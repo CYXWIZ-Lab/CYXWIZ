@@ -22,6 +22,10 @@
     "fmt",
     "sqlite3",
     "openssl",
+    {
+      "name": "libarchive",
+      "default-features": false
+    },
     "pybind11",
     "catch2",
     "cpp-httplib",

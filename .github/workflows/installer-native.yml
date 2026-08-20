@@ -1,0 +1,207 @@
+name: Installer Native Build
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/installer-native.yml"
+      - "CMakeLists.txt"
+      - "cyxwiz-backend/**"
+      - "cyxwiz-engine/**"
+      - "redist/bootstrapper/**"
+      - "vcpkg-ci.json"
+  push:
+    branches:
+      - main
+      - Nodes_Implementation
+    paths:
+      - ".github/workflows/installer-native.yml"
+      - "CMakeLists.txt"
+      - "cyxwiz-backend/**"
+      - "cyxwiz-engine/**"
+      - "redist/bootstrapper/**"
+      - "vcpkg-ci.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+          - name: Ubuntu x64
+            os: ubuntu-22.04
+          - name: macOS arm64
+            os: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Free Ubuntu disk space
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo apt-get clean
+
+      - name: Install Ubuntu build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf automake build-essential cmake gperf libcrypt-dev \
+            libgl1-mesa-dev libgtk-3-dev libtool libwayland-dev \
+            libxext-dev libxi-dev libxinerama-dev libxkbcommon-dev \
+            libxcursor-dev libxrandr-dev ninja-build pkg-config
+
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew install arrayfire autoconf automake cmake libtool ninja pkg-config
+
+      - name: Use CI vcpkg manifest
+        run: cmake -E copy vcpkg-ci.json vcpkg.json
+
+      - name: Setup vcpkg on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          Set-Location vcpkg
+          git checkout 594ad8871e1e8e45f8e626c015fd611163430207
+          .\bootstrap-vcpkg.bat
+          "VCPKG_ROOT=$PWD" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Setup vcpkg on Unix
+        if: runner.os != 'Windows'
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          cd vcpkg
+          git checkout 594ad8871e1e8e45f8e626c015fd611163430207
+          ./bootstrap-vcpkg.sh
+          echo "VCPKG_ROOT=$PWD" >> "$GITHUB_ENV"
+
+      - name: Install ArrayFire on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest `
+            -Uri https://arrayfire.gateway.scarf.sh/windows/3.10.0/ArrayFire.exe `
+            -OutFile ArrayFire.exe
+          Start-Process -FilePath ArrayFire.exe -ArgumentList /S -Wait
+
+      - name: Install ArrayFire on Ubuntu
+        if: runner.os == 'Linux'
+        run: |
+          wget -q https://arrayfire.gateway.scarf.sh/linux/3.10.0/ArrayFire.sh
+          chmod +x ArrayFire.sh
+          set +o pipefail
+          yes | sudo ./ArrayFire.sh --prefix=/opt/arrayfire
+          installer_status=${PIPESTATUS[1]}
+          set -o pipefail
+          exit "$installer_status"
+
+      - name: Configure Windows Release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S . -B build `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DCYXWIZ_BUILD_ENGINE=ON `
+            -DCYXWIZ_BUILD_SERVER_NODE=OFF `
+            -DCYXWIZ_BUILD_TESTS=ON `
+            -DCYXWIZ_BUILD_TUI=OFF `
+            -DCYXWIZ_ENABLE_PYTHON=OFF `
+            -DCYXWIZ_ENABLE_ONNX=OFF `
+            -DCYXWIZ_ENABLE_GGUF=OFF `
+            -DCYXWIZ_ENABLE_PYTORCH=OFF `
+            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF `
+            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF `
+            -DCYXWIZ_ENABLE_CUDA=OFF `
+            -DCYXWIZ_ENABLE_OPENCL=OFF
+
+      - name: Configure Ubuntu Release
+        if: runner.os == 'Linux'
+        run: |
+          AF_DIR="$(find /opt/arrayfire -name ArrayFireConfig.cmake \
+            -exec dirname {} \; | head -1)"
+          test -n "$AF_DIR"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DCYXWIZ_BUILD_ENGINE=ON \
+            -DCYXWIZ_BUILD_SERVER_NODE=OFF \
+            -DCYXWIZ_BUILD_TESTS=ON \
+            -DCYXWIZ_BUILD_TUI=OFF \
+            -DCYXWIZ_ENABLE_PYTHON=OFF \
+            -DCYXWIZ_ENABLE_ONNX=OFF \
+            -DCYXWIZ_ENABLE_GGUF=OFF \
+            -DCYXWIZ_ENABLE_PYTORCH=OFF \
+            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF \
+            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF \
+            -DCYXWIZ_ENABLE_CUDA=OFF \
+            -DCYXWIZ_ENABLE_OPENCL=OFF \
+            ${AF_DIR:+-DArrayFire_DIR="$AF_DIR"}
+
+      - name: Configure macOS Release
+        if: runner.os == 'macOS'
+        run: |
+          AF_PREFIX="$(brew --prefix arrayfire)"
+          AF_DIR="$(find "$AF_PREFIX" -name ArrayFireConfig.cmake \
+            -exec dirname {} \; | head -1)"
+          test -n "$AF_DIR"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DCYXWIZ_BUILD_ENGINE=ON \
+            -DCYXWIZ_BUILD_SERVER_NODE=OFF \
+            -DCYXWIZ_BUILD_TESTS=ON \
+            -DCYXWIZ_BUILD_TUI=OFF \
+            -DCYXWIZ_ENABLE_PYTHON=OFF \
+            -DCYXWIZ_ENABLE_ONNX=OFF \
+            -DCYXWIZ_ENABLE_GGUF=OFF \
+            -DCYXWIZ_ENABLE_PYTORCH=OFF \
+            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF \
+            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF \
+            -DCYXWIZ_ENABLE_CUDA=OFF \
+            -DCYXWIZ_ENABLE_OPENCL=OFF \
+            -DArrayFire_DIR="$AF_DIR"
+
+      - name: Build installer targets on Windows
+        if: runner.os == 'Windows'
+        run: >-
+          cmake --build build --config Release --parallel
+          --target cyxwiz-installer cyxwiz-backend-pack-installer
+          test_backend_pack_manager_model
+
+      - name: Build installer targets on Unix
+        if: runner.os != 'Windows'
+        run: >-
+          cmake --build build --parallel
+          --target cyxwiz-installer cyxwiz-backend-pack-installer
+          test_backend_pack_manager_model
+
+      - name: Run installer model contract
+        run: >-
+          ctest --test-dir build --build-config Release --output-on-failure
+          -R ^backend_pack_manager_model_contract$
