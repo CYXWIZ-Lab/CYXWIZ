@@ -73,7 +73,9 @@ if(WIN32)
     set_target_properties(cyxwiz-runtime-bootstrapper PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
-    install(TARGETS cyxwiz-runtime-bootstrapper RUNTIME DESTINATION .)
+    if(NOT CYXWIZ_BUILD_INSTALLER_ONLY)
+        install(TARGETS cyxwiz-runtime-bootstrapper RUNTIME DESTINATION .)
+    endif()
 endif()
 
 if(CYXWIZ_BUILD_TESTS)

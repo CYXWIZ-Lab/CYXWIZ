@@ -60,7 +60,10 @@ set_target_properties(cyxwiz-backend-pack-installer PROPERTIES
     CXX_STANDARD 20
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-install(TARGETS cyxwiz-backend-pack-installer RUNTIME DESTINATION .)
+install(TARGETS cyxwiz-backend-pack-installer
+    RUNTIME_DEPENDENCY_SET cyxwiz-installer-runtime-dependencies
+    RUNTIME DESTINATION .
+)
 
 if(CYXWIZ_BUILD_TESTS)
     add_executable(test_backend_pack_manager_model
@@ -113,7 +116,56 @@ set_target_properties(cyxwiz-installer PROPERTIES
     CXX_STANDARD 20
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-install(TARGETS cyxwiz-installer RUNTIME DESTINATION .)
+install(TARGETS cyxwiz-installer
+    RUNTIME_DEPENDENCY_SET cyxwiz-installer-runtime-dependencies
+    RUNTIME DESTINATION .
+)
+
+if(MSVC)
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
+    include(InstallRequiredSystemLibraries)
+endif()
+
+set(_cyxwiz_installer_runtime_directories)
+if(VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
+    list(APPEND _cyxwiz_installer_runtime_directories
+        "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+    )
+elseif(VCPKG_INSTALLED_DIR)
+    file(GLOB _cyxwiz_installer_candidate_runtime_directories
+        LIST_DIRECTORIES TRUE
+        "${VCPKG_INSTALLED_DIR}/*/bin"
+    )
+    list(APPEND _cyxwiz_installer_runtime_directories
+        ${_cyxwiz_installer_candidate_runtime_directories}
+    )
+endif()
+set(_cyxwiz_installer_runtime_directory_args)
+if(_cyxwiz_installer_runtime_directories)
+    list(APPEND _cyxwiz_installer_runtime_directory_args
+        DIRECTORIES ${_cyxwiz_installer_runtime_directories}
+    )
+endif()
+install(RUNTIME_DEPENDENCY_SET cyxwiz-installer-runtime-dependencies
+    PRE_EXCLUDE_REGEXES
+        "api-ms-win-.*"
+        "ext-ms-.*"
+        "azureattest.*"
+        "hvsifiletrust\\.dll"
+        "pdmutilities\\.dll"
+        "wpaxholder\\.dll"
+    POST_EXCLUDE_REGEXES
+        ".*[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\].*"
+        "^/lib/.*"
+        "^/lib64/.*"
+        "^/usr/lib/.*"
+        "^/System/Library/.*"
+    ${_cyxwiz_installer_runtime_directory_args}
+    RUNTIME DESTINATION .
+    LIBRARY DESTINATION .
+    FRAMEWORK DESTINATION Frameworks
+)
+install(FILES "${CMAKE_SOURCE_DIR}/LICENSE" DESTINATION .)
 
 if(TARGET cyxwiz-engine)
     if(TARGET cyxwiz-route-probe)
@@ -126,6 +178,9 @@ if(TARGET cyxwiz-engine)
 endif()
 
 unset(_cyxwiz_installer_sources)
+unset(_cyxwiz_installer_candidate_runtime_directories)
+unset(_cyxwiz_installer_runtime_directory_args)
+unset(_cyxwiz_installer_runtime_directories)
 unset(_cyxwiz_installer_generated_include)
 unset(_cyxwiz_installer_backend_dir)
 unset(_cyxwiz_installer_engine_dir)

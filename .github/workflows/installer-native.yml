@@ -11,6 +11,7 @@ on:
       - "cyxwiz-backend/**"
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
+      - "redist/scripts/verify_installer_package.py"
       - "vcpkg-installer.json"
   push:
     branches:
@@ -24,6 +25,7 @@ on:
       - "cyxwiz-backend/**"
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
+      - "redist/scripts/verify_installer_package.py"
       - "vcpkg-installer.json"
 
 permissions:
@@ -47,10 +49,13 @@ jobs:
         include:
           - name: Windows x64
             os: windows-latest
+            artifact: windows-x64
           - name: Ubuntu x64
             os: ubuntu-22.04
+            artifact: ubuntu-x64
           - name: macOS arm64
             os: macos-15
+            artifact: macos-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -151,3 +156,55 @@ jobs:
         run: >-
           ctest --test-dir build --build-config Release --output-on-failure
           -R ^backend_pack_manager_model_contract$
+
+      - name: Stage installer package
+        run: cmake --install build --config Release --prefix installer-stage
+
+      - name: Add Windows package smoke contract
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force installer-stage/smoke | Out-Null
+          Copy-Item build/bin/Release/test_backend_pack_manager_model.exe installer-stage/smoke/
+
+      - name: Add Unix package smoke contract
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p installer-stage/smoke
+          cp build/bin/test_backend_pack_manager_model installer-stage/smoke/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-installer-${{ matrix.artifact }}
+          path: installer-stage/
+          if-no-files-found: error
+
+  package-smoke:
+    name: ${{ matrix.name }} package smoke
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            artifact: windows-x64
+          - name: Ubuntu x64
+            os: ubuntu-22.04
+            artifact: ubuntu-x64
+          - name: macOS arm64
+            os: macos-15
+            artifact: macos-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cyxwiz-installer-${{ matrix.artifact }}
+          path: installer-stage
+
+      - name: Verify staged package on fresh runner
+        run: python redist/scripts/verify_installer_package.py installer-stage

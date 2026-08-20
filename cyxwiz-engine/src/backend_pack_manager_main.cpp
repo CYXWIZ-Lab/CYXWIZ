@@ -33,6 +33,7 @@ namespace {
 struct Arguments {
     std::filesystem::path runtime_root;
     std::string selected_pack;
+    bool package_smoke = false;
 };
 
 struct InstallBatchResult {
@@ -48,6 +49,7 @@ bool ParseArguments(
     output.runtime_root = executable_directory / "runtime";
     bool runtime_seen = false;
     bool selection_seen = false;
+    bool package_smoke_seen = false;
     for (std::size_t index = 1; index < values.size(); ++index) {
         if (values[index] == "--runtime-root" && !runtime_seen &&
             index + 1 < values.size()) {
@@ -57,10 +59,18 @@ bool ParseArguments(
                    index + 1 < values.size()) {
             output.selected_pack = values[++index];
             selection_seen = true;
+        } else if (values[index] == "--package-smoke" &&
+                   !package_smoke_seen) {
+            output.package_smoke = true;
+            package_smoke_seen = true;
         } else {
             error = "Unsupported, duplicate, or incomplete installer argument";
             return false;
         }
+    }
+    if (output.package_smoke && (runtime_seen || selection_seen)) {
+        error = "--package-smoke cannot be combined with installer arguments";
+        return false;
     }
     output.runtime_root = std::filesystem::absolute(output.runtime_root);
     return true;
@@ -124,6 +134,10 @@ int RunInstaller(
             arguments, executable_directory, parsed, argument_error)) {
         ShowFatal(argument_error);
         return 78;
+    }
+    if (parsed.package_smoke) {
+        std::cout << "CyxWiz installer package smoke passed\n";
+        return 0;
     }
 
     auto platform = cyxwiz::installer::CreateBackendPackInstallerPlatform(
