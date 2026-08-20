@@ -56,8 +56,10 @@ else()
     )
     if(APPLE)
         find_library(CYXWIZ_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+        find_library(CYXWIZ_CFNETWORK_FRAMEWORK CFNetwork REQUIRED)
         target_link_libraries(cyxwiz-backend-pack-service PRIVATE
             "${CYXWIZ_COREFOUNDATION_FRAMEWORK}"
+            "${CYXWIZ_CFNETWORK_FRAMEWORK}"
         )
     endif()
 endif()
