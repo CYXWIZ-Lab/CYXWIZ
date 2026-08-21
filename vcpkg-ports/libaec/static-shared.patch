@@ -1,0 +1,17 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index f9c3031..b2aeb6c 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -75,4 +75,11 @@ set_target_properties(aec sz
+   PROPERTIES
+   COMPILE_DEFINITIONS "${libaec_COMPILE_DEFINITIONS}")
+ 
+-install(TARGETS aec_static aec_shared sz_static sz_shared)
++if(BUILD_SHARED_LIBS)
++  set(install_targets aec_shared sz_shared)
++  set_target_properties(aec_static graec sz_static PROPERTIES EXCLUDE_FROM_ALL 1)
++else()
++  set(install_targets aec_static sz_static)
++  set_target_properties(aec_shared graec sz_shared PROPERTIES EXCLUDE_FROM_ALL 1)
++endif()
++install(TARGETS ${install_targets})

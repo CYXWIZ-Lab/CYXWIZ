@@ -57,16 +57,17 @@ jobs:
   build:
     name: Build Windows CPU base
     runs-on: windows-2022
-    timeout-minutes: 180
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
 
       - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: vcpkg-binary-cache
-          key: cpu-base-windows-2022-vcpkg-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}
-          save-always: true
+          key: cpu-base-windows-2022-vcpkg-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            cpu-base-windows-2022-vcpkg-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-
 
       - name: Prepare vcpkg binary cache
         shell: pwsh
@@ -122,6 +123,13 @@ jobs:
             Write-Warning "Configure attempt $attempt failed; retrying in $delaySeconds seconds"
             Start-Sleep -Seconds $delaySeconds
           }
+
+      - name: Save vcpkg binary cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg-binary-cache
+          key: cpu-base-windows-2022-vcpkg-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Build production CPU-base targets
         run: >-
