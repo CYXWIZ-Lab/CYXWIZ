@@ -19,6 +19,7 @@ on:
       - "redist/tests/test_verify_cpu_base_package.py"
       - "tests/smoke/test_oneapi_operation_probe.cpp"
       - "vcpkg-ci.json"
+      - "vcpkg-ports/**"
   push:
     branches:
       - main
@@ -39,6 +40,7 @@ on:
       - "redist/tests/test_verify_cpu_base_package.py"
       - "tests/smoke/test_oneapi_operation_probe.cpp"
       - "vcpkg-ci.json"
+      - "vcpkg-ports/**"
 
 permissions:
   contents: read
@@ -55,7 +57,7 @@ jobs:
   build:
     name: Build Windows CPU base
     runs-on: windows-2022
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -63,7 +65,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: vcpkg-binary-cache
-          key: cpu-base-windows-2022-vcpkg-${{ hashFiles('vcpkg-ci.json') }}
+          key: cpu-base-windows-2022-vcpkg-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}
+          save-always: true
 
       - name: Prepare vcpkg binary cache
         shell: pwsh
@@ -93,21 +96,32 @@ jobs:
       - name: Configure Release CPU build
         shell: pwsh
         run: |
-          cmake -S . -B build `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_OVERLAY_PORTS="${{ github.workspace }}/vcpkg-ports" `
-            -DCYXWIZ_BUILD_ENGINE=ON `
-            -DCYXWIZ_BUILD_SERVER_NODE=OFF `
-            -DCYXWIZ_BUILD_TESTS=OFF `
-            -DCYXWIZ_BUILD_TUI=OFF `
-            -DCYXWIZ_ENABLE_PYTHON=OFF `
-            -DCYXWIZ_ENABLE_ONNX=OFF `
-            -DCYXWIZ_ENABLE_GGUF=OFF `
-            -DCYXWIZ_ENABLE_PYTORCH=OFF `
-            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF `
-            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF `
-            -DCYXWIZ_ENABLE_CUDA=OFF `
-            -DCYXWIZ_ENABLE_OPENCL=OFF
+          $configureArgs = @(
+            '-S', '.', '-B', 'build',
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake",
+            '-DVCPKG_OVERLAY_PORTS=${{ github.workspace }}/vcpkg-ports',
+            '-DCYXWIZ_BUILD_ENGINE=ON',
+            '-DCYXWIZ_BUILD_SERVER_NODE=OFF',
+            '-DCYXWIZ_BUILD_TESTS=OFF',
+            '-DCYXWIZ_BUILD_TUI=OFF',
+            '-DCYXWIZ_ENABLE_PYTHON=OFF',
+            '-DCYXWIZ_ENABLE_ONNX=OFF',
+            '-DCYXWIZ_ENABLE_GGUF=OFF',
+            '-DCYXWIZ_ENABLE_PYTORCH=OFF',
+            '-DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF',
+            '-DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF',
+            '-DCYXWIZ_ENABLE_CUDA=OFF',
+            '-DCYXWIZ_ENABLE_OPENCL=OFF'
+          )
+          foreach ($attempt in 1..3) {
+            & cmake @configureArgs
+            $configureExit = $LASTEXITCODE
+            if ($configureExit -eq 0) { break }
+            if ($attempt -eq 3) { exit $configureExit }
+            $delaySeconds = 30 * $attempt
+            Write-Warning "Configure attempt $attempt failed; retrying in $delaySeconds seconds"
+            Start-Sleep -Seconds $delaySeconds
+          }
 
       - name: Build production CPU-base targets
         run: >-
