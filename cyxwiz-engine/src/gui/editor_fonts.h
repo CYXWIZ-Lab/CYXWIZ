@@ -31,6 +31,8 @@ inline constexpr std::array<ImWchar, 9> kTerminalSymbolFallbackGlyphRanges = {
 
 inline std::array<ImFont *, kEditorFontScales.size()> g_editor_mono_fonts = {};
 
+inline void ClearEditorMonoFonts() { g_editor_mono_fonts.fill(nullptr); }
+
 inline ImFont *AddTerminalCapableMonoFont(ImFontAtlas *atlas,
                                           const char *mono_path,
                                           const char *symbol_fallback_path,
@@ -44,6 +46,8 @@ inline ImFont *AddTerminalCapableMonoFont(ImFontAtlas *atlas,
   ImFontConfig fallback_config;
   fallback_config.MergeMode = true;
   fallback_config.PixelSnapH = true;
+  if (font_config)
+    fallback_config.RasterizerDensity = font_config->RasterizerDensity;
   fallback_config.GlyphMinAdvanceX = pixel_size;
   fallback_config.GlyphMaxAdvanceX = pixel_size;
   atlas->AddFontFromFileTTF(symbol_fallback_path, pixel_size, &fallback_config,

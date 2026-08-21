@@ -1,5 +1,6 @@
 #include "../src/gui/console_session_model.h"
 #include "../src/gui/console_workbench.h"
+#include "../src/gui/display_density.h"
 #include "../src/gui/editor_fonts.h"
 #include "../src/gui/panels/agent_llm_session.h"
 #include "../src/gui/panels/local_shell_process.h"
@@ -48,6 +49,26 @@ void TestProfiles() {
             profiles[4].requires_project && profiles[5].requires_project &&
             profiles[6].requires_project && profiles[7].requires_project,
         "project requirements should match the ticket contract");
+}
+
+void TestFramebufferDensityCalculation() {
+  using cyxwiz::gui::CalculateFramebufferDensity;
+  using cyxwiz::gui::HasMaterialFontDensityChange;
+
+  Check(CalculateFramebufferDensity(1280, 720, 1280, 720) == 1.0f,
+        "1x framebuffer should retain 1x font density");
+  Check(CalculateFramebufferDensity(1280, 720, 2560, 1440) == 2.0f,
+        "Retina framebuffer should select 2x font density");
+  Check(CalculateFramebufferDensity(1200, 800, 1800, 1200) == 1.5f,
+        "fractional HiDPI framebuffer should preserve its density");
+  Check(CalculateFramebufferDensity(0, 800, 1800, 1200) == 1.0f,
+        "invalid logical dimensions should fall back to 1x");
+  Check(CalculateFramebufferDensity(100, 100, 800, 800) == 4.0f,
+        "unexpected density should be bounded for atlas safety");
+  Check(!HasMaterialFontDensityChange(2.0f, 2.01f),
+        "rounding noise should not rebuild the font atlas");
+  Check(HasMaterialFontDensityChange(1.0f, 2.0f),
+        "monitor density changes should rebuild the font atlas");
 }
 
 void TestImplementedSessionAvailability() {
@@ -511,6 +532,7 @@ void TestProjectClosePreservesGlobalSessions() {
 } // namespace
 
 int main() {
+  TestFramebufferDensityCalculation();
   TestProfiles();
   TestImplementedSessionAvailability();
   TestSessionActivationDefersInputFocus();
