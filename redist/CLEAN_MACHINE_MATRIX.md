@@ -39,6 +39,17 @@ loaded ArrayFire unified, CPU, and oneMKL runtime modules. CUDA, OpenCL, and
 oneAPI remain explicit `not_run` entries. CI emits an unsigned signing request;
 it is qualification evidence, not a publishable release artifact.
 
+Latest qualifying checkpoint: GitHub Actions run `32460137920` passed on a
+separate fresh Windows runner. The archive is 307,438,064 bytes and installs
+317 files totaling 884,984,243 bytes. Engine bootstrap smoke completed in
+1,373.634 ms; the five CPU route checks completed in 22.971-160.888 ms; and
+`dense-compute-v1` reported a 6.0449 ms median iteration. The module audit
+resolved `arrayfire/bin/af.dll`, `arrayfire/bin/afcpu.dll`, and
+`arrayfire/bin/mkl_rt.2.dll` inside the installed base while contaminated
+development paths were present. This closes the Windows CPU-base row with
+bounded CPU execution evidence; it does not claim a full optimizer loop or
+physical accelerator qualification.
+
 ## Failure-contract coverage
 
 | Release condition | Native contract |
