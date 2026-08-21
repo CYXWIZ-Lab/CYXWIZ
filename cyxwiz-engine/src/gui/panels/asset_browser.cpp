@@ -631,19 +631,11 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
         item.is_expanded = node_open;
     }
 
-    // Show tooltip with file info on hover
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-        ImGui::BeginTooltip();
-        ImGui::Text("%s", item.name.c_str());
-        ImGui::Separator();
-        ImGui::Text("Path: %s", item.relative_path.c_str());
-        if (!item.is_directory) {
-            ImGui::Text("Size: %s", FormatFileSize(item.file_size).c_str());
-        }
-        ImGui::Text("Modified: %s", item.modified_time.c_str());
-        ImGui::EndTooltip();
-    }
-
+    // Capture every interaction owned by the tree row before rendering any
+    // other item. Tooltip contents replace ImGui's last-item state and would
+    // otherwise make delayed-hover clicks target the tooltip instead.
+    const bool item_hovered =
+        ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal);
     const bool item_clicked = ImGui::IsItemClicked(0);
     const bool item_double_clicked =
         item_clicked && ImGui::IsMouseDoubleClicked(0);
@@ -811,6 +803,20 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
             }
         }
         ImGui::EndDragDropTarget();
+    }
+
+    // Render descriptive content only after all last-item-dependent row
+    // interactions (click, popup, and drag/drop) have been evaluated.
+    if (item_hovered) {
+        ImGui::BeginTooltip();
+        ImGui::Text("%s", item.name.c_str());
+        ImGui::Separator();
+        ImGui::Text("Path: %s", item.relative_path.c_str());
+        if (!item.is_directory) {
+            ImGui::Text("Size: %s", FormatFileSize(item.file_size).c_str());
+        }
+        ImGui::Text("Modified: %s", item.modified_time.c_str());
+        ImGui::EndTooltip();
     }
 
     // Recursively render children if node is open (and not a leaf)

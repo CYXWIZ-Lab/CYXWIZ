@@ -27,7 +27,6 @@ MemoryMonitor::MemoryMonitor() {
     last_update_ = std::chrono::steady_clock::now();
 
     InitializePDH();
-    Update();
 }
 
 MemoryMonitor::~MemoryMonitor() {

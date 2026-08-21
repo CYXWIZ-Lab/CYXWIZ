@@ -2907,8 +2907,12 @@ void MainWindow::Render() {
 
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
 
-    cyxwiz::plugin::PluginManager::Instance().SetAssistantContextSnapshotForAll(
-        BuildAssistantContextSnapshot(node_editor_.get(), studio_debugger_panel_.get()));
+    auto& plugin_manager = cyxwiz::plugin::PluginManager::Instance();
+    if (plugin_manager.GetPluginCount() > 0) {
+        plugin_manager.SetAssistantContextSnapshotForAll(
+            BuildAssistantContextSnapshot(
+                node_editor_.get(), studio_debugger_panel_.get()));
+    }
 
     // Check if we need to connect P2PClient to monitoring panel
     if (!monitoring_job_id_.empty() && job_manager_ && p2p_training_panel_) {

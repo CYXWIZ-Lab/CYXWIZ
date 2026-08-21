@@ -88,9 +88,10 @@ void StudioDebuggerPanel::RenderToolbar() {
                               ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,
                               ImGui::GetStyleColorVec4(ImGuiCol_Header));
-        if (ImGui::Button(run_in_progress_
-                ? ICON_FA_CLOCK " Running"
-                : ICON_FA_PLAY " Run", ImVec2(-FLT_MIN, 0.0f))) {
+        const char* run_label = run_in_progress_
+            ? ICON_FA_CLOCK " Running##StudioDebuggerRunAction"
+            : ICON_FA_PLAY " Run##StudioDebuggerRunAction";
+        if (ImGui::Button(run_label, ImVec2(-FLT_MIN, 0.0f))) {
             if (run_debug_callback_) {
                 const StudioDebuggerRunMode mode = run_mode_;
                 const int sample_index = selected_sample_index_;

@@ -561,15 +561,13 @@ void NodeBrowserPanel::RenderStudioSection() {
 
     auto pattern_categories = pattern_lib.GetAvailableCategories();
     for (auto cat : pattern_categories) {
-        auto cat_patterns = pattern_lib.GetByCategory(cat);
-        if (cat_patterns.empty()) continue;
-
         // Category tree node
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
         const char* cat_icon = patterns::GetPatternCategoryIcon(cat);
         std::string cat_label = std::string(cat_icon) + " " + patterns::PatternCategoryToString(cat);
 
         if (ImGui::TreeNodeEx(cat_label.c_str(), flags)) {
+            const auto cat_patterns = pattern_lib.GetByCategory(cat);
             for (const auto& pattern : cat_patterns) {
                 ImGui::PushID(pattern.id.c_str());
 
@@ -777,6 +775,13 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
 
     // Invisible button for interaction
     ImGui::InvisibleButton("##card", card_size);
+
+    // Preserve the full layout while avoiding formatting and draw-list work
+    // for cards clipped outside the NodeGrid child window.
+    if (!ImGui::IsItemVisible()) {
+        ImGui::PopID();
+        return;
+    }
 
     bool hovered = ImGui::IsItemHovered();
     const bool support_blocked = IsSupportBlocked(metadata);

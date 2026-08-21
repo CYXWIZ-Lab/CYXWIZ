@@ -7,6 +7,7 @@
 #include <cyxwiz/memory_manager.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -1365,13 +1366,90 @@ TrainingTraceSummary TrainingTraceCollector::Snapshot() const {
     return summary;
 }
 
+namespace {
+
+constexpr auto kPersistedTraceValidationInterval = std::chrono::seconds(1);
+
+struct PersistedTraceCache {
+    std::mutex mutex;
+    std::filesystem::path path;
+    std::optional<std::filesystem::file_time_type> write_time;
+    uintmax_t file_size = 0;
+    std::optional<TrainingTraceSummary> summary;
+    std::chrono::steady_clock::time_point next_validation{};
+    bool initialized = false;
+};
+
+PersistedTraceCache& GetPersistedTraceCache() {
+    static PersistedTraceCache cache;
+    return cache;
+}
+
+void InvalidatePersistedTraceCache() {
+    auto& cache = GetPersistedTraceCache();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    cache.initialized = false;
+    cache.next_validation = {};
+}
+
+std::optional<TrainingTraceSummary> LoadCachedLastTrace() {
+    const auto path = CurrentTracePath();
+    const auto now = std::chrono::steady_clock::now();
+    auto& cache = GetPersistedTraceCache();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+
+    if (cache.initialized && cache.path == path &&
+        now < cache.next_validation) {
+        return cache.summary;
+    }
+
+    std::error_code error;
+    const auto write_time = std::filesystem::last_write_time(path, error);
+    if (error) {
+        cache.path = path;
+        cache.write_time.reset();
+        cache.file_size = 0;
+        cache.summary.reset();
+        cache.next_validation = now + kPersistedTraceValidationInterval;
+        cache.initialized = true;
+        return std::nullopt;
+    }
+
+    const auto file_size = std::filesystem::file_size(path, error);
+    if (error) {
+        return std::nullopt;
+    }
+
+    if (cache.initialized && cache.path == path &&
+        cache.write_time.has_value() &&
+        *cache.write_time == write_time && cache.file_size == file_size) {
+        cache.next_validation = now + kPersistedTraceValidationInterval;
+        return cache.summary;
+    }
+
+    auto summary = TrainingTraceCollector::LoadLastTrace();
+    if (!summary.has_value()) {
+        return std::nullopt;
+    }
+
+    cache.path = path;
+    cache.write_time = write_time;
+    cache.file_size = file_size;
+    cache.summary = summary;
+    cache.next_validation = now + kPersistedTraceValidationInterval;
+    cache.initialized = true;
+    return summary;
+}
+
+} // namespace
+
 TrainingTraceSummary TrainingTraceCollector::LatestTrace() {
     auto live = Instance().Snapshot();
     if (live.available && !live.run_id.empty()) {
         return live;
     }
-    if (const auto persisted = LoadLastTrace()) {
-        return *persisted;
+    if (auto persisted = LoadCachedLastTrace()) {
+        return std::move(*persisted);
     }
     return live;
 }
@@ -1670,6 +1748,7 @@ void TrainingTraceCollector::WriteLocked() const {
         j["residency_reason"] = summary.residency_reason;
         std::ofstream file(CurrentTracePath(), std::ios::trunc);
         file << std::setw(2) << j << '\n';
+        InvalidatePersistedTraceCache();
     } catch (...) {
         // Debug tracing must never break training.
     }
