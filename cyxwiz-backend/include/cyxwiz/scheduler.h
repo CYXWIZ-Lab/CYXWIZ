@@ -3,6 +3,7 @@
 #include "api_export.h"
 #include "tensor.h"  // Required before optimizer.h (uses Tensor in std::map)
 #include "optimizer.h"
+#include <map>
 #include <memory>
 #include <string>
 #include <functional>
@@ -19,6 +20,22 @@ enum class SchedulerType {
     ReduceLROnPlateau, // Reduce when metric stops improving
     LinearWarmup,    // Linear warmup followed by decay
     OneCycleLR       // 1cycle policy
+};
+
+/**
+ * Typed, backend-owned scheduler state required to reproduce the next LR.
+ * Checkpoint code serializes this envelope without inspecting concrete
+ * scheduler internals.
+ */
+struct SchedulerState {
+    int schema_version = 1;
+    std::string scheduler_type;
+    double base_learning_rate = 0.0;
+    double current_learning_rate = 0.0;
+    int last_step = 0;
+    std::map<std::string, double> hyperparameters;
+    std::map<std::string, std::string> string_hyperparameters;
+    std::map<std::string, double> values;
 };
 
 /**
@@ -50,6 +67,20 @@ public:
      */
     virtual void Reset() = 0;
 
+    /** Export complete state required for the next scheduler step. */
+    virtual bool ExportState(SchedulerState& state, std::string& error) const {
+        state = SchedulerState{};
+        error = "This scheduler does not implement exact state export.";
+        return false;
+    }
+
+    /** Import state transactionally; failure must not mutate the scheduler. */
+    virtual bool ImportState(const SchedulerState& state, std::string& error) {
+        (void)state;
+        error = "This scheduler does not implement exact state import.";
+        return false;
+    }
+
 protected:
     double base_lr_ = 0.001;
     double current_lr_ = 0.001;
@@ -73,6 +104,8 @@ public:
     double GetLR() const override { return current_lr_; }
     std::string GetName() const override { return "StepLR"; }
     void Reset() override;
+    bool ExportState(SchedulerState& state, std::string& error) const override;
+    bool ImportState(const SchedulerState& state, std::string& error) override;
 
 private:
     Optimizer* optimizer_;
@@ -98,6 +131,8 @@ public:
     double GetLR() const override { return current_lr_; }
     std::string GetName() const override { return "ExponentialLR"; }
     void Reset() override;
+    bool ExportState(SchedulerState& state, std::string& error) const override;
+    bool ImportState(const SchedulerState& state, std::string& error) override;
 
 private:
     Optimizer* optimizer_;
@@ -123,6 +158,8 @@ public:
     double GetLR() const override { return current_lr_; }
     std::string GetName() const override { return "CosineAnnealingLR"; }
     void Reset() override;
+    bool ExportState(SchedulerState& state, std::string& error) const override;
+    bool ImportState(const SchedulerState& state, std::string& error) override;
 
 private:
     Optimizer* optimizer_;
@@ -157,6 +194,8 @@ public:
     double GetLR() const override { return current_lr_; }
     std::string GetName() const override { return "ReduceLROnPlateau"; }
     void Reset() override;
+    bool ExportState(SchedulerState& state, std::string& error) const override;
+    bool ImportState(const SchedulerState& state, std::string& error) override;
 
     /**
      * Check if improvement was detected
@@ -209,6 +248,8 @@ public:
     double GetLR() const override { return current_lr_; }
     std::string GetName() const override { return "LinearWarmupLR"; }
     void Reset() override;
+    bool ExportState(SchedulerState& state, std::string& error) const override;
+    bool ImportState(const SchedulerState& state, std::string& error) override;
 
     bool IsWarmupComplete() const { return last_epoch_ >= warmup_epochs_; }
 
@@ -248,6 +289,8 @@ public:
     double GetLR() const override { return current_lr_; }
     std::string GetName() const override { return "OneCycleLR"; }
     void Reset() override;
+    bool ExportState(SchedulerState& state, std::string& error) const override;
+    bool ImportState(const SchedulerState& state, std::string& error) override;
 
 private:
     Optimizer* optimizer_;

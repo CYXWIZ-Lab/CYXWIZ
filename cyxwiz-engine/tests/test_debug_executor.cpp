@@ -17,6 +17,7 @@
 #include "../src/core/checkpoint_manager.h"
 
 #include <cyxwiz/loss.h>
+#include <cyxwiz/optimizers/sgd.h>
 #include <cyxwiz/tensor.h>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -768,6 +769,60 @@ void TestCheckpointPayloadV2RoundTripAndCorruptionGuard() {
                    restored_unstepped_state.tensors.empty(),
                "v2 Adam payload should preserve valid step-zero state");
 
+    SGDOptimizer scheduler_source_optimizer(0.1);
+    ReduceLROnPlateau scheduler_source(
+        &scheduler_source_optimizer, "max", 0.5, 1, 0.05, 0.01);
+    scheduler_source.Step(1, 0.50f);
+    scheduler_source.Step(2, 0.54f);
+    scheduler_source.Step(3, 0.56f);
+    scheduler_source.Step(4, 0.55f);
+    scheduler_source.Step(5, 0.54f);
+    CheckpointPayloadDescriptor scheduler_descriptor;
+    if (!SaveSchedulerPayloadV2(root, "scheduler/state.bin",
+                                scheduler_source, scheduler_descriptor,
+                                error)) {
+        throw std::runtime_error("v2 scheduler payload save failed: " + error);
+    }
+    ExpectTrue(scheduler_descriptor.kind ==
+                   CheckpointPayloadKind::SchedulerState &&
+                   VerifyCheckpointPayloadFile(
+                       root, scheduler_descriptor, error),
+               "v2 scheduler payload should have a verified SHA-256");
+
+    SGDOptimizer scheduler_resumed_optimizer(0.1);
+    ReduceLROnPlateau scheduler_resumed(
+        &scheduler_resumed_optimizer, "max", 0.5, 1, 0.05, 0.01);
+    if (!LoadSchedulerPayloadV2(root, scheduler_descriptor,
+                                scheduler_resumed, error)) {
+        throw std::runtime_error("v2 scheduler payload load failed: " + error);
+    }
+    ExpectNear(
+        static_cast<float>(scheduler_resumed.GetLR()),
+        static_cast<float>(scheduler_source.GetLR()), 0.0f,
+        "v2 scheduler payload current learning rate");
+    ExpectEq(scheduler_resumed.GetBadEpochs(), scheduler_source.GetBadEpochs(),
+             "v2 scheduler payload plateau counter");
+    scheduler_source.Step(6, 0.53f);
+    scheduler_resumed.Step(6, 0.53f);
+    scheduler_source.Step(7, 0.52f);
+    scheduler_resumed.Step(7, 0.52f);
+    ExpectNear(
+        static_cast<float>(scheduler_resumed.GetLR()),
+        static_cast<float>(scheduler_source.GetLR()), 0.0f,
+        "v2 scheduler payload exact continuation");
+
+    SGDOptimizer incompatible_scheduler_optimizer(0.1);
+    ReduceLROnPlateau incompatible_scheduler(
+        &incompatible_scheduler_optimizer, "max", 0.25, 1, 0.05, 0.01);
+    ExpectTrue(!LoadSchedulerPayloadV2(
+                   root, scheduler_descriptor, incompatible_scheduler, error),
+               "incompatible v2 scheduler payload must be rejected");
+    ExpectTrue(error.find("configuration does not match") != std::string::npos,
+               "incompatible scheduler payload should identify config drift");
+    ExpectNear(
+        static_cast<float>(incompatible_scheduler.GetLR()), 0.1f, 0.0f,
+        "incompatible scheduler payload must not mutate active state");
+
     const auto before_corruption = target.model->GetParameters();
     const auto model_path = root / model_descriptor.relative_path;
     {
@@ -796,7 +851,8 @@ void TestCheckpointPayloadV2RoundTripAndCorruptionGuard() {
     }
 
     std::filesystem::remove_all(root);
-    spdlog::info("  OK: v2 model/Adam payloads round-trip and corruption is transactional");
+    spdlog::info(
+        "  OK: v2 model/Adam/scheduler payloads round-trip and corruption is transactional");
 }
 
 void TestTransformerDecoderCheckpointRoundTrip() {

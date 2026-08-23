@@ -489,4 +489,74 @@ bool LoadOptimizerPayloadV2(
     }
 }
 
+bool SaveSchedulerPayloadV2(
+    const fs::path& checkpoint_directory,
+    const std::string& relative_path,
+    const LRScheduler& scheduler,
+    CheckpointPayloadDescriptor& descriptor,
+    std::string& error)
+{
+    SchedulerState state;
+    if (!scheduler.ExportState(state, error)) return false;
+    const json metadata = {
+        {"scheduler_state_schema_version", state.schema_version},
+        {"scheduler_type", state.scheduler_type},
+        {"base_learning_rate", state.base_learning_rate},
+        {"current_learning_rate", state.current_learning_rate},
+        {"last_step", state.last_step},
+        {"hyperparameters", state.hyperparameters},
+        {"string_hyperparameters", state.string_hyperparameters},
+        {"values", state.values},
+    };
+    return WriteArchiveAtomic(
+        checkpoint_directory, relative_path, "scheduler_state", metadata, {},
+        CheckpointPayloadKind::SchedulerState, descriptor, error);
+}
+
+bool LoadSchedulerPayloadV2(
+    const fs::path& checkpoint_directory,
+    const CheckpointPayloadDescriptor& descriptor,
+    LRScheduler& scheduler,
+    std::string& error)
+{
+    if (descriptor.kind != CheckpointPayloadKind::SchedulerState) {
+        error = "checkpoint descriptor is not a scheduler-state payload";
+        return false;
+    }
+    LoadedArchive archive;
+    if (!ReadArchive(checkpoint_directory, descriptor, "scheduler_state",
+                     archive, error)) {
+        return false;
+    }
+    if (!archive.tensors.empty()) {
+        error = "checkpoint scheduler state must not contain tensors";
+        return false;
+    }
+    try {
+        SchedulerState state;
+        state.schema_version =
+            archive.metadata.at("scheduler_state_schema_version").get<int>();
+        state.scheduler_type =
+            archive.metadata.at("scheduler_type").get<std::string>();
+        state.base_learning_rate =
+            archive.metadata.at("base_learning_rate").get<double>();
+        state.current_learning_rate =
+            archive.metadata.at("current_learning_rate").get<double>();
+        state.last_step = archive.metadata.at("last_step").get<int>();
+        state.hyperparameters =
+            archive.metadata.at("hyperparameters")
+                .get<std::map<std::string, double>>();
+        state.string_hyperparameters =
+            archive.metadata.at("string_hyperparameters")
+                .get<std::map<std::string, std::string>>();
+        state.values = archive.metadata.at("values")
+                           .get<std::map<std::string, double>>();
+        return scheduler.ImportState(state, error);
+    } catch (const std::exception& exception) {
+        error = std::string("checkpoint scheduler metadata is invalid: ") +
+                exception.what();
+        return false;
+    }
+}
+
 } // namespace cyxwiz

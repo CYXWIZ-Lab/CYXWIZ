@@ -579,7 +579,7 @@
       "tests": ["cyxwiz-tests:test_scheduler"],
       "execution": "host control state; parameter updates remain backend-resident",
       "status": "partial",
-      "gaps": ["invalid configurations", "state serialization", "TrainingExecutor cadence/state/checkpoint ownership"]
+      "gaps": ["LRWarmup nested optimizer/schedule state serialization", "TrainingExecutor cadence/state/checkpoint ownership"]
     },
     {
       "id": "METRIC-CLASS-001",

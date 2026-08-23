@@ -3,6 +3,7 @@
 #include "checkpoint_manifest.h"
 
 #include <cyxwiz/optimizer.h>
+#include <cyxwiz/scheduler.h>
 #include <cyxwiz/sequential.h>
 
 #include <filesystem>
@@ -39,6 +40,19 @@ bool LoadOptimizerPayloadV2(
     const std::filesystem::path& checkpoint_directory,
     const CheckpointPayloadDescriptor& descriptor,
     Optimizer& optimizer,
+    std::string& error);
+
+bool SaveSchedulerPayloadV2(
+    const std::filesystem::path& checkpoint_directory,
+    const std::string& relative_path,
+    const LRScheduler& scheduler,
+    CheckpointPayloadDescriptor& descriptor,
+    std::string& error);
+
+bool LoadSchedulerPayloadV2(
+    const std::filesystem::path& checkpoint_directory,
+    const CheckpointPayloadDescriptor& descriptor,
+    LRScheduler& scheduler,
     std::string& error);
 
 } // namespace cyxwiz

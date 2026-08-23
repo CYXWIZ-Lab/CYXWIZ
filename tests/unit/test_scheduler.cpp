@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <map>
 #include <stdexcept>
@@ -211,5 +212,117 @@ TEST_CASE("Optimizer LRWarmup rejects invalid ownership and step counts",
     auto optimizer = std::make_unique<cyxwiz::SGDOptimizer>(0.1);
     CHECK_THROWS_AS(
         cyxwiz::LRWarmup(std::move(optimizer), -1),
+        std::invalid_argument);
+}
+
+TEST_CASE("Scheduler state resumes PyTorch sequences transactionally",
+          "[scheduler][pytorch][state]") {
+    const auto cases = LoadSchedulerFixture();
+    REQUIRE(cases.is_array());
+
+    for (const auto& test_case : cases) {
+        INFO("case=" << test_case.at("name").get<std::string>());
+        const auto& expected_steps = test_case.at("expected_steps");
+        const std::size_t split = expected_steps.size() / 2;
+        cyxwiz::SGDOptimizer source_optimizer(
+            test_case.at("base_learning_rate").get<double>());
+        auto source = CreateFixtureScheduler(test_case, source_optimizer);
+
+        for (std::size_t index = 0; index < split; ++index) {
+            const auto& expected = expected_steps.at(index);
+            source->Step(
+                expected.at("index").get<int>(),
+                expected.value("metric", 0.0f));
+        }
+
+        cyxwiz::SchedulerState state;
+        std::string error;
+        REQUIRE(source->ExportState(state, error));
+        REQUIRE(error.empty());
+
+        cyxwiz::SGDOptimizer resumed_optimizer(
+            test_case.at("base_learning_rate").get<double>());
+        auto resumed = CreateFixtureScheduler(test_case, resumed_optimizer);
+        REQUIRE(resumed->ImportState(state, error));
+        REQUIRE(error.empty());
+        CHECK(resumed->GetLR() == Catch::Approx(source->GetLR()).margin(1.0e-12));
+        CHECK(resumed_optimizer.GetLearningRate() ==
+              Catch::Approx(source_optimizer.GetLearningRate()).margin(1.0e-12));
+
+        const double margin =
+            test_case.at("tolerance").at("atol").get<double>();
+        for (std::size_t index = split; index < expected_steps.size(); ++index) {
+            const auto& expected = expected_steps.at(index);
+            resumed->Step(
+                expected.at("index").get<int>(),
+                expected.value("metric", 0.0f));
+            CHECK(resumed->GetLR() == Catch::Approx(
+                      expected.at("learning_rate").get<double>())
+                      .margin(margin));
+        }
+
+        const double accepted_lr = resumed->GetLR();
+        auto invalid_state = state;
+        invalid_state.schema_version = 99;
+        CHECK_FALSE(resumed->ImportState(invalid_state, error));
+        CHECK_FALSE(error.empty());
+        CHECK(resumed->GetLR() == Catch::Approx(accepted_lr).margin(1.0e-12));
+
+        invalid_state = state;
+        invalid_state.scheduler_type = "WrongScheduler";
+        CHECK_FALSE(resumed->ImportState(invalid_state, error));
+        CHECK_FALSE(error.empty());
+        CHECK(resumed->GetLR() == Catch::Approx(accepted_lr).margin(1.0e-12));
+
+        invalid_state = state;
+        invalid_state.current_learning_rate =
+            std::numeric_limits<double>::quiet_NaN();
+        CHECK_FALSE(resumed->ImportState(invalid_state, error));
+        CHECK_FALSE(error.empty());
+        CHECK(resumed->GetLR() == Catch::Approx(accepted_lr).margin(1.0e-12));
+    }
+}
+
+TEST_CASE("Schedulers reject unsafe configurations",
+          "[scheduler][validation]") {
+    cyxwiz::SGDOptimizer optimizer(0.1);
+
+    CHECK_THROWS_AS(cyxwiz::StepLR(nullptr, 1), std::invalid_argument);
+    CHECK_THROWS_AS(cyxwiz::StepLR(&optimizer, 0), std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::ExponentialLR(nullptr, 0.9), std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::ExponentialLR(
+            &optimizer, std::numeric_limits<double>::quiet_NaN()),
+        std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::CosineAnnealingLR(nullptr, 10), std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::CosineAnnealingLR(&optimizer, 0), std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::ReduceLROnPlateau(nullptr), std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::ReduceLROnPlateau(&optimizer, "median"),
+        std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::ReduceLROnPlateau(&optimizer, "min", 1.0),
+        std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::LinearWarmupLR(nullptr, 4, 0.1), std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::LinearWarmupLR(&optimizer, 0, 0.1),
+        std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::OneCycleLR(nullptr, 0.1, 10), std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::OneCycleLR(&optimizer, 0.1, 0), std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::OneCycleLR(&optimizer, 0.1, 10, -0.1),
+        std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::OneCycleLR(&optimizer, 0.1, 10, 1.1),
+        std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::OneCycleLR(&optimizer, 0.1, 10, 0.3, 0.0),
         std::invalid_argument);
 }

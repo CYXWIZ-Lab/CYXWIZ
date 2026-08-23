@@ -94,6 +94,14 @@ host-control primitives; graph scheduler nodes remain blocked until
 TrainingExecutor owns their update cadence, run state, and checkpoint
 restoration.
 
+Each `LRScheduler` also exports/imports a typed, transactional state envelope.
+The scheduler tests resume every PyTorch LR sequence from a midpoint and reject
+schema, type, configuration, and non-finite state drift without mutating the
+active scheduler. Checkpoint v2 can persist that envelope as its reserved
+`scheduler_state` payload and verifies the archive hash before import. The
+optimizer-owning `LRWarmup` wrapper does not yet expose an exact nested
+optimizer/schedule state payload.
+
 `test_training_executor_arrow_parquet --uneven-epoch-metrics-only` runs the
 focused full-epoch aggregation contract. It compares `{4, 2}` Train and Dev
 metrics against evaluating the same unchanged model over each six-row role as
