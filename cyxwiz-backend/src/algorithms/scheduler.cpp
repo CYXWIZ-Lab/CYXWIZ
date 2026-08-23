@@ -4,6 +4,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <stdexcept>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -239,7 +240,7 @@ void LinearWarmupLR::Step(int epoch, float /*metric*/) {
 
     if (epoch < warmup_epochs_) {
         // Linear warmup: interpolate from start_lr to base_lr
-        double progress = static_cast<double>(epoch + 1) / warmup_epochs_;
+        double progress = static_cast<double>(epoch) / warmup_epochs_;
         current_lr_ = start_lr_ + (base_lr_ - start_lr_) * progress;
     } else {
         // After warmup, maintain base_lr
@@ -277,7 +278,7 @@ OneCycleLR::OneCycleLR(
     , final_div_factor_(final_div_factor)
 {
     initial_lr_ = max_lr / div_factor;
-    final_lr_ = max_lr / final_div_factor;
+    final_lr_ = initial_lr_ / final_div_factor;
     base_lr_ = max_lr;
     current_lr_ = initial_lr_;
 
@@ -291,24 +292,29 @@ OneCycleLR::OneCycleLR(
 
 void OneCycleLR::Step(int epoch, float /*metric*/) {
     if (!optimizer_) return;
+    if (epoch > total_steps_) {
+        throw std::out_of_range(
+            "OneCycleLR step exceeds the configured total_steps");
+    }
 
     current_step_ = epoch;
 
-    int warmup_steps = static_cast<int>(total_steps_ * pct_start_);
-    int decay_steps = total_steps_ - warmup_steps;
+    const double first_phase_end = pct_start_ * total_steps_ - 1.0;
+    const double second_phase_end = static_cast<double>(total_steps_ - 1);
+    const auto cosine_anneal = [](double start, double end, double progress) {
+        const double cosine = std::cos(M_PI * progress) + 1.0;
+        return end + (start - end) * cosine / 2.0;
+    };
 
-    if (current_step_ < warmup_steps) {
-        // Linear warmup from initial_lr to max_lr
-        double progress = static_cast<double>(current_step_) / warmup_steps;
-        current_lr_ = initial_lr_ + (max_lr_ - initial_lr_) * progress;
+    if (static_cast<double>(current_step_) <= first_phase_end) {
+        const double progress =
+            static_cast<double>(current_step_) / first_phase_end;
+        current_lr_ = cosine_anneal(initial_lr_, max_lr_, progress);
     } else {
-        // Cosine decay from max_lr to final_lr
-        int decay_step = current_step_ - warmup_steps;
-        double progress = static_cast<double>(decay_step) / decay_steps;
-        progress = std::min(progress, 1.0);
-
-        // Cosine annealing
-        current_lr_ = final_lr_ + (max_lr_ - final_lr_) * (1.0 + std::cos(M_PI * progress)) / 2.0;
+        const double progress =
+            (static_cast<double>(current_step_) - first_phase_end) /
+            (second_phase_end - first_phase_end);
+        current_lr_ = cosine_anneal(max_lr_, final_lr_, progress);
     }
 
     optimizer_->SetLearningRate(current_lr_);

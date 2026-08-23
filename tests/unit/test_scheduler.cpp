@@ -1,11 +1,16 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cyxwiz/optimizer.h>
+#include <cyxwiz/optimizers/lr_warmup.h>
+#include <cyxwiz/optimizers/sgd.h>
 #include <cyxwiz/scheduler.h>
+#include <cyxwiz/tensor.h>
 #include <nlohmann/json.hpp>
 
 #include <fstream>
 #include <memory>
+#include <map>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -23,6 +28,24 @@ json LoadSchedulerFixture() {
     REQUIRE(fixture.at("oracle").value("device", "") == "cpu");
     REQUIRE(!fixture.at("oracle").value("version", "").empty());
     return fixture.at("cases").at("scheduler_lr_sequences");
+}
+
+json LoadOptimizerWarmupFixture() {
+    std::ifstream stream(CYXWIZ_TRAINING_CORE_FIXTURE_PATH);
+    REQUIRE(stream.is_open());
+
+    json fixture;
+    stream >> fixture;
+    REQUIRE(fixture.value("schema_version", 0) == 1);
+    REQUIRE(fixture.at("oracle").value("name", "") == "PyTorch");
+    return fixture.at("cases").at("optimizer_lr_warmup_sequences");
+}
+
+cyxwiz::WarmupType ParseWarmupType(const std::string& value) {
+    if (value == "linear") return cyxwiz::WarmupType::Linear;
+    if (value == "cosine") return cyxwiz::WarmupType::Cosine;
+    if (value == "none") return cyxwiz::WarmupType::None;
+    throw std::invalid_argument("unsupported optimizer warmup type: " + value);
 }
 
 std::unique_ptr<cyxwiz::LRScheduler> CreateFixtureScheduler(
@@ -55,6 +78,25 @@ std::unique_ptr<cyxwiz::LRScheduler> CreateFixtureScheduler(
             parameters.at("patience").get<int>(),
             parameters.at("threshold").get<double>(),
             parameters.at("min_lr").get<double>());
+    }
+    if (type == "torch.optim.lr_scheduler.LambdaLR(linear_warmup)") {
+        return std::make_unique<cyxwiz::LinearWarmupLR>(
+            &optimizer,
+            parameters.at("warmup_epochs").get<int>(),
+            test_case.at("base_learning_rate").get<double>(),
+            parameters.at("start_lr").get<double>());
+    }
+    if (type == "torch.optim.lr_scheduler.OneCycleLR") {
+        REQUIRE(parameters.at("anneal_strategy").get<std::string>() == "cos");
+        REQUIRE_FALSE(parameters.at("cycle_momentum").get<bool>());
+        REQUIRE_FALSE(parameters.at("three_phase").get<bool>());
+        return std::make_unique<cyxwiz::OneCycleLR>(
+            &optimizer,
+            parameters.at("max_lr").get<double>(),
+            parameters.at("total_steps").get<int>(),
+            parameters.at("pct_start").get<double>(),
+            parameters.at("div_factor").get<double>(),
+            parameters.at("final_div_factor").get<double>());
     }
 
     FAIL_CHECK("unsupported scheduler fixture operation: " + type);
@@ -96,6 +138,12 @@ TEST_CASE("Learning-rate schedulers match PyTorch sequences and reset",
                   Catch::Approx(expected_lr).margin(margin));
         }
 
+        if (test_case.contains("expected_error_step")) {
+            CHECK_THROWS_AS(
+                scheduler->Step(test_case.at("expected_error_step").get<int>()),
+                std::out_of_range);
+        }
+
         scheduler->Reset();
         const double expected_reset =
             test_case.at("expected_reset_learning_rate").get<double>();
@@ -104,4 +152,64 @@ TEST_CASE("Learning-rate schedulers match PyTorch sequences and reset",
         CHECK(optimizer.GetLearningRate() ==
               Catch::Approx(expected_reset).margin(margin));
     }
+}
+
+TEST_CASE("Optimizer LRWarmup matches PyTorch update ordering",
+          "[scheduler][pytorch][optimizer]") {
+    const auto cases = LoadOptimizerWarmupFixture();
+    REQUIRE(cases.is_array());
+
+    for (const auto& test_case : cases) {
+        INFO("case=" << test_case.at("name").get<std::string>());
+        REQUIRE(test_case.at("call_order").get<std::string>() ==
+                "optimizer.step_then_scheduler.step");
+        const double margin =
+            test_case.at("tolerance").at("atol").get<double>();
+        const double base_lr =
+            test_case.at("base_learning_rate").get<double>();
+        const int warmup_steps = test_case.at("warmup_steps").get<int>();
+        auto optimizer = std::make_unique<cyxwiz::SGDOptimizer>(base_lr);
+        cyxwiz::LRWarmup warmup(
+            std::move(optimizer), warmup_steps,
+            ParseWarmupType(test_case.at("warmup_type").get<std::string>()),
+            base_lr);
+
+        CHECK(warmup.GetCurrentLR() == Catch::Approx(
+                  test_case.at("expected_initial_learning_rate").get<double>())
+                  .margin(margin));
+
+        float parameter_value = test_case.at("initial_parameter").get<float>();
+        float gradient_value = test_case.at("gradient").get<float>();
+        std::map<std::string, cyxwiz::Tensor> parameters{
+            {"w", cyxwiz::Tensor({1}, &parameter_value,
+                                 cyxwiz::DataType::Float32)}};
+        const std::map<std::string, cyxwiz::Tensor> gradients{
+            {"w", cyxwiz::Tensor({1}, &gradient_value,
+                                 cyxwiz::DataType::Float32)}};
+
+        for (const auto& expected_step : test_case.at("expected_steps")) {
+            warmup.Step(parameters, gradients);
+            CHECK(warmup.GetCurrentLR() == Catch::Approx(
+                      expected_step.at("learning_rate").get<double>())
+                      .margin(margin));
+            CHECK(parameters.at("w").ReadData<float>()[0] == Catch::Approx(
+                      expected_step.at("parameter").get<float>())
+                      .margin(margin));
+            CHECK(warmup.GetWarmupProgress() == Catch::Approx(
+                      expected_step.at("warmup_progress").get<double>())
+                      .margin(margin));
+            CHECK(warmup.IsWarmupComplete() ==
+                  expected_step.at("warmup_complete").get<bool>());
+        }
+    }
+}
+
+TEST_CASE("Optimizer LRWarmup rejects invalid ownership and step counts",
+          "[scheduler][validation]") {
+    CHECK_THROWS_AS(cyxwiz::LRWarmup(nullptr, 4), std::invalid_argument);
+
+    auto optimizer = std::make_unique<cyxwiz::SGDOptimizer>(0.1);
+    CHECK_THROWS_AS(
+        cyxwiz::LRWarmup(std::move(optimizer), -1),
+        std::invalid_argument);
 }

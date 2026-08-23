@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -557,9 +558,31 @@ def scheduler_lr_case(
             threshold_mode="abs",
             min_lr=scheduler_parameters["min_lr"],
         )
+    elif scheduler_type == "LinearWarmupLR":
+        warmup_epochs = scheduler_parameters["warmup_epochs"]
+        start_lr = scheduler_parameters["start_lr"]
+        start_factor = start_lr / base_lr
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda epoch: start_factor
+            + (1.0 - start_factor) * min(epoch / warmup_epochs, 1.0),
+        )
+    elif scheduler_type == "OneCycleLR":
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=scheduler_parameters["max_lr"],
+            total_steps=scheduler_parameters["total_steps"],
+            pct_start=scheduler_parameters["pct_start"],
+            anneal_strategy="cos",
+            cycle_momentum=False,
+            div_factor=scheduler_parameters["div_factor"],
+            final_div_factor=scheduler_parameters["final_div_factor"],
+            three_phase=False,
+        )
     else:
         raise ValueError(f"unsupported scheduler fixture type: {scheduler_type}")
 
+    initial_learning_rate = optimizer.param_groups[0]["lr"]
     expected_steps: list[dict[str, Any]] = []
     for index in range(1, steps + 1):
         optimizer.step()
@@ -573,17 +596,30 @@ def scheduler_lr_case(
         expected["learning_rate"] = optimizer.param_groups[0]["lr"]
         expected_steps.append(expected)
 
-    return {
+    result = {
         "name": name,
-        "operation": f"torch.optim.lr_scheduler.{scheduler_type}",
+        "operation": (
+            "torch.optim.lr_scheduler.LambdaLR(linear_warmup)"
+            if scheduler_type == "LinearWarmupLR"
+            else f"torch.optim.lr_scheduler.{scheduler_type}"
+        ),
         "call_order": "optimizer.step_then_scheduler.step",
         "base_learning_rate": base_lr,
         "parameters": scheduler_parameters,
         "tolerance": {"atol": 1.0e-12, "rtol": 1.0e-12},
-        "expected_initial_learning_rate": base_lr,
+        "expected_initial_learning_rate": initial_learning_rate,
         "expected_steps": expected_steps,
-        "expected_reset_learning_rate": base_lr,
+        "expected_reset_learning_rate": base_lr
+        if scheduler_type not in {"LinearWarmupLR", "OneCycleLR"}
+        else (
+            start_lr
+            if scheduler_type == "LinearWarmupLR"
+            else scheduler_parameters["max_lr"] / scheduler_parameters["div_factor"]
+        ),
     }
+    if scheduler_type == "OneCycleLR":
+        result["expected_error_step"] = scheduler_parameters["total_steps"] + 1
+    return result
 
 
 def scheduler_lr_matrix() -> list[dict[str, Any]]:
@@ -619,6 +655,125 @@ def scheduler_lr_matrix() -> list[dict[str, Any]]:
             steps=5,
             metrics=[1.0, 1.1, 1.2, 1.3, 1.4],
         ),
+        scheduler_lr_case(
+            "plateau_max_threshold_minimum_sequence",
+            "ReduceLROnPlateau",
+            {
+                "mode": "max",
+                "factor": 0.5,
+                "patience": 1,
+                "threshold": 0.05,
+                "min_lr": 0.01,
+            },
+            steps=13,
+            metrics=[
+                0.50,
+                0.54,
+                0.56,
+                0.55,
+                0.54,
+                0.53,
+                0.52,
+                0.51,
+                0.50,
+                0.49,
+                0.48,
+                0.47,
+                0.46,
+            ],
+        ),
+        scheduler_lr_case(
+            "linear_warmup_boundary_sequence",
+            "LinearWarmupLR",
+            {"warmup_epochs": 4, "start_lr": 0.0},
+            steps=6,
+        ),
+        scheduler_lr_case(
+            "one_cycle_two_phase_cosine_sequence",
+            "OneCycleLR",
+            {
+                "max_lr": 0.1,
+                "total_steps": 10,
+                "pct_start": 0.3,
+                "div_factor": 25.0,
+                "final_div_factor": 10000.0,
+                "anneal_strategy": "cos",
+                "cycle_momentum": False,
+                "three_phase": False,
+            },
+            steps=10,
+        ),
+    ]
+
+
+def optimizer_lr_warmup_case(
+    name: str,
+    warmup_type: str,
+    warmup_steps: int = 4,
+    steps: int = 6,
+) -> dict[str, Any]:
+    base_lr = 0.1
+    parameter = torch.nn.Parameter(torch.tensor([1.0], dtype=torch.float32))
+    optimizer = torch.optim.SGD([parameter], lr=base_lr)
+
+    if warmup_type == "linear":
+        lr_lambda = lambda step: min(step / warmup_steps, 1.0)
+    elif warmup_type == "cosine":
+        lr_lambda = lambda step: 0.5 * (
+            1.0 - math.cos(math.pi * min(step / warmup_steps, 1.0))
+        )
+    elif warmup_type == "none":
+        lr_lambda = lambda step: 1.0
+    else:
+        raise ValueError(f"unsupported optimizer warmup type: {warmup_type}")
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer, lr_lambda=lr_lambda
+    )
+    expected_steps: list[dict[str, Any]] = []
+    for index in range(1, steps + 1):
+        optimizer.zero_grad()
+        parameter.grad = torch.tensor([1.0], dtype=torch.float32)
+        optimizer.step()
+        scheduler.step()
+        expected_steps.append(
+            {
+                "index": index,
+                "learning_rate": optimizer.param_groups[0]["lr"],
+                "parameter": parameter.detach().item(),
+                "warmup_progress": (
+                    1.0
+                    if warmup_type == "none"
+                    else min(index / warmup_steps, 1.0)
+                ),
+                "warmup_complete": (
+                    warmup_type == "none" or index >= warmup_steps
+                ),
+            }
+        )
+
+    return {
+        "name": name,
+        "operation": "torch.optim.SGD + torch.optim.lr_scheduler.LambdaLR",
+        "call_order": "optimizer.step_then_scheduler.step",
+        "base_learning_rate": base_lr,
+        "warmup_type": warmup_type,
+        "warmup_steps": warmup_steps,
+        "initial_parameter": 1.0,
+        "gradient": 1.0,
+        "expected_initial_learning_rate": (
+            0.0 if warmup_type != "none" else base_lr
+        ),
+        "expected_steps": expected_steps,
+        "tolerance": {"atol": 1.0e-7, "rtol": 1.0e-7},
+    }
+
+
+def optimizer_lr_warmup_matrix() -> list[dict[str, Any]]:
+    return [
+        optimizer_lr_warmup_case("optimizer_linear_warmup", "linear"),
+        optimizer_lr_warmup_case("optimizer_cosine_warmup", "cosine"),
+        optimizer_lr_warmup_case("optimizer_no_warmup", "none"),
     ]
 
 
@@ -642,6 +797,7 @@ def generate_fixture() -> dict[str, Any]:
                 gradient_accumulation_matrix(),
             "weighted_sampler_inverse_frequency": weighted_sampler_case(),
             "scheduler_lr_sequences": scheduler_lr_matrix(),
+            "optimizer_lr_warmup_sequences": optimizer_lr_warmup_matrix(),
         },
     }
 

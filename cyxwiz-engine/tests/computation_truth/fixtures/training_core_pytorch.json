@@ -1462,6 +1462,185 @@
         ]
       }
     },
+    "optimizer_lr_warmup_sequences": [
+      {
+        "base_learning_rate": 0.1,
+        "call_order": "optimizer.step_then_scheduler.step",
+        "expected_initial_learning_rate": 0.0,
+        "expected_steps": [
+          {
+            "index": 1,
+            "learning_rate": 0.025,
+            "parameter": 1.0,
+            "warmup_complete": false,
+            "warmup_progress": 0.25
+          },
+          {
+            "index": 2,
+            "learning_rate": 0.05,
+            "parameter": 0.9750000238418579,
+            "warmup_complete": false,
+            "warmup_progress": 0.5
+          },
+          {
+            "index": 3,
+            "learning_rate": 0.07500000000000001,
+            "parameter": 0.925000011920929,
+            "warmup_complete": false,
+            "warmup_progress": 0.75
+          },
+          {
+            "index": 4,
+            "learning_rate": 0.1,
+            "parameter": 0.8500000238418579,
+            "warmup_complete": true,
+            "warmup_progress": 1.0
+          },
+          {
+            "index": 5,
+            "learning_rate": 0.1,
+            "parameter": 0.75,
+            "warmup_complete": true,
+            "warmup_progress": 1.0
+          },
+          {
+            "index": 6,
+            "learning_rate": 0.1,
+            "parameter": 0.6499999761581421,
+            "warmup_complete": true,
+            "warmup_progress": 1.0
+          }
+        ],
+        "gradient": 1.0,
+        "initial_parameter": 1.0,
+        "name": "optimizer_linear_warmup",
+        "operation": "torch.optim.SGD + torch.optim.lr_scheduler.LambdaLR",
+        "tolerance": {
+          "atol": 1e-07,
+          "rtol": 1e-07
+        },
+        "warmup_steps": 4,
+        "warmup_type": "linear"
+      },
+      {
+        "base_learning_rate": 0.1,
+        "call_order": "optimizer.step_then_scheduler.step",
+        "expected_initial_learning_rate": 0.0,
+        "expected_steps": [
+          {
+            "index": 1,
+            "learning_rate": 0.014644660940672622,
+            "parameter": 1.0,
+            "warmup_complete": false,
+            "warmup_progress": 0.25
+          },
+          {
+            "index": 2,
+            "learning_rate": 0.049999999999999996,
+            "parameter": 0.9853553175926208,
+            "warmup_complete": false,
+            "warmup_progress": 0.5
+          },
+          {
+            "index": 3,
+            "learning_rate": 0.08535533905932738,
+            "parameter": 0.9353553056716919,
+            "warmup_complete": false,
+            "warmup_progress": 0.75
+          },
+          {
+            "index": 4,
+            "learning_rate": 0.1,
+            "parameter": 0.8499999642372131,
+            "warmup_complete": true,
+            "warmup_progress": 1.0
+          },
+          {
+            "index": 5,
+            "learning_rate": 0.1,
+            "parameter": 0.7499999403953552,
+            "warmup_complete": true,
+            "warmup_progress": 1.0
+          },
+          {
+            "index": 6,
+            "learning_rate": 0.1,
+            "parameter": 0.6499999165534973,
+            "warmup_complete": true,
+            "warmup_progress": 1.0
+          }
+        ],
+        "gradient": 1.0,
+        "initial_parameter": 1.0,
+        "name": "optimizer_cosine_warmup",
+        "operation": "torch.optim.SGD + torch.optim.lr_scheduler.LambdaLR",
+        "tolerance": {
+          "atol": 1e-07,
+          "rtol": 1e-07
+        },
+        "warmup_steps": 4,
+        "warmup_type": "cosine"
+      },
+      {
+        "base_learning_rate": 0.1,
+        "call_order": "optimizer.step_then_scheduler.step",
+        "expected_initial_learning_rate": 0.1,
+        "expected_steps": [
+          {
+            "index": 1,
+            "learning_rate": 0.1,
+            "parameter": 0.8999999761581421,
+            "warmup_complete": true,
+            "warmup_progress": 1.0
+          },
+          {
+            "index": 2,
+            "learning_rate": 0.1,
+            "parameter": 0.7999999523162842,
+            "warmup_complete": true,
+            "warmup_progress": 1.0
+          },
+          {
+            "index": 3,
+            "learning_rate": 0.1,
+            "parameter": 0.6999999284744263,
+            "warmup_complete": true,
+            "warmup_progress": 1.0
+          },
+          {
+            "index": 4,
+            "learning_rate": 0.1,
+            "parameter": 0.5999999046325684,
+            "warmup_complete": true,
+            "warmup_progress": 1.0
+          },
+          {
+            "index": 5,
+            "learning_rate": 0.1,
+            "parameter": 0.49999991059303284,
+            "warmup_complete": true,
+            "warmup_progress": 1.0
+          },
+          {
+            "index": 6,
+            "learning_rate": 0.1,
+            "parameter": 0.3999999165534973,
+            "warmup_complete": true,
+            "warmup_progress": 1.0
+          }
+        ],
+        "gradient": 1.0,
+        "initial_parameter": 1.0,
+        "name": "optimizer_no_warmup",
+        "operation": "torch.optim.SGD + torch.optim.lr_scheduler.LambdaLR",
+        "tolerance": {
+          "atol": 1e-07,
+          "rtol": 1e-07
+        },
+        "warmup_steps": 4,
+        "warmup_type": "none"
+      }
+    ],
     "scheduler_lr_sequences": [
       {
         "base_learning_rate": 0.1,
@@ -1612,6 +1791,199 @@
           "mode": "min",
           "patience": 2,
           "threshold": 0.0001
+        },
+        "tolerance": {
+          "atol": 1e-12,
+          "rtol": 1e-12
+        }
+      },
+      {
+        "base_learning_rate": 0.1,
+        "call_order": "optimizer.step_then_scheduler.step",
+        "expected_initial_learning_rate": 0.1,
+        "expected_reset_learning_rate": 0.1,
+        "expected_steps": [
+          {
+            "index": 1,
+            "learning_rate": 0.1,
+            "metric": 0.5
+          },
+          {
+            "index": 2,
+            "learning_rate": 0.1,
+            "metric": 0.54
+          },
+          {
+            "index": 3,
+            "learning_rate": 0.1,
+            "metric": 0.56
+          },
+          {
+            "index": 4,
+            "learning_rate": 0.1,
+            "metric": 0.55
+          },
+          {
+            "index": 5,
+            "learning_rate": 0.05,
+            "metric": 0.54
+          },
+          {
+            "index": 6,
+            "learning_rate": 0.05,
+            "metric": 0.53
+          },
+          {
+            "index": 7,
+            "learning_rate": 0.025,
+            "metric": 0.52
+          },
+          {
+            "index": 8,
+            "learning_rate": 0.025,
+            "metric": 0.51
+          },
+          {
+            "index": 9,
+            "learning_rate": 0.0125,
+            "metric": 0.5
+          },
+          {
+            "index": 10,
+            "learning_rate": 0.0125,
+            "metric": 0.49
+          },
+          {
+            "index": 11,
+            "learning_rate": 0.01,
+            "metric": 0.48
+          },
+          {
+            "index": 12,
+            "learning_rate": 0.01,
+            "metric": 0.47
+          },
+          {
+            "index": 13,
+            "learning_rate": 0.01,
+            "metric": 0.46
+          }
+        ],
+        "name": "plateau_max_threshold_minimum_sequence",
+        "operation": "torch.optim.lr_scheduler.ReduceLROnPlateau",
+        "parameters": {
+          "factor": 0.5,
+          "min_lr": 0.01,
+          "mode": "max",
+          "patience": 1,
+          "threshold": 0.05
+        },
+        "tolerance": {
+          "atol": 1e-12,
+          "rtol": 1e-12
+        }
+      },
+      {
+        "base_learning_rate": 0.1,
+        "call_order": "optimizer.step_then_scheduler.step",
+        "expected_initial_learning_rate": 0.0,
+        "expected_reset_learning_rate": 0.0,
+        "expected_steps": [
+          {
+            "index": 1,
+            "learning_rate": 0.025
+          },
+          {
+            "index": 2,
+            "learning_rate": 0.05
+          },
+          {
+            "index": 3,
+            "learning_rate": 0.07500000000000001
+          },
+          {
+            "index": 4,
+            "learning_rate": 0.1
+          },
+          {
+            "index": 5,
+            "learning_rate": 0.1
+          },
+          {
+            "index": 6,
+            "learning_rate": 0.1
+          }
+        ],
+        "name": "linear_warmup_boundary_sequence",
+        "operation": "torch.optim.lr_scheduler.LambdaLR(linear_warmup)",
+        "parameters": {
+          "start_lr": 0.0,
+          "warmup_epochs": 4
+        },
+        "tolerance": {
+          "atol": 1e-12,
+          "rtol": 1e-12
+        }
+      },
+      {
+        "base_learning_rate": 0.1,
+        "call_order": "optimizer.step_then_scheduler.step",
+        "expected_error_step": 11,
+        "expected_initial_learning_rate": 0.0040000000000000036,
+        "expected_reset_learning_rate": 0.004,
+        "expected_steps": [
+          {
+            "index": 1,
+            "learning_rate": 0.052000000000000005
+          },
+          {
+            "index": 2,
+            "learning_rate": 0.1
+          },
+          {
+            "index": 3,
+            "learning_rate": 0.09504846320134738
+          },
+          {
+            "index": 4,
+            "learning_rate": 0.0811745653949763
+          },
+          {
+            "index": 5,
+            "learning_rate": 0.06112620219362893
+          },
+          {
+            "index": 6,
+            "learning_rate": 0.03887419780637107
+          },
+          {
+            "index": 7,
+            "learning_rate": 0.0188258346050237
+          },
+          {
+            "index": 8,
+            "learning_rate": 0.004951936798652629
+          },
+          {
+            "index": 9,
+            "learning_rate": 4e-07
+          },
+          {
+            "index": 10,
+            "learning_rate": 0.004951936798652624
+          }
+        ],
+        "name": "one_cycle_two_phase_cosine_sequence",
+        "operation": "torch.optim.lr_scheduler.OneCycleLR",
+        "parameters": {
+          "anneal_strategy": "cos",
+          "cycle_momentum": false,
+          "div_factor": 25.0,
+          "final_div_factor": 10000.0,
+          "max_lr": 0.1,
+          "pct_start": 0.3,
+          "three_phase": false,
+          "total_steps": 10
         },
         "tolerance": {
           "atol": 1e-12,

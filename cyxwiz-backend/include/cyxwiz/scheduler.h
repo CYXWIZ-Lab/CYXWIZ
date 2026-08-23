@@ -186,8 +186,9 @@ private:
 /**
  * LinearWarmupLR - Linear warmup followed by constant or decay
  *
- * During warmup: lr = base_lr * epoch / warmup_epochs
- * After warmup: lr = base_lr (or with decay if specified)
+ * During warmup, linearly interpolate from start_lr at construction/step 0 to
+ * base_lr at warmup_epochs. After warmup, maintain base_lr. This matches a
+ * PyTorch LambdaLR linear-warmup schedule.
  */
 class CYXWIZ_API LinearWarmupLR : public LRScheduler {
 public:
@@ -221,8 +222,8 @@ private:
 /**
  * OneCycleLR - 1cycle learning rate policy
  *
- * The 1cycle policy anneals the learning rate from initial_lr to max_lr
- * to min_lr (final_lr) over total_steps, with linear warmup and cosine decay.
+ * The default PyTorch-compatible two-phase policy cosine-anneals the learning
+ * rate from initial_lr to max_lr, then from max_lr to final_lr.
  */
 class CYXWIZ_API OneCycleLR : public LRScheduler {
 public:
@@ -232,7 +233,7 @@ public:
      * @param total_steps Total number of steps (epochs * steps_per_epoch)
      * @param pct_start Percentage of cycle spent increasing LR (default: 0.3)
      * @param div_factor Initial LR = max_lr / div_factor (default: 25)
-     * @param final_div_factor Final LR = max_lr / final_div_factor (default: 1e4)
+     * @param final_div_factor Final LR = initial_lr / final_div_factor (default: 1e4)
      */
     OneCycleLR(
         Optimizer* optimizer,

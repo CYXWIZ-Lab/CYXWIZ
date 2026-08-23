@@ -3,6 +3,7 @@
 
 #define _USE_MATH_DEFINES
 #include <cmath>
+#include <stdexcept>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -18,16 +19,30 @@ LRWarmup::LRWarmup(std::unique_ptr<Optimizer> optimizer, int warmup_steps,
                    WarmupType warmup_type, double base_lr)
     : optimizer_(std::move(optimizer)), warmup_steps_(warmup_steps),
       warmup_type_(warmup_type), current_step_(0) {
+    if (!optimizer_) {
+        throw std::invalid_argument("LRWarmup requires an optimizer");
+    }
+    if (warmup_steps_ < 0) {
+        throw std::invalid_argument("LRWarmup warmup_steps cannot be negative");
+    }
+
     // If base_lr not specified, use optimizer's initial learning rate
     if (base_lr < 0) {
         base_lr_ = optimizer_->GetLearningRate();
     } else {
         base_lr_ = base_lr;
     }
+
+    const bool warmup_active =
+        warmup_type_ != WarmupType::None && warmup_steps_ > 0;
+    optimizer_->SetLearningRate(warmup_active ? 0.0 : base_lr_);
 }
 
 void LRWarmup::Step(std::map<std::string, Tensor>& parameters,
                     const std::map<std::string, Tensor>& gradients) {
+    // Match optimizer.step() followed by scheduler.step(): the current rate
+    // belongs to this update, and the newly computed rate belongs to the next.
+    optimizer_->Step(parameters, gradients);
     current_step_++;
 
     // Compute warmup multiplier
@@ -55,9 +70,6 @@ void LRWarmup::Step(std::map<std::string, Tensor>& parameters,
 
     // Set adjusted learning rate
     optimizer_->SetLearningRate(warmup_lr);
-
-    // Perform optimization step
-    optimizer_->Step(parameters, gradients);
 }
 
 void LRWarmup::ZeroGrad() {
@@ -69,13 +81,14 @@ double LRWarmup::GetCurrentLR() const {
 }
 
 double LRWarmup::GetWarmupProgress() const {
-    if (warmup_steps_ <= 0) return 1.0;
+    if (warmup_type_ == WarmupType::None || warmup_steps_ <= 0) return 1.0;
     double progress = static_cast<double>(current_step_) / warmup_steps_;
     return progress > 1.0 ? 1.0 : progress;
 }
 
 bool LRWarmup::IsWarmupComplete() const {
-    return current_step_ >= warmup_steps_;
+    return warmup_type_ == WarmupType::None ||
+           current_step_ >= warmup_steps_;
 }
 
 } // namespace cyxwiz

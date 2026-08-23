@@ -987,17 +987,15 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
 
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedTrainingControlCapabilities() {
+    constexpr const char* scheduler_ownership_gap =
+        "the backend scheduler is numerically available, but TrainingExecutor "
+        "does not yet own its update cadence, run state, or checkpoint restoration";
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::StepLR,
-         "configurable in the editor but is not connected to training execution yet"},
-        {gui::NodeType::CosineAnnealing,
-         "configurable in the editor but is not connected to training execution yet"},
-        {gui::NodeType::ReduceOnPlateau,
-         "configurable in the editor but is not connected to training execution yet"},
-        {gui::NodeType::ExponentialLR,
-         "configurable in the editor but is not connected to training execution yet"},
-        {gui::NodeType::WarmupScheduler,
-         "configurable in the editor but is not connected to training execution yet"},
+        {gui::NodeType::StepLR, scheduler_ownership_gap},
+        {gui::NodeType::CosineAnnealing, scheduler_ownership_gap},
+        {gui::NodeType::ReduceOnPlateau, scheduler_ownership_gap},
+        {gui::NodeType::ExponentialLR, scheduler_ownership_gap},
+        {gui::NodeType::WarmupScheduler, scheduler_ownership_gap},
         {gui::NodeType::L1Regularization,
          "configurable in the editor but is not connected to training execution yet"},
         {gui::NodeType::L2Regularization,

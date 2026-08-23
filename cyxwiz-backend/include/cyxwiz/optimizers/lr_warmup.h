@@ -24,6 +24,9 @@ public:
              WarmupType warmup_type = WarmupType::Linear,
              double base_lr = -1.0);
 
+    // Applies the wrapped optimizer with the current learning rate, then
+    // advances the warmup rate for the next optimizer update. This matches
+    // PyTorch's optimizer.step() followed by scheduler.step() ordering.
     void Step(std::map<std::string, Tensor>& parameters,
               const std::map<std::string, Tensor>& gradients);
 

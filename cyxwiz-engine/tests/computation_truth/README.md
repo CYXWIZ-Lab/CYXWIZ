@@ -28,6 +28,7 @@ Initial target cases:
 - Dense forward parity.
 - CrossEntropy loss parity.
 - One-step Adam/AdamW parity.
+- Learning-rate scheduler sequence and boundary parity.
 - Training lifecycle: configured epochs vs completed/stopped/cancelled reason.
 
 The broad tracking ticket is:
@@ -80,6 +81,19 @@ length, and class-probability parity with PyTorch over 4,096 draws. Exact draw
 indices are intentionally not compared because CyxWiz and PyTorch use different
 RNG implementations.
 
+`cyxwiz-tests "[scheduler]"` consumes seven scheduler sequences and three
+optimizer-warmup sequences from the same fixture. It verifies StepLR,
+ExponentialLR, CosineAnnealingLR, ReduceLROnPlateau in `min`/`max` modes,
+LambdaLR-equivalent linear warmup, and the default two-phase cosine OneCycleLR
+policy. The optimizer-owning `LRWarmup` wrapper additionally checks linear,
+cosine, and disabled warmup learning rates together with the parameter value at
+every SGD update. Initial/reset rates, patience, absolute thresholds, the
+minimum LR floor, warmup progress, OneCycle final-divisor semantics, and
+PyTorch-compatible overstep rejection are checked. These schedulers are backend
+host-control primitives; graph scheduler nodes remain blocked until
+TrainingExecutor owns their update cadence, run state, and checkpoint
+restoration.
+
 `test_training_executor_arrow_parquet --uneven-epoch-metrics-only` runs the
 focused full-epoch aggregation contract. It compares `{4, 2}` Train and Dev
 metrics against evaluating the same unchanged model over each six-row role as
@@ -103,6 +117,9 @@ build\bin\Release\test_computation_truth_tfidf_loss.exe
 
 cmake --build build --config Debug --target test_training_batcher_setup -- /m:4 /v:minimal
 build\bin\Debug\test_training_batcher_setup.exe
+
+cmake --build build --config Debug --target cyxwiz-tests -- /m:4 /v:minimal
+build\bin\Debug\cyxwiz-tests.exe "[scheduler]"
 
 cmake --build build --config Debug --target test_training_executor_arrow_parquet -- /m:4 /v:minimal
 build\bin\Debug\test_training_executor_arrow_parquet.exe --uneven-epoch-metrics-only
