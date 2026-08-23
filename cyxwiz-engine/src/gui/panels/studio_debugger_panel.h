@@ -162,7 +162,7 @@ private:
     int selected_trace_index_ = -1;
     bool trace_settings_initialized_ = false;
     bool trace_persist_enabled_ = true;
-    int trace_persist_every_n_events_ = 10;
+    int trace_persist_every_n_events_ = 1000;
     int trace_max_recent_events_ = 200;
     StudioDebuggerSection active_section_ = StudioDebuggerSection::Overview;
     bool section_selection_pending_ = false;

@@ -39,6 +39,7 @@ struct BenchmarkOptions {
     int measured_batches = 8;
     std::string device = "current";
     std::optional<int> device_id;
+    bool trace_persist_enabled = true;
     std::filesystem::path qualification_path;
     std::filesystem::path trace_root =
         cyxwiz::GetDebugRunRoot() / "benchmarks" / "aps_dense";
@@ -69,6 +70,13 @@ int ParseNonNegativeInt(std::string_view text, const char* option_name) {
     return value;
 }
 
+bool ParseEnabled(std::string_view text, const char* option_name) {
+    if (text == "enabled") return true;
+    if (text == "disabled") return false;
+    throw std::invalid_argument(
+        std::string(option_name) + " requires enabled or disabled");
+}
+
 void PrintUsage() {
     std::cout
         << "Usage: test_dense_training_benchmark [options]\n"
@@ -78,6 +86,7 @@ void PrintUsage() {
         << "  --device NAME        current|cpu|cuda|opencl|oneapi\n"
         << "  --device-id N        ArrayFire device id for --device\n"
         << "  --qualification PATH Route qualification sidecar\n"
+        << "  --trace-persist MODE enabled|disabled (default enabled)\n"
         << "  --trace-root PATH    Benchmark trace output directory\n";
 }
 
@@ -113,6 +122,9 @@ BenchmarkOptions ParseOptions(int argc, char** argv) {
         } else if (option == "--qualification") {
             options.qualification_path =
                 std::filesystem::path(std::string(value));
+        } else if (option == "--trace-persist") {
+            options.trace_persist_enabled =
+                ParseEnabled(value, "--trace-persist");
         } else if (option == "--trace-root") {
             options.trace_root = std::filesystem::path(std::string(value));
         } else {
@@ -322,6 +334,10 @@ int RunBenchmark(const BenchmarkOptions& options) {
 
     const cyxwiz::ScopedDebugRunRootOverrideForTesting trace_root(
         options.trace_root);
+    auto trace_settings =
+        cyxwiz::TrainingTraceCollector::Instance().GetSettings();
+    trace_settings.persist_enabled = options.trace_persist_enabled;
+    cyxwiz::TrainingTraceCollector::Instance().Configure(trace_settings);
     const auto qualification =
         cyxwiz::LoadAndInstallRouteQualificationSnapshot(
             options.qualification_path);
@@ -509,6 +525,8 @@ int RunBenchmark(const BenchmarkOptions& options) {
     std::cout << "measured_batches=" << options.measured_batches << '\n';
     std::cout << "metric_report_interval=" << config.log_interval << '\n';
     std::cout << "metric_report_samples=2\n";
+    std::cout << "trace_persist_enabled="
+              << (options.trace_persist_enabled ? "true" : "false") << '\n';
     std::cout << std::fixed << std::setprecision(3);
     std::cout << "elapsed_seconds=" << elapsed_seconds << '\n';
     std::cout << "batches_per_second="

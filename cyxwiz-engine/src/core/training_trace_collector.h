@@ -169,7 +169,7 @@ struct TrainingTraceSummary {
 
 struct TrainingTraceSettings {
     bool persist_enabled = true;
-    int persist_every_n_events = 10;
+    int persist_every_n_events = 1000;
     size_t max_recent_events = 200;
 };
 
@@ -244,6 +244,7 @@ public:
 private:
     TrainingTraceCollector() = default;
 
+    void MaybePersistLocked(bool force);
     void WriteLocked() const;
     static std::string NowLocal();
     static std::string ThreadIdString();

@@ -21,14 +21,18 @@
 #include <parquet/arrow/writer.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -1825,6 +1829,101 @@ void TestRegressionTargetTransform(
           "target scaler order error should explain the mismatch");
 }
 
+nlohmann::json ReadPersistedTrainingTrace(const std::filesystem::path& path) {
+    std::ifstream input(path);
+    if (!input) {
+        throw std::runtime_error(
+            "persisted training trace should be readable: " + path.string());
+    }
+    return nlohmann::json::parse(input);
+}
+
+void TestTrainingTracePersistenceCoalescing() {
+    auto& collector = cyxwiz::TrainingTraceCollector::Instance();
+    const auto original_settings = collector.GetSettings();
+    Check(original_settings.persist_every_n_events >= 1000,
+          "default training trace persistence cadence should stay off the hot path");
+
+    cyxwiz::TrainingTraceSettings settings;
+    settings.persist_enabled = true;
+    settings.persist_every_n_events = 3;
+    settings.max_recent_events = 20;
+    collector.Configure(settings);
+    collector.StartRun("trace-coalescing-contract");
+
+    const auto trace_path =
+        cyxwiz::GetDebugRunRoot() / "current_training_trace.json";
+    Check(ReadPersistedTrainingTrace(trace_path).at("events").empty(),
+          "starting a run should persist an empty trace");
+
+    collector.RecordRuntimeEvent("Routine.One", "first routine event");
+    collector.RecordRuntimeEvent("Routine.Two", "second routine event");
+    Check(ReadPersistedTrainingTrace(trace_path).at("events").empty(),
+          "routine runtime events should be coalesced until the configured cadence");
+
+    collector.RecordRuntimeEvent("Routine.Three", "third routine event");
+    Check(ReadPersistedTrainingTrace(trace_path).at("events").size() == 3,
+          "the configured routine-event cadence should flush the latest snapshot");
+
+    collector.RecordStage(
+        cyxwiz::TrainingTraceStage::ComputeLoss, 1, 1, 2,
+        0.5f, 0.0f, 0.0f, "device_resident");
+    Check(ReadPersistedTrainingTrace(trace_path).at("events").size() == 3,
+          "successful device-resident stages should not force persistence");
+    collector.RecordRuntimeWarning("TrainingExecutor", "forced warning flush");
+    const auto warning_trace = ReadPersistedTrainingTrace(trace_path);
+    Check(warning_trace.at("events").size() == 5,
+          "a warning should flush pending routine events immediately");
+    Check(!warning_trace.at("warnings").empty(),
+          "an immediate warning flush should persist warning evidence");
+
+    std::atomic<bool> stop_reader = false;
+    std::atomic<bool> reader_saw_invalid_trace = false;
+    std::thread reader([&] {
+        while (!stop_reader.load()) {
+            try {
+                const auto persisted = ReadPersistedTrainingTrace(trace_path);
+                const auto snapshot = collector.Snapshot();
+                if (!persisted.is_object() ||
+                    snapshot.recent_events.size() > settings.max_recent_events) {
+                    reader_saw_invalid_trace.store(true);
+                }
+            } catch (...) {
+                reader_saw_invalid_trace.store(true);
+            }
+        }
+    });
+    for (int index = 0; index < 30; ++index) {
+        collector.RecordRuntimeWarning(
+            "AtomicPersistence", "forced reader-safety flush");
+    }
+    stop_reader.store(true);
+    reader.join();
+    Check(!reader_saw_invalid_trace.load(),
+          "concurrent readers should observe complete persisted traces and bounded snapshots");
+
+    for (int index = 0; index < 25; ++index) {
+        collector.RecordStage(
+            cyxwiz::TrainingTraceStage::Forward, 1, index + 1, 25);
+    }
+    Check(collector.Snapshot().recent_events.size() == 20,
+          "training trace event retention should remain bounded");
+
+    collector.RecordTerminalEvent(
+        "completed", "trace persistence contract complete", 1, 0.5f, 0.75f);
+    collector.FinishRun("completed");
+    const auto terminal_trace = ReadPersistedTrainingTrace(trace_path);
+    Check(terminal_trace.at("status") == "completed",
+          "finish should persist the terminal run status");
+    Check(terminal_trace.at("events").back().at("stage") ==
+              "TrainingTerminal",
+          "terminal persistence should include the latest terminal event");
+    Check(!std::filesystem::exists(trace_path.string() + ".tmp"),
+          "atomic trace persistence should not leave a temporary file");
+
+    collector.Configure(original_settings);
+}
+
 } // namespace
 
 int main() {
@@ -1837,6 +1936,8 @@ int main() {
     const cyxwiz::ScopedDebugRunRootOverrideForTesting debug_root(
         work_dir / "debug_runs");
     cyxwiz::test::InstallQualifiedRouteSnapshot();
+
+    TestTrainingTracePersistenceCoalescing();
 
     TestRunPreflightEnforcesRouteQualification();
 
