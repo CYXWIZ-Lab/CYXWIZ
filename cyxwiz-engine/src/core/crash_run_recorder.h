@@ -36,6 +36,7 @@ struct CrashRunSummary {
     std::string last_stage;
     std::string last_event_time;
     int epoch = 0;
+    int last_executed_epoch = 0;
     int batch = 0;
     int total_batches = 0;
     int epochs = 0;
@@ -47,6 +48,10 @@ struct CrashRunSummary {
     std::string warning;
     std::string terminal_reason;
     std::string failure_reason;
+    std::string checkpoint_used;
+    int restored_checkpoint_epoch = 0;
+    int restored_checkpoint_step = 0;
+    std::string active_model_provenance;
     std::vector<std::string> panel_events;
     bool windows_crash_available = false;
     std::string windows_fault_module;
@@ -65,6 +70,7 @@ public:
                           int batch_size,
                           size_t sample_count);
     void UpdateSampleCount(size_t sample_count);
+    void UpdateLastExecutedEpoch(int epoch);
 
     void MarkStage(TrainingTraceStage stage,
                    int epoch,
@@ -76,6 +82,10 @@ public:
                         const std::string& detail = "");
     void MarkBackendEvent(const std::string& source,
                           const std::string& detail = "");
+    void MarkActiveModelCheckpoint(const std::string& checkpoint_path,
+                                   int checkpoint_epoch,
+                                   int checkpoint_step,
+                                   const std::string& provenance);
 
     void MarkCompleted();
     void MarkEarlyStopped(const std::string& reason);
@@ -105,7 +115,12 @@ private:
     std::string last_thread_id_;
     std::string failure_reason_;
     std::string terminal_reason_;
+    std::string checkpoint_used_;
+    int restored_checkpoint_epoch_ = 0;
+    int restored_checkpoint_step_ = 0;
+    std::string active_model_provenance_;
     int epoch_ = 0;
+    int last_executed_epoch_ = 0;
     int batch_ = 0;
     int total_batches_ = 0;
     int epochs_ = 0;

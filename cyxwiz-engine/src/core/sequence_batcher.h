@@ -174,7 +174,25 @@ public:
             return;
         }
         ApplyPhaseIndices(phase);
-        Reset();
+        // Phase selection and epoch restart are separate IBatcher contracts.
+        // Callers reset after selecting the phase, avoiding duplicate Train
+        // shuffles when validation returns to the shared sequence batcher.
+    }
+
+    bool HasPhase(BatcherPhase phase) const override {
+        if (!split_mode_) {
+            return phase != BatcherPhase::Test;
+        }
+        switch (phase) {
+            case BatcherPhase::Train:
+                return !train_indices_.empty();
+            case BatcherPhase::Val:
+                return !val_indices_.empty();
+            case BatcherPhase::Test:
+                return !test_indices_.empty();
+            default:
+                return false;
+        }
     }
 
 private:

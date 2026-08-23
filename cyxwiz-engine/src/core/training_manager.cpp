@@ -35,6 +35,38 @@ void NormalizeTrainingNumWorkers(TrainingConfiguration& config,
     }
 }
 
+std::string BuildTrainingTaskTerminalMessage(
+    const TrainingMetrics& metrics) {
+    std::string message;
+    if (metrics.terminal_status == "early_stopped") {
+        message = "Early stopped";
+    } else if (metrics.terminal_status == "cancelled") {
+        message = "Cancelled";
+    } else if (metrics.terminal_status == "failed") {
+        message = "Failed";
+    } else {
+        message = "Completed";
+    }
+
+    message += " after " + std::to_string(metrics.last_executed_epoch) +
+        "/" + std::to_string(metrics.total_epochs) + " executed epochs";
+    if (!metrics.terminal_reason.empty()) {
+        message += ": " + metrics.terminal_reason;
+    }
+    if (metrics.restored_checkpoint_epoch > 0) {
+        message += "; active model restored from checkpoint epoch " +
+            std::to_string(metrics.restored_checkpoint_epoch);
+        if (metrics.restored_checkpoint_step > 0) {
+            message += " step " +
+                std::to_string(metrics.restored_checkpoint_step);
+        }
+    } else if (!metrics.active_model_provenance.empty()) {
+        message += "; active model provenance=" +
+            metrics.active_model_provenance;
+    }
+    return message;
+}
+
 } // namespace
 
 TrainingManager& TrainingManager::Instance() {
@@ -112,8 +144,16 @@ bool TrainingManager::StartTrainingCommon(
     current_task_id_.store(AsyncTaskManager::Instance().RunAsync(
         task_name,
         [](LambdaTask& task) {
-            while (!task.ShouldStop()) {
-                auto& mgr = TrainingManager::Instance();
+            auto& mgr = TrainingManager::Instance();
+            bool stop_forwarded = false;
+            while (mgr.IsTrainingActive()) {
+                if (task.ShouldStop() && !stop_forwarded) {
+                    // Task-panel cancellation is a request to stop the
+                    // training run. Keep observing until the training thread
+                    // publishes its authoritative terminal metrics.
+                    mgr.StopTraining();
+                    stop_forwarded = true;
+                }
                 if (!mgr.IsTrainingActive()) {
                     break;
                 }
@@ -128,15 +168,16 @@ bool TrainingManager::StartTrainingCommon(
             }
             const auto final_metrics =
                 TrainingManager::Instance().GetCurrentMetrics();
+            const std::string message =
+                BuildTrainingTaskTerminalMessage(final_metrics);
             if (final_metrics.terminal_status == "early_stopped") {
-                const std::string reason = final_metrics.terminal_reason.empty()
-                    ? "early stopping condition reached"
-                    : final_metrics.terminal_reason;
-                task.MarkCompleted("Early stopped: " + reason, "early_stopped");
+                task.MarkCompleted(message, "early_stopped");
             } else if (final_metrics.terminal_status == "cancelled") {
-                task.MarkCompleted("Cancelled: user_cancelled", "cancelled");
+                task.MarkCancelled(message);
+            } else if (final_metrics.terminal_status == "failed") {
+                task.MarkFailed(message);
             } else {
-                task.MarkCompleted();
+                task.MarkCompleted(message, "completed");
             }
         },
         nullptr,
@@ -169,6 +210,7 @@ bool TrainingManager::StartTrainingCommon(
     return true;
 }
 
+#ifndef CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS
 bool TrainingManager::StartTraining(
     TrainingConfiguration config,
     DatasetHandle dataset,
@@ -198,6 +240,7 @@ bool TrainingManager::StartTraining(
         std::move(node_editor_callback),
         "Training Model", "Training from Node Graph");
 }
+#endif
 
 bool TrainingManager::StartTrainingExternal(
     TrainingConfiguration config,
@@ -551,6 +594,7 @@ bool TrainingManager::StartTrainingSequence(
         "Training Model (Sequence)", "Training from sequence dataset");
 }
 
+#ifndef CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS
 bool TrainingManager::StartTrainingImage(
     TrainingConfiguration config,
     const DataRegistry::ImageDatasetEntry& image_entry,
@@ -575,6 +619,7 @@ bool TrainingManager::StartTrainingImage(
         image_entry, config.image_preprocessing,
         batch_size, config.train_ratio, config.shuffle, config.num_workers,
         static_cast<uint32_t>(config.dataloader_seed));
+    batcher->SetDropLast(config.drop_last);
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Image dataset has 0 samples");
@@ -641,6 +686,7 @@ bool TrainingManager::StartTrainingAudio(
         config.audio_preprocessing,
         batch_size, config.train_ratio, config.shuffle, config.num_workers,
         static_cast<uint32_t>(config.dataloader_seed));
+    batcher->SetDropLast(config.drop_last);
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Audio dataset has 0 samples");
@@ -721,6 +767,7 @@ bool TrainingManager::StartTrainingText(
         config.balance_mode,
         config.balance_target,
         static_cast<uint32_t>(std::max(0, config.balance_seed)));
+    batcher->SetDropLast(config.drop_last);
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Text dataset has 0 samples");
@@ -758,6 +805,7 @@ bool TrainingManager::StartTrainingText(
         std::move(node_editor_callback),
         "Training Model (Text)", "Training from Text Dataset");
 }
+#endif
 
 void TrainingManager::StopTraining() {
     if (!is_training_.load()) {
@@ -1050,15 +1098,26 @@ void TrainingManager::TrainingThreadFunc(
                 }
             };
 
-            exec->Train(
-                epochs,
-                batch_size,
-                batch_callback,
-                epoch_callback,
-                [this, &final_metrics](const TrainingMetrics& metrics) {
-                    final_metrics = metrics;
-                }
-            );
+            try {
+                exec->Train(
+                    epochs,
+                    batch_size,
+                    batch_callback,
+                    epoch_callback,
+                    [this, &final_metrics](const TrainingMetrics& metrics) {
+                        final_metrics = metrics;
+                    }
+                );
+            } catch (const std::exception& error) {
+                final_metrics = exec->GetMetrics();
+                spdlog::error(
+                    "TrainingManager: executor failed without escaping the training thread: {}",
+                    error.what());
+            } catch (...) {
+                final_metrics = exec->GetMetrics();
+                spdlog::error(
+                    "TrainingManager: executor failed with an unknown exception without escaping the training thread");
+            }
         }
     }
 
@@ -1069,22 +1128,31 @@ void TrainingManager::TrainingThreadFunc(
     // Get final metrics
     const bool completed_regression_mode =
         exec && UsesRegressionMetrics(exec->GetConfig());
+    const TrainingMetrics executor_metrics =
+        exec ? exec->GetMetrics() : TrainingMetrics{};
     {
         std::lock_guard<std::mutex> lock(metrics_mutex_);
+        // Preflight and setup failures terminate inside TrainingExecutor before
+        // the normal completion callback runs. In that case, reconcile the
+        // executor's authoritative terminal truth before publishing manager,
+        // task, dashboard, callback, and active-model state.
+        if (final_metrics.terminal_status.empty() &&
+            !executor_metrics.terminal_status.empty()) {
+            final_metrics = executor_metrics;
+        }
         if (final_metrics.total_epochs == 0) {
             final_metrics = cached_metrics_;
-        } else {
-            final_metrics.loss_history = cached_metrics_.loss_history;
-            final_metrics.accuracy_history = cached_metrics_.accuracy_history;
-            final_metrics.mae_history = cached_metrics_.mae_history;
-            final_metrics.rmse_history = cached_metrics_.rmse_history;
-            final_metrics.val_loss_history = cached_metrics_.val_loss_history;
-            final_metrics.val_accuracy_history = cached_metrics_.val_accuracy_history;
-            final_metrics.val_mae_history = cached_metrics_.val_mae_history;
-            final_metrics.val_rmse_history = cached_metrics_.val_rmse_history;
         }
-        cached_metrics_.is_training = false;
-        cached_metrics_.is_complete = !stop_requested_.load();
+        if (final_metrics.terminal_status.empty() &&
+            stop_requested_.load()) {
+            final_metrics.terminal_status = "cancelled";
+            final_metrics.terminal_reason = "user_cancelled";
+            final_metrics.status_message = "Training cancelled";
+            final_metrics.is_complete = true;
+        }
+        final_metrics.is_training = false;
+        final_metrics.is_paused = false;
+        cached_metrics_ = final_metrics;
     }
 
     // Update plot panel with completion status
@@ -1109,18 +1177,15 @@ void TrainingManager::TrainingThreadFunc(
             final_metrics.checkpoint_used,
             run_status);
         panel->AddRunComparisonRecord(record);
-        panel->SetTrainingComplete(total_training_time,
-                                   run_status,
-                                   final_metrics.terminal_reason,
-                                   final_metrics.checkpoint_used,
-                                   final_metrics.has_validation_metrics,
-                                   final_metrics.val_loss,
-                                   final_metrics.val_accuracy,
-                                   final_metrics.current_epoch);
+        panel->SetTrainingComplete(total_training_time, final_metrics);
     }
 
     // Cleanup
-    bool success = !stop_requested_.load();
+    const bool cancelled =
+        stop_requested_.load() ||
+        final_metrics.terminal_status == "cancelled";
+    const bool failed = final_metrics.terminal_status == "failed";
+    const bool success = !cancelled && !failed;
     is_training_.store(false);
     current_task_id_.store(0);
 
@@ -1137,7 +1202,7 @@ void TrainingManager::TrainingThreadFunc(
     // Preserve trained model for export before clearing executor
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (current_executor_ && (success || stop_requested_.load())) {
+        if (current_executor_ && (success || cancelled)) {
             // Transfer ownership of model and optimizer for later export
             last_trained_model_ = current_executor_->ReleaseModel();
             last_optimizer_ = current_executor_->ReleaseOptimizer();

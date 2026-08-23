@@ -24,6 +24,11 @@ public:
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
     Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
     std::string GetName() const override { return "CrossEntropy"; }
+    const Tensor* GetLastMeanReductionDenominator() const override {
+        return has_cached_mean_denominator_
+            ? &cached_mean_denominator_
+            : nullptr;
+    }
     const std::vector<float>& GetClassWeights() const { return class_weights_; }
     float GetLabelSmoothing() const { return label_smoothing_; }
 
@@ -33,6 +38,8 @@ private:
     float label_smoothing_;
     Tensor cached_softmax_;
     Tensor cached_class_weights_;
+    Tensor cached_mean_denominator_;
+    bool has_cached_mean_denominator_ = false;
 };
 
 class CYXWIZ_API NLLLoss : public Loss {

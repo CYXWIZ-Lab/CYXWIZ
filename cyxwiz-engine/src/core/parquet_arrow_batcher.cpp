@@ -396,7 +396,10 @@ void ParquetArrowBatcher::Reset() {
 // -----------------------------------------------------------------------------
 
 bool ParquetArrowBatcher::IsEpochComplete() const {
-    if (samples_served_ >= num_samples_) return true;
+    const size_t effective_samples = drop_last_ && batch_size_ > 0
+        ? (num_samples_ / batch_size_) * batch_size_
+        : num_samples_;
+    if (samples_served_ >= effective_samples) return true;
     // Also complete if we have no current table and no more groups to load
     if (!current_table_ && current_group_position_ >= epoch_group_order_.size()) return true;
     return false;
@@ -408,6 +411,7 @@ bool ParquetArrowBatcher::IsEpochComplete() const {
 
 size_t ParquetArrowBatcher::GetNumBatches() const {
     if (batch_size_ == 0 || num_samples_ == 0) return 0;
+    if (drop_last_) return num_samples_ / batch_size_;
     return (num_samples_ + batch_size_ - 1) / batch_size_;
 }
 
@@ -785,6 +789,10 @@ Batch ParquetArrowBatcher::GetNextBatch() {
         std::vector<size_t> label_shape = {
             rows_filled, regression_target_width};
         batch.labels = Tensor(label_shape, batch_labels_float.data());
+    } else if (class_index_label_mode_ && label_col_idx_ >= 0) {
+        std::vector<size_t> label_shape = {rows_filled};
+        batch.labels = Tensor(
+            label_shape, batch_labels.data(), DataType::Int32);
     } else if (one_hot_ && label_col_idx_ >= 0) {
         std::vector<float> onehot(rows_filled * num_classes_, 0.0f);
         for (size_t i = 0; i < rows_filled; ++i) {

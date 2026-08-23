@@ -22,6 +22,12 @@
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
 #else
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -489,6 +495,7 @@ void TrainingPlotPanel::ClearLocked() {
     // Reset training state
     is_training_ = false;
     current_epoch_ = 0;
+    last_executed_epoch_ = 0;
     total_epochs_ = 0;
     current_batch_ = 0;
     total_batches_ = 0;
@@ -497,6 +504,16 @@ void TrainingPlotPanel::ClearLocked() {
     avg_epoch_time_ = 0.0f;
     samples_per_second_ = 0.0f;
     total_training_time_ = 0.0f;
+    terminal_status_.clear();
+    terminal_reason_.clear();
+    checkpoint_used_.clear();
+    checkpoint_epoch_ = 0;
+    checkpoint_step_ = 0;
+    active_model_provenance_.clear();
+    has_checkpoint_validation_metrics_ = false;
+    checkpoint_val_loss_ = 0.0f;
+    checkpoint_val_accuracy_ = 0.0f;
+    active_checkpoint_loaded_ = false;
     epoch_times_.clear();
 }
 
@@ -513,6 +530,13 @@ void TrainingPlotPanel::SetTrainingState(bool is_training, int current_epoch, in
         preparation_progress_ = 0.0f;
         terminal_status_.clear();
         terminal_reason_.clear();
+        last_executed_epoch_ = 0;
+        checkpoint_used_.clear();
+        checkpoint_epoch_ = 0;
+        checkpoint_step_ = 0;
+        active_model_provenance_.clear();
+        has_checkpoint_validation_metrics_ = false;
+        active_checkpoint_loaded_ = false;
         total_training_time_ = 0.0f;
     }
     current_epoch_ = current_epoch;
@@ -555,6 +579,40 @@ void TrainingPlotPanel::SetTrainingComplete(float total_time_seconds,
     checkpoint_val_loss_ = checkpoint_val_loss;
     checkpoint_val_accuracy_ = checkpoint_val_accuracy;
     checkpoint_epoch_ = checkpoint_epoch;
+    checkpoint_step_ = 0;
+    last_executed_epoch_ = checkpoint_epoch;
+    active_model_provenance_ = checkpoint_used.empty()
+        ? "run_final_state"
+        : "restored_best_checkpoint";
+    active_checkpoint_loaded_ = false;
+}
+
+void TrainingPlotPanel::SetTrainingComplete(
+    float total_time_seconds,
+    const TrainingMetrics& metrics) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+
+    is_training_ = false;
+    is_preparing_ = false;
+    preparation_failed_ = false;
+    preparation_status_message_.clear();
+    preparation_error_message_.clear();
+    preparation_progress_ = 0.0f;
+    total_training_time_ = total_time_seconds;
+    terminal_status_ = metrics.terminal_status;
+    terminal_reason_ = metrics.terminal_reason;
+    current_epoch_ = metrics.current_epoch;
+    last_executed_epoch_ = metrics.last_executed_epoch;
+    if (metrics.total_epochs > 0) {
+        total_epochs_ = metrics.total_epochs;
+    }
+    checkpoint_used_ = metrics.checkpoint_used;
+    checkpoint_epoch_ = metrics.restored_checkpoint_epoch;
+    checkpoint_step_ = metrics.restored_checkpoint_step;
+    active_model_provenance_ = metrics.active_model_provenance;
+    has_checkpoint_validation_metrics_ = metrics.has_validation_metrics;
+    checkpoint_val_loss_ = metrics.val_loss;
+    checkpoint_val_accuracy_ = metrics.val_accuracy;
     active_checkpoint_loaded_ = false;
 }
 
@@ -574,6 +632,7 @@ void TrainingPlotPanel::SetActiveCheckpointLoaded(
     checkpoint_val_accuracy_ = validation_accuracy;
     has_checkpoint_validation_metrics_ = has_validation_metrics;
     active_checkpoint_loaded_ = true;
+    active_model_provenance_ = "loaded_checkpoint_for_testing";
 }
 
 void TrainingPlotPanel::SetBatchProgress(int current_epoch, int current_batch,
@@ -683,6 +742,12 @@ void TrainingPlotPanel::SetPreparationState(bool is_preparing,
         total_training_time_ = 0.0f;
         terminal_status_.clear();
         terminal_reason_.clear();
+        last_executed_epoch_ = 0;
+        checkpoint_used_.clear();
+        checkpoint_epoch_ = 0;
+        checkpoint_step_ = 0;
+        active_model_provenance_.clear();
+        active_checkpoint_loaded_ = false;
     }
 }
 
@@ -2141,8 +2206,11 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         const float progress =
             static_cast<float>(current_epoch_) / std::max(1, total_epochs_);
         if (!is_training_ && total_training_time_ > 0) {
-            ImGui::Text("Final epoch state: %d / %d",
-                        current_epoch_, total_epochs_);
+            ImGui::Text("Executed epochs: %d / %d",
+                        last_executed_epoch_, total_epochs_);
+            if (current_epoch_ > last_executed_epoch_) {
+                ImGui::TextDisabled("Stopped during epoch %d", current_epoch_);
+            }
         } else {
             const int display_epoch = std::max(1, current_epoch_);
             const int remaining_epochs =
@@ -2181,13 +2249,23 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         }
     }
 
-    if (!is_training_ && !checkpoint_used_.empty()) {
+    if (!is_training_ &&
+        (!active_model_provenance_.empty() || !checkpoint_used_.empty())) {
         ImGui::Spacing();
         ImGui::SeparatorText("Active model state");
-        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f),
-                           active_checkpoint_loaded_
-                               ? "Checkpoint loaded for testing"
-                               : "Best validation checkpoint restored");
+        const bool restored_checkpoint = checkpoint_epoch_ > 0 &&
+            !checkpoint_used_.empty();
+        ImGui::TextColored(
+            ImVec4(0.45f, 0.85f, 0.55f, 1.0f),
+            active_checkpoint_loaded_
+                ? "Checkpoint loaded for testing"
+                : (restored_checkpoint
+                    ? "Best validation checkpoint restored"
+                    : "Final state from executed run"));
+        if (!active_model_provenance_.empty()) {
+            ImGui::Text("Provenance: %s",
+                        active_model_provenance_.c_str());
+        }
         if (checkpoint_epoch_ > 0 && has_checkpoint_validation_metrics_) {
             ImGui::Text("Checkpoint epoch: %d", checkpoint_epoch_);
             ImGui::Text("Checkpoint validation: loss %.4f, accuracy %.2f%%",
@@ -2196,7 +2274,12 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         } else if (checkpoint_epoch_ > 0) {
             ImGui::Text("Checkpoint epoch: %d", checkpoint_epoch_);
         }
-        ImGui::TextWrapped("Path: %s", checkpoint_used_.c_str());
+        if (checkpoint_step_ > 0) {
+            ImGui::Text("Checkpoint step: %d", checkpoint_step_);
+        }
+        if (!checkpoint_used_.empty()) {
+            ImGui::TextWrapped("Path: %s", checkpoint_used_.c_str());
+        }
     }
 
     // Batch-level progress within the current epoch (live feedback during training)
@@ -2471,9 +2554,11 @@ TrainingStatusSnapshot TrainingPlotPanel::GetStatusSnapshot() const {
     snapshot.preparation_failed = preparation_failed_;
     snapshot.status_message = preparation_failed_
         ? preparation_error_message_
-        : preparation_status_message_;
+        : (is_preparing_ ? preparation_status_message_ : terminal_reason_);
     snapshot.terminal_status = terminal_status_;
+    snapshot.terminal_reason = terminal_reason_;
     snapshot.current_epoch = current_epoch_;
+    snapshot.last_executed_epoch = last_executed_epoch_;
     snapshot.total_epochs = total_epochs_;
     snapshot.current_batch = current_batch_;
     snapshot.total_batches = total_batches_;
@@ -2493,6 +2578,9 @@ TrainingStatusSnapshot TrainingPlotPanel::GetStatusSnapshot() const {
     snapshot.samples_per_second = samples_per_second_;
     snapshot.total_training_time = total_training_time_;
     snapshot.checkpoint_epoch = checkpoint_epoch_;
+    snapshot.checkpoint_step = checkpoint_step_;
+    snapshot.checkpoint_used = checkpoint_used_;
+    snapshot.active_model_provenance = active_model_provenance_;
     snapshot.metric_points = train_loss_.values.size();
     snapshot.latest_custom_metrics.reserve(custom_metrics_.size());
     for (const auto& metric : custom_metrics_) {

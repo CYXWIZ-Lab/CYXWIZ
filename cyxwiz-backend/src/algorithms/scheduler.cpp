@@ -102,7 +102,7 @@ void CosineAnnealingLR::Step(int epoch, float /*metric*/) {
 
     // Cosine annealing formula
     // lr = eta_min + (base_lr - eta_min) * (1 + cos(pi * T_cur / T_max)) / 2
-    double progress = static_cast<double>(epoch % T_max_) / T_max_;
+    const double progress = static_cast<double>(epoch) / T_max_;
     current_lr_ = eta_min_ + (base_lr_ - eta_min_) * (1.0 + std::cos(M_PI * progress)) / 2.0;
 
     optimizer_->SetLearningRate(current_lr_);
@@ -176,7 +176,7 @@ void ReduceLROnPlateau::Step(int epoch, float metric) {
         spdlog::debug("ReduceLROnPlateau: No improvement for {} epochs (metric={:.4f}, best={:.4f})",
                       num_bad_epochs_, metric, best_metric_);
 
-        if (num_bad_epochs_ >= patience_) {
+        if (num_bad_epochs_ > patience_) {
             // Reduce learning rate
             double old_lr = current_lr_;
             current_lr_ = std::max(current_lr_ * factor_, min_lr_);

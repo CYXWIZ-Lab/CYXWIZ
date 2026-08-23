@@ -717,6 +717,14 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
     const auto* data_loader = metadata.GetMetadata(gui::NodeType::DataLoader);
     Check(data_loader != nullptr,
           "DataLoader must be registered in the modern node catalog");
+    const auto* grad_accum_steps =
+        FindParameter(data_loader, "grad_accum_steps");
+    Check(grad_accum_steps != nullptr,
+          "DataLoader must expose gradient accumulation in Properties metadata");
+    Check(grad_accum_steps->type == "int" &&
+              grad_accum_steps->default_value == "1" &&
+              grad_accum_steps->validation == "1-100000",
+          "DataLoader Properties metadata must expose the canonical gradient accumulation contract");
     Check(HasInputType(data_loader, "Partitions", gui::PinType::Dataset),
           "DataLoader must consume the resolved Dataset partition contract");
     Check(!HasInputType(data_loader, "Data", gui::PinType::Tensor) &&

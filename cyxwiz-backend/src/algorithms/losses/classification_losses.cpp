@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -86,7 +87,7 @@ ClassAxisShape ValidateClassAxisPredictions(const Tensor& predictions, const cha
     }
     throw std::runtime_error(
         std::string(name) +
-        " CPU fallback supports 1D, 2D, or [batch, seq, classes] predictions");
+        " supports 1D, 2D, or [batch, seq, classes] predictions");
 }
 
 bool TargetsAreClassIndices(const Tensor& predictions, const Tensor& targets) {
@@ -153,9 +154,10 @@ Tensor ApplyClassReduction(const std::vector<float>& per_sample,
     for (float value : per_sample) {
         total += value;
     }
-    const size_t divisor = mean_count > 0 ? mean_count : shape.batch;
-    if (reduction == Reduction::Mean && divisor > 0) {
-        total /= static_cast<float>(divisor);
+    if (reduction == Reduction::Mean) {
+        total = mean_count > 0
+            ? total / static_cast<float>(mean_count)
+            : std::numeric_limits<float>::quiet_NaN();
     }
     return Tensor({1}, &total, DataType::Float32);
 }
@@ -215,10 +217,10 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
         *cached_softmax = softmax;
     }
 
-    const float* probs = softmax.Data<float>();
+    const float* pred = predictions.Data<float>();
     std::vector<float> losses(shape.batch, 0.0f);
     size_t mean_count = shape.batch;
-    float mean_weight = 0.0f;
+    float mean_denominator = 0.0f;
     const float smooth_other =
         label_smoothing / static_cast<float>(shape.classes);
     if (TargetsAreClassIndices(predictions, targets)) {
@@ -231,32 +233,42 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
             }
             ValidateClassIndex(class_index, shape.classes, "CrossEntropy");
             const size_t target_class = static_cast<size_t>(class_index);
-            float sample_weight = 0.0f;
+            const size_t base = batch * shape.classes;
+            float max_value = pred[base];
+            for (size_t c = 1; c < shape.classes; ++c) {
+                max_value = std::max(max_value, pred[base + c]);
+            }
+            float sum_exp = 0.0f;
+            for (size_t c = 0; c < shape.classes; ++c) {
+                sum_exp += std::exp(pred[base + c] - max_value);
+            }
+            const float log_sum_exp = std::log(sum_exp);
             for (size_t c = 0; c < shape.classes; ++c) {
                 const float target_value =
                     (c == target_class ? 1.0f - label_smoothing : 0.0f) +
                     smooth_other;
                 const float weight = class_weights.empty() ? 1.0f : class_weights[c];
-                losses[batch] -=
-                    weight * target_value *
-                    std::log(probs[batch * shape.classes + c] + 1e-10f);
-                sample_weight += weight * target_value;
+                const float log_probability =
+                    pred[base + c] - max_value - log_sum_exp;
+                losses[batch] -= weight * target_value * log_probability;
             }
             ++mean_count;
-            mean_weight += sample_weight;
+            mean_denominator += class_weights.empty()
+                ? 1.0f
+                : class_weights[target_class];
         }
         if (!class_weights.empty() && reduction != Reduction::None) {
             if (reduction == Reduction::Mean) {
-                const float divisor = mean_weight > 0.0f
-                    ? mean_weight
+                const float divisor = mean_denominator > 0.0f
+                    ? mean_denominator
                     : static_cast<float>(mean_count);
                 float total = 0.0f;
                 for (float value : losses) {
                     total += value;
                 }
-                if (divisor > 0.0f) {
-                    total /= divisor;
-                }
+                total = divisor > 0.0f
+                    ? total / divisor
+                    : std::numeric_limits<float>::quiet_NaN();
                 return Tensor({1}, &total, DataType::Float32);
             }
         }
@@ -265,27 +277,24 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
         const float* target = targets.Data<float>();
         for (size_t batch = 0; batch < shape.batch; ++batch) {
             const size_t base = batch * shape.classes;
-            float sample_weight = 0.0f;
+            float max_value = pred[base];
+            for (size_t c = 1; c < shape.classes; ++c) {
+                max_value = std::max(max_value, pred[base + c]);
+            }
+            float sum_exp = 0.0f;
+            for (size_t c = 0; c < shape.classes; ++c) {
+                sum_exp += std::exp(pred[base + c] - max_value);
+            }
+            const float log_sum_exp = std::log(sum_exp);
             for (size_t c = 0; c < shape.classes; ++c) {
                 const float weight = class_weights.empty() ? 1.0f : class_weights[c];
                 const float target_value =
                     target[base + c] * (1.0f - label_smoothing) +
                     smooth_other;
-                losses[batch] -=
-                    weight * target_value * std::log(probs[base + c] + 1e-10f);
-                sample_weight += weight * target_value;
+                const float log_probability =
+                    pred[base + c] - max_value - log_sum_exp;
+                losses[batch] -= weight * target_value * log_probability;
             }
-            mean_weight += sample_weight;
-        }
-        if (!class_weights.empty() && reduction == Reduction::Mean) {
-            float total = 0.0f;
-            for (float value : losses) {
-                total += value;
-            }
-            if (mean_weight > 0.0f) {
-                total /= mean_weight;
-            }
-            return Tensor({1}, &total, DataType::Float32);
         }
     }
     return ApplyClassReduction(losses, shape, reduction, mean_count);
@@ -309,7 +318,7 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
     float* out = grad.Data<float>();
     std::fill(out, out + predictions.NumElements(), 0.0f);
     size_t mean_count = shape.batch;
-    float mean_weight = 0.0f;
+    float mean_denominator = 0.0f;
     const float smooth_other =
         label_smoothing / static_cast<float>(shape.classes);
 
@@ -340,7 +349,9 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
                     probs[base + c] * weighted_target_sum - weighted_target[c];
             }
             ++mean_count;
-            mean_weight += weighted_target_sum;
+            mean_denominator += class_weights.empty()
+                ? 1.0f
+                : class_weights[target_class];
         }
     } else {
         ValidateFloat32Pair(predictions, targets, "CrossEntropy");
@@ -355,7 +366,6 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
                     smooth_other;
                 weighted_target_sum += weight * target_value;
             }
-            mean_weight += weighted_target_sum;
             for (size_t c = 0; c < shape.classes; ++c) {
                 const float weight = class_weights.empty() ? 1.0f : class_weights[c];
                 const float target_value =
@@ -369,8 +379,10 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
 
     const size_t divisor = mean_count > 0 ? mean_count : shape.batch;
     if (reduction == Reduction::Mean && divisor > 0) {
-        const float denominator = !class_weights.empty() && mean_weight > 0.0f
-            ? mean_weight
+        const float denominator =
+            TargetsAreClassIndices(predictions, targets) &&
+                !class_weights.empty() && mean_denominator > 0.0f
+            ? mean_denominator
             : static_cast<float>(divisor);
         const float scale = 1.0f / denominator;
         for (size_t i = 0; i < predictions.NumElements(); ++i) {
@@ -502,9 +514,88 @@ Tensor CpuFocalBackward(const Tensor& predictions,
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
+af::array ToCrossEntropyRows(const af::array& values,
+                             const std::vector<size_t>& semantic_shape) {
+    if (semantic_shape.size() == 1) {
+        return af::moddims(
+            values,
+            1,
+            static_cast<dim_t>(semantic_shape[0]));
+    }
+    if (semantic_shape.size() == 2) {
+        return values;
+    }
+
+    const dim_t batch = static_cast<dim_t>(semantic_shape[0]);
+    const dim_t sequence = static_cast<dim_t>(semantic_shape[1]);
+    const dim_t classes = static_cast<dim_t>(semantic_shape[2]);
+    af::array class_first = af::reorder(values, 2, 1, 0);
+    return af::transpose(af::moddims(
+        class_first, classes, batch * sequence));
+}
+
+af::array ToCrossEntropyIndexRows(
+    const af::array& targets,
+    const std::vector<size_t>& prediction_shape) {
+    if (prediction_shape.size() < 3) {
+        return af::flat(targets);
+    }
+    return af::flat(af::transpose(targets));
+}
+
+af::array RestoreCrossEntropyClassLast(
+    const af::array& rows,
+    const std::vector<size_t>& semantic_shape) {
+    if (semantic_shape.size() == 1) {
+        return af::flat(rows);
+    }
+    if (semantic_shape.size() == 2) {
+        return rows;
+    }
+
+    const dim_t batch = static_cast<dim_t>(semantic_shape[0]);
+    const dim_t sequence = static_cast<dim_t>(semantic_shape[1]);
+    const dim_t classes = static_cast<dim_t>(semantic_shape[2]);
+    af::array class_first = af::moddims(
+        af::transpose(rows), classes, sequence, batch);
+    return af::reorder(class_first, 2, 1, 0);
+}
+
+af::array RestoreCrossEntropyUnreduced(
+    const af::array& rows,
+    const std::vector<size_t>& prediction_shape) {
+    if (prediction_shape.size() < 3) {
+        return af::flat(rows);
+    }
+    const dim_t batch = static_cast<dim_t>(prediction_shape[0]);
+    const dim_t sequence = static_cast<dim_t>(prediction_shape[1]);
+    return af::transpose(
+        af::moddims(af::flat(rows), sequence, batch));
+}
+
+struct ArrayFireLogSoftmax {
+    af::array log_probabilities;
+    af::array probabilities;
+};
+
+ArrayFireLogSoftmax StableLogSoftmaxRows(const af::array& predictions) {
+    const unsigned classes =
+        static_cast<unsigned>(predictions.dims(1));
+    const af::array row_max = af::max(predictions, 1);
+    const af::array shifted =
+        predictions - af::tile(row_max, 1, classes);
+    const af::array log_denominator = af::log(af::sum(af::exp(shifted), 1));
+    af::array log_probabilities =
+        shifted - af::tile(log_denominator, 1, classes);
+    af::array probabilities = af::exp(log_probabilities);
+    log_probabilities.eval();
+    probabilities.eval();
+    return {log_probabilities, probabilities};
+}
+
 struct ArrayFireCrossEntropyTargets {
     af::array weighted_targets;
-    af::array row_weights;
+    af::array mean_denominator_rows;
 };
 
 ArrayFireCrossEntropyTargets BuildArrayFireCrossEntropyTargets(
@@ -513,26 +604,27 @@ ArrayFireCrossEntropyTargets BuildArrayFireCrossEntropyTargets(
     bool targets_are_class_indices,
     const std::vector<float>& class_weights,
     float label_smoothing,
+    int ignore_index,
     Tensor& cached_class_weights) {
     const dim_t batch_size = predictions.dims(0);
     const dim_t classes = predictions.dims(1);
 
     af::array target_distribution;
+    af::array valid_rows = af::constant(1.0f, batch_size, 1, f32);
     if (targets_are_class_indices) {
         const af::array target_indices = af::flat(targets.as(s32));
+        valid_rows = (target_indices != ignore_index).as(f32);
+        const af::array safe_target_indices =
+            target_indices * valid_rows.as(s32);
         const af::array identity = af::identity(classes, classes, f32);
         target_distribution =
-            af::transpose(identity(af::span, target_indices));
+            af::transpose(identity(af::span, safe_target_indices));
     } else {
         target_distribution = targets.as(f32);
     }
 
-    if (label_smoothing > 0.0f) {
-        target_distribution =
-            target_distribution * (1.0f - label_smoothing) +
-            label_smoothing / static_cast<float>(classes);
-    }
-
+    af::array mean_denominator_rows;
+    af::array tiled_weights;
     if (!class_weights.empty()) {
         const std::vector<size_t> expected_shape = {
             1, static_cast<size_t>(classes)};
@@ -543,23 +635,42 @@ ArrayFireCrossEntropyTargets BuildArrayFireCrossEntropyTargets(
                 DataType::Float32);
         }
         const af::array weights = cached_class_weights.GetSemanticArray();
+        tiled_weights =
+            af::tile(weights, static_cast<unsigned>(batch_size), 1);
+    }
+    if (targets_are_class_indices) {
+        mean_denominator_rows = class_weights.empty()
+            ? valid_rows
+            : af::sum(target_distribution * tiled_weights, 1) * valid_rows;
+    } else {
+        mean_denominator_rows = valid_rows;
+    }
+
+    if (label_smoothing > 0.0f) {
+        target_distribution =
+            target_distribution * (1.0f - label_smoothing) +
+            label_smoothing / static_cast<float>(classes);
+    }
+    if (targets_are_class_indices) {
         target_distribution =
             target_distribution *
-            af::tile(weights, static_cast<unsigned>(batch_size), 1);
+            af::tile(valid_rows, 1, static_cast<unsigned>(classes));
+    }
+
+    if (!class_weights.empty()) {
+        target_distribution = target_distribution * tiled_weights;
     }
 
     target_distribution.eval();
-    af::array row_weights = af::sum(target_distribution, 1);
-    row_weights.eval();
-    return {target_distribution, row_weights};
+    mean_denominator_rows.eval();
+    return {target_distribution, mean_denominator_rows};
 }
 
 af::array ApplyWeightedCrossEntropyReduction(
     const af::array& per_sample_loss,
-    const af::array& row_weights,
+    const af::array& mean_denominator_rows,
     Reduction reduction,
-    bool has_class_weights,
-    dim_t batch_size) {
+    af::array* mean_denominator) {
     if (reduction == Reduction::None) {
         return per_sample_loss;
     }
@@ -570,13 +681,11 @@ af::array ApplyWeightedCrossEntropyReduction(
         return total;
     }
 
-    if (!has_class_weights) {
-        return total / static_cast<float>(batch_size);
-    }
-
-    af::array denominator = af::sum(af::flat(row_weights));
-    denominator = denominator + (denominator == 0.0f).as(f32);
+    af::array denominator = af::sum(af::flat(mean_denominator_rows));
     denominator.eval();
+    if (mean_denominator != nullptr) {
+        *mean_denominator = denominator;
+    }
     return total / denominator;
 }
 #endif
@@ -588,107 +697,59 @@ af::array ApplyWeightedCrossEntropyReduction(
 // ============================================================================
 
 Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
-    const bool enhanced_arrayfire_path =
-        (!class_weights_.empty() || label_smoothing_ > 0.0f) &&
-        predictions.Shape().size() == 2;
-    if ((!class_weights_.empty() || label_smoothing_ > 0.0f) &&
-        !enhanced_arrayfire_path) {
-        return CpuCrossEntropyForward(
-            predictions, targets, reduction_, ignore_index_, class_weights_,
-            label_smoothing_, &cached_softmax_);
+    has_cached_mean_denominator_ = false;
+    const ClassAxisShape shape =
+        ValidateClassAxisPredictions(predictions, "CrossEntropy");
+    ValidateClassWeights(class_weights_, shape.classes, "CrossEntropy");
+    const bool class_indices = TargetsAreClassIndices(predictions, targets);
+    if (class_indices) {
+        ValidateClassIndexTargets(targets, shape, "CrossEntropy");
+    } else {
+        ValidateFloat32Pair(predictions, targets, "CrossEntropy");
     }
-    if (TargetsAreClassIndices(predictions, targets) &&
-        ClassIndexTargetsContain(targets, ignore_index_)) {
-        return CpuCrossEntropyForward(
-            predictions, targets, reduction_, ignore_index_, class_weights_,
-            label_smoothing_, &cached_softmax_);
-    }
-
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array pred = TensorToAf(predictions);
-        af::array target = TensorToAf(targets);
+        const af::array prediction_rows = ToCrossEntropyRows(
+            TensorToAf(predictions), predictions.Shape());
+        const af::array target_rows = class_indices
+            ? ToCrossEntropyIndexRows(TensorToAf(targets), predictions.Shape())
+            : ToCrossEntropyRows(TensorToAf(targets), targets.Shape());
+        const auto normalized = StableLogSoftmaxRows(prediction_rows);
+        const af::array semantic_softmax = RestoreCrossEntropyClassLast(
+            normalized.probabilities, predictions.Shape());
+        cached_softmax_ = Tensor::FromSemanticArray(
+            semantic_softmax, predictions.Shape());
 
-        // Apply softmax to predictions (assume logits input)
-        // For numerical stability, use log-softmax
-        int class_axis = 1;  // Assume predictions are [batch, classes]
-        if (pred.numdims() == 1) {
-            class_axis = 0;
+        const auto weighted = BuildArrayFireCrossEntropyTargets(
+            prediction_rows,
+            target_rows,
+            class_indices,
+            class_weights_,
+            label_smoothing_,
+            ignore_index_,
+            cached_class_weights_);
+        af::array per_sample_loss = -af::sum(
+            weighted.weighted_targets * normalized.log_probabilities, 1);
+        per_sample_loss.eval();
+        af::array mean_denominator;
+        af::array loss = ApplyWeightedCrossEntropyReduction(
+            per_sample_loss,
+            weighted.mean_denominator_rows,
+            reduction_,
+            reduction_ == Reduction::Mean ? &mean_denominator : nullptr);
+        loss.eval();
+        if (reduction_ == Reduction::Mean) {
+            cached_mean_denominator_ = Tensor::FromSemanticArray(
+                mean_denominator, {1});
+            has_cached_mean_denominator_ = true;
         }
-
-        af::array softmax_pred = StableSoftmax(pred, class_axis);
-        cached_softmax_ = AfToTensor(softmax_pred);
-
-        // Cross entropy: -sum(target * log(softmax))
-        af::array log_softmax = af::log(softmax_pred + 1e-10f);
-        af::array loss;
-
-        if (enhanced_arrayfire_path) {
-            const ClassAxisShape shape =
-                ValidateClassAxisPredictions(predictions, "CrossEntropy");
-            ValidateClassWeights(
-                class_weights_, shape.classes, "CrossEntropy");
-            const bool class_indices =
-                TargetsAreClassIndices(predictions, targets);
-            if (class_indices) {
-                ValidateClassIndexTargets(targets, shape, "CrossEntropy");
-            } else {
-                ValidateFloat32Pair(predictions, targets, "CrossEntropy");
-            }
-            const auto weighted = BuildArrayFireCrossEntropyTargets(
-                pred,
-                target,
-                class_indices,
-                class_weights_,
-                label_smoothing_,
-                cached_class_weights_);
-            af::array per_sample_loss =
-                -af::sum(weighted.weighted_targets * log_softmax, 1);
-            per_sample_loss.eval();
-            loss = ApplyWeightedCrossEntropyReduction(
-                per_sample_loss,
-                weighted.row_weights,
-                reduction_,
-                !class_weights_.empty(),
-                pred.dims(0));
-            loss.eval();
-            return AfToTensor(loss);
+        if (reduction_ == Reduction::None) {
+            const af::array semantic_loss = RestoreCrossEntropyUnreduced(
+                loss, predictions.Shape());
+            return Tensor::FromSemanticArray(
+                semantic_loss, shape.unreduced_shape);
         }
-
-        // Check if target is one-hot encoded or class indices
-        if (target.type() == af::dtype::s32 || target.type() == af::dtype::s64) {
-            // Targets are class indices - GPU-optimized gather
-            dim_t batch_size = pred.dims(0);
-            
-            // Create linear indices for gathering from flattened log_softmax
-            af::array batch_indices = af::range(af::dim4(batch_size), 0, s32);
-            af::array target_int = target.as(s32);
-            af::array linear_indices = target_int * static_cast<int>(batch_size) + batch_indices;
-            
-            // Gather log probabilities at target indices (single GPU operation)
-            af::array flat_log_softmax = af::flat(log_softmax);
-            af::array gathered = flat_log_softmax(linear_indices);
-            
-            // Cross entropy loss: -log_softmax[target]
-            af::array batch_loss = -gathered;
-            
-            // Handle ignore_index with mask (GPU operation)
-            if (ignore_index_ >= 0) {
-                af::array mask = (target_int != ignore_index_).as(f32);
-                batch_loss = batch_loss * mask;
-            }
-            
-            loss = ApplyReduction(batch_loss, reduction_);
-        } else {
-            // Targets are one-hot encoded or soft labels
-            loss = -target * log_softmax;
-
-            // Sum over class dimension
-            loss = af::sum(loss, class_axis);
-            loss = ApplyReduction(loss, reduction_);
-        }
-
-        return AfToTensor(loss);
+        return Tensor::FromSemanticArray(loss, {1});
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
             "CrossEntropyLoss::Forward", e.what(), predictions, targets, reduction_);
@@ -700,118 +761,57 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
 }
 
 Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
-    const bool enhanced_arrayfire_path =
-        (!class_weights_.empty() || label_smoothing_ > 0.0f) &&
-        predictions.Shape().size() == 2;
-    if ((!class_weights_.empty() || label_smoothing_ > 0.0f) &&
-        !enhanced_arrayfire_path) {
-        return CpuCrossEntropyBackward(
-            predictions, targets, reduction_, ignore_index_, class_weights_,
-            label_smoothing_, cached_softmax_);
-    }
-    if (TargetsAreClassIndices(predictions, targets) &&
-        ClassIndexTargetsContain(targets, ignore_index_)) {
-        return CpuCrossEntropyBackward(
-            predictions, targets, reduction_, ignore_index_, class_weights_,
-            label_smoothing_, cached_softmax_);
-    }
-    if (predictions.Shape().size() == 3) {
-        return CpuCrossEntropyBackward(
-            predictions, targets, reduction_, ignore_index_, class_weights_,
-            label_smoothing_, cached_softmax_);
+    const ClassAxisShape shape =
+        ValidateClassAxisPredictions(predictions, "CrossEntropy");
+    ValidateClassWeights(class_weights_, shape.classes, "CrossEntropy");
+    const bool class_indices = TargetsAreClassIndices(predictions, targets);
+    if (class_indices) {
+        ValidateClassIndexTargets(targets, shape, "CrossEntropy");
+    } else {
+        ValidateFloat32Pair(predictions, targets, "CrossEntropy");
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array pred = TensorToAf(predictions);
-        af::array softmax_pred;
+        const af::array prediction_rows = ToCrossEntropyRows(
+            TensorToAf(predictions), predictions.Shape());
+        af::array softmax_rows;
         if (cached_softmax_.Shape() == predictions.Shape()) {
-            softmax_pred = TensorToAf(cached_softmax_);
+            softmax_rows = ToCrossEntropyRows(
+                TensorToAf(cached_softmax_), predictions.Shape());
         } else {
-            int class_axis = pred.numdims() == 1 ? 0 : 1;
-            softmax_pred = StableSoftmax(pred, class_axis);
+            softmax_rows = StableLogSoftmaxRows(prediction_rows).probabilities;
         }
-        af::array target = TensorToAf(targets);
-
-        af::array grad;
-
-        if (enhanced_arrayfire_path) {
-            const ClassAxisShape shape =
-                ValidateClassAxisPredictions(predictions, "CrossEntropy");
-            ValidateClassWeights(
-                class_weights_, shape.classes, "CrossEntropy");
-            const bool class_indices =
-                TargetsAreClassIndices(predictions, targets);
-            if (class_indices) {
-                ValidateClassIndexTargets(targets, shape, "CrossEntropy");
-            } else {
-                ValidateFloat32Pair(predictions, targets, "CrossEntropy");
-            }
-            const auto weighted = BuildArrayFireCrossEntropyTargets(
-                pred,
-                target,
-                class_indices,
-                class_weights_,
-                label_smoothing_,
-                cached_class_weights_);
-            grad =
-                softmax_pred *
-                    af::tile(
-                        weighted.row_weights,
-                        1,
-                        static_cast<unsigned>(pred.dims(1))) -
-                weighted.weighted_targets;
-            if (reduction_ == Reduction::Mean) {
-                if (class_weights_.empty()) {
-                    grad = grad / static_cast<float>(pred.dims(0));
-                } else {
-                    af::array denominator =
-                        af::sum(af::flat(weighted.row_weights));
-                    denominator =
-                        denominator + (denominator == 0.0f).as(f32);
-                    denominator.eval();
-                    grad = grad / denominator;
-                }
-            }
-            grad.eval();
-            return AfToTensor(grad, predictions.Shape());
-        }
-
-        // Check if target is one-hot encoded or class indices
-        if (target.type() == af::dtype::s32 || target.type() == af::dtype::s64) {
-            // Targets are class indices - GPU-optimized one-hot encoding
-            dim_t num_classes = pred.dims(1);
-            af::array target_int = target.as(s32);
-
-            // Create one-hot using identity matrix indexing (GPU operation)
-            af::array identity = af::identity(af::dim4(num_classes, num_classes), f32);
-            af::array one_hot = identity(af::span, target_int);  // [num_classes, batch]
-            one_hot = af::transpose(one_hot);  // [batch, num_classes]
-            one_hot.eval();
-
-            // Handle ignore_index with mask (GPU operation)
-            if (ignore_index_ >= 0) {
-                af::array mask = (target_int != ignore_index_).as(f32);
-                mask.eval();
-                af::array mask_tiled = af::tile(mask, 1, static_cast<unsigned>(num_classes));
-                mask_tiled.eval();
-                one_hot = one_hot * mask_tiled;
-                one_hot.eval();
-            }
-
-            grad = softmax_pred - one_hot;
-        } else {
-            // Targets are one-hot encoded or soft labels
-            grad = softmax_pred - target;
-        }
-        grad.eval();
-
+        const af::array target_rows = class_indices
+            ? ToCrossEntropyIndexRows(TensorToAf(targets), predictions.Shape())
+            : ToCrossEntropyRows(TensorToAf(targets), targets.Shape());
+        const auto weighted = BuildArrayFireCrossEntropyTargets(
+            prediction_rows,
+            target_rows,
+            class_indices,
+            class_weights_,
+            label_smoothing_,
+            ignore_index_,
+            cached_class_weights_);
+        af::array grad_rows =
+            softmax_rows *
+                af::tile(
+                    af::sum(weighted.weighted_targets, 1),
+                    1,
+                    static_cast<unsigned>(prediction_rows.dims(1))) -
+            weighted.weighted_targets;
         if (reduction_ == Reduction::Mean) {
-            grad = grad / static_cast<float>(pred.dims(0));
-            grad.eval();
+            af::array denominator = af::sum(
+                af::flat(weighted.mean_denominator_rows));
+            denominator = denominator + (denominator == 0.0f).as(f32);
+            denominator.eval();
+            grad_rows = grad_rows / denominator;
         }
-
-        return AfToTensor(grad, predictions.Shape());
+        grad_rows.eval();
+        const af::array semantic_gradient = RestoreCrossEntropyClassLast(
+            grad_rows, predictions.Shape());
+        return Tensor::FromSemanticArray(
+            semantic_gradient, predictions.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
             "CrossEntropyLoss::Backward", e.what(), predictions, targets, reduction_);

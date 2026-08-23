@@ -394,15 +394,10 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
                 af::array weight_grad_gpu =
                     af::matmul(grad_gpu, input_gpu, AF_MAT_TRANS, AF_MAT_NONE);
                 weight_grad_gpu.eval();
-                weight_grad_gpu =
-                    weight_grad_gpu / static_cast<float>(batch_size);
-                weight_grad_gpu.eval();
                 weight_grad_ = Tensor::FromArrayRowMajor2D(weight_grad_gpu);
 
                 if (use_bias_) {
-                    af::array bias_grad_gpu = af::flat(
-                        af::sum(grad_gpu, 0) /
-                        static_cast<float>(batch_size));
+                    af::array bias_grad_gpu = af::flat(af::sum(grad_gpu, 0));
                     bias_grad_gpu.eval();
                     bias_grad_ = Tensor(bias_grad_gpu);
                 }
@@ -460,7 +455,7 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
                     grad_sum += grad_output_data[b * out_features_ + o] *
                               input_data[b * in_features_ + i];
                 }
-                weight_grad_data[o * in_features_ + i] = grad_sum / static_cast<float>(batch_size);
+                weight_grad_data[o * in_features_ + i] = grad_sum;
             }
         }
 
@@ -474,9 +469,6 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
                 }
             }
 
-            for (size_t o = 0; o < out_features_; o++) {
-                bias_grad_data[o] /= static_cast<float>(batch_size);
-            }
         }
 
         // Gradient w.r.t. input

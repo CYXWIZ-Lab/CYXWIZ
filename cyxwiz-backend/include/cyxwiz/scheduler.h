@@ -15,7 +15,7 @@ namespace cyxwiz {
 enum class SchedulerType {
     StepLR,          // Decay by gamma every step_size epochs
     ExponentialLR,   // Decay by gamma every epoch
-    CosineAnnealing, // Cosine annealing with warm restarts
+    CosineAnnealing, // Cosine annealing without warm restarts
     ReduceLROnPlateau, // Reduce when metric stops improving
     LinearWarmup,    // Linear warmup followed by decay
     OneCycleLR       // 1cycle policy

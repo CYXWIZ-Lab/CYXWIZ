@@ -622,7 +622,18 @@ void Viewport::Render() {
                     ImVec2(-1.0f, 0.0f));
             }
 
-            if (training.current_epoch > 0) {
+            if (!training.is_training &&
+                training.total_epochs > 0 &&
+                !training.terminal_status.empty()) {
+                ImGui::Text("Executed epochs: %d / %d",
+                            training.last_executed_epoch,
+                            training.total_epochs);
+                if (training.current_epoch >
+                    training.last_executed_epoch) {
+                    ImGui::TextDisabled("Stopped during epoch %d",
+                                        training.current_epoch);
+                }
+            } else if (training.current_epoch > 0) {
                 if (training.total_epochs > 0) {
                     ImGui::Text("Epoch: %d / %d",
                                 training.current_epoch,
@@ -691,6 +702,20 @@ void Viewport::Render() {
             if (!training.is_training && training.checkpoint_epoch > 0) {
                 ImGui::Text("Restored checkpoint epoch: %d",
                             training.checkpoint_epoch);
+                if (training.checkpoint_step > 0) {
+                    ImGui::Text("Restored checkpoint step: %d",
+                                training.checkpoint_step);
+                }
+            }
+            if (!training.is_training &&
+                !training.active_model_provenance.empty()) {
+                ImGui::Text("Active model provenance: %s",
+                            training.active_model_provenance.c_str());
+            }
+            if (!training.is_training &&
+                !training.checkpoint_used.empty()) {
+                ImGui::TextWrapped("Active checkpoint: %s",
+                                   training.checkpoint_used.c_str());
             }
             ImGui::TextDisabled("Metric samples: %zu", training.metric_points);
         }

@@ -12,6 +12,7 @@
 #include "../src/core/sequence_tag_metrics.h"
 #include "../src/core/training_run_comparison.h"
 #include "../src/gui/graph_training_launcher.h"
+#include "../src/gui/panels/training_plot_panel.h"
 
 #include <arrow/api.h>
 
@@ -937,6 +938,67 @@ void TestTrainingRunComparisonRecord() {
           "run comparison should not infer test availability from nonzero values");
 }
 
+void TestTrainingStatusProvenanceContract() {
+    cyxwiz::TrainingPlotPanel panel;
+    panel.SetTrainingState(true, 2, 5, 0.25f, 16.0f);
+
+    cyxwiz::TrainingMetrics metrics;
+    metrics.current_epoch = 2;
+    metrics.last_executed_epoch = 2;
+    metrics.total_epochs = 5;
+    metrics.is_complete = true;
+    metrics.terminal_status = "early_stopped";
+    metrics.terminal_reason = "validation_loss_plateau_patience_1";
+    metrics.checkpoint_used = "runs/fixture/best";
+    metrics.restored_checkpoint_epoch = 1;
+    metrics.restored_checkpoint_step = 2;
+    metrics.active_model_provenance = "restored_best_checkpoint";
+    metrics.has_validation_metrics = true;
+    metrics.val_loss = 0.75f;
+    metrics.val_accuracy = 0.50f;
+    panel.SetTrainingComplete(1.5f, metrics);
+
+    const auto snapshot = panel.GetStatusSnapshot();
+    Check(!snapshot.is_training &&
+              snapshot.terminal_status == "early_stopped" &&
+              snapshot.terminal_reason ==
+                  "validation_loss_plateau_patience_1",
+          "dashboard snapshot should preserve terminal status and reason");
+    Check(snapshot.current_epoch == 2 &&
+              snapshot.last_executed_epoch == 2 &&
+              snapshot.total_epochs == 5,
+          "dashboard snapshot should preserve executed-run epoch truth");
+    Check(snapshot.checkpoint_epoch == 1 &&
+              snapshot.checkpoint_step == 2 &&
+              snapshot.checkpoint_used == "runs/fixture/best",
+          "dashboard snapshot should preserve restored checkpoint identity");
+    Check(snapshot.active_model_provenance ==
+              "restored_best_checkpoint",
+          "dashboard snapshot should preserve active-model provenance");
+    Check(snapshot.status_message == metrics.terminal_reason,
+          "viewport-facing status should expose the terminal reason");
+
+    panel.Clear();
+    const auto cleared = panel.GetStatusSnapshot();
+    Check(cleared.terminal_status.empty() &&
+              cleared.terminal_reason.empty() &&
+              cleared.last_executed_epoch == 0 &&
+              cleared.checkpoint_epoch == 0 &&
+              cleared.checkpoint_step == 0 &&
+              cleared.checkpoint_used.empty() &&
+              cleared.active_model_provenance.empty(),
+          "clearing the dashboard should remove stale lifecycle provenance");
+
+    panel.SetActiveCheckpointLoaded(
+        "runs/fixture/manual", 7, 0.42f, 0.88f, true);
+    const auto loaded = panel.GetStatusSnapshot();
+    Check(loaded.checkpoint_epoch == 7 &&
+              loaded.checkpoint_used == "runs/fixture/manual" &&
+              loaded.active_model_provenance ==
+                  "loaded_checkpoint_for_testing",
+          "dashboard should distinguish a manually loaded checkpoint");
+}
+
 } // namespace
 
 namespace cyxwiz {
@@ -968,7 +1030,13 @@ std::vector<gui::NodeType> PipelineOperatorFactory::GetSupportedTypes() const {
 
 } // namespace cyxwiz
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 &&
+        std::string(argv[1]) == "--training-status-contract-only") {
+        TestTrainingStatusProvenanceContract();
+        std::cout << "Training status provenance contract passed\n";
+        return 0;
+    }
     TestTrainingRunComparisonRecord();
 
     const auto repo_root = FindRepoRoot();

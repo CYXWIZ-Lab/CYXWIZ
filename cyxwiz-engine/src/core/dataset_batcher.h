@@ -150,6 +150,9 @@ public:
     virtual size_t GetNumBatches() const = 0;
     virtual size_t GetNumSamples() const = 0;
     virtual void SetPhase(BatcherPhase /*phase*/) {}
+    virtual bool HasPhase(BatcherPhase phase) const {
+        return phase != BatcherPhase::Test;
+    }
 };
 
 class IBatcher {
@@ -165,8 +168,10 @@ public:
     virtual void SetNormalization(float mean, float std_dev) = 0;
     virtual void SetOneHotEncoding(size_t num_classes) = 0;
     virtual void SetScalarLabelMode(bool /*enable*/) {}
+    virtual void SetClassIndexLabelMode(bool /*enable*/) {}
     virtual void SetFlatten(bool flatten) = 0;
     virtual void SetBatchInspectionEnabled(bool /*enable*/) {}
+    virtual void SetDropLast(bool /*drop_last*/) {}
 
     // Switch between train/val/test index sets. Default: no-op (batchers
     // that already have a separate validation instance don't need this).
@@ -446,6 +451,7 @@ public:
     void SetNormalization(float mean, float std) override;
     void SetOneHotEncoding(size_t num_classes) override;
     void SetFlatten(bool flatten) override { flatten_ = flatten; }
+    void SetDropLast(bool drop_last) override { drop_last_ = drop_last; }
 
     // Phase 4 Time-Series: opt into regression label handling. When true,
     // labels are read as float (not int-cast), one-hot encoding is
@@ -455,6 +461,10 @@ public:
     // directly. Legacy classification callers never set this and keep the
     // existing behavior.
     void SetScalarLabelMode(bool enable) override { scalar_label_mode_ = enable; }
+    void SetClassIndexLabelMode(bool enable) override {
+        class_index_label_mode_ = enable;
+        if (enable) one_hot_ = false;
+    }
     void SetRegressionMode(bool enable) { SetScalarLabelMode(enable); }
     void SetBatchInspectionEnabled(bool enable) override {
         batch_inspection_enabled_ = enable;
@@ -472,6 +482,7 @@ private:
     size_t batch_size_;
     bool shuffle_;
     bool is_training_;
+    bool drop_last_ = false;
     int num_workers_ = 0;
     std::string partition_column_;   // Phase 4: time-series partition col name, "" = legacy slicing
     int partition_value_ = 0;        // which partition this batcher iterates (0=train, 1=val, 2=test)
@@ -503,6 +514,7 @@ private:
     size_t num_classes_ = 10;  // Default for MNIST
     bool flatten_ = true;
     bool scalar_label_mode_ = false;  // float [batch, 1] labels, no one-hot
+    bool class_index_label_mode_ = false;  // Int32 [batch] labels
     bool batch_inspection_enabled_ = false;
 
     void ShuffleIndices();

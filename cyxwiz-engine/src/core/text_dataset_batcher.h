@@ -52,6 +52,7 @@ public:
     void SetScalarLabelMode(bool enable) override;
     void SetFlatten(bool flatten) override;
     void SetBatchInspectionEnabled(bool enable) override;
+    void SetDropLast(bool drop_last) override;
     void SetPhase(BatcherPhase phase) override;
 
     int GetMaxLength() const { return max_length_; }

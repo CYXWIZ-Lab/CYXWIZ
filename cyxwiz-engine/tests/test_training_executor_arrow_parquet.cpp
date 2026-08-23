@@ -1,5 +1,7 @@
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/classification_decision.h"
 #include "../src/core/debug_run_paths.h"
+#include "../src/core/model_builder.h"
 #include "../src/core/ner_sequence_builder.h"
 #include "../src/core/parquet_backed_dataset.h"
 #include "../src/core/preprocessing_state.h"
@@ -9,10 +11,13 @@
 #include "../src/core/sequence_training_step.h"
 #include "../src/core/sequence_vocabulary.h"
 #include "../src/core/test_executor.h"
+#include "../src/core/training_batcher_setup.h"
 #include "../src/core/training_executor.h"
 #include "../src/core/training_trace_collector.h"
 #include "../src/core/execution_device_context.h"
 #include "../src/core/execution_device_preferences.h"
+#include "../src/plugin/interfaces/i_training_hook.h"
+#include "../src/plugin/registries/plugin_training_hook_manager.h"
 #include "route_qualification_test_fixture.h"
 #include "algorithms/arrayfire_backend_utils.h"
 
@@ -21,17 +26,25 @@
 #include <parquet/arrow/writer.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <map>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
+
+using json = nlohmann::json;
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -132,6 +145,76 @@ std::shared_ptr<arrow::Table> MakeTrainingTable() {
         6);
 }
 
+json LoadTrainingCoreFixture(const std::filesystem::path& executable_path,
+                             const char* explicit_path = nullptr) {
+    const auto fixture_path = explicit_path != nullptr
+        ? std::filesystem::path(explicit_path)
+        : std::filesystem::absolute(executable_path).parent_path() /
+              "computation_truth_fixtures" / "training_core_pytorch.json";
+    std::ifstream stream(fixture_path);
+    Check(stream.is_open(),
+          "unable to open PyTorch fixture: " + fixture_path.string());
+    json fixture;
+    stream >> fixture;
+    Check(fixture.value("schema_version", 0) == 1 &&
+              fixture.at("oracle").value("name", "") == "PyTorch" &&
+              fixture.at("oracle").value("device", "") == "cpu",
+          "gradient accumulation fixture must declare a PyTorch CPU oracle");
+    return fixture;
+}
+
+std::vector<size_t> FixtureShape(const json& value) {
+    return value.at("shape").get<std::vector<size_t>>();
+}
+
+std::vector<float> FixtureFloats(const json& value) {
+    return value.at("values").get<std::vector<float>>();
+}
+
+void CheckParameterFixture(const cyxwiz::Tensor& actual,
+                           const json& expected,
+                           double tolerance,
+                           const std::string& context) {
+    const auto expected_shape = FixtureShape(expected);
+    const auto expected_values = FixtureFloats(expected);
+    Check(actual.Shape() == expected_shape,
+          context + " shape should match PyTorch");
+    Check(actual.GetDataType() == cyxwiz::DataType::Float32,
+          context + " dtype should remain Float32");
+    const float* actual_values = actual.ReadData<float>();
+    Check(actual.NumElements() == expected_values.size(),
+          context + " element count should match PyTorch");
+    for (size_t i = 0; i < expected_values.size(); ++i) {
+        CheckNear(actual_values[i], expected_values[i], tolerance,
+                  context + " value " + std::to_string(i));
+    }
+}
+
+std::shared_ptr<arrow::Table> MakeUnevenValidationTable() {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("label", arrow::float32()),
+    });
+
+    return arrow::Table::Make(
+        schema,
+        {
+            FinishFloatArray(
+                {0.0f, 0.1f, 0.2f, 0.3f, 0.7f, 0.8f, 0.9f, 1.0f}),
+            FinishFloatArray(
+                {0.0f, 0.2f, 0.1f, 0.3f, 0.7f, 0.9f, 0.8f, 1.0f}),
+            FinishFloatArray(
+                {0.0f, 0.0f, -100.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f}),
+        },
+        8);
+}
+
+std::shared_ptr<arrow::Table> MakeImbalancedTrainingTable();
+std::vector<size_t> CollectBatchSizes(cyxwiz::IBatcher& batcher);
+std::vector<float> CollectBatchFeatures(cyxwiz::IBatcher& batcher);
+std::vector<float> CollectBatchLabels(cyxwiz::IBatcher& batcher);
+
 std::shared_ptr<arrow::Table> MakeRegressionTable() {
     auto schema = arrow::schema({
         arrow::field("x0", arrow::float32()),
@@ -190,6 +273,157 @@ cyxwiz::TrainingConfiguration MakeConfig(const std::filesystem::path& checkpoint
     return config;
 }
 
+std::shared_ptr<cyxwiz::ArrowDataset> MakeGradientAccumulationDataset(
+    const json& test_case) {
+    const auto input_shape = FixtureShape(test_case.at("input"));
+    const auto input_values = FixtureFloats(test_case.at("input"));
+    const auto targets =
+        test_case.at("targets").at("values").get<std::vector<int64_t>>();
+    Check(input_shape.size() == 2 && input_shape[1] == 2 &&
+              input_shape[0] == targets.size(),
+          "gradient accumulation fixture must contain [N,2] inputs and N targets");
+
+    std::vector<float> x0(targets.size());
+    std::vector<float> x1(targets.size());
+    std::vector<float> labels(targets.size());
+    for (size_t row = 0; row < targets.size(); ++row) {
+        x0[row] = input_values[row * 2];
+        x1[row] = input_values[row * 2 + 1];
+        labels[row] = static_cast<float>(targets[row]);
+    }
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("label", arrow::float32()),
+    });
+    return std::make_shared<cyxwiz::ArrowDataset>(
+        arrow::Table::Make(
+            schema,
+            {FinishFloatArray(x0), FinishFloatArray(x1),
+             FinishFloatArray(labels)},
+            static_cast<int64_t>(targets.size())),
+        "gradient_accumulation_" + test_case.at("name").get<std::string>());
+}
+
+void TestGradientAccumulationParityCase(
+    const json& test_case,
+    const std::filesystem::path& work_dir) {
+    Check(test_case.value("operation", "").find("torch.nn.Linear") == 0,
+          "gradient accumulation case must use the PyTorch end-to-end oracle");
+    Check(test_case.value("loss_reduction", "") == "mean",
+          "gradient accumulation case must use mean CrossEntropy");
+    const auto dataset = MakeGradientAccumulationDataset(test_case);
+    auto config = MakeConfig(
+        work_dir / test_case.at("name").get<std::string>());
+    config.dataset_name = test_case.at("name").get<std::string>();
+    config.learning_rate = test_case.at("learning_rate").get<float>();
+    config.batch_size = test_case.at("microbatch_size").get<int>();
+    config.grad_accum_steps = test_case.at("grad_accum_steps").get<int>();
+    config.train_ratio = 1.0f;
+    config.val_ratio = 0.0f;
+    config.test_ratio = 0.0f;
+    config.has_data_split = true;
+    config.shuffle = false;
+    config.log_interval = 0;
+    config.forbid_native_cpu_fallback = true;
+    const auto class_weights =
+        test_case.value("class_weights", std::vector<float>{});
+    if (!class_weights.empty()) {
+        std::string serialized_weights = "[";
+        for (size_t i = 0; i < class_weights.size(); ++i) {
+            if (i > 0) serialized_weights += ",";
+            serialized_weights += std::to_string(class_weights[i]);
+        }
+        serialized_weights += "]";
+        config.loss_params["class_weights"] = serialized_weights;
+    }
+    config.loss_params["ignore_index"] =
+        std::to_string(test_case.value("ignore_index", -100));
+    config.loss_params["label_smoothing"] =
+        std::to_string(test_case.value("label_smoothing", 0.0f));
+
+    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    const auto& expected_steps = test_case.at("expected_steps");
+    const double tolerance =
+        test_case.at("tolerance").at("atol").get<double>();
+    size_t observed_step = 0;
+    int batch_callback_count = 0;
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(
+        1,
+        config.batch_size,
+        [&](int, int batch, int, float, float) {
+            ++batch_callback_count;
+            if (observed_step >= expected_steps.size() ||
+                batch != expected_steps[observed_step]
+                             .at("ending_microbatch").get<int>()) {
+                return;
+            }
+            const auto current = executor.GetMetrics();
+            Check(current.optimizer_step_count ==
+                      static_cast<int>(observed_step + 1),
+                  "optimizer step count must advance exactly at the PyTorch window boundary");
+            auto* model = executor.GetModel();
+            Check(model != nullptr,
+                  "accumulation parity callback should expose the active model");
+            const auto actual = model->GetParameters();
+            const auto& expected = expected_steps[observed_step];
+            CheckParameterFixture(
+                actual.at("layer0.bias"), expected.at("bias"), tolerance,
+                test_case.at("name").get<std::string>() +
+                    " step bias " + std::to_string(observed_step + 1));
+            ++observed_step;
+        },
+        nullptr,
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            final_metrics = metrics;
+        });
+
+    Check(observed_step == expected_steps.size(),
+          "executor must observe every PyTorch optimizer boundary");
+    Check(batch_callback_count ==
+              static_cast<int>(test_case.at("targets").at("shape")[0]
+                                   .get<size_t>() + config.batch_size - 1) /
+                  config.batch_size,
+          "executor must consume every configured microbatch exactly once");
+    Check(final_metrics.optimizer_step_count ==
+              test_case.at("expected_optimizer_step_count").get<int>(),
+          "final optimizer step count must match PyTorch");
+    CheckNear(final_metrics.train_accuracy,
+              test_case.at("expected_train_accuracy").get<double>(),
+              1e-6,
+              test_case.at("name").get<std::string>() +
+                  " train accuracy must exclude ignored targets");
+    Check(final_metrics.current_epoch == 1 &&
+              final_metrics.last_executed_epoch == 1 &&
+              final_metrics.terminal_status == "completed" &&
+              final_metrics.terminal_reason == "completed_all_epochs",
+          "gradient accumulation parity run must preserve terminal lifecycle truth");
+    auto* model = executor.GetModel();
+    Check(model != nullptr,
+          "completed accumulation parity run should retain its active model");
+    const auto final_parameters = model->GetParameters();
+    CheckParameterFixture(
+        final_parameters.at("layer0.bias"),
+        test_case.at("expected").at("bias"), tolerance,
+        test_case.at("name").get<std::string>() + " final bias");
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    Check(trace.native_cpu_fallback_count == 0,
+          "gradient accumulation parity must remain ArrayFire-resident");
+}
+
+void TestGradientAccumulationPyTorchParity(
+    const json& cases,
+    const std::filesystem::path& work_dir) {
+    const auto& matrix =
+        cases.at("gradient_accumulation_linear_ce_sgd_f32");
+    Check(matrix.is_array() && matrix.size() == 3,
+          "gradient accumulation fixture matrix must cover three lifecycle cases");
+    for (const auto& test_case : matrix) {
+        TestGradientAccumulationParityCase(test_case, work_dir);
+    }
+}
+
 cyxwiz::TrainingConfiguration MakeRegressionConfig(
     const std::filesystem::path& checkpoint_dir) {
     auto config = MakeConfig(checkpoint_dir);
@@ -203,6 +437,449 @@ cyxwiz::TrainingConfiguration MakeRegressionConfig(
     config.target.width = 2;
     config.layers.front().units = 2;
     return config;
+}
+
+cyxwiz::TrainingMetrics RunOneEpochForDataContract(
+    cyxwiz::TrainingConfiguration config,
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset) {
+    cyxwiz::TrainingExecutor executor(std::move(config), dataset, "label");
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(
+        1,
+        2,
+        nullptr,
+        nullptr,
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            final_metrics = metrics;
+        });
+    return final_metrics;
+}
+
+struct FullBatchMetricOracle {
+    float loss = 0.0f;
+    float accuracy = 0.0f;
+    float mae = 0.0f;
+    float rmse = 0.0f;
+};
+
+FullBatchMetricOracle EvaluateCurrentModelAsOneBatch(
+    cyxwiz::TrainingExecutor& executor,
+    const cyxwiz::TrainingConfiguration& config,
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const std::string& label_column,
+    cyxwiz::BatcherPhase phase = cyxwiz::BatcherPhase::Train) {
+    auto full_batch_config = config;
+    full_batch_config.batch_size =
+        static_cast<int>(dataset->GetNumRows());
+    auto batchers = cyxwiz::BuildArrowTrainingBatchers(
+        full_batch_config,
+        dataset,
+        label_column,
+        full_batch_config.batch_size);
+    cyxwiz::IBatcher* batcher = nullptr;
+    if (phase == cyxwiz::BatcherPhase::Val) {
+        batcher = batchers.val;
+    } else if (phase == cyxwiz::BatcherPhase::Test) {
+        batcher = batchers.test;
+    } else {
+        batcher = batchers.train;
+    }
+    Check(batcher != nullptr,
+          "full-batch metric oracle should resolve the requested role");
+    const size_t expected_observations = batcher->GetNumSamples();
+    auto batch = batcher->GetNextBatch();
+    Check(batch.IsValid() &&
+              batch.size == expected_observations,
+          "full-batch metric oracle should contain every requested-role row");
+
+    auto* model = executor.GetModel();
+    Check(model != nullptr,
+          "full-batch metric oracle requires the retained trained model");
+    const auto predictions = model->Forward(batch.data);
+    auto loss = cyxwiz::BuildLossFromConfig(config);
+    Check(loss != nullptr, "full-batch metric oracle should build the loss");
+    const auto loss_tensor = loss->Forward(predictions, batch.labels);
+
+    FullBatchMetricOracle oracle;
+    oracle.loss = loss_tensor.ReadData<float>()[0];
+    if (cyxwiz::UsesRegressionMetrics(config)) {
+        const float* prediction_values = predictions.ReadData<float>();
+        const float* target_values = batch.labels.ReadData<float>();
+        double absolute_error_sum = 0.0;
+        double squared_error_sum = 0.0;
+        for (size_t index = 0; index < predictions.NumElements(); ++index) {
+            const double error = static_cast<double>(prediction_values[index]) -
+                static_cast<double>(target_values[index]);
+            absolute_error_sum += std::abs(error);
+            squared_error_sum += error * error;
+        }
+        const double count = static_cast<double>(predictions.NumElements());
+        oracle.mae = static_cast<float>(absolute_error_sum / count);
+        oracle.rmse = static_cast<float>(std::sqrt(squared_error_sum / count));
+    } else {
+        const float* prediction_values = predictions.ReadData<float>();
+        if (batch.labels.GetDataType() == cyxwiz::DataType::Int32 ||
+            batch.labels.GetDataType() == cyxwiz::DataType::Int64) {
+            const auto loss_config = cyxwiz::ResolveLossConfiguration(config);
+            const int32_t* labels32 =
+                batch.labels.GetDataType() == cyxwiz::DataType::Int32
+                    ? batch.labels.ReadData<int32_t>()
+                    : nullptr;
+            const int64_t* labels64 =
+                batch.labels.GetDataType() == cyxwiz::DataType::Int64
+                    ? batch.labels.ReadData<int64_t>()
+                    : nullptr;
+            size_t correct = 0;
+            size_t valid = 0;
+            for (size_t row = 0; row < batch.size; ++row) {
+                const int64_t target = labels32
+                    ? static_cast<int64_t>(labels32[row])
+                    : labels64[row];
+                if (loss_config.ignore_index_applicable &&
+                    target == loss_config.ignore_index) {
+                    continue;
+                }
+                if (cyxwiz::ClassificationPredictedClass(
+                        prediction_values + row * config.output_size,
+                        config.output_size,
+                        cyxwiz::ClassificationDecisionModeForLoss(
+                            config.loss_type)) == target) {
+                    ++correct;
+                }
+                ++valid;
+            }
+            oracle.accuracy = valid > 0
+                ? static_cast<float>(correct) / static_cast<float>(valid)
+                : 0.0f;
+        } else {
+            const float* target_values = batch.labels.ReadData<float>();
+            oracle.accuracy = cyxwiz::ClassificationAccuracy(
+                prediction_values,
+                target_values,
+                batch.size,
+                config.output_size,
+                cyxwiz::ClassificationDecisionModeForLoss(config.loss_type));
+        }
+    }
+    return oracle;
+}
+
+void TestUnevenFinalBatchMetricAggregation(
+    const std::filesystem::path& work_dir) {
+    const auto classification_dataset =
+        std::make_shared<cyxwiz::ArrowDataset>(
+            MakeTrainingTable(), "uneven_classification_metrics");
+    auto classification_config = MakeConfig(
+        work_dir / "uneven-classification-metrics");
+    classification_config.train_ratio = 1.0f;
+    classification_config.val_ratio = 0.0f;
+    classification_config.test_ratio = 0.0f;
+    classification_config.has_data_split = true;
+    classification_config.batch_size = 4;
+    classification_config.learning_rate = 0.0f;
+    classification_config.log_interval = 0;
+    classification_config.forbid_native_cpu_fallback = true;
+
+    cyxwiz::TrainingExecutor classification_executor(
+        classification_config, classification_dataset, "label");
+    cyxwiz::TrainingMetrics classification_metrics;
+    classification_executor.Train(
+        1,
+        classification_config.batch_size,
+        nullptr,
+        nullptr,
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            classification_metrics = metrics;
+        });
+    const auto classification_trace =
+        cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    Check(classification_trace.native_cpu_fallback_count == 0,
+          "uneven classification aggregation should remain ArrayFire-resident");
+    const auto classification_oracle = EvaluateCurrentModelAsOneBatch(
+        classification_executor,
+        classification_config,
+        classification_dataset,
+        "label");
+    Check(classification_metrics.total_batches == 2 &&
+              classification_metrics.train_sample_count == 6,
+          "classification fixture should execute a 4+2 uneven epoch");
+    CheckNear(classification_metrics.train_loss,
+              classification_oracle.loss,
+              1e-5,
+              "classification epoch loss should equal the full-batch mean");
+    CheckNear(classification_metrics.train_accuracy,
+              classification_oracle.accuracy,
+              1e-6,
+              "classification epoch accuracy should use all six samples");
+    Check(classification_metrics.loss_history.size() == 1 &&
+              classification_metrics.accuracy_history.size() == 1,
+          "classification history should publish one aggregated epoch point");
+    CheckNear(classification_metrics.loss_history.front(),
+              classification_oracle.loss,
+              1e-5,
+              "classification history should retain the full-epoch mean");
+
+    auto weighted_config = classification_config;
+    weighted_config.checkpoint_dir =
+        (work_dir / "uneven-weighted-smoothed-classification").string();
+    weighted_config.loss_params["class_weights"] = "[1.0, 4.0]";
+    weighted_config.loss_params["label_smoothing"] = "0.2";
+    cyxwiz::TrainingExecutor weighted_executor(
+        weighted_config, classification_dataset, "label");
+    cyxwiz::TrainingMetrics weighted_metrics;
+    weighted_executor.Train(
+        1,
+        weighted_config.batch_size,
+        nullptr,
+        nullptr,
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            weighted_metrics = metrics;
+        });
+    const auto weighted_trace =
+        cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    Check(weighted_trace.native_cpu_fallback_count == 0,
+          "weighted smoothed aggregation should remain ArrayFire-resident");
+    const auto weighted_oracle = EvaluateCurrentModelAsOneBatch(
+        weighted_executor,
+        weighted_config,
+        classification_dataset,
+        "label");
+    Check(weighted_metrics.total_batches == 2 &&
+              weighted_metrics.train_sample_count == 6,
+          "weighted smoothed fixture should execute a 4+2 uneven epoch");
+    CheckNear(weighted_metrics.train_loss,
+              weighted_oracle.loss,
+              1e-5,
+              "weighted smoothed epoch loss should equal the full-batch mean");
+    Check(weighted_metrics.loss_history.size() == 1,
+          "weighted smoothed history should publish one epoch point");
+    CheckNear(weighted_metrics.loss_history.front(),
+              weighted_oracle.loss,
+              1e-5,
+              "weighted smoothed history should retain the full-epoch mean");
+
+    const auto validation_dataset = std::make_shared<cyxwiz::ArrowDataset>(
+        MakeUnevenValidationTable(), "uneven_validation_metrics");
+    auto validation_config = MakeConfig(
+        work_dir / "uneven-validation-metrics");
+    validation_config.train_ratio = 0.25f;
+    validation_config.val_ratio = 0.75f;
+    validation_config.test_ratio = 0.0f;
+    validation_config.has_data_split = true;
+    validation_config.batch_size = 4;
+    validation_config.learning_rate = 0.0f;
+    validation_config.log_interval = 0;
+    validation_config.forbid_native_cpu_fallback = true;
+    validation_config.loss_params["ignore_index"] = "-100";
+
+    cyxwiz::TrainingExecutor validation_executor(
+        validation_config, validation_dataset, "label");
+    cyxwiz::TrainingMetrics validation_metrics;
+    validation_executor.Train(
+        1,
+        validation_config.batch_size,
+        nullptr,
+        nullptr,
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            validation_metrics = metrics;
+        });
+    const auto validation_trace =
+        cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    Check(validation_trace.native_cpu_fallback_count == 0,
+          "uneven validation aggregation should remain ArrayFire-resident");
+    const auto validation_oracle = EvaluateCurrentModelAsOneBatch(
+        validation_executor,
+        validation_config,
+        validation_dataset,
+        "label",
+        cyxwiz::BatcherPhase::Val);
+    Check(validation_metrics.val_sample_count == 6 &&
+              validation_metrics.has_validation_metrics,
+          "validation fixture should evaluate a 4+2 uneven role");
+    CheckNear(validation_metrics.val_loss,
+              validation_oracle.loss,
+              1e-5,
+              "validation loss should equal the full-role batch mean");
+    CheckNear(validation_metrics.val_accuracy,
+              validation_oracle.accuracy,
+              1e-6,
+              "validation accuracy should use five valid targets and exclude "
+              "the ignored row");
+    Check(validation_metrics.val_loss_history.size() == 1 &&
+              validation_metrics.val_accuracy_history.size() == 1,
+          "validation history should publish one aggregated role point");
+
+    const auto regression_dataset = std::make_shared<cyxwiz::ArrowDataset>(
+        MakeRegressionTable(), "uneven_regression_metrics");
+    auto regression_config = MakeRegressionConfig(
+        work_dir / "uneven-regression-metrics");
+    regression_config.train_ratio = 1.0f;
+    regression_config.val_ratio = 0.0f;
+    regression_config.test_ratio = 0.0f;
+    regression_config.has_data_split = true;
+    regression_config.batch_size = 4;
+    regression_config.learning_rate = 0.0f;
+    regression_config.log_interval = 0;
+    regression_config.forbid_native_cpu_fallback = true;
+
+    cyxwiz::TrainingExecutor regression_executor(
+        regression_config, regression_dataset, "target");
+    cyxwiz::TrainingMetrics regression_metrics;
+    regression_executor.Train(
+        1,
+        regression_config.batch_size,
+        nullptr,
+        nullptr,
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            regression_metrics = metrics;
+        });
+    const auto regression_trace =
+        cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    Check(regression_trace.native_cpu_fallback_count == 0,
+          "uneven regression aggregation should remain ArrayFire-resident");
+    const auto regression_oracle = EvaluateCurrentModelAsOneBatch(
+        regression_executor,
+        regression_config,
+        regression_dataset,
+        "target");
+    Check(regression_metrics.total_batches == 2 &&
+              regression_metrics.train_sample_count == 6,
+          "regression fixture should execute a 4+2 uneven epoch");
+    CheckNear(regression_metrics.train_loss,
+              regression_oracle.loss,
+              1e-5,
+              "regression epoch loss should equal the full-batch mean");
+    CheckNear(regression_metrics.train_mae,
+              regression_oracle.mae,
+              1e-5,
+              "regression epoch MAE should use all output values");
+    CheckNear(regression_metrics.train_rmse,
+              regression_oracle.rmse,
+              1e-5,
+              "regression epoch RMSE should use all output values");
+}
+
+void TestWeightedSamplerEpochAndUpdateCount(
+    const std::filesystem::path& work_dir) {
+    auto dataset = std::make_shared<cyxwiz::ArrowDataset>(
+        MakeImbalancedTrainingTable(), "weighted_sampler_contract");
+    auto config = MakeConfig(work_dir / "weighted-sampler");
+    config.train_ratio = 1.0f;
+    config.val_ratio = 0.0f;
+    config.test_ratio = 0.0f;
+    config.has_data_split = true;
+    config.batch_size = 2;
+    config.shuffle = false;
+    config.balance_classes = true;
+    config.balance_mode = "weighted_sampler";
+    config.balance_target = "max";
+    config.balance_seed = 23;
+
+    auto first = cyxwiz::BuildArrowTrainingBatchers(
+        config, dataset, "label", config.batch_size);
+    auto second = cyxwiz::BuildArrowTrainingBatchers(
+        config, dataset, "label", config.batch_size);
+    Check(first.num_train_samples == 5 && second.num_train_samples == 5,
+          "weighted sampling should preserve the configured five-sample "
+          "epoch instead of expanding it to oversampling size");
+    Check(first.train->GetNumBatches() == 3 &&
+              second.train->GetNumBatches() == 3,
+          "weighted sampling should preserve the baseline partial-batch count");
+    const auto first_labels = CollectBatchLabels(*first.train);
+    const auto second_labels = CollectBatchLabels(*second.train);
+    Check(first_labels == second_labels && first_labels.size() == 10,
+          "weighted sampling should be deterministic by seed and emit five "
+          "two-class targets");
+
+    auto baseline_config = config;
+    baseline_config.balance_classes = false;
+    baseline_config.balance_mode = "none";
+    baseline_config.checkpoint_dir =
+        (work_dir / "weighted-sampler-baseline").string();
+    const auto baseline = RunOneEpochForDataContract(
+        baseline_config, dataset);
+    const auto weighted = RunOneEpochForDataContract(config, dataset);
+    Check(baseline.optimizer_step_count == 3 &&
+              weighted.optimizer_step_count == 3 &&
+              baseline.total_batches == weighted.total_batches,
+          "weighted sampling should preserve one optimizer update per "
+          "baseline full/partial batch");
+}
+
+void TestArrowParquetBatchBoundaryParity(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& arrow_dataset,
+    const std::shared_ptr<cyxwiz::ParquetBackedDataset>& parquet_dataset,
+    const std::filesystem::path& work_dir) {
+    auto config = MakeConfig(work_dir / "batch-boundary-parity");
+    config.train_ratio = 1.0f;
+    config.val_ratio = 0.0f;
+    config.test_ratio = 0.0f;
+    config.has_data_split = true;
+    config.batch_size = 4;
+    config.shuffle = false;
+
+    auto arrow_keep = cyxwiz::BuildArrowTrainingBatchers(
+        config, arrow_dataset, "label", config.batch_size);
+    auto parquet_keep = cyxwiz::BuildParquetTrainingBatchers(
+        config, parquet_dataset, "label", config.batch_size);
+    Check(arrow_keep.num_train_samples == 6 &&
+              parquet_keep.num_train_samples == 6,
+          "Arrow and Parquet should expose the same six-sample Train role");
+    Check(CollectBatchSizes(*arrow_keep.train) ==
+              std::vector<size_t>({4, 2}) &&
+              CollectBatchSizes(*parquet_keep.train) ==
+              std::vector<size_t>({4, 2}),
+          "Arrow and Parquet should both keep the final partial batch");
+
+    config.drop_last = true;
+    auto arrow_drop = cyxwiz::BuildArrowTrainingBatchers(
+        config, arrow_dataset, "label", config.batch_size);
+    auto parquet_drop = cyxwiz::BuildParquetTrainingBatchers(
+        config, parquet_dataset, "label", config.batch_size);
+    Check(arrow_drop.train->GetNumBatches() == 1 &&
+              parquet_drop.train->GetNumBatches() == 1,
+          "Arrow and Parquet drop_last should floor the Train batch count");
+    Check(CollectBatchSizes(*arrow_drop.train) ==
+              std::vector<size_t>({4}) &&
+              CollectBatchSizes(*parquet_drop.train) ==
+              std::vector<size_t>({4}),
+          "Arrow and Parquet drop_last should suppress the same partial batch");
+}
+
+void TestArrowParquetSeedDeterminism(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& arrow_dataset,
+    const std::shared_ptr<cyxwiz::ParquetBackedDataset>& parquet_dataset,
+    const std::filesystem::path& work_dir) {
+    auto config = MakeConfig(work_dir / "seed-determinism");
+    config.train_ratio = 1.0f;
+    config.val_ratio = 0.0f;
+    config.test_ratio = 0.0f;
+    config.has_data_split = true;
+    config.batch_size = 2;
+    config.shuffle = true;
+    config.dataloader_seed = 2468;
+
+    auto first_arrow = cyxwiz::BuildArrowTrainingBatchers(
+        config, arrow_dataset, "label", config.batch_size);
+    auto second_arrow = cyxwiz::BuildArrowTrainingBatchers(
+        config, arrow_dataset, "label", config.batch_size);
+    Check(CollectBatchFeatures(*first_arrow.train) ==
+              CollectBatchFeatures(*second_arrow.train),
+          "matching Arrow seeds should reproduce the complete sample order");
+    Check(CollectBatchLabels(*first_arrow.train) ==
+              CollectBatchLabels(*second_arrow.train),
+          "matching Arrow seeds should reproduce the complete label order");
+
+    auto first_parquet = cyxwiz::BuildParquetTrainingBatchers(
+        config, parquet_dataset, "label", config.batch_size);
+    auto second_parquet = cyxwiz::BuildParquetTrainingBatchers(
+        config, parquet_dataset, "label", config.batch_size);
+    Check(CollectBatchFeatures(*first_parquet.train) ==
+              CollectBatchFeatures(*second_parquet.train),
+          "matching Parquet seeds should reproduce the complete sample order");
+    Check(CollectBatchLabels(*first_parquet.train) ==
+              CollectBatchLabels(*second_parquet.train),
+          "matching Parquet seeds should reproduce the complete label order");
 }
 
 void TestSequenceBatchContract() {
@@ -310,6 +987,132 @@ void TestSequenceBatcherDropLast() {
           "drop_last first batch should be full");
     Check(!batcher.GetNextSequenceBatch().IsValid(),
           "drop_last should suppress partial final batch");
+}
+
+void TestSequenceBatcherSeedDeterminism() {
+    const std::vector<cyxwiz::SequenceSample> samples = {
+        {{11}, {}, {1}},
+        {{21}, {}, {2}},
+        {{31}, {}, {3}},
+        {{41}, {}, {4}},
+        {{51}, {}, {5}},
+        {{61}, {}, {6}},
+    };
+
+    cyxwiz::SequenceBatcherConfig config;
+    config.batch_size = 2;
+    config.max_sequence_length = 1;
+    config.shuffle = true;
+    config.seed = 31415;
+    cyxwiz::SequenceBatcher first(samples, config);
+    cyxwiz::SequenceBatcher second(samples, config);
+
+    auto collect_words = [](cyxwiz::SequenceBatcher& batcher) {
+        std::vector<int64_t> words;
+        batcher.Reset();
+        while (!batcher.IsEpochComplete()) {
+            const auto batch = batcher.GetNextSequenceBatch();
+            Check(batch.IsValid(), "seeded sequence batch should be valid");
+            const int64_t* values = batch.word_ids.ReadData<int64_t>();
+            words.insert(words.end(), values,
+                         values + batch.word_ids.NumElements());
+        }
+        return words;
+    };
+
+    Check(collect_words(first) == collect_words(second),
+          "matching SequenceBatcher seeds should reproduce the complete "
+          "sample order");
+}
+
+std::shared_ptr<arrow::Table> MakeImbalancedTrainingTable() {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("label", arrow::float32()),
+    });
+
+    return arrow::Table::Make(
+        schema,
+        {
+            FinishFloatArray({0.0f, 0.1f, 0.2f, 0.3f, 1.0f}),
+            FinishFloatArray({0.0f, 0.2f, 0.4f, 0.6f, 1.0f}),
+            FinishFloatArray({0.0f, 0.0f, 0.0f, 0.0f, 1.0f}),
+        },
+        5);
+}
+
+std::vector<size_t> CollectBatchSizes(cyxwiz::IBatcher& batcher) {
+    std::vector<size_t> sizes;
+    batcher.Reset();
+    while (!batcher.IsEpochComplete()) {
+        auto batch = batcher.GetNextBatch();
+        if (!batch.IsValid()) {
+            break;
+        }
+        sizes.push_back(batch.size);
+    }
+    return sizes;
+}
+
+std::vector<float> CollectBatchFeatures(cyxwiz::IBatcher& batcher) {
+    std::vector<float> features;
+    batcher.Reset();
+    while (!batcher.IsEpochComplete()) {
+        auto batch = batcher.GetNextBatch();
+        if (!batch.IsValid()) {
+            break;
+        }
+        const float* values = batch.data.ReadData<float>();
+        features.insert(features.end(), values,
+                        values + batch.data.NumElements());
+    }
+    return features;
+}
+
+std::vector<float> CollectBatchLabels(cyxwiz::IBatcher& batcher) {
+    std::vector<float> labels;
+    batcher.Reset();
+    while (!batcher.IsEpochComplete()) {
+        auto batch = batcher.GetNextBatch();
+        if (!batch.IsValid()) {
+            break;
+        }
+        const float* values = batch.labels.ReadData<float>();
+        labels.insert(labels.end(), values,
+                      values + batch.labels.NumElements());
+    }
+    return labels;
+}
+
+void TestSequencePhaseSwitchRequiresExplicitReset() {
+    const std::vector<cyxwiz::SequenceSample> samples = {
+        {{1, 2}, {}, {0, 1}},
+        {{3, 4}, {}, {1, 0}},
+        {{5, 6}, {}, {0, 1}},
+    };
+
+    cyxwiz::SequenceBatcherConfig config;
+    config.batch_size = 1;
+    config.max_sequence_length = 2;
+    config.shuffle = true;
+    config.seed = 17;
+    config.train_indices = {0, 1};
+    config.val_indices = {2};
+
+    cyxwiz::SequenceBatcher batcher(samples, config);
+    while (!batcher.IsEpochComplete()) {
+        (void)batcher.GetNextSequenceBatch();
+    }
+    Check(batcher.IsEpochComplete(),
+          "sequence phase contract fixture should consume the Train phase");
+
+    batcher.SetPhase(cyxwiz::BatcherPhase::Val);
+    Check(batcher.IsEpochComplete(),
+          "SequenceBatcher::SetPhase must not implicitly reset iteration");
+    batcher.Reset();
+    Check(!batcher.IsEpochComplete() && batcher.GetNumSamples() == 1,
+          "an explicit Reset should start the selected sequence phase");
 }
 
 void TestSequenceTagMetrics() {
@@ -664,6 +1467,11 @@ void TestSequenceTrainingExecutor() {
           "sequence executor should score train tokens");
     Check(final_metrics.val_token_count == 8,
           "sequence executor should score validation tokens");
+    Check(final_metrics.test_sample_count == 0 &&
+              !final_metrics.has_test_metrics &&
+              final_metrics.test_token_count == 0,
+          "sequence executor without an explicit Test phase must not "
+          "evaluate Train data as held-out Test");
     Check(final_metrics.train_token_accuracy == final_metrics.train_accuracy,
           "sequence executor should mirror token accuracy to train_accuracy");
     Check(final_metrics.val_token_accuracy == final_metrics.val_accuracy,
@@ -739,6 +1547,1487 @@ void TestArrowDataLoaderSeedDeterminism(
     }
 }
 
+class CountingTrainingHook final
+    : public cyxwiz::plugin::ITrainingHook {
+public:
+    void OnTrainingStart(cyxwiz::plugin::TrainingContext&) override {
+        ++training_start_count;
+    }
+
+    void OnTrainingEnd(cyxwiz::plugin::TrainingContext&) override {
+        ++training_end_count;
+    }
+
+    void OnEpochStart(cyxwiz::plugin::TrainingContext& context) override {
+        epoch_start_epochs.push_back(context.current_epoch);
+    }
+
+    void OnEpochEnd(cyxwiz::plugin::TrainingContext& context) override {
+        epoch_end_epochs.push_back(context.current_epoch);
+        epoch_end_val_losses.push_back(context.val_loss);
+    }
+
+    int training_start_count = 0;
+    int training_end_count = 0;
+    std::vector<int> epoch_start_epochs;
+    std::vector<int> epoch_end_epochs;
+    std::vector<float> epoch_end_val_losses;
+};
+
+void TestValidationEarlyStoppingLifecycle(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const std::filesystem::path& work_dir,
+    bool save_best_checkpoint) {
+    const std::string label = save_best_checkpoint
+        ? "early stopping with best checkpoint"
+        : "early stopping without best checkpoint";
+    auto config = MakeConfig(
+        work_dir /
+        (save_best_checkpoint ? "early-stop-with-checkpoint"
+                              : "early-stop-without-checkpoint"));
+    config.epochs = 5;
+    config.learning_rate = 0.0f;
+    config.validation_freq = 1;
+    config.early_stopping_patience = 1;
+    config.save_best_checkpoint = save_best_checkpoint;
+    config.log_interval = 0;
+
+    CountingTrainingHook hook;
+    const std::string plugin_id = save_best_checkpoint
+        ? "plan39.lifecycle.plateau-with-checkpoint"
+        : "plan39.lifecycle.plateau-without-checkpoint";
+    auto& hooks = cyxwiz::plugin::PluginTrainingHookManager::Instance();
+    hooks.RegisterHook(plugin_id, &hook);
+
+    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    int epoch_callback_count = 0;
+    int completion_callback_count = 0;
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(
+        config.epochs,
+        config.batch_size,
+        nullptr,
+        [&](int epoch, float, float, float val_loss, float, float) {
+            ++epoch_callback_count;
+            Check(epoch == epoch_callback_count,
+                  label + " should report ordered epoch callbacks");
+            Check(std::isfinite(val_loss),
+                  label + " should report finite validation loss");
+        },
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            ++completion_callback_count;
+            final_metrics = metrics;
+        });
+    hooks.RemoveByPlugin(plugin_id);
+
+    Check(epoch_callback_count == 2,
+          label + " should stop after the first non-improving validation");
+    Check(completion_callback_count == 1,
+          label + " should invoke completion exactly once");
+    Check(final_metrics.is_complete && !final_metrics.is_training,
+          label + " should finish the executor lifecycle");
+    Check(final_metrics.current_epoch == 2 &&
+              final_metrics.last_executed_epoch == 2,
+          label + " should preserve the actual stopping epoch");
+    Check(final_metrics.total_epochs == 5,
+          label + " should preserve the configured epoch count");
+    Check(final_metrics.loss_history.size() == 2 &&
+              final_metrics.val_loss_history.size() == 2,
+          label + " should retain complete executed-run history");
+    Check(final_metrics.terminal_status == "early_stopped",
+          label + " should report early_stopped");
+    Check(final_metrics.terminal_reason ==
+              "validation_loss_plateau_patience_1",
+          label + " should report the exact plateau reason");
+    Check(hook.training_start_count == 1 &&
+              hook.training_end_count == 1 &&
+              hook.epoch_start_epochs == std::vector<int>({1, 2}) &&
+              hook.epoch_end_epochs == std::vector<int>({1, 2}),
+          label + " should close every fully executed plugin epoch hook");
+    Check(hook.epoch_end_val_losses.size() == 2 &&
+              std::isfinite(hook.epoch_end_val_losses[0]) &&
+              std::isfinite(hook.epoch_end_val_losses[1]),
+          label + " should publish validation values to both epoch-end hooks");
+
+    if (save_best_checkpoint) {
+        Check(!final_metrics.checkpoint_used.empty(),
+              label + " should restore a concrete best checkpoint");
+        Check(final_metrics.restored_checkpoint_epoch == 1,
+              label + " should report the independently restored epoch");
+        Check(final_metrics.restored_checkpoint_step > 0,
+              label + " should report the restored optimizer/global step");
+        Check(final_metrics.active_model_provenance ==
+                  "restored_best_checkpoint",
+              label + " should report restored active-model provenance");
+        Check(final_metrics.current_epoch !=
+                  final_metrics.restored_checkpoint_epoch,
+              label + " must not rewrite run history with checkpoint epoch");
+    } else {
+        Check(final_metrics.checkpoint_used.empty(),
+              label + " should not invent a checkpoint path");
+        Check(final_metrics.restored_checkpoint_epoch == 0 &&
+                  final_metrics.restored_checkpoint_step == 0,
+              label + " should not report restored checkpoint state");
+        Check(final_metrics.active_model_provenance == "run_final_state",
+              label + " should retain final-run model provenance");
+    }
+
+    const auto crash_run = cyxwiz::CrashRunRecorder::LoadLastRun();
+    Check(crash_run.has_value(), label + " should persist debug-run truth");
+    Check(crash_run->status == "early_stopped" &&
+              crash_run->terminal_reason ==
+                  "validation_loss_plateau_patience_1",
+          label + " debug-run status/reason mismatch");
+    Check(crash_run->epoch == 2 && crash_run->epochs == 5,
+          label + " debug-run epoch truth mismatch");
+    Check(crash_run->last_executed_epoch == 2,
+          label + " debug-run last-executed epoch truth mismatch");
+    if (save_best_checkpoint) {
+        Check(crash_run->checkpoint_used == final_metrics.checkpoint_used &&
+                  crash_run->restored_checkpoint_epoch == 1 &&
+                  crash_run->restored_checkpoint_step > 0 &&
+                  crash_run->active_model_provenance ==
+                      "restored_best_checkpoint",
+              label + " debug-run checkpoint provenance mismatch");
+    } else {
+        Check(crash_run->checkpoint_used.empty() &&
+                  crash_run->restored_checkpoint_epoch == 0 &&
+                  crash_run->restored_checkpoint_step == 0 &&
+                  crash_run->active_model_provenance == "run_final_state",
+              label + " debug-run should preserve final-run provenance");
+    }
+
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    Check(trace.available && trace.status == "early_stopped",
+          label + " trace should finish as early_stopped");
+    bool found_terminal_event = false;
+    bool found_restore_event = false;
+    for (const auto& event : trace.recent_events) {
+        if (event.stage == "EarlyStopped" && event.epoch == 2 &&
+            event.status == "early_stopped" &&
+            event.terminal_reason ==
+                "validation_loss_plateau_patience_1") {
+            found_terminal_event = true;
+        }
+        if (event.stage == "CheckpointRestored" && event.epoch == 1 &&
+            event.checkpoint_path == final_metrics.checkpoint_used &&
+            event.metric_scope == "active_model") {
+            found_restore_event = true;
+        }
+    }
+    Check(found_terminal_event,
+          label + " trace should contain the exact terminal event");
+    Check(found_restore_event == save_best_checkpoint,
+          label + " trace checkpoint-restored provenance mismatch");
+}
+
+void CheckTerminalEvidence(const std::string& expected_status,
+                           const std::string& expected_reason,
+                           int expected_epoch,
+                           int expected_last_executed_epoch,
+                           const std::string& label) {
+    const auto crash_run = cyxwiz::CrashRunRecorder::LoadLastRun();
+    Check(crash_run.has_value(), label + " should persist debug-run truth");
+    Check(crash_run->status == expected_status,
+          label + " debug-run status mismatch");
+    Check(crash_run->terminal_reason == expected_reason,
+          label + " debug-run terminal reason mismatch");
+    Check(crash_run->epoch == expected_epoch,
+          label + " debug-run terminal epoch mismatch");
+    Check(crash_run->last_executed_epoch ==
+              expected_last_executed_epoch,
+          label + " debug-run last-executed epoch mismatch");
+    if (expected_status == "failed") {
+        Check(crash_run->failure_reason == expected_reason,
+              label + " debug-run failure reason mismatch");
+    }
+
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    Check(trace.available && trace.status == expected_status,
+          label + " trace status mismatch");
+    int terminal_event_count = 0;
+    for (const auto& event : trace.recent_events) {
+        if ((event.stage == "EarlyStopped" ||
+             event.stage == "TrainingTerminal") &&
+            event.status == expected_status &&
+            event.terminal_reason == expected_reason) {
+            ++terminal_event_count;
+            Check(event.epoch == expected_epoch,
+                  label + " trace terminal epoch mismatch");
+        }
+    }
+    Check(terminal_event_count == 1,
+          label + " should record exactly one canonical terminal event");
+}
+
+void CheckHeldOutTestEvidence(
+    const cyxwiz::TrainingMetrics& metrics,
+    int expected_checkpoint_epoch,
+    const std::string& label) {
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    int restored_index = -1;
+    int test_index = -1;
+    int index = 0;
+    for (const auto& event : trace.recent_events) {
+        if (event.stage == "CheckpointRestored") {
+            restored_index = index;
+        }
+        if (event.stage == "HeldOutTestCompleted") {
+            Check(test_index < 0,
+                  label + " should record one held-out Test event");
+            test_index = index;
+            CheckNear(event.loss, metrics.test_loss, 1e-6,
+                      label + " trace Test loss");
+            CheckNear(event.accuracy, metrics.test_accuracy, 1e-6,
+                      label + " trace Test accuracy");
+            Check(event.metric_scope == "test",
+                  label + " trace should classify held-out metrics as Test");
+            Check(event.checkpoint_path == metrics.checkpoint_used,
+                  label + " trace should identify the evaluated model checkpoint");
+            Check(event.message.find(metrics.active_model_provenance) !=
+                      std::string::npos,
+                  label + " trace should identify active-model provenance");
+        }
+        ++index;
+    }
+
+    Check(test_index >= 0,
+          label + " should trace held-out Test completion");
+    if (expected_checkpoint_epoch > 0) {
+        Check(metrics.restored_checkpoint_epoch == expected_checkpoint_epoch &&
+                  metrics.active_model_provenance ==
+                      "restored_best_checkpoint" &&
+                  !metrics.checkpoint_used.empty(),
+              label + " should preserve restored model provenance");
+        Check(restored_index >= 0 && restored_index < test_index,
+              label + " must restore the best checkpoint before held-out Test");
+    } else {
+        Check(restored_index < 0 && metrics.checkpoint_used.empty() &&
+                  metrics.restored_checkpoint_epoch == 0 &&
+                  metrics.active_model_provenance == "run_final_state",
+              label + " should evaluate the final run state without restore");
+    }
+}
+
+void CheckScheduledValidationValues(
+    const std::vector<float>& values,
+    const std::vector<int>& validation_epochs,
+    int total_epochs,
+    const std::string& label) {
+    Check(values.size() == static_cast<size_t>(total_epochs),
+          label + " should publish one value per executed epoch");
+    for (int epoch = 1; epoch <= total_epochs; ++epoch) {
+        const bool should_have_validation =
+            std::find(validation_epochs.begin(), validation_epochs.end(), epoch) !=
+            validation_epochs.end();
+        if (should_have_validation) {
+            Check(std::isfinite(values[static_cast<size_t>(epoch - 1)]) &&
+                      values[static_cast<size_t>(epoch - 1)] >= 0.0f,
+                  label + " should publish finite validation at epoch " +
+                      std::to_string(epoch));
+        } else {
+            Check(values[static_cast<size_t>(epoch - 1)] == -1.0f,
+                  label + " should publish the skipped-validation sentinel at epoch " +
+                      std::to_string(epoch));
+        }
+    }
+}
+
+void TestScheduledValidationLifecycle(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const std::filesystem::path& work_dir) {
+    auto config = MakeConfig(work_dir / "scheduled-final-validation");
+    config.epochs = 5;
+    config.learning_rate = 0.0f;
+    config.validation_freq = 2;
+    config.early_stopping_patience = 0;
+    config.save_best_checkpoint = false;
+    config.log_interval = 0;
+
+    CountingTrainingHook hook;
+    constexpr const char* kPluginId =
+        "plan39.lifecycle.scheduled-final-validation";
+    auto& hooks = cyxwiz::plugin::PluginTrainingHookManager::Instance();
+    hooks.RegisterHook(kPluginId, &hook);
+
+    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    int batch_callback_count = 0;
+    int completion_callback_count = 0;
+    std::vector<int> callback_epochs;
+    std::vector<float> callback_val_losses;
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(
+        config.epochs,
+        config.batch_size,
+        [&](int, int, int, float, float) { ++batch_callback_count; },
+        [&](int epoch, float, float, float val_loss, float, float) {
+            callback_epochs.push_back(epoch);
+            callback_val_losses.push_back(val_loss);
+        },
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            ++completion_callback_count;
+            final_metrics = metrics;
+        });
+    hooks.RemoveByPlugin(kPluginId);
+
+    const std::vector<int> expected_epochs = {1, 2, 3, 4, 5};
+    const std::vector<int> validation_epochs = {2, 4, 5};
+    Check(batch_callback_count == 10,
+          "scheduled validation should keep every batch callback responsive");
+    Check(completion_callback_count == 1,
+          "scheduled validation should invoke completion exactly once");
+    Check(callback_epochs == expected_epochs,
+          "scheduled validation should preserve ordered epoch callbacks");
+    CheckScheduledValidationValues(
+        callback_val_losses, validation_epochs, 5,
+        "scheduled public epoch callback");
+    Check(hook.training_start_count == 1 && hook.training_end_count == 1 &&
+              hook.epoch_start_epochs == expected_epochs &&
+              hook.epoch_end_epochs == expected_epochs,
+          "scheduled validation should preserve symmetric plugin lifecycle hooks");
+    CheckScheduledValidationValues(
+        hook.epoch_end_val_losses, validation_epochs, 5,
+        "scheduled plugin epoch-end callback");
+    Check(final_metrics.terminal_status == "completed" &&
+              final_metrics.terminal_reason == "completed_all_epochs" &&
+              final_metrics.last_executed_epoch == 5 &&
+              final_metrics.loss_history.size() == 5 &&
+              final_metrics.val_loss_history.size() == 3,
+          "scheduled validation should retain exact final/history truth");
+
+    std::vector<int> traced_validation_epochs;
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    for (const auto& event : trace.recent_events) {
+        if (event.stage == "ValidationCompleted") {
+            traced_validation_epochs.push_back(event.epoch);
+        }
+    }
+    Check(traced_validation_epochs == validation_epochs,
+          "scheduled validation trace should contain epochs 2, 4, and final epoch 5");
+    CheckTerminalEvidence(
+        "completed", "completed_all_epochs", 5, 5,
+        "scheduled final validation");
+}
+
+void TestScheduledValidationPatienceLifecycle(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const std::filesystem::path& work_dir) {
+    auto config = MakeConfig(work_dir / "scheduled-validation-patience");
+    config.epochs = 7;
+    config.learning_rate = 0.0f;
+    config.validation_freq = 2;
+    config.early_stopping_patience = 2;
+    config.save_best_checkpoint = false;
+    config.log_interval = 0;
+
+    CountingTrainingHook hook;
+    constexpr const char* kPluginId =
+        "plan39.lifecycle.scheduled-validation-patience";
+    auto& hooks = cyxwiz::plugin::PluginTrainingHookManager::Instance();
+    hooks.RegisterHook(kPluginId, &hook);
+
+    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    std::vector<int> callback_epochs;
+    std::vector<float> callback_val_losses;
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(
+        config.epochs,
+        config.batch_size,
+        nullptr,
+        [&](int epoch, float, float, float val_loss, float, float) {
+            callback_epochs.push_back(epoch);
+            callback_val_losses.push_back(val_loss);
+        },
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            final_metrics = metrics;
+        });
+    hooks.RemoveByPlugin(kPluginId);
+
+    const std::vector<int> expected_epochs = {1, 2, 3, 4, 5, 6};
+    const std::vector<int> validation_epochs = {2, 4, 6};
+    Check(callback_epochs == expected_epochs &&
+              hook.epoch_start_epochs == expected_epochs &&
+              hook.epoch_end_epochs == expected_epochs,
+          "scheduled patience should close all six fully executed epochs");
+    CheckScheduledValidationValues(
+        callback_val_losses, validation_epochs, 6,
+        "scheduled patience public epoch callback");
+    CheckScheduledValidationValues(
+        hook.epoch_end_val_losses, validation_epochs, 6,
+        "scheduled patience plugin epoch-end callback");
+    Check(final_metrics.terminal_status == "early_stopped" &&
+              final_metrics.terminal_reason ==
+                  "validation_loss_plateau_patience_2" &&
+              final_metrics.last_executed_epoch == 6 &&
+              final_metrics.loss_history.size() == 6 &&
+              final_metrics.val_loss_history.size() == 3,
+          "scheduled patience should count only validation epochs and stop at epoch 6");
+    CheckTerminalEvidence(
+        "early_stopped", "validation_loss_plateau_patience_2", 6, 6,
+        "scheduled validation patience");
+}
+
+void CheckExternalResolvedRoleLifecycleCase(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    cyxwiz::TrainingConfiguration config,
+    const std::string& case_name,
+    const std::vector<int>& expected_epochs,
+    const std::vector<int>& validation_epochs,
+    const std::string& expected_terminal_status,
+    const std::string& expected_terminal_reason) {
+    auto batchers = cyxwiz::BuildArrowTrainingBatchers(
+        config, dataset, "label", config.batch_size);
+    auto resolved = cyxwiz::TakeResolvedExternalBatchers(
+        std::move(batchers));
+    Check(resolved.train != nullptr && resolved.dev != nullptr &&
+              resolved.test != nullptr,
+          case_name + " should resolve explicit Train/Dev/Test batchers");
+
+    CountingTrainingHook hook;
+    const std::string plugin_id =
+        "plan39.lifecycle.external-resolved." + case_name;
+    auto& hooks = cyxwiz::plugin::PluginTrainingHookManager::Instance();
+    hooks.RegisterHook(plugin_id, &hook);
+
+    cyxwiz::TrainingExecutor executor(config, std::move(resolved));
+    int batch_callback_count = 0;
+    int completion_callback_count = 0;
+    std::vector<int> callback_epochs;
+    std::vector<float> callback_val_losses;
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(
+        config.epochs,
+        config.batch_size,
+        [&](int, int, int, float, float) { ++batch_callback_count; },
+        [&](int epoch, float, float, float val_loss, float, float) {
+            callback_epochs.push_back(epoch);
+            callback_val_losses.push_back(val_loss);
+        },
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            ++completion_callback_count;
+            final_metrics = metrics;
+        });
+    hooks.RemoveByPlugin(plugin_id);
+
+    Check(final_metrics.total_batches == 2 &&
+              batch_callback_count ==
+                  final_metrics.total_batches *
+                      static_cast<int>(expected_epochs.size()),
+          case_name + " should invoke one callback for each external Train batch");
+    Check(completion_callback_count == 1,
+          case_name + " should invoke completion exactly once");
+    Check(callback_epochs == expected_epochs,
+          case_name + " should preserve ordered public epoch callbacks");
+    CheckScheduledValidationValues(
+        callback_val_losses,
+        validation_epochs,
+        static_cast<int>(expected_epochs.size()),
+        case_name + " public epoch callback");
+    Check(hook.training_start_count == 1 && hook.training_end_count == 1 &&
+              hook.epoch_start_epochs == expected_epochs &&
+              hook.epoch_end_epochs == expected_epochs,
+          case_name + " should preserve symmetric plugin lifecycle hooks");
+    CheckScheduledValidationValues(
+        hook.epoch_end_val_losses,
+        validation_epochs,
+        static_cast<int>(expected_epochs.size()),
+        case_name + " plugin epoch-end callback");
+    Check(final_metrics.train_sample_count == 3 &&
+              final_metrics.val_sample_count == 1 &&
+              final_metrics.test_sample_count == 2,
+          case_name + " should retain resolved external role sample counts");
+    Check(final_metrics.last_executed_epoch == expected_epochs.back() &&
+              final_metrics.loss_history.size() == expected_epochs.size() &&
+              final_metrics.val_loss_history.size() == validation_epochs.size(),
+          case_name + " should preserve exact external run history");
+    Check(final_metrics.terminal_status == expected_terminal_status &&
+              final_metrics.terminal_reason == expected_terminal_reason,
+          case_name + " should preserve exact terminal truth");
+
+    std::vector<int> traced_validation_epochs;
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    for (const auto& event : trace.recent_events) {
+        if (event.stage == "ValidationCompleted") {
+            traced_validation_epochs.push_back(event.epoch);
+        }
+    }
+    Check(traced_validation_epochs == validation_epochs,
+          case_name + " trace should record only scheduled validation epochs");
+    CheckTerminalEvidence(
+        expected_terminal_status,
+        expected_terminal_reason,
+        expected_epochs.back(),
+        expected_epochs.back(),
+        case_name);
+}
+
+void TestExternalResolvedRoleLifecycle(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const std::filesystem::path& work_dir) {
+    auto completed_config = MakeConfig(
+        work_dir / "external-resolved-scheduled-final-validation");
+    completed_config.epochs = 3;
+    completed_config.learning_rate = 0.0f;
+    completed_config.validation_freq = 2;
+    completed_config.early_stopping_patience = 0;
+    completed_config.save_best_checkpoint = false;
+    completed_config.log_interval = 0;
+    completed_config.train_ratio = 0.5f;
+    completed_config.val_ratio = 0.25f;
+    completed_config.test_ratio = 0.25f;
+    completed_config.has_data_split = true;
+    CheckExternalResolvedRoleLifecycleCase(
+        dataset,
+        completed_config,
+        "external-resolved-scheduled-final-validation",
+        {1, 2, 3},
+        {2, 3},
+        "completed",
+        "completed_all_epochs");
+
+    auto plateau_config = MakeConfig(
+        work_dir / "external-resolved-scheduled-patience");
+    plateau_config.epochs = 5;
+    plateau_config.learning_rate = 0.0f;
+    plateau_config.validation_freq = 2;
+    plateau_config.early_stopping_patience = 1;
+    plateau_config.save_best_checkpoint = false;
+    plateau_config.log_interval = 0;
+    plateau_config.train_ratio = 0.5f;
+    plateau_config.val_ratio = 0.25f;
+    plateau_config.test_ratio = 0.25f;
+    plateau_config.has_data_split = true;
+    CheckExternalResolvedRoleLifecycleCase(
+        dataset,
+        plateau_config,
+        "external-resolved-scheduled-patience",
+        {1, 2, 3, 4},
+        {2, 4},
+        "early_stopped",
+        "validation_loss_plateau_patience_1");
+}
+
+class PhaseTrackingBatcher final : public cyxwiz::IBatcher {
+public:
+    cyxwiz::Batch GetNextBatch() override {
+        if (IsEpochComplete()) {
+            return {};
+        }
+
+        const float phase_offset = current_phase_ == cyxwiz::BatcherPhase::Val
+            ? 0.25f
+            : 0.0f;
+        const std::vector<float> features = {
+            phase_offset + 0.0f, phase_offset + 0.1f,
+            phase_offset + 0.9f, phase_offset + 1.0f,
+        };
+        const std::vector<float> labels = {
+            1.0f, 0.0f,
+            0.0f, 1.0f,
+        };
+
+        cyxwiz::Batch batch;
+        batch.data = cyxwiz::Tensor(
+            {2, 2}, features.data(), cyxwiz::DataType::Float32);
+        batch.labels = cyxwiz::Tensor(
+            {2, 2}, labels.data(), cyxwiz::DataType::Float32);
+        batch.size = 2;
+        ++current_batch_;
+        if (current_phase_ == cyxwiz::BatcherPhase::Val) {
+            ++val_batch_count_;
+        } else {
+            ++train_batch_count_;
+        }
+        return batch;
+    }
+
+    void Reset() override {
+        current_batch_ = 0;
+        if (current_phase_ == cyxwiz::BatcherPhase::Val) {
+            ++val_reset_count_;
+        } else {
+            ++train_reset_count_;
+        }
+    }
+
+    bool IsEpochComplete() const override {
+        return current_batch_ >= GetNumBatches();
+    }
+
+    size_t GetNumBatches() const override {
+        if (current_phase_ == cyxwiz::BatcherPhase::Val) {
+            return 1;
+        }
+        if (current_phase_ == cyxwiz::BatcherPhase::Test) {
+            return 0;
+        }
+        return 2;
+    }
+
+    size_t GetNumSamples() const override {
+        return GetNumBatches() * 2;
+    }
+
+    void SetNormalization(float, float) override {}
+    void SetOneHotEncoding(size_t) override {}
+    void SetFlatten(bool) override {}
+
+    void SetPhase(cyxwiz::BatcherPhase phase) override {
+        current_phase_ = phase;
+    }
+
+    int TrainResetCount() const { return train_reset_count_; }
+    int ValResetCount() const { return val_reset_count_; }
+    int TrainBatchCount() const { return train_batch_count_; }
+    int ValBatchCount() const { return val_batch_count_; }
+
+private:
+    cyxwiz::BatcherPhase current_phase_ = cyxwiz::BatcherPhase::Train;
+    size_t current_batch_ = 0;
+    int train_reset_count_ = 0;
+    int val_reset_count_ = 0;
+    int train_batch_count_ = 0;
+    int val_batch_count_ = 0;
+};
+
+void CheckSharedPhaseExternalLifecycleCase(
+    cyxwiz::TrainingConfiguration config,
+    const std::string& case_name,
+    const std::vector<int>& expected_epochs,
+    const std::vector<int>& validation_epochs,
+    const std::string& expected_terminal_status,
+    const std::string& expected_terminal_reason) {
+    auto batcher = std::make_unique<PhaseTrackingBatcher>();
+    auto* phase_tracking_batcher = batcher.get();
+    CountingTrainingHook hook;
+    const std::string plugin_id =
+        "plan39.lifecycle.external-shared-phase." + case_name;
+    auto& hooks = cyxwiz::plugin::PluginTrainingHookManager::Instance();
+    hooks.RegisterHook(plugin_id, &hook);
+
+    cyxwiz::TrainingExecutor executor(config, std::move(batcher));
+    int batch_callback_count = 0;
+    int completion_callback_count = 0;
+    std::vector<int> callback_epochs;
+    std::vector<float> callback_val_losses;
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(
+        config.epochs,
+        config.batch_size,
+        [&](int, int, int, float, float) { ++batch_callback_count; },
+        [&](int epoch, float, float, float val_loss, float, float) {
+            callback_epochs.push_back(epoch);
+            callback_val_losses.push_back(val_loss);
+        },
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            ++completion_callback_count;
+            final_metrics = metrics;
+        });
+    hooks.RemoveByPlugin(plugin_id);
+
+    const int expected_train_batches =
+        static_cast<int>(expected_epochs.size()) * 2;
+    const int expected_val_batches =
+        static_cast<int>(validation_epochs.size());
+    Check(batch_callback_count == expected_train_batches &&
+              phase_tracking_batcher->TrainBatchCount() ==
+                  expected_train_batches &&
+              phase_tracking_batcher->ValBatchCount() ==
+                  expected_val_batches,
+          case_name + " should consume exact shared-phase Train and Dev batches");
+    Check(completion_callback_count == 1,
+          case_name + " should invoke completion exactly once");
+    Check(callback_epochs == expected_epochs &&
+              hook.training_start_count == 1 &&
+              hook.training_end_count == 1 &&
+              hook.epoch_start_epochs == expected_epochs &&
+              hook.epoch_end_epochs == expected_epochs,
+          case_name + " should preserve exact shared-phase lifecycle hooks");
+    CheckScheduledValidationValues(
+        callback_val_losses,
+        validation_epochs,
+        static_cast<int>(expected_epochs.size()),
+        case_name + " public epoch callback");
+    CheckScheduledValidationValues(
+        hook.epoch_end_val_losses,
+        validation_epochs,
+        static_cast<int>(expected_epochs.size()),
+        case_name + " plugin epoch-end callback");
+    Check(phase_tracking_batcher->TrainResetCount() ==
+              static_cast<int>(expected_epochs.size()) -
+                  (expected_terminal_status == "early_stopped" ? 1 : 0) &&
+              phase_tracking_batcher->ValResetCount() ==
+                  expected_val_batches,
+          case_name + " must reset once per executed semantic boundary");
+    Check(final_metrics.train_sample_count == 4 &&
+              final_metrics.val_sample_count == 2 &&
+              final_metrics.test_sample_count == 0 &&
+              final_metrics.last_executed_epoch == expected_epochs.back() &&
+              final_metrics.loss_history.size() == expected_epochs.size() &&
+              final_metrics.val_loss_history.size() ==
+                  validation_epochs.size() &&
+              final_metrics.terminal_status == expected_terminal_status &&
+              final_metrics.terminal_reason == expected_terminal_reason,
+          case_name + " should preserve shared-phase role and terminal truth");
+
+    std::vector<int> traced_validation_epochs;
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    for (const auto& event : trace.recent_events) {
+        if (event.stage == "ValidationCompleted") {
+            traced_validation_epochs.push_back(event.epoch);
+        }
+    }
+    Check(traced_validation_epochs == validation_epochs,
+          case_name + " trace should record only scheduled validation epochs");
+    CheckTerminalEvidence(
+        expected_terminal_status,
+        expected_terminal_reason,
+        expected_epochs.back(),
+        expected_epochs.back(),
+        case_name);
+}
+
+void TestSharedPhaseExternalLifecycle(
+    const std::filesystem::path& work_dir) {
+    auto completed_config = MakeConfig(
+        work_dir / "external-shared-phase-scheduled-final-validation");
+    completed_config.epochs = 3;
+    completed_config.learning_rate = 0.0f;
+    completed_config.validation_freq = 2;
+    completed_config.early_stopping_patience = 0;
+    completed_config.save_best_checkpoint = false;
+    completed_config.log_interval = 0;
+    CheckSharedPhaseExternalLifecycleCase(
+        completed_config,
+        "external-shared-phase-scheduled-final-validation",
+        {1, 2, 3},
+        {2, 3},
+        "completed",
+        "completed_all_epochs");
+
+    auto plateau_config = MakeConfig(
+        work_dir / "external-shared-phase-scheduled-patience");
+    plateau_config.epochs = 5;
+    plateau_config.learning_rate = 0.0f;
+    plateau_config.validation_freq = 2;
+    plateau_config.early_stopping_patience = 1;
+    plateau_config.save_best_checkpoint = false;
+    plateau_config.log_interval = 0;
+    CheckSharedPhaseExternalLifecycleCase(
+        plateau_config,
+        "external-shared-phase-scheduled-patience",
+        {1, 2, 3, 4},
+        {2, 4},
+        "early_stopped",
+        "validation_loss_plateau_patience_1");
+}
+
+void CheckSequenceLifecycleCase(
+    const cyxwiz::NERSequenceBuildResult& built,
+    cyxwiz::TrainingConfiguration config,
+    const std::string& case_name,
+    const std::vector<int>& expected_epochs,
+    const std::vector<int>& validation_epochs,
+    const std::string& expected_terminal_status,
+    const std::string& expected_terminal_reason,
+    int expected_checkpoint_epoch) {
+    auto batcher = std::make_unique<cyxwiz::SequenceBatcher>(
+        built.samples, built.batcher_config);
+    CountingTrainingHook hook;
+    const std::string plugin_id =
+        "plan39.lifecycle.sequence." + case_name;
+    auto& hooks = cyxwiz::plugin::PluginTrainingHookManager::Instance();
+    hooks.RegisterHook(plugin_id, &hook);
+
+    cyxwiz::TrainingExecutor executor(
+        config, std::move(batcher), built.tag_vocabulary.Values());
+    int batch_callback_count = 0;
+    int completion_callback_count = 0;
+    std::vector<int> callback_epochs;
+    std::vector<float> callback_val_losses;
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(
+        config.epochs,
+        config.batch_size,
+        [&](int, int, int, float, float) { ++batch_callback_count; },
+        [&](int epoch, float, float, float val_loss, float, float) {
+            callback_epochs.push_back(epoch);
+            callback_val_losses.push_back(val_loss);
+        },
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            ++completion_callback_count;
+            final_metrics = metrics;
+        });
+    hooks.RemoveByPlugin(plugin_id);
+
+    Check(batch_callback_count ==
+              static_cast<int>(expected_epochs.size()) * 2 &&
+              final_metrics.optimizer_step_count ==
+                  static_cast<int>(expected_epochs.size()) * 2,
+          case_name + " should execute two Sequence batches per epoch");
+    Check(completion_callback_count == 1,
+          case_name + " should invoke completion exactly once");
+    Check(callback_epochs == expected_epochs &&
+              hook.training_start_count == 1 &&
+              hook.training_end_count == 1 &&
+              hook.epoch_start_epochs == expected_epochs &&
+              hook.epoch_end_epochs == expected_epochs,
+          case_name + " should preserve symmetric Sequence lifecycle hooks");
+    CheckScheduledValidationValues(
+        callback_val_losses,
+        validation_epochs,
+        static_cast<int>(expected_epochs.size()),
+        case_name + " public epoch callback");
+    CheckScheduledValidationValues(
+        hook.epoch_end_val_losses,
+        validation_epochs,
+        static_cast<int>(expected_epochs.size()),
+        case_name + " plugin epoch-end callback");
+    Check(final_metrics.train_sample_count == 2 &&
+              final_metrics.val_sample_count == 1 &&
+              final_metrics.test_sample_count == 1 &&
+              final_metrics.train_token_count == 8 &&
+              final_metrics.val_token_count == 4 &&
+              final_metrics.test_token_count == 4 &&
+              final_metrics.has_test_metrics &&
+              std::isfinite(final_metrics.test_loss) &&
+              final_metrics.test_token_accuracy ==
+                  final_metrics.test_accuracy &&
+              final_metrics.test_entity_f1 >= 0.0f &&
+              final_metrics.test_entity_f1 <= 1.0f &&
+              final_metrics.test_accuracy >= 0.0f &&
+              final_metrics.test_accuracy <= 1.0f,
+          case_name + " should preserve Sequence role and token counts");
+    Check(final_metrics.current_epoch == expected_epochs.back() &&
+              final_metrics.last_executed_epoch == expected_epochs.back() &&
+              final_metrics.loss_history.size() == expected_epochs.size() &&
+              final_metrics.val_loss_history.size() ==
+                  validation_epochs.size() &&
+              final_metrics.terminal_status == expected_terminal_status &&
+              final_metrics.terminal_reason == expected_terminal_reason,
+          case_name + " should preserve exact Sequence terminal truth");
+
+    std::vector<int> traced_validation_epochs;
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    for (const auto& event : trace.recent_events) {
+        if (event.stage == "ValidationCompleted") {
+            traced_validation_epochs.push_back(event.epoch);
+        }
+    }
+    Check(traced_validation_epochs == validation_epochs,
+          case_name + " trace should record only Sequence validation epochs");
+    CheckHeldOutTestEvidence(
+        final_metrics, expected_checkpoint_epoch, case_name);
+    CheckTerminalEvidence(
+        expected_terminal_status,
+        expected_terminal_reason,
+        expected_epochs.back(),
+        expected_epochs.back(),
+        case_name);
+}
+
+void TestSequenceLifecycleCadence(const std::filesystem::path& work_dir) {
+    const std::vector<cyxwiz::NERSequenceRow> rows = {
+        {{"John", "lives", "in", "Berlin"},
+         {},
+         {"B-PER", "O", "O", "B-LOC"}},
+        {{"Mary", "works", "in", "Paris"},
+         {},
+         {"B-PER", "O", "O", "B-LOC"}},
+        {{"Alice", "visits", "New", "York"},
+         {},
+         {"B-PER", "O", "B-LOC", "I-LOC"}},
+        {{"Bob", "works", "in", "London"},
+         {},
+         {"B-PER", "O", "O", "B-LOC"}},
+    };
+
+    cyxwiz::NERSequenceBuilderConfig builder_config;
+    builder_config.use_pos_tags = false;
+    builder_config.token_vocabulary.lowercase = true;
+    builder_config.batcher.batch_size = 1;
+    builder_config.batcher.max_sequence_length = 4;
+    builder_config.batcher.shuffle = true;
+    builder_config.batcher.seed = 17;
+    builder_config.batcher.tag_ignore_index = -100;
+    builder_config.batcher.train_indices = {0, 1};
+    builder_config.batcher.val_indices = {2};
+    builder_config.batcher.test_indices = {3};
+    const auto built = cyxwiz::BuildNERSequenceData(rows, builder_config);
+
+    auto make_config = [&](const std::string& checkpoint_name) {
+        cyxwiz::TrainingConfiguration config;
+        config.dataset_name = "sequence-lifecycle";
+        config.input_size = 4;
+        config.input_shape = {4};
+        config.output_size = built.tag_vocabulary.Size();
+        config.loss_type = gui::NodeType::CrossEntropyLoss;
+        config.loss_params["ignore_index"] = "-100";
+        config.optimizer_type = gui::NodeType::SGD;
+        config.learning_rate = 0.0f;
+        config.batch_size = 1;
+        config.sequence_batch.enabled = true;
+        config.sequence_batch.ignore_index = -100;
+        config.save_best_checkpoint = false;
+        config.log_interval = 0;
+        config.checkpoint_dir = (work_dir / checkpoint_name).string();
+
+        cyxwiz::CompiledLayer embedding;
+        embedding.type = gui::NodeType::Embedding;
+        embedding.parameters["num_embeddings"] =
+            std::to_string(built.token_vocabulary.Size());
+        embedding.parameters["embedding_dim"] = "6";
+        config.layers.push_back(embedding);
+
+        cyxwiz::CompiledLayer token_head;
+        token_head.type = gui::NodeType::TimeDistributed;
+        token_head.units = static_cast<int>(built.tag_vocabulary.Size());
+        config.layers.push_back(token_head);
+        return config;
+    };
+
+    auto completed_config = make_config("sequence-scheduled-final-validation");
+    completed_config.epochs = 3;
+    completed_config.validation_freq = 2;
+    completed_config.early_stopping_patience = 0;
+    CheckSequenceLifecycleCase(
+        built,
+        completed_config,
+        "sequence-scheduled-final-validation",
+        {1, 2, 3},
+        {2, 3},
+        "completed",
+        "completed_all_epochs",
+        0);
+
+    auto plateau_config = make_config("sequence-scheduled-patience");
+    plateau_config.epochs = 5;
+    plateau_config.validation_freq = 2;
+    plateau_config.early_stopping_patience = 1;
+    plateau_config.save_best_checkpoint = true;
+    CheckSequenceLifecycleCase(
+        built,
+        plateau_config,
+        "sequence-scheduled-patience",
+        {1, 2, 3, 4},
+        {2, 4},
+        "early_stopped",
+        "validation_loss_plateau_patience_1",
+        2);
+}
+
+void CheckParquetLifecycleCase(
+    const std::shared_ptr<cyxwiz::ParquetBackedDataset>& dataset,
+    cyxwiz::TrainingConfiguration config,
+    const std::string& case_name,
+    const std::vector<int>& expected_epochs,
+    const std::vector<int>& validation_epochs,
+    const std::string& expected_terminal_status,
+    const std::string& expected_terminal_reason,
+    int expected_checkpoint_epoch) {
+    CountingTrainingHook hook;
+    const std::string plugin_id =
+        "plan39.lifecycle.parquet." + case_name;
+    auto& hooks = cyxwiz::plugin::PluginTrainingHookManager::Instance();
+    hooks.RegisterHook(plugin_id, &hook);
+
+    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    int batch_callback_count = 0;
+    int completion_callback_count = 0;
+    std::vector<int> callback_epochs;
+    std::vector<float> callback_val_losses;
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(
+        config.epochs,
+        config.batch_size,
+        [&](int, int, int, float, float) { ++batch_callback_count; },
+        [&](int epoch, float, float, float val_loss, float, float) {
+            callback_epochs.push_back(epoch);
+            callback_val_losses.push_back(val_loss);
+        },
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            ++completion_callback_count;
+            final_metrics = metrics;
+        });
+    hooks.RemoveByPlugin(plugin_id);
+
+    Check(batch_callback_count ==
+              static_cast<int>(expected_epochs.size()) * 2 &&
+              final_metrics.optimizer_step_count ==
+                  static_cast<int>(expected_epochs.size()) * 2,
+          case_name + " should execute two Parquet Train batches per epoch");
+    Check(completion_callback_count == 1,
+          case_name + " should invoke completion exactly once");
+    Check(callback_epochs == expected_epochs &&
+              hook.training_start_count == 1 &&
+              hook.training_end_count == 1 &&
+              hook.epoch_start_epochs == expected_epochs &&
+              hook.epoch_end_epochs == expected_epochs,
+          case_name + " should preserve symmetric Parquet lifecycle hooks");
+    CheckScheduledValidationValues(
+        callback_val_losses,
+        validation_epochs,
+        static_cast<int>(expected_epochs.size()),
+        case_name + " public epoch callback");
+    CheckScheduledValidationValues(
+        hook.epoch_end_val_losses,
+        validation_epochs,
+        static_cast<int>(expected_epochs.size()),
+        case_name + " plugin epoch-end callback");
+    Check(final_metrics.train_sample_count == 3 &&
+              final_metrics.val_sample_count == 1 &&
+              final_metrics.test_sample_count == 2 &&
+              final_metrics.has_test_metrics &&
+              std::isfinite(final_metrics.test_loss) &&
+              final_metrics.test_accuracy >= 0.0f &&
+              final_metrics.test_accuracy <= 1.0f,
+          case_name + " should preserve Parquet role counts");
+    Check(final_metrics.current_epoch == expected_epochs.back() &&
+              final_metrics.last_executed_epoch == expected_epochs.back() &&
+              final_metrics.loss_history.size() == expected_epochs.size() &&
+              final_metrics.val_loss_history.size() ==
+                  validation_epochs.size() &&
+              final_metrics.terminal_status == expected_terminal_status &&
+              final_metrics.terminal_reason == expected_terminal_reason,
+          case_name + " should preserve exact Parquet terminal truth");
+
+    std::vector<int> traced_validation_epochs;
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    for (const auto& event : trace.recent_events) {
+        if (event.stage == "ValidationCompleted") {
+            traced_validation_epochs.push_back(event.epoch);
+        }
+    }
+    Check(traced_validation_epochs == validation_epochs,
+          case_name + " trace should record only Parquet validation epochs");
+    CheckHeldOutTestEvidence(
+        final_metrics, expected_checkpoint_epoch, case_name);
+    CheckTerminalEvidence(
+        expected_terminal_status,
+        expected_terminal_reason,
+        expected_epochs.back(),
+        expected_epochs.back(),
+        case_name);
+}
+
+void TestParquetLifecycleCadence(
+    const std::shared_ptr<cyxwiz::ParquetBackedDataset>& dataset,
+    const std::filesystem::path& work_dir) {
+    auto completed_config = MakeConfig(
+        work_dir / "parquet-scheduled-final-validation");
+    completed_config.epochs = 3;
+    completed_config.learning_rate = 0.0f;
+    completed_config.validation_freq = 2;
+    completed_config.early_stopping_patience = 0;
+    completed_config.save_best_checkpoint = false;
+    completed_config.log_interval = 0;
+    completed_config.train_ratio = 0.5f;
+    completed_config.val_ratio = 0.25f;
+    completed_config.test_ratio = 0.25f;
+    completed_config.has_data_split = true;
+    CheckParquetLifecycleCase(
+        dataset,
+        completed_config,
+        "parquet-scheduled-final-validation",
+        {1, 2, 3},
+        {2, 3},
+        "completed",
+        "completed_all_epochs",
+        0);
+
+    auto plateau_config = MakeConfig(
+        work_dir / "parquet-scheduled-patience");
+    plateau_config.epochs = 5;
+    plateau_config.learning_rate = 0.0f;
+    plateau_config.validation_freq = 2;
+    plateau_config.early_stopping_patience = 1;
+    plateau_config.save_best_checkpoint = true;
+    plateau_config.log_interval = 0;
+    plateau_config.train_ratio = 0.5f;
+    plateau_config.val_ratio = 0.25f;
+    plateau_config.test_ratio = 0.25f;
+    plateau_config.has_data_split = true;
+    CheckParquetLifecycleCase(
+        dataset,
+        plateau_config,
+        "parquet-scheduled-patience",
+        {1, 2, 3, 4},
+        {2, 4},
+        "early_stopped",
+        "validation_loss_plateau_patience_1",
+        2);
+}
+
+struct MetricCadenceRunResult {
+    cyxwiz::TrainingMetrics metrics;
+    std::map<std::string, std::vector<float>> parameters;
+    int batch_callback_count = 0;
+    uint64_t loss_scalar_readbacks = 0;
+    uint64_t accuracy_scalar_readbacks = 0;
+    std::string reporting_cadence;
+};
+
+MetricCadenceRunResult RunMetricCadenceCase(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const std::filesystem::path& checkpoint_dir,
+    int log_interval) {
+    auto config = MakeConfig(checkpoint_dir);
+    config.epochs = 2;
+    config.batch_size = 1;
+    config.validation_freq = 2;
+    config.log_interval = log_interval;
+    config.save_best_checkpoint = false;
+    config.early_stopping_patience = 0;
+
+    // Model construction happens inside Train. Reset the ArrayFire RNG before
+    // each case so reporting cadence is the only changed input.
+    af::setSeed(390039);
+    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    MetricCadenceRunResult result;
+    executor.Train(
+        config.epochs,
+        config.batch_size,
+        [&](int, int, int, float, float) {
+            ++result.batch_callback_count;
+        },
+        nullptr,
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            result.metrics = metrics;
+        });
+
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    for (const auto& group : trace.arrayfire_host_sync_groups) {
+        if (group.operation == "TrainingExecutor::ReadAccumulatedLoss") {
+            result.loss_scalar_readbacks += group.event_count;
+        } else if (group.operation ==
+                   "TrainingExecutor::ReadAccumulatedAccuracy") {
+            result.accuracy_scalar_readbacks += group.event_count;
+        }
+    }
+    for (const auto& event : trace.recent_events) {
+        if (event.stage == "TrainingExecutor.ReportingCadence") {
+            result.reporting_cadence = event.message;
+        }
+    }
+
+    auto* model = executor.GetModel();
+    Check(model != nullptr,
+          "metric cadence case should retain its trained sequential model");
+    for (const auto& [name, tensor] : model->GetParameters()) {
+        Check(tensor.GetDataType() == cyxwiz::DataType::Float32,
+              "metric cadence fixture expects Float32 model parameters");
+        const float* values = tensor.ReadData<float>();
+        result.parameters[name] = std::vector<float>(
+            values, values + tensor.NumElements());
+    }
+    return result;
+}
+
+void TestMetricReportingCadenceInvariance(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const std::filesystem::path& work_dir) {
+    const auto first_final = RunMetricCadenceCase(
+        dataset, work_dir / "metric-cadence-first-final", 0);
+    const auto every_second = RunMetricCadenceCase(
+        dataset, work_dir / "metric-cadence-every-two", 2);
+
+    Check(first_final.batch_callback_count == 8 &&
+              every_second.batch_callback_count == 8,
+          "metric sampling cadence must not throttle batch callbacks");
+    Check(first_final.metrics.optimizer_step_count == 8 &&
+              every_second.metrics.optimizer_step_count == 8,
+          "metric sampling cadence must not change optimizer step count");
+    Check(first_final.metrics.terminal_status == "completed" &&
+              every_second.metrics.terminal_status == "completed" &&
+              first_final.metrics.last_executed_epoch == 2 &&
+              every_second.metrics.last_executed_epoch == 2,
+          "metric sampling cadence must not change terminal epoch truth");
+    Check(first_final.metrics.loss_history.size() == 2 &&
+              every_second.metrics.loss_history.size() == 2 &&
+              first_final.metrics.val_loss_history.size() == 1 &&
+              every_second.metrics.val_loss_history.size() == 1,
+          "metric sampling cadence must not change epoch/validation history counts");
+    for (size_t i = 0; i < first_final.metrics.loss_history.size(); ++i) {
+        CheckNear(first_final.metrics.loss_history[i],
+                  every_second.metrics.loss_history[i],
+                  1e-6,
+                  "metric sampling cadence must preserve train loss history");
+        CheckNear(first_final.metrics.accuracy_history[i],
+                  every_second.metrics.accuracy_history[i],
+                  1e-6,
+                  "metric sampling cadence must preserve train accuracy history");
+    }
+    CheckNear(first_final.metrics.val_loss_history[0],
+              every_second.metrics.val_loss_history[0],
+              1e-6,
+              "metric sampling cadence must preserve final validation loss");
+    Check(first_final.parameters.size() == every_second.parameters.size(),
+          "metric sampling cadence runs should expose the same parameter set");
+    for (const auto& [name, first_values] : first_final.parameters) {
+        const auto found = every_second.parameters.find(name);
+        Check(found != every_second.parameters.end() &&
+                  found->second.size() == first_values.size(),
+              "metric sampling cadence runs should preserve parameter shape for " +
+                  name);
+        for (size_t i = 0; i < first_values.size(); ++i) {
+            CheckNear(first_values[i], found->second[i], 1e-6,
+                      "metric sampling cadence must preserve final parameter " +
+                          name);
+        }
+    }
+
+    Check(first_final.loss_scalar_readbacks == 4 &&
+              first_final.accuracy_scalar_readbacks == 4,
+          "first/final cadence should read each training scalar twice per epoch");
+    Check(every_second.loss_scalar_readbacks == 6 &&
+              every_second.accuracy_scalar_readbacks == 6,
+          "interval-2 cadence should read each training scalar three times per epoch");
+    Check(first_final.reporting_cadence.find("first and final batch") !=
+              std::string::npos &&
+              every_second.reporting_cadence.find("every 2 batches") !=
+              std::string::npos,
+          "trace should report each effective metric sampling cadence");
+}
+
+class StopBeforeSecondEpochHook final
+    : public cyxwiz::plugin::ITrainingHook {
+public:
+    void OnTrainingStart(cyxwiz::plugin::TrainingContext&) override {
+        ++training_start_count;
+    }
+
+    void OnTrainingEnd(cyxwiz::plugin::TrainingContext&) override {
+        ++training_end_count;
+    }
+
+    void OnEpochStart(cyxwiz::plugin::TrainingContext&) override {
+        ++epoch_start_count;
+    }
+
+    void OnEpochEnd(cyxwiz::plugin::TrainingContext&) override {
+        ++epoch_end_count;
+    }
+
+    bool ShouldStopEarly(
+        const cyxwiz::plugin::TrainingContext& context) override {
+        ++stop_poll_count;
+        return context.current_epoch >= 2;
+    }
+
+    int training_start_count = 0;
+    int training_end_count = 0;
+    int epoch_start_count = 0;
+    int epoch_end_count = 0;
+    int stop_poll_count = 0;
+};
+
+void TestPluginStopLifecycle(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const std::filesystem::path& work_dir) {
+    auto config = MakeConfig(work_dir / "plugin-stop");
+    config.epochs = 4;
+    config.log_interval = 0;
+
+    StopBeforeSecondEpochHook hook;
+    constexpr const char* kPluginId = "plan39.lifecycle.plugin-stop";
+    auto& hooks = cyxwiz::plugin::PluginTrainingHookManager::Instance();
+    hooks.RegisterHook(kPluginId, &hook);
+
+    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    int batch_callback_count = 0;
+    int epoch_callback_count = 0;
+    int completion_callback_count = 0;
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(
+        config.epochs,
+        config.batch_size,
+        [&](int, int, int, float, float) { ++batch_callback_count; },
+        [&](int, float, float, float, float, float) {
+            ++epoch_callback_count;
+        },
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            ++completion_callback_count;
+            final_metrics = metrics;
+        });
+    hooks.RemoveByPlugin(kPluginId);
+
+    Check(batch_callback_count == 2 && epoch_callback_count == 1,
+          "plugin stop should execute exactly one complete epoch");
+    Check(completion_callback_count == 1,
+          "plugin stop should invoke completion exactly once");
+    Check(final_metrics.current_epoch == 1 &&
+              final_metrics.last_executed_epoch == 1 &&
+              final_metrics.loss_history.size() == 1,
+          "plugin stop should preserve one executed epoch");
+    Check(final_metrics.terminal_status == "early_stopped" &&
+              final_metrics.terminal_reason ==
+                  "plugin_requested_early_stop",
+          "plugin stop should report its exact terminal truth");
+    Check(hook.training_start_count == 1 &&
+              hook.training_end_count == 1 &&
+              hook.epoch_start_count == 1 &&
+              hook.epoch_end_count == 1 &&
+              hook.stop_poll_count == 2,
+          "plugin stop should preserve exact plugin callback cadence");
+    CheckTerminalEvidence(
+        "early_stopped", "plugin_requested_early_stop", 1, 1,
+        "plugin stop");
+}
+
+void TestUserCancellationLifecycle(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const std::filesystem::path& work_dir) {
+    auto config = MakeConfig(work_dir / "user-cancel");
+    config.epochs = 3;
+    config.log_interval = 0;
+
+    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    int batch_callback_count = 0;
+    int epoch_callback_count = 0;
+    int completion_callback_count = 0;
+    cyxwiz::TrainingMetrics final_metrics;
+    executor.Train(
+        config.epochs,
+        config.batch_size,
+        [&](int, int, int, float, float) {
+            ++batch_callback_count;
+            executor.Stop();
+        },
+        [&](int, float, float, float, float, float) {
+            ++epoch_callback_count;
+        },
+        [&](const cyxwiz::TrainingMetrics& metrics) {
+            ++completion_callback_count;
+            final_metrics = metrics;
+        });
+
+    Check(batch_callback_count == 1 && epoch_callback_count == 0,
+          "user cancellation should stop after one partial-epoch batch");
+    Check(completion_callback_count == 1,
+          "user cancellation should invoke completion exactly once");
+    Check(final_metrics.current_epoch == 1 &&
+              final_metrics.last_executed_epoch == 0 &&
+              final_metrics.current_batch == 1 &&
+              final_metrics.loss_history.empty(),
+          "user cancellation should distinguish active from completed epoch");
+    Check(final_metrics.terminal_status == "cancelled" &&
+              final_metrics.terminal_reason == "user_cancelled",
+          "user cancellation should report its exact terminal truth");
+    CheckTerminalEvidence(
+        "cancelled", "user_cancelled", 1, 0, "user cancellation");
+}
+
+void TestInjectedRuntimeFailureLifecycle(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const std::filesystem::path& work_dir) {
+    auto config = MakeConfig(work_dir / "runtime-failure");
+    config.epochs = 3;
+    config.log_interval = 0;
+
+    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    int completion_callback_count = 0;
+    bool threw = false;
+    try {
+        executor.Train(
+            config.epochs,
+            config.batch_size,
+            [](int, int, int, float, float) {
+                throw std::runtime_error("injected_lifecycle_failure");
+            },
+            nullptr,
+            [&](const cyxwiz::TrainingMetrics&) {
+                ++completion_callback_count;
+            });
+    } catch (const std::runtime_error& error) {
+        threw = std::string(error.what()).find(
+                    "injected_lifecycle_failure") != std::string::npos;
+    }
+
+    const auto final_metrics = executor.GetMetrics();
+    Check(threw, "injected runtime failure should propagate to the caller");
+    Check(completion_callback_count == 0,
+          "failed training should not invoke the success completion callback");
+    Check(final_metrics.is_complete && !final_metrics.is_training &&
+              !final_metrics.is_paused,
+          "failed training should close its lifecycle state");
+    Check(final_metrics.current_epoch == 1 &&
+              final_metrics.last_executed_epoch == 0,
+          "failed training should preserve its partial-epoch truth");
+    Check(final_metrics.terminal_status == "failed" &&
+              final_metrics.terminal_reason.find(
+                  "injected_lifecycle_failure") != std::string::npos,
+          "failed training should report a non-empty coded reason");
+    CheckTerminalEvidence(
+        "failed", final_metrics.terminal_reason, 1, 0,
+        "injected runtime failure");
+}
+
+void TestPauseResumeDoesNotDuplicateWork(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const std::filesystem::path& work_dir) {
+    auto config = MakeConfig(work_dir / "pause-resume");
+    config.log_interval = 0;
+
+    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    std::atomic<int> batch_callback_count{0};
+    std::atomic<bool> pause_requested{false};
+    cyxwiz::TrainingMetrics final_metrics;
+    std::exception_ptr training_error;
+    std::thread training_thread([&]() {
+        try {
+            executor.Train(
+                1,
+                config.batch_size,
+                [&](int, int batch, int, float, float) {
+                    ++batch_callback_count;
+                    if (batch == 1) {
+                        executor.Pause();
+                        pause_requested.store(true);
+                    }
+                },
+                nullptr,
+                [&](const cyxwiz::TrainingMetrics& metrics) {
+                    final_metrics = metrics;
+                });
+        } catch (...) {
+            training_error = std::current_exception();
+        }
+    });
+
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::seconds(10);
+    while (!pause_requested.load() &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    Check(pause_requested.load() && executor.IsPaused(),
+          "pause/resume should reach the paused state after batch one");
+    const auto paused_metrics = executor.GetMetrics();
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    const auto still_paused_metrics = executor.GetMetrics();
+    Check(paused_metrics.current_batch == 1 &&
+              still_paused_metrics.current_batch == 1 &&
+              batch_callback_count.load() == 1,
+          "paused training should not advance or duplicate batches");
+
+    executor.Resume();
+    training_thread.join();
+    Check(training_error == nullptr,
+          "pause/resume training should not throw");
+    Check(batch_callback_count.load() == 2 &&
+              final_metrics.optimizer_step_count == 2 &&
+              final_metrics.current_batch == 2,
+          "pause/resume should execute each batch and optimizer step once");
+    Check(final_metrics.current_epoch == 1 &&
+              final_metrics.last_executed_epoch == 1 &&
+              final_metrics.loss_history.size() == 1,
+          "pause/resume should complete exactly one epoch");
+    Check(final_metrics.terminal_status == "completed" &&
+              final_metrics.terminal_reason == "completed_all_epochs" &&
+              !final_metrics.is_paused,
+          "pause/resume should preserve normal terminal truth");
+}
+
 void RunExecutor(cyxwiz::TrainingExecutor& executor,
                  const std::string& label,
                  int expected_epochs = 1,
@@ -789,7 +3078,12 @@ void RunExecutor(cyxwiz::TrainingExecutor& executor,
     Check(final_metrics.is_complete, label + " should mark training complete");
     Check(!final_metrics.is_training, label + " should clear training state");
     Check(final_metrics.current_epoch == expected_epochs, label + " should finish expected epoch");
+    Check(final_metrics.last_executed_epoch == expected_epochs,
+          label + " should preserve the final executed epoch");
     Check(final_metrics.total_epochs == expected_epochs, label + " should keep total epochs");
+    Check(final_metrics.terminal_status == "completed" &&
+              final_metrics.terminal_reason == "completed_all_epochs",
+          label + " should report exact normal-completion truth");
     Check(final_metrics.total_batches == 2, label + " should train two batches");
     const int expected_steps = expected_optimizer_steps >= 0
         ? expected_optimizer_steps
@@ -1484,6 +3778,19 @@ void TestStrictPlacementPreflightRejectsKnownNativeCpuStage(
           "strict placement preflight rejection should not report completion");
     Check(!executor.IsTraining(),
           "strict placement preflight rejection should clear training state");
+    const auto failed_metrics = executor.GetMetrics();
+    Check(failed_metrics.is_complete &&
+              failed_metrics.terminal_status == "failed" &&
+              failed_metrics.terminal_reason.find(
+                  "placement_preflight_failed") != std::string::npos,
+          "strict placement preflight should close metrics with its reason");
+    Check(failed_metrics.current_epoch == 0 &&
+              failed_metrics.last_executed_epoch == 0 &&
+              failed_metrics.current_batch == 0,
+          "strict placement preflight should report zero executed work");
+    CheckTerminalEvidence(
+        "failed", failed_metrics.terminal_reason, 0, 0,
+        "strict placement preflight");
 
     const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
     Check(trace.status == "failed",
@@ -1535,6 +3842,19 @@ void TestExecutablePreflightRejectsUnsupportedOptimizer(
           "unsupported optimizer preflight should not report completion");
     Check(!executor.IsTraining(),
           "unsupported optimizer preflight should clear training state");
+    const auto failed_metrics = executor.GetMetrics();
+    Check(failed_metrics.is_complete &&
+              failed_metrics.terminal_status == "failed" &&
+              failed_metrics.terminal_reason.find(
+                  "execution_preflight_failed") != std::string::npos,
+          "unsupported optimizer preflight should close metrics with its reason");
+    Check(failed_metrics.current_epoch == 0 &&
+              failed_metrics.last_executed_epoch == 0 &&
+              failed_metrics.current_batch == 0,
+          "unsupported optimizer preflight should report zero executed work");
+    CheckTerminalEvidence(
+        "failed", failed_metrics.terminal_reason, 0, 0,
+        "unsupported optimizer preflight");
 
     const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
     Check(trace.status == "failed",
@@ -1827,7 +4147,7 @@ void TestRegressionTargetTransform(
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     namespace fs = std::filesystem;
 
     const fs::path work_dir =
@@ -1838,11 +4158,46 @@ int main() {
         work_dir / "debug_runs");
     cyxwiz::test::InstallQualifiedRouteSnapshot();
 
+    if (argc >= 2 &&
+        std::string(argv[1]) == "--gradient-accumulation-parity-only") {
+        const auto fixture = LoadTrainingCoreFixture(
+            argc > 0 ? fs::path(argv[0]) : fs::path{},
+            argc >= 3 ? argv[2] : nullptr);
+        TestGradientAccumulationPyTorchParity(
+            fixture.at("cases"), work_dir / "gradient-accumulation");
+        fs::remove_all(work_dir);
+        std::cout << "Gradient accumulation PyTorch parity passed\n";
+        return 0;
+    }
+
+    if (argc == 2 &&
+        std::string(argv[1]) == "--uneven-epoch-metrics-only") {
+        TestUnevenFinalBatchMetricAggregation(work_dir);
+        fs::remove_all(work_dir);
+        std::cout << "Uneven final-batch metric aggregation passed\n";
+        return 0;
+    }
+
+#ifndef NDEBUG
+    if (argc == 2 && std::string(argv[1]) == "--strict-dense-only") {
+        const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(
+            MakeTrainingTable(), "strict_dense_training");
+        const auto config = MakeConfig(work_dir / "checkpoints");
+        TestStrictArrayFireCpuDenseTrainingDoesNotFallback(dataset, config);
+        fs::remove_all(work_dir);
+        std::cout << "Strict dense ArrayFire residency passed\n";
+        return 0;
+    }
+#endif
+
     TestRunPreflightEnforcesRouteQualification();
+    TestWeightedSamplerEpochAndUpdateCount(work_dir);
 
     TestSequenceBatchContract();
     TestSequenceBatcherPadsNamedPayloads();
     TestSequenceBatcherDropLast();
+    TestSequenceBatcherSeedDeterminism();
+    TestSequencePhaseSwitchRequiresExplicitReset();
     TestSequenceTagMetrics();
     TestSequenceVocabulary();
     TestNERSequenceBuilder();
@@ -1853,6 +4208,24 @@ int main() {
         MakeTrainingTable(), "training_executor_arrow");
     const auto config = MakeConfig(work_dir / "checkpoints");
     TestArrowDataLoaderSeedDeterminism(dataset);
+    TestValidationEarlyStoppingLifecycle(dataset, work_dir, false);
+    TestValidationEarlyStoppingLifecycle(dataset, work_dir, true);
+    TestScheduledValidationLifecycle(dataset, work_dir);
+    TestScheduledValidationPatienceLifecycle(dataset, work_dir);
+    TestExternalResolvedRoleLifecycle(dataset, work_dir);
+    TestSharedPhaseExternalLifecycle(work_dir);
+    TestSequenceLifecycleCadence(work_dir);
+    TestMetricReportingCadenceInvariance(dataset, work_dir);
+    TestUnevenFinalBatchMetricAggregation(work_dir);
+    const auto training_core_fixture = LoadTrainingCoreFixture(
+        argc > 0 ? fs::path(argv[0]) : fs::path{});
+    TestGradientAccumulationPyTorchParity(
+        training_core_fixture.at("cases"),
+        work_dir / "gradient-accumulation");
+    TestPluginStopLifecycle(dataset, work_dir);
+    TestUserCancellationLifecycle(dataset, work_dir);
+    TestInjectedRuntimeFailureLifecycle(dataset, work_dir);
+    TestPauseResumeDoesNotDuplicateWork(dataset, work_dir);
 
 #ifndef NDEBUG
     TestAllowedTrainingRecordsForcedLinearFallback(dataset, config);
@@ -1903,19 +4276,6 @@ int main() {
     TestRegressionTargetTransform(work_dir);
 
     {
-        auto scheduled_validation_config = config;
-        scheduled_validation_config.epochs = 3;
-        scheduled_validation_config.validation_freq = 2;
-        scheduled_validation_config.log_interval = 1;
-        cyxwiz::TrainingExecutor scheduled_executor(
-            scheduled_validation_config, dataset, "label");
-        RunExecutor(scheduled_executor,
-                    "Arrow scheduled validation TrainingExecutor",
-                    3,
-                    2);
-    }
-
-    {
         auto grad_accum_config = config;
         grad_accum_config.epochs = 3;
         grad_accum_config.grad_accum_steps = 2;
@@ -1929,10 +4289,14 @@ int main() {
     }
 
     const fs::path parquet_path = work_dir / "training_executor.parquet";
-    WriteParquetWithRowGroupSize(*dataset, parquet_path.string(), 2);
+    WriteParquetWithRowGroupSize(*dataset, parquet_path.string(), 1);
     auto parquet_dataset = cyxwiz::ParquetBackedDataset::Open(
         parquet_path.string(), "training_executor_parquet");
     Check(parquet_dataset != nullptr, "Parquet fixture should open");
+
+    TestArrowParquetBatchBoundaryParity(dataset, parquet_dataset, work_dir);
+    TestArrowParquetSeedDeterminism(dataset, parquet_dataset, work_dir);
+    TestParquetLifecycleCadence(parquet_dataset, work_dir);
 
     {
         cyxwiz::TrainingExecutor parquet_executor(config, parquet_dataset, "label");

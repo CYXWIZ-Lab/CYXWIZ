@@ -1,0 +1,1652 @@
+{
+  "cases": {
+    "adamw_step1_f32": {
+      "dtype": "float32",
+      "expected": {
+        "exp_avg": {
+          "shape": [
+            3
+          ],
+          "values": [
+            0.02500000037252903,
+            -0.05000000074505806,
+            0.012500000186264515
+          ]
+        },
+        "exp_avg_sq": {
+          "shape": [
+            3
+          ],
+          "values": [
+            6.25000029685907e-05,
+            0.0002500000118743628,
+            1.5625000742147677e-05
+          ]
+        },
+        "parameter": {
+          "shape": [
+            3
+          ],
+          "values": [
+            0.9890000224113464,
+            -1.9880000352859497,
+            0.4895000159740448
+          ]
+        },
+        "step": 1
+      },
+      "gradient": {
+        "shape": [
+          3
+        ],
+        "values": [
+          0.25,
+          -0.5,
+          0.125
+        ]
+      },
+      "hyperparameters": {
+        "beta1": 0.9,
+        "beta2": 0.999,
+        "epsilon": 1e-08,
+        "learning_rate": 0.01,
+        "weight_decay": 0.1
+      },
+      "initial_parameter": {
+        "shape": [
+          3
+        ],
+        "values": [
+          1.0,
+          -2.0,
+          0.5
+        ]
+      },
+      "operation": "torch.optim.AdamW",
+      "step_count": 1,
+      "tolerance": {
+        "atol": 1e-05,
+        "rtol": 1e-05
+      }
+    },
+    "cross_entropy_index_mean_f32": {
+      "dtype": "float32",
+      "expected": {
+        "loss": 0.718643844127655
+      },
+      "logits": {
+        "shape": [
+          2,
+          3
+        ],
+        "values": [
+          1.0,
+          2.0,
+          0.5,
+          0.10000000149011612,
+          -0.20000000298023224,
+          0.0
+        ]
+      },
+      "operation": "torch.nn.functional.cross_entropy",
+      "reduction": "mean",
+      "target_dtype": "int64",
+      "targets": {
+        "shape": [
+          2
+        ],
+        "values": [
+          1,
+          0
+        ]
+      },
+      "tolerance": {
+        "atol": 1e-05,
+        "rtol": 1e-05
+      }
+    },
+    "cross_entropy_matrix_f32": [
+      {
+        "class_weights": [],
+        "dtype": "float32",
+        "expected": {
+          "logit_gradient": {
+            "shape": [
+              4,
+              3
+            ],
+            "values": [
+              -0.15620529651641846,
+              0.11419519782066345,
+              0.04201006516814232,
+              -0.7552714943885803,
+              0.665241003036499,
+              0.09003058075904846,
+              0.0,
+              0.0,
+              0.0,
+              0.5897976160049438,
+              0.13160164654254913,
+              -0.7213993072509766
+            ]
+          },
+          "loss": {
+            "shape": [
+              4
+            ],
+            "values": [
+              0.1698460429906845,
+              1.4076058864593506,
+              0.0,
+              1.2779757976531982
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "label_smoothing": 0.0,
+        "logits": {
+          "shape": [
+            4,
+            3
+          ],
+          "values": [
+            2.0,
+            0.0,
+            -1.0,
+            0.5,
+            1.5,
+            -0.5,
+            -1.0,
+            0.20000000298023224,
+            2.200000047683716,
+            1.0,
+            -0.5,
+            0.25
+          ]
+        },
+        "name": "index_none",
+        "operation": "torch.nn.functional.cross_entropy",
+        "reduction": "none",
+        "target_dtype": "int64",
+        "target_form": "index",
+        "targets": {
+          "shape": [
+            4
+          ],
+          "values": [
+            0,
+            0,
+            -100,
+            2
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "class_weights": [
+          1.0,
+          2.0,
+          4.0
+        ],
+        "dtype": "float32",
+        "expected": {
+          "logit_gradient": {
+            "shape": [
+              4,
+              3
+            ],
+            "values": [
+              0.2021399736404419,
+              0.011313915252685547,
+              -0.21345393359661102,
+              -0.5566772222518921,
+              0.7093052864074707,
+              -0.15262794494628906,
+              0.0,
+              0.0,
+              0.0,
+              2.0959246158599854,
+              0.34920603036880493,
+              -2.4451308250427246
+            ]
+          },
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              7.934017181396484
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "label_smoothing": 0.2,
+        "logits": {
+          "shape": [
+            4,
+            3
+          ],
+          "values": [
+            2.0,
+            0.0,
+            -1.0,
+            0.5,
+            1.5,
+            -0.5,
+            -1.0,
+            0.20000000298023224,
+            2.200000047683716,
+            1.0,
+            -0.5,
+            0.25
+          ]
+        },
+        "name": "index_sum_weighted_smoothed_ignored",
+        "operation": "torch.nn.functional.cross_entropy",
+        "reduction": "sum",
+        "target_dtype": "int64",
+        "target_form": "index",
+        "targets": {
+          "shape": [
+            4
+          ],
+          "values": [
+            0,
+            0,
+            -100,
+            2
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "class_weights": [],
+        "dtype": "float32",
+        "expected": {
+          "logit_gradient": {
+            "shape": [
+              4,
+              3
+            ],
+            "values": [
+              -0.05206844210624695,
+              0.038065068423748016,
+              0.01400335505604744,
+              -0.2517571747303009,
+              0.2217470109462738,
+              0.030010193586349487,
+              0.0,
+              0.0,
+              0.0,
+              0.19659921526908875,
+              0.043867215514183044,
+              -0.24046644568443298
+            ]
+          },
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              0.9518092274665833
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "label_smoothing": 0.0,
+        "logits": {
+          "shape": [
+            4,
+            3
+          ],
+          "values": [
+            2.0,
+            0.0,
+            -1.0,
+            0.5,
+            1.5,
+            -0.5,
+            -1.0,
+            0.20000000298023224,
+            2.200000047683716,
+            1.0,
+            -0.5,
+            0.25
+          ]
+        },
+        "name": "index_mean_ignored",
+        "operation": "torch.nn.functional.cross_entropy",
+        "reduction": "mean",
+        "target_dtype": "int64",
+        "target_form": "index",
+        "targets": {
+          "shape": [
+            4
+          ],
+          "values": [
+            0,
+            0,
+            -100,
+            2
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "class_weights": [
+          1.0,
+          2.0,
+          4.0
+        ],
+        "dtype": "float32",
+        "expected": {
+          "logit_gradient": {
+            "shape": [
+              4,
+              3
+            ],
+            "values": [
+              0.033689990639686584,
+              0.0018856525421142578,
+              -0.03557565435767174,
+              -0.09277954697608948,
+              0.11821754276752472,
+              -0.025437990203499794,
+              0.0,
+              0.0,
+              0.0,
+              0.34932079911231995,
+              0.05820101499557495,
+              -0.4075218439102173
+            ]
+          },
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              1.322336196899414
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "label_smoothing": 0.2,
+        "logits": {
+          "shape": [
+            4,
+            3
+          ],
+          "values": [
+            2.0,
+            0.0,
+            -1.0,
+            0.5,
+            1.5,
+            -0.5,
+            -1.0,
+            0.20000000298023224,
+            2.200000047683716,
+            1.0,
+            -0.5,
+            0.25
+          ]
+        },
+        "name": "index_mean_weighted_smoothed_ignored",
+        "operation": "torch.nn.functional.cross_entropy",
+        "reduction": "mean",
+        "target_dtype": "int64",
+        "target_form": "index",
+        "targets": {
+          "shape": [
+            4
+          ],
+          "values": [
+            0,
+            0,
+            -100,
+            2
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "class_weights": [
+          1.0,
+          2.0,
+          4.0
+        ],
+        "dtype": "float32",
+        "expected": {
+          "logit_gradient": {
+            "shape": [
+              4,
+              3
+            ],
+            "values": [
+              0.19491448998451233,
+              -0.06575201451778412,
+              -0.1291624754667282,
+              0.10977639257907867,
+              -0.08962544798851013,
+              -0.020150866359472275,
+              -0.03321417048573494,
+              -0.07546830922365189,
+              0.10868242383003235,
+              0.4214094579219818,
+              -0.011122733354568481,
+              -0.4102868437767029
+            ]
+          },
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              2.745850086212158
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "label_smoothing": 0.2,
+        "logits": {
+          "shape": [
+            4,
+            3
+          ],
+          "values": [
+            2.0,
+            0.0,
+            -1.0,
+            0.5,
+            1.5,
+            -0.5,
+            -1.0,
+            0.20000000298023224,
+            2.200000047683716,
+            1.0,
+            -0.5,
+            0.25
+          ]
+        },
+        "name": "soft_mean_weighted_smoothed",
+        "operation": "torch.nn.functional.cross_entropy",
+        "reduction": "mean",
+        "target_dtype": "float32",
+        "target_form": "soft",
+        "targets": {
+          "shape": [
+            4,
+            3
+          ],
+          "values": [
+            0.699999988079071,
+            0.20000000298023224,
+            0.10000000149011612,
+            0.0,
+            1.0,
+            0.0,
+            0.20000000298023224,
+            0.30000001192092896,
+            0.5,
+            0.10000000149011612,
+            0.20000000298023224,
+            0.699999988079071
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "class_weights": [],
+        "dtype": "float32",
+        "expected": {
+          "logit_gradient": {
+            "shape": [
+              3
+            ],
+            "values": [
+              1.0,
+              -1.0,
+              0.0
+            ]
+          },
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              2000.0
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "label_smoothing": 0.0,
+        "logits": {
+          "shape": [
+            3
+          ],
+          "values": [
+            1000.0,
+            -1000.0,
+            0.0
+          ]
+        },
+        "name": "rank1_index_mean_extreme_logits",
+        "operation": "torch.nn.functional.cross_entropy",
+        "reduction": "mean",
+        "target_dtype": "int64",
+        "target_form": "index",
+        "targets": {
+          "shape": [],
+          "values": [
+            1
+          ]
+        },
+        "tolerance": {
+          "atol": 0.0001,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "class_weights": [
+          1.0,
+          3.0,
+          2.0
+        ],
+        "dtype": "float32",
+        "expected": {
+          "logit_gradient": {
+            "shape": [
+              3
+            ],
+            "values": [
+              1.3381428718566895,
+              -1.4240063428878784,
+              0.08586335182189941
+            ]
+          },
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              4.606202125549316
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "label_smoothing": 0.15,
+        "logits": {
+          "shape": [
+            3
+          ],
+          "values": [
+            1.5,
+            -0.25,
+            0.75
+          ]
+        },
+        "name": "rank1_soft_sum_weighted_smoothed",
+        "operation": "torch.nn.functional.cross_entropy",
+        "reduction": "sum",
+        "target_dtype": "float32",
+        "target_form": "soft",
+        "targets": {
+          "shape": [
+            3
+          ],
+          "values": [
+            0.10000000149011612,
+            0.6000000238418579,
+            0.30000001192092896
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "class_weights": [],
+        "dtype": "float32",
+        "expected": {
+          "logit_gradient": {
+            "shape": [
+              2,
+              2,
+              3
+            ],
+            "values": [
+              -0.15620529651641846,
+              0.11419519782066345,
+              0.04201006516814232,
+              0.0,
+              0.0,
+              0.0,
+              0.03465886786580086,
+              0.11507146805524826,
+              -0.149730384349823,
+              0.5897976160049438,
+              -0.8683983683586121,
+              0.27860066294670105
+            ]
+          },
+          "loss": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              0.1698460429906845,
+              0.0,
+              0.16220176219940186,
+              2.0279757976531982
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "label_smoothing": 0.0,
+        "logits": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            2.0,
+            0.0,
+            -1.0,
+            0.5,
+            1.5,
+            -0.5,
+            -1.0,
+            0.20000000298023224,
+            2.200000047683716,
+            1.0,
+            -0.5,
+            0.25
+          ]
+        },
+        "name": "rank3_index_none_ignored",
+        "operation": "torch.nn.functional.cross_entropy",
+        "reduction": "none",
+        "target_dtype": "int64",
+        "target_form": "index",
+        "targets": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            0,
+            -100,
+            2,
+            1
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "class_weights": [
+          1.0,
+          2.0,
+          4.0
+        ],
+        "dtype": "float32",
+        "expected": {
+          "logit_gradient": {
+            "shape": [
+              2,
+              2,
+              3
+            ],
+            "values": [
+              0.028877146542072296,
+              0.0016162730753421783,
+              -0.030493417754769325,
+              0.0,
+              0.0,
+              0.0,
+              0.008630835451185703,
+              0.04122791439294815,
+              -0.04985874891281128,
+              0.16460692882537842,
+              -0.20876522362232208,
+              0.044158291071653366
+            ]
+          },
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              0.8925278186798096
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "label_smoothing": 0.2,
+        "logits": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            2.0,
+            0.0,
+            -1.0,
+            0.5,
+            1.5,
+            -0.5,
+            -1.0,
+            0.20000000298023224,
+            2.200000047683716,
+            1.0,
+            -0.5,
+            0.25
+          ]
+        },
+        "name": "rank3_index_mean_weighted_smoothed_ignored",
+        "operation": "torch.nn.functional.cross_entropy",
+        "reduction": "mean",
+        "target_dtype": "int64",
+        "target_form": "index",
+        "targets": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            0,
+            -100,
+            2,
+            1
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "class_weights": [
+          1.0,
+          2.0,
+          4.0
+        ],
+        "dtype": "float32",
+        "expected": {
+          "logit_gradient": {
+            "shape": [
+              2,
+              2,
+              3
+            ],
+            "values": [
+              0.2705128788948059,
+              -0.21829736232757568,
+              -0.05221560597419739,
+              0.3963068723678589,
+              -0.0941382646560669,
+              -0.3021683990955353,
+              0.09702016413211823,
+              0.050351738929748535,
+              -0.14737200736999512,
+              1.0968648195266724,
+              -0.02062992751598358,
+              -1.0762351751327515
+            ]
+          },
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              9.91993236541748
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "label_smoothing": 0.1,
+        "logits": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1.0,
+            -0.5,
+            0.25,
+            0.0,
+            1.0,
+            -1.0,
+            -0.25,
+            0.5,
+            1.5,
+            2.0,
+            0.0,
+            -0.5
+          ]
+        },
+        "name": "rank3_soft_sum_weighted_smoothed",
+        "operation": "torch.nn.functional.cross_entropy",
+        "reduction": "sum",
+        "target_dtype": "float32",
+        "target_form": "soft",
+        "targets": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            0.699999988079071,
+            0.20000000298023224,
+            0.10000000149011612,
+            0.10000000149011612,
+            0.800000011920929,
+            0.10000000149011612,
+            0.20000000298023224,
+            0.30000001192092896,
+            0.5,
+            0.6000000238418579,
+            0.10000000149011612,
+            0.30000001192092896
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "class_weights": [
+          1.0,
+          2.0,
+          4.0
+        ],
+        "dtype": "float32",
+        "expected": {
+          "logit_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "loss": {
+            "non_finite": "nan",
+            "shape": [
+              1
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "label_smoothing": 0.2,
+        "logits": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            2.0,
+            0.0,
+            -1.0,
+            0.5,
+            1.5,
+            -0.5
+          ]
+        },
+        "name": "rank2_index_mean_all_ignored",
+        "operation": "torch.nn.functional.cross_entropy",
+        "reduction": "mean",
+        "target_dtype": "int64",
+        "target_form": "index",
+        "targets": {
+          "shape": [
+            2
+          ],
+          "values": [
+            -100,
+            -100
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      }
+    ],
+    "gradient_accumulation_linear_ce_sgd_f32": [
+      {
+        "class_weights": [],
+        "dtype": "float32",
+        "expected": {
+          "bias": {
+            "shape": [
+              2
+            ],
+            "values": [
+              -0.010000000707805157,
+              0.010000000707805157
+            ]
+          },
+          "weight": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              0.20000000298023224,
+              -0.4000000059604645,
+              -0.10000000149011612,
+              0.30000001192092896
+            ]
+          }
+        },
+        "expected_optimizer_step_count": 1,
+        "expected_steps": [
+          {
+            "bias": {
+              "shape": [
+                2
+              ],
+              "values": [
+                -0.010000000707805157,
+                0.010000000707805157
+              ]
+            },
+            "ending_microbatch": 2,
+            "loss": 0.6931471824645996,
+            "weight": {
+              "shape": [
+                2,
+                2
+              ],
+              "values": [
+                0.20000000298023224,
+                -0.4000000059604645,
+                -0.10000000149011612,
+                0.30000001192092896
+              ]
+            },
+            "window_microbatch_count": 2,
+            "window_sample_count": 5
+          }
+        ],
+        "expected_train_accuracy": 0.4,
+        "expected_valid_target_count": 5,
+        "grad_accum_steps": 2,
+        "ignore_index": -100,
+        "initial": {
+          "bias": {
+            "shape": [
+              2
+            ],
+            "values": [
+              0.0,
+              0.0
+            ]
+          },
+          "weight": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              0.20000000298023224,
+              -0.4000000059604645,
+              -0.10000000149011612,
+              0.30000001192092896
+            ]
+          }
+        },
+        "input": {
+          "shape": [
+            5,
+            2
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label_smoothing": 0.0,
+        "learning_rate": 0.1,
+        "loss_reduction": "mean",
+        "microbatch_size": 3,
+        "name": "uneven_microbatch_sample_weighting",
+        "operation": "torch.nn.Linear + torch.nn.functional.cross_entropy + torch.optim.SGD",
+        "targets": {
+          "shape": [
+            5
+          ],
+          "values": [
+            0,
+            1,
+            1,
+            0,
+            1
+          ]
+        },
+        "tolerance": {
+          "atol": 2e-05,
+          "rtol": 2e-05
+        }
+      },
+      {
+        "class_weights": [],
+        "dtype": "float32",
+        "expected": {
+          "bias": {
+            "shape": [
+              2
+            ],
+            "values": [
+              -0.05000000074505806,
+              0.05000000074505806
+            ]
+          },
+          "weight": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              0.20000000298023224,
+              -0.4000000059604645,
+              -0.10000000149011612,
+              0.30000001192092896
+            ]
+          }
+        },
+        "expected_optimizer_step_count": 2,
+        "expected_steps": [
+          {
+            "bias": {
+              "shape": [
+                2
+              ],
+              "values": [
+                0.0,
+                0.0
+              ]
+            },
+            "ending_microbatch": 3,
+            "loss": 0.6931471824645996,
+            "weight": {
+              "shape": [
+                2,
+                2
+              ],
+              "values": [
+                0.20000000298023224,
+                -0.4000000059604645,
+                -0.10000000149011612,
+                0.30000001192092896
+              ]
+            },
+            "window_microbatch_count": 3,
+            "window_sample_count": 6
+          },
+          {
+            "bias": {
+              "shape": [
+                2
+              ],
+              "values": [
+                -0.05000000074505806,
+                0.05000000074505806
+              ]
+            },
+            "ending_microbatch": 4,
+            "loss": 0.6931471824645996,
+            "weight": {
+              "shape": [
+                2,
+                2
+              ],
+              "values": [
+                0.20000000298023224,
+                -0.4000000059604645,
+                -0.10000000149011612,
+                0.30000001192092896
+              ]
+            },
+            "window_microbatch_count": 1,
+            "window_sample_count": 1
+          }
+        ],
+        "expected_train_accuracy": 0.42857142857142855,
+        "expected_valid_target_count": 7,
+        "grad_accum_steps": 3,
+        "ignore_index": -100,
+        "initial": {
+          "bias": {
+            "shape": [
+              2
+            ],
+            "values": [
+              0.0,
+              0.0
+            ]
+          },
+          "weight": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              0.20000000298023224,
+              -0.4000000059604645,
+              -0.10000000149011612,
+              0.30000001192092896
+            ]
+          }
+        },
+        "input": {
+          "shape": [
+            7,
+            2
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label_smoothing": 0.0,
+        "learning_rate": 0.1,
+        "loss_reduction": "mean",
+        "microbatch_size": 2,
+        "name": "final_partial_window_flush",
+        "operation": "torch.nn.Linear + torch.nn.functional.cross_entropy + torch.optim.SGD",
+        "targets": {
+          "shape": [
+            7
+          ],
+          "values": [
+            0,
+            1,
+            1,
+            0,
+            1,
+            0,
+            1
+          ]
+        },
+        "tolerance": {
+          "atol": 2e-05,
+          "rtol": 2e-05
+        }
+      },
+      {
+        "class_weights": [
+          1.0,
+          4.0
+        ],
+        "dtype": "float32",
+        "expected": {
+          "bias": {
+            "shape": [
+              2
+            ],
+            "values": [
+              -0.029999995604157448,
+              0.030000001192092896
+            ]
+          },
+          "weight": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              0.20000000298023224,
+              -0.4000000059604645,
+              -0.10000000149011612,
+              0.30000001192092896
+            ]
+          }
+        },
+        "expected_optimizer_step_count": 1,
+        "expected_steps": [
+          {
+            "bias": {
+              "shape": [
+                2
+              ],
+              "values": [
+                -0.029999995604157448,
+                0.030000001192092896
+              ]
+            },
+            "ending_microbatch": 2,
+            "loss": 0.6931471824645996,
+            "weight": {
+              "shape": [
+                2,
+                2
+              ],
+              "values": [
+                0.20000000298023224,
+                -0.4000000059604645,
+                -0.10000000149011612,
+                0.30000001192092896
+              ]
+            },
+            "window_microbatch_count": 2,
+            "window_sample_count": 5
+          }
+        ],
+        "expected_train_accuracy": 0.5,
+        "expected_valid_target_count": 4,
+        "grad_accum_steps": 2,
+        "ignore_index": -100,
+        "initial": {
+          "bias": {
+            "shape": [
+              2
+            ],
+            "values": [
+              0.0,
+              0.0
+            ]
+          },
+          "weight": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              0.20000000298023224,
+              -0.4000000059604645,
+              -0.10000000149011612,
+              0.30000001192092896
+            ]
+          }
+        },
+        "input": {
+          "shape": [
+            5,
+            2
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label_smoothing": 0.2,
+        "learning_rate": 0.1,
+        "loss_reduction": "mean",
+        "microbatch_size": 3,
+        "name": "weighted_ignored_mean_denominator",
+        "operation": "torch.nn.Linear + torch.nn.functional.cross_entropy + torch.optim.SGD",
+        "targets": {
+          "shape": [
+            5
+          ],
+          "values": [
+            0,
+            1,
+            -100,
+            1,
+            0
+          ]
+        },
+        "tolerance": {
+          "atol": 2e-05,
+          "rtol": 2e-05
+        }
+      }
+    ],
+    "linear_basic_f32": {
+      "bias": {
+        "shape": [
+          2
+        ],
+        "values": [
+          0.10000000149011612,
+          -0.20000000298023224
+        ]
+      },
+      "dtype": "float32",
+      "expected": {
+        "grad_bias": {
+          "shape": [
+            2
+          ],
+          "values": [
+            1.25,
+            1.5
+          ]
+        },
+        "grad_input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.625,
+            -1.375,
+            1.25,
+            -0.375,
+            1.25,
+            3.5
+          ]
+        },
+        "grad_weight": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            1.0,
+            1.25,
+            0.0,
+            -0.5,
+            -7.0,
+            8.5
+          ]
+        },
+        "output": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            -3.4000000953674316,
+            -0.44999998807907104,
+            11.100000381469727,
+            3.549999952316284
+          ]
+        }
+      },
+      "grad_output": {
+        "shape": [
+          2,
+          2
+        ],
+        "values": [
+          1.0,
+          -0.5,
+          0.25,
+          2.0
+        ]
+      },
+      "input": {
+        "shape": [
+          2,
+          3
+        ],
+        "values": [
+          1.0,
+          2.0,
+          -1.0,
+          0.0,
+          -3.0,
+          4.0
+        ]
+      },
+      "operation": "torch.nn.functional.linear",
+      "parameter_gradient_reduction": "sum_over_batch",
+      "tolerance": {
+        "atol": 1e-05,
+        "rtol": 1e-05
+      },
+      "weight": {
+        "shape": [
+          2,
+          3
+        ],
+        "values": [
+          0.5,
+          -1.0,
+          2.0,
+          -0.25,
+          0.75,
+          1.5
+        ]
+      }
+    },
+    "scheduler_lr_sequences": [
+      {
+        "base_learning_rate": 0.1,
+        "call_order": "optimizer.step_then_scheduler.step",
+        "expected_initial_learning_rate": 0.1,
+        "expected_reset_learning_rate": 0.1,
+        "expected_steps": [
+          {
+            "index": 1,
+            "learning_rate": 0.1
+          },
+          {
+            "index": 2,
+            "learning_rate": 0.05
+          },
+          {
+            "index": 3,
+            "learning_rate": 0.05
+          },
+          {
+            "index": 4,
+            "learning_rate": 0.025
+          },
+          {
+            "index": 5,
+            "learning_rate": 0.025
+          }
+        ],
+        "name": "step_lr_epoch_sequence",
+        "operation": "torch.optim.lr_scheduler.StepLR",
+        "parameters": {
+          "gamma": 0.5,
+          "step_size": 2
+        },
+        "tolerance": {
+          "atol": 1e-12,
+          "rtol": 1e-12
+        }
+      },
+      {
+        "base_learning_rate": 0.1,
+        "call_order": "optimizer.step_then_scheduler.step",
+        "expected_initial_learning_rate": 0.1,
+        "expected_reset_learning_rate": 0.1,
+        "expected_steps": [
+          {
+            "index": 1,
+            "learning_rate": 0.09000000000000001
+          },
+          {
+            "index": 2,
+            "learning_rate": 0.08100000000000002
+          },
+          {
+            "index": 3,
+            "learning_rate": 0.07290000000000002
+          },
+          {
+            "index": 4,
+            "learning_rate": 0.06561000000000002
+          }
+        ],
+        "name": "exponential_lr_epoch_sequence",
+        "operation": "torch.optim.lr_scheduler.ExponentialLR",
+        "parameters": {
+          "gamma": 0.9
+        },
+        "tolerance": {
+          "atol": 1e-12,
+          "rtol": 1e-12
+        }
+      },
+      {
+        "base_learning_rate": 0.1,
+        "call_order": "optimizer.step_then_scheduler.step",
+        "expected_initial_learning_rate": 0.1,
+        "expected_reset_learning_rate": 0.1,
+        "expected_steps": [
+          {
+            "index": 1,
+            "learning_rate": 0.08681980515339464
+          },
+          {
+            "index": 2,
+            "learning_rate": 0.05500000000000001
+          },
+          {
+            "index": 3,
+            "learning_rate": 0.023180194846605363
+          },
+          {
+            "index": 4,
+            "learning_rate": 0.01
+          },
+          {
+            "index": 5,
+            "learning_rate": 0.023180194846605363
+          }
+        ],
+        "name": "cosine_annealing_boundary_sequence",
+        "operation": "torch.optim.lr_scheduler.CosineAnnealingLR",
+        "parameters": {
+          "T_max": 4,
+          "eta_min": 0.01
+        },
+        "tolerance": {
+          "atol": 1e-12,
+          "rtol": 1e-12
+        }
+      },
+      {
+        "base_learning_rate": 0.1,
+        "call_order": "optimizer.step_then_scheduler.step",
+        "expected_initial_learning_rate": 0.1,
+        "expected_reset_learning_rate": 0.1,
+        "expected_steps": [
+          {
+            "index": 1,
+            "learning_rate": 0.1,
+            "metric": 1.0
+          },
+          {
+            "index": 2,
+            "learning_rate": 0.1,
+            "metric": 1.1
+          },
+          {
+            "index": 3,
+            "learning_rate": 0.1,
+            "metric": 1.2
+          },
+          {
+            "index": 4,
+            "learning_rate": 0.05,
+            "metric": 1.3
+          },
+          {
+            "index": 5,
+            "learning_rate": 0.05,
+            "metric": 1.4
+          }
+        ],
+        "name": "plateau_patience_sequence",
+        "operation": "torch.optim.lr_scheduler.ReduceLROnPlateau",
+        "parameters": {
+          "factor": 0.5,
+          "min_lr": 0.01,
+          "mode": "min",
+          "patience": 2,
+          "threshold": 0.0001
+        },
+        "tolerance": {
+          "atol": 1e-12,
+          "rtol": 1e-12
+        }
+      }
+    ],
+    "weighted_sampler_inverse_frequency": {
+      "absolute_probability_tolerance": 0.03,
+      "class_counts": [
+        3072,
+        1024
+      ],
+      "cross_rng_probability_tolerance": 0.04,
+      "expected_class_probabilities": [
+        0.4999999999999999,
+        0.5000000000000001
+      ],
+      "num_samples": 4096,
+      "operation": "torch.utils.data.WeightedRandomSampler",
+      "pytorch_empirical_class_counts": [
+        2042,
+        2054
+      ],
+      "replacement": true,
+      "rng_contract": "Distribution parity is required; the C++ RNG stream is not required to reproduce torch.multinomial indices.",
+      "sample_weight_rule": "inverse_class_frequency",
+      "seed": 3901
+    }
+  },
+  "oracle": {
+    "device": "cpu",
+    "name": "PyTorch",
+    "version": "2.10.0+cpu"
+  },
+  "schema_version": 1,
+  "seed": 39
+}

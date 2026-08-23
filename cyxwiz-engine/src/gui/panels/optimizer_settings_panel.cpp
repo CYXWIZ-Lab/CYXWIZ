@@ -344,7 +344,9 @@ void OptimizerSettingsPanel::RenderAdvancedSection() {
         ImGui::SetNextItemWidth(150);
         ImGui::InputInt("Gradient Accumulation", &gradient_accumulation_steps_);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Accumulate gradients over N steps (effective batch = batch_size * N)");
-        gradient_accumulation_steps_ = std::max(1, gradient_accumulation_steps_);
+        gradient_accumulation_steps_ =
+            training_contract::ClampGradientAccumulationSteps(
+                gradient_accumulation_steps_);
 
         ImGui::Checkbox("Mixed Precision (FP16)", &use_mixed_precision_);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use automatic mixed precision for faster training (requires GPU)");

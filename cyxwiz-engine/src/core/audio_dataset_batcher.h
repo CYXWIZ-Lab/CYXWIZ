@@ -56,6 +56,7 @@ public:
     void SetOneHotEncoding(size_t num_classes) override;
     void SetScalarLabelMode(bool enable) override { scalar_label_mode_ = enable; }
     void SetFlatten(bool flatten) override;
+    void SetDropLast(bool drop_last) override { drop_last_ = drop_last; }
     void SetPhase(BatcherPhase phase) override;
 
     // Audio-specific accessors
@@ -69,6 +70,7 @@ private:
     int batch_size_;
     bool shuffle_;
     int num_workers_ = 0;
+    bool drop_last_ = false;
     bool flatten_ = true;   // default flatten — most audio classifiers use Dense head
 
     int feature_rows_ = 0;  // n_fft/2+1, n_mels, or n_mfcc

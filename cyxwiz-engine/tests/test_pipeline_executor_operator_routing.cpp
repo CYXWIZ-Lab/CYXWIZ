@@ -49,6 +49,66 @@ void CheckAsyncTaskProgressContract() {
           "task progress should clamp values above one");
 }
 
+std::shared_ptr<cyxwiz::AsyncTask> WaitForTaskTerminalState(
+    uint64_t task_id) {
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < deadline) {
+        auto task = cyxwiz::AsyncTaskManager::Instance().GetTask(task_id);
+        if (task && task->GetState() != cyxwiz::TaskState::Pending &&
+            task->GetState() != cyxwiz::TaskState::Running) {
+            return task;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return cyxwiz::AsyncTaskManager::Instance().GetTask(task_id);
+}
+
+void CheckAsyncTaskTerminalContract() {
+    auto& manager = cyxwiz::AsyncTaskManager::Instance();
+    manager.Initialize(1);
+
+    const uint64_t completed_id = manager.RunAsync(
+        "early-stop terminal contract",
+        [](cyxwiz::LambdaTask& task) {
+            task.MarkCompleted(
+                "Early stopped after 2/5 executed epochs",
+                "early_stopped");
+        });
+    const auto completed = WaitForTaskTerminalState(completed_id);
+    Check(completed && completed->GetState() == cyxwiz::TaskState::Completed,
+          "explicit early-stop task outcome should remain completed");
+    Check(completed->GetStatusMessage() ==
+              "Early stopped after 2/5 executed epochs",
+          "automatic completion must not overwrite explicit terminal truth");
+
+    const uint64_t cancelled_id = manager.RunAsync(
+        "cancel terminal contract",
+        [](cyxwiz::LambdaTask& task) {
+            task.MarkCancelled("Cancelled after 0/3 executed epochs");
+        });
+    const auto cancelled = WaitForTaskTerminalState(cancelled_id);
+    Check(cancelled && cancelled->GetState() == cyxwiz::TaskState::Cancelled,
+          "explicit cancellation should retain the cancelled task state");
+    Check(cancelled->GetStatusMessage() ==
+              "Cancelled after 0/3 executed epochs",
+          "cancelled task should retain its lifecycle detail");
+
+    const uint64_t failed_id = manager.RunAsync(
+        "failure terminal contract",
+        [](cyxwiz::LambdaTask& task) {
+            task.MarkFailed("failed after 0/3 executed epochs");
+        });
+    const auto failed = WaitForTaskTerminalState(failed_id);
+    Check(failed && failed->GetState() == cyxwiz::TaskState::Failed,
+          "explicit failure should retain the failed task state");
+    Check(failed->GetErrorMessage() ==
+              "failed after 0/3 executed epochs",
+          "failed task should retain its lifecycle detail");
+
+    manager.Shutdown();
+}
+
 void CheckProgressSeries(const std::vector<float>& values,
                          const std::string& context) {
     Check(!values.empty(), context + " should report progress");
@@ -776,6 +836,11 @@ void CheckFocusedExportParquetPathOnly() {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 &&
+        std::string(argv[1]) == "--async-task-terminal-contract") {
+        CheckAsyncTaskTerminalContract();
+        return 0;
+    }
     if (argc == 2 &&
         std::string(argv[1]) == "--export-parquet-path-only") {
         CheckFocusedExportParquetPathOnly();

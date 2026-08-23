@@ -87,6 +87,17 @@ bool IsBalancedClassWeightRequest(const TrainingConfiguration& config) {
     return LowerAscii(TrimAscii(it->second)) == "balanced";
 }
 
+bool RequiresClassIndexTargets(const TrainingConfiguration& config) {
+    if (!UsesClassIndexTargets(config.loss_type) ||
+        config.preprocessing.has_onehot) {
+        return false;
+    }
+    const auto weights = config.loss_params.find("class_weights");
+    const bool has_weights = weights != config.loss_params.end() &&
+                             !TrimAscii(weights->second).empty();
+    return has_weights || config.loss_params.contains("ignore_index");
+}
+
 std::vector<int64_t> TrainRowsFromPartition(
     const std::shared_ptr<arrow::Table>& table,
     const std::string& partition_column) {
@@ -402,8 +413,7 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
     }
 
     if (config.drop_last) {
-        spdlog::warn("TrainingExecutor: drop_last=true requested but ArrowDatasetBatcher "
-                     "does not yet support it - last partial batch will be kept");
+        result.arrow_train->SetDropLast(true);
     }
     if (config.preprocessing.has_normalization) {
         result.arrow_train->SetNormalization(config.preprocessing.norm_mean,
@@ -418,6 +428,10 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
         result.arrow_train->SetScalarLabelMode(true);
         result.arrow_val->SetScalarLabelMode(true);
         result.arrow_test->SetScalarLabelMode(true);
+    } else if (RequiresClassIndexTargets(config)) {
+        result.arrow_train->SetClassIndexLabelMode(true);
+        result.arrow_val->SetClassIndexLabelMode(true);
+        result.arrow_test->SetClassIndexLabelMode(true);
     } else if (config.preprocessing.has_onehot) {
         result.arrow_train->SetOneHotEncoding(config.preprocessing.num_classes);
         result.arrow_val->SetOneHotEncoding(config.preprocessing.num_classes);
@@ -514,8 +528,7 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     }
 
     if (config.drop_last) {
-        spdlog::warn("TrainingExecutor: drop_last=true requested but ParquetArrowBatcher "
-                     "does not yet support it - last partial batch will be kept");
+        result.parquet_train->SetDropLast(true);
     }
     if (config.preprocessing.has_normalization) {
         result.parquet_train->SetNormalization(config.preprocessing.norm_mean,
@@ -530,6 +543,10 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
         result.parquet_train->SetScalarLabelMode(true);
         result.parquet_val->SetScalarLabelMode(true);
         result.parquet_test->SetScalarLabelMode(true);
+    } else if (RequiresClassIndexTargets(config)) {
+        result.parquet_train->SetClassIndexLabelMode(true);
+        result.parquet_val->SetClassIndexLabelMode(true);
+        result.parquet_test->SetClassIndexLabelMode(true);
     } else if (config.preprocessing.has_onehot) {
         result.parquet_train->SetOneHotEncoding(config.preprocessing.num_classes);
         result.parquet_val->SetOneHotEncoding(config.preprocessing.num_classes);
@@ -683,6 +700,8 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
                            dynamic_cast<ParquetArrowBatcher*>(batcher)) {
                 parquet_batcher->SetScalarLabelMode(true);
             }
+        } else if (RequiresClassIndexTargets(config)) {
+            batcher->SetClassIndexLabelMode(true);
         } else if (config.preprocessing.has_onehot) {
             batcher->SetOneHotEncoding(config.preprocessing.num_classes);
         } else {

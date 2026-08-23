@@ -91,7 +91,7 @@ ImageDatasetBatcher::ImageDatasetBatcher(
 
 Batch ImageDatasetBatcher::GetNextBatch() {
     Batch batch;
-    if (!dataset_ || current_idx_ >= epoch_order_.size()) return batch;
+    if (!dataset_ || IsEpochComplete()) return batch;
 
     size_t actual_size = std::min(static_cast<size_t>(batch_size_),
                                    epoch_order_.size() - current_idx_);
@@ -225,11 +225,17 @@ void ImageDatasetBatcher::SetPhase(BatcherPhase phase) {
 }
 
 bool ImageDatasetBatcher::IsEpochComplete() const {
-    return current_idx_ >= epoch_order_.size();
+    if (current_idx_ >= epoch_order_.size()) return true;
+    return drop_last_ && batch_size_ > 0 &&
+           current_phase_ == BatcherPhase::Train &&
+           epoch_order_.size() - current_idx_ < static_cast<size_t>(batch_size_);
 }
 
 size_t ImageDatasetBatcher::GetNumBatches() const {
     if (batch_size_ <= 0) return 0;
+    if (drop_last_ && current_phase_ == BatcherPhase::Train) {
+        return epoch_order_.size() / static_cast<size_t>(batch_size_);
+    }
     return (epoch_order_.size() + batch_size_ - 1) / batch_size_;
 }
 

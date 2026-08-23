@@ -97,6 +97,7 @@ protected:
     void MarkCompleted(
         const std::string& message = "Completed",
         const std::string& status = "completed");
+    void MarkCancelled(const std::string& message = "Cancelled");
     void MarkFailed(const std::string& error);
 
 private:
@@ -213,6 +214,7 @@ public:
     using AsyncTask::ReportProgress;
     using AsyncTask::ShouldStop;
     using AsyncTask::MarkCompleted;
+    using AsyncTask::MarkCancelled;
     using AsyncTask::MarkFailed;
 
 private:
@@ -228,7 +230,8 @@ uint64_t AsyncTaskManager::RunAsync(const std::string& name, Func&& func,
         [f = std::forward<Func>(func)](LambdaTask& task) {
             try {
                 f(task);
-                if (!task.IsCancelRequested()) {
+                if (!task.IsCancelRequested() &&
+                    task.GetState() == TaskState::Running) {
                     task.MarkCompleted();
                 }
             } catch (const std::exception& e) {

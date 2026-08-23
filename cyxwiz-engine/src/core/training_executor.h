@@ -31,6 +31,9 @@ inline bool UsesRegressionMetrics(const TrainingConfiguration& config) {
 struct TrainingMetrics {
     // Current progress
     int current_epoch = 0;
+    // Run-history truth. This is never rewritten when an earlier checkpoint
+    // is restored into the active model after training.
+    int last_executed_epoch = 0;
     int total_epochs = 0;
     int current_batch = 0;
     int total_batches = 0;
@@ -59,9 +62,12 @@ struct TrainingMetrics {
     float test_rmse = 0.0f;
     bool has_test_metrics = false;
 
-    // Checkpoint actually restored/used for final evaluation. Empty means no
-    // concrete checkpoint path was restored by the executor.
+    // Active-model provenance after training. Run-history fields above remain
+    // about executed work; restored checkpoint state is reported separately.
     std::string checkpoint_used;
+    int restored_checkpoint_epoch = 0;
+    int restored_checkpoint_step = 0;
+    std::string active_model_provenance;
 
     // Token-level sequence tagging metrics. For sequence training,
     // train_accuracy/val_accuracy also mirror token accuracy so existing
@@ -70,8 +76,11 @@ struct TrainingMetrics {
     float val_token_accuracy = 0.0f;
     float train_entity_f1 = 0.0f;
     float val_entity_f1 = 0.0f;
+    float test_token_accuracy = 0.0f;
+    float test_entity_f1 = 0.0f;
     size_t train_token_count = 0;
     size_t val_token_count = 0;
+    size_t test_token_count = 0;
 
     // Timing
     float epoch_time_seconds = 0.0f;
@@ -254,6 +263,13 @@ public:
     std::unique_ptr<Optimizer> ReleaseOptimizer() { return std::move(optimizer_); }
 
 private:
+    struct SequenceEvaluationMetrics {
+        float loss = 0.0f;
+        float accuracy = 0.0f;
+        float entity_f1 = 0.0f;
+        size_t token_count = 0;
+    };
+
     // Three possible dataset backings. Exactly one of dataset_ / arrow_dataset_ /
     // parquet_dataset_ is populated at construction time, based on which
     // constructor was called. mode_ is the tag the Train() function uses
@@ -342,6 +358,8 @@ private:
      * Run validation for token-tagging batches.
      */
     void RunValidationSequence(ISequenceBatcher& batcher);
+    SequenceEvaluationMetrics EvaluateSequenceBatcher(
+        ISequenceBatcher& batcher);
 
     /**
      * Forward pass through the model
@@ -377,6 +395,8 @@ private:
         int total_batches,
         float batch_loss,
         float current_acc,
+        float gradient_weight,
+        const Tensor* device_gradient_weight,
         bool force_step
     );
 
@@ -405,6 +425,9 @@ private:
     Tensor loss_gradient_;
     std::map<std::string, Tensor> gradient_accumulator_;
     int gradient_accumulated_batches_ = 0;
+    float gradient_accumulation_weight_ = 0.0f;
+    Tensor gradient_accumulation_device_weight_;
+    bool gradient_accumulation_device_weight_initialized_ = false;
 };
 
 } // namespace cyxwiz

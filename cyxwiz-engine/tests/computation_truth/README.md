@@ -14,6 +14,14 @@ Reference stack:
 - scikit-learn for TF-IDF parity when available.
 - Small in-repo reference implementations when external Python packages are unavailable.
 
+PyTorch is a reference-generation dependency, not an Engine runtime
+dependency. Small generated fixtures are checked in under `fixtures/`, copied
+beside their test executable at build time, and consumed by the C++ tests.
+
+`coverage_inventory.json` is the machine-readable Plan 39 Tier-0/Tier-1
+baseline. It records ownership, semantic contracts, oracle choice, current
+tests, execution path, honest coverage status, and remaining evidence gaps.
+
 Initial target cases:
 
 - TF-IDF bounded materialization values and shape.
@@ -35,25 +43,77 @@ The broad tracking ticket is:
 - Verifies bounded output width: `max_features` columns plus optional `y`.
 - Verifies deterministic TF-IDF values against a hand reference.
 - Verifies deterministic label encoding.
-- Verifies `CrossEntropyLoss` mean against hand reference math equivalent to PyTorch `cross_entropy`.
-- Verifies `LinearLayer` forward output against hand reference `input @ weight^T + bias`.
+- Verifies `CrossEntropyLoss` against generated PyTorch `cross_entropy`
+  fixtures for class-last rank-1/2/3 logits, index and soft targets,
+  `none`/`sum`/`mean`, class weights, ignored targets, label smoothing,
+  extreme logits, all-ignored mean behavior, forward loss, and full logit
+  gradients.
+- Verifies `LinearLayer` forward output against a generated PyTorch linear fixture.
 - Verifies `LinearLayer` backward values:
   - gradient with respect to input
-  - mean-reduced weight gradients
-  - mean-reduced bias gradients
-- Verifies `AdamWOptimizer` first-step parameter update with decoupled weight decay against a hand reference equivalent to PyTorch AdamW first-step semantics.
+  - summed weight gradients, matching PyTorch autograd
+  - summed bias gradients, matching PyTorch autograd
+- Verifies `AdamWOptimizer` first-step parameter update with decoupled weight
+  decay against a generated PyTorch AdamW fixture.
+- Activates ArrayFire CPU exactly, binds an immutable execution context, and
+  runs the fixture-backed core checks with native CPU fallback forbidden.
+- Rejects native fallback attempts and undeclared host synchronization; only
+  bounded, attributed test-output readbacks are allowed.
+- Proves every supported CrossEntropy rank uses the same strict ArrayFire CPU
+  path; rank-3 is reshaped on device and is not a hidden native CPU variant.
+
+The Linear, CrossEntropy, AdamW, and weighted-sampler expectations come from the checked-in
+`fixtures/training_core_pytorch.json` fixture. Regenerate it with:
+
+```powershell
+python cyxwiz-engine/tests/computation_truth/reference/generate_training_core_fixtures.py
+```
+
+The pinned reference package is listed in
+`reference/requirements.txt`. Regenerating fixtures is an explicit developer
+action; normal configuration, builds, and test runs do not invoke Python or
+require network access.
+
+`test_training_batcher_setup` consumes the weighted-sampler case from the same
+fixture. It verifies inverse-class-frequency replacement sampling, fixed epoch
+length, and class-probability parity with PyTorch over 4,096 draws. Exact draw
+indices are intentionally not compared because CyxWiz and PyTorch use different
+RNG implementations.
+
+`test_training_executor_arrow_parquet --uneven-epoch-metrics-only` runs the
+focused full-epoch aggregation contract. It compares `{4, 2}` Train and Dev
+metrics against evaluating the same unchanged model over each six-row role as
+one batch, and covers classification loss/accuracy plus two-output regression
+loss/MAE/RMSE under strict zero-native-fallback execution. Classification also
+covers weighted, label-smoothed CrossEntropy with unequal class composition in
+the `{4, 2}` batches.
+
+`test_training_executor_arrow_parquet --gradient-accumulation-parity-only`
+consumes two generated PyTorch effective-batch fixtures. It checks an uneven
+`{3, 2}` microbatch window and a three-microbatch window followed by a forced
+one-microbatch tail. Bias parameters are compared at every SGD boundary, final
+parameters and optimizer-step counts must match, terminal lifecycle truth is
+exact, and native CPU fallback is forbidden.
 
 Run:
 
 ```powershell
 cmake --build build --config Release --target test_computation_truth_tfidf_loss -- /m:4 /v:minimal
 build\bin\Release\test_computation_truth_tfidf_loss.exe
+
+cmake --build build --config Debug --target test_training_batcher_setup -- /m:4 /v:minimal
+build\bin\Debug\test_training_batcher_setup.exe
+
+cmake --build build --config Debug --target test_training_executor_arrow_parquet -- /m:4 /v:minimal
+build\bin\Debug\test_training_executor_arrow_parquet.exe --uneven-epoch-metrics-only
+
+build\bin\Debug\test_training_executor_arrow_parquet.exe --gradient-accumulation-parity-only
 ```
 
-Note: some local builds report `PyTorch/LibTorch: OFF`; those builds should
-use hand references or optional Python-side PyTorch checks. When LibTorch is
-enabled, keep it in computation-truth tests and outside the engine runtime
-boundary.
+These checks work when `PyTorch/LibTorch: OFF`: PyTorch is used only to
+generate the checked-in fixture, while the C++ test has no LibTorch runtime
+dependency. If LibTorch is enabled for other computation-truth tests, keep it
+outside the engine runtime boundary.
 
 Latest observed run also exercised `LinearLayer` while ArrayFire GPU was active.
 

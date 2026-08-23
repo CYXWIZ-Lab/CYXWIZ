@@ -11,6 +11,8 @@
 
 namespace cyxwiz {
 
+struct TrainingMetrics;
+
 struct TrainingStatusSnapshot {
     bool has_data = false;
     bool is_training = false;
@@ -18,7 +20,9 @@ struct TrainingStatusSnapshot {
     bool preparation_failed = false;
     std::string status_message;
     std::string terminal_status;
+    std::string terminal_reason;
     int current_epoch = 0;
+    int last_executed_epoch = 0;
     int total_epochs = 0;
     int current_batch = 0;
     int total_batches = 0;
@@ -30,6 +34,9 @@ struct TrainingStatusSnapshot {
     float samples_per_second = 0.0f;
     float total_training_time = 0.0f;
     int checkpoint_epoch = 0;
+    int checkpoint_step = 0;
+    std::string checkpoint_used;
+    std::string active_model_provenance;
     size_t metric_points = 0;
     std::vector<std::pair<std::string, double>> latest_custom_metrics;
 };
@@ -103,6 +110,8 @@ public:
                              float checkpoint_val_loss = 0.0f,
                              float checkpoint_val_accuracy = 0.0f,
                              int checkpoint_epoch = 0);
+    void SetTrainingComplete(float total_time_seconds,
+                             const TrainingMetrics& metrics);
     void SetActiveCheckpointLoaded(const std::string& checkpoint_path,
                                    int checkpoint_epoch,
                                    float validation_loss,
@@ -205,6 +214,7 @@ private:
     std::string preparation_error_message_;
     float preparation_progress_ = 0.0f;
     int current_epoch_ = 0;
+    int last_executed_epoch_ = 0;
     int total_epochs_ = 0;
     int current_batch_ = 0;
     int total_batches_ = 0;
@@ -221,6 +231,8 @@ private:
     float checkpoint_val_loss_ = 0.0f;
     float checkpoint_val_accuracy_ = 0.0f;
     int checkpoint_epoch_ = 0;
+    int checkpoint_step_ = 0;
+    std::string active_model_provenance_;
     bool active_checkpoint_loaded_ = false;
     std::vector<float> epoch_times_;  // For averaging
     bool last_render_visible_ = false;

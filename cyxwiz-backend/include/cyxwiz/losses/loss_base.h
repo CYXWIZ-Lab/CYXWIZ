@@ -43,6 +43,13 @@ public:
 
     virtual std::string GetName() const { return "Loss"; }
 
+    // Mean losses whose semantic divisor is not the observation count may
+    // expose the device-resident denominator produced by their last Forward.
+    // The pointer remains valid until the next non-const call on the loss.
+    virtual const Tensor* GetLastMeanReductionDenominator() const {
+        return nullptr;
+    }
+
     Reduction GetReduction() const { return reduction_; }
     void SetReduction(Reduction reduction) { reduction_ = reduction; }
 

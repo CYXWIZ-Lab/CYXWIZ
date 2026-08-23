@@ -318,7 +318,7 @@ TEST_CASE("CrossEntropyLoss weights and smooths one-hot targets", "[loss]") {
 
     float expected_loss = 0.0f;
     float expected_grad[6] = {};
-    float denominator = 0.0f;
+    constexpr float mean_denominator = 2.0f;
     for (size_t row = 0; row < 2; ++row) {
         const size_t base = row * 3;
         float max_logit = logit_values[base];
@@ -347,16 +347,15 @@ TEST_CASE("CrossEntropyLoss weights and smooths one-hot targets", "[loss]") {
             expected_loss -= weighted_targets[column] *
                 std::log(exp_values[column] / exp_sum);
         }
-        denominator += row_weight;
         for (size_t column = 0; column < 3; ++column) {
             const float probability = exp_values[column] / exp_sum;
             expected_grad[base + column] =
                 probability * row_weight - weighted_targets[column];
         }
     }
-    expected_loss /= denominator;
+    expected_loss /= mean_denominator;
     for (float& value : expected_grad) {
-        value /= denominator;
+        value /= mean_denominator;
     }
 
     REQUIRE(loss.ReadData<float>()[0] ==

@@ -956,6 +956,23 @@ std::string StudioDebuggerPanel::BuildAssistantTrainingContextJson() const {
             {"accuracy", terminal->accuracy}
         };
     }
+    if (const auto last_run = CrashRunRecorder::LoadLastRun();
+        last_run &&
+        (trace.run_id.empty() || last_run->run_id == trace.run_id)) {
+        context["run_history"] = {
+            {"active_epoch", last_run->epoch},
+            {"last_executed_epoch", last_run->last_executed_epoch},
+            {"configured_epochs", last_run->epochs},
+            {"terminal_reason", last_run->terminal_reason},
+            {"checkpoint_used", last_run->checkpoint_used},
+            {"restored_checkpoint_epoch",
+             last_run->restored_checkpoint_epoch},
+            {"restored_checkpoint_step",
+             last_run->restored_checkpoint_step},
+            {"active_model_provenance",
+             last_run->active_model_provenance}
+        };
+    }
 
     return context.dump();
 }
@@ -1747,9 +1764,32 @@ void StudioDebuggerPanel::RenderLastRun() {
     ImGui::Text("Backend: %s", run.backend.empty() ? "(unknown)" : run.backend.c_str());
     ImGui::Text("Last event: epoch %d/%d batch %d/%d",
                 run.epoch, run.epochs, run.batch, run.total_batches);
+    ImGui::Text("Executed epochs: %d/%d",
+                run.last_executed_epoch, run.epochs);
+    if (run.epoch > run.last_executed_epoch) {
+        ImGui::TextDisabled("Terminal event occurred during epoch %d",
+                            run.epoch);
+    }
     ImGui::Text("Last stage: %s", run.last_stage.c_str());
     ImGui::Text("Metrics: loss=%.4f acc=%.2f%%", run.loss, run.accuracy * 100.0f);
     ImGui::Text("Time: %s", run.last_event_time.c_str());
+    if (!run.terminal_reason.empty()) {
+        ImGui::TextWrapped("Terminal reason: %s",
+                           run.terminal_reason.c_str());
+    }
+    if (!run.active_model_provenance.empty()) {
+        ImGui::Text("Active model provenance: %s",
+                    run.active_model_provenance.c_str());
+    }
+    if (run.restored_checkpoint_epoch > 0) {
+        ImGui::Text("Restored checkpoint: epoch %d, step %d",
+                    run.restored_checkpoint_epoch,
+                    run.restored_checkpoint_step);
+    }
+    if (!run.checkpoint_used.empty()) {
+        ImGui::TextWrapped("Active checkpoint: %s",
+                           run.checkpoint_used.c_str());
+    }
     if (!run.warning.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f), "Warning:");
         ImGui::SameLine();
@@ -1935,8 +1975,10 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
                         latest_validation->validation_accuracy * 100.0f);
         }
         if (latest_checkpoint) {
-            ImGui::Text("Checkpoint: %s epoch %d val_loss %.4f val_acc %.2f%%",
-                        latest_checkpoint->is_best_checkpoint ? "best" : "saved",
+            const bool restored =
+                latest_checkpoint->stage == "CheckpointRestored";
+            ImGui::Text("%s: epoch %d val_loss %.4f val_acc %.2f%%",
+                        restored ? "Active model restored" : "Checkpoint saved",
                         latest_checkpoint->epoch,
                         latest_checkpoint->validation_loss,
                         latest_checkpoint->validation_accuracy * 100.0f);
@@ -1949,10 +1991,12 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
             ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f),
                                "Terminal: %s",
                                latest_terminal->status.c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("active epoch %d",
+                                latest_terminal->epoch);
             if (!latest_terminal->terminal_reason.empty()) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s",
-                                    latest_terminal->terminal_reason.c_str());
+                ImGui::TextWrapped("Reason: %s",
+                                   latest_terminal->terminal_reason.c_str());
             }
         }
     }

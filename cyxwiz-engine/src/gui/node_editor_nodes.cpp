@@ -2,6 +2,7 @@
 #include "properties.h"
 #include "visualization/visualization_nodes.h"
 #include "../core/worker_defaults.h"
+#include "../core/training_parameter_contract.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include "../core/data_registry.h"
 #include <imgui.h>
@@ -716,7 +717,8 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             // Optimizer node owns gradient-update knobs (lr, momentum, betas).
             node.parameters["epochs"] = "10";
             node.parameters["batch_size"] = "32";
-            node.parameters["grad_accum_steps"] = "1";  // simulate larger effective batch
+            node.parameters[cyxwiz::training_contract::kGradientAccumulationStepsKey] =
+                cyxwiz::training_contract::kGradientAccumulationStepsDefaultValue;
             node.parameters["shuffle"] = "true";
             node.parameters["drop_last"] = "false";
             node.parameters["seed"] = "42";             // reproducibility

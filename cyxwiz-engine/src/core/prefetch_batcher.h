@@ -100,9 +100,19 @@ public:
         source_->SetScalarLabelMode(enable);
     }
 
+    void SetClassIndexLabelMode(bool enable) override {
+        StopWorker();
+        source_->SetClassIndexLabelMode(enable);
+    }
+
     void SetFlatten(bool flatten) override {
         StopWorker();
         source_->SetFlatten(flatten);
+    }
+
+    void SetDropLast(bool drop_last) override {
+        StopWorker();
+        source_->SetDropLast(drop_last);
     }
 
     void SetPhase(BatcherPhase phase) override {

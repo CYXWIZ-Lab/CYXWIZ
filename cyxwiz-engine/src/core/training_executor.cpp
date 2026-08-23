@@ -15,6 +15,7 @@
 #include "sequence_model_input.h"
 #include "sequence_training_step.h"
 #include "training_batcher_setup.h"
+#include "training_parameter_contract.h"
 #ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
 #include "data_registry.h"
 #include "../preprocessing/preprocessing_config.h"
@@ -228,34 +229,134 @@ bool ShouldReportTrainingBatch(const TrainingConfiguration& config,
            batch_num % config.log_interval == 0;
 }
 
-void AccumulateDeviceScalar(Tensor& accumulator,
-                            bool& initialized,
-                            const Tensor& value) {
+void AccumulateDeviceValue(Tensor& accumulator,
+                           bool& initialized,
+                           const Tensor& value,
+                           size_t expected_elements,
+                           const char* value_name) {
     if (value.GetDataType() != DataType::Float32 ||
-        value.NumElements() != 1) {
+        value.NumElements() != expected_elements) {
         throw std::runtime_error(
-            "Training scalar accumulator requires one Float32 value");
+            std::string("Training ") + value_name + " accumulator requires " +
+            std::to_string(expected_elements) + " Float32 value(s)");
     }
 
     Tensor next = initialized ? accumulator + value : value;
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     af::array materialized = next.GetSemanticArray();
     materialized.eval();
-    next.SetFromSemanticArray(materialized, {1});
+    next.SetFromSemanticArray(materialized, {expected_elements});
 #endif
     accumulator = std::move(next);
     initialized = true;
 }
 
-float ReadAccumulatedLoss(const Tensor& loss_sum, int batch_count) {
-    if (batch_count <= 0) {
+void AccumulateDeviceScalar(Tensor& accumulator,
+                            bool& initialized,
+                            const Tensor& value) {
+    AccumulateDeviceValue(
+        accumulator, initialized, value, 1, "scalar");
+}
+
+void AccumulateDeviceClassificationCounts(Tensor& accumulator,
+                                          bool& initialized,
+                                          const Tensor& value) {
+    AccumulateDeviceValue(
+        accumulator, initialized, value, 2, "classification count");
+}
+
+std::optional<int> ClassificationMetricIgnoreIndex(
+    const TrainingConfiguration& config) {
+    const auto loss_config = ResolveLossConfiguration(config);
+    if (!loss_config.ignore_index_applicable) {
+        return std::nullopt;
+    }
+    return loss_config.ignore_index;
+}
+
+Tensor ApplyDeviceScalar(const Tensor& value,
+                         const Tensor& scalar,
+                         bool divide) {
+    if (value.GetDataType() != DataType::Float32 ||
+        scalar.GetDataType() != DataType::Float32 ||
+        scalar.NumElements() != 1) {
+        throw std::runtime_error(
+            "Training device-scalar operations require Float32 tensors and one scalar value");
+    }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    af::array result = divide
+        ? value.GetSemanticArray() / scalar.GetSemanticArray()
+        : value.GetSemanticArray() * scalar.GetSemanticArray();
+    result.eval();
+    return Tensor::FromSemanticArray(result, value.Shape());
+#else
+    const float host_scalar = scalar.ReadData<float>()[0];
+    return divide ? value / host_scalar : value * host_scalar;
+#endif
+}
+
+struct LossAggregationWeightValue {
+    float host = 1.0f;
+    const Tensor* device = nullptr;
+};
+
+LossAggregationWeightValue ResolveLossAggregationWeight(
+    const Loss& loss,
+    size_t observation_count) {
+    switch (loss.GetReduction()) {
+        case Reduction::Mean:
+            return {
+                static_cast<float>(observation_count),
+                loss.GetLastMeanReductionDenominator(),
+            };
+        case Reduction::Sum:
+            return {1.0f, nullptr};
+        case Reduction::None:
+            throw std::runtime_error(
+                "TrainingExecutor requires a scalar loss reduction");
+    }
+    throw std::runtime_error("TrainingExecutor received an unknown loss reduction");
+}
+
+float LossAggregationWeight(const Loss& loss, size_t observation_count) {
+    return ResolveLossAggregationWeight(loss, observation_count).host;
+}
+
+float FinalizeAggregatedLoss(const Loss& loss,
+                             float weighted_loss_sum,
+                             float weight_sum) {
+    if (loss.GetReduction() == Reduction::Sum) {
+        return weighted_loss_sum;
+    }
+    return weight_sum > 0.0f ? weighted_loss_sum / weight_sum : 0.0f;
+}
+
+float ReadAccumulatedLoss(const Tensor& loss_sum,
+                          const Loss& loss,
+                          float weight_sum,
+                          const Tensor* device_weight_sum = nullptr,
+                          std::string_view operation =
+                              "TrainingExecutor::ReadAccumulatedLoss") {
+    if (loss.GetReduction() == Reduction::Mean &&
+        device_weight_sum != nullptr) {
+        Tensor safe_weight = device_weight_sum->Clip(
+            std::numeric_limits<float>::min(),
+            std::numeric_limits<float>::max());
+        Tensor mean_loss = ApplyDeviceScalar(
+            loss_sum, safe_weight, true);
+        const ScopedArrayFireHostSyncAttribution loss_sync_attribution(
+            ArrayFireHostSyncCategory::LossScalarReadback,
+            std::string(operation));
+        return mean_loss.ReadData<float>()[0];
+    }
+    if (weight_sum <= 0.0f) {
         return 0.0f;
     }
     const ScopedArrayFireHostSyncAttribution loss_sync_attribution(
         ArrayFireHostSyncCategory::LossScalarReadback,
-        "TrainingExecutor::ReadAccumulatedLoss");
-    return loss_sum.ReadData<float>()[0] /
-           static_cast<float>(batch_count);
+        std::string(operation));
+    return FinalizeAggregatedLoss(
+        loss, loss_sum.ReadData<float>()[0], weight_sum);
 }
 
 bool ShouldRunValidationEpoch(const TrainingConfiguration& config,
@@ -746,15 +847,27 @@ void TrainingExecutor::Train(
             ? "ArrayFire-first execution; native CPU fallback forbidden"
             : "ArrayFire-first execution; native CPU fallback allowed and recorded");
     RecordDeclaredScalarLossOutputBoundary();
-    auto fail_setup = [&](const std::string& reason) {
+    auto fail_run = [&](const std::string& reason) {
+        UpdateMetrics([&](TrainingMetrics& m) {
+            m.total_epochs = epochs;
+            m.is_training = false;
+            m.is_paused = false;
+            m.is_complete = true;
+            m.terminal_status = "failed";
+            m.terminal_reason = reason;
+            m.status_message = "Training failed: " + reason;
+        });
+        const TrainingMetrics failed_metrics = GetMetrics();
         CrashRunRecorder::Instance().MarkFailed(reason);
         TrainingTraceCollector::Instance().RecordTerminalEvent(
             "failed",
             reason,
-            0,
-            0.0f,
-            0.0f);
+            failed_metrics.current_epoch,
+            failed_metrics.train_loss,
+            failed_metrics.train_accuracy);
         TrainingTraceCollector::Instance().FinishRun("failed");
+        BackendDebugHooks::SetDebugEventCallback({});
+        is_paused_.store(false);
         is_training_.store(false);
     };
 
@@ -765,7 +878,7 @@ void TrainingExecutor::Train(
         TrainingTraceCollector::Instance().RecordRuntimeWarning(
             "TrainingExecutor.ExecutionPreflight", reason);
         spdlog::error("TrainingExecutor: {}", reason);
-        fail_setup(reason);
+        fail_run(reason);
         return;
     }
 
@@ -777,7 +890,7 @@ void TrainingExecutor::Train(
         TrainingTraceCollector::Instance().RecordRuntimeWarning(
             "TrainingExecutor.PlacementPreflight", reason);
         spdlog::error("TrainingExecutor: {}", reason);
-        fail_setup(reason);
+        fail_run(reason);
         return;
     }
 
@@ -788,7 +901,7 @@ void TrainingExecutor::Train(
                           errors::FormatError(
                               errors::Training::InvalidTrainingSetup,
                               "Failed to initialize"));
-            fail_setup("initialization_failed");
+            fail_run("initialization_failed");
             return;
         }
         LogTrainingBackendPlacementPlan(config_);
@@ -797,9 +910,16 @@ void TrainingExecutor::Train(
     UpdateMetrics([epochs](TrainingMetrics& m) {
         m.total_epochs = epochs;
         m.current_epoch = 0;
+        m.last_executed_epoch = 0;
+        m.restored_checkpoint_epoch = 0;
+        m.restored_checkpoint_step = 0;
+        m.checkpoint_used.clear();
+        m.active_model_provenance = "run_final_state";
         m.is_training = true;
         m.is_complete = false;
         m.status_message = "Starting training...";
+        m.terminal_status.clear();
+        m.terminal_reason.clear();
         m.loss_history.clear();
         m.accuracy_history.clear();
         m.val_loss_history.clear();
@@ -811,9 +931,14 @@ void TrainingExecutor::Train(
         m.val_token_accuracy = 0.0f;
         m.train_entity_f1 = 0.0f;
         m.val_entity_f1 = 0.0f;
+        m.test_token_accuracy = 0.0f;
+        m.test_entity_f1 = 0.0f;
         m.train_token_count = 0;
         m.val_token_count = 0;
+        m.test_token_count = 0;
     });
+    CrashRunRecorder::Instance().MarkActiveModelCheckpoint(
+        "", 0, 0, "run_final_state");
 
     // Create batchers - Arrow in-memory, Parquet disk-backed, external, or
     // legacy. Modern paths flow through IBatcher pointers; legacy keeps the
@@ -864,7 +989,7 @@ void TrainingExecutor::Train(
 
         if (!external_batchers_.train) {
             spdlog::error("TrainingExecutor: external batcher mode but no Train batcher");
-            fail_setup("missing_external_train_batcher");
+            fail_run("missing_external_train_batcher");
             return;
         }
 
@@ -884,7 +1009,7 @@ void TrainingExecutor::Train(
 
         if (!sequence_batcher_) {
             spdlog::error("TrainingExecutor: sequence mode but no sequence batcher");
-            fail_setup("missing_sequence_batcher");
+            fail_run("missing_sequence_batcher");
             return;
         }
 
@@ -971,7 +1096,7 @@ void TrainingExecutor::Train(
 #else
         spdlog::error("TrainingExecutor: legacy DatasetHandle mode is disabled "
                       "for this modern-only test build");
-        fail_setup("legacy_dataset_mode_disabled");
+        fail_run("legacy_dataset_mode_disabled");
         return;
 #endif
     }
@@ -981,6 +1106,10 @@ void TrainingExecutor::Train(
         num_train_samples = active_sequence_batcher->GetNumSamples();
         active_sequence_batcher->SetPhase(BatcherPhase::Val);
         num_val_samples = active_sequence_batcher->GetNumSamples();
+        if (active_sequence_batcher->HasPhase(BatcherPhase::Test)) {
+            active_sequence_batcher->SetPhase(BatcherPhase::Test);
+            num_test_samples = active_sequence_batcher->GetNumSamples();
+        }
         active_sequence_batcher->SetPhase(BatcherPhase::Train);
     } else if (active_train_ibatcher) {
         active_train_ibatcher->SetPhase(train_batcher_phase);
@@ -1053,6 +1182,9 @@ void TrainingExecutor::Train(
     ReportPinMemoryTransferStatus(config_);
     gradient_accumulator_.clear();
     gradient_accumulated_batches_ = 0;
+    gradient_accumulation_weight_ = 0.0f;
+    gradient_accumulation_device_weight_ = Tensor();
+    gradient_accumulation_device_weight_initialized_ = false;
 
     std::unique_ptr<CheckpointManager> checkpoint_manager;
     float best_val_loss = std::numeric_limits<float>::infinity();
@@ -1063,7 +1195,8 @@ void TrainingExecutor::Train(
     const int log_interval = std::max(0, config_.log_interval);
     spdlog::info("TrainingExecutor: DataLoader runtime policy validation_freq={} epoch(s), metric_report_interval={} batch(es), seed={}, grad_accum_steps={}",
                  validation_freq, log_interval, config_.dataloader_seed,
-                 std::max(1, config_.grad_accum_steps));
+                 training_contract::ClampGradientAccumulationSteps(
+                     config_.grad_accum_steps));
     const std::string reporting_cadence = log_interval > 0
         ? fmt::format(
               "Metrics are sampled on batch 1, every {} batches, and the final batch.",
@@ -1193,6 +1326,7 @@ void TrainingExecutor::Train(
 
         // Update history
         UpdateMetrics([&](TrainingMetrics& m) {
+            m.last_executed_epoch = epoch;
             m.epoch_time_seconds = epoch_time;
             m.samples_per_second = samples_per_sec;
             m.loss_history.push_back(m.train_loss);
@@ -1212,6 +1346,7 @@ void TrainingExecutor::Train(
                 }
             }
         });
+        CrashRunRecorder::Instance().UpdateLastExecutedEpoch(epoch);
 
         // Epoch callback
         if (epoch_cb) {
@@ -1257,27 +1392,36 @@ void TrainingExecutor::Train(
                          validation_freq, epoch_time, samples_per_sec);
         }
 
-        if (validation_ran_this_epoch && checkpoint_manager && save_best_checkpoint && std::isfinite(current.val_loss)) {
+        bool stop_after_epoch = false;
+        if (validation_ran_this_epoch && std::isfinite(current.val_loss)) {
             if (current.val_loss < best_val_loss) {
                 best_val_loss = current.val_loss;
                 epochs_without_improvement = 0;
-                if (SequentialModel* sequential_model = model_->AsSequentialModel()) {
-                    if (checkpoint_manager->SaveBestModel(*sequential_model,
-                                                          optimizer_.get(),
-                                                          current,
-                                                          current.val_loss)) {
-                        TrainingTraceCollector::Instance().RecordCheckpointSaved(
-                            epoch,
-                            checkpoint_manager->GetBestCheckpoint(),
-                            current.val_loss,
-                            current.val_accuracy,
-                            true);
-                        spdlog::info("TrainingExecutor: Best validation checkpoint saved at epoch {} (val_loss={:.4f})",
-                                     epoch, current.val_loss);
+                if (checkpoint_manager && save_best_checkpoint) {
+                    if (SequentialModel* sequential_model =
+                            model_->AsSequentialModel()) {
+                        if (checkpoint_manager->SaveBestModel(
+                                *sequential_model,
+                                optimizer_.get(),
+                                current,
+                                current.val_loss)) {
+                            TrainingTraceCollector::Instance()
+                                .RecordCheckpointSaved(
+                                    epoch,
+                                    checkpoint_manager->GetBestCheckpoint(),
+                                    current.val_loss,
+                                    current.val_accuracy,
+                                    true);
+                            spdlog::info(
+                                "TrainingExecutor: Best validation checkpoint saved at epoch {} (val_loss={:.4f})",
+                                epoch,
+                                current.val_loss);
+                        }
+                    } else {
+                        spdlog::warn(
+                            "TrainingExecutor: save_best_checkpoint is not available for graph executable models yet");
+                        checkpoint_manager.reset();
                     }
-                } else {
-                    spdlog::warn("TrainingExecutor: save_best_checkpoint is not available for graph executable models yet");
-                    checkpoint_manager.reset();
                 }
             } else {
                 ++epochs_without_improvement;
@@ -1296,13 +1440,7 @@ void TrainingExecutor::Train(
                         m.terminal_reason = terminal_reason;
                         m.status_message = "Early stopping: validation loss plateaued";
                     });
-                    TrainingTraceCollector::Instance().RecordTerminalEvent(
-                        terminal_status,
-                        terminal_reason,
-                        epoch,
-                        current.train_loss,
-                        current.train_accuracy);
-                    break;
+                    stop_after_epoch = true;
                 }
             }
         }
@@ -1314,10 +1452,18 @@ void TrainingExecutor::Train(
             ctx.total_epochs = epochs;
             ctx.train_loss = current.train_loss;
             ctx.train_accuracy = current.train_accuracy;
-            ctx.val_loss = current.val_loss;
-            ctx.val_accuracy = current.val_accuracy;
+            ctx.val_loss = validation_ran_this_epoch
+                ? current.val_loss
+                : -1.0f;
+            ctx.val_accuracy = validation_ran_this_epoch
+                ? current.val_accuracy
+                : -1.0f;
             ctx.learning_rate = config_.learning_rate;
             cyxwiz::plugin::PluginTrainingHookManager::Instance().NotifyEpochEnd(ctx);
+        }
+
+        if (stop_after_epoch) {
+            break;
         }
 
         // Reset batchers for next epoch
@@ -1332,8 +1478,12 @@ void TrainingExecutor::Train(
                 active_sequence_batcher->Reset();
             } else {
                 active_train_ibatcher->Reset();
-                active_val_ibatcher->Reset();
-                if (active_test_ibatcher) {
+                if (active_val_ibatcher != active_train_ibatcher) {
+                    active_val_ibatcher->Reset();
+                }
+                if (active_test_ibatcher &&
+                    active_test_ibatcher != active_train_ibatcher &&
+                    active_test_ibatcher != active_val_ibatcher) {
                     active_test_ibatcher->Reset();
                 }
             }
@@ -1351,6 +1501,7 @@ void TrainingExecutor::Train(
     }
     UpdateMetrics([&](TrainingMetrics& m) {
         m.is_training = false;
+        m.is_paused = false;
         m.is_complete = true;
         m.terminal_status = terminal_status;
         m.terminal_reason = terminal_reason;
@@ -1362,6 +1513,13 @@ void TrainingExecutor::Train(
             m.status_message = "Training complete";
         }
     });
+    final_metrics = GetMetrics();
+    TrainingTraceCollector::Instance().RecordTerminalEvent(
+        terminal_status,
+        terminal_reason,
+        final_metrics.current_epoch,
+        final_metrics.train_loss,
+        final_metrics.train_accuracy);
 
     if (!stop_requested_.load() && checkpoint_manager && save_best_checkpoint) {
         const std::string best_checkpoint = checkpoint_manager->GetBestCheckpoint();
@@ -1373,66 +1531,88 @@ void TrainingExecutor::Train(
                                                               "best");
             }
             if (restored) {
-                final_metrics.current_epoch = restored->epoch;
-                final_metrics.current_batch = restored->global_step;
-                final_metrics.train_loss = restored->train_loss;
-                final_metrics.train_accuracy = restored->train_accuracy;
-                final_metrics.train_mae = restored->train_mae;
-                final_metrics.train_rmse = restored->train_rmse;
-                final_metrics.val_loss = restored->val_loss;
-                final_metrics.val_accuracy = restored->val_accuracy;
-                final_metrics.val_mae = restored->val_mae;
-                final_metrics.val_rmse = restored->val_rmse;
-                final_metrics.has_validation_metrics = true;
-                final_metrics.loss_history = restored->loss_history;
-                final_metrics.accuracy_history = restored->accuracy_history;
-                final_metrics.mae_history = restored->mae_history;
-                final_metrics.rmse_history = restored->rmse_history;
-                final_metrics.val_loss_history = restored->val_loss_history;
-                final_metrics.val_accuracy_history = restored->val_accuracy_history;
-                final_metrics.val_mae_history = restored->val_mae_history;
-                final_metrics.val_rmse_history = restored->val_rmse_history;
                 final_metrics.checkpoint_used = best_checkpoint;
+                final_metrics.restored_checkpoint_epoch = restored->epoch;
+                final_metrics.restored_checkpoint_step = restored->global_step;
+                final_metrics.active_model_provenance =
+                    "restored_best_checkpoint";
                 UpdateMetrics([&](TrainingMetrics& m) {
-                    m.current_epoch = restored->epoch;
-                    m.current_batch = restored->global_step;
-                    m.train_loss = restored->train_loss;
-                    m.train_accuracy = restored->train_accuracy;
-                    m.train_mae = restored->train_mae;
-                    m.train_rmse = restored->train_rmse;
-                    m.val_loss = restored->val_loss;
-                    m.val_accuracy = restored->val_accuracy;
-                    m.val_mae = restored->val_mae;
-                    m.val_rmse = restored->val_rmse;
-                    m.has_validation_metrics = true;
-                    m.loss_history = restored->loss_history;
-                    m.accuracy_history = restored->accuracy_history;
-                    m.mae_history = restored->mae_history;
-                    m.rmse_history = restored->rmse_history;
-                    m.val_loss_history = restored->val_loss_history;
-                    m.val_accuracy_history = restored->val_accuracy_history;
-                    m.val_mae_history = restored->val_mae_history;
-                    m.val_rmse_history = restored->val_rmse_history;
                     m.checkpoint_used = best_checkpoint;
+                    m.restored_checkpoint_epoch = restored->epoch;
+                    m.restored_checkpoint_step = restored->global_step;
+                    m.active_model_provenance =
+                        "restored_best_checkpoint";
                     m.terminal_status = terminal_status;
                     m.terminal_reason = terminal_reason;
                     m.status_message = std::string(
                         "Restored best validation checkpoint after ") +
                         terminal_status + ": " + terminal_reason;
                 });
-                TrainingTraceCollector::Instance().RecordCheckpointSaved(
+                CrashRunRecorder::Instance().MarkActiveModelCheckpoint(
+                    best_checkpoint,
+                    restored->epoch,
+                    restored->global_step,
+                    "restored_best_checkpoint");
+                TrainingTraceCollector::Instance().RecordCheckpointRestored(
                     restored->epoch,
                     best_checkpoint,
                     restored->val_loss,
-                    restored->val_accuracy,
-                    true);
+                    restored->val_accuracy);
                 spdlog::info("TrainingExecutor: Restored best checkpoint from epoch {} (val_loss={:.4f})",
                              restored->epoch, restored->val_loss);
             }
         }
     }
 
-    if (!stop_requested_.load() && active_test_ibatcher &&
+    if (!stop_requested_.load() && mode_ == DatasetMode::SequenceExternal &&
+        active_sequence_batcher) {
+        if (!active_sequence_batcher->HasPhase(BatcherPhase::Test)) {
+            spdlog::debug(
+                "TrainingExecutor: no explicit Sequence Test phase; "
+                "held-out metrics were skipped");
+        } else {
+            active_sequence_batcher->SetPhase(BatcherPhase::Test);
+        }
+        if (active_sequence_batcher->HasPhase(BatcherPhase::Test) &&
+            active_sequence_batcher->GetNumSamples() > 0) {
+            model_->SetTraining(false);
+            const auto test_evaluation =
+                EvaluateSequenceBatcher(*active_sequence_batcher);
+            UpdateMetrics([test_evaluation](TrainingMetrics& m) {
+                m.test_loss = test_evaluation.loss;
+                m.test_accuracy = test_evaluation.accuracy;
+                m.test_token_accuracy = test_evaluation.accuracy;
+                m.test_entity_f1 = test_evaluation.entity_f1;
+                m.test_token_count = test_evaluation.token_count;
+                m.has_test_metrics = true;
+            });
+            final_metrics.test_loss = test_evaluation.loss;
+            final_metrics.test_accuracy = test_evaluation.accuracy;
+            final_metrics.test_token_accuracy = test_evaluation.accuracy;
+            final_metrics.test_entity_f1 = test_evaluation.entity_f1;
+            final_metrics.test_token_count = test_evaluation.token_count;
+            final_metrics.has_test_metrics = true;
+            TrainingTraceCollector::Instance().RecordHeldOutTestMetrics(
+                final_metrics.last_executed_epoch,
+                test_evaluation.loss,
+                test_evaluation.accuracy,
+                final_metrics.active_model_provenance,
+                final_metrics.checkpoint_used);
+            spdlog::info(
+                "TrainingExecutor: Held-out Sequence test metrics "
+                "test_loss={:.4f}, token_acc={:.2f}%, entity_f1={:.2f}% "
+                "({} samples, {} tokens)",
+                test_evaluation.loss,
+                test_evaluation.accuracy * 100.0f,
+                test_evaluation.entity_f1 * 100.0f,
+                active_sequence_batcher->GetNumSamples(),
+                test_evaluation.token_count);
+        } else if (active_sequence_batcher->HasPhase(BatcherPhase::Test)) {
+            spdlog::warn(
+                "TrainingExecutor: configured Sequence test split produced "
+                "0 held-out samples; test metrics were skipped");
+        }
+    } else if (!stop_requested_.load() && active_test_ibatcher &&
         active_test_ibatcher->GetNumSamples() > 0) {
         model_->SetTraining(false);
         active_test_ibatcher->SetPhase(test_batcher_phase);
@@ -1450,6 +1630,12 @@ void TrainingExecutor::Train(
         final_metrics.test_mae = test_evaluation.mae;
         final_metrics.test_rmse = test_evaluation.rmse;
         final_metrics.has_test_metrics = true;
+        TrainingTraceCollector::Instance().RecordHeldOutTestMetrics(
+            final_metrics.last_executed_epoch,
+            test_evaluation.loss,
+            test_evaluation.accuracy,
+            final_metrics.active_model_provenance,
+            final_metrics.checkpoint_used);
         if (regression_metrics) {
             spdlog::info(
                 "TrainingExecutor: Held-out test metrics test_loss={:.4f}, "
@@ -1468,6 +1654,7 @@ void TrainingExecutor::Train(
     }
 
     // Notify plugin hooks: training end
+    final_metrics = GetMetrics();
     {
         cyxwiz::plugin::TrainingContext ctx;
         ctx.current_epoch = final_metrics.current_epoch;
@@ -1505,20 +1692,14 @@ void TrainingExecutor::Train(
             errors::Training::TrainingExecutionFailed,
             "Training failed",
             e.what());
-        CrashRunRecorder::Instance().MarkFailed(coded_error);
-        TrainingTraceCollector::Instance().FinishRun("failed");
-        BackendDebugHooks::SetDebugEventCallback({});
-        is_training_.store(false);
+        fail_run(coded_error);
         spdlog::error("TrainingExecutor: {}", coded_error);
         throw;
     } catch (...) {
         const std::string coded_error = errors::FormatError(
             errors::Training::TrainingExecutionFailed,
             "Training failed with unknown native exception");
-        CrashRunRecorder::Instance().MarkFailed(coded_error);
-        TrainingTraceCollector::Instance().FinishRun("failed");
-        BackendDebugHooks::SetDebugEventCallback({});
-        is_training_.store(false);
+        fail_run(coded_error);
         spdlog::error("TrainingExecutor: {}", coded_error);
         throw;
     }
@@ -1531,15 +1712,17 @@ void TrainingExecutor::RunTrainingEpoch(
     BatchCallback batch_cb)
 {
     float epoch_loss = 0.0f;
+    float loss_weight_sum = 0.0f;
     const bool regression_metrics = UsesRegressionMetrics(config_);
     RegressionMetricAccumulator regression(
         &config_.regression_target_transform);
     Tensor device_loss_sum;
     bool device_loss_sum_initialized = false;
-    Tensor device_correct_sum;
-    bool device_correct_sum_initialized = false;
-    int correct = 0;
-    int total = 0;
+    Tensor device_loss_weight_sum;
+    bool device_loss_weight_sum_initialized = false;
+    Tensor device_accuracy_counts;
+    bool device_accuracy_counts_initialized = false;
+    const auto metric_ignore_index = ClassificationMetricIgnoreIndex(config_);
     int batch_num = 0;
     float current_loss = 0.0f;
     float current_acc = 0.0f;
@@ -1640,16 +1823,31 @@ void TrainingExecutor::RunTrainingEpoch(
             static_cast<int>(total_batches));
         float batch_loss = current_loss;
         std::string loss_status = "device_resident";
+        LossAggregationWeightValue loss_weight;
         if (regression_metrics) {
             batch_loss = ComputeLoss(predictions, batch.labels);
-            epoch_loss += batch_loss;
+            loss_weight = ResolveLossAggregationWeight(*loss_, batch.size);
+            loss_weight_sum += loss_weight.host;
+            epoch_loss += batch_loss * loss_weight.host;
             loss_status = std::isfinite(batch_loss) ? "ok" : "failed";
         } else {
             Tensor loss_tensor = ComputeLossTensor(predictions, batch.labels);
+            loss_weight = ResolveLossAggregationWeight(*loss_, batch.size);
+            Tensor weighted_loss = loss_weight.device != nullptr
+                ? ApplyDeviceScalar(loss_tensor, *loss_weight.device, false)
+                : loss_tensor * loss_weight.host;
             AccumulateDeviceScalar(
                 device_loss_sum,
                 device_loss_sum_initialized,
-                loss_tensor);
+                weighted_loss);
+            if (loss_weight.device != nullptr) {
+                AccumulateDeviceScalar(
+                    device_loss_weight_sum,
+                    device_loss_weight_sum_initialized,
+                    *loss_weight.device);
+            } else {
+                loss_weight_sum += loss_weight.host;
+            }
         }
         TrainingTraceCollector::Instance().RecordStage(
             TrainingTraceStage::ComputeLoss, epoch, batch_num,
@@ -1669,12 +1867,12 @@ void TrainingExecutor::RunTrainingEpoch(
         } else {
             const auto accuracy_scalar = BuildClassificationDecisionScalar(
                 predictions, batch.labels, batch.size, config_.output_size,
-                ClassificationDecisionModeForLoss(config_.loss_type));
-            AccumulateDeviceScalar(
-                device_correct_sum,
-                device_correct_sum_initialized,
-                accuracy_scalar.correct);
-            total += static_cast<int>(accuracy_scalar.total);
+                ClassificationDecisionModeForLoss(config_.loss_type),
+                metric_ignore_index);
+            AccumulateDeviceClassificationCounts(
+                device_accuracy_counts,
+                device_accuracy_counts_initialized,
+                accuracy_scalar.counts);
         }
 
         // Backward pass
@@ -1693,21 +1891,22 @@ void TrainingExecutor::RunTrainingEpoch(
             config_, batch_num, static_cast<int>(total_batches),
             batcher.IsEpochComplete());
         if (!regression_metrics && should_report) {
-            current_loss = ReadAccumulatedLoss(device_loss_sum, batch_num);
+            current_loss = ReadAccumulatedLoss(
+                device_loss_sum, *loss_, loss_weight_sum,
+                device_loss_weight_sum_initialized
+                    ? &device_loss_weight_sum
+                    : nullptr);
             const auto accuracy_count = ReadClassificationDecisionScalar(
-                ClassificationDecisionScalar{
-                    device_correct_sum,
-                    static_cast<size_t>(total),
-                },
+                ClassificationDecisionScalar{device_accuracy_counts},
                 "TrainingExecutor::ReadAccumulatedAccuracy");
-            correct = static_cast<int>(accuracy_count.correct);
             current_acc = accuracy_count.total > 0
                 ? static_cast<float>(accuracy_count.correct) /
                       static_cast<float>(accuracy_count.total)
                 : 0.0f;
             batch_loss = current_loss;
         } else if (regression_metrics) {
-            current_loss = epoch_loss / batch_num;
+            current_loss = FinalizeAggregatedLoss(
+                *loss_, epoch_loss, loss_weight_sum);
         }
 
         // Update metrics
@@ -1716,7 +1915,8 @@ void TrainingExecutor::RunTrainingEpoch(
 
         AccumulateGradientsAndMaybeStep(
             epoch, batch_num, static_cast<int>(total_batches),
-            batch_loss, current_acc, batcher.IsEpochComplete());
+            batch_loss, current_acc, loss_weight.host, loss_weight.device,
+            batcher.IsEpochComplete());
 
         UpdateMetrics([batch_num, current_loss, current_acc,
                        current_mae, current_rmse,
@@ -1793,11 +1993,17 @@ void TrainingExecutor::RunTrainingEpoch(
 
 void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
     float val_loss = 0.0f;
+    float loss_weight_sum = 0.0f;
+    Tensor device_loss_sum;
+    bool device_loss_sum_initialized = false;
+    Tensor device_loss_weight_sum;
+    bool device_loss_weight_sum_initialized = false;
     const bool regression_metrics = UsesRegressionMetrics(config_);
     RegressionMetricAccumulator regression(
         &config_.regression_target_transform);
     int correct = 0;
     int total = 0;
+    const auto metric_ignore_index = ClassificationMetricIgnoreIndex(config_);
     int batch_num = 0;
 
     batcher.Reset();
@@ -1814,8 +2020,29 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
         Tensor predictions = Forward(batch.data);
 
         // Compute loss
-        float batch_loss = ComputeLoss(predictions, batch.labels);
-        val_loss += batch_loss;
+        if (regression_metrics) {
+            const float batch_loss = ComputeLoss(predictions, batch.labels);
+            const float loss_weight = LossAggregationWeight(*loss_, batch.size);
+            val_loss += batch_loss * loss_weight;
+            loss_weight_sum += loss_weight;
+        } else {
+            Tensor loss_tensor = ComputeLossTensor(predictions, batch.labels);
+            const auto loss_weight =
+                ResolveLossAggregationWeight(*loss_, batch.size);
+            Tensor weighted_loss = loss_weight.device != nullptr
+                ? ApplyDeviceScalar(loss_tensor, *loss_weight.device, false)
+                : loss_tensor * loss_weight.host;
+            AccumulateDeviceScalar(
+                device_loss_sum, device_loss_sum_initialized, weighted_loss);
+            if (loss_weight.device != nullptr) {
+                AccumulateDeviceScalar(
+                    device_loss_weight_sum,
+                    device_loss_weight_sum_initialized,
+                    *loss_weight.device);
+            } else {
+                loss_weight_sum += loss_weight.host;
+            }
+        }
 
         // Compute objective-appropriate metrics.
         if (regression_metrics) {
@@ -1829,13 +2056,27 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
         } else {
             const auto accuracy_count = CountClassificationDecisionScalars(
                 predictions, batch.labels, batch.size, config_.output_size,
-                ClassificationDecisionModeForLoss(config_.loss_type));
+                ClassificationDecisionModeForLoss(config_.loss_type),
+                metric_ignore_index);
             correct += static_cast<int>(accuracy_count.correct);
             total += static_cast<int>(accuracy_count.total);
         }
     }
 
-    float final_loss = batch_num > 0 ? val_loss / batch_num : 0.0f;
+    float final_loss = 0.0f;
+    if (regression_metrics) {
+        final_loss = FinalizeAggregatedLoss(
+            *loss_, val_loss, loss_weight_sum);
+    } else if (device_loss_sum_initialized) {
+        final_loss = ReadAccumulatedLoss(
+            device_loss_sum,
+            *loss_,
+            loss_weight_sum,
+            device_loss_weight_sum_initialized
+                ? &device_loss_weight_sum
+                : nullptr,
+            "TrainingExecutor::ReadValidationLoss");
+    }
     float final_acc = total > 0 ? static_cast<float>(correct) / total : 0.0f;
     const float final_mae = regression.Mae();
     const float final_rmse = regression.Rmse();
@@ -1894,7 +2135,8 @@ float TrainingExecutor::ComputeAccuracy(const Tensor& predictions, const Tensor&
 
     const auto accuracy_count = CountClassificationDecisionScalars(
         predictions, targets, batch_size, num_classes,
-        ClassificationDecisionModeForLoss(config_.loss_type));
+        ClassificationDecisionModeForLoss(config_.loss_type),
+        ClassificationMetricIgnoreIndex(config_));
     return accuracy_count.total > 0
         ? static_cast<float>(accuracy_count.correct) /
               static_cast<float>(accuracy_count.total)
@@ -1932,6 +2174,8 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
     int total_batches,
     float batch_loss,
     float current_acc,
+    float gradient_weight,
+    const Tensor* device_gradient_weight,
     bool force_step) {
     if (!model_ || !optimizer_) {
         return false;
@@ -1942,6 +2186,18 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
         return false;
     }
 
+    if (device_gradient_weight == nullptr &&
+        (!std::isfinite(gradient_weight) || gradient_weight < 0.0f)) {
+        throw std::runtime_error(
+            "TrainingExecutor: gradient accumulation weight must be finite and non-negative");
+    }
+    const bool mean_reduction = loss_->GetReduction() == Reduction::Mean;
+    if (mean_reduction && gradient_accumulated_batches_ > 0 &&
+        gradient_accumulation_device_weight_initialized_ !=
+            (device_gradient_weight != nullptr)) {
+        throw std::runtime_error(
+            "TrainingExecutor: gradient accumulation cannot mix host and device mean denominators");
+    }
     for (const auto& [name, grad] : grads) {
         if (grad.GetDataType() != DataType::Float32) {
             throw std::runtime_error(
@@ -1949,9 +2205,15 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
                 name + "'");
         }
 
+        Tensor weighted_grad = grad.Clone();
+        if (mean_reduction) {
+            weighted_grad = device_gradient_weight != nullptr
+                ? ApplyDeviceScalar(grad, *device_gradient_weight, false)
+                : grad * gradient_weight;
+        }
         auto found = gradient_accumulator_.find(name);
         if (found == gradient_accumulator_.end()) {
-            gradient_accumulator_[name] = grad.Clone();
+            gradient_accumulator_[name] = std::move(weighted_grad);
             continue;
         }
 
@@ -1962,19 +2224,45 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
                 name + "'");
         }
 
-        accumulated = accumulated + grad;
+        accumulated = accumulated + weighted_grad;
     }
 
     ++gradient_accumulated_batches_;
-    const int grad_accum_steps = std::max(1, config_.grad_accum_steps);
+    if (mean_reduction) {
+        if (device_gradient_weight != nullptr) {
+            AccumulateDeviceScalar(
+                gradient_accumulation_device_weight_,
+                gradient_accumulation_device_weight_initialized_,
+                *device_gradient_weight);
+        } else {
+            gradient_accumulation_weight_ += gradient_weight;
+        }
+    }
+    const int grad_accum_steps =
+        training_contract::ClampGradientAccumulationSteps(
+            config_.grad_accum_steps);
     if (!force_step && gradient_accumulated_batches_ < grad_accum_steps) {
         return false;
     }
 
     std::map<std::string, Tensor> averaged_grads;
-    const float scale = 1.0f / static_cast<float>(gradient_accumulated_batches_);
+    const float host_scale = mean_reduction &&
+                             !gradient_accumulation_device_weight_initialized_
+        ? (gradient_accumulation_weight_ > 0.0f
+               ? 1.0f / gradient_accumulation_weight_
+               : 0.0f)
+        : 1.0f;
     for (const auto& [name, accumulated] : gradient_accumulator_) {
-        averaged_grads[name] = accumulated * scale;
+        if (mean_reduction &&
+            gradient_accumulation_device_weight_initialized_) {
+            Tensor safe_weight = gradient_accumulation_device_weight_.Clip(
+                std::numeric_limits<float>::min(),
+                std::numeric_limits<float>::max());
+            averaged_grads[name] = ApplyDeviceScalar(
+                accumulated, safe_weight, true);
+        } else {
+            averaged_grads[name] = accumulated * host_scale;
+        }
     }
 
     CrashRunRecorder::Instance().MarkStage(
@@ -1998,6 +2286,9 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
 
     gradient_accumulator_.clear();
     gradient_accumulated_batches_ = 0;
+    gradient_accumulation_weight_ = 0.0f;
+    gradient_accumulation_device_weight_ = Tensor();
+    gradient_accumulation_device_weight_initialized_ = false;
     return true;
 }
 
@@ -2122,6 +2413,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
     BatchCallback batch_cb)
 {
     float epoch_loss = 0.0f;
+    float loss_weight_sum = 0.0f;
     int batch_num = 0;
     size_t sample_count = 0;
     SequenceTagMetrics aggregate_metrics;
@@ -2192,11 +2484,11 @@ void TrainingExecutor::RunTrainingEpochSequence(
             throw std::runtime_error(
                 "TrainingExecutor: sequence training loss is not finite");
         }
-        epoch_loss += batch_loss;
-
+        size_t batch_loss_observations = 0;
         if (is_language_modeling) {
             const auto accuracy_count = CountNextTokenAccuracyFromLogits(
                 predictions, targets, ignore_index);
+            batch_loss_observations = accuracy_count.valid;
             aggregate_metrics.total_tokens += accuracy_count.valid;
             aggregate_metrics.correct_tokens += accuracy_count.correct;
             aggregate_metrics.token_accuracy =
@@ -2206,9 +2498,14 @@ void TrainingExecutor::RunTrainingEpochSequence(
         } else {
             const auto batch_metrics = ComputeSequenceTagMetricsFromLogits(
                 predictions, targets, sequence_id_to_label_, ignore_index);
+            batch_loss_observations = batch_metrics.total_tokens;
             AccumulateSequenceTagMetrics(aggregate_metrics, batch_metrics);
             FinalizeSequenceTagMetricRates(aggregate_metrics);
         }
+        const float loss_weight = LossAggregationWeight(
+            *loss_, batch_loss_observations);
+        epoch_loss += batch_loss * loss_weight;
+        loss_weight_sum += loss_weight;
 
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::Backward, epoch, batch_num,
@@ -2221,7 +2518,8 @@ void TrainingExecutor::RunTrainingEpochSequence(
             TrainingTraceStage::Backward, epoch, batch_num,
             static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
 
-        const float current_loss = epoch_loss / batch_num;
+        const float current_loss = FinalizeAggregatedLoss(
+            *loss_, epoch_loss, loss_weight_sum);
         const float current_acc =
             static_cast<float>(aggregate_metrics.token_accuracy);
         const float current_f1 =
@@ -2229,7 +2527,8 @@ void TrainingExecutor::RunTrainingEpochSequence(
 
         AccumulateGradientsAndMaybeStep(
             epoch, batch_num, static_cast<int>(total_batches),
-            batch_loss, current_acc, batcher.IsEpochComplete());
+            batch_loss, current_acc, loss_weight, nullptr,
+            batcher.IsEpochComplete());
 
         UpdateMetrics([batch_num,
                        current_loss,
@@ -2275,7 +2574,8 @@ void TrainingExecutor::RunTrainingEpochSequence(
     }
 
     FinalizeSequenceTagMetricRates(aggregate_metrics);
-    const float final_loss = batch_num > 0 ? epoch_loss / batch_num : 0.0f;
+    const float final_loss = FinalizeAggregatedLoss(
+        *loss_, epoch_loss, loss_weight_sum);
     const float final_acc =
         static_cast<float>(aggregate_metrics.token_accuracy);
     const float final_f1 =
@@ -2304,7 +2604,21 @@ void TrainingExecutor::RunTrainingEpochSequence(
 }
 
 void TrainingExecutor::RunValidationSequence(ISequenceBatcher& batcher) {
-    float val_loss = 0.0f;
+    const auto evaluation = EvaluateSequenceBatcher(batcher);
+    UpdateMetrics([evaluation](TrainingMetrics& m) {
+        m.val_loss = evaluation.loss;
+        m.val_accuracy = evaluation.accuracy;
+        m.has_validation_metrics = true;
+        m.val_token_accuracy = evaluation.accuracy;
+        m.val_entity_f1 = evaluation.entity_f1;
+        m.val_token_count = evaluation.token_count;
+    });
+}
+
+TrainingExecutor::SequenceEvaluationMetrics
+TrainingExecutor::EvaluateSequenceBatcher(ISequenceBatcher& batcher) {
+    float evaluation_loss = 0.0f;
+    float loss_weight_sum = 0.0f;
     int batch_num = 0;
     SequenceTagMetrics aggregate_metrics;
 
@@ -2331,13 +2645,13 @@ void TrainingExecutor::RunValidationSequence(ISequenceBatcher& batcher) {
         const float batch_loss = ComputeLoss(predictions, targets);
         if (!std::isfinite(batch_loss)) {
             throw std::runtime_error(
-                "TrainingExecutor: sequence validation loss is not finite");
+                "TrainingExecutor: sequence evaluation loss is not finite");
         }
-        val_loss += batch_loss;
-
+        size_t batch_loss_observations = 0;
         if (is_language_modeling) {
             const auto accuracy_count = CountNextTokenAccuracyFromLogits(
                 predictions, targets, ignore_index);
+            batch_loss_observations = accuracy_count.valid;
             aggregate_metrics.total_tokens += accuracy_count.valid;
             aggregate_metrics.correct_tokens += accuracy_count.correct;
             aggregate_metrics.token_accuracy =
@@ -2347,29 +2661,25 @@ void TrainingExecutor::RunValidationSequence(ISequenceBatcher& batcher) {
         } else {
             const auto batch_metrics = ComputeSequenceTagMetricsFromLogits(
                 predictions, targets, sequence_id_to_label_, ignore_index);
+            batch_loss_observations = batch_metrics.total_tokens;
             AccumulateSequenceTagMetrics(aggregate_metrics, batch_metrics);
         }
+        const float loss_weight = LossAggregationWeight(
+            *loss_, batch_loss_observations);
+        evaluation_loss += batch_loss * loss_weight;
+        loss_weight_sum += loss_weight;
     }
 
     FinalizeSequenceTagMetricRates(aggregate_metrics);
-    const float final_loss = batch_num > 0 ? val_loss / batch_num : 0.0f;
-    const float final_acc =
+    SequenceEvaluationMetrics evaluation;
+    evaluation.loss = FinalizeAggregatedLoss(
+        *loss_, evaluation_loss, loss_weight_sum);
+    evaluation.accuracy =
         static_cast<float>(aggregate_metrics.token_accuracy);
-    const float final_f1 =
+    evaluation.entity_f1 =
         static_cast<float>(aggregate_metrics.entity_f1);
-
-    UpdateMetrics([final_loss,
-                   final_acc,
-                   final_f1,
-                   token_count = aggregate_metrics.total_tokens]
-                  (TrainingMetrics& m) {
-        m.val_loss = final_loss;
-        m.val_accuracy = final_acc;
-        m.has_validation_metrics = true;
-        m.val_token_accuracy = final_acc;
-        m.val_entity_f1 = final_f1;
-        m.val_token_count = token_count;
-    });
+    evaluation.token_count = aggregate_metrics.total_tokens;
+    return evaluation;
 }
 
 // =============================================================================
@@ -2384,15 +2694,17 @@ void TrainingExecutor::RunTrainingEpochArrow(
     spdlog::debug("RunTrainingEpochArrow: Entered, epoch={}", epoch);
 
     float epoch_loss = 0.0f;
+    float loss_weight_sum = 0.0f;
     const bool regression_metrics = UsesRegressionMetrics(config_);
     RegressionMetricAccumulator regression(
         &config_.regression_target_transform);
     Tensor device_loss_sum;
     bool device_loss_sum_initialized = false;
-    Tensor device_correct_sum;
-    bool device_correct_sum_initialized = false;
-    int correct = 0;
-    int total = 0;
+    Tensor device_loss_weight_sum;
+    bool device_loss_weight_sum_initialized = false;
+    Tensor device_accuracy_counts;
+    bool device_accuracy_counts_initialized = false;
+    const auto metric_ignore_index = ClassificationMetricIgnoreIndex(config_);
     int batch_num = 0;
     float current_loss = 0.0f;
     float current_acc = 0.0f;
@@ -2477,7 +2789,6 @@ void TrainingExecutor::RunTrainingEpochArrow(
             for (auto d : label_shape) shape_str += std::to_string(d) + " ";
             spdlog::info("DEBUG Arrow: Label shape: [{}], output_size={}", shape_str, config_.output_size);
 
-            const float* label_data = batch.labels.ReadData<float>();
             size_t label_count = 0;
             if (!label_shape.empty()) {
                 label_count = 1;
@@ -2485,12 +2796,23 @@ void TrainingExecutor::RunTrainingEpochArrow(
                     label_count *= dim;
                 }
             }
-            if (label_data && label_count > 0) {
+            if (label_count > 0) {
                 const size_t sample_count = std::min<size_t>(label_count, 3);
                 std::string label_str = "  [";
-                for (size_t i = 0; i < sample_count; ++i) {
-                    label_str += fmt::format("{:.1f}", label_data[i]);
-                    if (i + 1 < sample_count) label_str += ", ";
+                if (batch.labels.GetDataType() == DataType::Int32) {
+                    const int32_t* label_data =
+                        batch.labels.ReadData<int32_t>();
+                    for (size_t i = 0; i < sample_count; ++i) {
+                        label_str += fmt::format("{}", label_data[i]);
+                        if (i + 1 < sample_count) label_str += ", ";
+                    }
+                } else {
+                    const float* label_data =
+                        batch.labels.ReadData<float>();
+                    for (size_t i = 0; i < sample_count; ++i) {
+                        label_str += fmt::format("{:.1f}", label_data[i]);
+                        if (i + 1 < sample_count) label_str += ", ";
+                    }
                 }
                 label_str += "]";
                 spdlog::info("DEBUG Arrow: First label values: {}", label_str);
@@ -2511,16 +2833,31 @@ void TrainingExecutor::RunTrainingEpochArrow(
             static_cast<int>(total_batches));
         float batch_loss = current_loss;
         std::string loss_status = "device_resident";
+        LossAggregationWeightValue loss_weight;
         if (regression_metrics) {
             batch_loss = ComputeLoss(predictions, batch.labels);
-            epoch_loss += batch_loss;
+            loss_weight = ResolveLossAggregationWeight(*loss_, batch.size);
+            loss_weight_sum += loss_weight.host;
+            epoch_loss += batch_loss * loss_weight.host;
             loss_status = std::isfinite(batch_loss) ? "ok" : "failed";
         } else {
             Tensor loss_tensor = ComputeLossTensor(predictions, batch.labels);
+            loss_weight = ResolveLossAggregationWeight(*loss_, batch.size);
+            Tensor weighted_loss = loss_weight.device != nullptr
+                ? ApplyDeviceScalar(loss_tensor, *loss_weight.device, false)
+                : loss_tensor * loss_weight.host;
             AccumulateDeviceScalar(
                 device_loss_sum,
                 device_loss_sum_initialized,
-                loss_tensor);
+                weighted_loss);
+            if (loss_weight.device != nullptr) {
+                AccumulateDeviceScalar(
+                    device_loss_weight_sum,
+                    device_loss_weight_sum_initialized,
+                    *loss_weight.device);
+            } else {
+                loss_weight_sum += loss_weight.host;
+            }
         }
         TrainingTraceCollector::Instance().RecordStage(
             TrainingTraceStage::ComputeLoss, epoch, batch_num,
@@ -2540,12 +2877,12 @@ void TrainingExecutor::RunTrainingEpochArrow(
         } else {
             const auto accuracy_scalar = BuildClassificationDecisionScalar(
                 predictions, batch.labels, batch.size, config_.output_size,
-                ClassificationDecisionModeForLoss(config_.loss_type));
-            AccumulateDeviceScalar(
-                device_correct_sum,
-                device_correct_sum_initialized,
-                accuracy_scalar.correct);
-            total += static_cast<int>(accuracy_scalar.total);
+                ClassificationDecisionModeForLoss(config_.loss_type),
+                metric_ignore_index);
+            AccumulateDeviceClassificationCounts(
+                device_accuracy_counts,
+                device_accuracy_counts_initialized,
+                accuracy_scalar.counts);
         }
 
         // Backward pass
@@ -2564,21 +2901,22 @@ void TrainingExecutor::RunTrainingEpochArrow(
             config_, batch_num, static_cast<int>(total_batches),
             batcher.IsEpochComplete());
         if (!regression_metrics && should_report) {
-            current_loss = ReadAccumulatedLoss(device_loss_sum, batch_num);
+            current_loss = ReadAccumulatedLoss(
+                device_loss_sum, *loss_, loss_weight_sum,
+                device_loss_weight_sum_initialized
+                    ? &device_loss_weight_sum
+                    : nullptr);
             const auto accuracy_count = ReadClassificationDecisionScalar(
-                ClassificationDecisionScalar{
-                    device_correct_sum,
-                    static_cast<size_t>(total),
-                },
+                ClassificationDecisionScalar{device_accuracy_counts},
                 "TrainingExecutor::ReadAccumulatedAccuracy");
-            correct = static_cast<int>(accuracy_count.correct);
             current_acc = accuracy_count.total > 0
                 ? static_cast<float>(accuracy_count.correct) /
                       static_cast<float>(accuracy_count.total)
                 : 0.0f;
             batch_loss = current_loss;
         } else if (regression_metrics) {
-            current_loss = epoch_loss / batch_num;
+            current_loss = FinalizeAggregatedLoss(
+                *loss_, epoch_loss, loss_weight_sum);
         }
 
         // Update metrics
@@ -2587,7 +2925,8 @@ void TrainingExecutor::RunTrainingEpochArrow(
 
         AccumulateGradientsAndMaybeStep(
             epoch, batch_num, static_cast<int>(total_batches),
-            batch_loss, current_acc, batcher.IsEpochComplete());
+            batch_loss, current_acc, loss_weight.host, loss_weight.device,
+            batcher.IsEpochComplete());
 
         UpdateMetrics([batch_num, current_loss, current_acc,
                        current_mae, current_rmse](TrainingMetrics& m) {
@@ -2670,11 +3009,17 @@ void TrainingExecutor::RunTrainingEpochArrow(
 ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
     IBatcher& batcher) {
     float val_loss = 0.0f;
+    float loss_weight_sum = 0.0f;
+    Tensor device_loss_sum;
+    bool device_loss_sum_initialized = false;
+    Tensor device_loss_weight_sum;
+    bool device_loss_weight_sum_initialized = false;
     const bool regression_metrics = UsesRegressionMetrics(config_);
     RegressionMetricAccumulator regression(
         &config_.regression_target_transform);
     int correct = 0;
     int total = 0;
+    const auto metric_ignore_index = ClassificationMetricIgnoreIndex(config_);
     int batch_num = 0;
     double fetch_total_ms = 0.0;
     double fetch_max_ms = 0.0;
@@ -2698,8 +3043,29 @@ ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
         Tensor predictions = Forward(batch.data);
 
         // Compute loss
-        float batch_loss = ComputeLoss(predictions, batch.labels);
-        val_loss += batch_loss;
+        if (regression_metrics) {
+            const float batch_loss = ComputeLoss(predictions, batch.labels);
+            const float loss_weight = LossAggregationWeight(*loss_, batch.size);
+            val_loss += batch_loss * loss_weight;
+            loss_weight_sum += loss_weight;
+        } else {
+            Tensor loss_tensor = ComputeLossTensor(predictions, batch.labels);
+            const auto loss_weight =
+                ResolveLossAggregationWeight(*loss_, batch.size);
+            Tensor weighted_loss = loss_weight.device != nullptr
+                ? ApplyDeviceScalar(loss_tensor, *loss_weight.device, false)
+                : loss_tensor * loss_weight.host;
+            AccumulateDeviceScalar(
+                device_loss_sum, device_loss_sum_initialized, weighted_loss);
+            if (loss_weight.device != nullptr) {
+                AccumulateDeviceScalar(
+                    device_loss_weight_sum,
+                    device_loss_weight_sum_initialized,
+                    *loss_weight.device);
+            } else {
+                loss_weight_sum += loss_weight.host;
+            }
+        }
 
         // Compute accuracy
         if (regression_metrics) {
@@ -2713,13 +3079,27 @@ ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
         } else {
             const auto accuracy_count = CountClassificationDecisionScalars(
                 predictions, batch.labels, batch.size, config_.output_size,
-                ClassificationDecisionModeForLoss(config_.loss_type));
+                ClassificationDecisionModeForLoss(config_.loss_type),
+                metric_ignore_index);
             correct += static_cast<int>(accuracy_count.correct);
             total += static_cast<int>(accuracy_count.total);
         }
     }
 
-    float final_loss = batch_num > 0 ? val_loss / batch_num : 0.0f;
+    float final_loss = 0.0f;
+    if (regression_metrics) {
+        final_loss = FinalizeAggregatedLoss(
+            *loss_, val_loss, loss_weight_sum);
+    } else if (device_loss_sum_initialized) {
+        final_loss = ReadAccumulatedLoss(
+            device_loss_sum,
+            *loss_,
+            loss_weight_sum,
+            device_loss_weight_sum_initialized
+                ? &device_loss_weight_sum
+                : nullptr,
+            "TrainingExecutor::ReadValidationLoss");
+    }
     float final_acc = total > 0 ? static_cast<float>(correct) / total : 0.0f;
 
     if (batch_num > 0) {
