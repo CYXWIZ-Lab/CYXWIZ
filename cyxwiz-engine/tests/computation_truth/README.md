@@ -117,11 +117,14 @@ covers weighted, label-smoothed CrossEntropy with unequal class composition in
 the `{4, 2}` batches.
 
 `test_training_executor_arrow_parquet --gradient-accumulation-parity-only`
-consumes two generated PyTorch effective-batch fixtures. It checks an uneven
-`{3, 2}` microbatch window and a three-microbatch window followed by a forced
-one-microbatch tail. Bias parameters are compared at every SGD boundary, final
-parameters and optimizer-step counts must match, terminal lifecycle truth is
-exact, and native CPU fallback is forbidden.
+consumes four generated PyTorch effective-batch fixtures. The mean-reduction
+matrix checks an uneven `{3, 2}` microbatch window, weighted and ignored targets,
+and a three-microbatch window followed by a forced one-microbatch tail. A
+weighted, ignored, label-smoothed sum-reduction case proves that microbatch
+gradients add without mean normalization and that the reported epoch loss is
+the exact effective-batch sum. Bias parameters are compared at every SGD
+boundary, final parameters and optimizer-step counts must match, terminal
+lifecycle truth is exact, and native CPU fallback is forbidden.
 
 Run:
 

@@ -717,13 +717,13 @@
       "owner": "cyxwiz-engine/src/core/training_executor.h",
       "implementation": ["cyxwiz-backend/include/cyxwiz/losses/loss_base.h", "cyxwiz-backend/src/algorithms/losses/classification_losses.cpp", "cyxwiz-engine/src/core/arrow_dataset_batcher.cpp", "cyxwiz-engine/src/core/parquet_arrow_batcher.cpp", "cyxwiz-engine/src/core/training_parameter_contract.h", "cyxwiz-engine/src/core/graph_compiler.cpp", "cyxwiz-engine/src/core/node_metadata_registry.cpp", "cyxwiz-engine/src/core/training_executor.cpp"],
       "callers": ["Properties metadata renderer", "DataLoaderDialog", "GraphCompiler", "TrainingExecutor"],
-      "contract": "The user-visible and compiled grad_accum_steps contract is 1-100000; mean-reduced accumulation uses the loss's true semantic denominator, including CrossEntropy class weights and ignored targets; accumulated gradients and final parameters match an equivalent PyTorch effective batch; partial final windows flush exactly once.",
+      "contract": "The user-visible and compiled grad_accum_steps contract is 1-100000; mean-reduced accumulation uses the loss's true semantic denominator, including CrossEntropy class weights and ignored targets, while sum-reduced gradients add without averaging; accumulated gradients, reported epoch loss and final parameters match an equivalent PyTorch effective batch; partial final windows flush exactly once.",
       "supported": "1 <= grad_accum_steps <= 100000",
       "oracle": "PyTorch tiny-model multi-batch fixture",
       "tests": ["test_pipeline_operator_metadata", "test_graph_compiler_deferred_nodes", "test_training_executor_arrow_parquet"],
       "execution": "ArrayFire-resident training path",
-      "status": "partial",
-      "gaps": ["sum-reduction accumulation fixture"]
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LIFE-DATA-001",

@@ -1001,6 +1001,7 @@
           }
         ],
         "expected_train_accuracy": 0.4,
+        "expected_train_loss": 0.6931471824645996,
         "expected_valid_target_count": 5,
         "grad_accum_steps": 2,
         "ignore_index": -100,
@@ -1152,6 +1153,7 @@
           }
         ],
         "expected_train_accuracy": 0.42857142857142855,
+        "expected_train_loss": 0.6931471824645996,
         "expected_valid_target_count": 7,
         "grad_accum_steps": 3,
         "ignore_index": -100,
@@ -1285,6 +1287,7 @@
           }
         ],
         "expected_train_accuracy": 0.5,
+        "expected_train_loss": 0.6931471824645996,
         "expected_valid_target_count": 4,
         "grad_accum_steps": 2,
         "ignore_index": -100,
@@ -1334,6 +1337,134 @@
         "loss_reduction": "mean",
         "microbatch_size": 3,
         "name": "weighted_ignored_mean_denominator",
+        "operation": "torch.nn.Linear + torch.nn.functional.cross_entropy + torch.optim.SGD",
+        "targets": {
+          "shape": [
+            5
+          ],
+          "values": [
+            0,
+            1,
+            -100,
+            1,
+            0
+          ]
+        },
+        "tolerance": {
+          "atol": 2e-05,
+          "rtol": 2e-05
+        }
+      },
+      {
+        "class_weights": [
+          1.0,
+          4.0
+        ],
+        "dtype": "float32",
+        "expected": {
+          "bias": {
+            "shape": [
+              2
+            ],
+            "values": [
+              -0.30000001192092896,
+              0.30000001192092896
+            ]
+          },
+          "weight": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              0.20000000298023224,
+              -0.4000000059604645,
+              -0.10000000149011612,
+              0.30000001192092896
+            ]
+          }
+        },
+        "expected_optimizer_step_count": 1,
+        "expected_steps": [
+          {
+            "bias": {
+              "shape": [
+                2
+              ],
+              "values": [
+                -0.30000001192092896,
+                0.30000001192092896
+              ]
+            },
+            "ending_microbatch": 2,
+            "loss": 6.931471824645996,
+            "weight": {
+              "shape": [
+                2,
+                2
+              ],
+              "values": [
+                0.20000000298023224,
+                -0.4000000059604645,
+                -0.10000000149011612,
+                0.30000001192092896
+              ]
+            },
+            "window_microbatch_count": 2,
+            "window_sample_count": 5
+          }
+        ],
+        "expected_train_accuracy": 0.5,
+        "expected_train_loss": 6.931471824645996,
+        "expected_valid_target_count": 4,
+        "grad_accum_steps": 2,
+        "ignore_index": -100,
+        "initial": {
+          "bias": {
+            "shape": [
+              2
+            ],
+            "values": [
+              0.0,
+              0.0
+            ]
+          },
+          "weight": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              0.20000000298023224,
+              -0.4000000059604645,
+              -0.10000000149011612,
+              0.30000001192092896
+            ]
+          }
+        },
+        "input": {
+          "shape": [
+            5,
+            2
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "label_smoothing": 0.2,
+        "learning_rate": 0.1,
+        "loss_reduction": "sum",
+        "microbatch_size": 3,
+        "name": "weighted_ignored_sum_reduction",
         "operation": "torch.nn.Linear + torch.nn.functional.cross_entropy + torch.optim.SGD",
         "targets": {
           "shape": [

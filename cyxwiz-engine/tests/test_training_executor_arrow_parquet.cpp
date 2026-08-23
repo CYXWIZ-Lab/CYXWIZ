@@ -310,8 +310,10 @@ void TestGradientAccumulationParityCase(
     const std::filesystem::path& work_dir) {
     Check(test_case.value("operation", "").find("torch.nn.Linear") == 0,
           "gradient accumulation case must use the PyTorch end-to-end oracle");
-    Check(test_case.value("loss_reduction", "") == "mean",
-          "gradient accumulation case must use mean CrossEntropy");
+    const std::string loss_reduction =
+        test_case.value("loss_reduction", "");
+    Check(loss_reduction == "mean" || loss_reduction == "sum",
+          "gradient accumulation case must use scalar CrossEntropy");
     const auto dataset = MakeGradientAccumulationDataset(test_case);
     auto config = MakeConfig(
         work_dir / test_case.at("name").get<std::string>());
@@ -326,6 +328,7 @@ void TestGradientAccumulationParityCase(
     config.shuffle = false;
     config.log_interval = 0;
     config.forbid_native_cpu_fallback = true;
+    config.loss_params["reduction"] = loss_reduction;
     const auto class_weights =
         test_case.value("class_weights", std::vector<float>{});
     if (!class_weights.empty()) {
@@ -394,6 +397,11 @@ void TestGradientAccumulationParityCase(
               1e-6,
               test_case.at("name").get<std::string>() +
                   " train accuracy must exclude ignored targets");
+    CheckNear(final_metrics.train_loss,
+              test_case.at("expected_train_loss").get<double>(),
+              tolerance,
+              test_case.at("name").get<std::string>() +
+                  " train loss must preserve reduction semantics");
     Check(final_metrics.current_epoch == 1 &&
               final_metrics.last_executed_epoch == 1 &&
               final_metrics.terminal_status == "completed" &&
@@ -417,8 +425,13 @@ void TestGradientAccumulationPyTorchParity(
     const std::filesystem::path& work_dir) {
     const auto& matrix =
         cases.at("gradient_accumulation_linear_ce_sgd_f32");
-    Check(matrix.is_array() && matrix.size() == 3,
-          "gradient accumulation fixture matrix must cover three lifecycle cases");
+    Check(matrix.is_array() && matrix.size() == 4,
+          "gradient accumulation fixture matrix must cover mean and sum lifecycle cases");
+    Check(std::count_if(
+              matrix.begin(), matrix.end(), [](const json& test_case) {
+                  return test_case.value("loss_reduction", "") == "sum";
+              }) == 1,
+          "gradient accumulation fixture matrix must contain one sum-reduction oracle");
     for (const auto& test_case : matrix) {
         TestGradientAccumulationParityCase(test_case, work_dir);
     }

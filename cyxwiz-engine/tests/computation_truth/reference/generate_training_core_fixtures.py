@@ -81,7 +81,10 @@ def gradient_accumulation_case(
     class_weights: list[float] | None = None,
     ignore_index: int = -100,
     label_smoothing: float = 0.0,
+    loss_reduction: str = "mean",
 ) -> dict[str, Any]:
+    if loss_reduction not in {"mean", "sum"}:
+        raise ValueError("gradient accumulation requires mean or sum reduction")
     inputs = torch.tensor(input_values, dtype=torch.float32)
     targets = torch.tensor(target_values, dtype=torch.int64)
     initial_weight = torch.tensor(
@@ -109,6 +112,8 @@ def gradient_accumulation_case(
     expected_steps: list[dict[str, Any]] = []
     correct_predictions = 0
     valid_predictions = 0
+    epoch_loss_numerator = 0.0
+    epoch_loss_denominator = 0.0
     for window_start in range(0, len(microbatches), grad_accum_steps):
         window = microbatches[window_start:window_start + grad_accum_steps]
         effective_inputs = torch.cat([batch[0] for batch in window])
@@ -128,10 +133,21 @@ def gradient_accumulation_case(
             weight=weight,
             ignore_index=ignore_index,
             label_smoothing=label_smoothing,
-            reduction="mean",
+            reduction=loss_reduction,
         )
         loss.backward()
         optimizer.step()
+        if loss_reduction == "sum":
+            epoch_loss_numerator += float(loss.item())
+            epoch_loss_denominator = 1.0
+        else:
+            semantic_denominator = (
+                float(weight[effective_targets[valid_mask]].sum().item())
+                if weight is not None
+                else float(valid_mask.sum().item())
+            )
+            epoch_loss_numerator += float(loss.item()) * semantic_denominator
+            epoch_loss_denominator += semantic_denominator
         expected_steps.append({
             "ending_microbatch": window_start + len(window),
             "window_microbatch_count": len(window),
@@ -145,7 +161,7 @@ def gradient_accumulation_case(
         "name": name,
         "operation": "torch.nn.Linear + torch.nn.functional.cross_entropy + torch.optim.SGD",
         "dtype": "float32",
-        "loss_reduction": "mean",
+        "loss_reduction": loss_reduction,
         "class_weights": class_weights or [],
         "ignore_index": ignore_index,
         "label_smoothing": label_smoothing,
@@ -156,6 +172,11 @@ def gradient_accumulation_case(
         "expected_train_accuracy": (
             correct_predictions / valid_predictions
             if valid_predictions > 0
+            else 0.0
+        ),
+        "expected_train_loss": (
+            epoch_loss_numerator / epoch_loss_denominator
+            if epoch_loss_denominator > 0.0
             else 0.0
         ),
         "expected_valid_target_count": valid_predictions,
@@ -219,6 +240,23 @@ def gradient_accumulation_matrix() -> list[dict[str, Any]]:
             class_weights=[1.0, 4.0],
             ignore_index=-100,
             label_smoothing=0.2,
+        ),
+        gradient_accumulation_case(
+            "weighted_ignored_sum_reduction",
+            [
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+            ],
+            [0, 1, -100, 1, 0],
+            microbatch_size=3,
+            grad_accum_steps=2,
+            class_weights=[1.0, 4.0],
+            ignore_index=-100,
+            label_smoothing=0.2,
+            loss_reduction="sum",
         ),
     ]
 
