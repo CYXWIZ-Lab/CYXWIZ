@@ -1,5 +1,6 @@
 #include "regression_operators.h"
 #include "../profiler_trace.h"
+#include "dense_feature_memory_preflight.h"
 #include "feature_matrix_utils.h"
 #include "ts_column_utils.h"
 
@@ -43,7 +44,8 @@ arrow::Status ReadColumnDouble(
     const std::shared_ptr<arrow::Table>& input,
     const std::string& col_name,
     const std::string& op_name,
-    std::vector<double>& out) {
+    std::vector<double>& out,
+    const PipelineOperatorCancellationQuery& cancellation_requested) {
 
     auto col = input->GetColumnByName(col_name);
     if (!col) {
@@ -52,7 +54,14 @@ arrow::Status ReadColumnDouble(
     }
     std::vector<float> floats;
     std::string bad;
-    if (!ReadColumnAsFloat(col, floats, bad)) {
+    bool cancelled = false;
+    if (!ReadColumnAsFloat(
+            col, floats, bad, cancellation_requested, &cancelled)) {
+        if (cancelled) {
+            return arrow::Status::Cancelled(
+                op_name + ": materialization cancelled while reading '" +
+                col_name + "'");
+        }
         return arrow::Status::TypeError(
             op_name + ": column '" + col_name +
             "' must be numeric (got '" + bad + "')");
@@ -64,7 +73,8 @@ arrow::Status ReadColumnDouble(
 arrow::Result<std::shared_ptr<arrow::Table>> AppendPredictionResidual(
     const std::shared_ptr<arrow::Table>& input,
     const std::vector<double>& predicted,
-    const std::vector<double>& residuals) {
+    const std::vector<double>& residuals,
+    const PipelineOperatorCancellationQuery& cancellation_requested) {
 
     const int64_t n = input->num_rows();
     if (static_cast<int64_t>(predicted.size()) != n ||
@@ -82,6 +92,11 @@ arrow::Result<std::shared_ptr<arrow::Table>> AppendPredictionResidual(
     ARROW_RETURN_NOT_OK(pred_builder.Reserve(n));
     ARROW_RETURN_NOT_OK(resid_builder.Reserve(n));
     for (int64_t i = 0; i < n; ++i) {
+        if ((i & 1023) == 0 && cancellation_requested &&
+            cancellation_requested()) {
+            return arrow::Status::Cancelled(
+                "Regression: materialization cancelled while writing output");
+        }
         ARROW_RETURN_NOT_OK(pred_builder.Append(static_cast<float>(predicted[i])));
         ARROW_RETURN_NOT_OK(resid_builder.Append(static_cast<float>(residuals[i])));
     }
@@ -156,9 +171,40 @@ LinearRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         return arrow::Status::Invalid("LinearRegression: input table is null");
     }
 
+    std::vector<std::string> resolved_features;
+    ARROW_RETURN_NOT_OK(ResolveFeatureColumns(
+        input, feature_cols_, target_col_, GetName(), resolved_features));
+    auto target_column = input->GetColumnByName(target_col_);
+    if (!target_column) {
+        return arrow::Status::KeyError(
+            GetName() + ": target column '" + target_col_ + "' not found");
+    }
+    if (!IsNumericChunked(target_column)) {
+        return arrow::Status::TypeError(
+            GetName() + ": target column '" + target_col_ +
+            "' must be numeric");
+    }
+
+    const uint64_t regression_workspace_columns =
+        4ULL + (fit_intercept_ ? 1ULL : 0ULL);
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitDenseFeatureMemoryPreflight(
+            input,
+            resolved_features,
+            regression_workspace_columns,
+            GetName(),
+            "reduce training rows or predictor columns, fit on a sample "
+            "first, or use a future chunked regression path",
+            GetMaterializationMemoryContext(),
+            progress_callback_));
+    const uint64_t estimated_memory_bytes =
+        preflight_estimate.estimated_peak_bytes;
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+
     // Read target.
     std::vector<double> y;
-    ARROW_RETURN_NOT_OK(ReadColumnDouble(input, target_col_, GetName(), y));
+    ARROW_RETURN_NOT_OK(ReadColumnDouble(
+        input, target_col_, GetName(), y, GetCancellationQuery()));
     const size_t n = y.size();
     if (n == 0) {
         return arrow::Status::Invalid("LinearRegression: target column is empty");
@@ -169,7 +215,9 @@ LinearRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     std::vector<std::vector<double>> feature_cols(p);
     for (size_t f = 0; f < p; ++f) {
         ARROW_RETURN_NOT_OK(
-            ReadColumnDouble(input, feature_cols_[f], GetName(), feature_cols[f]));
+            ReadColumnDouble(
+                input, feature_cols_[f], GetName(), feature_cols[f],
+                GetCancellationQuery()));
         if (feature_cols[f].size() != n) {
             return arrow::Status::Invalid(
                 "LinearRegression: feature '" + feature_cols_[f] +
@@ -180,7 +228,6 @@ LinearRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     // Build X matrix [n x (p + intercept)], row-major.
     const size_t n_cols = fit_intercept_ ? p + 1 : p;
-    const uint64_t matrix_bytes = static_cast<uint64_t>(n) * static_cast<uint64_t>(n_cols) * sizeof(double);
     std::vector<std::vector<double>> X(n, std::vector<double>(n_cols, 0.0));
     std::vector<std::string> names;
     names.reserve(n_cols);
@@ -188,6 +235,9 @@ LinearRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     for (const auto& name : feature_cols_) names.push_back(name);
 
     for (size_t i = 0; i < n; ++i) {
+        if ((i & 1023) == 0) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        }
         size_t col = 0;
         if (fit_intercept_) X[i][col++] = 1.0;
         for (size_t f = 0; f < p; ++f) {
@@ -202,8 +252,9 @@ LinearRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             ") — system is underdetermined");
     }
 
-    ReportProgress(progress_callback_, "fit", "Fitting linear regression model", 0.65, static_cast<uint64_t>(n), static_cast<uint64_t>(n), matrix_bytes);
+    ReportProgress(progress_callback_, "fit", "Fitting linear regression model", 0.65, static_cast<uint64_t>(n), static_cast<uint64_t>(n), estimated_memory_bytes);
     auto result = DataAnalyzer::MultipleLinearRegression(X, y, names);
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
     if (result.predicted.size() != n || result.residuals.size() != n) {
         return arrow::Status::ExecutionError(
             "LinearRegression: backend returned empty predictions "
@@ -217,7 +268,8 @@ LinearRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                  n, p, fit_intercept_,
                  result.r_squared, result.adjusted_r_squared, result.rmse);
 
-    return AppendPredictionResidual(input, result.predicted, result.residuals);
+    return AppendPredictionResidual(
+        input, result.predicted, result.residuals, GetCancellationQuery());
 }
 
 // ============================================================================
@@ -269,11 +321,43 @@ PolynomialRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) 
         return arrow::Status::Invalid("PolynomialRegression: input table is null");
     }
 
+    std::vector<std::string> resolved_features;
+    ARROW_RETURN_NOT_OK(ResolveFeatureColumns(
+        input, {feature_col_}, target_col_, GetName(), resolved_features));
+    auto target_column = input->GetColumnByName(target_col_);
+    if (!target_column) {
+        return arrow::Status::KeyError(
+            GetName() + ": target column '" + target_col_ + "' not found");
+    }
+    if (!IsNumericChunked(target_column)) {
+        return arrow::Status::TypeError(
+            GetName() + ": target column '" + target_col_ +
+            "' must be numeric");
+    }
+
+    const uint64_t regression_workspace_columns =
+        static_cast<uint64_t>(degree_) + 4ULL;
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitDenseFeatureMemoryPreflight(
+            input,
+            resolved_features,
+            regression_workspace_columns,
+            GetName(),
+            "reduce polynomial degree or training rows, fit on a sample "
+            "first, or use a future chunked regression path",
+            GetMaterializationMemoryContext(),
+            progress_callback_));
+    const uint64_t estimated_memory_bytes =
+        preflight_estimate.estimated_peak_bytes;
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+
     std::vector<double> x;
-    ARROW_RETURN_NOT_OK(ReadColumnDouble(input, feature_col_, GetName(), x));
+    ARROW_RETURN_NOT_OK(ReadColumnDouble(
+        input, feature_col_, GetName(), x, GetCancellationQuery()));
 
     std::vector<double> y;
-    ARROW_RETURN_NOT_OK(ReadColumnDouble(input, target_col_, GetName(), y));
+    ARROW_RETURN_NOT_OK(ReadColumnDouble(
+        input, target_col_, GetName(), y, GetCancellationQuery()));
 
     if (x.size() != y.size()) {
         return arrow::Status::Invalid(
@@ -286,9 +370,9 @@ PolynomialRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) 
             std::to_string(x.size()) + " for degree " + std::to_string(degree_) + ")");
     }
 
-    const uint64_t vector_bytes = static_cast<uint64_t>(x.size()) * 2U * sizeof(double);
-    ReportProgress(progress_callback_, "fit", "Fitting polynomial regression model", 0.60, static_cast<uint64_t>(x.size()), static_cast<uint64_t>(x.size()), vector_bytes);
+    ReportProgress(progress_callback_, "fit", "Fitting polynomial regression model", 0.60, static_cast<uint64_t>(x.size()), static_cast<uint64_t>(x.size()), estimated_memory_bytes);
     auto result = DataAnalyzer::PolynomialRegression(x, y, degree_);
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
     if (result.predicted.size() != x.size() || result.residuals.size() != x.size()) {
         return arrow::Status::ExecutionError(
             "PolynomialRegression: backend returned empty predictions "
@@ -301,7 +385,8 @@ PolynomialRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) 
                  x.size(), degree_,
                  result.r_squared, result.adjusted_r_squared, result.rmse);
 
-    return AppendPredictionResidual(input, result.predicted, result.residuals);
+    return AppendPredictionResidual(
+        input, result.predicted, result.residuals, GetCancellationQuery());
 }
 
 } // namespace cyxwiz

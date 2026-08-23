@@ -183,6 +183,14 @@ void ReportMaterializationCacheStatus(
                 "",
                 "",
                 status,
+                0,
+                0,
+                false,
+                0,
+                0,
+                0,
+                "",
+                "",
                 cache_key,
                 cache_artifact_path,
                 cache_manifest_path,
@@ -1014,7 +1022,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     cyxwiz::DataRegistry& registry,
     std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel,
     std::function<void(bool)> node_editor_callback,
-    GraphTrainingDispatch dispatch) {
+    GraphTrainingDispatch dispatch,
+    cyxwiz::MaterializationMemoryPolicy materialization_memory_policy) {
 
     GraphTrainingLaunchResult result;
 
@@ -1145,6 +1154,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
          epochs,
          batch_size,
          cache_config = materialization_cache_config,
+         materialization_memory_policy,
          plot_panel,
          callback = std::move(node_editor_callback),
          dispatch = std::move(dispatch)](cyxwiz::LambdaTask& task) mutable {
@@ -1185,6 +1195,11 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
             cyxwiz::MaterializeResult materialize_result;
             {
                 CYXWIZ_PROFILE_ZONE("CyxWiz Pipeline Materialization");
+                cyxwiz::PipelineOperatorExecutionContext materialization_context;
+                materialization_context.memory.policy =
+                    materialization_memory_policy;
+                materialization_context.cancellation_requested =
+                    [&task]() { return task.ShouldStop(); };
                 materialize_result = cyxwiz::PipelineMaterializer::Materialize(
                     nodes, links, registry, effective_dataset_name, cache_config,
                     [&task, plot_panel](const cyxwiz::PipelineOperatorProgress& event) {
@@ -1206,7 +1221,15 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                             event.estimated_memory_bytes,
                             event.processed_items,
                             event.total_items,
-                            event.memory_risk_level);
+                            event.memory_risk_level,
+                            event.available_memory_bytes,
+                            event.safe_memory_budget_bytes,
+                            event.process_memory_detected,
+                            event.process_resident_memory_bytes,
+                            event.process_private_memory_bytes,
+                            event.process_resident_growth_bytes,
+                            event.process_private_memory_name,
+                            event.process_memory_source);
                         PostPlotPanelUpdate(
                             plot_panel,
                             [message,
@@ -1218,6 +1241,14 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                              node_id = event.node_id,
                              node_name = event.node_name,
                              memory_risk_level = event.memory_risk_level,
+                             available_memory_bytes = event.available_memory_bytes,
+                             safe_memory_budget_bytes = event.safe_memory_budget_bytes,
+                             process_memory_detected = event.process_memory_detected,
+                             process_resident_memory_bytes = event.process_resident_memory_bytes,
+                             process_private_memory_bytes = event.process_private_memory_bytes,
+                             process_resident_growth_bytes = event.process_resident_growth_bytes,
+                             process_private_memory_name = event.process_private_memory_name,
+                             process_memory_source = event.process_memory_source,
                              status = event.status](
                                 cyxwiz::TrainingPlotPanel& panel) {
                                 panel.SetPreparationState(
@@ -1232,11 +1263,33 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                                 node_id,
                                 node_name,
                                 memory_risk_level,
-                                status);
+                                status,
+                                available_memory_bytes,
+                                safe_memory_budget_bytes,
+                                process_memory_detected,
+                                process_resident_memory_bytes,
+                                process_private_memory_bytes,
+                                process_resident_growth_bytes,
+                                process_private_memory_name,
+                                process_memory_source);
                             });
-                    });
+                    },
+                    std::move(materialization_context));
             }
             ReportMaterializationCacheStatus(task, plot_panel, materialize_result);
+            if (materialize_result.failure_kind ==
+                cyxwiz::MaterializationFailureKind::Cancelled) {
+                cyxwiz::TrainingTraceCollector::Instance().RecordTaskProgress(
+                    task.GetId(),
+                    task.GetName(),
+                    "Materialization cancelled",
+                    0.15f,
+                    materialize_result.error_message,
+                    "cancelled",
+                    materialize_result.failed_node_id,
+                    materialize_result.failed_node_name);
+                return;
+            }
             if (!materialize_result.success) {
                 throw std::runtime_error(
                     "Materializer failed for dataset '" +

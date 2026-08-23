@@ -1,5 +1,6 @@
 #include "decision_tree_operator.h"
 #include "../profiler_trace.h"
+#include "dense_feature_memory_preflight.h"
 #include "feature_matrix_utils.h"
 #include "tree_classification_utils.h"
 #include "tree_model_artifact.h"
@@ -110,23 +111,35 @@ DecisionTreeClassifierOperator::Apply(
     ARROW_RETURN_NOT_OK(ResolveFeatureColumns(
         input, feature_cols_, target_col_, GetName(), resolved_features));
 
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitDenseFeatureMemoryPreflight(
+            input,
+            resolved_features,
+            3ULL,
+            GetName(),
+            "reduce training rows or feature columns, train on a sample "
+            "first, or use a future chunked tree-training path",
+            GetMaterializationMemoryContext(),
+            progress_callback_));
+    const uint64_t estimated_matrix_bytes =
+        preflight_estimate.estimated_peak_bytes;
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+
     report_progress("Reading feature matrix",
                     "Reading DecisionTree training feature matrix",
                     0.20,
                     0,
-                    static_cast<uint64_t>(resolved_features.size()));
+                    static_cast<uint64_t>(resolved_features.size()),
+                    estimated_matrix_bytes);
     std::vector<std::vector<double>> features;
     int64_t n_samples = 0;
     ARROW_RETURN_NOT_OK(ReadFeatureMatrix(
-        input, resolved_features, GetName(), features, n_samples));
+        input, resolved_features, GetName(), features, n_samples,
+        GetCancellationQuery()));
     if (n_samples <= 0) {
         return arrow::Status::Invalid(
             "DecisionTreeClassifier: input table has no rows");
     }
-    const uint64_t estimated_matrix_bytes =
-        static_cast<uint64_t>(n_samples) *
-        static_cast<uint64_t>(resolved_features.size()) *
-        sizeof(double);
     report_progress("Feature matrix ready",
                     "DecisionTree matrix ready: " +
                     std::to_string(n_samples) + " rows x " +
@@ -166,6 +179,7 @@ DecisionTreeClassifierOperator::Apply(
     } catch (const std::exception& ex) {
         return arrow::Status::Invalid(ex.what());
     }
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
 
     report_progress("Predicting rows",
                     "Generating DecisionTree training-set predictions",

@@ -3,6 +3,7 @@
 #include "ts_column_utils.h"
 
 #include <arrow/api.h>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -82,7 +83,8 @@ inline arrow::Status ReadFeatureMatrix(
     const std::vector<std::string>& feature_names,
     const std::string& op_name,
     std::vector<std::vector<double>>& out_matrix,
-    int64_t& out_n_samples) {
+    int64_t& out_n_samples,
+    const std::function<bool()>& cancellation_requested = {}) {
 
     const size_t n_features = feature_names.size();
     std::vector<std::vector<float>> feat_cols(n_features);
@@ -90,7 +92,14 @@ inline arrow::Status ReadFeatureMatrix(
     for (size_t f = 0; f < n_features; ++f) {
         auto col = table->GetColumnByName(feature_names[f]);
         std::string bad_type;
-        if (!ReadColumnAsFloat(col, feat_cols[f], bad_type)) {
+        bool cancelled = false;
+        if (!ReadColumnAsFloat(
+                col, feat_cols[f], bad_type, cancellation_requested,
+                &cancelled)) {
+            if (cancelled) {
+                return arrow::Status::Cancelled(
+                    op_name + ": materialization cancelled while reading features");
+            }
             return arrow::Status::TypeError(
                 op_name + ": feature '" + feature_names[f] +
                 "' read failed (type='" + bad_type + "')");
@@ -108,6 +117,11 @@ inline arrow::Status ReadFeatureMatrix(
     for (size_t f = 0; f < n_features; ++f) {
         const auto& col = feat_cols[f];
         for (int64_t i = 0; i < n_samples; ++i) {
+            if ((i & 1023) == 0 && cancellation_requested &&
+                cancellation_requested()) {
+                return arrow::Status::Cancelled(
+                    op_name + ": materialization cancelled while building features");
+            }
             out_matrix[i][f] = static_cast<double>(col[i]);
         }
     }

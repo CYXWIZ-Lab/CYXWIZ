@@ -33,16 +33,6 @@ bool IsSupportedTimestampType(const std::shared_ptr<arrow::DataType>& type) {
     }
 }
 
-const char* RiskStatus(MaterializationMemoryRisk risk) {
-    switch (risk) {
-    case MaterializationMemoryRisk::Safe: return "running";
-    case MaterializationMemoryRisk::Warning: return "warning";
-    case MaterializationMemoryRisk::Risky: return "risky";
-    case MaterializationMemoryRisk::Blocked: return "blocked";
-    }
-    return "running";
-}
-
 void ReportProgress(const PipelineOperatorProgressCallback& callback,
                     std::string stage, std::string message, float progress,
                     uint64_t processed, uint64_t total,
@@ -178,7 +168,7 @@ TimeSeriesSegmentOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     const auto estimate = EstimateDenseMaterializationMemory(
         rows, 2, static_cast<uint64_t>(sizeof(int64_t)));
     const auto decision = EvaluateMaterializationMemory(
-        estimate, DetectMaterializationMemorySnapshot());
+        estimate, GetMaterializationMemoryContext());
     std::ostringstream message;
     message << "TimeSeriesSegment memory preflight: risk="
             << MaterializationMemoryRiskName(decision.risk)
@@ -189,7 +179,7 @@ TimeSeriesSegmentOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = "TimeSeriesSegment memory preflight";
         event.message = message.str();
-        event.status = RiskStatus(decision.risk);
+        event.status = MaterializationMemoryRiskToProgressStatus(decision.risk);
         event.progress = 0.03f;
         event.total_items = rows;
         event.estimated_memory_bytes = estimate.estimated_peak_bytes;

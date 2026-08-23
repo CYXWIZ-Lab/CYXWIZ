@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <string>
@@ -35,9 +36,12 @@ inline std::string NormalizeTimeSeriesParameterChoice(const std::string& value) 
 inline bool ReadColumnAsFloat(
     const std::shared_ptr<arrow::ChunkedArray>& column,
     std::vector<float>& out,
-    std::string& error_type_name) {
+    std::string& error_type_name,
+    const std::function<bool()>& cancellation_requested = {},
+    bool* cancelled = nullptr) {
 
     out.clear();
+    if (cancelled) *cancelled = false;
     out.reserve(static_cast<size_t>(column->length()));
 
     for (int c = 0; c < column->num_chunks(); ++c) {
@@ -45,70 +49,98 @@ inline bool ReadColumnAsFloat(
         const int64_t chunk_len = chunk->length();
 
         auto is_null = [&](int64_t i) -> bool { return chunk->IsNull(i); };
+        auto stop_requested = [&](int64_t i) {
+            if ((i & 1023) != 0 || !cancellation_requested ||
+                !cancellation_requested()) {
+                return false;
+            }
+            if (cancelled) *cancelled = true;
+            return true;
+        };
         const float nan_val = std::numeric_limits<float>::quiet_NaN();
 
         switch (chunk->type_id()) {
             case arrow::Type::DOUBLE: {
                 auto arr = std::static_pointer_cast<arrow::DoubleArray>(chunk);
                 const double* data = arr->raw_values();
-                for (int64_t i = 0; i < chunk_len; ++i)
+                for (int64_t i = 0; i < chunk_len; ++i) {
+                    if (stop_requested(i)) return false;
                     out.push_back(is_null(i) ? nan_val : static_cast<float>(data[i]));
+                }
                 break;
             }
             case arrow::Type::FLOAT: {
                 auto arr = std::static_pointer_cast<arrow::FloatArray>(chunk);
                 const float* data = arr->raw_values();
-                for (int64_t i = 0; i < chunk_len; ++i)
+                for (int64_t i = 0; i < chunk_len; ++i) {
+                    if (stop_requested(i)) return false;
                     out.push_back(is_null(i) ? nan_val : data[i]);
+                }
                 break;
             }
             case arrow::Type::INT64: {
                 auto arr = std::static_pointer_cast<arrow::Int64Array>(chunk);
-                for (int64_t i = 0; i < chunk_len; ++i)
+                for (int64_t i = 0; i < chunk_len; ++i) {
+                    if (stop_requested(i)) return false;
                     out.push_back(is_null(i) ? nan_val : static_cast<float>(arr->Value(i)));
+                }
                 break;
             }
             case arrow::Type::INT32: {
                 auto arr = std::static_pointer_cast<arrow::Int32Array>(chunk);
-                for (int64_t i = 0; i < chunk_len; ++i)
+                for (int64_t i = 0; i < chunk_len; ++i) {
+                    if (stop_requested(i)) return false;
                     out.push_back(is_null(i) ? nan_val : static_cast<float>(arr->Value(i)));
+                }
                 break;
             }
             case arrow::Type::INT16: {
                 auto arr = std::static_pointer_cast<arrow::Int16Array>(chunk);
-                for (int64_t i = 0; i < chunk_len; ++i)
+                for (int64_t i = 0; i < chunk_len; ++i) {
+                    if (stop_requested(i)) return false;
                     out.push_back(is_null(i) ? nan_val : static_cast<float>(arr->Value(i)));
+                }
                 break;
             }
             case arrow::Type::INT8: {
                 auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
-                for (int64_t i = 0; i < chunk_len; ++i)
+                for (int64_t i = 0; i < chunk_len; ++i) {
+                    if (stop_requested(i)) return false;
                     out.push_back(is_null(i) ? nan_val : static_cast<float>(arr->Value(i)));
+                }
                 break;
             }
             case arrow::Type::UINT64: {
                 auto arr = std::static_pointer_cast<arrow::UInt64Array>(chunk);
-                for (int64_t i = 0; i < chunk_len; ++i)
+                for (int64_t i = 0; i < chunk_len; ++i) {
+                    if (stop_requested(i)) return false;
                     out.push_back(is_null(i) ? nan_val : static_cast<float>(arr->Value(i)));
+                }
                 break;
             }
             case arrow::Type::UINT32: {
                 auto arr = std::static_pointer_cast<arrow::UInt32Array>(chunk);
-                for (int64_t i = 0; i < chunk_len; ++i)
+                for (int64_t i = 0; i < chunk_len; ++i) {
+                    if (stop_requested(i)) return false;
                     out.push_back(is_null(i) ? nan_val : static_cast<float>(arr->Value(i)));
+                }
                 break;
             }
             case arrow::Type::UINT16: {
                 auto arr = std::static_pointer_cast<arrow::UInt16Array>(chunk);
-                for (int64_t i = 0; i < chunk_len; ++i)
+                for (int64_t i = 0; i < chunk_len; ++i) {
+                    if (stop_requested(i)) return false;
                     out.push_back(is_null(i) ? nan_val : static_cast<float>(arr->Value(i)));
+                }
                 break;
             }
             case arrow::Type::UINT8: {
                 auto arr = std::static_pointer_cast<arrow::UInt8Array>(chunk);
                 const uint8_t* data = arr->raw_values();
-                for (int64_t i = 0; i < chunk_len; ++i)
+                for (int64_t i = 0; i < chunk_len; ++i) {
+                    if (stop_requested(i)) return false;
                     out.push_back(is_null(i) ? nan_val : static_cast<float>(data[i]));
+                }
                 break;
             }
             default:

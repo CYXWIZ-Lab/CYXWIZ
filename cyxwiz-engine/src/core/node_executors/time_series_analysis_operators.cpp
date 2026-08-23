@@ -264,21 +264,6 @@ std::vector<bool> MarkSignificant(int size, const std::vector<int>& lags) {
     return out;
 }
 
-const char* MaterializationMemoryProgressStatus(
-    MaterializationMemoryRisk risk) {
-    switch (risk) {
-    case MaterializationMemoryRisk::Safe:
-        return "running";
-    case MaterializationMemoryRisk::Warning:
-        return "warning";
-    case MaterializationMemoryRisk::Risky:
-        return "risky";
-    case MaterializationMemoryRisk::Blocked:
-        return "blocked";
-    }
-    return "running";
-}
-
 std::string BuildTimeSeriesAnalysisMemoryPreflightMessage(
     const std::string& op_name,
     const MaterializationMemoryEstimate& estimate,
@@ -307,6 +292,7 @@ arrow::Result<MaterializationMemoryEstimate> EmitSignalAnalysisMemoryPreflight(
     const std::string& op_name,
     uint64_t planned_columns,
     const std::string& suggestion,
+    const MaterializationMemoryContext& memory_context,
     const PipelineOperatorProgressCallback& callback,
     uint64_t& planned_samples) {
     auto signal_column = input->GetColumnByName(signal_col);
@@ -332,7 +318,7 @@ arrow::Result<MaterializationMemoryEstimate> EmitSignalAnalysisMemoryPreflight(
     const auto estimate = EstimateDenseMaterializationMemory(
         planned_samples, planned_columns, static_cast<uint64_t>(sizeof(double)));
     const auto decision = EvaluateMaterializationMemory(
-        estimate, DetectMaterializationMemorySnapshot());
+        estimate, memory_context);
     const std::string preflight_message =
         BuildTimeSeriesAnalysisMemoryPreflightMessage(
             op_name, estimate, decision, suggestion);
@@ -346,7 +332,7 @@ arrow::Result<MaterializationMemoryEstimate> EmitSignalAnalysisMemoryPreflight(
         PipelineOperatorProgress event;
         event.stage = op_name + " memory preflight";
         event.message = preflight_message;
-        event.status = MaterializationMemoryProgressStatus(decision.risk);
+        event.status = MaterializationMemoryRiskToProgressStatus(decision.risk);
         event.progress = 0.03f;
         event.processed_items = 0;
         event.total_items = planned_cells;
@@ -423,6 +409,7 @@ TimeSeriesDecompositionOperator::Apply(
         EmitSignalAnalysisMemoryPreflight(
             input, signal_col_, GetName(), 4,
             "reduce signal rows, decompose a sampled/windowed signal first, or use a future chunked decomposition path.",
+            GetMaterializationMemoryContext(),
             progress_callback_, planned_samples));
 
     ReportProgress(progress_callback_, "Reading signal",
@@ -522,6 +509,7 @@ ARIMAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         EmitSignalAnalysisMemoryPreflight(
             input, signal_col_, GetName(), 3,
             "reduce signal rows, fit ARIMA on a sampled/windowed signal first, or use a future chunked forecasting path.",
+            GetMaterializationMemoryContext(),
             progress_callback_, planned_samples));
 
     ReportProgress(progress_callback_, "Reading signal",
@@ -648,6 +636,7 @@ ExponentialSmoothingOperator::Apply(
         EmitSignalAnalysisMemoryPreflight(
             input, signal_col_, GetName(), 3,
             "reduce signal rows, fit smoothing on a sampled/windowed signal first, or use a future chunked forecasting path.",
+            GetMaterializationMemoryContext(),
             progress_callback_, planned_samples));
 
     ReportProgress(progress_callback_, "Reading signal",
@@ -744,6 +733,7 @@ ACFOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         EmitSignalAnalysisMemoryPreflight(
             input, signal_col_, GetName(), 5,
             "reduce signal rows, cap max_lag, run ACF on a sampled/windowed signal first, or use a future chunked correlation path.",
+            GetMaterializationMemoryContext(),
             progress_callback_, planned_samples));
 
     ReportProgress(progress_callback_, "Reading signal",
@@ -826,6 +816,7 @@ PACFOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         EmitSignalAnalysisMemoryPreflight(
             input, signal_col_, GetName(), 5,
             "reduce signal rows, cap max_lag, run PACF on a sampled/windowed signal first, or use a future chunked correlation path.",
+            GetMaterializationMemoryContext(),
             progress_callback_, planned_samples));
 
     ReportProgress(progress_callback_, "Reading signal",
@@ -907,6 +898,7 @@ StationarityTestOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         EmitSignalAnalysisMemoryPreflight(
             input, signal_col_, GetName(), 3,
             "reduce signal rows, cap max_lags, test a sampled/windowed signal first, or use a future chunked stationarity path.",
+            GetMaterializationMemoryContext(),
             progress_callback_, planned_samples));
 
     ReportProgress(progress_callback_, "Reading signal",
@@ -1000,6 +992,7 @@ SeasonalityDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         EmitSignalAnalysisMemoryPreflight(
             input, signal_col_, GetName(), 3,
             "reduce signal rows, narrow the period search, detect seasonality on a sampled/windowed signal first, or use a future chunked seasonality path.",
+            GetMaterializationMemoryContext(),
             progress_callback_, planned_samples));
 
     ReportProgress(progress_callback_, "Reading signal",
@@ -1211,7 +1204,7 @@ SeasonalNaiveOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     const auto estimate = EstimateDenseMaterializationMemory(
         static_cast<uint64_t>(output_rows), output_columns, sizeof(double));
     const auto decision = EvaluateMaterializationMemory(
-        estimate, DetectMaterializationMemorySnapshot());
+        estimate, GetMaterializationMemoryContext());
     const std::string preflight_message =
         BuildTimeSeriesAnalysisMemoryPreflightMessage(
             GetName(), estimate, decision,
@@ -1221,7 +1214,7 @@ SeasonalNaiveOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = "SeasonalNaive memory preflight";
         event.message = preflight_message;
-        event.status = MaterializationMemoryProgressStatus(decision.risk);
+        event.status = MaterializationMemoryRiskToProgressStatus(decision.risk);
         event.progress = 0.03f;
         event.estimated_memory_bytes = estimate.estimated_peak_bytes;
         event.memory_risk_level = MaterializationMemoryRiskName(decision.risk);

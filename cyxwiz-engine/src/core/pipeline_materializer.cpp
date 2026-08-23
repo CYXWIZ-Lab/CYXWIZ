@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <new>
 #include <system_error>
 
 namespace cyxwiz {
@@ -211,6 +212,30 @@ void SaveCacheManifestLastUsed(const MaterializationCacheManifest& manifest,
     }
 }
 
+void SetMaterializationFailure(
+    MaterializeResult& result,
+    MaterializationFailureKind kind,
+    std::string message,
+    int node_id = -1,
+    std::string node_name = {}) {
+    result.success = false;
+    result.failure_kind = kind;
+    result.error_message = std::move(message);
+    result.failed_node_id = node_id;
+    result.failed_node_name = std::move(node_name);
+}
+
+bool StopIfMaterializationCancelled(
+    const PipelineOperatorExecutionContext& context,
+    MaterializeResult& result) {
+    if (!context.IsCancellationRequested()) return false;
+    SetMaterializationFailure(
+        result,
+        MaterializationFailureKind::Cancelled,
+        "PipelineMaterializer: cancelled before publishing output");
+    return true;
+}
+
 } // namespace
 
 const char* PipelineMaterializerSourceKindName(
@@ -230,6 +255,20 @@ const char* PipelineMaterializerSourceKindName(
         return "Unknown";
     }
     return "Unknown";
+}
+
+const char* MaterializationFailureKindName(MaterializationFailureKind kind) {
+    switch (kind) {
+    case MaterializationFailureKind::None:
+        return "none";
+    case MaterializationFailureKind::Cancelled:
+        return "cancelled";
+    case MaterializationFailureKind::Capacity:
+        return "capacity";
+    case MaterializationFailureKind::Error:
+        return "error";
+    }
+    return "error";
 }
 
 PipelineMaterializerSourceKind ResolvePipelineMaterializerSourceKind(
@@ -258,10 +297,12 @@ MaterializeResult PipelineMaterializer::Materialize(
     const std::vector<gui::NodeLink>& links,
     DataRegistry& registry,
     const std::string& source_dataset_name,
-    PipelineOperatorProgressCallback progress_callback) {
+    PipelineOperatorProgressCallback progress_callback,
+    PipelineOperatorExecutionContext execution_context) {
     MaterializationCacheConfig cache_config;
     return Materialize(nodes, links, registry, source_dataset_name,
-                       cache_config, std::move(progress_callback));
+                       cache_config, std::move(progress_callback),
+                       std::move(execution_context));
 }
 
 MaterializeResult PipelineMaterializer::Materialize(
@@ -270,7 +311,8 @@ MaterializeResult PipelineMaterializer::Materialize(
     DataRegistry& registry,
     const std::string& source_dataset_name,
     const MaterializationCacheConfig& cache_config,
-    PipelineOperatorProgressCallback progress_callback) {
+    PipelineOperatorProgressCallback progress_callback,
+    PipelineOperatorExecutionContext execution_context) try {
 
     MaterializeResult result;
     result.effective_dataset_name = source_dataset_name;
@@ -278,9 +320,15 @@ MaterializeResult PipelineMaterializer::Materialize(
         ? MaterializationCacheStatus::Disabled
         : MaterializationCacheStatus::Miss;
 
+    if (StopIfMaterializationCancelled(execution_context, result)) {
+        return result;
+    }
+
     if (source_dataset_name.empty()) {
-        result.success = false;
-        result.error_message = "PipelineMaterializer: source_dataset_name is empty";
+        SetMaterializationFailure(
+            result,
+            MaterializationFailureKind::Error,
+            "PipelineMaterializer: source_dataset_name is empty");
         return result;
     }
 
@@ -310,17 +358,21 @@ MaterializeResult PipelineMaterializer::Materialize(
 
     auto source_dataset = registry.GetArrowDataset(source_dataset_name);
     if (!source_dataset) {
-        result.success = false;
-        result.error_message = "PipelineMaterializer: failed to fetch Arrow dataset '" +
-                               source_dataset_name + "' from registry";
+        SetMaterializationFailure(
+            result,
+            MaterializationFailureKind::Error,
+            "PipelineMaterializer: failed to fetch Arrow dataset '" +
+                source_dataset_name + "' from registry");
         return result;
     }
 
     auto source_table = source_dataset->GetArrowTable();
     if (!source_table) {
-        result.success = false;
-        result.error_message = "PipelineMaterializer: Arrow dataset '" +
-                               source_dataset_name + "' has a null table";
+        SetMaterializationFailure(
+            result,
+            MaterializationFailureKind::Error,
+            "PipelineMaterializer: Arrow dataset '" +
+                source_dataset_name + "' has a null table");
         return result;
     }
 
@@ -362,16 +414,25 @@ MaterializeResult PipelineMaterializer::Materialize(
                 }
 
                 if (validation.usable) {
+                    if (StopIfMaterializationCancelled(
+                            execution_context, result)) {
+                        return result;
+                    }
                     auto cached = LoadCachedArrowDataset(
                         validation.manifest, materialized_name);
                     if (cached && cached->GetArrowTable()) {
+                        if (StopIfMaterializationCancelled(
+                                execution_context, result)) {
+                            return result;
+                        }
                         auto registered = registry.RegisterArrowTable(
                             cached->GetArrowTable(), materialized_name);
                         if (!registered) {
-                            result.success = false;
-                            result.error_message =
+                            SetMaterializationFailure(
+                                result,
+                                MaterializationFailureKind::Error,
                                 "PipelineMaterializer: RegisterArrowTable failed for cached '" +
-                                materialized_name + "'";
+                                    materialized_name + "'");
                             return result;
                         }
                         result.effective_dataset_name = materialized_name;
@@ -406,21 +467,29 @@ MaterializeResult PipelineMaterializer::Materialize(
         }
 
         if (cache_config.mode == MaterializationCacheMode::RequireHit) {
-            result.success = false;
-            result.error_message =
+            std::string message =
                 "PipelineMaterializer: materialization cache require-hit failed";
             if (!result.cache_message.empty()) {
-                result.error_message += ": " + result.cache_message;
+                message += ": " + result.cache_message;
             }
+            SetMaterializationFailure(
+                result, MaterializationFailureKind::Error, std::move(message));
             return result;
         }
     }
 
     auto table_result = MaterializeTable(
-        nodes, links, source_table, source_dataset_name, progress_callback);
+        nodes, links, source_table, source_dataset_name, progress_callback,
+        execution_context);
     if (!table_result.success) {
-        result.success = false;
-        result.error_message = table_result.error_message;
+        SetMaterializationFailure(
+            result,
+            table_result.failure_kind == MaterializationFailureKind::None
+                ? MaterializationFailureKind::Error
+                : table_result.failure_kind,
+            table_result.error_message,
+            table_result.failed_node_id,
+            table_result.failed_node_name);
         return result;
     }
 
@@ -435,12 +504,7 @@ MaterializeResult PipelineMaterializer::Materialize(
         return result;
     }
 
-    auto registered =
-        registry.RegisterArrowTable(table_result.table, materialized_name);
-    if (!registered) {
-        result.success = false;
-        result.error_message = "PipelineMaterializer: RegisterArrowTable failed for '" +
-                               materialized_name + "'";
+    if (StopIfMaterializationCancelled(execution_context, result)) {
         return result;
     }
 
@@ -488,8 +552,32 @@ MaterializeResult PipelineMaterializer::Materialize(
         }
     }
 
+    if (StopIfMaterializationCancelled(execution_context, result)) {
+        return result;
+    }
+    auto registered =
+        registry.RegisterArrowTable(table_result.table, materialized_name);
+    if (!registered) {
+        SetMaterializationFailure(
+            result,
+            MaterializationFailureKind::Error,
+            "PipelineMaterializer: RegisterArrowTable failed for '" +
+                materialized_name + "'");
+        return result;
+    }
+
     spdlog::info("PipelineMaterializer: materialized '{}' -> '{}' ({} operators applied)",
                  source_dataset_name, materialized_name, result.operators_applied);
+    return result;
+} catch (const std::bad_alloc&) {
+    MaterializeResult result;
+    result.effective_dataset_name = source_dataset_name;
+    SetMaterializationFailure(
+        result,
+        MaterializationFailureKind::Capacity,
+        "PipelineMaterializer: allocation failed while preparing dataset '" +
+            source_dataset_name +
+            "'. Reduce input rows or output dimensions and retry.");
     return result;
 }
 

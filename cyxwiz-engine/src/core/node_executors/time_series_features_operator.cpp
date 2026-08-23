@@ -104,21 +104,6 @@ bool ParseIntList(const std::string& s, std::vector<int>& out,
     return true;
 }
 
-const char* MaterializationMemoryProgressStatus(
-    MaterializationMemoryRisk risk) {
-    switch (risk) {
-    case MaterializationMemoryRisk::Safe:
-        return "running";
-    case MaterializationMemoryRisk::Warning:
-        return "warning";
-    case MaterializationMemoryRisk::Risky:
-        return "risky";
-    case MaterializationMemoryRisk::Blocked:
-        return "blocked";
-    }
-    return "running";
-}
-
 std::string BuildFeaturesMemoryPreflightMessage(
     const MaterializationMemoryEstimate& estimate,
     const MaterializationMemoryDecision& decision) {
@@ -265,7 +250,7 @@ TimeSeriesFeaturesOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         static_cast<uint64_t>(planned_engineered_columns),
         static_cast<uint64_t>(sizeof(float)));
     const auto preflight_decision = EvaluateMaterializationMemory(
-        preflight_estimate, DetectMaterializationMemorySnapshot());
+        preflight_estimate, GetMaterializationMemoryContext());
     const std::string preflight_message = BuildFeaturesMemoryPreflightMessage(
         preflight_estimate, preflight_decision);
     uint64_t planned_cells = 0;
@@ -278,7 +263,7 @@ TimeSeriesFeaturesOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = "TimeSeriesFeatures memory preflight";
         event.message = preflight_message;
-        event.status = MaterializationMemoryProgressStatus(
+        event.status = MaterializationMemoryRiskToProgressStatus(
             preflight_decision.risk);
         event.progress = 0.03f;
         event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;

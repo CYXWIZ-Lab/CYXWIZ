@@ -1462,7 +1462,16 @@ void TestSupportBundleContract() {
     event.node_name = "Sequence DataLoader token=secret-token";
     event.message = "operator failed token=secret-token";
     event.cpu_allocated_bytes = 1024;
+    event.estimated_memory_bytes = 8192;
+    event.available_memory_bytes = 16384;
+    event.safe_memory_budget_bytes = 12288;
     event.memory_risk_level = "risky";
+    event.process_memory_detected = true;
+    event.process_resident_memory_bytes = 4096;
+    event.process_private_memory_bytes = 3072;
+    event.process_resident_growth_bytes = 1024;
+    event.process_private_memory_name = "private commit";
+    event.process_memory_source = "deterministic test";
     event.pin_memory_requested = true;
     event.transfer_mode =
         cyxwiz::PinMemoryTransferMode::PinnedRequestedButUnsupported;
@@ -1651,6 +1660,21 @@ void TestSupportBundleContract() {
     Check(bundle["training_trace"]["recent_events"][0]["memory_risk_level"].get<std::string>() ==
               "risky",
           "support bundle should export materialization memory risk level");
+    Check(bundle["training_trace"]["recent_events"][0]["estimated_memory_bytes"].get<uint64_t>() ==
+              8192 &&
+              bundle["training_trace"]["recent_events"][0]["available_memory_bytes"].get<uint64_t>() ==
+                  16384 &&
+              bundle["training_trace"]["recent_events"][0]["safe_memory_budget_bytes"].get<uint64_t>() ==
+                  12288,
+          "support bundle should export estimate and system memory budgets");
+    Check(bundle["training_trace"]["recent_events"][0]["process_memory_detected"].get<bool>() &&
+              bundle["training_trace"]["recent_events"][0]["process_resident_memory_bytes"].get<uint64_t>() ==
+                  4096 &&
+              bundle["training_trace"]["recent_events"][0]["process_private_memory_bytes"].get<uint64_t>() ==
+                  3072 &&
+              bundle["training_trace"]["recent_events"][0]["process_resident_growth_bytes"].get<uint64_t>() ==
+                  1024,
+          "support bundle should export actual process memory evidence");
     Check(bundle["training_trace"]["recent_events"][0]["pin_memory_requested"].get<bool>(),
           "support bundle should export pin_memory request state");
     Check(bundle["training_trace"]["recent_events"][0]["transfer_mode"].get<std::string>() ==

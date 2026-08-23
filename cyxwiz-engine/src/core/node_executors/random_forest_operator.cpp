@@ -1,5 +1,6 @@
 #include "random_forest_operator.h"
 #include "../profiler_trace.h"
+#include "dense_feature_memory_preflight.h"
 #include "feature_matrix_utils.h"
 #include "tree_classification_utils.h"
 #include "tree_model_artifact.h"
@@ -128,23 +129,37 @@ RandomForestClassifierOperator::Apply(
     ARROW_RETURN_NOT_OK(ResolveFeatureColumns(
         input, feature_cols_, target_col_, GetName(), resolved_features));
 
+    const uint64_t model_workspace_columns =
+        static_cast<uint64_t>(options_.n_estimators) + 2ULL;
+    ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
+        EmitDenseFeatureMemoryPreflight(
+            input,
+            resolved_features,
+            model_workspace_columns,
+            GetName(),
+            "reduce n_estimators, training rows, or feature columns; train "
+            "on a sample first or use a future chunked forest path",
+            GetMaterializationMemoryContext(),
+            progress_callback_));
+    const uint64_t estimated_matrix_bytes =
+        preflight_estimate.estimated_peak_bytes;
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+
     report_progress("Reading feature matrix",
                     "Reading RandomForest training feature matrix",
                     0.20,
                     0,
-                    static_cast<uint64_t>(resolved_features.size()));
+                    static_cast<uint64_t>(resolved_features.size()),
+                    estimated_matrix_bytes);
     std::vector<std::vector<double>> features;
     int64_t n_samples = 0;
     ARROW_RETURN_NOT_OK(ReadFeatureMatrix(
-        input, resolved_features, GetName(), features, n_samples));
+        input, resolved_features, GetName(), features, n_samples,
+        GetCancellationQuery()));
     if (n_samples <= 0) {
         return arrow::Status::Invalid(
             "RandomForestClassifier: input table has no rows");
     }
-    const uint64_t estimated_matrix_bytes =
-        static_cast<uint64_t>(n_samples) *
-        static_cast<uint64_t>(resolved_features.size()) *
-        sizeof(double);
     report_progress("Feature matrix ready",
                     "RandomForest matrix ready: " +
                     std::to_string(n_samples) + " rows x " +
@@ -185,6 +200,7 @@ RandomForestClassifierOperator::Apply(
     } catch (const std::exception& ex) {
         return arrow::Status::Invalid(ex.what());
     }
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
 
     report_progress("Predicting rows",
                     "Generating RandomForest training-set predictions",

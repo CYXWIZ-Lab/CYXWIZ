@@ -1,5 +1,7 @@
 #include "differencing_operator.h"
 #include "../profiler_trace.h"
+#include "feature_matrix_utils.h"
+#include "materialization_memory_preflight.h"
 #include "ts_column_utils.h"
 
 #include <spdlog/spdlog.h>
@@ -84,20 +86,46 @@ DifferencingOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         return arrow::Status::Invalid("Differencing: input table is null");
     }
 
-    ReportProgress(progress_callback_, "read_column",
-                   "Reading column for differencing", 0.10f, 0,
-                   static_cast<uint64_t>(input->num_rows()));
     auto column = input->GetColumnByName(value_col_);
     if (!column) {
         return arrow::Status::KeyError(
             "Differencing: column '" + value_col_ + "' not found");
     }
+    if (!IsNumericChunked(column)) {
+        return arrow::Status::TypeError(
+            "Differencing: column '" + value_col_ +
+            "' has unsupported type '" + column->type()->ToString() + "'");
+    }
+
+    const uint64_t planned_rows =
+        static_cast<uint64_t>(std::max<int64_t>(0, input->num_rows()));
+    const auto difference_estimate = EstimateDenseMaterializationMemory(
+        planned_rows, 3, static_cast<uint64_t>(sizeof(float)));
+    ARROW_ASSIGN_OR_RAISE(
+        auto preflight_estimate,
+        EmitMaterializationMemoryPreflight(
+            difference_estimate,
+            "Differencing",
+            "planned_row_buffers",
+            "Reduce input rows or difference a smaller materialized dataset.",
+            GetMaterializationMemoryContext(),
+            progress_callback_,
+            SaturatingMaterializationItemCount(planned_rows, 3),
+            0.15f));
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+
+    ReportProgress(progress_callback_, "read_column",
+                   "Reading column for differencing", 0.20f, 0,
+                   planned_rows,
+                   preflight_estimate.estimated_peak_bytes);
 
     int col_idx = input->schema()->GetFieldIndex(value_col_);
 
     std::vector<float> values;
     std::string bad_type;
-    if (!ReadColumnAsFloat(column, values, bad_type)) {
+    if (!ReadColumnAsFloat(
+            column, values, bad_type, GetCancellationQuery())) {
+        ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         return arrow::Status::TypeError(
             "Differencing: column '" + value_col_ +
             "' has unsupported type '" + bad_type + "'");
@@ -108,7 +136,7 @@ DifferencingOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     ReportProgress(progress_callback_, "difference",
                    "Applying time-series differencing", 0.45f, 0,
                    static_cast<uint64_t>(original_n),
-                   static_cast<uint64_t>(values.size() * sizeof(float)));
+                    preflight_estimate.estimated_peak_bytes);
     // Apply differencing `order_` times. Each pass drops `lag_` values
     // from the front of the series.
     for (int d = 0; d < order_; ++d) {
@@ -122,6 +150,9 @@ DifferencingOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         std::vector<float> diffed;
         diffed.reserve(n - lag_);
         for (size_t i = lag_; i < n; ++i) {
+            if (((i - static_cast<size_t>(lag_)) & 1023) == 0) {
+                ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+            }
             diffed.push_back(values[i] - values[i - lag_]);
         }
         values = std::move(diffed);
@@ -138,7 +169,7 @@ DifferencingOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    "Writing differenced output", 0.90f,
                    static_cast<uint64_t>(values.size()),
                    static_cast<uint64_t>(original_n),
-                   static_cast<uint64_t>(values.size() * sizeof(float)));
+                    preflight_estimate.estimated_peak_bytes);
     ARROW_ASSIGN_OR_RAISE(
         auto out_table,
         ReplaceColumnWithFloat(sliced, col_idx, values,
@@ -150,7 +181,7 @@ DifferencingOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    "Differencing complete", 1.0f,
                    static_cast<uint64_t>(values.size()),
                    static_cast<uint64_t>(original_n),
-                   static_cast<uint64_t>(values.size() * sizeof(float)));
+                    preflight_estimate.estimated_peak_bytes);
     return out_table;
 }
 

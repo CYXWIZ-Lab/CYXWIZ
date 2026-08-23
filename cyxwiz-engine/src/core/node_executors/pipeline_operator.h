@@ -1,5 +1,8 @@
 #pragma once
 
+#include "../materialization_memory_types.h"
+#include "../process_memory_snapshot.h"
+
 #include <arrow/result.h>
 #include <arrow/status.h>
 #include <arrow/table.h>
@@ -9,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace cyxwiz {
 
@@ -37,13 +41,40 @@ struct PipelineOperatorProgress {
     std::string status = "running";
     float progress = 0.0f;
     uint64_t estimated_memory_bytes = 0;
+    uint64_t available_memory_bytes = 0;
+    uint64_t safe_memory_budget_bytes = 0;
     std::string memory_risk_level;
+    bool process_memory_detected = false;
+    uint64_t process_resident_memory_bytes = 0;
+    uint64_t process_private_memory_bytes = 0;
+    uint64_t process_resident_growth_bytes = 0;
+    std::string process_private_memory_name;
+    std::string process_memory_source;
     uint64_t processed_items = 0;
     uint64_t total_items = 0;
 };
 
 using PipelineOperatorProgressCallback =
     std::function<void(const PipelineOperatorProgress&)>;
+
+using PipelineOperatorCancellationQuery = std::function<bool()>;
+using ProcessMemorySnapshotQuery = std::function<ProcessMemorySnapshot()>;
+
+struct PipelineOperatorExecutionContext {
+    MaterializationMemoryContext memory;
+    PipelineOperatorCancellationQuery cancellation_requested;
+    ProcessMemorySnapshotQuery process_memory_snapshot;
+
+    bool IsCancellationRequested() const {
+        return cancellation_requested && cancellation_requested();
+    }
+
+    ProcessMemorySnapshot CaptureProcessMemory() const {
+        return process_memory_snapshot
+            ? process_memory_snapshot()
+            : DetectProcessMemorySnapshot();
+    }
+};
 
 /**
  * IPipelineOperator — Category 1 base interface (pipeline operations).
@@ -99,6 +130,14 @@ public:
         (void)callback;
     }
 
+    void SetMaterializationMemoryContext(MaterializationMemoryContext context) {
+        execution_context_.memory = std::move(context);
+    }
+
+    void SetExecutionContext(PipelineOperatorExecutionContext context) {
+        execution_context_ = std::move(context);
+    }
+
     /**
      * Optional schema-only inference for compile-gate validation. Default
      * returns the input schema unchanged (correct for any operator that
@@ -117,6 +156,30 @@ public:
     virtual bool IsCacheable() const {
         return GetBand() != PipelineBand::PhaseAware;
     }
+
+protected:
+    const MaterializationMemoryContext& GetMaterializationMemoryContext() const {
+        return execution_context_.memory;
+    }
+
+    const PipelineOperatorCancellationQuery& GetCancellationQuery() const {
+        return execution_context_.cancellation_requested;
+    }
+
+    bool IsCancellationRequested() const {
+        return execution_context_.IsCancellationRequested();
+    }
+
+    arrow::Status CheckCancellation(const std::string& operation) const {
+        if (IsCancellationRequested()) {
+            return arrow::Status::Cancelled(
+                operation + ": materialization cancelled");
+        }
+        return arrow::Status::OK();
+    }
+
+private:
+    PipelineOperatorExecutionContext execution_context_;
 };
 
 } // namespace cyxwiz

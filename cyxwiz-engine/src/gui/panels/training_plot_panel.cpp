@@ -716,6 +716,14 @@ void TrainingPlotPanel::RecordMaterializationProgress(
     const std::string& node_name,
     const std::string& memory_risk_level,
     const std::string& status,
+    uint64_t available_memory_bytes,
+    uint64_t safe_memory_budget_bytes,
+    bool process_memory_detected,
+    uint64_t process_resident_memory_bytes,
+    uint64_t process_private_memory_bytes,
+    uint64_t process_resident_growth_bytes,
+    const std::string& process_private_memory_name,
+    const std::string& process_memory_source,
     const std::string& cache_key,
     const std::string& cache_artifact_path,
     const std::string& cache_manifest_path,
@@ -731,7 +739,15 @@ void TrainingPlotPanel::RecordMaterializationProgress(
     event.node_id = node_id;
     event.progress = std::clamp(progress, 0.0f, 1.0f);
     event.estimated_memory_bytes = estimated_memory_bytes;
+    event.available_memory_bytes = available_memory_bytes;
+    event.safe_memory_budget_bytes = safe_memory_budget_bytes;
     event.memory_risk_level = memory_risk_level;
+    event.process_memory_detected = process_memory_detected;
+    event.process_resident_memory_bytes = process_resident_memory_bytes;
+    event.process_private_memory_bytes = process_private_memory_bytes;
+    event.process_resident_growth_bytes = process_resident_growth_bytes;
+    event.process_private_memory_name = process_private_memory_name;
+    event.process_memory_source = process_memory_source;
     event.processed_items = processed_items;
     event.total_items = total_items;
     event.cache_key = cache_key;
@@ -1520,6 +1536,28 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
             ImGui::Text("Estimated memory: %s",
                         FormatTraceBytes(latest.estimated_memory_bytes).c_str());
         }
+        if (latest.available_memory_bytes > 0) {
+            ImGui::Text("Available RAM / safe budget: %s / %s",
+                        FormatTraceBytes(latest.available_memory_bytes).c_str(),
+                        FormatTraceBytes(latest.safe_memory_budget_bytes).c_str());
+        }
+        if (latest.process_memory_detected) {
+            ImGui::Text("Process resident / growth: %s / +%s",
+                        FormatTraceBytes(
+                            latest.process_resident_memory_bytes).c_str(),
+                        FormatTraceBytes(
+                            latest.process_resident_growth_bytes).c_str());
+            if (latest.process_private_memory_bytes > 0) {
+                ImGui::Text("Process %s: %s",
+                            latest.process_private_memory_name.empty()
+                                ? "private memory"
+                                : latest.process_private_memory_name.c_str(),
+                            FormatTraceBytes(
+                                latest.process_private_memory_bytes).c_str());
+            }
+            ImGui::TextDisabled(
+                "Process RAM; ArrayFire device memory is reported separately.");
+        }
         if (!latest.memory_risk_level.empty()) {
             ImGui::Text("Memory risk: %s", latest.memory_risk_level.c_str());
         }
@@ -1551,6 +1589,13 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         if (event.estimated_memory_bytes > 0) {
             ImGui::Text("Estimated memory: %s",
                         FormatTraceBytes(event.estimated_memory_bytes).c_str());
+        }
+        if (event.process_memory_detected) {
+            ImGui::Text("Process resident: %s (+%s)",
+                        FormatTraceBytes(
+                            event.process_resident_memory_bytes).c_str(),
+                        FormatTraceBytes(
+                            event.process_resident_growth_bytes).c_str());
         }
         if (!event.memory_risk_level.empty()) {
             ImGui::Text("Memory risk: %s", event.memory_risk_level.c_str());

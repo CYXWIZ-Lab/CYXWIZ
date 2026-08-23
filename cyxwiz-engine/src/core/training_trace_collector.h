@@ -48,7 +48,15 @@ struct TrainingTraceEvent {
     int node_id = -1;
     std::string node_name;
     uint64_t estimated_memory_bytes = 0;
+    uint64_t available_memory_bytes = 0;
+    uint64_t safe_memory_budget_bytes = 0;
     std::string memory_risk_level;
+    bool process_memory_detected = false;
+    uint64_t process_resident_memory_bytes = 0;
+    uint64_t process_private_memory_bytes = 0;
+    uint64_t process_resident_growth_bytes = 0;
+    std::string process_private_memory_name;
+    std::string process_memory_source;
     uint64_t processed_items = 0;
     uint64_t total_items = 0;
     bool pin_memory_requested = false;
@@ -216,7 +224,15 @@ public:
                             uint64_t estimated_memory_bytes = 0,
                             uint64_t processed_items = 0,
                             uint64_t total_items = 0,
-                            const std::string& memory_risk_level = "");
+                            const std::string& memory_risk_level = "",
+                            uint64_t available_memory_bytes = 0,
+                            uint64_t safe_memory_budget_bytes = 0,
+                            bool process_memory_detected = false,
+                            uint64_t process_resident_memory_bytes = 0,
+                            uint64_t process_private_memory_bytes = 0,
+                            uint64_t process_resident_growth_bytes = 0,
+                            const std::string& process_private_memory_name = "",
+                            const std::string& process_memory_source = "");
     void RecordValidationMetrics(int epoch,
                                  float train_loss,
                                  float train_accuracy,

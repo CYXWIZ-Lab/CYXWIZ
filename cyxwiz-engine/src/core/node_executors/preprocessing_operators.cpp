@@ -279,21 +279,6 @@ arrow::Result<std::shared_ptr<arrow::Table>> ReplaceWithInts(
     return table->SetColumn(col_idx, field, chunked);
 }
 
-const char* MaterializationMemoryProgressStatus(
-    MaterializationMemoryRisk risk) {
-    switch (risk) {
-    case MaterializationMemoryRisk::Safe:
-        return "running";
-    case MaterializationMemoryRisk::Warning:
-        return "warning";
-    case MaterializationMemoryRisk::Risky:
-        return "risky";
-    case MaterializationMemoryRisk::Blocked:
-        return "blocked";
-    }
-    return "running";
-}
-
 std::string BuildPreprocessingMemoryPreflightMessage(
     const std::string& op_name,
     const MaterializationMemoryEstimate& estimate,
@@ -322,6 +307,7 @@ arrow::Result<MaterializationMemoryEstimate> EmitPreprocessingMemoryPreflight(
     uint64_t planned_columns,
     uint64_t bytes_per_value,
     const std::string& suggestion,
+    const MaterializationMemoryContext& memory_context,
     const PipelineOperatorProgressCallback& callback) {
     const uint64_t planned_rows =
         static_cast<uint64_t>(std::max<int64_t>(0, input->num_rows()));
@@ -336,7 +322,7 @@ arrow::Result<MaterializationMemoryEstimate> EmitPreprocessingMemoryPreflight(
     const auto estimate = EstimateDenseMaterializationMemory(
         planned_rows, planned_columns, bytes_per_value);
     const auto decision = EvaluateMaterializationMemory(
-        estimate, DetectMaterializationMemorySnapshot());
+        estimate, memory_context);
     const std::string preflight_message =
         BuildPreprocessingMemoryPreflightMessage(
             op_name, estimate, decision, suggestion);
@@ -350,7 +336,7 @@ arrow::Result<MaterializationMemoryEstimate> EmitPreprocessingMemoryPreflight(
         PipelineOperatorProgress event;
         event.stage = op_name + " memory preflight";
         event.message = preflight_message;
-        event.status = MaterializationMemoryProgressStatus(decision.risk);
+        event.status = MaterializationMemoryRiskToProgressStatus(decision.risk);
         event.progress = 0.12f;
         event.processed_items = 0;
         event.total_items = planned_cells;
@@ -504,6 +490,7 @@ StandardScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             input, GetName(), static_cast<uint64_t>(resolved.size()),
             static_cast<uint64_t>(sizeof(double)),
             "reduce selected rows or columns, scale a sample first, or use a future chunked preprocessing path.",
+            GetMaterializationMemoryContext(),
             progress_callback_));
     const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
     ReportProgress(progress_callback_, "Columns resolved",
@@ -653,6 +640,7 @@ MinMaxScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             input, GetName(), static_cast<uint64_t>(resolved.size()),
             static_cast<uint64_t>(sizeof(double)),
             "reduce selected rows or columns, scale a sample first, or use a future chunked preprocessing path.",
+            GetMaterializationMemoryContext(),
             progress_callback_));
     const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
     ReportProgress(progress_callback_, "Columns resolved",
@@ -757,6 +745,7 @@ RobustScalerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             input, GetName(), static_cast<uint64_t>(resolved.size()),
             static_cast<uint64_t>(sizeof(double)),
             "reduce selected rows or columns, scale a sample first, or use a future chunked preprocessing path.",
+            GetMaterializationMemoryContext(),
             progress_callback_));
     const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
     ReportProgress(progress_callback_, "Columns resolved",
@@ -838,6 +827,7 @@ LabelEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         EmitPreprocessingMemoryPreflight(
             input, GetName(), 1ULL, static_cast<uint64_t>(sizeof(int)),
             "reduce selected rows, encode a sample first, or use a future chunked encoding path.",
+            GetMaterializationMemoryContext(),
             progress_callback_));
 
     std::vector<int> codes;
@@ -894,6 +884,7 @@ OrdinalEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             input, GetName(), static_cast<uint64_t>(columns_.size()),
             static_cast<uint64_t>(sizeof(int)),
             "reduce selected rows or categorical columns, encode a sample first, or use a future chunked encoding path.",
+            GetMaterializationMemoryContext(),
             progress_callback_));
     const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
 
@@ -987,6 +978,7 @@ TargetEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             input, GetName(), static_cast<uint64_t>(columns_.size()) + 1ULL,
             static_cast<uint64_t>(sizeof(double)),
             "reduce selected rows or categorical columns, encode a sample first, or use a future chunked target-encoding path.",
+            GetMaterializationMemoryContext(),
             progress_callback_));
     const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
 
@@ -1133,6 +1125,7 @@ OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             input, GetName(), static_cast<uint64_t>(resolved.size()) + 1ULL,
             static_cast<uint64_t>(sizeof(double)),
             "reduce selected rows or feature columns, detect outliers on a sample first, or use a future chunked outlier path.",
+            GetMaterializationMemoryContext(),
             progress_callback_));
     const uint64_t estimated_bytes = preflight_estimate.estimated_peak_bytes;
 

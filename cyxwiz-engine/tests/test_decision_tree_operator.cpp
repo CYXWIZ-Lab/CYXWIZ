@@ -106,6 +106,12 @@ void TestNumericLabels() {
         {"criterion", "gini"},
     }, error), error);
 
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
+
     auto result = op.Apply(MakeNumericLabelTable());
     Check(result.ok(), result.status().ToString());
     auto output = result.ValueOrDie();
@@ -114,6 +120,52 @@ void TestNumericLabels() {
           "first numeric prediction should match class 0");
     Check(ReadDoubleValue(output, "pred", 3) == 1.0,
           "last numeric prediction should match class 1");
+    Check(progress_events.size() > 1,
+          "DecisionTree should emit a memory preflight event");
+    Check(progress_events[1].stage ==
+              "DecisionTreeClassifier memory preflight",
+          "DecisionTree should preflight after resolving features");
+    Check(progress_events[1].memory_risk_level == "safe",
+          "small DecisionTree fixture should report safe memory risk");
+    Check(progress_events[1].estimated_memory_bytes >
+              4ULL * 5ULL * static_cast<uint64_t>(sizeof(double)),
+          "DecisionTree preflight should include matrix and model workspace");
+}
+
+void TestBlockedPreflightStopsBeforeFeatureRead() {
+    cyxwiz::DecisionTreeClassifierOperator op;
+    std::string error;
+    Check(op.Configure({
+        {"target_col", "label"},
+        {"feature_cols", "x,z"},
+    }, error), error);
+
+    cyxwiz::MaterializationMemoryContext memory_context;
+    memory_context.policy.hard_limit_bytes = 1;
+    memory_context.snapshot_override = cyxwiz::MaterializationMemorySnapshot{
+        1024, 1024, true};
+    op.SetMaterializationMemoryContext(memory_context);
+
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
+
+    const auto result = op.Apply(MakeNumericLabelTable());
+    Check(!result.ok(),
+          "DecisionTree should reject a request above the hard limit");
+    Check(result.status().IsCapacityError(),
+          "blocked DecisionTree should return CapacityError");
+    Check(progress_events.size() == 2,
+          "blocked DecisionTree should stop after resolve and preflight");
+    Check(progress_events.back().status == "blocked",
+          "blocked DecisionTree should expose blocked progress status");
+    Check(progress_events.back().memory_risk_level == "blocked",
+          "blocked DecisionTree should expose blocked memory risk");
+    Check(progress_events.back().message.find("configured hard limit") !=
+              std::string::npos,
+          "blocked DecisionTree should explain its hard limit");
 }
 
 void TestStringLabels() {
@@ -156,6 +208,7 @@ void TestValidation() {
 
 int main() {
     TestNumericLabels();
+    TestBlockedPreflightStopsBeforeFeatureRead();
     TestStringLabels();
     TestValidation();
     std::cout << "Decision tree operator passed\n";

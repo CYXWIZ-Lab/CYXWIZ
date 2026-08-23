@@ -195,41 +195,6 @@ bool IsStringLikeColumn(const std::shared_ptr<arrow::ChunkedArray>& column,
     return true;
 }
 
-const char* MaterializationMemoryProgressStatus(
-    MaterializationMemoryRisk risk) {
-    switch (risk) {
-    case MaterializationMemoryRisk::Safe:
-        return "running";
-    case MaterializationMemoryRisk::Warning:
-        return "warning";
-    case MaterializationMemoryRisk::Risky:
-        return "risky";
-    case MaterializationMemoryRisk::Blocked:
-        return "blocked";
-    }
-    return "running";
-}
-
-std::string BuildTfidfMemoryPreflightMessage(
-    const MaterializationMemoryEstimate& estimate,
-    const MaterializationMemoryDecision& decision) {
-    std::ostringstream ss;
-    ss << "TF-IDF memory preflight: risk="
-       << MaterializationMemoryRiskName(decision.risk)
-       << ", rows=" << estimate.rows
-       << ", max_features=" << estimate.output_features
-       << ", raw=" << FormatMaterializationBytes(estimate.raw_output_bytes)
-       << ", estimated_peak="
-       << FormatMaterializationBytes(estimate.estimated_peak_bytes)
-       << ", available="
-       << FormatMaterializationBytes(decision.available_bytes)
-       << ", safe_budget="
-       << FormatMaterializationBytes(decision.safe_budget_bytes)
-       << ". " << decision.reason
-       << ". Suggestion: " << decision.suggestion;
-    return ss.str();
-}
-
 } // namespace
 
 bool TFIDFVectorizerOperator::Configure(
@@ -397,10 +362,12 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     const auto preflight_estimate = EstimateDenseMaterializationMemory(
         planned_rows, planned_features, static_cast<uint64_t>(sizeof(float)));
     const auto preflight_decision = EvaluateMaterializationMemory(
-        preflight_estimate, DetectMaterializationMemorySnapshot());
+        preflight_estimate, GetMaterializationMemoryContext());
     const std::string preflight_message =
-        BuildTfidfMemoryPreflightMessage(
-            preflight_estimate, preflight_decision);
+        BuildMaterializationMemoryPreflightMessage(
+            "TF-IDF", "max_features", preflight_estimate, preflight_decision,
+            "Reduce TF-IDF max_features, sample fewer rows first, or use a "
+            "sparse/chunked materialization path when supported.");
     uint64_t planned_cells = 0;
     if (!CheckedMulU64(planned_rows, planned_features, planned_cells)) {
         planned_cells = std::numeric_limits<uint64_t>::max();
@@ -409,7 +376,7 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = "TF-IDF memory preflight";
         event.message = preflight_message;
-        event.status = MaterializationMemoryProgressStatus(
+        event.status = MaterializationMemoryRiskToProgressStatus(
             preflight_decision.risk);
         event.progress = 0.03f;
         event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
@@ -423,9 +390,12 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         return arrow::Status::CapacityError(
             "Materialization blocked: " + preflight_message);
     }
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
 
     std::vector<std::string> texts;
-    if (!ReadColumnAsStrings(text_column, texts, bad_type)) {
+    if (!ReadColumnAsStrings(
+            text_column, texts, bad_type, GetCancellationQuery())) {
+        ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         return arrow::Status::TypeError(
             "TFIDFVectorizer: text column '" + text_col_ +
             "' must be string/large_string, got '" + bad_type + "'");
@@ -454,6 +424,9 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     std::unordered_map<std::string, TFIDFTermStats> term_stats_by_name;
     try {
         for (size_t row = 0; row < texts.size(); ++row) {
+            if ((row & 1023) == 0) {
+                ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+            }
             const auto& text = texts[row];
             auto tokenized = TextProcessing::Tokenize(
                 text, "word", 2, /*lowercase=*/true,
@@ -611,7 +584,10 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                 "TFIDFVectorizer: label column '" + label_col_ + "' not found");
         }
         std::string lbad;
-        if (!ReadLabelColumnAsInt(label_column, labels, class_names, lbad)) {
+        if (!ReadLabelColumnAsInt(
+                label_column, labels, class_names, lbad,
+                GetCancellationQuery())) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
             return arrow::Status::TypeError(
                 "TFIDFVectorizer: label column '" + label_col_ +
                 "' has unsupported type '" + lbad + "'");
@@ -644,6 +620,9 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     for (size_t r = 0; r < n; ++r) {
+        if ((r & 1023) == 0) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        }
         std::vector<float> dense_row(kept, 0.0f);
         const auto& counts = doc_counts[r];
         const size_t token_count = doc_token_counts[r];

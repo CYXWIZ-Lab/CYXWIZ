@@ -955,6 +955,9 @@ MainWindow::MainWindow()
                 }
 
                 auto& registry = cyxwiz::DataRegistry::Instance();
+                cyxwiz::PipelineOperatorExecutionContext materialization_context;
+                materialization_context.cancellation_requested =
+                    [&task]() { return task.ShouldStop(); };
                 const auto materialized =
                     cyxwiz::PipelineMaterializer::Materialize(
                         nodes, links, registry, effective_dataset_name,
@@ -969,7 +972,12 @@ MainWindow::MainWindow()
                                 event.message.empty()
                                     ? event.stage
                                     : event.message);
-                        });
+                        },
+                        std::move(materialization_context));
+                if (materialized.failure_kind ==
+                    cyxwiz::MaterializationFailureKind::Cancelled) {
+                    return;
+                }
                 if (!materialized.success) {
                     throw std::runtime_error(
                         "Checkpoint evaluation preprocessing failed: " +
@@ -3681,9 +3689,16 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 plot_panel, std::move(callback));
         };
 
+        cyxwiz::MaterializationMemoryPolicy materialization_memory_policy;
+        materialization_memory_policy.hard_limit_bytes =
+            cyxwiz::ProjectManager::Instance()
+                .GetConfig()
+                .editor_settings
+                .materialization_memory_limit_bytes;
         auto launch_result = StartGraphTrainingFromCompiledConfig(
             nodes, links, std::move(config), registry, training_plot_panel_,
-            node_editor_callback, dispatch_training);
+            node_editor_callback, dispatch_training,
+            materialization_memory_policy);
 
         if (launch_result.started) {
             spdlog::info("Training started successfully");
@@ -5826,6 +5841,10 @@ void MainWindow::SaveProjectSettings() {
     // Save application-wide settings
     settings.app_theme = static_cast<int>(GetTheme().GetCurrentPreset());
     settings.ui_scale = ImGui::GetIO().FontGlobalScale;
+    if (toolbar_) {
+        settings.materialization_memory_limit_bytes =
+            toolbar_->GetMaterializationMemoryLimitBytes();
+    }
 
     // Save layout file
     SaveLayout();
@@ -5862,6 +5881,8 @@ void MainWindow::LoadProjectSettings() {
         toolbar_->SetEditorShowWhitespace(settings.show_whitespace);
         toolbar_->SetEditorWordWrap(settings.word_wrap);
         toolbar_->SetEditorAutoIndent(settings.auto_indent);
+        toolbar_->SetMaterializationMemoryLimitBytes(
+            settings.materialization_memory_limit_bytes);
     }
 
     // Apply application theme

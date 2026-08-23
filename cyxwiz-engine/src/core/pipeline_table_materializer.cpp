@@ -2,12 +2,15 @@
 
 #include "node_executors/pipeline_operator.h"
 #include "node_executors/pipeline_operator_factory.h"
+#include "materialization_memory_guard.h"
 #include "pipeline_runtime_capabilities.h"
+#include "process_memory_snapshot.h"
 
 #include <arrow/table.h>
 #include <spdlog/spdlog.h>
 
 #include <map>
+#include <new>
 #include <optional>
 #include <queue>
 #include <unordered_set>
@@ -16,6 +19,44 @@
 namespace cyxwiz {
 
 namespace {
+
+// Deliberately not derived from std::exception: several operators translate
+// backend std::exceptions into Arrow errors. This private control signal must
+// reach the materializer boundary without being relabelled by those catches.
+class MaterializationCancelled final {};
+
+struct MaterializationCapacityExceeded final {
+    std::string message;
+};
+
+void SetMaterializationFailure(
+    MaterializeTableResult& result,
+    MaterializationFailureKind kind,
+    std::string message,
+    const gui::MLNode* node = nullptr) {
+    result.success = false;
+    result.failure_kind = kind;
+    result.error_message = std::move(message);
+    if (node) {
+        result.failed_node_id = node->id;
+        result.failed_node_name = node->name;
+    }
+}
+
+bool StopIfMaterializationCancelled(
+    const PipelineOperatorExecutionContext& context,
+    MaterializeTableResult& result,
+    const gui::MLNode* node = nullptr) {
+    if (!context.IsCancellationRequested()) return false;
+    SetMaterializationFailure(
+        result,
+        MaterializationFailureKind::Cancelled,
+        node
+            ? "PipelineMaterializer: cancelled at node '" + node->name + "'"
+            : "PipelineMaterializer: cancelled",
+        node);
+    return true;
+}
 
 bool IsDataInputNode(const gui::MLNode& node) {
     return node.type == gui::NodeType::DataInput ||
@@ -296,25 +337,33 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
     const std::vector<gui::NodeLink>& links,
     const std::shared_ptr<arrow::Table>& source_table,
     const std::string& source_dataset_name,
-    PipelineOperatorProgressCallback progress_callback) {
+    PipelineOperatorProgressCallback progress_callback,
+    PipelineOperatorExecutionContext execution_context) try {
 
     MaterializeTableResult result;
     result.table = source_table;
 
+    if (StopIfMaterializationCancelled(execution_context, result)) {
+        return result;
+    }
+
     if (!source_table) {
-        result.success = false;
-        result.error_message = "PipelineMaterializer: source Arrow table is null";
+        SetMaterializationFailure(
+            result,
+            MaterializationFailureKind::Error,
+            "PipelineMaterializer: source Arrow table is null");
         return result;
     }
 
     const gui::MLNode* data_input = FindDataInputNode(nodes, source_dataset_name);
     if (!data_input) {
         if (!source_dataset_name.empty()) {
-            result.success = false;
-            result.error_message =
+            SetMaterializationFailure(
+                result,
+                MaterializationFailureKind::Error,
                 "PipelineMaterializer: source dataset '" +
                 source_dataset_name +
-                "' does not match any DataInput/DatasetInput node";
+                "' does not match any DataInput/DatasetInput node");
         }
         return result;
     }
@@ -336,12 +385,19 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
     std::string graph_shape_error;
     if (!ValidateLinearMaterializerOperatorPath(
             *data_input, nodes, links, graph_shape_error)) {
-        result.success = false;
-        result.error_message = graph_shape_error;
+        SetMaterializationFailure(
+            result, MaterializationFailureKind::Error, graph_shape_error);
         return result;
     }
 
     auto current_table = source_table;
+    const auto process_memory_baseline =
+        execution_context.CaptureProcessMemory();
+    const auto budget_snapshot = execution_context.memory.snapshot_override
+        .value_or(DetectMaterializationMemorySnapshot());
+    const uint64_t safe_memory_budget_bytes = SaturatingScaleBytes(
+        budget_snapshot.available_bytes,
+        execution_context.memory.policy.blocked_fraction);
     std::queue<int> queue;
     std::unordered_set<int> visited;
     queue.push(data_input->id);
@@ -353,47 +409,158 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
 
         const gui::MLNode* node = FindNodeById(node_id, nodes);
         if (!node) continue;
+        if (StopIfMaterializationCancelled(execution_context, result, node)) {
+            return result;
+        }
 
         const auto operator_type =
             ResolveArrowTableMaterializerOperatorType(node->type);
         if (node->id != data_input->id && operator_type.has_value()) {
             auto op = factory.Create(*operator_type);
             if (!op) {
-                result.success = false;
-                result.error_message =
+                SetMaterializationFailure(
+                    result,
+                    MaterializationFailureKind::Error,
                     "PipelineMaterializer: factory returned null for node '" +
                     node->name +
-                    "' (runtime support allows materialization but Create failed)";
+                    "' (runtime support allows materialization but Create failed)",
+                    node);
                 return result;
             }
 
+            op->SetExecutionContext(execution_context);
+
             op->SetProgressCallback(
-                [progress_callback, node](const PipelineOperatorProgress& event) {
-                    if (!progress_callback) {
-                        return;
+                [progress_callback,
+                 execution_context,
+                 process_memory_baseline,
+                 budget_snapshot,
+                 safe_memory_budget_bytes,
+                 node](
+                    const PipelineOperatorProgress& event) {
+                    if (execution_context.IsCancellationRequested()) {
+                        throw MaterializationCancelled();
                     }
                     auto with_node = event;
                     with_node.node_id = node->id;
                     with_node.node_name = node->name;
-                    progress_callback(with_node);
+                    with_node.available_memory_bytes =
+                        budget_snapshot.available_bytes;
+                    with_node.safe_memory_budget_bytes =
+                        safe_memory_budget_bytes;
+                    const auto process_memory =
+                        execution_context.CaptureProcessMemory();
+                    with_node.process_memory_detected =
+                        process_memory.detected;
+                    with_node.process_resident_memory_bytes =
+                        process_memory.resident_bytes;
+                    with_node.process_private_memory_bytes =
+                        process_memory.private_bytes;
+                    with_node.process_private_memory_name =
+                        process_memory.private_metric_name;
+                    with_node.process_memory_source = process_memory.source;
+                    if (process_memory.detected &&
+                        process_memory_baseline.detected &&
+                        process_memory.resident_bytes >
+                            process_memory_baseline.resident_bytes) {
+                        with_node.process_resident_growth_bytes =
+                            process_memory.resident_bytes -
+                            process_memory_baseline.resident_bytes;
+                    }
+                    const uint64_t configured_limit =
+                        execution_context.memory.policy.hard_limit_bytes;
+                    const uint64_t runtime_limit = configured_limit > 0 &&
+                            safe_memory_budget_bytes > 0
+                        ? std::min(configured_limit,
+                                   safe_memory_budget_bytes)
+                        : configured_limit > 0
+                            ? configured_limit
+                            : safe_memory_budget_bytes;
+                    if (runtime_limit > 0 &&
+                        with_node.process_resident_growth_bytes >=
+                            runtime_limit) {
+                        with_node.status = "blocked";
+                        with_node.memory_risk_level = "blocked";
+                        with_node.message =
+                            "Runtime memory guard stopped node '" +
+                            node->name + "': process resident growth " +
+                            FormatMaterializationBytes(
+                                with_node.process_resident_growth_bytes) +
+                            " reached the materialization limit " +
+                            FormatMaterializationBytes(runtime_limit) +
+                            ". Reduce input rows or output dimensions and retry.";
+                        if (progress_callback) {
+                            progress_callback(with_node);
+                        }
+                        throw MaterializationCapacityExceeded{
+                            with_node.message};
+                    }
+                    if (progress_callback) {
+                        progress_callback(with_node);
+                    }
+                    if (execution_context.IsCancellationRequested()) {
+                        throw MaterializationCancelled();
+                    }
                 });
 
             std::string err;
             auto params = BuildOperatorParams(*node, nodes, links);
             if (!op->Configure(params, err)) {
-                result.success = false;
-                result.error_message =
+                SetMaterializationFailure(
+                    result,
+                    MaterializationFailureKind::Error,
                     "PipelineMaterializer: Configure failed for node '" +
-                    node->name + "': " + err;
+                    node->name + "': " + err,
+                    node);
                 return result;
             }
 
-            auto applied = op->Apply(current_table);
+            arrow::Result<std::shared_ptr<arrow::Table>> applied =
+                arrow::Status::UnknownError("operator did not run");
+            try {
+                applied = op->Apply(current_table);
+            } catch (const MaterializationCancelled&) {
+                SetMaterializationFailure(
+                    result,
+                    MaterializationFailureKind::Cancelled,
+                    "PipelineMaterializer: cancelled at node '" +
+                        node->name + "'",
+                    node);
+                return result;
+            } catch (const MaterializationCapacityExceeded& capacity) {
+                SetMaterializationFailure(
+                    result,
+                    MaterializationFailureKind::Capacity,
+                    capacity.message,
+                    node);
+                return result;
+            } catch (const std::bad_alloc&) {
+                SetMaterializationFailure(
+                    result,
+                    MaterializationFailureKind::Capacity,
+                    "PipelineMaterializer: allocation failed for node '" +
+                        node->name +
+                        "'. Reduce input rows or output dimensions and retry.",
+                    node);
+                return result;
+            }
             if (!applied.ok()) {
-                result.success = false;
-                result.error_message =
+                const auto failure_kind = applied.status().IsCancelled()
+                    ? MaterializationFailureKind::Cancelled
+                    : applied.status().IsCapacityError()
+                        ? MaterializationFailureKind::Capacity
+                        : MaterializationFailureKind::Error;
+                SetMaterializationFailure(
+                    result,
+                    failure_kind,
                     "PipelineMaterializer: Apply failed for node '" +
-                    node->name + "': " + applied.status().message();
+                        node->name + "': " + applied.status().message(),
+                    node);
+                return result;
+            }
+
+            if (StopIfMaterializationCancelled(
+                    execution_context, result, node)) {
                 return result;
             }
 
@@ -412,6 +579,15 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
     }
 
     result.table = current_table;
+    return result;
+} catch (const std::bad_alloc&) {
+    MaterializeTableResult result;
+    result.table = source_table;
+    SetMaterializationFailure(
+        result,
+        MaterializationFailureKind::Capacity,
+        "PipelineMaterializer: allocation failed while preparing the operator "
+        "pipeline. Reduce input rows or output dimensions and retry.");
     return result;
 }
 

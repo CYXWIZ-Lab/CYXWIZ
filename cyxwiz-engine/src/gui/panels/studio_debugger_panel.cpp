@@ -2020,6 +2020,28 @@ void StudioDebuggerPanel::RenderMaterializationTrace(
     if (!latest.memory_risk_level.empty()) {
         ImGui::Text("Memory risk: %s", latest.memory_risk_level.c_str());
     }
+    if (latest.available_memory_bytes > 0) {
+        ImGui::Text("Available RAM / safe budget: %s / %s",
+                    FormatBytesCompact(latest.available_memory_bytes).c_str(),
+                    FormatBytesCompact(latest.safe_memory_budget_bytes).c_str());
+    }
+    if (latest.process_memory_detected) {
+        ImGui::Text("Process resident / growth: %s / +%s",
+                    FormatBytesCompact(
+                        latest.process_resident_memory_bytes).c_str(),
+                    FormatBytesCompact(
+                        latest.process_resident_growth_bytes).c_str());
+        if (latest.process_private_memory_bytes > 0) {
+            ImGui::Text("Process %s: %s",
+                        latest.process_private_memory_name.empty()
+                            ? "private memory"
+                            : latest.process_private_memory_name.c_str(),
+                        FormatBytesCompact(
+                            latest.process_private_memory_bytes).c_str());
+        }
+        ImGui::TextDisabled(
+            "Process RAM; ArrayFire device memory is reported separately.");
+    }
     if (!latest.message.empty()) {
         ImGui::TextWrapped("%s", latest.message.c_str());
     }
@@ -2094,6 +2116,13 @@ void StudioDebuggerPanel::RenderMaterializationTrace(
                                 event.estimated_memory_bytes).c_str());
             } else {
                 ImGui::TextDisabled("-");
+            }
+            if (event.process_memory_detected) {
+                ImGui::TextDisabled("actual %s (+%s)",
+                    FormatBytesCompact(
+                        event.process_resident_memory_bytes).c_str(),
+                    FormatBytesCompact(
+                        event.process_resident_growth_bytes).c_str());
             }
 
             ImGui::TableSetColumnIndex(5);

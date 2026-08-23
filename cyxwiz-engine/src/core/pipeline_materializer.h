@@ -25,6 +25,15 @@ enum class PipelineMaterializerSourceKind {
     TextDataset,
 };
 
+enum class MaterializationFailureKind {
+    None,
+    Cancelled,
+    Capacity,
+    Error,
+};
+
+const char* MaterializationFailureKindName(MaterializationFailureKind kind);
+
 const char* PipelineMaterializerSourceKindName(
     PipelineMaterializerSourceKind kind);
 
@@ -70,6 +79,9 @@ struct MaterializeResult {
     bool saved_to_cache = false;
     bool success = true;
     std::string error_message;
+    MaterializationFailureKind failure_kind = MaterializationFailureKind::None;
+    int failed_node_id = -1;
+    std::string failed_node_name;
 };
 
 /**
@@ -84,6 +96,9 @@ struct MaterializeTableResult {
     int operators_applied = 0;
     bool success = true;
     std::string error_message;
+    MaterializationFailureKind failure_kind = MaterializationFailureKind::None;
+    int failed_node_id = -1;
+    std::string failed_node_name;
 };
 
 /**
@@ -105,14 +120,16 @@ public:
         const std::vector<gui::NodeLink>& links,
         const std::shared_ptr<arrow::Table>& source_table,
         const std::string& source_dataset_name = {},
-        PipelineOperatorProgressCallback progress_callback = {});
+        PipelineOperatorProgressCallback progress_callback = {},
+        PipelineOperatorExecutionContext execution_context = {});
 
     static MaterializeResult Materialize(
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,
         DataRegistry& registry,
         const std::string& source_dataset_name,
-        PipelineOperatorProgressCallback progress_callback = {});
+        PipelineOperatorProgressCallback progress_callback = {},
+        PipelineOperatorExecutionContext execution_context = {});
 
     static MaterializeResult Materialize(
         const std::vector<gui::MLNode>& nodes,
@@ -120,7 +137,8 @@ public:
         DataRegistry& registry,
         const std::string& source_dataset_name,
         const MaterializationCacheConfig& cache_config,
-        PipelineOperatorProgressCallback progress_callback = {});
+        PipelineOperatorProgressCallback progress_callback = {},
+        PipelineOperatorExecutionContext execution_context = {});
 
     // Suffix used to register the transformed Arrow table when ops fire.
     // Exposed for the DataRegistry cleanup cascade and tests.

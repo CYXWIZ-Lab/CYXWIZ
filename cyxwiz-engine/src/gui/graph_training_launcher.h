@@ -56,6 +56,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     cyxwiz::DataRegistry& registry,
     std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel,
     std::function<void(bool)> node_editor_callback,
-    GraphTrainingDispatch dispatch);
+    GraphTrainingDispatch dispatch,
+    cyxwiz::MaterializationMemoryPolicy materialization_memory_policy = {});
 
 } // namespace gui

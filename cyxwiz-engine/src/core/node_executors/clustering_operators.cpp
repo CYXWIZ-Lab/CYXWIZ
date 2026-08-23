@@ -117,21 +117,6 @@ int CountUniqueClusters(const std::vector<int>& labels) {
     return static_cast<int>(unique.size());
 }
 
-const char* MaterializationMemoryProgressStatus(
-    MaterializationMemoryRisk risk) {
-    switch (risk) {
-    case MaterializationMemoryRisk::Safe:
-        return "running";
-    case MaterializationMemoryRisk::Warning:
-        return "warning";
-    case MaterializationMemoryRisk::Risky:
-        return "risky";
-    case MaterializationMemoryRisk::Blocked:
-        return "blocked";
-    }
-    return "running";
-}
-
 std::string BuildClusteringMemoryPreflightMessage(
     const std::string& op_name,
     const MaterializationMemoryEstimate& estimate,
@@ -158,6 +143,7 @@ arrow::Result<MaterializationMemoryEstimate> EmitClusteringMemoryPreflight(
     const std::shared_ptr<arrow::Table>& input,
     const std::vector<std::string>& resolved_features,
     const std::string& op_name,
+    const MaterializationMemoryContext& memory_context,
     const PipelineOperatorProgressCallback& callback,
     uint64_t& planned_samples) {
     planned_samples =
@@ -175,7 +161,7 @@ arrow::Result<MaterializationMemoryEstimate> EmitClusteringMemoryPreflight(
     const auto estimate = EstimateDenseMaterializationMemory(
         planned_samples, planned_columns, static_cast<uint64_t>(sizeof(double)));
     const auto decision = EvaluateMaterializationMemory(
-        estimate, DetectMaterializationMemorySnapshot());
+        estimate, memory_context);
     const std::string preflight_message =
         BuildClusteringMemoryPreflightMessage(op_name, estimate, decision);
 
@@ -188,7 +174,7 @@ arrow::Result<MaterializationMemoryEstimate> EmitClusteringMemoryPreflight(
         PipelineOperatorProgress event;
         event.stage = op_name + " memory preflight";
         event.message = preflight_message;
-        event.status = MaterializationMemoryProgressStatus(decision.risk);
+        event.status = MaterializationMemoryRiskToProgressStatus(decision.risk);
         event.progress = 0.03f;
         event.processed_items = 0;
         event.total_items = planned_cells;
@@ -278,11 +264,14 @@ KMeansOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     uint64_t planned_samples = 0;
     ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
         EmitClusteringMemoryPreflight(
-            input, resolved, GetName(), progress_callback_, planned_samples));
+            input, resolved, GetName(), GetMaterializationMemoryContext(),
+            progress_callback_, planned_samples));
 
     std::vector<std::vector<double>> matrix;
     int64_t n_samples = 0;
-    ARROW_RETURN_NOT_OK(ReadFeatureMatrix(input, resolved, GetName(), matrix, n_samples));
+    ARROW_RETURN_NOT_OK(ReadFeatureMatrix(
+        input, resolved, GetName(), matrix, n_samples,
+        GetCancellationQuery()));
     const uint64_t matrix_bytes = preflight_estimate.estimated_peak_bytes;
 
     if (n_samples < n_clusters_) {
@@ -355,11 +344,14 @@ DBSCANOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     uint64_t planned_samples = 0;
     ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
         EmitClusteringMemoryPreflight(
-            input, resolved, GetName(), progress_callback_, planned_samples));
+            input, resolved, GetName(), GetMaterializationMemoryContext(),
+            progress_callback_, planned_samples));
 
     std::vector<std::vector<double>> matrix;
     int64_t n_samples = 0;
-    ARROW_RETURN_NOT_OK(ReadFeatureMatrix(input, resolved, GetName(), matrix, n_samples));
+    ARROW_RETURN_NOT_OK(ReadFeatureMatrix(
+        input, resolved, GetName(), matrix, n_samples,
+        GetCancellationQuery()));
     const uint64_t matrix_bytes = preflight_estimate.estimated_peak_bytes;
 
     ReportProgress(progress_callback_, "fit", "Fitting DBSCAN clusters", 0.55, 0, static_cast<uint64_t>(n_samples), matrix_bytes);
@@ -434,11 +426,14 @@ HierarchicalOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     uint64_t planned_samples = 0;
     ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
         EmitClusteringMemoryPreflight(
-            input, resolved, GetName(), progress_callback_, planned_samples));
+            input, resolved, GetName(), GetMaterializationMemoryContext(),
+            progress_callback_, planned_samples));
 
     std::vector<std::vector<double>> matrix;
     int64_t n_samples = 0;
-    ARROW_RETURN_NOT_OK(ReadFeatureMatrix(input, resolved, GetName(), matrix, n_samples));
+    ARROW_RETURN_NOT_OK(ReadFeatureMatrix(
+        input, resolved, GetName(), matrix, n_samples,
+        GetCancellationQuery()));
     const uint64_t matrix_bytes = preflight_estimate.estimated_peak_bytes;
 
     if (n_samples < n_clusters_) {
@@ -516,11 +511,14 @@ GMMOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     uint64_t planned_samples = 0;
     ARROW_ASSIGN_OR_RAISE(auto preflight_estimate,
         EmitClusteringMemoryPreflight(
-            input, resolved, GetName(), progress_callback_, planned_samples));
+            input, resolved, GetName(), GetMaterializationMemoryContext(),
+            progress_callback_, planned_samples));
 
     std::vector<std::vector<double>> matrix;
     int64_t n_samples = 0;
-    ARROW_RETURN_NOT_OK(ReadFeatureMatrix(input, resolved, GetName(), matrix, n_samples));
+    ARROW_RETURN_NOT_OK(ReadFeatureMatrix(
+        input, resolved, GetName(), matrix, n_samples,
+        GetCancellationQuery()));
     const uint64_t matrix_bytes = preflight_estimate.estimated_peak_bytes;
 
     if (n_samples < n_components_) {

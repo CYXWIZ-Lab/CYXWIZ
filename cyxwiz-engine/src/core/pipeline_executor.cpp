@@ -5376,6 +5376,10 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
         ReportError(node.type + ": PipelineOperatorFactory returned null operator");
         return false;
     }
+    PipelineOperatorExecutionContext operator_context;
+    operator_context.cancellation_requested =
+        [this]() { return cancel_requested_.load(); };
+    op->SetExecutionContext(std::move(operator_context));
 
     std::string configure_error;
     if (!op->Configure(node.parameters, configure_error)) {

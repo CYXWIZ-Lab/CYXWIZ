@@ -107,6 +107,12 @@ void TestNumericLabels() {
         {"max_depth", "2"},
     }, error), error);
 
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
+
     auto result = op.Apply(MakeNumericLabelTable());
     Check(result.ok(), result.status().ToString());
     auto output = result.ValueOrDie();
@@ -115,6 +121,16 @@ void TestNumericLabels() {
           "first numeric prediction should match class 0");
     Check(ReadDoubleValue(output, "gb_pred", 7) == 1.0,
           "last numeric prediction should match class 1");
+    Check(progress_events.size() > 1,
+          "GradientBoosting should emit a memory preflight event");
+    Check(progress_events[1].stage ==
+              "GradientBoostingClassifier memory preflight",
+          "GradientBoosting should preflight after resolving features");
+    Check(progress_events[1].memory_risk_level == "safe",
+          "small GradientBoosting fixture should report safe memory risk");
+    Check(progress_events[1].estimated_memory_bytes >
+              8ULL * 35ULL * static_cast<uint64_t>(sizeof(double)),
+          "GradientBoosting preflight should include estimator workspace");
 }
 
 void TestStringLabels() {

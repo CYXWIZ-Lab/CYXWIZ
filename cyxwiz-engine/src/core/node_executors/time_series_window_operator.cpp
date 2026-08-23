@@ -33,21 +33,6 @@ void ParseColList(const std::string& s, std::vector<std::string>& out) {
     }
 }
 
-const char* MaterializationMemoryProgressStatus(
-    MaterializationMemoryRisk risk) {
-    switch (risk) {
-    case MaterializationMemoryRisk::Safe:
-        return "running";
-    case MaterializationMemoryRisk::Warning:
-        return "warning";
-    case MaterializationMemoryRisk::Risky:
-        return "risky";
-    case MaterializationMemoryRisk::Blocked:
-        return "blocked";
-    }
-    return "running";
-}
-
 std::string BuildWindowMemoryPreflightMessage(
     const MaterializationMemoryEstimate& estimate,
     const MaterializationMemoryDecision& decision,
@@ -250,7 +235,7 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         static_cast<uint64_t>(planned_output_columns),
         planned_bytes_per_value);
     const auto preflight_decision = EvaluateMaterializationMemory(
-        preflight_estimate, DetectMaterializationMemorySnapshot());
+        preflight_estimate, GetMaterializationMemoryContext());
     const std::string preflight_message = BuildWindowMemoryPreflightMessage(
         preflight_estimate, preflight_decision,
         static_cast<uint64_t>(planned_output_columns));
@@ -264,7 +249,7 @@ TimeSeriesWindowOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = "TimeSeriesWindow memory preflight";
         event.message = preflight_message;
-        event.status = MaterializationMemoryProgressStatus(
+        event.status = MaterializationMemoryRiskToProgressStatus(
             preflight_decision.risk);
         event.progress = 0.03f;
         event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
