@@ -19,6 +19,14 @@ public:
         size_t selected_sample_index);
 
     static DebugTraceRecord BuildGraphSnapshotTrace(const DebugSession& session);
+
+    static bool FullWorkflowSucceeded(
+        bool compile_success,
+        bool preflight_ready,
+        bool smoke_supported,
+        bool smoke_success,
+        bool has_debug_result,
+        bool debug_success);
 };
 
 } // namespace cyxwiz

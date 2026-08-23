@@ -1193,7 +1193,8 @@ void TrainingTraceCollector::RecordTaskProgress(
         events_.pop_front();
     }
 
-    if (event.status != "running" && !event.message.empty()) {
+    if (IsTrainingTaskAttentionStatus(event.status) &&
+        !event.message.empty()) {
         warnings_.push_back(task_name + ": " + event.message);
         if (warnings_.size() > 50) {
             warnings_.erase(warnings_.begin());
@@ -1598,6 +1599,7 @@ std::optional<TrainingTraceSummary> TrainingTraceCollector::LoadLastTrace() {
                 summary.recent_events.push_back(EventFromJson(item));
             }
         }
+        training_trace_detail::RemoveLegacyNonAttentionTaskWarnings(summary);
         if (j.contains("materialization_events") &&
             j["materialization_events"].is_array()) {
             for (const auto& item : j["materialization_events"]) {

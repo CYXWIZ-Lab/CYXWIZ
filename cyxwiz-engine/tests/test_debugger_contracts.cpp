@@ -24,6 +24,7 @@
 #include "../src/core/node_executors/text_tokenizer_operator.h"
 #include "../src/core/preflight_validator.h"
 #include "../src/core/text_preprocessing_tracer.h"
+#include "../src/core/training_trace_collector.h"
 
 #include <arrow/api.h>
 #include <cstdlib>
@@ -125,6 +126,12 @@ bool HasIssueCode(const std::vector<cyxwiz::ValidationIssue>& issues,
 }
 
 void TestDebugSessionSnapshotContract() {
+    Check(!cyxwiz::IsTrainingTaskAttentionStatus("completed") &&
+              !cyxwiz::IsTrainingTaskAttentionStatus("running") &&
+              cyxwiz::IsTrainingTaskAttentionStatus("failed") &&
+              cyxwiz::IsTrainingTaskAttentionStatus("cancel_requested"),
+          "task warning classification should exclude normal completion");
+
     auto data = MakeNode(1, gui::NodeType::DataInput, "Data Input");
     data.parameters = {{"dataset", "debug_text"}};
     auto tokenizer = MakeNode(2, gui::NodeType::TextTokenizer, "Tokenizer");
@@ -164,6 +171,16 @@ void TestDebugSessionSnapshotContract() {
     Check(session.studio_events.size() == 1, "session start Studio event should be emitted");
     Check(session.studio_events[0].action == "DebugSession.Start",
           "session start event action should be stable");
+    Check(!session.studio_events[0].timestamp.empty(),
+          "session start event should carry a timestamp");
+    Check(cyxwiz::DebugSessionManager::FullWorkflowSucceeded(
+              true, true, true, true, true, true),
+          "full workflow should pass when every required stage passes");
+    Check(!cyxwiz::DebugSessionManager::FullWorkflowSucceeded(
+              true, true, false, false, true, true) &&
+              !cyxwiz::DebugSessionManager::FullWorkflowSucceeded(
+                  true, true, true, true, true, false),
+          "full workflow should preserve smoke or Local Debug failure");
     Check(session.traces.size() == 1, "graph snapshot trace should be emitted");
 
     const cyxwiz::DebugTraceRecord& trace = session.traces[0];
@@ -203,6 +220,39 @@ void TestDebugSessionSnapshotContract() {
           "snapshot payload should include node array");
     Check(trace.payload["links"].is_array() && trace.payload["links"].size() == 1,
           "snapshot payload should include link array");
+}
+
+void TestPersistedTrainingTraceWarningSanitization() {
+    cyxwiz::TrainingTraceSummary summary;
+    summary.warnings = {
+        "Training Model: cancel requested",
+        "Training Model: Completed",
+        "Runtime: genuine warning"};
+
+    cyxwiz::TrainingTraceEvent cancel_requested;
+    cancel_requested.metric_scope = "task";
+    cancel_requested.task_id = 7;
+    cancel_requested.task_name = "Training Model";
+    cancel_requested.status = "cancel_requested";
+    cancel_requested.message = "cancel requested";
+    summary.recent_events.push_back(cancel_requested);
+
+    cyxwiz::TrainingTraceEvent completed = cancel_requested;
+    completed.status = "completed";
+    completed.message = "Completed";
+    summary.recent_events.push_back(completed);
+
+    cyxwiz::training_trace_detail::RemoveLegacyNonAttentionTaskWarnings(summary);
+
+    Check(std::find(summary.warnings.begin(), summary.warnings.end(),
+                    "Training Model: Completed") == summary.warnings.end(),
+          "legacy completed task message should not remain a warning");
+    Check(std::find(summary.warnings.begin(), summary.warnings.end(),
+                    "Training Model: cancel requested") != summary.warnings.end(),
+          "cancel-requested task warning should be preserved");
+    Check(std::find(summary.warnings.begin(), summary.warnings.end(),
+                    "Runtime: genuine warning") != summary.warnings.end(),
+          "unrelated persisted warnings should be preserved");
 }
 
 void TestNodeTraceContract() {
@@ -696,6 +746,7 @@ void TestRuntimeBackendClassificationContract() {
 
     cyxwiz::DebugRunExecutionSummary linked_execution;
     linked_execution.available = true;
+    linked_execution.evidence_scope = "latest_training_run_unlinked";
     linked_execution.training_run_id = "linked-training-run";
     linked_execution.requested_backend = "arrayfire_cuda";
     linked_execution.effective_backend = "arrayfire_cuda";
@@ -725,7 +776,8 @@ void TestRuntimeBackendClassificationContract() {
               audit.payload["attention_count"].get<size_t>() == 1,
           "backend audit should count unknown attention placements");
     Check(audit.payload["linked_execution_scope"].get<std::string>() ==
-              "linked_training_run" &&
+              "latest_training_run_unlinked" &&
+              !audit.payload["linked_execution_correlated"].get<bool>() &&
               !audit.payload["linked_context_is_node_actual_evidence"].get<bool>(),
           "linked execution context must remain separate from node actual evidence");
     Check(!audit.payload["cost_estimate_available"].get<bool>() &&
@@ -912,6 +964,8 @@ void TestMemoryOwnershipTraceContract() {
 
     cyxwiz::DebugRunExecutionSummary execution;
     execution.available = true;
+    execution.correlated = true;
+    execution.evidence_scope = "selected_training_run";
     execution.training_run_id = "tensor-lifecycle-run";
     execution.effective_backend = "CUDA";
     execution.effective_device_id = 0;
@@ -969,13 +1023,15 @@ void TestMemoryOwnershipTraceContract() {
 
     auto mismatched_execution = execution;
     mismatched_execution.training_run_id = "different-training-run";
+    mismatched_execution.correlated = false;
+    mismatched_execution.evidence_scope = "latest_training_run_unlinked";
     const auto mismatched_lifecycle = tracer.BuildTensorLifecycleTrace(
         "tensor-lifecycle-run", lifecycle_sources, mismatched_execution);
     Check(!mismatched_lifecycle.payload["runtime_backend_observed"].get<bool>() &&
               mismatched_lifecycle.payload["effective_backend"] == "unobserved" &&
               mismatched_lifecycle.payload["runtime_backend_evidence_scope"] ==
-                  "unobserved",
-          "lifecycle should reject backend evidence from a different run");
+                  "latest_training_run_unlinked",
+          "lifecycle should preserve but not promote unlinked backend evidence");
 
     std::vector<cyxwiz::DebugTraceRecord> many_lifecycle_sources;
     many_lifecycle_sources.reserve(140);
@@ -4206,6 +4262,16 @@ void TestDebugRunStoreContract() {
     execution_trace.synchronization_known_bytes = 1024;
     record.summary.execution =
         cyxwiz::MakeDebugRunExecutionSummary(execution_trace);
+    Check(record.summary.execution.available &&
+              !record.summary.execution.correlated &&
+              record.summary.execution.evidence_scope ==
+                  "latest_training_run_unlinked",
+          "latest training evidence should remain explicitly unlinked");
+    const auto selected_execution =
+        cyxwiz::MakeDebugRunExecutionSummary(execution_trace, true);
+    Check(selected_execution.correlated &&
+              selected_execution.evidence_scope == "selected_training_run",
+          "explicit Runtime Trace selection should correlate training evidence");
 
     auto replay_data = MakeNode(
         1, gui::NodeType::DataInput, "Replay Data Input");
@@ -4337,6 +4403,9 @@ void TestDebugRunStoreContract() {
     Check(loaded->summary.recommendation_count == 1,
           "loaded recommendation count should match persisted recommendation count");
     Check(loaded->summary.execution.available &&
+              !loaded->summary.execution.correlated &&
+              loaded->summary.execution.evidence_scope ==
+                  "latest_training_run_unlinked" &&
               loaded->summary.execution.training_run_id ==
                   execution_trace.run_id &&
               loaded->summary.execution.effective_backend ==
@@ -4379,7 +4448,7 @@ void TestDebugRunStoreContract() {
               loaded->replay_capsule.balance_seed == 23,
           "replay capsule should preserve all run-affecting seeds");
     Check(loaded->replay_capsule.backend_evidence_scope ==
-                  "linked_training_run" &&
+                  "latest_training_run_unlinked" &&
               loaded->replay_capsule.backend_source_run_id ==
                   execution_trace.run_id &&
               loaded->replay_capsule.requested_backend ==
@@ -4655,6 +4724,7 @@ void TestTextPreprocessingTraceContract() {
 
 int main() {
     TestDebugSessionSnapshotContract();
+    TestPersistedTrainingTraceWarningSanitization();
     TestTrainingGraphDiffContract();
     TestNodeTraceContract();
     TestGraphTraceExecutionSlice();

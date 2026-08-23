@@ -17,18 +17,18 @@ void ToolbarPanel::RenderProfileMenu() {
         ImGui::PopStyleColor();
         ImGui::Spacing();
 
-        // ========== Performance Profiler (ProfilingPanel) ==========
+        // Canonical runtime evidence is owned by Studio Debugger.
         if (ImGui::MenuItem(ICON_FA_GAUGE_HIGH " Performance Profiler")) {
             if (open_profiler_callback_) {
                 open_profiler_callback_();
             }
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Per-layer timing analysis:\n"
-                              "- Forward/backward pass timing\n"
-                              "- Layer breakdown by execution time\n"
-                              "- Timeline view of training steps\n"
-                              "- History charts and statistics");
+            ImGui::SetTooltip("Canonical training runtime evidence:\n"
+                              "- Backend and device residency\n"
+                              "- Transfer and synchronization timeline\n"
+                              "- Bounded Local Debug layer timing\n"
+                              "- Tensor allocator and ArrayFire memory");
         }
 
         // ========== Memory Visualization (MemoryPanel) ==========

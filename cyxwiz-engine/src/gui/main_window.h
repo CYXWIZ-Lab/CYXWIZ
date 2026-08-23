@@ -44,7 +44,6 @@ class JobStatusPanel;
 class P2PTrainingPanel;
 class PatternBrowserPanel;
 class QueryConsolePanel;
-class ProfilingPanel;
 class MemoryPanel;
 class MemoryMonitor;
 class VariableExplorerPanel;
@@ -322,7 +321,6 @@ private:
     std::unique_ptr<cyxwiz::QueryConsolePanel> query_console_;
     std::unique_ptr<gui::CustomNodeEditorPanel> custom_node_editor_;
     std::unique_ptr<gui::ThemeEditorPanel> theme_editor_;
-    std::unique_ptr<cyxwiz::ProfilingPanel> profiling_panel_;
     std::unique_ptr<cyxwiz::MemoryPanel> memory_panel_;
     std::unique_ptr<cyxwiz::MemoryMonitor> memory_monitor_;
     std::unique_ptr<cyxwiz::VariableExplorerPanel> variable_explorer_;

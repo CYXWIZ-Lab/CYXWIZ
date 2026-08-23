@@ -159,6 +159,8 @@ nlohmann::json DebugSupportBundleBuilder::DebugRunToJson(
             {"file_path", "[REDACTED]"},
             {"execution", {
                 {"available", record.summary.execution.available},
+                {"correlated", record.summary.execution.correlated},
+                {"evidence_scope", record.summary.execution.evidence_scope},
                 {"training_run_id", record.summary.execution.training_run_id},
                 {"status", record.summary.execution.status},
                 {"requested_backend", record.summary.execution.requested_backend},

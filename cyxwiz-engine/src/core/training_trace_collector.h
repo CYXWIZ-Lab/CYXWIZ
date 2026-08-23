@@ -1,15 +1,25 @@
 #pragma once
 
 #include "crash_run_recorder.h"
+#include <algorithm>
 #include <cstdint>
 #include <deque>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cyxwiz {
+
+inline bool IsTrainingTaskAttentionStatus(std::string_view status) {
+    return status == "warning" ||
+        status == "error" ||
+        status == "failed" ||
+        status == "cancel_requested" ||
+        status == "cancelled";
+}
 
 struct PinMemoryTransferStatus;
 struct ArrayFireNativeCpuFallbackEvent;
@@ -174,6 +184,31 @@ struct TrainingTraceSummary {
     std::string residency_verdict;
     std::string residency_reason;
 };
+
+namespace training_trace_detail {
+
+inline void RemoveLegacyNonAttentionTaskWarnings(
+    TrainingTraceSummary& summary) {
+    for (const auto& event : summary.recent_events) {
+        const bool is_task_event =
+            event.metric_scope == "task" || event.task_id != 0;
+        if (!is_task_event ||
+            IsTrainingTaskAttentionStatus(event.status) ||
+            event.message.empty()) {
+            continue;
+        }
+
+        const std::string legacy_warning =
+            event.task_name + ": " + event.message;
+        const auto warning = std::find(
+            summary.warnings.begin(), summary.warnings.end(), legacy_warning);
+        if (warning != summary.warnings.end()) {
+            summary.warnings.erase(warning);
+        }
+    }
+}
+
+} // namespace training_trace_detail
 
 struct TrainingTraceSettings {
     bool persist_enabled = true;

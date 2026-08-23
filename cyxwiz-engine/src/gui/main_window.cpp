@@ -49,7 +49,6 @@
 #include "panels/query_console.h"
 #include "panels/custom_node_editor.h"
 #include "panels/theme_editor.h"
-#include "panels/profiling_panel.h"
 #include "panels/memory_panel.h"
 #include "panels/memory_monitor.h"
 #include "panels/variable_explorer.h"
@@ -567,7 +566,6 @@ MainWindow::MainWindow()
     query_console_ = std::make_unique<cyxwiz::QueryConsolePanel>();
     custom_node_editor_ = std::make_unique<gui::CustomNodeEditorPanel>();
     theme_editor_ = std::make_unique<gui::ThemeEditorPanel>();
-    profiling_panel_ = std::make_unique<cyxwiz::ProfilingPanel>();
     memory_panel_ = std::make_unique<cyxwiz::MemoryPanel>();
     memory_monitor_ = std::make_unique<cyxwiz::MemoryMonitor>();
     variable_explorer_ = std::make_unique<cyxwiz::VariableExplorerPanel>();
@@ -1586,9 +1584,10 @@ MainWindow::MainWindow()
 
     // Set up Profiler callback
     toolbar_->SetOpenProfilerCallback([this]() {
-        if (profiling_panel_) {
-            profiling_panel_->Show();
-            spdlog::info("Opened Performance Profiler panel");
+        if (studio_debugger_panel_) {
+            studio_debugger_panel_->ShowRuntimeProfile();
+            spdlog::info(
+                "Opened canonical Studio Debugger runtime profile");
         }
     });
 
@@ -2654,8 +2653,6 @@ MainWindow::~MainWindow() {
     memory_monitor_.reset();
     spdlog::info("~MainWindow: memory_panel_");
     memory_panel_.reset();
-    spdlog::info("~MainWindow: profiling_panel_");
-    profiling_panel_.reset();
     spdlog::info("~MainWindow: theme_editor_");
     theme_editor_.reset();
     spdlog::info("~MainWindow: custom_node_editor_");
@@ -2958,7 +2955,6 @@ void MainWindow::Render() {
     if (query_console_) query_console_->Render();
     if (custom_node_editor_) custom_node_editor_->Render();
     if (theme_editor_) theme_editor_->Render();
-    if (profiling_panel_) profiling_panel_->Render();
     if (memory_panel_) memory_panel_->Render();
     if (memory_monitor_) memory_monitor_->Render();
     if (variable_explorer_) variable_explorer_->Render();
@@ -3432,7 +3428,6 @@ void MainWindow::SetDefaultPanelVisibility() {
     if (query_console_) query_console_->SetVisible(false);
     if (custom_node_editor_) custom_node_editor_->SetVisible(false);
     if (theme_editor_) theme_editor_->SetVisible(false);
-    if (profiling_panel_) profiling_panel_->SetVisible(false);
     if (memory_panel_) memory_panel_->SetVisible(false);
     if (memory_monitor_) memory_monitor_->SetVisible(false);
     if (variable_explorer_) variable_explorer_->SetVisible(false);
@@ -4041,7 +4036,9 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     if (training_trace.available) {
         session.training_trace = training_trace;
         session.execution =
-            cyxwiz::MakeDebugRunExecutionSummary(session.training_trace);
+            cyxwiz::MakeDebugRunExecutionSummary(
+                session.training_trace,
+                mode == cyxwiz::StudioDebuggerRunMode::RuntimeTrace);
     }
     const std::string& run_id = session.run_id;
     cyxwiz::DebugRunReplayCapsule replay_capsule =
@@ -4174,7 +4171,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
 
     session.studio_events.push_back({
         run_id,
-        "",
+        NowLocalTimestampForDebugStore(),
         session.graph_hash,
         -1,
         "StudioDebugger.Run",
@@ -4277,7 +4274,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 run_id, session.graph_hash, placement));
         }
         session.studio_events.push_back({
-            run_id, "", session.graph_hash, -1,
+            run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
             "BackendPlacementAudit", "captured",
             "Captured " + std::to_string(config.backend_placements.size()) +
                 " compiler placement decision(s); actual runtime backend "
@@ -4319,7 +4316,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 session.recommendations));
             session.studio_events.push_back({
                 run_id,
-                "",
+                NowLocalTimestampForDebugStore(),
                 session.graph_hash,
                 explain_node_id,
                 "StudioDebugger.ExplainNode",
@@ -4334,7 +4331,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             session.failure_summary = "Compile gate failed.";
         }
         session.studio_events.push_back({
-            run_id, "", session.graph_hash, -1,
+            run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
             "Compile", "failed", session.failure_summary
         });
         if (explain_node_id >= 0) {
@@ -4349,7 +4346,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         return false;
     }
     session.studio_events.push_back({
-        run_id, "", session.graph_hash, -1,
+        run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
         "Compile", "passed", "Compile gate passed before Local Debug."
     });
 
@@ -4383,7 +4380,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     preflight_trace.payload["summary"] = session.preflight.summary;
     session.traces.push_back(std::move(preflight_trace));
     session.studio_events.push_back({
-        run_id, "", session.graph_hash, -1,
+        run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
         "Preflight", session.preflight.ready ? "ready" : "blocked",
         session.preflight.ready ? "Preflight checks passed." : "Preflight reported blocking issues."
     });
@@ -4421,7 +4418,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 std::make_move_iterator(operator_traces.end()));
             if (has_operator_traces) {
                 session.studio_events.push_back({
-                    run_id, "", session.graph_hash, -1,
+                    run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
                     "OperatorPreprocessingTrace", "captured",
                     "Captured operator-backed Arrow preprocessing trace."
                 });
@@ -4437,7 +4434,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                               std::make_move_iterator(preprocessing_traces.end()));
         if (!preprocessing_traces.empty()) {
             session.studio_events.push_back({
-                run_id, "", session.graph_hash, -1,
+                run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
                 "TextPreprocessingTrace", "captured",
                 "Captured text preprocessing trace for sample " +
                     std::to_string(selected_sample_index) + "."
@@ -4452,13 +4449,13 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                               std::make_move_iterator(session.smoke_result.traces.end()));
         if (session.smoke_result.supported) {
             session.studio_events.push_back({
-                run_id, "", session.graph_hash, -1,
+                run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
                 "SmokeRun", session.smoke_result.success ? "passed" : "failed",
                 session.smoke_result.summary
             });
         } else {
             session.studio_events.push_back({
-                run_id, "", session.graph_hash, -1,
+                run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
                 "SmokeRun", "unsupported", session.smoke_result.summary
             });
         }
@@ -4481,7 +4478,10 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         session.failure_summary = session.debug_result.failure_summary;
 
         if (!session.debug_result.issues.empty()) {
-            session.issues = session.debug_result.issues;
+            session.issues.insert(
+                session.issues.end(),
+                session.debug_result.issues.begin(),
+                session.debug_result.issues.end());
         }
 
         if (!session.debug_result.model_build_traces.empty()) {
@@ -4848,7 +4848,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             session.traces.push_back(std::move(record));
         }
         session.studio_events.push_back({
-            run_id, "", session.graph_hash, -1,
+            run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
             "LocalDebug", session.debug_result.success ? "passed" : "failed",
             session.debug_result.success ? "Local Debug completed." : session.debug_result.failure_summary
         });
@@ -4886,7 +4886,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             cyxwiz::errors::Training::TrainingExecutionFailed
         });
         session.studio_events.push_back({
-            run_id, "", session.graph_hash, -1,
+            run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
             "LocalDebug", "failed", session.failure_summary
         });
         append_error_timeline();
@@ -4898,6 +4898,29 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         session.success =
             session.smoke_result.supported && session.smoke_result.success;
         session.failure_summary = session.success ? "" : session.smoke_result.summary;
+    }
+
+    if (run_full) {
+        session.success = cyxwiz::DebugSessionManager::FullWorkflowSucceeded(
+            compile_success,
+            session.preflight.ready,
+            session.smoke_result.supported,
+            session.smoke_result.success,
+            session.has_debug_result,
+            session.debug_result.success);
+        if (!session.success && session.failure_summary.empty()) {
+            if (!session.preflight.ready) {
+                session.failure_summary = "Preflight reported blocking issues.";
+            } else if (!session.smoke_result.supported ||
+                       !session.smoke_result.success) {
+                session.failure_summary = session.smoke_result.summary.empty()
+                    ? "Smoke Run did not complete successfully."
+                    : session.smoke_result.summary;
+            } else {
+                session.failure_summary =
+                    "Local Debug did not complete successfully.";
+            }
+        }
     }
 
     if (run_runtime) {
