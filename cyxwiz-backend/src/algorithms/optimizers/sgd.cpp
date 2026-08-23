@@ -2,6 +2,10 @@
 #include "cyxwiz/tensor.h"
 #include "optimizer_utils.h"
 
+#include <cmath>
+#include <stdexcept>
+#include <utility>
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #endif
@@ -14,6 +18,14 @@ namespace cyxwiz {
 
 SGDOptimizer::SGDOptimizer(double learning_rate, double momentum)
     : momentum_(momentum) {
+    if (!std::isfinite(learning_rate) || learning_rate < 0.0) {
+        throw std::invalid_argument(
+            "SGD optimizer requires a finite non-negative learning rate");
+    }
+    if (!std::isfinite(momentum_) || momentum_ < 0.0) {
+        throw std::invalid_argument(
+            "SGD optimizer requires finite non-negative momentum");
+    }
     learning_rate_ = learning_rate;
     step_count_ = 0;
     optimizer_detail::OptimizerArrayFireAvailable();
@@ -30,6 +42,13 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
         const Tensor& grad = grad_it->second;
         size_t num_elements = param.NumElements();
+        const auto velocity = velocity_.find(name);
+        if (velocity != velocity_.end() &&
+            velocity->second.Shape() != param.Shape()) {
+            throw std::invalid_argument(
+                "SGD momentum state shape does not match parameter '" + name +
+                "'.");
+        }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
         if (optimizer_detail::OptimizerArrayFireAvailable() && param.GetDataType() == DataType::Float32) {
@@ -72,9 +91,24 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
         if (param.GetDataType() == DataType::Float32) {
             float* param_data = param.Data<float>();
             const float* grad_data = grad.Data<float>();
-
-            for (size_t i = 0; i < num_elements; i++) {
-                param_data[i] -= static_cast<float>(learning_rate_) * grad_data[i];
+            if (momentum_ > 0.0) {
+                if (velocity_.find(name) == velocity_.end()) {
+                    velocity_[name] =
+                        Tensor::Zeros(param.Shape(), DataType::Float32);
+                }
+                float* velocity_data = velocity_.at(name).Data<float>();
+                for (size_t i = 0; i < num_elements; i++) {
+                    velocity_data[i] =
+                        static_cast<float>(momentum_) * velocity_data[i] +
+                        grad_data[i];
+                    param_data[i] -= static_cast<float>(learning_rate_) *
+                                     velocity_data[i];
+                }
+            } else {
+                for (size_t i = 0; i < num_elements; i++) {
+                    param_data[i] -= static_cast<float>(learning_rate_) *
+                                     grad_data[i];
+                }
             }
         }
     }
@@ -83,7 +117,88 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
 }
 
 void SGDOptimizer::ZeroGrad() {
-    velocity_.clear();
+    // Gradients are caller-owned input maps, so there is no optimizer-owned
+    // gradient storage to clear. Momentum is persistent optimizer state.
+}
+
+bool SGDOptimizer::ExportState(OptimizerState& state, std::string& error) const {
+    if (!std::isfinite(learning_rate_) || learning_rate_ < 0.0 ||
+        step_count_ < 0) {
+        error = "SGD optimizer contains invalid runtime state.";
+        return false;
+    }
+
+    OptimizerState exported;
+    exported.optimizer_type = "SGD";
+    exported.learning_rate = learning_rate_;
+    exported.step_count = step_count_;
+    exported.hyperparameters = {{"momentum", momentum_}};
+    for (const auto& [name, velocity] : velocity_) {
+        exported.tensors.emplace("velocity/" + name, velocity);
+    }
+    state = std::move(exported);
+    error.clear();
+    return true;
+}
+
+bool SGDOptimizer::ImportState(
+    const OptimizerState& state,
+    std::string& error)
+{
+    constexpr const char* kVelocityPrefix = "velocity/";
+    constexpr std::size_t kVelocityPrefixLength = 9;
+
+    if (state.schema_version != 1) {
+        error = "SGD optimizer state schema version is unsupported.";
+        return false;
+    }
+    if (state.optimizer_type != "SGD") {
+        error = "Optimizer state type '" + state.optimizer_type +
+                "' is incompatible with SGD.";
+        return false;
+    }
+    if (!std::isfinite(state.learning_rate) || state.learning_rate < 0.0) {
+        error = "SGD optimizer state has an invalid learning rate.";
+        return false;
+    }
+    if (state.step_count < 0) {
+        error = "SGD optimizer state has a negative step count.";
+        return false;
+    }
+    if (state.hyperparameters !=
+        std::map<std::string, double>{{"momentum", momentum_}}) {
+        error =
+            "SGD optimizer state configuration does not match the active "
+            "optimizer.";
+        return false;
+    }
+
+    std::map<std::string, Tensor> imported_velocity;
+    for (const auto& [key, tensor] : state.tensors) {
+        if (key.rfind(kVelocityPrefix, 0) != 0 ||
+            key.size() == kVelocityPrefixLength) {
+            error = "SGD optimizer state contains unknown tensor '" + key +
+                    "'.";
+            return false;
+        }
+        if (momentum_ <= 0.0) {
+            error = "SGD optimizer without momentum cannot restore velocity.";
+            return false;
+        }
+        if (tensor.GetDataType() != DataType::Float32) {
+            error = "SGD optimizer state tensor '" + key +
+                    "' must use Float32.";
+            return false;
+        }
+        imported_velocity.emplace(
+            key.substr(kVelocityPrefixLength), tensor);
+    }
+
+    learning_rate_ = state.learning_rate;
+    step_count_ = state.step_count;
+    velocity_ = std::move(imported_velocity);
+    error.clear();
+    return true;
 }
 
 } // namespace cyxwiz

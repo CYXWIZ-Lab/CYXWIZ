@@ -823,6 +823,66 @@ void TestCheckpointPayloadV2RoundTripAndCorruptionGuard() {
         static_cast<float>(incompatible_scheduler.GetLR()), 0.1f, 0.0f,
         "incompatible scheduler payload must not mutate active state");
 
+    float warmup_parameter_value = 1.0f;
+    float warmup_gradient_value = 0.25f;
+    std::map<std::string, Tensor> warmup_source_parameters{
+        {"w", Tensor({1}, &warmup_parameter_value, DataType::Float32)}};
+    const std::map<std::string, Tensor> warmup_gradients{
+        {"w", Tensor({1}, &warmup_gradient_value, DataType::Float32)}};
+    auto warmup_source_optimizer =
+        std::make_unique<SGDOptimizer>(0.1, 0.9);
+    LRWarmup warmup_source(
+        std::move(warmup_source_optimizer), 4, WarmupType::Linear, 0.1);
+    warmup_source.Step(warmup_source_parameters, warmup_gradients);
+    warmup_source.ZeroGrad();
+    warmup_source.Step(warmup_source_parameters, warmup_gradients);
+    warmup_source.ZeroGrad();
+
+    CheckpointPayloadDescriptor warmup_descriptor;
+    if (!SaveLRWarmupPayloadV2(root, "scheduler/warmup.bin", warmup_source,
+                               warmup_descriptor, error)) {
+        throw std::runtime_error("v2 LRWarmup payload save failed: " + error);
+    }
+    ExpectTrue(
+        warmup_descriptor.kind == CheckpointPayloadKind::SchedulerState &&
+            VerifyCheckpointPayloadFile(root, warmup_descriptor, error),
+        "v2 LRWarmup payload should have a verified SHA-256");
+
+    auto warmup_resumed_optimizer =
+        std::make_unique<SGDOptimizer>(0.1, 0.9);
+    LRWarmup warmup_resumed(
+        std::move(warmup_resumed_optimizer), 4, WarmupType::Linear, 0.1);
+    if (!LoadLRWarmupPayloadV2(
+            root, warmup_descriptor, warmup_resumed, error)) {
+        throw std::runtime_error("v2 LRWarmup payload load failed: " + error);
+    }
+    auto warmup_resumed_parameters = warmup_source_parameters;
+    warmup_source.Step(warmup_source_parameters, warmup_gradients);
+    warmup_resumed.Step(warmup_resumed_parameters, warmup_gradients);
+    ExpectNear(
+        warmup_resumed_parameters.at("w").ReadData<float>()[0],
+        warmup_source_parameters.at("w").ReadData<float>()[0], 1.0e-7f,
+        "v2 LRWarmup payload exact nested-SGD continuation");
+    ExpectNear(
+        static_cast<float>(warmup_resumed.GetCurrentLR()),
+        static_cast<float>(warmup_source.GetCurrentLR()), 0.0f,
+        "v2 LRWarmup payload exact learning-rate continuation");
+
+    auto incompatible_warmup_optimizer =
+        std::make_unique<SGDOptimizer>(0.1, 0.9);
+    LRWarmup incompatible_warmup(
+        std::move(incompatible_warmup_optimizer), 5,
+        WarmupType::Linear, 0.1);
+    ExpectTrue(
+        !LoadLRWarmupPayloadV2(
+            root, warmup_descriptor, incompatible_warmup, error),
+        "incompatible v2 LRWarmup payload must be rejected");
+    ExpectTrue(error.find("configuration does not match") != std::string::npos,
+               "incompatible LRWarmup payload should identify config drift");
+    ExpectNear(
+        static_cast<float>(incompatible_warmup.GetCurrentLR()), 0.0f, 0.0f,
+        "incompatible LRWarmup payload must not mutate active state");
+
     const auto before_corruption = target.model->GetParameters();
     const auto model_path = root / model_descriptor.relative_path;
     {
@@ -852,7 +912,8 @@ void TestCheckpointPayloadV2RoundTripAndCorruptionGuard() {
 
     std::filesystem::remove_all(root);
     spdlog::info(
-        "  OK: v2 model/Adam/scheduler payloads round-trip and corruption is transactional");
+        "  OK: v2 model/Adam/scheduler/LRWarmup payloads round-trip and "
+        "corruption is transactional");
 }
 
 void TestTransformerDecoderCheckpointRoundTrip() {

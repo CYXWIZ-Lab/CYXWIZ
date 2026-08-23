@@ -98,9 +98,15 @@ Each `LRScheduler` also exports/imports a typed, transactional state envelope.
 The scheduler tests resume every PyTorch LR sequence from a midpoint and reject
 schema, type, configuration, and non-finite state drift without mutating the
 active scheduler. Checkpoint v2 can persist that envelope as its reserved
-`scheduler_state` payload and verifies the archive hash before import. The
-optimizer-owning `LRWarmup` wrapper does not yet expose an exact nested
-optimizer/schedule state payload.
+`scheduler_state` payload and verifies the archive hash before import.
+
+The optimizer-owning `LRWarmup` wrapper persists its warmup configuration,
+step cursor, and complete wrapped optimizer envelope together. Its v2
+`scheduler_state` archive includes nested optimizer tensors and rejects wrapper
+or optimizer configuration drift before mutation. SGD provides the required
+typed learning-rate, step-count, momentum, and velocity state; its native CPU
+fallback applies the same momentum equation, and `ZeroGrad()` preserves that
+persistent optimizer state because gradients are caller-owned maps.
 
 `test_training_executor_arrow_parquet --uneven-epoch-metrics-only` runs the
 focused full-epoch aggregation contract. It compares `{4, 2}` Train and Dev

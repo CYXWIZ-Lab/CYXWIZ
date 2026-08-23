@@ -17,6 +17,15 @@ enum class WarmupType {
     Cosine
 };
 
+struct LRWarmupState {
+    int schema_version = 1;
+    int warmup_steps = 0;
+    WarmupType warmup_type = WarmupType::None;
+    double base_learning_rate = 0.0;
+    int current_step = 0;
+    OptimizerState optimizer_state;
+};
+
 class CYXWIZ_API LRWarmup {
 public:
     LRWarmup(std::unique_ptr<Optimizer> optimizer,
@@ -35,6 +44,9 @@ public:
     double GetCurrentLR() const;
     double GetWarmupProgress() const;
     bool IsWarmupComplete() const;
+
+    bool ExportState(LRWarmupState& state, std::string& error) const;
+    bool ImportState(const LRWarmupState& state, std::string& error);
 
     Optimizer* GetOptimizer() { return optimizer_.get(); }
 

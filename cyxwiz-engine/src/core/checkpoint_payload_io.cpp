@@ -559,4 +559,98 @@ bool LoadSchedulerPayloadV2(
     }
 }
 
+bool SaveLRWarmupPayloadV2(
+    const fs::path& checkpoint_directory,
+    const std::string& relative_path,
+    const LRWarmup& warmup,
+    CheckpointPayloadDescriptor& descriptor,
+    std::string& error)
+{
+    LRWarmupState state;
+    if (!warmup.ExportState(state, error)) return false;
+
+    std::string warmup_type;
+    switch (state.warmup_type) {
+        case WarmupType::None: warmup_type = "none"; break;
+        case WarmupType::Linear: warmup_type = "linear"; break;
+        case WarmupType::Cosine: warmup_type = "cosine"; break;
+        default:
+            error = "LRWarmup state contains an invalid warmup type";
+            return false;
+    }
+
+    const json metadata = {
+        {"lr_warmup_state_schema_version", state.schema_version},
+        {"warmup_steps", state.warmup_steps},
+        {"warmup_type", warmup_type},
+        {"base_learning_rate", state.base_learning_rate},
+        {"current_step", state.current_step},
+        {"optimizer_state_schema_version",
+         state.optimizer_state.schema_version},
+        {"optimizer_type", state.optimizer_state.optimizer_type},
+        {"optimizer_learning_rate", state.optimizer_state.learning_rate},
+        {"optimizer_step_count", state.optimizer_state.step_count},
+        {"optimizer_hyperparameters", state.optimizer_state.hyperparameters},
+    };
+    return WriteArchiveAtomic(
+        checkpoint_directory, relative_path, "lr_warmup_state", metadata,
+        state.optimizer_state.tensors, CheckpointPayloadKind::SchedulerState,
+        descriptor, error);
+}
+
+bool LoadLRWarmupPayloadV2(
+    const fs::path& checkpoint_directory,
+    const CheckpointPayloadDescriptor& descriptor,
+    LRWarmup& warmup,
+    std::string& error)
+{
+    if (descriptor.kind != CheckpointPayloadKind::SchedulerState) {
+        error = "checkpoint descriptor is not a scheduler-state payload";
+        return false;
+    }
+    LoadedArchive archive;
+    if (!ReadArchive(checkpoint_directory, descriptor, "lr_warmup_state",
+                     archive, error)) {
+        return false;
+    }
+    try {
+        LRWarmupState state;
+        state.schema_version =
+            archive.metadata.at("lr_warmup_state_schema_version").get<int>();
+        state.warmup_steps = archive.metadata.at("warmup_steps").get<int>();
+        const auto warmup_type =
+            archive.metadata.at("warmup_type").get<std::string>();
+        if (warmup_type == "none") {
+            state.warmup_type = WarmupType::None;
+        } else if (warmup_type == "linear") {
+            state.warmup_type = WarmupType::Linear;
+        } else if (warmup_type == "cosine") {
+            state.warmup_type = WarmupType::Cosine;
+        } else {
+            error = "checkpoint LRWarmup metadata has an invalid warmup type";
+            return false;
+        }
+        state.base_learning_rate =
+            archive.metadata.at("base_learning_rate").get<double>();
+        state.current_step = archive.metadata.at("current_step").get<int>();
+        state.optimizer_state.schema_version =
+            archive.metadata.at("optimizer_state_schema_version").get<int>();
+        state.optimizer_state.optimizer_type =
+            archive.metadata.at("optimizer_type").get<std::string>();
+        state.optimizer_state.learning_rate =
+            archive.metadata.at("optimizer_learning_rate").get<double>();
+        state.optimizer_state.step_count =
+            archive.metadata.at("optimizer_step_count").get<int>();
+        state.optimizer_state.hyperparameters =
+            archive.metadata.at("optimizer_hyperparameters")
+                .get<std::map<std::string, double>>();
+        state.optimizer_state.tensors = std::move(archive.tensors);
+        return warmup.ImportState(state, error);
+    } catch (const std::exception& exception) {
+        error = std::string("checkpoint LRWarmup metadata is invalid: ") +
+                exception.what();
+        return false;
+    }
+}
+
 } // namespace cyxwiz

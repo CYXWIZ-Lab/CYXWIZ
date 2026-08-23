@@ -209,10 +209,157 @@ TEST_CASE("Optimizer LRWarmup rejects invalid ownership and step counts",
           "[scheduler][validation]") {
     CHECK_THROWS_AS(cyxwiz::LRWarmup(nullptr, 4), std::invalid_argument);
 
+    CHECK_THROWS_AS(
+        cyxwiz::SGDOptimizer(-0.1),
+        std::invalid_argument);
+    CHECK_THROWS_AS(
+        cyxwiz::SGDOptimizer(0.1, -0.1),
+        std::invalid_argument);
+
     auto optimizer = std::make_unique<cyxwiz::SGDOptimizer>(0.1);
     CHECK_THROWS_AS(
         cyxwiz::LRWarmup(std::move(optimizer), -1),
         std::invalid_argument);
+
+    optimizer = std::make_unique<cyxwiz::SGDOptimizer>(0.1);
+    CHECK_THROWS_AS(
+        cyxwiz::LRWarmup(
+            std::move(optimizer), 4, static_cast<cyxwiz::WarmupType>(99)),
+        std::invalid_argument);
+
+    optimizer = std::make_unique<cyxwiz::SGDOptimizer>(0.1);
+    CHECK_THROWS_AS(
+        cyxwiz::LRWarmup(
+            std::move(optimizer), 4, cyxwiz::WarmupType::Linear,
+            std::numeric_limits<double>::quiet_NaN()),
+        std::invalid_argument);
+}
+
+TEST_CASE("Optimizer LRWarmup state resumes its nested SGD update",
+          "[scheduler][checkpoint][optimizer]") {
+    constexpr double base_lr = 0.1;
+    float parameter_value = 1.0f;
+    float gradient_value = 0.25f;
+    std::map<std::string, cyxwiz::Tensor> source_parameters{
+        {"w", cyxwiz::Tensor(
+                  {1}, &parameter_value, cyxwiz::DataType::Float32)}};
+    const std::map<std::string, cyxwiz::Tensor> gradients{
+        {"w", cyxwiz::Tensor(
+                  {1}, &gradient_value, cyxwiz::DataType::Float32)}};
+
+    auto source_optimizer =
+        std::make_unique<cyxwiz::SGDOptimizer>(base_lr, 0.9);
+    cyxwiz::LRWarmup source(
+        std::move(source_optimizer), 4, cyxwiz::WarmupType::Linear, base_lr);
+    source.Step(source_parameters, gradients);
+    source.ZeroGrad();
+    source.Step(source_parameters, gradients);
+    source.ZeroGrad();
+    CHECK(source_parameters.at("w").ReadData<float>()[0] ==
+          Catch::Approx(0.988125f).margin(1.0e-7f));
+
+    cyxwiz::LRWarmupState state;
+    std::string error;
+    REQUIRE(source.ExportState(state, error));
+    REQUIRE(error.empty());
+
+    auto resumed_optimizer =
+        std::make_unique<cyxwiz::SGDOptimizer>(base_lr, 0.9);
+    cyxwiz::LRWarmup resumed(
+        std::move(resumed_optimizer), 4, cyxwiz::WarmupType::Linear, base_lr);
+    REQUIRE(resumed.ImportState(state, error));
+    REQUIRE(error.empty());
+    CHECK(resumed.GetCurrentLR() ==
+          Catch::Approx(source.GetCurrentLR()).margin(1.0e-12));
+    CHECK(resumed.GetOptimizer()->GetStepCount() ==
+          source.GetOptimizer()->GetStepCount());
+
+    auto resumed_parameters = source_parameters;
+    source.Step(source_parameters, gradients);
+    resumed.Step(resumed_parameters, gradients);
+    CHECK(resumed_parameters.at("w").ReadData<float>()[0] ==
+          Catch::Approx(source_parameters.at("w").ReadData<float>()[0])
+              .margin(1.0e-7f));
+    CHECK(resumed.GetCurrentLR() ==
+          Catch::Approx(source.GetCurrentLR()).margin(1.0e-12));
+
+    const double accepted_lr = resumed.GetCurrentLR();
+    const int accepted_steps = resumed.GetOptimizer()->GetStepCount();
+    auto invalid = state;
+    invalid.current_step = 5;
+    CHECK_FALSE(resumed.ImportState(invalid, error));
+    CHECK_FALSE(error.empty());
+    CHECK(resumed.GetCurrentLR() == Catch::Approx(accepted_lr).margin(1.0e-12));
+    CHECK(resumed.GetOptimizer()->GetStepCount() == accepted_steps);
+
+    invalid = state;
+    invalid.optimizer_state.hyperparameters.at("momentum") = 0.5;
+    CHECK_FALSE(resumed.ImportState(invalid, error));
+    CHECK(error.find("wrapped optimizer state import failed") !=
+          std::string::npos);
+    CHECK(resumed.GetCurrentLR() == Catch::Approx(accepted_lr).margin(1.0e-12));
+    CHECK(resumed.GetOptimizer()->GetStepCount() == accepted_steps);
+}
+
+TEST_CASE("Optimizer LRWarmup state resumes every PyTorch sequence",
+          "[scheduler][pytorch][state][optimizer]") {
+    const auto cases = LoadOptimizerWarmupFixture();
+    REQUIRE(cases.is_array());
+
+    for (const auto& test_case : cases) {
+        INFO("case=" << test_case.at("name").get<std::string>());
+        const double margin =
+            test_case.at("tolerance").at("atol").get<double>();
+        const double base_lr =
+            test_case.at("base_learning_rate").get<double>();
+        const int warmup_steps = test_case.at("warmup_steps").get<int>();
+        const auto warmup_type =
+            ParseWarmupType(test_case.at("warmup_type").get<std::string>());
+        const auto& expected_steps = test_case.at("expected_steps");
+        const std::size_t split = expected_steps.size() / 2;
+
+        auto source_optimizer =
+            std::make_unique<cyxwiz::SGDOptimizer>(base_lr);
+        cyxwiz::LRWarmup source(
+            std::move(source_optimizer), warmup_steps, warmup_type, base_lr);
+        float parameter_value = test_case.at("initial_parameter").get<float>();
+        float gradient_value = test_case.at("gradient").get<float>();
+        std::map<std::string, cyxwiz::Tensor> source_parameters{
+            {"w", cyxwiz::Tensor(
+                      {1}, &parameter_value, cyxwiz::DataType::Float32)}};
+        const std::map<std::string, cyxwiz::Tensor> gradients{
+            {"w", cyxwiz::Tensor(
+                      {1}, &gradient_value, cyxwiz::DataType::Float32)}};
+        for (std::size_t index = 0; index < split; ++index) {
+            source.Step(source_parameters, gradients);
+        }
+
+        cyxwiz::LRWarmupState state;
+        std::string error;
+        REQUIRE(source.ExportState(state, error));
+        auto resumed_optimizer =
+            std::make_unique<cyxwiz::SGDOptimizer>(base_lr);
+        cyxwiz::LRWarmup resumed(
+            std::move(resumed_optimizer), warmup_steps, warmup_type, base_lr);
+        REQUIRE(resumed.ImportState(state, error));
+        auto resumed_parameters = source_parameters;
+
+        for (std::size_t index = split; index < expected_steps.size(); ++index) {
+            const auto& expected = expected_steps.at(index);
+            resumed.Step(resumed_parameters, gradients);
+            CHECK(resumed.GetCurrentLR() ==
+                  Catch::Approx(expected.at("learning_rate").get<double>())
+                      .margin(margin));
+            CHECK(resumed_parameters.at("w").ReadData<float>()[0] ==
+                  Catch::Approx(expected.at("parameter").get<float>())
+                      .margin(margin));
+            CHECK(resumed.GetWarmupProgress() ==
+                  Catch::Approx(expected.at("warmup_progress").get<double>())
+                      .margin(margin));
+            CHECK(resumed.IsWarmupComplete() ==
+                  expected.at("warmup_complete").get<bool>());
+        }
+    }
 }
 
 TEST_CASE("Scheduler state resumes PyTorch sequences transactionally",

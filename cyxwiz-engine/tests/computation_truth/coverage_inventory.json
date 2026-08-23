@@ -491,15 +491,15 @@
       "operation": "SGD base and momentum update",
       "tier": 1,
       "owner": "cyxwiz-backend/include/cyxwiz/optimizers/sgd.h",
-      "implementation": ["cyxwiz-backend/src/algorithms/optimizers/sgd.cpp"],
-      "callers": ["TrainingExecutor"],
-      "contract": "Step ordering, momentum state, update count and supported decay semantics match the declared PyTorch configuration.",
+      "implementation": ["cyxwiz-backend/src/algorithms/optimizers/sgd.cpp", "cyxwiz-engine/src/core/checkpoint_payload_io.cpp"],
+      "callers": ["LRWarmup", "TrainingExecutor", "checkpointing"],
+      "contract": "Step ordering, persistent momentum state, update count, exact state continuation and supported decay semantics match the declared PyTorch configuration.",
       "supported": "Float32 named parameter maps; exposed learning-rate/momentum options",
       "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_optimizer", "test_training_executor_arrow_parquet"],
-      "execution": "ArrayFire-first where supported",
+      "tests": ["cyxwiz-tests:test_optimizer", "cyxwiz-tests:test_scheduler", "test_debug_executor", "test_training_executor_arrow_parquet"],
+      "execution": "ArrayFire-first with an explicit momentum-correct native CPU fallback",
       "status": "partial",
-      "gaps": ["PyTorch multi-step fixture", "state serialization", "strict residency"]
+      "gaps": ["standalone PyTorch momentum multi-step fixture", "strict residency"]
     },
     {
       "id": "OPT-ADAM-001",
@@ -571,15 +571,15 @@
       "operation": "StepLR, ExponentialLR, CosineAnnealingLR, ReduceLROnPlateau, LinearWarmupLR, OneCycleLR and LRWarmup",
       "tier": 1,
       "owner": "cyxwiz-backend/include/cyxwiz/scheduler.h",
-      "implementation": ["cyxwiz-backend/src/algorithms/scheduler.cpp", "cyxwiz-backend/src/algorithms/optimizers/lr_warmup.cpp"],
+      "implementation": ["cyxwiz-backend/src/algorithms/scheduler.cpp", "cyxwiz-backend/src/algorithms/optimizers/lr_warmup.cpp", "cyxwiz-engine/src/core/checkpoint_payload_io.cpp"],
       "callers": ["public backend API; engine scheduler nodes are explicitly unsupported"],
       "contract": "Learning-rate sequence, epoch/step ordering, reset, plateau patience and warmup boundaries match the declared PyTorch semantics.",
       "supported": "public scheduler configurations",
       "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_scheduler"],
+      "tests": ["cyxwiz-tests:test_scheduler", "test_debug_executor"],
       "execution": "host control state; parameter updates remain backend-resident",
       "status": "partial",
-      "gaps": ["LRWarmup nested optimizer/schedule state serialization", "TrainingExecutor cadence/state/checkpoint ownership"]
+      "gaps": ["TrainingExecutor cadence/state/checkpoint ownership"]
     },
     {
       "id": "METRIC-CLASS-001",
