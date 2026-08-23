@@ -154,6 +154,20 @@ void TestMaterializationMemoryGuardThresholds() {
           "unknown memory without a conservative fallback should fail closed");
     Check(decision.reason.find("unknown") != std::string::npos,
           "unknown-memory decision should explain missing system memory");
+
+    constexpr uint64_t kAcceptanceRows = 53043;
+    const auto tfidf_5000 = cyxwiz::EstimateDenseMaterializationMemory(
+        kAcceptanceRows, 5000, static_cast<uint64_t>(sizeof(float)));
+    const auto tfidf_8000 = cyxwiz::EstimateDenseMaterializationMemory(
+        kAcceptanceRows, 8000, static_cast<uint64_t>(sizeof(float)));
+    Check(!tfidf_5000.overflow &&
+              tfidf_5000.raw_output_bytes == 1060860000ULL &&
+              tfidf_5000.estimated_peak_bytes == 3315187500ULL,
+          "5,000-feature TF-IDF acceptance estimate should remain exact");
+    Check(!tfidf_8000.overflow &&
+              tfidf_8000.raw_output_bytes == 1697376000ULL &&
+              tfidf_8000.estimated_peak_bytes == 5304300000ULL,
+          "8,000-feature TF-IDF acceptance estimate should remain exact");
 }
 
 void TestTFIDFBlocksBeforeAllocationHeavyWork() {

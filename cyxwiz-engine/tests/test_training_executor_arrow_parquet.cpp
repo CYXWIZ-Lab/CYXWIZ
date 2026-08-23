@@ -1877,6 +1877,52 @@ void TestTrainingTracePersistenceCoalescing() {
     Check(!warning_trace.at("warnings").empty(),
           "an immediate warning flush should persist warning evidence");
 
+    collector.RecordTaskProgress(
+        42,
+        "Prepare graph training",
+        "MemoryPreflight",
+        0.04f,
+        "Materialization estimate requires confirmation.",
+        "warning",
+        17,
+        "TF-IDF",
+        4096,
+        0,
+        10,
+        "warning",
+        8192,
+        6144,
+        true,
+        2048,
+        3072,
+        256,
+        "private_commit",
+        "test");
+    const auto materialization_trace =
+        ReadPersistedTrainingTrace(trace_path);
+    Check(materialization_trace.at("materialization_events").size() == 1,
+          "node-scoped task progress should persist as materialization evidence");
+    const auto& materialization_event =
+        materialization_trace.at("materialization_events").front();
+    Check(materialization_event.at("node_id") == 17 &&
+              materialization_event.at("estimated_memory_bytes") == 4096 &&
+              materialization_event.at("process_resident_growth_bytes") == 256,
+          "persisted materialization evidence should retain node, estimate, and actual growth");
+
+    Check(collector.ContinueRun("trace-coalescing-contract-runtime"),
+          "an active preparation trace should accept the runtime run ID");
+    const auto continued_trace = collector.Snapshot();
+    Check(continued_trace.run_id == "trace-coalescing-contract-runtime" &&
+              continued_trace.materialization_events.size() == 1 &&
+              continued_trace.materialization_events.front().run_id ==
+                  continued_trace.run_id,
+          "run-ID handoff should preserve and rebind materialization evidence");
+    const auto continued_persisted = ReadPersistedTrainingTrace(trace_path);
+    Check(continued_persisted.at("run_id") ==
+              "trace-coalescing-contract-runtime" &&
+              continued_persisted.at("materialization_events").size() == 1,
+          "run-ID handoff should persist the preserved materialization evidence");
+
     std::atomic<bool> stop_reader = false;
     std::atomic<bool> reader_saw_invalid_trace = false;
     std::thread reader([&] {

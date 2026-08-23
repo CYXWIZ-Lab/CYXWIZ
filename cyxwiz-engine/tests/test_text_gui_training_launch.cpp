@@ -10,6 +10,7 @@
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/core/sequence_arrow_batcher.h"
 #include "../src/core/sequence_tag_metrics.h"
+#include "../src/core/training_trace_collector.h"
 #include "../src/core/training_run_comparison.h"
 #include "../src/gui/graph_training_launcher.h"
 
@@ -67,6 +68,14 @@ bool WaitFor(const std::function<bool()>& predicate,
 
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
     return predicate();
+}
+
+bool HasActiveTaskNamed(const std::string& name) {
+    const auto tasks = cyxwiz::AsyncTaskManager::Instance().GetActiveTasks();
+    return std::any_of(
+        tasks.begin(), tasks.end(), [&name](const cyxwiz::TaskInfo& task) {
+            return task.name == name;
+        });
 }
 
 std::filesystem::path FindRepoRoot() {
@@ -1102,6 +1111,83 @@ int main() {
     std::atomic<bool> callback_finished{false};
 
     auto config = MakeTrainingConfig(work_dir / "checkpoints");
+    auto safe_memory_preflight = gui::PreflightGraphMaterialization(
+        nodes, links, config, registry);
+    Check(safe_memory_preflight.checked &&
+              safe_memory_preflight.estimate_available,
+          "GUI pre-start check should reuse tokenizer memory evidence");
+    Check(!safe_memory_preflight.blocked &&
+              !safe_memory_preflight.requires_confirmation,
+          "small tokenizer pre-start check should proceed without a prompt");
+    Check(safe_memory_preflight.evidence.node_id == 2 &&
+              safe_memory_preflight.evidence.node_name == "Text Tokenizer",
+          "GUI pre-start evidence should identify the tokenizer node");
+
+    const uint64_t estimated_peak =
+        safe_memory_preflight.evidence.estimated_memory_bytes;
+    Check(estimated_peak > 0,
+          "GUI pre-start evidence should include an estimated peak");
+    cyxwiz::MaterializationMemoryContext warning_memory_context;
+    warning_memory_context.snapshot_override =
+        cyxwiz::MaterializationMemorySnapshot{
+            estimated_peak * 2ULL, estimated_peak * 2ULL, true};
+    auto warning_memory_preflight = gui::PreflightGraphMaterialization(
+        nodes, links, config, registry, warning_memory_context);
+    Check(!warning_memory_preflight.blocked &&
+              warning_memory_preflight.requires_confirmation,
+          "warning estimate should require main-thread confirmation");
+    Check(warning_memory_preflight.status_detail.find(
+              "Downstream shapes") != std::string::npos,
+          "GUI warning should state the truthful downstream scope");
+
+    cyxwiz::MaterializationMemoryContext blocked_memory_context;
+    blocked_memory_context.policy.hard_limit_bytes = 1;
+    blocked_memory_context.snapshot_override =
+        cyxwiz::MaterializationMemorySnapshot{1024, 1024, true};
+    auto blocked_memory_preflight = gui::PreflightGraphMaterialization(
+        nodes, links, config, registry, blocked_memory_context);
+    Check(blocked_memory_preflight.blocked &&
+              !blocked_memory_preflight.requires_confirmation,
+          "hard-limit estimate should block before the launch worker");
+
+    std::atomic<bool> release_preparation_guard{false};
+    auto guarded_preparation = std::make_shared<cyxwiz::LambdaTask>(
+        "Prepare graph training",
+        [&release_preparation_guard](cyxwiz::LambdaTask& task) {
+            while (!release_preparation_guard.load() && !task.ShouldStop()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            task.MarkCompleted("guard fixture complete");
+        });
+    cyxwiz::AsyncTaskManager::Instance().Submit(guarded_preparation);
+    Check(WaitFor(
+              [] { return HasActiveTaskNamed("Prepare graph training"); },
+              std::chrono::seconds(2)),
+          "preparation guard fixture should become active");
+    auto duplicate_launch = gui::StartGraphTrainingFromCompiledConfig(
+        nodes,
+        links,
+        config,
+        registry,
+        std::weak_ptr<cyxwiz::TrainingPlotPanel>{},
+        [](bool) {},
+        [](cyxwiz::TrainingConfiguration,
+           const std::string&,
+           const std::string&,
+           int,
+           int,
+           std::weak_ptr<cyxwiz::TrainingPlotPanel>,
+           std::function<void(bool)>) { return true; });
+    Check(!duplicate_launch.started &&
+              duplicate_launch.status_title ==
+                  "Training preparation already active",
+          "a second launch should be blocked while graph preparation is active");
+    release_preparation_guard.store(true);
+    Check(WaitFor(
+              [] { return !HasActiveTaskNamed("Prepare graph training"); },
+              std::chrono::seconds(2)),
+          "preparation guard fixture should finish cleanly");
+
     auto dispatch = [&](cyxwiz::TrainingConfiguration dispatch_config,
                         const std::string& dataset_name,
                         const std::string& label_column,
@@ -1179,7 +1265,9 @@ int main() {
         registry,
         std::weak_ptr<cyxwiz::TrainingPlotPanel>{},
         [](bool) {},
-        dispatch);
+        dispatch,
+        {},
+        safe_memory_preflight.evidence);
 
     Check(result.started, result.error_message);
     Check(WaitFor([&] { return callback_finished.load(); },
@@ -1187,6 +1275,20 @@ int main() {
           "dispatch should run through the training finish callback");
     Check(dispatch_called.load(), "dispatch should be called");
     Check(callback_started.load(), "training start callback should fire");
+    Check(WaitFor(
+              [] { return !HasActiveTaskNamed("Prepare graph training"); },
+              std::chrono::seconds(2)),
+          "graph preparation task should reach a terminal state");
+    const auto launch_trace =
+        cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    const auto preflight_event = std::find_if(
+        launch_trace.materialization_events.begin(),
+        launch_trace.materialization_events.end(),
+        [](const cyxwiz::TrainingTraceEvent& event) {
+            return event.node_id == 2 && event.estimated_memory_bytes > 0;
+        });
+    Check(preflight_event != launch_trace.materialization_events.end(),
+          "launch preflight evidence should survive a materialization cache hit");
     Check(result.effective_dataset_name == kDatasetName,
           "queued result should report source dataset");
     Check(result.label_column == "label",
@@ -1313,6 +1415,10 @@ int main() {
     Check(WaitFor([&] { return sequence_dispatch_called.load(); },
                   std::chrono::seconds(20)),
           "sequence batch launch should call dispatch");
+    Check(WaitFor(
+              [] { return !HasActiveTaskNamed("Prepare graph training"); },
+              std::chrono::seconds(2)),
+          "sequence preparation should reach a terminal state");
 
     const auto ner_graph_path =
         repo_root / "examples/cyxgraph/NER/ner_bilstm_sequence_tagger.cyxgraph";
@@ -1527,6 +1633,10 @@ int main() {
           "saved NER launch should call dispatch");
     Check(saved_ners_start_callback.load(),
           "saved NER launch should start callback");
+    Check(WaitFor(
+              [] { return !HasActiveTaskNamed("Prepare graph training"); },
+              std::chrono::seconds(2)),
+          "saved NER preparation should reach a terminal state");
     Check(saved_ner_result.effective_dataset_name == kSavedNerDatasetName,
           "saved NER result should use registered dataset name");
     Check(saved_ner_result.operators_applied == 0,
@@ -1587,6 +1697,10 @@ int main() {
     Check(WaitFor([&] { return legacy_text_dispatch_called.load(); },
                   std::chrono::seconds(20)),
           "legacy text dispatch should be called");
+    Check(WaitFor(
+              [] { return !HasActiveTaskNamed("Prepare graph training"); },
+              std::chrono::seconds(2)),
+          "legacy text preparation should reach a terminal state");
     Check(legacy_text_result.effective_dataset_name == kScopeTextDatasetName,
           "legacy text result should keep original dataset");
     Check(legacy_text_result.operators_applied == 0,

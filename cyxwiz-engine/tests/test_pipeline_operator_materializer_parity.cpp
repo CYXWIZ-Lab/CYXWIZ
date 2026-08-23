@@ -322,6 +322,70 @@ void TestStandardScalerEmitsMemoryPreflight() {
           "StandardScaler preflight test should preserve row count");
 }
 
+void TestMaterializerPreflightStopsBeforeApply() {
+    constexpr const char* kSourceName = "preflight_only_source";
+    const auto source_table = MakePreprocessingTable();
+    const std::vector<gui::MLNode> nodes = {
+        MakeDataInputNode(471, kSourceName),
+        MakeOperatorNode(
+            472,
+            gui::NodeType::StandardScaler,
+            "Preflight StandardScaler",
+            {{"columns", "x,y"},
+             {"with_mean", "true"},
+             {"with_std", "true"}}),
+    };
+    const std::vector<gui::NodeLink> links = {
+        {1, 471, 0, 472, 0, gui::LinkType::TensorFlow},
+    };
+
+    auto safe = cyxwiz::PipelineMaterializer::PreflightTable(
+        nodes, links, source_table, kSourceName);
+    Check(safe.success, "preflight-only materializer should complete cleanly");
+    Check(safe.memory_preflight_observed,
+          "preflight-only materializer should capture operator evidence");
+    Check(safe.memory_preflight.memory_risk_level == "safe",
+          "small deterministic preflight should be safe");
+    Check(safe.memory_preflight.node_id == 472 &&
+              safe.memory_preflight.node_name == "Preflight StandardScaler",
+          "preflight evidence should identify the responsible node");
+    Check(safe.operators_applied == 0,
+          "preflight-only materializer must stop before Apply completes");
+    Check(safe.table == source_table,
+          "preflight-only materializer must preserve the source table");
+
+    cyxwiz::MaterializationMemoryContext warning_context;
+    const uint64_t estimated_peak =
+        safe.memory_preflight.estimated_memory_bytes;
+    Check(estimated_peak > 0,
+          "preflight evidence should contain the estimated peak");
+    warning_context.snapshot_override =
+        cyxwiz::MaterializationMemorySnapshot{
+            estimated_peak * 2ULL, estimated_peak * 2ULL, true};
+    auto warning = cyxwiz::PipelineMaterializer::PreflightTable(
+        nodes, links, source_table, kSourceName, warning_context);
+    Check(warning.success && warning.memory_preflight_observed,
+          "warning preflight should remain an allocation-free decision");
+    Check(warning.memory_preflight.memory_risk_level == "warning",
+          "deterministic 50 percent estimate should require warning handling");
+    Check(warning.operators_applied == 0 && warning.table == source_table,
+          "warning preflight must stop before materialization");
+
+    cyxwiz::MaterializationMemoryContext blocked_context;
+    blocked_context.policy.hard_limit_bytes = 1;
+    blocked_context.snapshot_override =
+        cyxwiz::MaterializationMemorySnapshot{1024, 1024, true};
+    auto blocked = cyxwiz::PipelineMaterializer::PreflightTable(
+        nodes, links, source_table, kSourceName, blocked_context);
+    Check(blocked.success && blocked.memory_preflight_observed,
+          "blocked preflight should return its decision without allocating");
+    Check(blocked.memory_preflight.status == "blocked" &&
+              blocked.memory_preflight.memory_risk_level == "blocked",
+          "blocked preflight should preserve the operator decision");
+    Check(blocked.operators_applied == 0 && blocked.table == source_table,
+          "blocked preflight must leave the source table untouched");
+}
+
 void TestStandardScalerExcludesMultipleTargetColumns() {
     cyxwiz::StandardScalerOperator op;
     std::string error;
@@ -712,6 +776,7 @@ void TestMaterializerStructuredFailures() {
 
 int main() {
     TestStandardScalerEmitsMemoryPreflight();
+    TestMaterializerPreflightStopsBeforeApply();
     TestStandardScalerExcludesMultipleTargetColumns();
     TestRegressionMemoryPreflight();
     TestRemainingRowTransformMemoryPreflight();

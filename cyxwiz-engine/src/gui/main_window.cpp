@@ -3099,6 +3099,7 @@ void MainWindow::Render() {
 
     // Render the Compile Graph result popup (triggered from Train -> Compile Graph menu)
     RenderCompileResultPopup();
+    RenderMaterializationMemoryConfirmationPopup();
 
     // Render tutorial overlay (on top of all panels)
     cyxwiz::TutorialSystem::Instance().Render();
@@ -3534,6 +3535,17 @@ void MainWindow::SetDefaultPanelVisibility() {
 }
 
 void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
+    const bool memory_confirmation_accepted =
+        materialization_memory_confirmation_accepted_once_;
+    const int accepted_memory_node_id =
+        accepted_materialization_memory_node_id_;
+    const uint64_t accepted_memory_estimated_bytes =
+        accepted_materialization_memory_estimated_bytes_;
+    const std::string accepted_memory_risk =
+        std::move(accepted_materialization_memory_risk_);
+    materialization_memory_confirmation_accepted_once_ = false;
+    accepted_materialization_memory_node_id_ = -1;
+    accepted_materialization_memory_estimated_bytes_ = 0;
     try {
         spdlog::info("StartTrainingFromGraph: Compiling {} nodes, {} links", nodes.size(), links.size());
 
@@ -3614,6 +3626,81 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         auto& registry = cyxwiz::DataRegistry::Instance();
         auto& tm = cyxwiz::TrainingManager::Instance();
 
+        cyxwiz::MaterializationMemoryPolicy materialization_memory_policy;
+        materialization_memory_policy.hard_limit_bytes =
+            project.GetConfig()
+                .editor_settings
+                .materialization_memory_limit_bytes;
+
+        cyxwiz::MaterializationMemoryContext preflight_memory_context;
+        preflight_memory_context.policy = materialization_memory_policy;
+        spdlog::info(
+            "StartTrainingFromGraph: preparing materialization memory plan");
+        const auto memory_preflight = PreflightGraphMaterialization(
+            nodes, links, config, registry,
+            std::move(preflight_memory_context));
+        if (memory_preflight.blocked) {
+            compile_result_success_ = false;
+            compile_result_mode_ = CompileResultMode::BlockedTrain;
+            compile_result_message_ = memory_preflight.status_title;
+            compile_result_summary_ = memory_preflight.status_detail;
+            compile_result_backend_placements_.clear();
+            compile_result_issues_.clear();
+            compile_result_issues_.push_back({
+                cyxwiz::IssueLevel::Error,
+                memory_preflight.evidence.node_id,
+                memory_preflight.evidence.node_name,
+                memory_preflight.status_detail,
+                cyxwiz::errors::Training::InvalidTrainingSetup});
+            show_compile_result_popup_ = true;
+            spdlog::error(
+                "StartTrainingFromGraph: pre-start materialization memory "
+                "check blocked training: {}",
+                memory_preflight.status_detail);
+            return;
+        }
+        const auto memory_risk_rank = [](const std::string& risk) {
+            if (risk == "risky") return 2;
+            if (risk == "warning") return 1;
+            return 0;
+        };
+        const bool accepted_current_estimate =
+            memory_confirmation_accepted &&
+            accepted_memory_node_id == memory_preflight.evidence.node_id &&
+            accepted_memory_estimated_bytes ==
+                memory_preflight.evidence.estimated_memory_bytes &&
+            memory_risk_rank(memory_preflight.evidence.memory_risk_level) <=
+                memory_risk_rank(accepted_memory_risk);
+        if (memory_preflight.requires_confirmation &&
+            !accepted_current_estimate) {
+            pending_memory_confirmation_nodes_ = nodes;
+            pending_memory_confirmation_links_ = links;
+            materialization_memory_confirmation_node_id_ =
+                memory_preflight.evidence.node_id;
+            materialization_memory_confirmation_estimated_bytes_ =
+                memory_preflight.evidence.estimated_memory_bytes;
+            materialization_memory_confirmation_detail_ =
+                memory_preflight.status_detail;
+            materialization_memory_confirmation_risk_ =
+                memory_preflight.evidence.memory_risk_level;
+            materialization_memory_confirmation_node_ =
+                memory_preflight.evidence.node_name;
+            show_materialization_memory_confirmation_popup_ = true;
+            spdlog::warn(
+                "StartTrainingFromGraph: awaiting main-thread confirmation "
+                "for {} materialization estimate at node '{}'",
+                materialization_memory_confirmation_risk_,
+                materialization_memory_confirmation_node_);
+            return;
+        }
+        if (memory_preflight.requires_confirmation) {
+            spdlog::warn(
+                "StartTrainingFromGraph: user accepted {} materialization "
+                "estimate at node '{}'",
+                memory_preflight.evidence.memory_risk_level,
+                memory_preflight.evidence.node_name);
+        }
+
         // Set up node editor callback to update training animation and pin state.
         // When training ends, flip all nodes' pin state to Trained so pins go
         // solid green - the user's at-a-glance signal that the graph has been run.
@@ -3684,16 +3771,13 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 plot_panel, std::move(callback));
         };
 
-        cyxwiz::MaterializationMemoryPolicy materialization_memory_policy;
-        materialization_memory_policy.hard_limit_bytes =
-            cyxwiz::ProjectManager::Instance()
-                .GetConfig()
-                .editor_settings
-                .materialization_memory_limit_bytes;
         auto launch_result = StartGraphTrainingFromCompiledConfig(
             nodes, links, std::move(config), registry, training_plot_panel_,
             node_editor_callback, dispatch_training,
-            materialization_memory_policy);
+            materialization_memory_policy,
+            memory_preflight.estimate_available
+                ? std::make_optional(memory_preflight.evidence)
+                : std::nullopt);
 
         if (launch_result.started) {
             spdlog::info("Training started successfully");
@@ -3724,6 +3808,101 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         spdlog::error("StartTrainingFromGraph exception: {}", e.what());
     } catch (...) {
         spdlog::error("StartTrainingFromGraph unknown exception");
+    }
+}
+
+void MainWindow::RenderMaterializationMemoryConfirmationPopup() {
+    constexpr const char* kPopupTitle = "Confirm Materialization Memory Risk";
+    if (show_materialization_memory_confirmation_popup_) {
+        ImGui::OpenPopup(kPopupTitle);
+        show_materialization_memory_confirmation_popup_ = false;
+    }
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(720, 430), ImGuiCond_Appearing);
+
+    bool continue_training = false;
+    bool cancel_training = false;
+    if (ImGui::BeginPopupModal(
+            kPopupTitle, nullptr, ImGuiWindowFlags_NoResize)) {
+        const bool risky = materialization_memory_confirmation_risk_ == "risky";
+        const ImVec4 risk_color = risky
+            ? ImVec4(1.0f, 0.48f, 0.30f, 1.0f)
+            : ImVec4(1.0f, 0.82f, 0.28f, 1.0f);
+        ImGui::TextColored(
+            risk_color, "%s memory estimate",
+            risky ? "Risky" : "Warning");
+        if (!materialization_memory_confirmation_node_.empty()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled(
+                "- %s", materialization_memory_confirmation_node_.c_str());
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::BeginChild(
+            "MaterializationMemoryConfirmationBody",
+            ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 18.0f), true);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(
+            materialization_memory_confirmation_detail_.c_str());
+        ImGui::Spacing();
+        ImGui::TextColored(
+            risk_color,
+            "Continuing may cause paging, a slow or unresponsive UI, or a "
+            "capacity stop. No background materialization has started yet.");
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+
+        const float button_width = 160.0f;
+        const float gap = ImGui::GetStyle().ItemSpacing.x;
+        const float total_width = button_width * 2.0f + gap;
+        ImGui::SetCursorPosX(
+            (ImGui::GetWindowSize().x - total_width) * 0.5f);
+        if (ImGui::Button("Cancel", ImVec2(button_width, 0)) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            cancel_training = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Continue anyway", ImVec2(button_width, 0))) {
+            continue_training = true;
+        }
+
+        if (continue_training || cancel_training) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (cancel_training) {
+        pending_memory_confirmation_nodes_.clear();
+        pending_memory_confirmation_links_.clear();
+        materialization_memory_confirmation_detail_.clear();
+        materialization_memory_confirmation_risk_.clear();
+        materialization_memory_confirmation_node_.clear();
+        materialization_memory_confirmation_node_id_ = -1;
+        materialization_memory_confirmation_estimated_bytes_ = 0;
+        spdlog::info(
+            "StartTrainingFromGraph: materialization memory confirmation "
+            "cancelled by user");
+    } else if (continue_training) {
+        auto nodes = std::move(pending_memory_confirmation_nodes_);
+        auto links = std::move(pending_memory_confirmation_links_);
+        accepted_materialization_memory_node_id_ =
+            materialization_memory_confirmation_node_id_;
+        accepted_materialization_memory_estimated_bytes_ =
+            materialization_memory_confirmation_estimated_bytes_;
+        accepted_materialization_memory_risk_ =
+            materialization_memory_confirmation_risk_;
+        materialization_memory_confirmation_detail_.clear();
+        materialization_memory_confirmation_risk_.clear();
+        materialization_memory_confirmation_node_.clear();
+        materialization_memory_confirmation_node_id_ = -1;
+        materialization_memory_confirmation_estimated_bytes_ = 0;
+        materialization_memory_confirmation_accepted_once_ = true;
+        StartTrainingFromGraph(nodes, links);
     }
 }
 

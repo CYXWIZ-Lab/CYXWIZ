@@ -719,12 +719,18 @@ void TrainingExecutor::Train(
     const auto started_run = CrashRunRecorder::LoadLastRun();
     const std::string training_run_id =
         started_run ? started_run->run_id : "training-run";
-    TrainingTraceCollector::Instance().StartRun(training_run_id);
+    auto& training_trace = TrainingTraceCollector::Instance();
+    if (!training_trace.ContinueRun(training_run_id)) {
+        training_trace.StartRun(training_run_id);
+    } else {
+        training_trace.RecordRuntimeEvent(
+            "TrainingSetup",
+            "Training executor attached to existing preparation trace");
+    }
     CrashRunRecorder::Instance().MarkBackendEvent(
         "ExecutionDeviceContext.Bind",
         execution_context.Describe());
-    TrainingTraceCollector::Instance().RecordExecutionDeviceContext(
-        execution_context);
+    training_trace.RecordExecutionDeviceContext(execution_context);
     AppendExecutionDeviceLifecycleEvent(execution_context, training_run_id);
     const auto execution_placement_plan =
         BuildExecutionPlacementPlan(config_, execution_context);

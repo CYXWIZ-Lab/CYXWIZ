@@ -736,6 +736,29 @@ void TrainingTraceCollector::StartRun(const std::string& run_id) {
     MaybePersistLocked(true);
 }
 
+bool TrainingTraceCollector::ContinueRun(const std::string& run_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id.empty() || run_id_.empty() || status_ != "running") {
+        return false;
+    }
+
+    run_id_ = run_id;
+    for (auto& event : events_) {
+        event.run_id = run_id_;
+    }
+    for (auto& event : materialization_events_) {
+        event.run_id = run_id_;
+    }
+    if (has_execution_context_event_) {
+        execution_context_event_.run_id = run_id_;
+    }
+    if (has_placement_plan_event_) {
+        placement_plan_event_.run_id = run_id_;
+    }
+    MaybePersistLocked(true);
+    return true;
+}
+
 void TrainingTraceCollector::RecordStage(TrainingTraceStage stage,
                                          int epoch,
                                          int batch,
@@ -1191,6 +1214,13 @@ void TrainingTraceCollector::RecordTaskProgress(
     events_.push_back(event);
     while (events_.size() > settings_.max_recent_events) {
         events_.pop_front();
+    }
+
+    if (event.node_id >= 0) {
+        materialization_events_.push_back(event);
+        while (materialization_events_.size() > settings_.max_recent_events) {
+            materialization_events_.pop_front();
+        }
     }
 
     if (IsTrainingTaskAttentionStatus(event.status) &&

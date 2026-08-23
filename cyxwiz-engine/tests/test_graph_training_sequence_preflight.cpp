@@ -6,6 +6,7 @@
 
 #include <arrow/api.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -194,6 +195,14 @@ bool WaitFor(const std::function<bool()>& predicate,
     return predicate();
 }
 
+bool HasActiveTaskNamed(const std::string& name) {
+    const auto tasks = cyxwiz::AsyncTaskManager::Instance().GetActiveTasks();
+    return std::any_of(
+        tasks.begin(), tasks.end(), [&name](const cyxwiz::TaskInfo& task) {
+            return task.name == name;
+        });
+}
+
 std::string LatestFailedTaskError() {
     for (const auto& task :
          cyxwiz::AsyncTaskManager::Instance().GetRecentTasks(10)) {
@@ -272,6 +281,10 @@ int main() {
     Check(WaitFor([&] { return dispatch_called.load(); },
                   std::chrono::seconds(5)),
           "valid sequence preflight should call dispatch");
+    Check(WaitFor(
+              [] { return !HasActiveTaskNamed("Prepare graph training"); },
+              std::chrono::seconds(2)),
+          "valid sequence preparation should reach a terminal state");
 
     {
         const std::vector<gui::MLNode> role_nodes = {

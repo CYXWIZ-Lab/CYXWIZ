@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,17 @@ struct GraphTrainingLaunchResult {
     int batch_size = 0;
 };
 
+struct GraphMaterializationPreflightResult {
+    bool checked = false;
+    bool estimate_available = false;
+    bool blocked = false;
+    bool requires_confirmation = false;
+    std::string dataset_name;
+    std::string status_title;
+    std::string status_detail;
+    cyxwiz::PipelineOperatorProgress evidence;
+};
+
 using GraphTrainingDispatch = std::function<bool(
     cyxwiz::TrainingConfiguration config,
     const std::string& dataset_name,
@@ -49,6 +61,16 @@ using GraphTrainingDispatch = std::function<bool(
 // evaluation preparation.
 cyxwiz::MaterializationCacheConfig GraphMaterializationCacheConfig();
 
+// Synchronous, allocation-light pre-start check. It executes the existing
+// operator-owned estimator and stops at its first memory decision; it does not
+// publish a dataset or approximate unknown downstream shapes.
+GraphMaterializationPreflightResult PreflightGraphMaterialization(
+    const std::vector<MLNode>& nodes,
+    const std::vector<NodeLink>& links,
+    const cyxwiz::TrainingConfiguration& config,
+    cyxwiz::DataRegistry& registry,
+    cyxwiz::MaterializationMemoryContext memory_context = {});
+
 GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     const std::vector<MLNode>& nodes,
     const std::vector<NodeLink>& links,
@@ -57,6 +79,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel,
     std::function<void(bool)> node_editor_callback,
     GraphTrainingDispatch dispatch,
-    cyxwiz::MaterializationMemoryPolicy materialization_memory_policy = {});
+    cyxwiz::MaterializationMemoryPolicy materialization_memory_policy = {},
+    std::optional<cyxwiz::PipelineOperatorProgress>
+        materialization_preflight_evidence = std::nullopt);
 
 } // namespace gui

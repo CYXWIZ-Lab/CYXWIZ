@@ -64,6 +64,10 @@ struct PipelineOperatorExecutionContext {
     MaterializationMemoryContext memory;
     PipelineOperatorCancellationQuery cancellation_requested;
     ProcessMemorySnapshotQuery process_memory_snapshot;
+    // Pre-start planning uses the normal operator estimator and stops as soon
+    // as that estimator publishes its first memory decision. The materializer
+    // owns the control flow; operators never need a UI-specific branch.
+    bool stop_after_memory_preflight = false;
 
     bool IsCancellationRequested() const {
         return cancellation_requested && cancellation_requested();

@@ -29,6 +29,10 @@ struct MaterializationCapacityExceeded final {
     std::string message;
 };
 
+struct MaterializationPreflightComplete final {
+    PipelineOperatorProgress event;
+};
+
 void SetMaterializationFailure(
     MaterializeTableResult& result,
     MaterializationFailureKind kind,
@@ -332,6 +336,20 @@ std::map<std::string, std::string> BuildOperatorParams(
 
 } // namespace
 
+MaterializeTableResult PipelineMaterializer::PreflightTable(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    const std::shared_ptr<arrow::Table>& source_table,
+    const std::string& source_dataset_name,
+    MaterializationMemoryContext memory_context) {
+    PipelineOperatorExecutionContext execution_context;
+    execution_context.memory = std::move(memory_context);
+    execution_context.stop_after_memory_preflight = true;
+    return MaterializeTable(
+        nodes, links, source_table, source_dataset_name, {},
+        std::move(execution_context));
+}
+
 MaterializeTableResult PipelineMaterializer::MaterializeTable(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
@@ -498,6 +516,11 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
                     if (progress_callback) {
                         progress_callback(with_node);
                     }
+                    if (execution_context.stop_after_memory_preflight &&
+                        !with_node.memory_risk_level.empty()) {
+                        throw MaterializationPreflightComplete{
+                            std::move(with_node)};
+                    }
                     if (execution_context.IsCancellationRequested()) {
                         throw MaterializationCancelled();
                     }
@@ -533,6 +556,11 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
                     MaterializationFailureKind::Capacity,
                     capacity.message,
                     node);
+                return result;
+            } catch (MaterializationPreflightComplete& preflight) {
+                result.memory_preflight_observed = true;
+                result.memory_preflight = std::move(preflight.event);
+                result.table = source_table;
                 return result;
             } catch (const std::bad_alloc&) {
                 SetMaterializationFailure(

@@ -221,6 +221,9 @@ public:
     static TrainingTraceCollector& Instance();
 
     void StartRun(const std::string& run_id);
+    // Rebind an active preparation trace to the runtime's canonical run ID
+    // without discarding already-recorded materialization evidence.
+    bool ContinueRun(const std::string& run_id);
     void RecordStage(TrainingTraceStage stage,
                      int epoch,
                      int batch,
