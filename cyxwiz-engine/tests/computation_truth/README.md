@@ -108,6 +108,14 @@ typed learning-rate, step-count, momentum, and velocity state; its native CPU
 fallback applies the same momentum equation, and `ZeroGrad()` preserves that
 persistent optimizer state because gradients are caller-owned maps.
 
+`test_debug_executor --checkpoint-serialization-only` proves the version 1.0
+model-parameter payload contract for every supported Tensor dtype: Float32,
+Float64, Int32, Int64, and UInt8. Shape, dtype, and exact payload bytes must
+round-trip, and the file must contain exactly the declared payload size.
+Unsupported dtype headers and truncated payloads must fail closed
+without mutating the active model. Checkpoint reads and writes remain explicit
+bounded host I/O; this is serialization evidence, not native CPU fallback.
+
 `test_training_executor_arrow_parquet --uneven-epoch-metrics-only` runs the
 focused full-epoch aggregation contract. It compares `{4, 2}` Train and Dev
 metrics against evaluating the same unchanged model over each six-row role as

@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -438,6 +439,170 @@ void TestLayerNormCheckpointRoundTrip() {
 
     std::filesystem::remove_all(root);
     spdlog::info("  OK: LayerNorm checkpoint parameters round-trip");
+}
+
+class CheckpointParameterModule final : public Module {
+public:
+    explicit CheckpointParameterModule(Tensor parameter)
+        : parameter_(std::move(parameter)) {}
+
+    Tensor Forward(const Tensor& input) override { return input; }
+    Tensor Backward(const Tensor& grad_output) override { return grad_output; }
+    std::map<std::string, Tensor> GetParameters() override {
+        return {{"value", parameter_}};
+    }
+    void SetParameters(const std::map<std::string, Tensor>& params) override {
+        const auto found = params.find("value");
+        if (found != params.end()) {
+            parameter_ = found->second;
+        }
+    }
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override { return "CheckpointParameter"; }
+
+private:
+    Tensor parameter_;
+};
+
+template <typename T>
+void CheckCheckpointParameterRoundTrip(
+    DataType dtype,
+    const std::vector<T>& source_values,
+    const std::string& label) {
+    const std::vector<T> target_values(source_values.size(), T{});
+    SequentialModel source;
+    source.AddModule(std::make_unique<CheckpointParameterModule>(
+        Tensor({source_values.size()}, source_values.data(), dtype)));
+    SequentialModel target;
+    target.AddModule(std::make_unique<CheckpointParameterModule>(
+        Tensor({target_values.size()}, target_values.data(), dtype)));
+
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        ("cyxwiz_checkpoint_" + label + "_compatibility_test");
+    std::filesystem::remove_all(root);
+    CheckpointManager manager(root.string());
+
+    TrainingMetrics metrics;
+    metrics.current_epoch = 4;
+    const std::string saved =
+        manager.SaveCheckpoint(source, nullptr, metrics, label);
+    ExpectTrue(!saved.empty(),
+               (label + " checkpoint should save").c_str());
+    const auto tensor_path =
+        root / label / "model" / "layer0_value.bin";
+    const uintmax_t expected_file_size =
+        sizeof(uint32_t) + sizeof(uint64_t) + sizeof(uint32_t) +
+        source_values.size() * sizeof(T);
+    ExpectTrue(std::filesystem::file_size(tensor_path) == expected_file_size,
+               (label + " checkpoint must write the exact payload size").c_str());
+
+    const auto loaded = manager.LoadCheckpoint(target, nullptr, label);
+    ExpectTrue(loaded.has_value(),
+               (label + " checkpoint should load").c_str());
+    const auto params = target.GetParameters();
+    const auto found = params.find("layer0.value");
+    ExpectTrue(found != params.end(),
+               (label + " parameter should exist after load").c_str());
+    ExpectTrue(found->second.GetDataType() == dtype,
+               (label + " checkpoint must preserve dtype").c_str());
+    ExpectTrue(found->second.Shape() ==
+                   std::vector<size_t>{source_values.size()},
+               (label + " checkpoint must preserve shape").c_str());
+    ExpectTrue(std::memcmp(found->second.ReadData(), source_values.data(),
+                           source_values.size() * sizeof(T)) == 0,
+               (label + " checkpoint must preserve exact bytes").c_str());
+
+    std::filesystem::remove_all(root);
+}
+
+void TestCheckpointTensorSerializationCompatibility() {
+    spdlog::info("--- TestCheckpointTensorSerializationCompatibility ---");
+    CheckCheckpointParameterRoundTrip<float>(
+        DataType::Float32, {1.25f, -2.5f, 3.75f}, "float32");
+    CheckCheckpointParameterRoundTrip<double>(
+        DataType::Float64, {1.25, -2.5, 3.75}, "float64");
+    CheckCheckpointParameterRoundTrip<int32_t>(
+        DataType::Int32, {1, -2, 300000}, "int32");
+    CheckCheckpointParameterRoundTrip<int64_t>(
+        DataType::Int64, {1, -2, INT64_C(5000000000)}, "int64");
+    CheckCheckpointParameterRoundTrip<uint8_t>(
+        DataType::UInt8, {0, 127, 255}, "uint8");
+
+    const std::vector<double> source_values = {1.25, -2.5, 3.75};
+    const std::vector<double> target_values = {9.0, 8.0, 7.0};
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "cyxwiz_checkpoint_tensor_corruption_test";
+    std::filesystem::remove_all(root);
+    CheckpointManager manager(root.string());
+    SequentialModel source;
+    source.AddModule(std::make_unique<CheckpointParameterModule>(
+        Tensor({source_values.size()}, source_values.data(), DataType::Float64)));
+    TrainingMetrics metrics;
+
+    const auto make_target = [&]() {
+        SequentialModel target;
+        target.AddModule(std::make_unique<CheckpointParameterModule>(
+            Tensor({target_values.size()}, target_values.data(),
+                   DataType::Float64)));
+        return target;
+    };
+    const auto assert_target_unchanged = [&](SequentialModel& target,
+                                              const char* message) {
+        const auto params = target.GetParameters();
+        const auto found = params.find("layer0.value");
+        ExpectTrue(found != params.end(), message);
+        ExpectTrue(std::memcmp(found->second.ReadData(), target_values.data(),
+                               target_values.size() * sizeof(double)) == 0,
+                   message);
+    };
+
+    ExpectTrue(!manager.SaveCheckpoint(
+                    source, nullptr, metrics, "unsupported-dtype").empty(),
+               "unsupported-dtype fixture should save");
+    const auto unsupported_path =
+        root / "unsupported-dtype" / "model" / "layer0_value.bin";
+    {
+        std::fstream file(unsupported_path,
+                          std::ios::binary | std::ios::in | std::ios::out);
+        ExpectTrue(file.is_open(), "dtype fixture should open for corruption");
+        file.seekp(sizeof(uint32_t) + sizeof(uint64_t));
+        const uint32_t unsupported_dtype = UINT32_MAX;
+        file.write(reinterpret_cast<const char*>(&unsupported_dtype),
+                   sizeof(unsupported_dtype));
+    }
+    auto unsupported_target = make_target();
+    ExpectTrue(!manager.LoadCheckpoint(
+                    unsupported_target, nullptr, "unsupported-dtype").has_value(),
+               "unsupported checkpoint dtype must fail closed");
+    ExpectTrue(manager.GetLastError().find("unsupported data type") !=
+                   std::string::npos,
+               "unsupported checkpoint dtype should be diagnosed");
+    assert_target_unchanged(
+        unsupported_target,
+        "unsupported dtype must not mutate the active model");
+
+    ExpectTrue(!manager.SaveCheckpoint(
+                    source, nullptr, metrics, "truncated").empty(),
+               "truncated-payload fixture should save");
+    const auto truncated_path =
+        root / "truncated" / "model" / "layer0_value.bin";
+    std::filesystem::resize_file(
+        truncated_path, std::filesystem::file_size(truncated_path) - 1);
+    auto truncated_target = make_target();
+    ExpectTrue(!manager.LoadCheckpoint(
+                    truncated_target, nullptr, "truncated").has_value(),
+               "truncated checkpoint payload must fail closed");
+    ExpectTrue(manager.GetLastError().find("truncated") != std::string::npos,
+               "truncated checkpoint payload should be diagnosed");
+    assert_target_unchanged(
+        truncated_target,
+        "truncated payload must not mutate the active model");
+
+    std::filesystem::remove_all(root);
+    spdlog::info(
+        "  OK: checkpoint tensor dtype matrix and corruption guards");
 }
 
 void TestCheckpointRejectsIncompatibleModelWithoutMutation() {
@@ -2027,9 +2192,16 @@ void TestLossMetricExplainerContract() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     spdlog::set_level(spdlog::level::info);
     try {
+        if (argc == 2 &&
+            std::string(argv[1]) == "--checkpoint-serialization-only") {
+            TestCheckpointTensorSerializationCompatibility();
+            std::cout << "Checkpoint serialization compatibility passed\n";
+            return 0;
+        }
+
         const bool run_slow_sentiment =
             std::getenv("CYXWIZ_RUN_SLOW_DEBUG_TESTS") != nullptr;
 
@@ -2037,6 +2209,7 @@ int main() {
         TestBuildSequentialLayerNorm();
         TestBuildSequentialMultiHeadAttention();
         TestLayerNormCheckpointRoundTrip();
+        TestCheckpointTensorSerializationCompatibility();
         TestCheckpointRejectsIncompatibleModelWithoutMutation();
         TestCheckpointFormatCapabilitiesFailClosed();
         TestCheckpointManifestV2AtomicContract();

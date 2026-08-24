@@ -685,13 +685,13 @@
       "owner": "cyxwiz-engine/src/core/training_executor.h",
       "implementation": ["cyxwiz-engine/src/core/training_executor.cpp", "cyxwiz-engine/src/core/checkpoint_manager.cpp", "cyxwiz-engine/src/core/crash_run_recorder.cpp", "cyxwiz-engine/src/core/training_manager.cpp", "cyxwiz-engine/src/gui/panels/training_plot_panel.cpp", "cyxwiz-engine/src/gui/panels/studio_debugger_panel.cpp"],
       "callers": ["model export", "trace", "debug-run JSON", "task state", "dashboard", "debugger"],
-      "contract": "Last executed/stopping epoch is immutable run history; restored checkpoint epoch/path and active-model provenance are separate fields.",
-      "supported": "checkpoint-enabled runs",
+      "contract": "Last executed/stopping epoch is immutable run history; restored checkpoint epoch/path and active-model provenance are separate fields. Version 1.0 model parameters preserve shape, dtype and exact payload bytes for every supported Tensor dtype; invalid payloads fail before active-model mutation.",
+      "supported": "checkpoint-enabled runs and version 1.0 Float32, Float64, Int32, Int64 and UInt8 model-parameter payloads",
       "oracle": "deterministic improving-then-plateau fixture",
-      "tests": ["test_training_executor_arrow_parquet", "test_training_manager_session", "test_text_gui_training_launch --training-status-contract-only", "test_debugger_contracts"],
+      "tests": ["test_debug_executor --checkpoint-serialization-only", "test_training_executor_arrow_parquet", "test_training_manager_session", "test_text_gui_training_launch --training-status-contract-only", "test_debugger_contracts"],
       "execution": "bounded checkpoint output/input boundary",
       "status": "partial",
-      "gaps": ["checkpoint serialization compatibility matrix", "live UI validation"]
+      "gaps": ["live UI validation"]
     },
     {
       "id": "LIFE-CADENCE-001",
