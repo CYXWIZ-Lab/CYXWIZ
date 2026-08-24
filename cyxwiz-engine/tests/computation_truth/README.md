@@ -177,6 +177,17 @@ Parquet, and external tabular cases require strict zero-fallback ArrayFire
 execution. Sequence exposes its declared compatibility policy because token
 accuracy is not yet a strict-resident metric.
 
+`test_training_executor_dataset_handle` exercises the same production
+`TrainingExecutor`/`DatasetBatcher` control loop for the legacy
+`DatasetHandle` compatibility path. Its barrier-controlled resume case proves
+three batches and three optimizer updates occur exactly once; its cancellation
+case proves a paused run closes after the first batch without another update.
+Both cases commit CPU device 0 through the pending Preferences selection,
+repeat exact-route authorization in run preflight, and require certified
+`arrayfire_cpu:0` execution with strict zero native fallback. Target-only seams
+for unrelated optional preprocessing and annotation services fail loudly if
+that out-of-scope behavior is entered.
+
 Run:
 
 ```powershell
@@ -199,6 +210,9 @@ build\bin\Debug\test_training_executor_arrow_parquet.exe --uneven-epoch-metrics-
 build\bin\Debug\test_training_executor_arrow_parquet.exe --gradient-accumulation-parity-only
 
 build\bin\Debug\test_training_executor_arrow_parquet.exe --paused-control-matrix-only
+
+cmake --build build --config Debug --target test_training_executor_dataset_handle -- /m:4 /v:minimal
+build\bin\Debug\test_training_executor_dataset_handle.exe
 ```
 
 These checks work when `PyTorch/LibTorch: OFF`: PyTorch is used only to

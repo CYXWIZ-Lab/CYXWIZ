@@ -3588,9 +3588,9 @@ function(configure_training_executor_harness target_name)
         target_compile_definitions(${target_name} PRIVATE
             _CRT_SECURE_NO_WARNINGS
             NOMINMAX
-            CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
         )
-    else()
+    endif()
+    if(NOT (ARGC GREATER 1 AND "${ARGV1}" STREQUAL "LEGACY"))
         target_compile_definitions(${target_name} PRIVATE
             CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
         )
@@ -3607,6 +3607,16 @@ add_executable(test_training_executor_arrow_parquet
     ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
 )
 configure_training_executor_harness(test_training_executor_arrow_parquet)
+
+# ===== Test: Legacy DatasetHandle cooperative lifecycle =====
+add_executable(test_training_executor_dataset_handle
+    tests/test_training_executor_dataset_handle.cpp
+    tests/legacy_dataset_harness_stubs.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
+    src/core/dataset_batcher.cpp
+)
+configure_training_executor_harness(
+    test_training_executor_dataset_handle LEGACY)
 
 add_custom_target(copy_test_training_executor_arrow_parquet_fixture
     COMMAND ${CMAKE_COMMAND} -E make_directory

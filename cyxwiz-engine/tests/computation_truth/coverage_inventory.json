@@ -654,12 +654,12 @@
       "implementation": ["cyxwiz-engine/src/core/training_executor.cpp", "cyxwiz-engine/src/core/training_manager.cpp", "cyxwiz-engine/src/core/async_task_manager.cpp", "cyxwiz-engine/src/gui/panels/training_plot_panel.cpp"],
       "callers": ["plugins", "task controls", "trace", "dashboard", "debugger"],
       "contract": "Plugin stop is early_stopped/plugin_requested_early_stop; user stop is cancelled/user_cancelled; neither is completed, and cancellation while paused cannot release the wait into another batch or optimizer update.",
-      "supported": "Arrow, Parquet, external IBatcher and sequence ISequenceBatcher TrainingExecutor runs; legacy DatasetHandle compatibility remains pending",
+      "supported": "Arrow, Parquet, external IBatcher, sequence ISequenceBatcher, and legacy DatasetHandle TrainingExecutor runs",
       "oracle": "deterministic lifecycle state machine",
-      "tests": ["test_training_executor_arrow_parquet --paused-control-matrix-only", "test_training_manager_session", "test_pipeline_executor_operator_routing --async-task-terminal-contract", "test_text_gui_training_launch --training-status-contract-only"],
+      "tests": ["test_training_executor_arrow_parquet --paused-control-matrix-only", "test_training_executor_dataset_handle", "test_training_manager_session", "test_pipeline_executor_operator_routing --async-task-terminal-contract", "test_text_gui_training_launch --training-status-contract-only"],
       "execution": "run control plane",
       "status": "partial",
-      "gaps": ["legacy DatasetHandle compatibility mode", "live UI validation"]
+      "gaps": ["live UI validation"]
     },
     {
       "id": "LIFE-FAIL-001",
@@ -750,12 +750,12 @@
       "implementation": ["cyxwiz-engine/src/core/training_executor.cpp"],
       "callers": ["task controls"],
       "contract": "Pause/resume neither duplicates nor skips batches, callbacks, or optimizer updates; cancellation while paused performs no subsequent work; engine scheduler nodes remain explicitly unsupported.",
-      "supported": "Arrow, Parquet, external IBatcher and sequence ISequenceBatcher cooperative control; legacy DatasetHandle compatibility remains pending",
+      "supported": "Arrow, Parquet, external IBatcher, sequence ISequenceBatcher, and legacy DatasetHandle cooperative control",
       "oracle": "deterministic barrier-controlled run",
-      "tests": ["test_training_executor_arrow_parquet --paused-control-matrix-only"],
+      "tests": ["test_training_executor_arrow_parquet --paused-control-matrix-only", "test_training_executor_dataset_handle"],
       "execution": "run control plane",
-      "status": "partial",
-      "gaps": ["legacy DatasetHandle compatibility mode"]
+      "status": "covered",
+      "gaps": []
     }
   ]
 }
