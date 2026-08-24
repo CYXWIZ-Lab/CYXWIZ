@@ -84,9 +84,14 @@ calls before a successful forward and rejects gradient shape/dtype drift,
 preserves all five Tensor dtypes byte-for-byte, and proves rank-3-to-rank-2
 forward plus rank-2-to-rank-3 backward remain ArrayFire-resident with zero
 native fallback and zero host synchronization on ArrayFire CPU and every
-installed CUDA/OpenCL device. oneAPI remains an isolated-process gap: the
-installed plugin crashed a direct in-process Flatten matrix and therefore is
-not placed in the monolithic `cyxwiz-tests` process.
+installed CUDA/OpenCL device. `cyxwiz-route-probe` now owns the equivalent
+strict Float32 forward/backward contract as a released, process-isolated route
+operation. Installed oneAPI device 1 passes with exact backend/device identity,
+zero fallback, and zero compute-time host synchronization. Installed oneAPI
+device 0 is rejected safely: Intel `igc64.dll` raises access violation
+`0xC0000005` during device input creation. The probe suppresses Windows fault
+dialogs, and the route-qualification parent classifies crash/timeout outcomes;
+the known-bad route is never executed inside monolithic `cyxwiz-tests`.
 
 `test_training_batcher_setup` consumes the weighted-sampler case from the same
 fixture. It verifies inverse-class-frequency replacement sampling, fixed epoch

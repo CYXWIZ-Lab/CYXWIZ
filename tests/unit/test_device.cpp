@@ -438,7 +438,7 @@ TEST_CASE("Route qualification snapshot rejects unsafe and stale evidence",
     snapshot.operation_manifest_id.clear();
 
     auto unsafe = record;
-    unsafe.pass_count = 20;
+    unsafe.pass_count = unsafe.operation_count - 1;
     unsafe.crash_count = 1;
     unsafe.certified = false;
     snapshot.routes = {unsafe};
@@ -509,8 +509,8 @@ TEST_CASE("Route qualification JSON is validated before installation",
     "display_name": "Intel(R) Test Graphics",
     "device_kind": "gpu",
     "identity_source": "test_selector",
-    "operation_count": 21,
-    "pass_count": 21,
+    "operation_count": )" << cyxwiz::kRouteQualificationOperationCount << R"(,
+    "pass_count": )" << cyxwiz::kRouteQualificationOperationCount << R"(,
     "unavailable_count": 0,
     "failure_count": 0,
     "timeout_count": 0,
@@ -779,7 +779,7 @@ TEST_CASE("Qualification service publishes a complete exact-route matrix",
     CHECK(operations.size() ==
           cyxwiz::RequiredRouteQualificationOperations().size());
     CHECK(operations.front() == "route_metadata");
-    CHECK(operations.back() == "linear_init");
+    CHECK(operations.back() == "cyxwiz_flatten_forward_backward");
     REQUIRE_FALSE(progress.empty());
     CHECK(progress.back().status ==
           cyxwiz::RouteQualificationRunStatus::Completed);

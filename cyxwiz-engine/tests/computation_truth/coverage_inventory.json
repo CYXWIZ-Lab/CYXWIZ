@@ -320,10 +320,10 @@
       "contract": "Forward matches torch.nn.Flatten without value reordering; backward accepts only the exact cached output shape/dtype and restores the cached input shape.",
       "supported": "rank >= 2, configured start_dim through the final dimension, and Float32/Float64/Int32/Int64/UInt8 payload preservation",
       "oracle": "generated PyTorch 2.10 torch.nn.Flatten forward/autograd fixtures",
-      "tests": ["cyxwiz-tests:test_flatten_layer", "cyxwiz-tests:test_tensor"],
-      "execution": "strict ArrayFire-resident cross-rank reshape with zero native fallback or host synchronization on ArrayFire CPU and every installed CUDA/OpenCL device",
+      "tests": ["cyxwiz-tests:test_flatten_layer", "cyxwiz-tests:test_tensor", "cyxwiz-route-probe:cyxwiz_flatten_forward_backward", "test_route_qualification_process"],
+      "execution": "strict ArrayFire-resident cross-rank reshape with zero native fallback or host synchronization on ArrayFire CPU, every installed CUDA/OpenCL device, and oneAPI device 1; oneAPI device 0 is rejected through the isolated route-qualification boundary",
       "status": "partial",
-      "gaps": ["isolated oneAPI operation probe; the installed plugin crashes the direct in-process Flatten matrix"]
+      "gaps": ["installed oneAPI device 0 provider/runtime repair: igc64.dll raises access violation 0xC0000005 during device input creation; rerun isolated qualification after driver/plugin update"]
     },
     {
       "id": "LAYER-DROPOUT-001",
