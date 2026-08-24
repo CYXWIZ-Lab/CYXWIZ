@@ -79,6 +79,21 @@ if(CYXWIZ_BUILD_TESTS)
         CXX_STANDARD 20
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
+
+    add_executable(test_installer_verification_summary
+        "${_cyxwiz_installer_engine_dir}/tests/test_installer_verification_summary.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/installer_verification_summary.cpp"
+    )
+    target_include_directories(test_installer_verification_summary PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+        "${_cyxwiz_installer_backend_dir}/include"
+        "${CMAKE_BINARY_DIR}/cyxwiz-backend/include"
+        "${_cyxwiz_installer_generated_include}"
+    )
+    set_target_properties(test_installer_verification_summary PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
 endif()
 
 find_package(OpenGL REQUIRED)
@@ -87,6 +102,8 @@ set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/installer/backend_pack_installer_platform.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_catalog_adapter.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/core/installer_verification_summary.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_snapshot.cpp"
 )
 if(WIN32)
     add_executable(cyxwiz-installer WIN32 ${_cyxwiz_installer_sources})
@@ -107,6 +124,7 @@ target_link_libraries(cyxwiz-installer PRIVATE
     OpenGL::GL
     cyxwiz-backend-pack-service
     cyxwiz-runtime-bootstrap
+    nlohmann_json::nlohmann_json
 )
 if(WIN32)
     target_link_libraries(cyxwiz-installer PRIVATE shell32)

@@ -383,14 +383,11 @@ def copy_build_payload(
             paths.build / f"cyxwiz-backend-pack-installer{exe_suffix}",
             "signed backend-pack installer",
         ),
+        require_file(
+            paths.build / f"cyxwiz-runtime-bootstrapper{exe_suffix}",
+            "package-local runtime bootstrapper",
+        ),
     ]
-    if system == "windows":
-        helpers.append(
-            require_file(
-                paths.build / "cyxwiz-runtime-bootstrapper.exe",
-                "package-local runtime bootstrapper",
-            )
-        )
     backend_runtime(paths, lib_suffix)
     require_directory(paths.resources, "Engine resources")
 

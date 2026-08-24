@@ -55,22 +55,27 @@ Both shell families call one standard-library implementation:
 
 - `scripts/package_release.py`
 - `scripts/sign_pack_manifest.py`
-- `bootstrapper/` native Windows launcher and runtime-state resolver
+- `bootstrapper/` native desktop launchers and shared runtime-state resolver
 - `scripts/package_minimal.bat` and `package_minimal.sh`
 - `scripts/package_full.bat` and `package_full.sh`
 
 The base and optional-pack profiles call `package_release.py` directly so the
 release command explicitly names the artifact being produced.
 
-### Windows runtime bootstrapper
+### Native runtime bootstrapper
 
-The installed app-level `cyxwiz-runtime-bootstrapper.exe` reads only
+The installed app-level `cyxwiz-runtime-bootstrapper` (`.exe` on Windows)
+reads only
 `runtime/active-runtime.json`, resolves one versioned base and its explicitly
-selected optional packs, and launches the Engine from that base. It replaces
-the inherited developer `PATH`, removes ArrayFire/Python path overrides, and
-the Engine installs `SetDefaultDllDirectories`/`AddDllDirectory` restrictions
-before it initializes optional runtimes. Direct Engine launch remains
-available for development builds when `CYXWIZ_ACTIVE_RUNTIME_ROOT` is absent.
+selected optional packs, and launches the Engine from that base. Windows
+replaces inherited developer `PATH`, and the Engine installs
+`SetDefaultDllDirectories`/`AddDllDirectory` restrictions before initializing
+optional runtimes. Linux and macOS replace inherited dynamic-loader paths with
+the exact active base/pack directories and launch through `fork`/`exec` without
+a shell. All platforms remove ArrayFire/Python overrides, propagate exact
+runtime identity, support `--installer`, and apply queued Repair only after the
+Engine exits. Direct Engine launch remains available for development builds
+when `CYXWIZ_ACTIVE_RUNTIME_ROOT` is absent.
 
 The Engine's bounded `--package-smoke` diagnostic is accepted only through an
 active runtime layout. It verifies that inherited ArrayFire/Python overrides
@@ -85,12 +90,18 @@ contains the legacy PATH-mutating batch launcher; activation and the app-level
 bootstrapper are required.
 
 Repair is intentionally split from the minimal launcher. After the Engine
-queues an exact pack Repair and exits, the bootstrapper dispatches the sibling
-`cyxwiz-backend-pack-installer` (`.exe` on Windows). That helper verifies the signed catalog
-and pack, stages an immutable replacement, and qualifies it through the
-isolated route probe before activation. It does not link the backend or
-ArrayFire DLLs, and a failed qualification leaves the pack inactive and the
-request available for retry.
+queues an exact pack Repair and exits, the bootstrapper dispatches the exact
+`cyxwiz-backend-pack-installer` (`.exe` on Windows) from the active signed base.
+That helper verifies the signed catalog and pack, stages an immutable
+replacement, and qualifies it through the isolated route probe before
+activation. It does not link the backend or ArrayFire DLLs, and a failed
+qualification leaves the pack inactive and the request available for retry.
+
+Fresh delivery rechecks and atomically publishes the signed base's stable
+`cyxwiz-runtime-bootstrapper` beside `runtime/` before generation-1 activation.
+Its `--installer` mode resolves the same versioned `cyxwiz-installer` GUI from
+the active base, allowing later platform registration to point at one stable
+launcher without copying the GUI or dependency closure into the product root.
 
 The packaged desktop application also includes `cyxwiz-installer` (`.exe` on
 Windows), a standalone graphical component manager. Recommended, CPU-only,
@@ -104,6 +115,12 @@ recommendation reads stable kernel vendor IDs. macOS remains conservative and
 recommends CPU-only unless a later native classifier can prove an eligible
 accelerator. Release publication still requires the clean-machine matrix for
 each shipped OS.
+
+After local verification, the same installer shows each route's typed result,
+a bounded failure reason and next action, plus benchmark medians when present.
+It identifies a best measured configuration only when two or more active,
+verified routes have comparable fixed-benchmark evidence. Internal evidence
+keys and engineering ticket names are never customer-facing result text.
 
 This keeps validation, backend closure rules, manifests, hashes, and README
 rendering consistent across platforms.

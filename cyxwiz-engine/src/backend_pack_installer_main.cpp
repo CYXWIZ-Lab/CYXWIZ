@@ -2,6 +2,7 @@
 #include "core/compute_runtime_paths.h"
 
 #include "backend_pack_lifecycle_service.h"
+#include "backend_pack_metadata_cache.h"
 #include "backend_pack_platform.h"
 #include "backend_pack_state_service.h"
 
@@ -33,8 +34,10 @@ namespace {
 
 struct Options {
     std::filesystem::path runtime_root;
+    std::filesystem::path metadata_root;
     std::string pack_id;
     std::string deactivate_backend;
+    bool base = false;
     bool repair = false;
     bool offline = false;
 };
@@ -119,7 +122,9 @@ bool ParseOptions(
     Options& output,
     std::string& error) {
     bool saw_runtime_root = false;
+    bool saw_metadata_root = false;
     bool saw_pack_id = false;
+    bool saw_base_pack_id = false;
     bool saw_deactivate_backend = false;
     for (int index = 1; index < argc; ++index) {
         const std::wstring_view argument(argv[index]);
@@ -127,6 +132,10 @@ bool ParseOptions(
             index + 1 < argc) {
             output.runtime_root = argv[++index];
             saw_runtime_root = true;
+        } else if (argument == L"--metadata-root" &&
+                   !saw_metadata_root && index + 1 < argc) {
+            output.metadata_root = argv[++index];
+            saw_metadata_root = true;
         } else if (argument == L"--pack-id" && !saw_pack_id &&
                    index + 1 < argc) {
             const std::wstring value(argv[++index]);
@@ -140,6 +149,20 @@ bool ParseOptions(
                 output.pack_id.push_back(static_cast<char>(character));
             }
             saw_pack_id = true;
+        } else if (argument == L"--base-pack-id" &&
+                   !saw_base_pack_id && index + 1 < argc) {
+            const std::wstring value(argv[++index]);
+            if (!IsIdentifier(value)) {
+                error = "--base-pack-id must be a safe ASCII identifier";
+                return false;
+            }
+            output.pack_id.clear();
+            output.pack_id.reserve(value.size());
+            for (const wchar_t character : value) {
+                output.pack_id.push_back(static_cast<char>(character));
+            }
+            output.base = true;
+            saw_base_pack_id = true;
         } else if (argument == L"--deactivate-backend" &&
                    !saw_deactivate_backend && index + 1 < argc) {
             const std::wstring value(argv[++index]);
@@ -165,11 +188,16 @@ bool ParseOptions(
         }
     }
     if (!saw_runtime_root || !output.runtime_root.is_absolute() ||
-        saw_pack_id == saw_deactivate_backend ||
+        (saw_metadata_root && !output.metadata_root.is_absolute()) ||
+        static_cast<int>(saw_pack_id) +
+                static_cast<int>(saw_base_pack_id) +
+                static_cast<int>(saw_deactivate_backend) != 1 ||
+        (saw_base_pack_id && output.repair) ||
         (saw_deactivate_backend && (output.repair || output.offline))) {
         error = "--runtime-root and exactly one pack operation are required";
         return false;
     }
+    if (!saw_metadata_root) output.metadata_root = output.runtime_root;
     return true;
 }
 #else
@@ -179,7 +207,9 @@ bool ParseOptions(
     Options& output,
     std::string& error) {
     bool saw_runtime_root = false;
+    bool saw_metadata_root = false;
     bool saw_pack_id = false;
+    bool saw_base_pack_id = false;
     bool saw_deactivate_backend = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
@@ -187,6 +217,10 @@ bool ParseOptions(
             index + 1 < argc) {
             output.runtime_root = argv[++index];
             saw_runtime_root = true;
+        } else if (argument == "--metadata-root" &&
+                   !saw_metadata_root && index + 1 < argc) {
+            output.metadata_root = argv[++index];
+            saw_metadata_root = true;
         } else if (argument == "--pack-id" && !saw_pack_id &&
                    index + 1 < argc) {
             output.pack_id = argv[++index];
@@ -195,6 +229,15 @@ bool ParseOptions(
                 return false;
             }
             saw_pack_id = true;
+        } else if (argument == "--base-pack-id" &&
+                   !saw_base_pack_id && index + 1 < argc) {
+            output.pack_id = argv[++index];
+            if (!IsIdentifier(output.pack_id)) {
+                error = "--base-pack-id must be a safe ASCII identifier";
+                return false;
+            }
+            output.base = true;
+            saw_base_pack_id = true;
         } else if (argument == "--deactivate-backend" &&
                    !saw_deactivate_backend && index + 1 < argc) {
             output.deactivate_backend = argv[++index];
@@ -214,11 +257,16 @@ bool ParseOptions(
         }
     }
     if (!saw_runtime_root || !output.runtime_root.is_absolute() ||
-        saw_pack_id == saw_deactivate_backend ||
+        (saw_metadata_root && !output.metadata_root.is_absolute()) ||
+        static_cast<int>(saw_pack_id) +
+                static_cast<int>(saw_base_pack_id) +
+                static_cast<int>(saw_deactivate_backend) != 1 ||
+        (saw_base_pack_id && output.repair) ||
         (saw_deactivate_backend && (output.repair || output.offline))) {
         error = "--runtime-root and exactly one pack operation are required";
         return false;
     }
+    if (!saw_metadata_root) output.metadata_root = output.runtime_root;
     return true;
 }
 #endif
@@ -275,22 +323,47 @@ int main(int argc, char** argv) {
         return 78;
     }
     auto trust = cyxwiz::runtime::BackendPackTrustStore::Load(
-        options.runtime_root / "trust" / "trusted-keys.json", error);
+        options.metadata_root / "trust" / "trusted-keys.json", error);
     if (!trust) {
         std::cerr << "Cannot load the bundled trust store: " << error << '\n';
         return 78;
+    }
+
+    const auto metadata_root = options.metadata_root.lexically_normal();
+    const auto runtime_root = options.runtime_root.lexically_normal();
+    if (options.base && metadata_root != runtime_root) {
+        cyxwiz::runtime::BackendPackLifecycleService metadata_service(
+            metadata_root,
+            cyxwiz::runtime::BackendPackMetadataVerifier(
+                *trust, ClientVersion(),
+                std::string(
+                    cyxwiz::runtime::CurrentBackendPackPlatformId()),
+                std::string(
+                    cyxwiz::runtime::CurrentBackendPackArchitectureId())));
+        cyxwiz::runtime::VerifiedBackendPackCatalogSnapshot snapshot;
+        if (!metadata_service.ReadCatalogSnapshot(
+                CurrentUtc(), snapshot, error) ||
+            !cyxwiz::runtime::PublishVerifiedBackendPackMetadata(
+                metadata_root / "trust" / "trusted-keys.json",
+                snapshot, runtime_root, error)) {
+            std::cerr << "Cannot seed verified installer metadata: "
+                      << error << '\n';
+            return 1;
+        }
     }
 
     auto qualification_service =
         std::make_shared<cyxwiz::RouteQualificationService>();
     cyxwiz::BackendPackQualificationAdapterOptions qualification_options;
     qualification_options.runtime_root = options.runtime_root;
-    qualification_options.probe_executable =
-        executable_directory /
-        cyxwiz::runtime::CurrentRouteProbeExecutableName();
+    qualification_options.probe_executable = options.base
+        ? options.runtime_root / "base" / options.pack_id /
+              cyxwiz::runtime::CurrentRouteProbeExecutableName()
+        : executable_directory /
+              cyxwiz::runtime::CurrentRouteProbeExecutableName();
     qualification_options.cache_path =
         cyxwiz::GetRouteQualificationCachePath();
-    if (!std::filesystem::is_regular_file(
+    if (!options.base && !std::filesystem::is_regular_file(
             qualification_options.probe_executable)) {
         std::cerr << "Qualification helper is missing: "
                   << qualification_options.probe_executable.string() << '\n';
@@ -316,17 +389,19 @@ int main(int argc, char** argv) {
     cyxwiz::runtime::BackendPackDeliveryRequest request;
     request.catalog_path =
         cyxwiz::runtime::BackendPackCurrentCatalogPath(
-            options.runtime_root);
+            options.metadata_root);
     request.manifest_path =
         cyxwiz::runtime::BackendPackCachedManifestPath(
-            options.runtime_root, options.pack_id);
+            options.metadata_root, options.pack_id);
     request.current_utc = CurrentUtc();
     request.pack_id = options.pack_id;
     request.repair = options.repair;
     request.source = options.offline
         ? cyxwiz::runtime::BackendPackDeliverySource::OfflineSibling
         : cyxwiz::runtime::BackendPackDeliverySource::CatalogHttps;
-    const auto result = lifecycle.Deliver(request);
+    const auto result = options.base
+        ? lifecycle.DeliverBase(request)
+        : lifecycle.Deliver(request);
     std::cout << result.message << '\n';
     if (result.status == cyxwiz::runtime::
             BackendPackLifecycleStatus::InstalledAndActivated) {

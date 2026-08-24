@@ -28,6 +28,13 @@ CONTRACT_TESTS = (
     "test_backend_pack_maintenance",
     "test_backend_pack_maintenance_request",
     "test_backend_pack_lifecycle_service",
+    "test_runtime_bootstrapper",
+    "test_installer_verification_summary",
+)
+
+CONTRACT_SUPPORT_EXECUTABLES = (
+    "cyxwiz-runtime-bootstrapper",
+    "test_runtime_bootstrapper_child",
 )
 
 
@@ -221,12 +228,17 @@ def verify(stage: Path, artifact_id: str) -> dict[str, Any]:
         require_file(stage / "smoke" / f"{name}{suffix}")
         for name in CONTRACT_TESTS
     ]
+    contract_support = [
+        require_file(stage / "smoke" / f"{name}{suffix}")
+        for name in CONTRACT_SUPPORT_EXECUTABLES
+    ]
+    validation_executables = [*contract_tests, *contract_support]
     if os.name != "nt":
-        for executable in (installer, helper, *contract_tests):
+        for executable in (installer, helper, *validation_executables):
             executable.chmod(executable.stat().st_mode | 0o111)
 
     dependency_audit = audit_dependencies(
-        [installer, helper, *contract_tests], stage
+        [installer, helper, *validation_executables], stage
     )
     checks = [
         run_checked(installer, ["--package-smoke"], 0, stage),

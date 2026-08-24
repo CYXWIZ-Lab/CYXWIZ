@@ -139,6 +139,10 @@ if(CYXWIZ_BUILD_INSTALLER_ONLY)
             NAME backend_pack_manager_model_contract
             COMMAND test_backend_pack_manager_model
         )
+        add_test(
+            NAME installer_verification_summary_contract
+            COMMAND test_installer_verification_summary
+        )
     endif()
 
     message(STATUS "Configured standalone CyxWiz installer targets")
@@ -482,6 +486,12 @@ if(CYXWIZ_BUILD_TESTS)
         add_test(
             NAME backend_pack_manager_model_contract
             COMMAND test_backend_pack_manager_model
+        )
+    endif()
+    if(TARGET test_installer_verification_summary)
+        add_test(
+            NAME installer_verification_summary_contract
+            COMMAND test_installer_verification_summary
         )
     endif()
     add_subdirectory(tests)

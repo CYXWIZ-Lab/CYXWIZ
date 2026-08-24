@@ -87,6 +87,9 @@ public:
     BackendPackInstallResult StageInstallOrUpdate(
         const VerifiedBackendPackPayload& payload,
         std::uint64_t disk_budget_bytes);
+    BackendPackInstallResult StageBase(
+        const VerifiedBackendPackPayload& payload,
+        std::uint64_t disk_budget_bytes);
     BackendPackInstallResult Repair(
         const VerifiedBackendPackPayload& payload,
         std::uint64_t disk_budget_bytes);
@@ -101,7 +104,8 @@ private:
         const VerifiedBackendPackPayload& payload,
         std::uint64_t disk_budget_bytes,
         bool repair,
-        bool activate);
+        bool activate,
+        bool base);
     BackendPackInstallResult Finish(
         BackendPackInstallStatus status,
         std::string message,

@@ -13,6 +13,25 @@ enum class BackendPackInstallChoice {
     Custom
 };
 
+enum class CyxWizInstallerMode {
+    FreshInstall,
+    Maintenance
+};
+
+enum class CyxWizInstallScope {
+    CurrentUser,
+    AllUsers
+};
+
+struct CyxWizInstallLocation {
+    bool valid = false;
+    std::filesystem::path install_root;
+    std::filesystem::path runtime_root;
+    CyxWizInstallScope scope = CyxWizInstallScope::CurrentUser;
+    bool requires_elevation = false;
+    std::string message;
+};
+
 enum class BackendPackCatalogSupport {
     Unavailable,
     Supported,
@@ -36,6 +55,8 @@ struct BackendPackManagerRecord {
     std::string pack_id;
     std::string installed_pack_id;
     std::string package_version;
+    std::string runtime_set_id;
+    std::string companion_base_id;
     std::filesystem::path catalog_path;
     std::filesystem::path manifest_path;
     std::uint64_t download_size_bytes = 0;
@@ -81,6 +102,8 @@ struct BackendPackInstallerSelection {
 
 struct BackendPackInstallerPlan {
     bool valid = false;
+    bool install_base = false;
+    std::string base_pack_id;
     std::vector<std::string> pack_ids;
     std::vector<std::string> deactivate_backends;
     std::uint64_t download_size_bytes = 0;
@@ -99,7 +122,12 @@ BackendPackInstallerSelection ResolveBackendPackInstallerSelection(
 
 BackendPackInstallerPlan BuildBackendPackInstallerPlan(
     const BackendPackInstallerSelection& selection,
-    const std::vector<BackendPackManagerRecord>& catalog_records);
+    const std::vector<BackendPackManagerRecord>& catalog_records,
+    CyxWizInstallerMode mode = CyxWizInstallerMode::Maintenance);
+
+CyxWizInstallLocation ResolveCyxWizInstallLocation(
+    std::filesystem::path install_root,
+    CyxWizInstallScope scope = CyxWizInstallScope::CurrentUser);
 
 const char* BackendPackCatalogSupportName(
     BackendPackCatalogSupport support);

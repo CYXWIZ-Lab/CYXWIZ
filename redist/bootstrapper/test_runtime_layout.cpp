@@ -62,9 +62,11 @@ bool Expect(bool condition, const std::string& message) {
 
 int RunBootstrapper(
     const std::filesystem::path& bootstrapper,
-    const std::filesystem::path& runtime_root) {
+    const std::filesystem::path& runtime_root,
+    bool installer = false) {
     std::wstring command = L"\"" + bootstrapper.native() +
                            L"\" --runtime-root \"" + runtime_root.native() + L"\"";
+    if (installer) command += L" --installer";
     std::vector<wchar_t> mutable_command(command.begin(), command.end());
     mutable_command.push_back(L'\0');
     STARTUPINFOW startup{};
@@ -210,6 +212,25 @@ int main() {
             diagnostic.find("launched runtime_set=set-v1") != std::string::npos &&
                 diagnostic.find("engine DLL search configured") != std::string::npos,
             "successful launch must record package-local runtime diagnostics");
+
+        std::filesystem::copy_file(
+            child,
+            fixture.root / "base" / "base-v1" /
+                std::string(
+                    cyxwiz::runtime::CurrentInstallerManagerExecutableName()),
+            std::filesystem::copy_options::overwrite_existing);
+        const int installer_exit = RunBootstrapper(
+            bootstrapper, fixture.root, true);
+        const auto installer_diagnostic =
+            ReadText(fixture.root / "bootstrapper.log");
+        failures += !Expect(
+            installer_exit == 0 &&
+                installer_diagnostic.find(
+                    "launched installer runtime_set=set-v1") !=
+                    std::string::npos,
+            "stable launcher must resolve and start the installed manager from the active base; exit=" +
+                std::to_string(installer_exit) + " log=" +
+                installer_diagnostic);
     }
     {
         Fixture fixture;

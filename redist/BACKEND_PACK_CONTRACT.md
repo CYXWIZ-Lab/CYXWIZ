@@ -13,7 +13,7 @@ CyxWiz owns one application-local runtime root selected by an app-level native
 bootstrapper:
 
 ```text
-cyxwiz-runtime-bootstrapper.exe       # Windows app-level launcher
+cyxwiz-runtime-bootstrapper[.exe]     # app-level launcher
 cyxwiz-installer[.exe]
 cyxwiz-backend-pack-installer[.exe]
 runtime/
@@ -36,16 +36,28 @@ runtime/
   active-runtime.json
 ```
 
-The bootstrapper is installed beside `runtime/`, not inside a versioned base.
-It resolves the selected Engine from `active-runtime.json`; a base archive does
-not contain an independently launchable PATH-mutating script.
-The installer helper is installed beside the bootstrapper. It is a separate
-process that does not link the backend or ArrayFire runtime, so it can replace
-an inactive pack without keeping any pack DLL loaded.
+The stable bootstrapper is installed beside `runtime/` and retained inside the
+signed versioned base as its verified publication source. Fresh base delivery
+rechecks its signed size/hash and atomically publishes it before activating
+`active-runtime.json`. It resolves the selected Engine from that state; a base
+archive does not contain an independently launchable PATH-mutating script.
+The bootstrapper resolves installer/repair executables from the active base so
+the full GUI and helper dependency closure stays versioned instead of being
+duplicated at the product root. The helper remains a separate process that
+does not link the backend or ArrayFire runtime, so it can replace an inactive
+pack without keeping any pack DLL loaded.
 
-The graphical `cyxwiz-installer` component manager is also installed beside
-the bootstrapper (`.exe` on Windows). It owns Recommended, CPU-only, and Custom
-package consent and launches the signed delivery helper with an exact pack ID.
+Windows and POSIX launchers enforce the same state and child-process contract.
+Linux and macOS resolve the active base through the shared runtime validator,
+replace inherited loader paths with only the active package directories,
+remove ArrayFire, Python, and loader-injection overrides, and use exact
+`fork`/`exec` argument vectors for Engine, Installer, and deferred Repair.
+They do not invoke a shell or restore the legacy PATH-mutating launch script.
+
+The graphical `cyxwiz-installer` component manager remains in the signed
+versioned base and is resolved by the stable bootstrapper (`.exe` on Windows).
+It owns Recommended, CPU-only, and Custom package consent and launches the
+same-base signed delivery helper with an exact pack ID.
 It uses a portable ImGui/GLFW shell and a narrow desktop adapter; it must not
 link the CyxWiz compute backend or ArrayFire. Windows uses WinHTTP and
 `CreateProcessW`; Linux and macOS use the same certificate-verifying HTTPS
@@ -55,13 +67,24 @@ activation, and no-global-environment contract. Recommendation is deliberately
 conservative: an OS with no trusted hardware classification defaults to the
 CPU-only choice instead of guessing an accelerator pack.
 
+A fresh setup may keep its app-bundled trust store and signed catalog under a
+separate absolute metadata root while the customer selects an empty runtime
+destination. The exact helper verifies that source, publishes the parsed trust
+store and verified manifest files into the destination cache with the signed
+catalog published last, and only then stages and qualifies the CPU base.
+Maintenance reads metadata from the installed runtime cache. Current-user
+installation is the least-privilege default; an all-users scope is an explicit
+choice and requires platform authorization. Neither scope changes the global
+loader environment.
+
 The CPU backend is part of the required base and cannot be represented as an
 optional pack. A process resolves exactly one base and at most one pack per
 optional backend. Activation replaces `active-runtime.json` atomically only
 after all staged files, notices, manifests, and compatibility gates pass.
 
 No normal workflow modifies the machine-wide `PATH`, `LD_LIBRARY_PATH`, or
-equivalent. Hardware drivers and vendor providers remain host prerequisites.
+equivalent. The launcher supplies a bounded child-only loader environment.
+Hardware drivers and vendor providers remain host prerequisites.
 
 `trusted-keys.json` is an app-bundled schema-1 document with exactly
 `schema_version` and `keys`. Each key entry contains exactly `key_id`,
@@ -234,6 +257,22 @@ passes that identity to the shared qualification adapter. It activates only a
 `supported` pack with a qualified result, and only if the active runtime state
 is unchanged when qualification completes. Diagnostic, missing-adapter,
 failed, cancelled, and stale-evidence results leave a complete pack inactive.
+
+## Customer Verification Summary
+
+The consolidated installer reads the shared machine-local qualification
+snapshot; it does not run a second probe registry. It presents route outcomes
+from typed status and count fields and never renders internal matrix IDs,
+evidence IDs, benchmark IDs, ticket names, or raw probe messages as customer
+text. Crashes, timeouts, failed operations, unavailable operations, stale
+evidence, and incomplete evidence remain distinct results with bounded next
+actions.
+
+A route may be labeled `Best measured` only when at least two active routes
+passed the complete operation contract and contain finite positive samples
+from the same fixed CyxWiz performance benchmark. One measured route is shown
+as evidence without a comparative claim. Failed, inactive, unmatched, stale,
+or differently benchmarked routes are never performance recommendations.
 
 ## Repair and Removal
 

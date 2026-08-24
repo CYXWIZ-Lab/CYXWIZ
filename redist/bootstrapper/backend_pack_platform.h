@@ -50,4 +50,20 @@ constexpr std::string_view CurrentBackendPackInstallerExecutableName() {
 #endif
 }
 
+constexpr std::string_view CurrentRuntimeBootstrapperExecutableName() {
+#ifdef _WIN32
+    return "cyxwiz-runtime-bootstrapper.exe";
+#else
+    return "cyxwiz-runtime-bootstrapper";
+#endif
+}
+
+constexpr std::string_view CurrentInstallerManagerExecutableName() {
+#ifdef _WIN32
+    return "cyxwiz-installer.exe";
+#else
+    return "cyxwiz-installer";
+#endif
+}
+
 }  // namespace cyxwiz::runtime

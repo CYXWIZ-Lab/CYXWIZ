@@ -192,18 +192,35 @@ Json Manifest(const KeyPair& pack_key) {
         "pack-2026", pack_key);
 }
 
+Json BaseManifest(const KeyPair& pack_key) {
+    auto signed_body = Manifest(pack_key)["signed"];
+    signed_body["pack_id"] = "base-v1";
+    signed_body["pack_kind"] = "base";
+    signed_body["backend"] = "cpu";
+    signed_body["companion_base_id"] = nullptr;
+    signed_body["compatibility"]["device_kinds"] = Json::array({"cpu"});
+    signed_body["compatibility"]["provider_types"] = Json::array();
+    signed_body["compatibility"]["minimum_identity_confidence"] =
+        "backend_local";
+    signed_body["archive"]["file_name"] = "base-v1.zip";
+    return Envelope(
+        "cyxwiz-backend-pack-manifest", std::move(signed_body),
+        "pack-2026", pack_key);
+}
+
 Json Catalog(
     const KeyPair& catalog_key,
     const std::string& manifest_sha256,
-    const std::string& support_status = "supported") {
+    const std::string& support_status = "supported",
+    const std::string& pack_id = "opencl-v1") {
     Json signed_body = {
         {"catalog_id", "production-2026-08"},
         {"generated_utc", "2026-08-13T20:00:00Z"},
         {"expires_utc", "2026-09-13T20:00:00Z"},
         {"minimum_client_version", "0.2.0"},
         {"packs", Json::array({{
-            {"pack_id", "opencl-v1"},
-            {"manifest_url", "https://downloads.cyxwiz.com/opencl-v1.json"},
+            {"pack_id", pack_id},
+            {"manifest_url", "https://downloads.cyxwiz.com/" + pack_id + ".json"},
             {"manifest_sha256", manifest_sha256},
             {"signing_key_id", "pack-2026"},
             {"support_status", support_status}}})}};
@@ -277,6 +294,42 @@ int main() {
     const auto payload = manifest.BindExtractedDirectory(temporary.Path());
     if (!Expect(payload.pack_id == "opencl-v1", "bound payload differs"))
         return 1;
+
+    const auto base_manifest_path = temporary.Path() / "base-manifest.json";
+    const auto base_catalog_path = temporary.Path() / "base-catalog.json";
+    const auto base_manifest_bytes = WriteJson(
+        base_manifest_path, BaseManifest(pack_key));
+    WriteJson(
+        base_catalog_path,
+        Catalog(
+            catalog_key, Sha256(base_manifest_bytes), "supported",
+            "base-v1"));
+    VerifiedBackendPackCatalog base_catalog;
+    if (!Expect(
+            verifier.VerifyCatalog(
+                base_catalog_path, "2026-08-14T12:00:00Z",
+                base_catalog, error),
+            error.c_str())) {
+        return 1;
+    }
+    VerifiedBackendPackManifest base_manifest;
+    if (!Expect(
+            verifier.VerifyManifest(
+                base_manifest_path, base_catalog.packs.front(),
+                base_manifest, error, BackendPackManifestKind::Base),
+            error.c_str()) ||
+        !Expect(
+            base_manifest.kind == BackendPackManifestKind::Base &&
+                base_manifest.backend == "cpu" &&
+                base_manifest.companion_base_id.empty(),
+            "base manifest identity differs") ||
+        !Expect(
+            !verifier.VerifyManifest(
+                base_manifest_path, base_catalog.packs.front(),
+                base_manifest, error),
+            "optional-pack verification accepted a base manifest")) {
+        return 1;
+    }
 
     auto tampered = Manifest(pack_key);
     tampered["signed"]["backend"] = "cuda";

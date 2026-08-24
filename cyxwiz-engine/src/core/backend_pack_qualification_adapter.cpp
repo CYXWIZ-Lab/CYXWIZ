@@ -8,6 +8,7 @@ namespace cyxwiz {
 namespace {
 
 std::optional<DeviceType> BackendType(const std::string& backend) {
+    if (backend == "cpu") return DeviceType::CPU;
     if (backend == "cuda") return DeviceType::CUDA;
     if (backend == "opencl") return DeviceType::OPENCL;
     if (backend == "oneapi") return DeviceType::ONEAPI;
@@ -80,10 +81,13 @@ runtime::BackendPackQualificationDecision QualifyCandidate(
             "Staged route qualification is not configured");
     }
     const auto type = BackendType(manifest.backend);
+    const bool base =
+        manifest.kind == runtime::BackendPackManifestKind::Base;
     if (!type || manifest.pack_id.empty() ||
         manifest.compatibility.operation_matrix_id.empty() ||
         candidate.runtime_set_id != manifest.runtime_set_id ||
-        candidate.base_pack_id != manifest.companion_base_id) {
+        candidate.base_pack_id !=
+            (base ? manifest.pack_id : manifest.companion_base_id)) {
         return Failure(
             options.failure_policy,
             "Staged pack and prospective runtime identities do not match");
@@ -95,17 +99,22 @@ runtime::BackendPackQualificationDecision QualifyCandidate(
             options.runtime_root, candidate, resolved, error)) {
         return Failure(options.failure_policy, std::move(error));
     }
-    const auto resolved_pack = std::find_if(
-        resolved.packs.begin(), resolved.packs.end(),
-        [&](const runtime::ActivePack& pack) {
-            return pack.backend == manifest.backend &&
-                   pack.pack_id == manifest.pack_id;
-        });
     std::error_code filesystem_error;
-    if (resolved_pack == resolved.packs.end() ||
+    const auto resolved_directory = [&]() -> std::filesystem::path {
+        if (base) return resolved.base_directory;
+        const auto resolved_pack = std::find_if(
+            resolved.packs.begin(), resolved.packs.end(),
+            [&](const runtime::ActivePack& pack) {
+                return pack.backend == manifest.backend &&
+                       pack.pack_id == manifest.pack_id;
+            });
+        return resolved_pack == resolved.packs.end()
+            ? std::filesystem::path{} : resolved_pack->directory;
+    }();
+    if (resolved_directory.empty() ||
         !std::filesystem::equivalent(
-            resolved_pack->directory, installed_directory,
-            filesystem_error) || filesystem_error) {
+            resolved_directory, installed_directory, filesystem_error) ||
+        filesystem_error) {
         return Failure(
             options.failure_policy,
             "Installed pack directory does not match the prospective runtime");

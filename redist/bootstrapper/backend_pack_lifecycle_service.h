@@ -147,6 +147,11 @@ public:
         BackendPackArtifactSource& source);
     BackendPackLifecycleResult Deliver(
         const BackendPackDeliveryRequest& request);
+    BackendPackLifecycleResult DeliverBase(
+        const BackendPackDeliveryRequest& request,
+        BackendPackArtifactSource& source);
+    BackendPackLifecycleResult DeliverBase(
+        const BackendPackDeliveryRequest& request);
     BackendPackLifecycleResult Remove(
         std::string backend,
         std::string pack_id);
@@ -158,7 +163,8 @@ public:
 private:
     BackendPackLifecycleResult DeliverInternal(
         const BackendPackDeliveryRequest& request,
-        BackendPackArtifactSource* source);
+        BackendPackArtifactSource* source,
+        bool base);
     BackendPackLifecycleResult Finish(
         BackendPackLifecycleStatus status,
         std::string message,

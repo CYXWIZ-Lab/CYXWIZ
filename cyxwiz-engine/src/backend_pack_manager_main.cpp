@@ -7,8 +7,10 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
+#include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <future>
 #include <iostream>
@@ -32,6 +34,9 @@ namespace {
 
 struct Arguments {
     std::filesystem::path runtime_root;
+    std::filesystem::path metadata_root;
+    cyxwiz::CyxWizInstallScope scope =
+        cyxwiz::CyxWizInstallScope::CurrentUser;
     std::string selected_pack;
     bool package_smoke = false;
 };
@@ -46,8 +51,16 @@ bool ParseArguments(
     const std::filesystem::path& executable_directory,
     Arguments& output,
     std::string& error) {
-    output.runtime_root = executable_directory / "runtime";
+    const auto bundled_runtime = executable_directory / "runtime";
+    std::error_code state_error;
+    output.runtime_root = std::filesystem::is_regular_file(
+        bundled_runtime / "active-runtime.json", state_error)
+        ? bundled_runtime
+        : cyxwiz::installer::DefaultCyxWizInstallRoot(output.scope) /
+              "runtime";
+    output.metadata_root = bundled_runtime;
     bool runtime_seen = false;
+    bool metadata_seen = false;
     bool selection_seen = false;
     bool package_smoke_seen = false;
     for (std::size_t index = 1; index < values.size(); ++index) {
@@ -55,6 +68,13 @@ bool ParseArguments(
             index + 1 < values.size()) {
             output.runtime_root = values[++index];
             runtime_seen = true;
+        } else if (values[index] == "--metadata-root" && !metadata_seen &&
+                   index + 1 < values.size()) {
+            output.metadata_root = values[++index];
+            metadata_seen = true;
+        } else if (values[index] == "--all-users" &&
+                   output.scope == cyxwiz::CyxWizInstallScope::CurrentUser) {
+            output.scope = cyxwiz::CyxWizInstallScope::AllUsers;
         } else if (values[index] == "--select" && !selection_seen &&
                    index + 1 < values.size()) {
             output.selected_pack = values[++index];
@@ -68,12 +88,35 @@ bool ParseArguments(
             return false;
         }
     }
-    if (output.package_smoke && (runtime_seen || selection_seen)) {
+    if (output.package_smoke &&
+        (runtime_seen || metadata_seen || selection_seen ||
+         output.scope == cyxwiz::CyxWizInstallScope::AllUsers)) {
         error = "--package-smoke cannot be combined with installer arguments";
         return false;
     }
+    if (!runtime_seen &&
+        output.scope == cyxwiz::CyxWizInstallScope::AllUsers) {
+        output.runtime_root =
+            cyxwiz::installer::DefaultCyxWizInstallRoot(output.scope) /
+            "runtime";
+    }
     output.runtime_root = std::filesystem::absolute(output.runtime_root);
+    if (runtime_seen && !metadata_seen) {
+        output.metadata_root = output.runtime_root;
+    }
+    output.metadata_root = std::filesystem::absolute(output.metadata_root);
     return true;
+}
+
+std::string PathText(const std::filesystem::path& path) {
+    const auto value = path.u8string();
+    return {reinterpret_cast<const char*>(value.data()), value.size()};
+}
+
+std::filesystem::path PathFromText(const char* value) {
+    const std::string_view text(value ? value : "");
+    return std::filesystem::path(std::u8string(
+        reinterpret_cast<const char8_t*>(text.data()), text.size()));
 }
 
 void ApplyTheme() {
@@ -115,6 +158,55 @@ std::string Join(const std::vector<std::string>& values) {
     return result;
 }
 
+void RenderVerificationSummary(
+    const cyxwiz::InstallerVerificationSummary& summary) {
+    if (!ImGui::CollapsingHeader(
+            "Verification results", ImGuiTreeNodeFlags_DefaultOpen)) {
+        return;
+    }
+    ImGui::TextWrapped("%s", summary.headline.c_str());
+    ImGui::TextWrapped("%s", summary.performance_message.c_str());
+    if (!summary.evidence_matches_runtime || summary.routes.empty()) return;
+
+    if (ImGui::BeginTable(
+            "VerificationRoutes", 4,
+            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                ImGuiTableFlags_Resizable)) {
+        ImGui::TableSetupColumn("Route");
+        ImGui::TableSetupColumn("Result");
+        ImGui::TableSetupColumn("Reason");
+        ImGui::TableSetupColumn("Benchmark");
+        ImGui::TableHeadersRow();
+        for (const auto& route : summary.routes) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("%s device %d", route.backend.c_str(), route.device_id);
+            if (!route.display_name.empty()) {
+                ImGui::TextDisabled("%s", route.display_name.c_str());
+            }
+            if (!route.active) ImGui::TextDisabled("Not active");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(
+                cyxwiz::InstallerRouteVerificationStatusName(route.status));
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextWrapped("%s", route.reason.c_str());
+            if (!route.recommended_action.empty()) {
+                ImGui::TextDisabled("%s", route.recommended_action.c_str());
+            }
+            ImGui::TableSetColumnIndex(3);
+            if (route.benchmark_available) {
+                ImGui::Text("%.3f ms median", route.benchmark_median_iteration_ms);
+                if (route.best_measured) ImGui::TextDisabled("Best measured");
+            } else {
+                ImGui::TextDisabled("Not available");
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextDisabled(
+        "Performance comparisons use only active routes that passed the same CyxWiz benchmark contract.");
+}
+
 void ShowFatal(const std::string& message) {
 #ifdef _WIN32
     ::MessageBoxA(
@@ -140,9 +232,31 @@ int RunInstaller(
         return 0;
     }
 
+    auto install_location = cyxwiz::ResolveCyxWizInstallLocation(
+        parsed.runtime_root.parent_path(), parsed.scope);
+    if (!install_location.valid ||
+        install_location.runtime_root != parsed.runtime_root.lexically_normal()) {
+        ShowFatal(install_location.valid
+            ? "The runtime root must be the runtime directory below the installation location"
+            : install_location.message);
+        return 78;
+    }
     auto platform = cyxwiz::installer::CreateBackendPackInstallerPlatform(
-        parsed.runtime_root, executable_directory);
+        install_location.runtime_root, parsed.metadata_root,
+        executable_directory, install_location.scope);
     auto catalog = platform->Refresh();
+    std::array<char, 2048> install_path_text{};
+    const auto initial_install_path = PathText(install_location.install_root);
+    if (initial_install_path.size() >= install_path_text.size()) {
+        ShowFatal("The installation location is too long");
+        return 78;
+    }
+    std::memcpy(
+        install_path_text.data(), initial_install_path.c_str(),
+        initial_install_path.size() + 1);
+    int install_scope = static_cast<int>(install_location.scope);
+    bool install_location_dirty = false;
+    std::string install_location_message = install_location.message;
     std::set<std::string> custom_selection;
     int choice = static_cast<int>(
         cyxwiz::BackendPackInstallChoice::Recommended);
@@ -224,6 +338,10 @@ int RunInstaller(
         ImGui::Text("CyxWiz Installer");
         ImGui::SameLine();
         ImGui::TextDisabled("%s", platform->PlatformName().c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled(
+            catalog.mode == cyxwiz::CyxWizInstallerMode::FreshInstall
+                ? "Fresh installation" : "Modify installation");
         ImGui::TextWrapped(
             "Install only the compute packages this machine needs. Every package is signature-verified and locally qualified before it can authorize training.");
         ImGui::Separator();
@@ -233,6 +351,70 @@ int RunInstaller(
         }
         ImGui::SameLine();
         ImGui::TextWrapped("%s", catalog.message.c_str());
+        ImGui::Spacing();
+
+        ImGui::Text("Installation location");
+        if (catalog.mode == cyxwiz::CyxWizInstallerMode::FreshInstall) {
+            ImGui::SetNextItemWidth(-145.0f);
+            if (ImGui::InputText(
+                    "##install-location", install_path_text.data(),
+                    install_path_text.size())) {
+                install_location_dirty = true;
+            }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(operation_running);
+            if (ImGui::Button("Use location")) {
+                const auto candidate = cyxwiz::ResolveCyxWizInstallLocation(
+                    PathFromText(install_path_text.data()),
+                    static_cast<cyxwiz::CyxWizInstallScope>(install_scope));
+                install_location_message = candidate.message;
+                if (candidate.valid) {
+                    install_location = candidate;
+                    platform = cyxwiz::installer::
+                        CreateBackendPackInstallerPlatform(
+                            install_location.runtime_root,
+                            parsed.metadata_root, executable_directory,
+                            install_location.scope);
+                    catalog = platform->Refresh();
+                    custom_selection.clear();
+                    install_location_dirty = false;
+                }
+            }
+            ImGui::EndDisabled();
+            const int previous_scope = install_scope;
+            ImGui::BeginDisabled(operation_running);
+            ImGui::RadioButton("Install for me", &install_scope, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("Install for all users", &install_scope, 1);
+            ImGui::EndDisabled();
+            if (install_scope != previous_scope) {
+                const auto default_root =
+                    cyxwiz::installer::DefaultCyxWizInstallRoot(
+                        static_cast<cyxwiz::CyxWizInstallScope>(
+                            install_scope));
+                const auto default_text = PathText(default_root);
+                if (default_text.size() < install_path_text.size()) {
+                    install_path_text.fill('\0');
+                    std::memcpy(
+                        install_path_text.data(), default_text.c_str(),
+                        default_text.size() + 1);
+                }
+                install_location_dirty = true;
+                install_location_message = install_scope == 1
+                    ? "System-wide installation requires platform authorization"
+                    : "Current-user installation is the recommended least-privilege choice";
+            }
+            ImGui::TextDisabled(
+                "%s%s", install_location_message.c_str(),
+                install_location_dirty
+                    ? "; select Use location to inspect this destination"
+                    : "");
+        } else {
+            const auto installed_path = PathText(install_location.install_root);
+            ImGui::TextUnformatted(installed_path.c_str());
+            ImGui::TextDisabled(
+                "The installation location is fixed while modifying an existing runtime.");
+        }
         ImGui::Spacing();
 
         ImGui::Text("Installation choice");
@@ -272,14 +454,15 @@ int RunInstaller(
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 const bool selectable =
-                    choice == 2 && record.delivery_metadata_available &&
+                    record.backend != "cpu" && choice == 2 &&
+                    record.delivery_metadata_available &&
                     (record.catalog_support ==
                          cyxwiz::BackendPackCatalogSupport::Supported ||
                      record.catalog_support ==
                          cyxwiz::BackendPackCatalogSupport::Diagnostic);
-                bool checked = choice == 0
+                bool checked = record.backend == "cpu" || (choice == 0
                     ? record.recommended
-                    : custom_selection.contains(record.pack_id);
+                    : custom_selection.contains(record.pack_id));
                 ImGui::BeginDisabled(!selectable || operation_running);
                 if (ImGui::Checkbox("##selected", &checked) && choice == 2) {
                     if (checked) custom_selection.insert(record.pack_id);
@@ -288,6 +471,10 @@ int RunInstaller(
                 ImGui::EndDisabled();
                 ImGui::TableSetColumnIndex(1);
                 ImGui::TextUnformatted(record.backend.c_str());
+                if (record.backend == "cpu") {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("Required");
+                }
                 if (record.recommended) {
                     ImGui::SameLine();
                     ImGui::TextDisabled("Recommended");
@@ -331,7 +518,7 @@ int RunInstaller(
         const auto selection = cyxwiz::ResolveBackendPackInstallerSelection(
             mode, catalog.records, SelectedPackIds(custom_selection));
         const auto plan = cyxwiz::BuildBackendPackInstallerPlan(
-            selection, catalog.records);
+            selection, catalog.records, catalog.mode);
         ImGui::TextWrapped("%s", plan.message.c_str());
         if (plan.download_size_bytes > 0) {
             ImGui::Text(
@@ -342,10 +529,11 @@ int RunInstaller(
         ImGui::TextDisabled(
             "Close CyxWiz Engine before applying package changes. Installation does not modify global PATH or system driver settings.");
 
-        const bool has_changes = !plan.pack_ids.empty() ||
+        const bool has_changes = plan.install_base || !plan.pack_ids.empty() ||
             !plan.deactivate_backends.empty();
         const bool can_apply = plan.valid && has_changes &&
             (plan.pack_ids.empty() || catalog.available) &&
+            !install_location_dirty && install_location.valid &&
             !operation_running;
         ImGui::BeginDisabled(!can_apply);
         if (ImGui::Button("Review changes")) {
@@ -364,12 +552,26 @@ int RunInstaller(
         if (!operation_message.empty()) {
             ImGui::TextWrapped("%s", operation_message.c_str());
         }
+        RenderVerificationSummary(catalog.verification);
 
         if (ImGui::BeginPopupModal(
                 "Confirm backend changes", nullptr,
                 ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::TextWrapped(
                 "Review the exact changes CyxWiz will make to this runtime.");
+            if (pending_plan.install_base) {
+                ImGui::Spacing();
+                ImGui::Text("Install location:");
+                const auto reviewed_path =
+                    PathText(install_location.install_root);
+                ImGui::BulletText("%s", reviewed_path.c_str());
+                ImGui::BulletText(
+                    "%s", install_location.requires_elevation
+                        ? "All users (authorization required)"
+                        : "Current user");
+                ImGui::Text("Install required product component:");
+                ImGui::BulletText("%s", pending_plan.base_pack_id.c_str());
+            }
             if (!pending_plan.pack_ids.empty()) {
                 ImGui::Spacing();
                 ImGui::Text("Download, verify, and locally qualify:");
@@ -394,17 +596,31 @@ int RunInstaller(
                 "Close CyxWiz Engine before continuing. A package that fails local qualification will not be activated, and later changes will stop.");
             if (ImGui::Button("Apply changes")) {
                 const auto pack_ids = pending_plan.pack_ids;
+                const auto base_pack_id = pending_plan.base_pack_id;
+                const bool install_base = pending_plan.install_base;
                 const auto deactivate_backends =
                     pending_plan.deactivate_backends;
                 auto* worker = platform.get();
                 operation_running = true;
-                operation_message = pack_ids.empty()
-                    ? "Applying CPU-only configuration..."
-                    : "Downloading and verifying signed packages...";
+                operation_message = install_base
+                    ? "Installing and CPU-qualifying the required CyxWiz Engine base..."
+                    : (pack_ids.empty()
+                          ? "Applying CPU-only configuration..."
+                          : "Downloading and verifying signed packages...");
                 operation = std::async(
                     std::launch::async,
-                    [worker, pack_ids, deactivate_backends]() {
+                    [worker, install_base, base_pack_id, pack_ids,
+                     deactivate_backends]() {
                         InstallBatchResult batch;
+                        if (install_base) {
+                            const auto result =
+                                worker->InstallBase(base_pack_id);
+                            batch.message = result.message;
+                            if (!result.succeeded || !result.activated) {
+                                batch.succeeded = false;
+                                return batch;
+                            }
+                        }
                         for (const auto& pack_id : pack_ids) {
                             const auto result =
                                 worker->InstallOrUpdate(pack_id);

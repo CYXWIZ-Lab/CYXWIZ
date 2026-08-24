@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/backend_pack_manager_model.h"
+#include "core/installer_verification_summary.h"
 
 #include <filesystem>
 #include <memory>
@@ -10,10 +11,12 @@
 namespace cyxwiz::installer {
 
 struct InstallerCatalogState {
+    CyxWizInstallerMode mode = CyxWizInstallerMode::Maintenance;
     bool available = false;
     std::string catalog_id;
     std::string message;
     std::vector<BackendPackManagerRecord> records;
+    InstallerVerificationSummary verification;
 };
 
 struct InstallerOperationResult {
@@ -27,6 +30,8 @@ public:
     virtual ~BackendPackInstallerPlatform() = default;
 
     virtual InstallerCatalogState Refresh() = 0;
+    virtual InstallerOperationResult InstallBase(
+        const std::string& pack_id) = 0;
     virtual InstallerOperationResult InstallOrUpdate(
         const std::string& pack_id) = 0;
     virtual InstallerOperationResult DeactivateBackend(
@@ -37,6 +42,11 @@ public:
 std::unique_ptr<BackendPackInstallerPlatform>
 CreateBackendPackInstallerPlatform(
     std::filesystem::path runtime_root,
-    std::filesystem::path executable_directory);
+    std::filesystem::path metadata_root,
+    std::filesystem::path executable_directory,
+    CyxWizInstallScope scope = CyxWizInstallScope::CurrentUser);
+
+std::filesystem::path DefaultCyxWizInstallRoot(
+    CyxWizInstallScope scope);
 
 }  // namespace cyxwiz::installer

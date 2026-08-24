@@ -39,7 +39,11 @@ void TestInstallerChoices() {
     auto blocked = Pack(
         "cuda-old", cyxwiz::BackendPackCatalogSupport::Blocked);
     blocked.recommended = true;
-    const std::vector records{recommended, diagnostic, blocked};
+    auto base = Pack(
+        "base-v1", cyxwiz::BackendPackCatalogSupport::Supported);
+    base.backend = "cpu";
+    base.recommended = true;
+    const std::vector records{recommended, diagnostic, blocked, base};
 
     const auto automatic = cyxwiz::ResolveBackendPackInstallerSelection(
         cyxwiz::BackendPackInstallChoice::Recommended, records);
@@ -67,6 +71,10 @@ void TestInstallerChoices() {
         cyxwiz::BackendPackInstallChoice::Custom, records);
     Check(!empty_custom.valid,
           "Custom must require an explicit optional-pack choice");
+    const auto explicit_base = cyxwiz::ResolveBackendPackInstallerSelection(
+        cyxwiz::BackendPackInstallChoice::Custom, records, {"base-v1"});
+    Check(!explicit_base.valid,
+          "The required CPU base must not enter the optional-pack selection");
 }
 
 void TestActionPolicy() {
@@ -183,6 +191,51 @@ void TestInstallerPlan() {
           "CPU-only plan must be a no-op when no optional route is active");
 }
 
+void TestFreshInstallerPlan() {
+    cyxwiz::BackendPackManagerRecord base;
+    base.backend = "cpu";
+    base.pack_id = "base-v1";
+    base.runtime_set_id = "set-v1";
+    base.catalog_support = cyxwiz::BackendPackCatalogSupport::Supported;
+    base.delivery_metadata_available = true;
+    base.download_size_bytes = 1000;
+
+    auto optional = Pack(
+        "opencl-v1", cyxwiz::BackendPackCatalogSupport::Supported);
+    optional.runtime_set_id = "set-v1";
+    optional.companion_base_id = "base-v1";
+    optional.delivery_metadata_available = true;
+    optional.download_size_bytes = 250;
+
+    cyxwiz::BackendPackInstallerSelection selection;
+    selection.valid = true;
+    selection.pack_ids = {"opencl-v1"};
+    const auto plan = cyxwiz::BuildBackendPackInstallerPlan(
+        selection, std::vector{base, optional},
+        cyxwiz::CyxWizInstallerMode::FreshInstall);
+    Check(plan.valid && plan.install_base &&
+              plan.base_pack_id == "base-v1" &&
+              plan.pack_ids == std::vector<std::string>{"opencl-v1"} &&
+              plan.download_size_bytes == 1250,
+          "Fresh plan must compose one required base with compatible optional packs");
+
+    auto foreign = optional;
+    foreign.pack_id = "opencl-v2";
+    foreign.companion_base_id = "base-v2";
+    selection.pack_ids = {"opencl-v2"};
+    const auto incompatible = cyxwiz::BuildBackendPackInstallerPlan(
+        selection, std::vector{base, foreign},
+        cyxwiz::CyxWizInstallerMode::FreshInstall);
+    Check(!incompatible.valid,
+          "Fresh plan must reject a backend pack from another base runtime set");
+
+    const auto missing_base = cyxwiz::BuildBackendPackInstallerPlan(
+        selection, std::vector{foreign},
+        cyxwiz::CyxWizInstallerMode::FreshInstall);
+    Check(!missing_base.valid,
+          "Fresh plan must fail closed without a signed CPU base");
+}
+
 void TestPackPlatformIdentity() {
     const auto platform = cyxwiz::runtime::CurrentBackendPackPlatformId();
     const auto architecture =
@@ -237,12 +290,14 @@ void TestCatalogAdapter() {
     snapshot.records.push_back(unavailable);
 
     cyxwiz::runtime::ActiveRuntimeState active;
+    active.runtime_set_id = "set-v1";
+    active.base_pack_id = "base-v1";
     active.packs.push_back({"opencl", "opencl-v1"});
     active.packs.push_back({"oneapi", "oneapi-local"});
     const auto records = cyxwiz::BuildBackendPackCatalogRecords(
         snapshot, active);
-    Check(records.size() == 3,
-          "Catalog view must retain current packs absent from the catalog");
+    Check(records.size() == 4,
+          "Catalog view must retain the required base and current packs absent from the catalog");
     const auto& update = records[0];
     Check(update.pack_id == "opencl-v2" && update.installed &&
               !update.active &&
@@ -280,15 +335,42 @@ void TestDisplayFormatting() {
           "Signed download size should be human readable");
 }
 
+void TestInstallLocation() {
+#ifdef _WIN32
+    const std::filesystem::path absolute_root = "C:\\Users\\test\\CyxWiz";
+    const std::filesystem::path filesystem_root = "C:\\";
+#else
+    const std::filesystem::path absolute_root = "/home/test/CyxWiz";
+    const std::filesystem::path filesystem_root = "/";
+#endif
+    const auto current_user = cyxwiz::ResolveCyxWizInstallLocation(
+        absolute_root, cyxwiz::CyxWizInstallScope::CurrentUser);
+    const auto all_users = cyxwiz::ResolveCyxWizInstallLocation(
+        absolute_root / "." / "product" / "..",
+        cyxwiz::CyxWizInstallScope::AllUsers);
+    const auto relative = cyxwiz::ResolveCyxWizInstallLocation(
+        "relative/CyxWiz");
+    const auto root = cyxwiz::ResolveCyxWizInstallLocation(filesystem_root);
+    Check(
+        current_user.valid && current_user.install_root == absolute_root &&
+            current_user.runtime_root == absolute_root / "runtime" &&
+            !current_user.requires_elevation && all_users.valid &&
+            all_users.install_root == absolute_root &&
+            all_users.requires_elevation && !relative.valid && !root.valid,
+        "Installation locations must be absolute, normalized, non-root, and least-privilege by default");
+}
+
 }  // namespace
 
 int main() {
     TestInstallerChoices();
     TestActionPolicy();
     TestInstallerPlan();
+    TestFreshInstallerPlan();
     TestPackPlatformIdentity();
     TestCatalogAdapter();
     TestDisplayFormatting();
+    TestInstallLocation();
     std::cout << "Backend pack manager model tests passed\n";
     return 0;
 }

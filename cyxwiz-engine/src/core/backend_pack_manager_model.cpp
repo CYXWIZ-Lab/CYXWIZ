@@ -157,7 +157,7 @@ BackendPackInstallerSelection ResolveBackendPackInstallerSelection(
     std::set<std::string> selected;
     if (choice == BackendPackInstallChoice::Recommended) {
         for (const auto& record : catalog_records) {
-            if (record.recommended &&
+            if (record.backend != "cpu" && record.recommended &&
                 record.catalog_support == BackendPackCatalogSupport::Supported &&
                 !record.pack_id.empty()) {
                 selected.insert(record.pack_id);
@@ -178,6 +178,7 @@ BackendPackInstallerSelection ResolveBackendPackInstallerSelection(
                 return candidate.pack_id == pack_id;
             });
         if (record == catalog_records.end() ||
+            record->backend == "cpu" ||
             !CatalogAllowsConsent(record->catalog_support)) {
             result.message =
                 "Custom selection contains a pack not authorized by the signed catalog";
@@ -195,12 +196,35 @@ BackendPackInstallerSelection ResolveBackendPackInstallerSelection(
 
 BackendPackInstallerPlan BuildBackendPackInstallerPlan(
     const BackendPackInstallerSelection& selection,
-    const std::vector<BackendPackManagerRecord>& catalog_records) {
+    const std::vector<BackendPackManagerRecord>& catalog_records,
+    CyxWizInstallerMode mode) {
     BackendPackInstallerPlan plan;
     if (!selection.valid) {
         plan.message = selection.message.empty()
             ? "The installer selection is invalid" : selection.message;
         return plan;
+    }
+    const BackendPackManagerRecord* base = nullptr;
+    if (mode == CyxWizInstallerMode::FreshInstall) {
+        for (const auto& record : catalog_records) {
+            if (record.backend != "cpu") continue;
+            if (base != nullptr) {
+                plan.message =
+                    "The signed catalog contains more than one CPU base for this target";
+                return plan;
+            }
+            base = &record;
+        }
+        if (!base || base->pack_id.empty() ||
+            base->catalog_support != BackendPackCatalogSupport::Supported ||
+            !base->delivery_metadata_available) {
+            plan.message =
+                "A supported signed CyxWiz Engine/CPU base is required for a fresh installation";
+            return plan;
+        }
+        plan.install_base = true;
+        plan.base_pack_id = base->pack_id;
+        plan.download_size_bytes = base->download_size_bytes;
     }
     if (selection.deactivate_optional_backends) {
         std::set<std::string> active_backends;
@@ -221,10 +245,17 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
                 return candidate.pack_id == pack_id;
             });
         if (record == catalog_records.end() ||
+            record->backend == "cpu" ||
             !CatalogAllowsConsent(record->catalog_support) ||
             !record->delivery_metadata_available) {
             plan.message =
                 "A selected pack is not deliverable from the signed catalog";
+            return plan;
+        }
+        if (base && (record->runtime_set_id != base->runtime_set_id ||
+                     record->companion_base_id != base->pack_id)) {
+            plan.message =
+                "A selected backend pack does not belong to the required CPU base runtime set";
             return plan;
         }
         if (record->installed && record->active &&
@@ -241,7 +272,14 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
         plan.pack_ids.push_back(record->pack_id);
     }
     plan.valid = true;
-    if (!plan.deactivate_backends.empty()) {
+    if (plan.install_base) {
+        plan.message = "Install the required CyxWiz Engine/CPU base";
+        if (!plan.pack_ids.empty()) {
+            plan.message += " and " + std::to_string(plan.pack_ids.size()) +
+                " signed optional backend pack(s)";
+        }
+        plan.message += "; every compute route requires local verification";
+    } else if (!plan.deactivate_backends.empty()) {
         plan.message = std::to_string(plan.deactivate_backends.size()) +
             " optional backend route(s) will be deactivated; package files will be kept";
     } else if (selection.deactivate_optional_backends) {
@@ -253,6 +291,39 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
             " signed backend pack(s) will be downloaded and locally qualified";
     }
     return plan;
+}
+
+CyxWizInstallLocation ResolveCyxWizInstallLocation(
+    std::filesystem::path install_root,
+    CyxWizInstallScope scope) {
+    CyxWizInstallLocation result;
+    result.scope = scope;
+    result.requires_elevation = scope == CyxWizInstallScope::AllUsers;
+    if (install_root.empty()) {
+        result.message = "Choose an installation location";
+        return result;
+    }
+    if (!install_root.is_absolute()) {
+        result.message = "The installation location must be an absolute path";
+        return result;
+    }
+    install_root = install_root.lexically_normal();
+    if (install_root != install_root.root_path() &&
+        install_root.filename().empty()) {
+        install_root = install_root.parent_path();
+    }
+    if (install_root == install_root.root_path()) {
+        result.message =
+            "The filesystem root cannot be used as the installation location";
+        return result;
+    }
+    result.valid = true;
+    result.install_root = std::move(install_root);
+    result.runtime_root = result.install_root / "runtime";
+    result.message = result.requires_elevation
+        ? "Install for all users; platform authorization will be requested when changes are applied"
+        : "Install for the current user without system-wide changes";
+    return result;
 }
 
 const char* BackendPackCatalogSupportName(
