@@ -124,7 +124,14 @@ int main() {
             std::filesystem::perm_options::add);
         ::setenv("AF_PATH", "cyxwiz-untrusted-marker", 1);
         ::setenv("PYTHONPATH", "cyxwiz-untrusted-marker", 1);
+#ifdef __APPLE__
+        // An invalid DYLD_INSERT_LIBRARIES value terminates the bootstrapper
+        // before main(). Contaminate the non-host injection variable instead;
+        // the child still requires both injection variables to be absent.
+        ::setenv("LD_PRELOAD", "cyxwiz-untrusted-marker", 1);
+#else
         ::setenv("DYLD_INSERT_LIBRARIES", "cyxwiz-untrusted-marker", 1);
+#endif
         ::setenv("LD_LIBRARY_PATH", "cyxwiz-untrusted-marker", 1);
         ::setenv("DYLD_LIBRARY_PATH", "cyxwiz-untrusted-marker", 1);
 
