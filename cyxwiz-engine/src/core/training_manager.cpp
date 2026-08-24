@@ -101,6 +101,12 @@ bool TrainingManager::StartTrainingCommon(
     // Image, Audio, Text} verbatim.
     is_training_.store(true);
     stop_requested_.store(false);
+    {
+        std::lock_guard<std::mutex> lock(metrics_mutex_);
+        cached_metrics_ = TrainingMetrics();
+        cached_metrics_.total_epochs = epochs;
+        cached_metrics_.is_training = true;
+    }
     const bool sequence_mode =
         executor && executor->GetConfig().sequence_batch.enabled;
     const bool regression_mode =
@@ -882,14 +888,6 @@ void TrainingManager::TrainingThreadFunc(
     {
         std::lock_guard<std::mutex> lock(mutex_);
         current_executor_ = std::move(executor);
-    }
-
-    // Initialize cached metrics
-    {
-        std::lock_guard<std::mutex> lock(metrics_mutex_);
-        cached_metrics_ = TrainingMetrics();
-        cached_metrics_.total_epochs = epochs;
-        cached_metrics_.is_training = true;
     }
 
     // Track training start time for total duration

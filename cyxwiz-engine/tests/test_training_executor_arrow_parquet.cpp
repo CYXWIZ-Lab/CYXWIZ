@@ -31,6 +31,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -2975,31 +2976,45 @@ void TestInjectedRuntimeFailureLifecycle(
         "injected runtime failure");
 }
 
-void TestPauseResumeDoesNotDuplicateWork(
-    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
-    const std::filesystem::path& work_dir) {
-    auto config = MakeConfig(work_dir / "pause-resume");
-    config.log_interval = 0;
+enum class PausedControlAction {
+    Resume,
+    Cancel,
+};
 
-    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+using PausedExecutorFactory = std::function<
+    std::unique_ptr<cyxwiz::TrainingExecutor>(const std::filesystem::path&)>;
+
+void CheckPausedControlCase(
+    const PausedExecutorFactory& make_executor,
+    const std::filesystem::path& work_dir,
+    const std::string& mode,
+    int expected_batches,
+    bool strict_residency,
+    PausedControlAction action) {
+    const bool cancel = action == PausedControlAction::Cancel;
+    const std::string action_name = cancel ? "cancel" : "resume";
+    const std::string label = mode + " pause/" + action_name;
+    auto executor = make_executor(work_dir / (mode + "-" + action_name));
     std::atomic<int> batch_callback_count{0};
     std::atomic<bool> pause_requested{false};
     cyxwiz::TrainingMetrics final_metrics;
+    int completion_callback_count = 0;
     std::exception_ptr training_error;
     std::thread training_thread([&]() {
         try {
-            executor.Train(
+            executor->Train(
                 1,
-                config.batch_size,
+                2,
                 [&](int, int batch, int, float, float) {
                     ++batch_callback_count;
                     if (batch == 1) {
-                        executor.Pause();
+                        executor->Pause();
                         pause_requested.store(true);
                     }
                 },
                 nullptr,
                 [&](const cyxwiz::TrainingMetrics& metrics) {
+                    ++completion_callback_count;
                     final_metrics = metrics;
                 });
         } catch (...) {
@@ -3013,32 +3028,205 @@ void TestPauseResumeDoesNotDuplicateWork(
            std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    Check(pause_requested.load() && executor.IsPaused(),
-          "pause/resume should reach the paused state after batch one");
-    const auto paused_metrics = executor.GetMetrics();
+    if (!pause_requested.load() || !executor->IsPaused()) {
+        executor->Stop();
+        training_thread.join();
+        Check(false, label + " should reach the paused state after batch one");
+    }
+    const auto paused_metrics = executor->GetMetrics();
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    const auto still_paused_metrics = executor.GetMetrics();
+    const auto still_paused_metrics = executor->GetMetrics();
     Check(paused_metrics.current_batch == 1 &&
+              paused_metrics.optimizer_step_count == 1 &&
               still_paused_metrics.current_batch == 1 &&
+              still_paused_metrics.optimizer_step_count == 1 &&
               batch_callback_count.load() == 1,
-          "paused training should not advance or duplicate batches");
+          label + " should not advance or duplicate work while paused");
 
-    executor.Resume();
+    if (cancel) {
+        executor->Stop();
+    } else {
+        executor->Resume();
+    }
     training_thread.join();
     Check(training_error == nullptr,
-          "pause/resume training should not throw");
-    Check(batch_callback_count.load() == 2 &&
-              final_metrics.optimizer_step_count == 2 &&
-              final_metrics.current_batch == 2,
-          "pause/resume should execute each batch and optimizer step once");
-    Check(final_metrics.current_epoch == 1 &&
-              final_metrics.last_executed_epoch == 1 &&
-              final_metrics.loss_history.size() == 1,
-          "pause/resume should complete exactly one epoch");
-    Check(final_metrics.terminal_status == "completed" &&
-              final_metrics.terminal_reason == "completed_all_epochs" &&
-              !final_metrics.is_paused,
-          "pause/resume should preserve normal terminal truth");
+          label + " training should not throw");
+    Check(completion_callback_count == 1,
+          label + " should invoke completion exactly once");
+
+    if (cancel) {
+        Check(batch_callback_count.load() == 1 &&
+                  final_metrics.optimizer_step_count == 1 &&
+                  final_metrics.current_batch == 1,
+              label + " must not consume work after cancellation");
+        Check(final_metrics.current_epoch == 1 &&
+                  final_metrics.last_executed_epoch == 0 &&
+                  final_metrics.loss_history.empty() &&
+                  final_metrics.terminal_status == "cancelled" &&
+                  final_metrics.terminal_reason == "user_cancelled" &&
+                  !final_metrics.is_paused,
+              label + " should preserve partial-epoch cancellation truth");
+        CheckTerminalEvidence(
+            "cancelled", "user_cancelled", 1, 0, label);
+    } else {
+        Check(batch_callback_count.load() == expected_batches &&
+                  final_metrics.optimizer_step_count == expected_batches &&
+                  final_metrics.current_batch == expected_batches,
+              label + " should execute each batch and optimizer step once");
+        Check(final_metrics.current_epoch == 1 &&
+                  final_metrics.last_executed_epoch == 1 &&
+                  final_metrics.loss_history.size() == 1 &&
+                  final_metrics.terminal_status == "completed" &&
+                  final_metrics.terminal_reason == "completed_all_epochs" &&
+                  !final_metrics.is_paused,
+              label + " should preserve normal terminal truth");
+        CheckTerminalEvidence(
+            "completed", "completed_all_epochs", 1, 1, label);
+    }
+
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    Check(trace.effective_backend.rfind("arrayfire_", 0) == 0,
+          label + " should retain effective ArrayFire execution truth");
+    if (strict_residency) {
+        Check(trace.native_cpu_fallback_count == 0 &&
+                  trace.fallback_policy == "forbid_native_cpu_fallback",
+              label + " should retain strict zero-fallback execution truth");
+    } else {
+        Check(trace.fallback_policy == "allow_native_cpu_fallback",
+              label + " should expose its declared compatibility policy");
+    }
+}
+
+void CheckPausedControlMode(
+    const PausedExecutorFactory& make_executor,
+    const std::filesystem::path& work_dir,
+    const std::string& mode,
+    int expected_batches,
+    bool strict_residency) {
+    CheckPausedControlCase(
+        make_executor, work_dir, mode, expected_batches, strict_residency,
+        PausedControlAction::Resume);
+    CheckPausedControlCase(
+        make_executor, work_dir, mode, expected_batches, strict_residency,
+        PausedControlAction::Cancel);
+}
+
+void TestPausedControlAcrossModernDatasetModes(
+    const std::filesystem::path& work_dir) {
+    const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(
+        MakeTrainingTable(), "paused_control_arrow");
+
+    const auto make_tabular_config = [&](const std::filesystem::path& path) {
+        auto config = MakeConfig(path);
+        config.train_ratio = 1.0f;
+        config.val_ratio = 0.0f;
+        config.test_ratio = 0.0f;
+        config.has_data_split = true;
+        config.log_interval = 0;
+        config.forbid_native_cpu_fallback = true;
+        return config;
+    };
+
+    CheckPausedControlMode(
+        [&](const std::filesystem::path& path) {
+            return std::make_unique<cyxwiz::TrainingExecutor>(
+                make_tabular_config(path), dataset, "label");
+        },
+        work_dir,
+        "arrow",
+        3,
+        true);
+
+    const auto parquet_path = work_dir / "paused-control.parquet";
+    WriteParquetWithRowGroupSize(*dataset, parquet_path.string(), 1);
+    const auto parquet_dataset = cyxwiz::ParquetBackedDataset::Open(
+        parquet_path.string(), "paused_control_parquet");
+    Check(parquet_dataset != nullptr,
+          "paused-control Parquet fixture should open");
+    CheckPausedControlMode(
+        [&](const std::filesystem::path& path) {
+            return std::make_unique<cyxwiz::TrainingExecutor>(
+                make_tabular_config(path), parquet_dataset, "label");
+        },
+        work_dir,
+        "parquet",
+        3,
+        true);
+
+    CheckPausedControlMode(
+        [&](const std::filesystem::path& path) {
+            auto config = make_tabular_config(path);
+            return std::make_unique<cyxwiz::TrainingExecutor>(
+                std::move(config), std::make_unique<PhaseTrackingBatcher>());
+        },
+        work_dir,
+        "external",
+        2,
+        true);
+
+    const std::vector<cyxwiz::NERSequenceRow> sequence_rows = {
+        {{"John", "lives", "in", "Berlin"}, {},
+         {"B-PER", "O", "O", "B-LOC"}},
+        {{"Mary", "works", "in", "Paris"}, {},
+         {"B-PER", "O", "O", "B-LOC"}},
+        {{"Alice", "visits", "New", "York"}, {},
+         {"B-PER", "O", "B-LOC", "I-LOC"}},
+        {{"Bob", "works", "in", "London"}, {},
+         {"B-PER", "O", "O", "B-LOC"}},
+    };
+    cyxwiz::NERSequenceBuilderConfig builder_config;
+    builder_config.use_pos_tags = false;
+    builder_config.token_vocabulary.lowercase = true;
+    builder_config.batcher.batch_size = 2;
+    builder_config.batcher.max_sequence_length = 4;
+    builder_config.batcher.shuffle = false;
+    builder_config.batcher.tag_ignore_index = -100;
+    builder_config.batcher.train_indices = {0, 1, 2, 3};
+    const auto sequence = cyxwiz::BuildNERSequenceData(
+        sequence_rows, builder_config);
+
+    CheckPausedControlMode(
+        [&](const std::filesystem::path& path) {
+            cyxwiz::TrainingConfiguration config;
+            config.dataset_name = "paused_control_sequence";
+            config.input_size = 4;
+            config.input_shape = {4};
+            config.output_size = sequence.tag_vocabulary.Size();
+            config.loss_type = gui::NodeType::CrossEntropyLoss;
+            config.loss_params["ignore_index"] = "-100";
+            config.optimizer_type = gui::NodeType::SGD;
+            config.learning_rate = 0.01f;
+            config.batch_size = 2;
+            config.sequence_batch.enabled = true;
+            config.sequence_batch.ignore_index = -100;
+            config.save_best_checkpoint = false;
+            config.log_interval = 0;
+            config.forbid_native_cpu_fallback = false;
+            config.checkpoint_dir = path.string();
+
+            cyxwiz::CompiledLayer embedding;
+            embedding.type = gui::NodeType::Embedding;
+            embedding.parameters["num_embeddings"] =
+                std::to_string(sequence.token_vocabulary.Size());
+            embedding.parameters["embedding_dim"] = "6";
+            config.layers.push_back(embedding);
+
+            cyxwiz::CompiledLayer token_head;
+            token_head.type = gui::NodeType::TimeDistributed;
+            token_head.units = static_cast<int>(
+                sequence.tag_vocabulary.Size());
+            config.layers.push_back(token_head);
+
+            auto batcher = std::make_unique<cyxwiz::SequenceBatcher>(
+                sequence.samples, sequence.batcher_config);
+            return std::make_unique<cyxwiz::TrainingExecutor>(
+                std::move(config), std::move(batcher),
+                sequence.tag_vocabulary.Values());
+        },
+        work_dir,
+        "sequence",
+        2,
+        false);
 }
 
 void RunExecutor(cyxwiz::TrainingExecutor& executor,
@@ -4191,6 +4379,15 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    if (argc == 2 &&
+        std::string(argv[1]) == "--paused-control-matrix-only") {
+        TestPausedControlAcrossModernDatasetModes(
+            work_dir / "paused-control-matrix");
+        fs::remove_all(work_dir);
+        std::cout << "Paused-control dataset-mode matrix passed\n";
+        return 0;
+    }
+
 #ifndef NDEBUG
     if (argc == 2 && std::string(argv[1]) == "--strict-dense-only") {
         const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(
@@ -4238,7 +4435,8 @@ int main(int argc, char** argv) {
     TestPluginStopLifecycle(dataset, work_dir);
     TestUserCancellationLifecycle(dataset, work_dir);
     TestInjectedRuntimeFailureLifecycle(dataset, work_dir);
-    TestPauseResumeDoesNotDuplicateWork(dataset, work_dir);
+    TestPausedControlAcrossModernDatasetModes(
+        work_dir / "paused-control-matrix");
 
 #ifndef NDEBUG
     TestAllowedTrainingRecordsForcedLinearFallback(dataset, config);

@@ -1237,7 +1237,7 @@ void TrainingExecutor::Train(
                 break;
             }
         }
-        WaitWhilePaused();
+        if (!WaitWhilePaused()) break;
 
         auto epoch_start = std::chrono::steady_clock::now();
 
@@ -1741,7 +1741,7 @@ void TrainingExecutor::RunTrainingEpoch(
 
     while (!batcher.IsEpochComplete()) {
         if (ShouldStop()) break;
-        WaitWhilePaused();
+        if (!WaitWhilePaused()) break;
 
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
@@ -2323,10 +2323,11 @@ void TrainingExecutor::UpdateMetrics(const std::function<void(TrainingMetrics&)>
     updater(metrics_);
 }
 
-void TrainingExecutor::WaitWhilePaused() {
+bool TrainingExecutor::WaitWhilePaused() {
     while (is_paused_.load() && !stop_requested_.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+    return !stop_requested_.load();
 }
 
 void TrainingExecutor::PreprocessBatch(Batch& /*batch*/) {
@@ -2429,7 +2430,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
 
     while (!batcher.IsEpochComplete()) {
         if (ShouldStop()) break;
-        WaitWhilePaused();
+        if (!WaitWhilePaused()) break;
 
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
@@ -2731,7 +2732,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
     spdlog::debug("RunTrainingEpochArrow: Entering batch loop");
     while (!batcher.IsEpochComplete()) {
         if (ShouldStop()) break;
-        WaitWhilePaused();
+        if (!WaitWhilePaused()) break;
 
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,

@@ -416,9 +416,9 @@ private:
     bool ShouldStop() const { return stop_requested_.load(); }
 
     /**
-     * Wait while paused
+     * Wait while paused and report whether execution may continue.
      */
-    void WaitWhilePaused();
+    bool WaitWhilePaused();
 
     // Cached tensors for backward pass
     Tensor last_predictions_;

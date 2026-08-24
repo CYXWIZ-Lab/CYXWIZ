@@ -126,6 +126,15 @@ the exact effective-batch sum. Bias parameters are compared at every SGD
 boundary, final parameters and optimizer-step counts must match, terminal
 lifecycle truth is exact, and native CPU fallback is forbidden.
 
+`test_training_executor_arrow_parquet --paused-control-matrix-only` exercises
+resume and cancellation while paused across Arrow, Parquet, external
+`IBatcher`, and sequence `ISequenceBatcher` runs. It proves that paused work
+does not advance, resumed work consumes every remaining batch exactly once,
+and cancellation cannot release the pause wait into another batch. Arrow,
+Parquet, and external tabular cases require strict zero-fallback ArrayFire
+execution. Sequence exposes its declared compatibility policy because token
+accuracy is not yet a strict-resident metric.
+
 Run:
 
 ```powershell
@@ -142,6 +151,8 @@ cmake --build build --config Debug --target test_training_executor_arrow_parquet
 build\bin\Debug\test_training_executor_arrow_parquet.exe --uneven-epoch-metrics-only
 
 build\bin\Debug\test_training_executor_arrow_parquet.exe --gradient-accumulation-parity-only
+
+build\bin\Debug\test_training_executor_arrow_parquet.exe --paused-control-matrix-only
 ```
 
 These checks work when `PyTorch/LibTorch: OFF`: PyTorch is used only to
