@@ -117,6 +117,91 @@ def flatten_matrix() -> list[dict[str, Any]]:
     ]
 
 
+def dropout_semantics() -> dict[str, Any]:
+    input_tensor = torch.tensor(
+        [[1.0, -2.0, 3.5], [4.0, -5.0, 6.5]],
+        dtype=torch.float32,
+        requires_grad=True,
+    )
+    grad_output = torch.tensor(
+        [[0.25, -0.5, 0.75], [1.0, -1.25, 1.5]],
+        dtype=torch.float32,
+    )
+
+    eval_module = torch.nn.Dropout(0.5).eval()
+    eval_output = eval_module(input_tensor)
+    (eval_grad_input,) = torch.autograd.grad(
+        eval_output, input_tensor, grad_outputs=grad_output
+    )
+
+    boundary_cases: list[dict[str, Any]] = []
+    for probability in (0.0, 1.0):
+        boundary_input = input_tensor.detach().clone().requires_grad_(True)
+        boundary_output = torch.nn.Dropout(probability)(boundary_input)
+        (boundary_grad_input,) = torch.autograd.grad(
+            boundary_output, boundary_input, grad_outputs=grad_output
+        )
+        boundary_cases.append({
+            "probability": probability,
+            "expected": {
+                "output": tensor_fixture(boundary_output),
+                "grad_input": tensor_fixture(boundary_grad_input),
+            },
+        })
+
+    distribution_cases: list[dict[str, Any]] = []
+    sample_count = 65536
+    for index, probability in enumerate((0.25, 0.5, 0.9)):
+        torch.manual_seed(3901 + index)
+        samples = torch.ones(
+            sample_count, dtype=torch.float32, requires_grad=True
+        )
+        output = torch.nn.Dropout(probability)(samples)
+        (grad_input,) = torch.autograd.grad(
+            output, samples, grad_outputs=torch.ones_like(output)
+        )
+        distribution_cases.append({
+            "probability": probability,
+            "sample_count": sample_count,
+            "expected_keep_scale": 1.0 / (1.0 - probability),
+            "theoretical": {
+                "zero_fraction": probability,
+                "mean": 1.0,
+                "variance": probability / (1.0 - probability),
+            },
+            "pytorch_observed": {
+                "zero_fraction": float((output == 0).float().mean().item()),
+                "mean": float(output.mean().item()),
+                "variance": float(output.var(unbiased=False).item()),
+                "backward_mask_mismatch_count": int(
+                    (grad_input != output).sum().item()
+                ),
+            },
+            "tolerance": {
+                "zero_fraction": 0.015,
+                "mean": 0.03,
+                "variance": 0.3 if probability == 0.9 else 0.06,
+            },
+        })
+
+    return {
+        "operation": "torch.nn.Dropout",
+        "dtype": "float32",
+        "input": tensor_fixture(input_tensor),
+        "grad_output": tensor_fixture(grad_output),
+        "eval_expected": {
+            "output": tensor_fixture(eval_output),
+            "grad_input": tensor_fixture(eval_grad_input),
+        },
+        "boundary_cases": boundary_cases,
+        "distribution_cases": distribution_cases,
+        "rng_contract": (
+            "Distribution parity is required across frameworks; exact mask "
+            "replay is required only after resetting the same backend RNG seed."
+        ),
+    }
+
+
 def gradient_accumulation_case(
     name: str,
     input_values: list[list[float]],
@@ -872,6 +957,7 @@ def generate_fixture() -> dict[str, Any]:
         },
         "seed": 39,
         "cases": {
+            "dropout_semantics_f32": dropout_semantics(),
             "flatten_forward_backward_f32": flatten_matrix(),
             "linear_basic_f32": linear_case(),
             "cross_entropy_index_mean_f32": cross_entropy_case(),

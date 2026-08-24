@@ -328,18 +328,18 @@
     {
       "id": "LAYER-DROPOUT-001",
       "family": "layer",
-      "operation": "DropoutLayer training and evaluation modes",
+      "operation": "DropoutLayer and DropoutModule training and evaluation modes",
       "tier": 1,
-      "owner": "cyxwiz-backend/include/cyxwiz/layers/dropout.h",
-      "implementation": ["cyxwiz-backend/src/algorithms/layers/dropout.cpp"],
+      "owner": "cyxwiz-backend/include/cyxwiz/layers/dropout.h; cyxwiz-backend/include/cyxwiz/sequential.h",
+      "implementation": ["cyxwiz-backend/src/algorithms/layers/dropout.cpp", "cyxwiz-backend/src/algorithms/sequential/regularization_shape_modules.cpp"],
       "callers": ["SequentialModel", "regularized model families"],
-      "contract": "Evaluation is identity; training applies inverted-dropout scaling with reproducible configured seed behavior.",
-      "supported": "Float32 public layer domain",
-      "oracle": "PyTorch semantic distribution plus CyxWiz deterministic replay",
-      "tests": [],
-      "execution": "must be ArrayFire-first",
-      "status": "missing",
-      "gaps": ["eval identity", "training replay", "backward", "residency"]
+      "contract": "Probability is inclusive [0,1]; evaluation and p=0 are exact identity; p=1 is exact zero; Float32 training applies inverted-dropout scaling and backward reuses the mask owned by the successful training forward even if the current mode changes.",
+      "supported": "all Tensor dtypes for identity paths; Float32 for stochastic training",
+      "oracle": "Generated PyTorch 2.10 forward/backward boundary and distribution fixtures plus same-backend CyxWiz seed replay",
+      "tests": ["cyxwiz-tests:test_dropout_layer", "cyxwiz-route-probe:cyxwiz_dropout_forward_backward"],
+      "execution": "strict ArrayFire-resident CPU, CUDA, OpenCL and qualified oneAPI routes; declared native CPU compatibility fallback",
+      "status": "partial",
+      "gaps": ["installed oneAPI device 0 Intel provider/runtime repair and exact-route requalification"]
     },
     {
       "id": "ACT-ELEMENTWISE-001",

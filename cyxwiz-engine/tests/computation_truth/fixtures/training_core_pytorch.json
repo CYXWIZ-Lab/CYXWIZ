@@ -943,6 +943,202 @@
         }
       }
     ],
+    "dropout_semantics_f32": {
+      "boundary_cases": [
+        {
+          "expected": {
+            "grad_input": {
+              "shape": [
+                2,
+                3
+              ],
+              "values": [
+                0.25,
+                -0.5,
+                0.75,
+                1.0,
+                -1.25,
+                1.5
+              ]
+            },
+            "output": {
+              "shape": [
+                2,
+                3
+              ],
+              "values": [
+                1.0,
+                -2.0,
+                3.5,
+                4.0,
+                -5.0,
+                6.5
+              ]
+            }
+          },
+          "probability": 0.0
+        },
+        {
+          "expected": {
+            "grad_input": {
+              "shape": [
+                2,
+                3
+              ],
+              "values": [
+                0.0,
+                -0.0,
+                0.0,
+                0.0,
+                -0.0,
+                0.0
+              ]
+            },
+            "output": {
+              "shape": [
+                2,
+                3
+              ],
+              "values": [
+                0.0,
+                -0.0,
+                0.0,
+                0.0,
+                -0.0,
+                0.0
+              ]
+            }
+          },
+          "probability": 1.0
+        }
+      ],
+      "distribution_cases": [
+        {
+          "expected_keep_scale": 1.3333333333333333,
+          "probability": 0.25,
+          "pytorch_observed": {
+            "backward_mask_mismatch_count": 0,
+            "mean": 1.0011391639709473,
+            "variance": 0.3325725197792053,
+            "zero_fraction": 0.2491455078125
+          },
+          "sample_count": 65536,
+          "theoretical": {
+            "mean": 1.0,
+            "variance": 0.3333333333333333,
+            "zero_fraction": 0.25
+          },
+          "tolerance": {
+            "mean": 0.03,
+            "variance": 0.06,
+            "zero_fraction": 0.015
+          }
+        },
+        {
+          "expected_keep_scale": 2.0,
+          "probability": 0.5,
+          "pytorch_observed": {
+            "backward_mask_mismatch_count": 0,
+            "mean": 1.00396728515625,
+            "variance": 0.9999842643737793,
+            "zero_fraction": 0.498016357421875
+          },
+          "sample_count": 65536,
+          "theoretical": {
+            "mean": 1.0,
+            "variance": 1.0,
+            "zero_fraction": 0.5
+          },
+          "tolerance": {
+            "mean": 0.03,
+            "variance": 0.06,
+            "zero_fraction": 0.015
+          }
+        },
+        {
+          "expected_keep_scale": 10.000000000000002,
+          "probability": 0.9,
+          "pytorch_observed": {
+            "backward_mask_mismatch_count": 0,
+            "mean": 1.012115478515625,
+            "variance": 9.096776962280273,
+            "zero_fraction": 0.8987884521484375
+          },
+          "sample_count": 65536,
+          "theoretical": {
+            "mean": 1.0,
+            "variance": 9.000000000000002,
+            "zero_fraction": 0.9
+          },
+          "tolerance": {
+            "mean": 0.03,
+            "variance": 0.3,
+            "zero_fraction": 0.015
+          }
+        }
+      ],
+      "dtype": "float32",
+      "eval_expected": {
+        "grad_input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.25,
+            -0.5,
+            0.75,
+            1.0,
+            -1.25,
+            1.5
+          ]
+        },
+        "output": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            1.0,
+            -2.0,
+            3.5,
+            4.0,
+            -5.0,
+            6.5
+          ]
+        }
+      },
+      "grad_output": {
+        "shape": [
+          2,
+          3
+        ],
+        "values": [
+          0.25,
+          -0.5,
+          0.75,
+          1.0,
+          -1.25,
+          1.5
+        ]
+      },
+      "input": {
+        "shape": [
+          2,
+          3
+        ],
+        "values": [
+          1.0,
+          -2.0,
+          3.5,
+          4.0,
+          -5.0,
+          6.5
+        ]
+      },
+      "operation": "torch.nn.Dropout",
+      "rng_contract": "Distribution parity is required across frameworks; exact mask replay is required only after resetting the same backend RNG seed."
+    },
     "flatten_forward_backward_f32": [
       {
         "dtype": "float32",

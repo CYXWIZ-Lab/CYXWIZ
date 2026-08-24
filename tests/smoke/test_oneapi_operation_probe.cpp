@@ -14,6 +14,7 @@
 #include <cyxwiz/tensor.h>
 
 #include "core/route_qualification_snapshot.h"
+#include "route_probe_dropout_contract.h"
 #include "route_probe_flatten_contract.h"
 
 #include <algorithm>
@@ -519,6 +520,10 @@ void RunOperation(const ProbeOptions &options) {
   }
   if (operation == "cyxwiz_flatten_forward_backward") {
     cyxwiz::route_probe::RunFlattenForwardBackwardContract(operation, &Stage);
+    return;
+  }
+  if (operation == "cyxwiz_dropout_forward_backward") {
+    cyxwiz::route_probe::RunDropoutForwardBackwardContract(operation, &Stage);
     return;
   }
 

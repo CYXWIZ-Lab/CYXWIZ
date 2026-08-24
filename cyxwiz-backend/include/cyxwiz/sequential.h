@@ -552,11 +552,12 @@ public:
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
+    void SetTraining(bool training) override;
     std::string GetName() const override;
 
 private:
     float p_;  // Dropout probability
-    Tensor mask_;  // Dropout mask for backward
+    DropoutLayer layer_;
 };
 
 /**

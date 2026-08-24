@@ -25,6 +25,7 @@ if(TARGET cyxwiz-backend)
     add_executable(cyxwiz-route-probe
         "${CMAKE_SOURCE_DIR}/tests/smoke/test_oneapi_operation_probe.cpp"
         "${CMAKE_SOURCE_DIR}/tests/smoke/route_probe_flatten_contract.cpp"
+        "${CMAKE_SOURCE_DIR}/tests/smoke/route_probe_dropout_contract.cpp"
     )
     target_link_libraries(cyxwiz-route-probe PRIVATE cyxwiz-backend)
     target_include_directories(cyxwiz-route-probe PRIVATE

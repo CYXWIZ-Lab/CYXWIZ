@@ -28,6 +28,7 @@ set(operations
     cyxwiz_bce_backward
     linear_init
     cyxwiz_flatten_forward_backward
+    cyxwiz_dropout_forward_backward
 )
 
 set(report "oneAPI isolated operation matrix\nprobe=${PROBE_EXE}\n")

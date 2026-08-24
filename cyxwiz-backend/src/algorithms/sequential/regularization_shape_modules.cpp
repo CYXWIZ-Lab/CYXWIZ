@@ -107,95 +107,19 @@ Tensor SoftmaxModule::Backward(const Tensor& grad_output) {
 // DropoutModule Implementation (ArrayFire)
 // ============================================================================
 
-DropoutModule::DropoutModule(float p) : p_(p) {
-    if (p < 0.0f || p > 1.0f) {
-        spdlog::warn("DropoutModule: p={} out of range [0,1], clamping", p);
-        p_ = std::clamp(p, 0.0f, 1.0f);
-    }
-}
+DropoutModule::DropoutModule(float p) : p_(p), layer_(p) {}
 
 Tensor DropoutModule::Forward(const Tensor& input) {
-    input_cache_ = input.Clone();
-
-    // During eval, just return input
-    if (!is_training_) {
-        return input.Clone();
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    // ArrayFire implementation
-    af::array x = input.GetSemanticArray();
-    float scale = 1.0f / (1.0f - p_);
-
-    // Generate random mask: values > p are kept (scaled), values <= p are dropped
-    af::array rand_vals = af::randu(x.dims());
-    af::array keep_mask = (rand_vals > p_).as(af::dtype::f32);  // 1 for keep, 0 for drop
-    af::array scaled_mask = keep_mask * scale;
-
-    // Store mask for backward pass
-    mask_ = Tensor::FromSemanticArray(scaled_mask, input.Shape());
-
-    // Apply dropout
-    af::array output = x * scaled_mask;
-    return Tensor::FromSemanticArray(output, input.Shape());
-#else
-    // CPU fallback
-    const auto& shape = input.Shape();
-    size_t total = input.NumElements();
-
-    Tensor output(shape, input.GetDataType());
-    mask_ = Tensor(shape, DataType::Float32);
-
-    const float* in_data = input.ReadData<float>();
-    float* out_data = output.MutableData<float>();
-    float* mask_data = mask_.MutableData<float>();
-
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-    float scale = 1.0f / (1.0f - p_);
-
-    for (size_t i = 0; i < total; ++i) {
-        if (dist(gen) > p_) {
-            mask_data[i] = scale;
-            out_data[i] = in_data[i] * scale;
-        } else {
-            mask_data[i] = 0.0f;
-            out_data[i] = 0.0f;
-        }
-    }
-    return output;
-#endif
+    return layer_.Forward(input);
 }
 
 Tensor DropoutModule::Backward(const Tensor& grad_output) {
-    if (!is_training_) {
-        return grad_output.Clone();
-    }
+    return layer_.Backward(grad_output);
+}
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    // ArrayFire implementation
-    af::array grad = grad_output.GetSemanticArray();
-    af::array mask = mask_.GetSemanticArray();
-
-    // grad_input = grad * mask (mask already has scaling applied)
-    af::array grad_input = grad * mask;
-    return Tensor::FromSemanticArray(grad_input, grad_output.Shape());
-#else
-    // CPU fallback
-    const auto& shape = grad_output.Shape();
-    Tensor grad_input(shape, DataType::Float32);
-
-    const float* grad_data = grad_output.ReadData<float>();
-    const float* mask_data = mask_.ReadData<float>();
-    float* out_data = grad_input.MutableData<float>();
-
-    size_t total = grad_output.NumElements();
-    for (size_t i = 0; i < total; ++i) {
-        out_data[i] = grad_data[i] * mask_data[i];
-    }
-    return grad_input;
-#endif
+void DropoutModule::SetTraining(bool training) {
+    Module::SetTraining(training);
+    layer_.SetTraining(training);
 }
 
 std::string DropoutModule::GetName() const {

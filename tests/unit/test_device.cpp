@@ -779,7 +779,7 @@ TEST_CASE("Qualification service publishes a complete exact-route matrix",
     CHECK(operations.size() ==
           cyxwiz::RequiredRouteQualificationOperations().size());
     CHECK(operations.front() == "route_metadata");
-    CHECK(operations.back() == "cyxwiz_flatten_forward_backward");
+    CHECK(operations.back() == "cyxwiz_dropout_forward_backward");
     REQUIRE_FALSE(progress.empty());
     CHECK(progress.back().status ==
           cyxwiz::RouteQualificationRunStatus::Completed);

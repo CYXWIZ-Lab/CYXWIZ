@@ -17,6 +17,7 @@ add_executable(cyxwiz-tests
     unit/test_optimizer.cpp
     unit/test_scheduler.cpp
     unit/test_flatten_layer.cpp
+    unit/test_dropout_layer.cpp
     unit/test_linear_layer.cpp
     unit/test_linear_algebra.cpp
     unit/test_dense_layer.cpp
@@ -52,6 +53,10 @@ set_source_files_properties(unit/test_scheduler.cpp PROPERTIES
         "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
 )
 set_source_files_properties(unit/test_flatten_layer.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_dropout_layer.cpp PROPERTIES
     COMPILE_DEFINITIONS
         "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
 )

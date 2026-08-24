@@ -93,6 +93,22 @@ device 0 is rejected safely: Intel `igc64.dll` raises access violation
 dialogs, and the route-qualification parent classifies crash/timeout outcomes;
 the known-bad route is never executed inside monolithic `cyxwiz-tests`.
 
+`cyxwiz-tests "[dropout]"` consumes generated PyTorch 2.10 Dropout fixtures
+for evaluation identity, exact `p=0`/`p=1` boundaries, training
+forward/backward distributions at `p=0.25`, `0.5`, and `0.9`, and explicit
+cross-RNG semantics. `DropoutLayer` and the production `DropoutModule` share
+one implementation, reject invalid probabilities and backward state/shape/
+dtype drift, preserve the mask owned by the successful training forward, and
+provide same-ArrayFire-backend seed replay without claiming bitwise equality
+with PyTorch's different RNG. The released
+`cyxwiz_dropout_forward_backward` route operation proves strict Float32
+forward/backward residency with zero native fallback and zero compute-time host
+synchronization on CPU device 0, CUDA device 0, OpenCL devices 0/1/2, and
+oneAPI device 1. oneAPI device 0 remains rejected by its already-recorded Intel
+`igc64.dll` access violation; Preferences and run preflight require certified
+exact-route evidence, so an enumerated but incompatible route cannot be
+committed silently for training.
+
 `test_training_batcher_setup` consumes the weighted-sampler case from the same
 fixture. It verifies inverse-class-frequency replacement sampling, fixed epoch
 length, and class-probability parity with PyTorch over 4,096 draws. Exact draw
@@ -174,6 +190,8 @@ cmake --build build --config Debug --target cyxwiz-tests -- /m:4 /v:minimal
 build\bin\Debug\cyxwiz-tests.exe "[scheduler]"
 
 build\bin\Debug\cyxwiz-tests.exe "[flatten]"
+
+build\bin\Debug\cyxwiz-tests.exe "[dropout]"
 
 cmake --build build --config Debug --target test_training_executor_arrow_parquet -- /m:4 /v:minimal
 build\bin\Debug\test_training_executor_arrow_parquet.exe --uneven-epoch-metrics-only
