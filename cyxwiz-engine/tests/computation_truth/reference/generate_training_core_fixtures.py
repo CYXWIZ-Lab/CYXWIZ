@@ -72,6 +72,51 @@ def linear_case() -> dict[str, Any]:
     }
 
 
+def flatten_case(
+    name: str,
+    shape: list[int],
+    start_dim: int,
+) -> dict[str, Any]:
+    element_count = math.prod(shape)
+    input_tensor = (
+        torch.arange(element_count, dtype=torch.float32)
+        .reshape(shape)
+        .sub(7.5)
+        .requires_grad_(True)
+    )
+    module = torch.nn.Flatten(start_dim=start_dim)
+    output = module(input_tensor)
+    grad_output = torch.linspace(
+        -1.25, 1.75, steps=element_count, dtype=torch.float32
+    ).reshape(output.shape)
+    (grad_input,) = torch.autograd.grad(
+        output, input_tensor, grad_outputs=grad_output
+    )
+
+    return {
+        "name": name,
+        "operation": "torch.nn.Flatten",
+        "dtype": "float32",
+        "parameters": {"start_dim": start_dim, "end_dim": -1},
+        "tolerance": {"atol": 0.0, "rtol": 0.0},
+        "input": tensor_fixture(input_tensor),
+        "grad_output": tensor_fixture(grad_output),
+        "expected": {
+            "output": tensor_fixture(output),
+            "grad_input": tensor_fixture(grad_input),
+        },
+    }
+
+
+def flatten_matrix() -> list[dict[str, Any]]:
+    return [
+        flatten_case("rank4_start1", [2, 1, 2, 2], 1),
+        flatten_case("rank4_start2", [2, 1, 2, 2], 2),
+        flatten_case("rank3_negative_start", [2, 2, 2], -2),
+        flatten_case("rank2_start1_identity_shape", [2, 2], 1),
+    ]
+
+
 def gradient_accumulation_case(
     name: str,
     input_values: list[list[float]],
@@ -827,6 +872,7 @@ def generate_fixture() -> dict[str, Any]:
         },
         "seed": 39,
         "cases": {
+            "flatten_forward_backward_f32": flatten_matrix(),
             "linear_basic_f32": linear_case(),
             "cross_entropy_index_mean_f32": cross_entropy_case(),
             "cross_entropy_matrix_f32": cross_entropy_matrix(),

@@ -959,65 +959,62 @@ Tensor Tensor::Reshape(const std::vector<size_t>& new_shape) const {
     }
 
     if (device_current_ && af_array_ &&
-        new_shape.size() == 2 &&
         new_elements > 0 &&
-        device_layout_ == TensorDeviceLayout::RowMajor2D) {
+        new_shape.size() <= 4 &&
+        (device_layout_ == TensorDeviceLayout::RowMajor2D ||
+         device_layout_ == TensorDeviceLayout::RowMajor3D)) {
         try {
-            const af::array row_major_linear = af::flat(af::transpose(*af_array_));
-            const af::dim4 swapped_dims(
-                static_cast<dim_t>(new_shape[1]),
-                static_cast<dim_t>(new_shape[0]),
-                1,
-                1);
+            const af::array row_major_linear =
+                device_layout_ == TensorDeviceLayout::RowMajor2D
+                    ? af::flat(af::transpose(*af_array_))
+                    : af::flat(af::reorder(*af_array_, 2, 1, 0));
 
             Tensor result;
             result.shape_ = new_shape;
             result.dtype_ = dtype_;
             result.device_ = device_;
-            result.af_array_ = std::make_unique<af::array>(
-                af::transpose(af::moddims(row_major_linear, swapped_dims)));
             result.host_current_ = false;
             result.device_current_ = true;
-            result.device_layout_ = TensorDeviceLayout::RowMajor2D;
+
+            if (new_shape.size() == 2) {
+                const af::dim4 swapped_dims(
+                    static_cast<dim_t>(new_shape[1]),
+                    static_cast<dim_t>(new_shape[0]),
+                    1,
+                    1);
+                result.af_array_ = std::make_unique<af::array>(
+                    af::transpose(af::moddims(row_major_linear, swapped_dims)));
+                result.device_layout_ = TensorDeviceLayout::RowMajor2D;
+            } else if (new_shape.size() == 3) {
+                const af::dim4 reversed_dims(
+                    static_cast<dim_t>(new_shape[2]),
+                    static_cast<dim_t>(new_shape[1]),
+                    static_cast<dim_t>(new_shape[0]),
+                    1);
+                result.af_array_ = std::make_unique<af::array>(
+                    af::reorder(
+                        af::moddims(row_major_linear, reversed_dims),
+                        2,
+                        1,
+                        0));
+                result.device_layout_ = TensorDeviceLayout::RowMajor3D;
+            } else {
+                af::dim4 dims(1, 1, 1, 1);
+                for (size_t i = 0; i < new_shape.size(); ++i) {
+                    dims[static_cast<unsigned int>(i)] =
+                        static_cast<dim_t>(new_shape[i]);
+                }
+                result.af_array_ = std::make_unique<af::array>(
+                    af::moddims(row_major_linear, dims));
+                result.device_layout_ = TensorDeviceLayout::ArrayFireNative;
+            }
             return result;
         } catch (const af::exception& e) {
             RecordTensorCoreArrayFireFallback(
                 "Tensor::Reshape",
                 *this,
                 new_shape,
-                "op=reshape;layout=row_major_2d",
-                e.what());
-        }
-    }
-
-    if (device_current_ && af_array_ &&
-        new_shape.size() == 3 &&
-        new_elements > 0 &&
-        device_layout_ == TensorDeviceLayout::RowMajor3D) {
-        try {
-            const af::array row_major_linear = af::flat(af::reorder(*af_array_, 2, 1, 0));
-            const af::dim4 reversed_dims(
-                static_cast<dim_t>(new_shape[2]),
-                static_cast<dim_t>(new_shape[1]),
-                static_cast<dim_t>(new_shape[0]),
-                1);
-
-            Tensor result;
-            result.shape_ = new_shape;
-            result.dtype_ = dtype_;
-            result.device_ = device_;
-            result.af_array_ = std::make_unique<af::array>(
-                af::reorder(af::moddims(row_major_linear, reversed_dims), 2, 1, 0));
-            result.host_current_ = false;
-            result.device_current_ = true;
-            result.device_layout_ = TensorDeviceLayout::RowMajor3D;
-            return result;
-        } catch (const af::exception& e) {
-            RecordTensorCoreArrayFireFallback(
-                "Tensor::Reshape",
-                *this,
-                new_shape,
-                "op=reshape;layout=row_major_3d",
+                "op=reshape;layout=row_major_cross_rank",
                 e.what());
         }
     }

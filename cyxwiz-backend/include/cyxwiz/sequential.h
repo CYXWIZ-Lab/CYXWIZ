@@ -573,6 +573,8 @@ public:
 private:
     int start_dim_;
     std::vector<size_t> original_shape_;  // For backward reshape
+    std::vector<size_t> output_shape_;    // Exact gradient contract
+    DataType output_dtype_ = DataType::Float32;
 };
 
 /**

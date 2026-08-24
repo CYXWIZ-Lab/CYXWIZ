@@ -75,6 +75,19 @@ The pinned reference package is listed in
 action; normal configuration, builds, and test runs do not invoke Python or
 require network access.
 
+`cyxwiz-tests "[flatten]"` consumes generated PyTorch 2.10
+`torch.nn.Flatten` forward/autograd fixtures for rank-2/3/4 inputs, positive
+and negative configured `start_dim`, and exact value ordering. It exercises
+both the public `FlattenLayer` and the production `FlattenModule` used by
+graph-built `SequentialModel` instances. The contract also rejects backward
+calls before a successful forward and rejects gradient shape/dtype drift,
+preserves all five Tensor dtypes byte-for-byte, and proves rank-3-to-rank-2
+forward plus rank-2-to-rank-3 backward remain ArrayFire-resident with zero
+native fallback and zero host synchronization on ArrayFire CPU and every
+installed CUDA/OpenCL device. oneAPI remains an isolated-process gap: the
+installed plugin crashed a direct in-process Flatten matrix and therefore is
+not placed in the monolithic `cyxwiz-tests` process.
+
 `test_training_batcher_setup` consumes the weighted-sampler case from the same
 fixture. It verifies inverse-class-frequency replacement sampling, fixed epoch
 length, and class-probability parity with PyTorch over 4,096 draws. Exact draw
@@ -154,6 +167,8 @@ build\bin\Debug\test_training_batcher_setup.exe
 
 cmake --build build --config Debug --target cyxwiz-tests -- /m:4 /v:minimal
 build\bin\Debug\cyxwiz-tests.exe "[scheduler]"
+
+build\bin\Debug\cyxwiz-tests.exe "[flatten]"
 
 cmake --build build --config Debug --target test_training_executor_arrow_parquet -- /m:4 /v:minimal
 build\bin\Debug\test_training_executor_arrow_parquet.exe --uneven-epoch-metrics-only

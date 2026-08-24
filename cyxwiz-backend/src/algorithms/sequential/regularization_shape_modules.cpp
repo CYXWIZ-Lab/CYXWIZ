@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <random>
+#include <stdexcept>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -208,33 +209,27 @@ std::string DropoutModule::GetName() const {
 FlattenModule::FlattenModule(int start_dim) : start_dim_(start_dim) {}
 
 Tensor FlattenModule::Forward(const Tensor& input) {
+    Tensor output = input.Flatten(start_dim_);
     original_shape_ = input.Shape();
-
-    // Calculate flattened size from start_dim onwards
-    size_t batch_size = 1;
-    size_t flat_size = 1;
-
-    for (size_t i = 0; i < original_shape_.size(); ++i) {
-        if (static_cast<int>(i) < start_dim_) {
-            batch_size *= original_shape_[i];
-        } else {
-            flat_size *= original_shape_[i];
-        }
-    }
-
-    // Pure CPU reshape — just copy data with new shape. Flatten has no
-    // computation, and going through ArrayFire's moddims scrambles the
-    // row-major data layout (column-major AF produces transposed output
-    // that LinearLayer can't consume). This approach is both correct
-    // and faster than a GPU round-trip for a zero-compute operation.
-    const float* in_data = input.ReadData<float>();
-    return Tensor({batch_size, flat_size}, in_data, input.GetDataType());
+    output_shape_ = output.Shape();
+    output_dtype_ = output.GetDataType();
+    return output;
 }
 
 Tensor FlattenModule::Backward(const Tensor& grad_output) {
-    // Pure CPU reshape back to original shape (same as Forward).
-    const float* grad_data = grad_output.ReadData<float>();
-    return Tensor(original_shape_, grad_data, grad_output.GetDataType());
+    if (original_shape_.empty()) {
+        throw std::logic_error(
+            "FlattenModule::Backward requires a successful Forward call");
+    }
+    if (grad_output.Shape() != output_shape_) {
+        throw std::runtime_error(
+            "FlattenModule::Backward gradient shape does not match Forward output");
+    }
+    if (grad_output.GetDataType() != output_dtype_) {
+        throw std::runtime_error(
+            "FlattenModule::Backward gradient dtype does not match Forward output");
+    }
+    return grad_output.Reshape(original_shape_);
 }
 
 } // namespace cyxwiz
