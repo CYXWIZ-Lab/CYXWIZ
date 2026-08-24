@@ -98,6 +98,61 @@ struct NodeMetadata {
 };
 
 /**
+ * Return whether runtime/training capability truth blocks this node from
+ * being added to a graph. Kept beside NodeMetadata so every frontend entry
+ * point applies the same support policy.
+ */
+inline bool IsNodeSupportBlocked(const NodeMetadata& metadata) {
+    for (const auto& axis : metadata.support_axes) {
+        if (axis.name == "Support State" && axis.value == "blocked") {
+            return true;
+        }
+    }
+    // Runtime and compiler axes are lane-specific. A node may be unsupported
+    // by PipelineExecutor while remaining valid in the training graph runtime.
+    // Capability resolution promotes a true product-wide blocker to the
+    // explicit Support State above and/or Template status below.
+    return metadata.badge == "Blocked";
+}
+
+inline bool CanAddNodeToGraph(const NodeMetadata& metadata) {
+    return !metadata.IsTemplate() && !IsNodeSupportBlocked(metadata);
+}
+
+/**
+ * Apply the declarative static contract to a newly constructed node.
+ * Dynamic dialogs may add or replace fields after this bootstrap step.
+ */
+inline void ApplyStaticNodeMetadataContract(const NodeMetadata& metadata,
+                                            gui::MLNode& node,
+                                            int& next_pin_id) {
+    node.category = metadata.category;
+
+    const auto append_pin = [&next_pin_id](const PortDefinition& port,
+                                           bool is_input,
+                                           std::vector<gui::NodePin>& pins) {
+        gui::NodePin pin{};
+        pin.id = next_pin_id++;
+        pin.type = port.type;
+        pin.name = port.name;
+        pin.is_input = is_input;
+        pin.description = port.description;
+        pin.is_required = port.required;
+        pins.push_back(pin);
+    };
+
+    for (const auto& input : metadata.inputs) {
+        append_pin(input, true, node.inputs);
+    }
+    for (const auto& output : metadata.outputs) {
+        append_pin(output, false, node.outputs);
+    }
+    for (const auto& parameter : metadata.parameters) {
+        node.parameters.emplace(parameter.name, parameter.default_value);
+    }
+}
+
+/**
  * Get display name for a category
  */
 inline std::string GetCategoryDisplayName(NodeCategory category) {

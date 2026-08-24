@@ -29,23 +29,6 @@ const cyxwiz::SupportAxisDefinition* FindSupportAxis(
     return it != metadata->support_axes.end() ? &*it : nullptr;
 }
 
-bool HasUnsupportedSupportAxis(const cyxwiz::NodeMetadata* metadata,
-                               const char* axis_name) {
-    const auto* axis = FindSupportAxis(metadata, axis_name);
-    return axis != nullptr && !axis->supported;
-}
-
-bool IsMetadataSupportBlocked(const cyxwiz::NodeMetadata* metadata) {
-    const auto* support_state = FindSupportAxis(metadata, "Support State");
-    if (support_state && support_state->value == "blocked") return true;
-
-    return HasUnsupportedSupportAxis(metadata, "Runtime") ||
-           HasUnsupportedSupportAxis(metadata, "Pipeline Executor") ||
-           HasUnsupportedSupportAxis(metadata, "Training Backend") ||
-           HasUnsupportedSupportAxis(metadata, "Compile") ||
-           HasUnsupportedSupportAxis(metadata, "Training");
-}
-
 std::string FirstSupportBlockReason(const cyxwiz::NodeMetadata* metadata) {
     if (!metadata) return {};
 
@@ -62,7 +45,7 @@ std::string FirstSupportBlockReason(const cyxwiz::NodeMetadata* metadata) {
         }
     }
 
-    return IsMetadataSupportBlocked(metadata)
+    return metadata != nullptr && cyxwiz::IsNodeSupportBlocked(*metadata)
         ? std::string("Blocked by central support metadata")
         : std::string();
 }
@@ -199,7 +182,7 @@ void NodeEditor::InitializeSearchableNodes() {
             node.status = to_gui_status(meta->status);
             node.description = meta->brief_description;
             node.tooltip = meta->help_text;
-            node.support_blocked = IsMetadataSupportBlocked(meta);
+            node.support_blocked = cyxwiz::IsNodeSupportBlocked(*meta);
             if (const auto* support_state = FindSupportAxis(meta, "Support State")) {
                 node.support_state = support_state->value;
             }

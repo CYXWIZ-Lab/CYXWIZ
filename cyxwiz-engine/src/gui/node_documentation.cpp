@@ -1245,9 +1245,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Add momentum for faster convergence.",
         "weight = weight - lr * gradient.",
         {
-            {"lr", "Learning rate (e.g., 0.01)"},
-            {"momentum", "Momentum factor (0.9 typical)"},
-            {"weight_decay", "L2 regularization"}
+            {"learning_rate", "Positive update step size (0.01 default)"},
+            {"momentum", "Momentum coefficient in [0, 1)"}
         },
         {
             "Use momentum >= 0.9 for better convergence",
@@ -1262,9 +1261,10 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Good default choice that works well for most tasks.",
         "Tracks running mean and variance of gradients.",
         {
-            {"lr", "Learning rate (e.g., 0.001)"},
-            {"betas", "Coefficients for running averages (0.9, 0.999)"},
-            {"eps", "Numerical stability (1e-8)"}
+            {"learning_rate", "Positive update step size (0.001 default)"},
+            {"beta1", "First-moment decay coefficient"},
+            {"beta2", "Second-moment decay coefficient"},
+            {"epsilon", "Positive numerical-stability constant"}
         },
         {
             "Default choice for most deep learning",
@@ -1279,8 +1279,10 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Better generalization than standard Adam.",
         "Weight decay applied directly to weights, not to gradient.",
         {
-            {"lr", "Learning rate"},
-            {"betas", "Running average coefficients"},
+            {"learning_rate", "Positive update step size"},
+            {"beta1", "First-moment decay coefficient"},
+            {"beta2", "Second-moment decay coefficient"},
+            {"epsilon", "Positive numerical-stability constant"},
             {"weight_decay", "Weight decay coefficient (0.01 typical)"}
         },
         {
@@ -1296,9 +1298,10 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Good for non-stationary objectives and RNNs.",
         "Divides learning rate by running average of recent gradient magnitudes.",
         {
-            {"lr", "Learning rate (0.01 typical)"},
+            {"learning_rate", "Positive update step size (0.001 default)"},
             {"alpha", "Smoothing constant (0.99)"},
-            {"eps", "Numerical stability"}
+            {"epsilon", "Positive numerical-stability constant"},
+            {"momentum", "Momentum coefficient in [0, 1)"}
         },
         {
             "Often works well for RNNs",
@@ -1313,8 +1316,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Good for sparse data but learning rate decays aggressively.",
         "Parameters with large gradients get smaller updates.",
         {
-            {"lr", "Initial learning rate"},
-            {"eps", "Numerical stability"}
+            {"learning_rate", "Positive initial update step size"},
+            {"epsilon", "Positive numerical-stability constant"}
         },
         {
             "Good for sparse features (NLP, recommender systems)",
@@ -1329,8 +1332,10 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Often slightly faster convergence than Adam.",
         "Combines Adam's adaptivity with Nesterov's look-ahead.",
         {
-            {"lr", "Learning rate"},
-            {"betas", "Running average coefficients"}
+            {"learning_rate", "Positive update step size"},
+            {"beta1", "First-moment decay coefficient"},
+            {"beta2", "Second-moment decay coefficient"},
+            {"epsilon", "Positive numerical-stability constant"}
         },
         {
             "Try if Adam is working well",

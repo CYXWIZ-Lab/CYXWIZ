@@ -1258,17 +1258,7 @@ bool NodeBrowserPanel::NodeMatchesSupportFilter(
 
 bool NodeBrowserPanel::IsSupportBlocked(
     const cyxwiz::NodeMetadata* metadata) const {
-    if (!metadata) return false;
-
-    if (HasUnsupportedAxis(metadata, "Runtime") ||
-        HasUnsupportedAxis(metadata, "Pipeline Executor") ||
-        HasUnsupportedAxis(metadata, "Training Backend") ||
-        HasUnsupportedAxis(metadata, "Compile") ||
-        HasUnsupportedAxis(metadata, "Training")) {
-        return true;
-    }
-
-    return metadata->badge == "Blocked";
+    return metadata != nullptr && cyxwiz::IsNodeSupportBlocked(*metadata);
 }
 
 bool NodeBrowserPanel::HasPipelineSupport(

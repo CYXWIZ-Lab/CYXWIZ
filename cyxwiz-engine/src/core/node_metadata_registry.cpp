@@ -58,16 +58,6 @@ PinType ParseTemplatePinType(const std::string& type_name) {
     return PinType::Dataset;
 }
 
-void AppendHelpTextSection(NodeMetadata& metadata, const std::string& section) {
-    if (section.empty() || metadata.help_text.find(section) != std::string::npos) {
-        return;
-    }
-    if (!metadata.help_text.empty()) {
-        metadata.help_text += "\n\n";
-    }
-    metadata.help_text += section;
-}
-
 void UpsertSupportAxis(NodeMetadata& metadata,
                        std::string name,
                        std::string value,
@@ -98,14 +88,6 @@ void ApplySupportState(NodeMetadata& metadata,
                        bool supported,
                        std::string reason = {}) {
     UpsertSupportAxis(metadata, "Support State", state, supported, reason);
-
-    std::string summary = "Product support: state=";
-    summary += state;
-    if (!reason.empty()) {
-        summary += "; reason=";
-        summary += reason;
-    }
-    AppendHelpTextSection(metadata, summary);
 }
 
 void ApplyRuntimeSupportAxes(NodeMetadata& metadata,
@@ -143,24 +125,6 @@ void ApplyRuntimeSupportAxes(NodeMetadata& metadata,
             support.implementation_owner),
         support.implementation_owner != PipelineRuntimeImplementationOwner::None,
         reason);
-
-    std::string summary = "Runtime support: mode=";
-    summary += PipelineRuntimeSupportModeName(support.mode);
-    summary += "; fail_mode=";
-    summary += PipelineRuntimeFailModeName(support.fail_mode);
-    summary += "; pipeline_executor=";
-    summary += support.pipeline_executor_supported ? "supported" : "unsupported";
-    summary += "; materializer=";
-    summary += PipelineMaterializerStorageSupportName(
-        support.materializer_storage_support);
-    summary += "; owner=";
-    summary += PipelineRuntimeImplementationOwnerName(
-        support.implementation_owner);
-    if (!reason.empty()) {
-        summary += "; reason=";
-        summary += reason;
-    }
-    AppendHelpTextSection(metadata, summary);
 
     if (support.fail_mode == PipelineRuntimeFailMode::Real &&
         support.pipeline_executor_supported) {
@@ -480,18 +444,6 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                 true,
                 reason);
 
-            std::string summary = "Training backend support: mode=";
-            summary += PipelineTrainingBackendSupportModeName(support.mode);
-            summary += "; compile=";
-            summary += support.compile_supported ? "supported" : "unsupported";
-            summary += "; training=";
-            summary += support.training_supported ? "supported" : "unsupported";
-            summary += "; owner=training_backend";
-            if (support.reason != nullptr) {
-                summary += "; reason=";
-                summary += support.reason;
-            }
-            AppendHelpTextSection(metadata, summary);
             ApplySupportState(metadata, "blocked", false, reason);
         };
 
@@ -546,18 +498,6 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
             true,
             reason);
 
-        std::string summary = "Training backend support: mode=";
-        summary += PipelineTrainingBackendSupportModeName(support.mode);
-        summary += "; compile=";
-        summary += support.compile_supported ? "supported" : "unsupported";
-        summary += "; training=";
-        summary += support.training_supported ? "supported" : "unsupported";
-        summary += "; owner=training_backend";
-        if (support.reason != nullptr) {
-            summary += "; reason=";
-            summary += support.reason;
-        }
-        AppendHelpTextSection(metadata, summary);
         ApplySupportState(metadata, "real", true, reason);
     }
 
@@ -611,14 +551,6 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
             true,
             reason);
 
-        std::string summary = "Training role: role=";
-        summary += role;
-        summary += "; compile=supported; training=supported; owner=training_backend";
-        if (capability.reason != nullptr) {
-            summary += "; reason=";
-            summary += capability.reason;
-        }
-        AppendHelpTextSection(metadata, summary);
     }
 
     const auto apply_task_type_guidance =
@@ -633,11 +565,6 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                 task_type,
                 true,
                 guidance);
-            std::string summary = "Task guidance: ";
-            summary += task_type;
-            summary += "; ";
-            summary += guidance;
-            AppendHelpTextSection(it->second, summary);
         };
 
     apply_task_type_guidance(
@@ -701,11 +628,6 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                 lane,
                 true,
                 guidance);
-            std::string summary = "Workflow lane: ";
-            summary += lane;
-            summary += "; ";
-            summary += guidance;
-            AppendHelpTextSection(it->second, summary);
         };
 
     apply_workflow_lane_guidance(
@@ -1170,11 +1092,15 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
     // ===== Smart I/O Nodes (Universal - replaces individual format nodes) =====
     RegisterNode({NodeType::DataInput, NodeCategory::DataSources, "Data Input", ICON_FA_FILE_IMPORT,
         {"csv", "tsv", "parquet", "feather", "arrow", "ipc", "input", "load", "read", "import", "file"}, 0, false,
-        "Universal data loader - supports CSV, TSV, Parquet, Feather, Arrow, and IPC", "", "",
-        {}, {{"Dataset", PinType::Dataset, true, "Loaded dataset asset"}},
-        {{"file_path", "file", "", "Data file", {}, "*.csv;*.tsv;*.parquet;*.feather;*.fea;*.arrow;*.ipc"},
+        "Configure and load a project dataset through the Data Input dialog",
+        "The dialog owns source discovery, parsing options, schema inspection, "
+        "column roles, preview, and loading. The node emits one Dataset artifact.",
+        "",
+        {}, {{"Dataset", PinType::Dataset, true,
+              "Loaded dataset with source, schema, column-role, row-count, and backing-store metadata."}},
+        {{"file_path", "file", "", "Initial file selected by the dialog", {}, "*.csv;*.tsv;*.parquet;*.feather;*.fea;*.arrow;*.ipc"},
          {"file_type", "enum", "auto", "Input format", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}, ""},
-         {"configured", "bool", "false", "Dialog configured", {}, ""}},
+         {"configured", "bool", "false", "Whether the dialog has applied a source contract", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::DataOutput, NodeCategory::DataSources, "Data Output", ICON_FA_FILE_EXPORT,
@@ -1904,17 +1830,39 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
 // =============================================================================
 void NodeMetadataRegistry::InitializeLayerNodes() {
     RegisterNode({NodeType::Dense, NodeCategory::Layers, "Dense", ICON_FA_LAYER_GROUP,
-        {"dense", "linear", "fc"}, 0, false, "Fully connected layer", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
-        {{"units", "int", "64", "Output units", {}, ""}},
+        {"dense", "linear", "fc"}, 0, false,
+        "Linear projection over the final input dimension",
+        "Maps input features to a configurable output width. Add a separate "
+        "activation node when nonlinear behavior is required.",
+        "",
+        {{"Input", PinType::Tensor, true,
+          "Input features [batch, in_features]. Flatten higher-rank inputs first."}},
+        {{"Output", PinType::Tensor, true,
+          "Linear projection [batch, units]."}},
+        {{"units", "int", "64", "Number of output features", {}, "1-1048576",
+          "Output Units", "Layer", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Conv2D, NodeCategory::Layers, "Conv2D", ICON_FA_BORDER_ALL,
-        {"conv", "convolution"}, 0, false, "2D convolution", "", "",
-        {{"Input", PinType::Tensor, true, "Input [N,C,H,W]"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
-        {{"filters", "int", "32", "Filters", {}, ""}, {"kernel_size", "int", "3", "Kernel", {}, ""}},
+        {"conv", "convolution", "cnn"}, 0, false,
+        "Blocked 2D convolution layer retained for graph compatibility",
+        "Saved Conv2D nodes remain visible and inspectable, but cannot compile "
+        "or train until ModelBuilder owns a supported Conv2D module path. Use "
+        "separate activation nodes; the legacy inline activation field is not "
+        "an executable contract.",
+        "",
+        {{"Input", PinType::Tensor, true,
+          "Input feature map [batch, channels, height, width]."}},
+        {{"Output", PinType::Tensor, true,
+          "Convolved feature map; unavailable at runtime while this node is blocked."}},
+        {{"filters", "int", "32", "Number of output channels", {}, "1-1048576",
+          "Output Channels", "Convolution", true, false},
+         {"kernel_size", "int", "3", "Square kernel width and height", {}, "1-1048576",
+          "Kernel Size", "Convolution", true, false},
+         {"stride", "int", "1", "Spatial step between kernel applications", {}, "1-1048576",
+          "Stride", "Convolution", true, false},
+         {"padding", "enum", "same", "Legacy padding policy preserved for saved graphs",
+          {"same", "valid"}, "", "Padding", "Convolution", true, false}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::LSTM, NodeCategory::Recurrent, "LSTM", ICON_FA_REPEAT,
@@ -1968,26 +1916,38 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Dropout, NodeCategory::Regularization, "Dropout", ICON_FA_SHUFFLE,
-        {"dropout", "regularization"}, 0, false, "Dropout layer", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
-        {{"rate", "float", "0.5", "Rate", {}, ""}},
+        {"dropout", "regularization"}, 0, false,
+        "Randomly suppress activations during training",
+        "Applies inverted dropout during training and passes values through unchanged during evaluation.", "",
+        {{"Input", PinType::Tensor, true, "Activations of any supported shape."}},
+        {{"Output", PinType::Tensor, true, "Same shape as Input."}},
+        {{"rate", "float", "0.5", "Probability of dropping each activation", {}, "0.0-0.999",
+          "Drop Probability", "Regularization", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::BatchNorm, NodeCategory::Normalization, "BatchNorm", ICON_FA_SCALE_BALANCED,
-        {"batchnorm", "normalization"}, 0, false, "Batch normalization", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Normalized"}},
-        {{"eps", "float", "1e-5", "Epsilon", {}, ""},
-         {"momentum", "float", "0.1", "Momentum", {}, ""}},
+        {"batchnorm", "normalization"}, 0, false,
+        "Normalize features with batch statistics and running estimates", "", "",
+        {{"Input", PinType::Tensor, true, "Feature activations to normalize."}},
+        {{"Output", PinType::Tensor, true, "Normalized tensor with the same shape."}},
+        {{"eps", "float", "1e-5", "Numerical stability term", {}, "0.0-1.0",
+          "Epsilon", "Normalization", true, false},
+         {"momentum", "float", "0.1", "Running-statistics update momentum", {}, "0.0-1.0",
+          "Momentum", "Normalization", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LayerNorm, NodeCategory::Normalization, "LayerNorm", ICON_FA_SCALE_BALANCED,
-        {"layernorm", "normalization", "transformer"}, 0, false, "Layer normalization", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Normalized"}},
-        {{"normalized_shape", "int", "128", "Normalized shape", {}, ""},
-         {"eps", "float", "1e-5", "Epsilon", {}, ""}},
+        {"layernorm", "normalization", "transformer"}, 0, false,
+        "Normalize the trailing feature dimensions of each sample", "", "",
+        {{"Input", PinType::Tensor, true, "Feature or sequence activations to normalize."}},
+        {{"Output", PinType::Tensor, true, "Normalized tensor with the same shape."}},
+        {{"normalized_shape", "string", "",
+          "Comma-separated trailing dimensions; empty uses the current feature width", {}, "",
+          "Normalized Shape", "Normalization", false, false},
+         {"eps", "float", "1e-5", "Numerical stability term", {}, "0.0-1.0",
+          "Epsilon", "Normalization", true, false},
+         {"elementwise_affine", "bool", "true", "Learn per-element scale and bias", {}, "",
+          "Elementwise Affine", "Normalization", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GroupNorm, NodeCategory::Normalization, "GroupNorm", ICON_FA_SCALE_BALANCED,
@@ -2006,13 +1966,31 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::MultiHeadAttention, NodeCategory::Attention, "Multi-Head Attention", ICON_FA_BULLSEYE,
-        {"attention", "transformer"}, 0, false, "Multi-head attention", "", "",
-        {{"Query", PinType::Tensor, true, "Query"},
-         {"Key", PinType::Tensor, false, "Optional; currently blocked when connected"},
-         {"Value", PinType::Tensor, false, "Optional; currently blocked when connected"},
-         {"Mask", PinType::Tensor, false, "Optional; not compiled for standalone MHA yet"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
-        {{"embed_dim", "int", "512", "Dim", {}, ""}, {"num_heads", "int", "8", "Heads", {}, ""}},
+        {"attention", "transformer", "self-attention"}, 0, false,
+        "Trainable self-attention over a sequence tensor",
+        "Connect one sequence tensor to Query. Studio uses it as query, key, and value. "
+        "Cross-attention and attention masks remain fail-closed until their "
+        "multi-input runtime contract is implemented.",
+        "",
+        {{"Query", PinType::Tensor, true,
+          "Sequence tensor [batch, sequence, features], used as query, key, and value."},
+         {"Key", PinType::Tensor, false,
+          "Reserved for cross-attention; connecting this pin is currently rejected."},
+         {"Value", PinType::Tensor, false,
+          "Reserved for cross-attention; connecting this pin is currently rejected."},
+         {"Mask", PinType::Tensor, false,
+          "Reserved for attention masking; connecting this pin is currently rejected."}},
+        {{"Output", PinType::Tensor, true,
+          "Self-attention output [batch, sequence, features]."}},
+        {{"embed_dim", "int", "512", "Expected input feature width", {}, "1-65536",
+          "Embedding Dimension", "Attention", true, false},
+         {"num_heads", "int", "8",
+          "Number of attention heads; non-divisible widths fall back to one head", {}, "1-4096",
+          "Attention Heads", "Attention", true, false},
+         {"dropout", "float", "0.0", "Attention dropout probability", {}, "0.0-0.999",
+          "Dropout", "Regularization", false, false},
+         {"use_bias", "bool", "true", "Enable bias in the attention projections", {}, "",
+          "Use Bias", "Advanced", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TransformerEncoder, NodeCategory::Attention, "Transformer Encoder", ICON_FA_BULLSEYE,
@@ -2124,44 +2102,44 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::Flatten, NodeCategory::ShapeOps, "Flatten", ICON_FA_ARROWS_LEFT_RIGHT,
-        {"flatten", "reshape"}, 0, false, "Flatten tensor", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Flattened"}},
+        {"flatten", "reshape"}, 0, false, "Collapse each sample to one feature dimension", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor with one or more sample dimensions"}},
+        {{"Output", PinType::Tensor, true, "Tensor with sample dimensions flattened to one"}},
         {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Reshape, NodeCategory::ShapeOps, "Reshape", ICON_FA_ARROWS_LEFT_RIGHT,
-        {"reshape", "view", "shape", "tensor"}, 0, false, "Reshape tensor dimensions", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Reshaped"}},
-        {{"shape", "string", "-1,256", "Target shape", {}, ""}},
+        {"reshape", "view", "shape", "tensor"}, 0, false, "Reshape each sample without changing its element count", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor whose sample shape will be changed"}},
+        {{"Output", PinType::Tensor, true, "Tensor with the requested sample shape"}},
+        {{"shape", "string", "", "Comma-separated target sample dimensions; one dimension may be -1", {}, "", "Target Shape", "Shape", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::View, NodeCategory::ShapeOps, "View", ICON_FA_ARROWS_LEFT_RIGHT,
-        {"view", "reshape", "shape", "tensor"}, 0, false, "View tensor with a new shape", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Viewed"}},
-        {{"shape", "string", "-1,256", "Target shape", {}, ""}},
+        {"view", "reshape", "shape", "tensor"}, 0, false, "View each sample with a different shape", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor whose sample shape will be changed"}},
+        {{"Output", PinType::Tensor, true, "Tensor viewed with the requested sample shape"}},
+        {{"shape", "string", "", "Comma-separated target sample dimensions; one dimension may be -1", {}, "", "Target Shape", "Shape", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Permute, NodeCategory::ShapeOps, "Permute", ICON_FA_SHUFFLE,
-        {"permute", "transpose", "axes", "shape", "tensor"}, 0, false, "Reorder tensor dimensions", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Permuted"}},
-        {{"dims", "string", "0,2,1", "Dimension order", {}, ""}},
+        {"permute", "transpose", "axes", "shape", "tensor"}, 0, false, "Reorder every sample dimension", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor whose sample dimensions will be reordered"}},
+        {{"Output", PinType::Tensor, true, "Tensor with dimensions in the requested order"}},
+        {{"dims", "string", "", "Comma-separated dimension order containing every input axis once", {}, "", "Dimension Order", "Shape", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Squeeze, NodeCategory::ShapeOps, "Squeeze", ICON_FA_COMPRESS,
-        {"squeeze", "shape", "dimension", "tensor"}, 0, false, "Remove singleton tensor dimensions", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Squeezed"}},
-        {{"dim", "int", "0", "Dimension", {}, ""}},
+        {"squeeze", "shape", "dimension", "tensor"}, 0, false, "Remove singleton sample dimensions", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor containing one or more size-one dimensions"}},
+        {{"Output", PinType::Tensor, true, "Tensor with selected singleton dimensions removed"}},
+        {{"dim", "int", "-1", "Dimension to remove, or -1 to remove all singleton dimensions", {}, "", "Dimension", "Shape"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Unsqueeze, NodeCategory::ShapeOps, "Unsqueeze", ICON_FA_EXPAND,
-        {"unsqueeze", "shape", "dimension", "tensor"}, 0, false, "Insert a singleton tensor dimension", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Unsqueezed"}},
-        {{"dim", "int", "0", "Dimension", {}, ""}},
+        {"unsqueeze", "shape", "dimension", "tensor"}, 0, false, "Insert a singleton sample dimension", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor whose sample rank will be increased"}},
+        {{"Output", PinType::Tensor, true, "Tensor with a size-one dimension inserted"}},
+        {{"dim", "int", "0", "Position at which to insert the singleton dimension", {}, "", "Dimension", "Shape"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Split, NodeCategory::ShapeOps, "Split", ICON_FA_CODE_BRANCH,
@@ -2197,155 +2175,157 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorSum, NodeCategory::Analytics, "Tensor Sum", ICON_FA_CALCULATOR,
-        {"tensor", "sum", "reduce", "reduction"}, 0, false, "Sum tensor values", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Reduced tensor"}},
-        {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
-         {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
+        {"tensor", "sum", "reduce", "reduction"}, 0, false, "Sum values along sample dimensions", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor whose sample dimensions will be reduced"}},
+        {{"Output", PinType::Tensor, true, "Reduced tensor with the batch dimension preserved"}},
+        {{"dim", "int", "-1", "Sample dimension to reduce, or -1 for all sample values", {}, "", "Dimension", "Reduction"},
+         {"keepdim", "bool", "false", "Retain reduced sample dimensions with size one", {}, "", "Keep Dimension", "Reduction"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorMean, NodeCategory::Analytics, "Tensor Mean", ICON_FA_CALCULATOR,
-        {"tensor", "mean", "average", "reduce", "reduction"}, 0, false, "Average tensor values", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Reduced tensor"}},
-        {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
-         {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
+        {"tensor", "mean", "average", "reduce", "reduction"}, 0, false, "Average values along sample dimensions", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor whose sample dimensions will be reduced"}},
+        {{"Output", PinType::Tensor, true, "Reduced tensor with the batch dimension preserved"}},
+        {{"dim", "int", "-1", "Sample dimension to reduce, or -1 for all sample values", {}, "", "Dimension", "Reduction"},
+         {"keepdim", "bool", "false", "Retain reduced sample dimensions with size one", {}, "", "Keep Dimension", "Reduction"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorMax, NodeCategory::Analytics, "Tensor Max", ICON_FA_CALCULATOR,
-        {"tensor", "max", "maximum", "reduce", "reduction"}, 0, false, "Maximum tensor values", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Reduced tensor"}},
-        {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
-         {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
+        {"tensor", "max", "maximum", "reduce", "reduction"}, 0, false, "Take the maximum along sample dimensions", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor whose sample dimensions will be reduced"}},
+        {{"Output", PinType::Tensor, true, "Reduced tensor with the batch dimension preserved"}},
+        {{"dim", "int", "-1", "Sample dimension to reduce, or -1 for all sample values", {}, "", "Dimension", "Reduction"},
+         {"keepdim", "bool", "false", "Retain reduced sample dimensions with size one", {}, "", "Keep Dimension", "Reduction"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorMin, NodeCategory::Analytics, "Tensor Min", ICON_FA_CALCULATOR,
-        {"tensor", "min", "minimum", "reduce", "reduction"}, 0, false, "Minimum tensor values", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Reduced tensor"}},
-        {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
-         {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
+        {"tensor", "min", "minimum", "reduce", "reduction"}, 0, false, "Take the minimum along sample dimensions", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor whose sample dimensions will be reduced"}},
+        {{"Output", PinType::Tensor, true, "Reduced tensor with the batch dimension preserved"}},
+        {{"dim", "int", "-1", "Sample dimension to reduce, or -1 for all sample values", {}, "", "Dimension", "Reduction"},
+         {"keepdim", "bool", "false", "Retain reduced sample dimensions with size one", {}, "", "Keep Dimension", "Reduction"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorProd, NodeCategory::Analytics, "Tensor Prod", ICON_FA_CALCULATOR,
-        {"tensor", "prod", "product", "reduce", "reduction"}, 0, false, "Product of tensor values", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Reduced tensor"}},
-        {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
-         {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
+        {"tensor", "prod", "product", "reduce", "reduction"}, 0, false, "Multiply values along sample dimensions", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor whose sample dimensions will be reduced"}},
+        {{"Output", PinType::Tensor, true, "Reduced tensor with the batch dimension preserved"}},
+        {{"dim", "int", "-1", "Sample dimension to reduce, or -1 for all sample values", {}, "", "Dimension", "Reduction"},
+         {"keepdim", "bool", "false", "Retain reduced sample dimensions with size one", {}, "", "Keep Dimension", "Reduction"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorVar, NodeCategory::Analytics, "Tensor Var", ICON_FA_CALCULATOR,
-        {"tensor", "var", "variance", "reduce", "reduction"}, 0, false, "Variance of tensor values", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Reduced tensor"}},
-        {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
-         {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
+        {"tensor", "var", "variance", "reduce", "reduction"}, 0, false, "Compute population variance along sample dimensions", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor whose sample dimensions will be reduced"}},
+        {{"Output", PinType::Tensor, true, "Population variance with the batch dimension preserved"}},
+        {{"dim", "int", "-1", "Sample dimension to reduce, or -1 for all sample values", {}, "", "Dimension", "Reduction"},
+         {"keepdim", "bool", "false", "Retain reduced sample dimensions with size one", {}, "", "Keep Dimension", "Reduction"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorStd, NodeCategory::Analytics, "Tensor Std", ICON_FA_CALCULATOR,
-        {"tensor", "std", "standard deviation", "reduce", "reduction"}, 0, false, "Standard deviation of tensor values", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Reduced tensor"}},
-        {{"dim", "int", "-1", "Dimension, or -1 for all values", {}, ""},
-         {"keepdim", "bool", "false", "Keep reduced dimension", {}, ""}},
+        {"tensor", "std", "standard deviation", "reduce", "reduction"}, 0, false, "Compute population standard deviation along sample dimensions", "", "",
+        {{"Input", PinType::Tensor, true, "Tensor whose sample dimensions will be reduced"}},
+        {{"Output", PinType::Tensor, true, "Population standard deviation with the batch dimension preserved"}},
+        {{"dim", "int", "-1", "Sample dimension to reduce, or -1 for all sample values", {}, "", "Dimension", "Reduction"},
+         {"keepdim", "bool", "false", "Retain reduced sample dimensions with size one", {}, "", "Keep Dimension", "Reduction"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorBroadcastTo, NodeCategory::ShapeOps, "Tensor Broadcast To", ICON_FA_EXPAND,
         {"tensor", "broadcast", "shape", "expand"}, 0, false, "Broadcast tensor to a target shape", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Broadcast tensor"}},
-        {{"shape", "string", "", "Target shape", {}, ""}},
+        {{"Input", PinType::Tensor, true, "Tensor with dimensions compatible with the target shape"}},
+        {{"Output", PinType::Tensor, true, "Tensor broadcast to the target sample shape"}},
+        {{"shape", "string", "", "Comma-separated positive target sample dimensions", {}, "", "Target Shape", "Shape", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorExpand, NodeCategory::ShapeOps, "Tensor Expand", ICON_FA_EXPAND,
         {"tensor", "expand", "broadcast", "shape"}, 0, false, "Materialize tensor expanded to a target shape", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Expanded tensor"}},
-        {{"shape", "string", "", "Target shape", {}, ""}},
+        {{"Input", PinType::Tensor, true, "Tensor with dimensions compatible with the target shape"}},
+        {{"Output", PinType::Tensor, true, "Materialized tensor expanded to the target sample shape"}},
+        {{"shape", "string", "", "Comma-separated positive target sample dimensions", {}, "", "Target Shape", "Shape", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorIndexSelect, NodeCategory::ShapeOps, "Tensor Index Select", ICON_FA_LIST_CHECK,
         {"tensor", "index", "select", "gather", "slice"}, 0, false, "Select entries along one dimension by index list", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Selected tensor"}},
-        {{"dim", "int", "0", "Dimension", {}, ""},
-         {"indices", "string", "", "Comma-separated indices", {}, ""}},
+        {{"Input", PinType::Tensor, true, "Tensor from which values will be selected"}},
+        {{"Output", PinType::Tensor, true, "Tensor containing the selected entries"}},
+        {{"dim", "int", "0", "Dimension along which to select", {}, "", "Dimension", "Selection"},
+         {"indices", "string", "", "Comma-separated indices; negative indices count from the end", {}, "", "Indices", "Selection", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorPow, NodeCategory::Analytics, "Tensor Pow", ICON_FA_CALCULATOR,
         {"tensor", "pow", "power", "elementwise"}, 0, false, "Raise tensor values to a scalar power", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
-        {{"exponent", "float", "2.0", "Scalar exponent", {}, ""}},
+        {{"Input", PinType::Tensor, true, "Tensor values used as the power base"}},
+        {{"Output", PinType::Tensor, true, "Elementwise power result with the same shape"}},
+        {{"exponent", "float", "2.0", "Scalar exponent applied to every value", {}, "", "Exponent", "Operation"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorSqrt, NodeCategory::Analytics, "Tensor Sqrt", ICON_FA_CALCULATOR,
         {"tensor", "sqrt", "square root", "elementwise"}, 0, false, "Elementwise square root", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
+        {{"Input", PinType::Tensor, true, "Tensor containing non-negative values"}},
+        {{"Output", PinType::Tensor, true, "Elementwise square root with the same shape"}},
         {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorExp, NodeCategory::Analytics, "Tensor Exp", ICON_FA_CALCULATOR,
         {"tensor", "exp", "exponential", "elementwise"}, 0, false, "Elementwise exponential", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
+        {{"Input", PinType::Tensor, true, "Input tensor"}},
+        {{"Output", PinType::Tensor, true, "Elementwise exponential with the same shape"}},
         {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorLog, NodeCategory::Analytics, "Tensor Log", ICON_FA_CALCULATOR,
         {"tensor", "log", "natural log", "elementwise"}, 0, false, "Elementwise natural log", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
+        {{"Input", PinType::Tensor, true, "Tensor containing positive values"}},
+        {{"Output", PinType::Tensor, true, "Elementwise natural logarithm with the same shape"}},
         {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorAbs, NodeCategory::Analytics, "Tensor Abs", ICON_FA_CALCULATOR,
         {"tensor", "abs", "absolute", "elementwise"}, 0, false, "Elementwise absolute value", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
+        {{"Input", PinType::Tensor, true, "Input tensor"}},
+        {{"Output", PinType::Tensor, true, "Elementwise absolute value with the same shape"}},
         {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorSign, NodeCategory::Analytics, "Tensor Sign", ICON_FA_CALCULATOR,
         {"tensor", "sign", "elementwise"}, 0, false, "Elementwise sign", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
+        {{"Input", PinType::Tensor, true, "Input tensor"}},
+        {{"Output", PinType::Tensor, true, "Elementwise sign values with the same shape"}},
         {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorClip, NodeCategory::Analytics, "Tensor Clip", ICON_FA_CALCULATOR,
         {"tensor", "clip", "clamp", "elementwise"}, 0, false, "Clip tensor values to a scalar range", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
-        {{"min", "float", "0.0", "Minimum value", {}, ""},
-         {"max", "float", "1.0", "Maximum value", {}, ""}},
+        {{"Input", PinType::Tensor, true, "Tensor whose values will be clamped"}},
+        {{"Output", PinType::Tensor, true, "Clamped tensor with the same shape"}},
+        {{"min", "float", "0.0", "Inclusive lower bound", {}, "", "Minimum", "Range"},
+         {"max", "float", "1.0", "Inclusive upper bound", {}, "", "Maximum", "Range"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorDot, NodeCategory::Analytics, "Tensor Dot", ICON_FA_CALCULATOR,
         {"tensor", "dot", "vector", "linalg"}, 0, false, "Compute vector or row-wise batch dot product", "", "",
-        {{"A", PinType::Tensor, true, "Left input"}, {"B", PinType::Tensor, true, "Right input"}},
-        {{"Output", PinType::Tensor, true, "Dot product"}},
+        {{"A", PinType::Tensor, true, "Left 1D vector or [batch, features] tensor"},
+         {"B", PinType::Tensor, true, "Right tensor with the same shape and data type as A"}},
+        {{"Output", PinType::Tensor, true, "Scalar dot product or one result per batch row"}},
         {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorBatchMatMul, NodeCategory::Analytics, "Tensor Batch MatMul", ICON_FA_CALCULATOR,
-        {"tensor", "batch", "matmul", "matrix", "linalg"}, 0, false, "Compute batched matrix multiplication", "", "",
-        {{"A", PinType::Tensor, true, "Left input"}, {"B", PinType::Tensor, true, "Right input"}},
-        {{"Output", PinType::Tensor, true, "Batched product"}},
-        {}, NodeImplementationStatus::Template, 0});
+        {"tensor", "batch", "matmul", "matrix", "linalg"}, 0, false, "Blocked batched matrix multiplication retained for graph compatibility", "", "",
+        {{"A", PinType::Tensor, true, "Left tensor [batch, rows, inner]"},
+         {"B", PinType::Tensor, true, "Right tensor [batch, inner, columns] with the same data type"}},
+        {{"Output", PinType::Tensor, true, "Batched matrix product [batch, rows, columns]"}},
+        {}, NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::TensorCompare, NodeCategory::Analytics, "Tensor Compare", ICON_FA_CALCULATOR,
-        {"tensor", "compare", "greater", "less", "equal", "mask"}, 0, false, "Compare tensors or tensor and scalar", "", "",
-        {{"A", PinType::Tensor, true, "Input tensor"},
-         {"B", PinType::Tensor, false, "Optional tensor rhs; when connected, scalar is ignored"}},
-        {{"Mask", PinType::Tensor, true, "Comparison mask"}},
-        {{"op", "enum", ">", "Comparison operator", {">", ">=", "<", "<=", "==", "!="}, ""},
-         {"scalar", "float", "0.0", "Scalar comparison value", {}, ""}},
+        {"tensor", "compare", "greater", "less", "equal", "mask"}, 0, false, "Compare A with a scalar or a second tensor", "", "",
+        {{"A", PinType::Tensor, true, "Left operand tensor"},
+         {"B", PinType::Tensor, false, "Optional right operand tensor; when connected, Scalar is ignored"}},
+        {{"Mask", PinType::Tensor, true, "Zero-or-one comparison mask matching the input shape"}},
+        {{"op", "enum", ">", "Comparison applied to A and Scalar or A and B", {">", ">=", "<", "<=", "==", "!="}, "", "Operator", "Comparison"},
+         {"scalar", "float", "0.0", "Right operand used when B is not connected", {}, "", "Scalar", "Comparison"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TensorLogicalMask, NodeCategory::Analytics, "Tensor Logical Mask", ICON_FA_CALCULATOR,
-        {"tensor", "logical", "mask", "not", "and", "or"}, 0, false, "Combine or invert tensor masks", "", "",
-        {{"A", PinType::Tensor, true, "Input mask"},
-         {"B", PinType::Tensor, false, "Optional rhs mask for and/or"}},
-        {{"Mask", PinType::Tensor, true, "Logical mask"}},
-        {{"op", "enum", "not", "Logical operator", {"not", "and", "or"}, ""}},
+        {"tensor", "logical", "mask", "not", "and", "or"}, 0, false, "Invert one mask or combine two masks", "", "",
+        {{"A", PinType::Tensor, true, "Left zero-or-nonzero mask"},
+         {"B", PinType::Tensor, false, "Optional right mask required by and/or"}},
+        {{"Mask", PinType::Tensor, true, "Zero-or-one logical mask matching the input shape"}},
+        {{"op", "enum", "not", "Use not with A only; use and/or when B is connected", {"not", "and", "or"}, "", "Operator", "Logical"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Embedding, NodeCategory::Layers, "Embedding", ICON_FA_CUBES,
@@ -2376,7 +2356,7 @@ void NodeMetadataRegistry::InitializeActivationNodes() {
         {"softmax", "probability"}, 0, false, "Softmax activation", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Probabilities"}},
-        {{"dim", "int", "-1", "Dimension", {}, ""}},
+        {},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GELU, NodeCategory::Activation, "GELU", ICON_FA_BOLT,
@@ -2424,10 +2404,12 @@ void NodeMetadataRegistry::InitializeActivationNodes() {
 void NodeMetadataRegistry::InitializeTrainingNodes() {
     RegisterNode({NodeType::MSELoss, NodeCategory::Training, "MSE Loss", ICON_FA_CHART_LINE,
         {"mse", "loss", "regression", "criterion", "objective", "optimization"},
-        0, false, "Mean squared error", "", "",
-        {{"Predictions", PinType::Tensor, true, "Predictions"}, {"Targets", PinType::Tensor, true, "Targets"}},
+        0, false, "Squared-error loss for same-shaped numeric predictions and targets", "", "",
+        {{"Predictions", PinType::Tensor, true, "Numeric model predictions"},
+         {"Targets", PinType::Labels, true, "Same-shaped numeric target values"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
-        {}, NodeImplementationStatus::Implemented, 0});
+        {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::CrossEntropyLoss, NodeCategory::Training, "CrossEntropy / Token CE", ICON_FA_CHART_PIE,
         {"crossentropy", "cross entropy", "ce", "classification", "multiclass",
@@ -2464,7 +2446,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         0, false,
         "Soft Dice loss for probability masks and same-shaped Float32 targets", "", "",
         {{"Predictions", PinType::Tensor, true, "Probability mask predictions"},
-         {"Targets", PinType::Tensor, true, "Same-shaped target masks"}},
+         {"Targets", PinType::Labels, true, "Same-shaped Float32 target masks"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
         {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
          {"smooth", "float", "1.0", "Smoothing constant", {}, ""}},
@@ -2477,7 +2459,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         0, false,
         "Tversky loss for imbalanced probability masks and same-shaped Float32 targets", "", "",
         {{"Predictions", PinType::Tensor, true, "Probability mask predictions"},
-         {"Targets", PinType::Tensor, true, "Same-shaped target masks"}},
+         {"Targets", PinType::Labels, true, "Same-shaped Float32 target masks"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
         {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
          {"alpha", "float", "0.5", "False-positive penalty", {}, ""},
@@ -2491,7 +2473,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         0, false,
         "Jaccard/IoU loss for probability masks and same-shaped Float32 targets", "", "",
         {{"Predictions", PinType::Tensor, true, "Probability mask predictions"},
-         {"Targets", PinType::Tensor, true, "Same-shaped target masks"}},
+         {"Targets", PinType::Labels, true, "Same-shaped Float32 target masks"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
         {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
          {"smooth", "float", "1.0", "Smoothing constant", {}, ""}},
@@ -2502,7 +2484,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
          "objective", "optimization", "loss"},
         0, false, "Binary cross-entropy loss for probability predictions", "", "",
         {{"Predictions", PinType::Tensor, true, "Predicted probabilities"},
-         {"Targets", PinType::Tensor, true, "Binary targets"}},
+         {"Targets", PinType::Labels, true, "Same-shaped binary Float32 targets"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
         {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""}},
         NodeImplementationStatus::Implemented, 0});
@@ -2513,7 +2495,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         0, false,
         "Numerically stable binary cross-entropy loss for logits", "", "",
         {{"Logits", PinType::Tensor, true, "Binary logits"},
-         {"Targets", PinType::Tensor, true, "Binary targets"}},
+         {"Targets", PinType::Labels, true, "Same-shaped binary Float32 targets"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
         {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
          {"pos_weight", "float", "1.0", "Positive-class weight", {}, ""}},
@@ -2522,9 +2504,9 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
     RegisterNode({NodeType::L1Loss, NodeCategory::Training, "L1 Loss", ICON_FA_CHART_LINE,
         {"l1", "mae", "mean absolute error", "absolute", "regression",
          "criterion", "objective", "optimization", "loss"},
-        0, false, "Mean absolute error loss for regression", "", "",
-        {{"Predictions", PinType::Tensor, true, "Predictions"},
-         {"Targets", PinType::Tensor, true, "Targets"}},
+        0, false, "Absolute-error loss for same-shaped regression values", "", "",
+        {{"Predictions", PinType::Tensor, true, "Numeric model predictions"},
+         {"Targets", PinType::Labels, true, "Same-shaped numeric target values"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
         {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""}},
         NodeImplementationStatus::Implemented, 0});
@@ -2533,22 +2515,22 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         {"smooth l1", "smoothl1", "huber", "regression", "robust",
          "criterion", "objective", "optimization", "loss"},
         0, false, "Smooth L1 loss for robust regression", "", "",
-        {{"Predictions", PinType::Tensor, true, "Predictions"},
-         {"Targets", PinType::Tensor, true, "Targets"}},
+        {{"Predictions", PinType::Tensor, true, "Numeric model predictions"},
+         {"Targets", PinType::Labels, true, "Same-shaped numeric target values"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
         {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
-         {"beta", "float", "1.0", "Transition point", {}, ""}},
+         {"beta", "float", "1.0", "Quadratic-to-linear transition width", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::HuberLoss, NodeCategory::Training, "Huber Loss", ICON_FA_CHART_LINE,
         {"huber", "smooth l1", "smoothl1", "regression", "robust",
          "criterion", "objective", "optimization", "loss"},
-        0, false, "Huber-style robust regression loss", "", "",
-        {{"Predictions", PinType::Tensor, true, "Predictions"},
-         {"Targets", PinType::Tensor, true, "Targets"}},
+        0, false, "Huber loss implemented by the equivalent Smooth L1 objective", "", "",
+        {{"Predictions", PinType::Tensor, true, "Numeric model predictions"},
+         {"Targets", PinType::Labels, true, "Same-shaped numeric target values"}},
         {{"Loss", PinType::Loss, true, "Loss value"}},
         {{"reduction", "enum", "mean", "Reduction", {"mean", "sum", "none"}, ""},
-         {"beta", "float", "1.0", "Transition point", {}, ""}},
+         {"beta", "float", "1.0", "Huber delta / Smooth L1 transition width", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::NLLLoss, NodeCategory::Training, "NLL Loss", ICON_FA_CHART_PIE,
@@ -2564,50 +2546,65 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
 
     RegisterNode({NodeType::Adam, NodeCategory::Training, "Adam", ICON_FA_GRADUATION_CAP,
         {"adam", "optimizer", "optimization", "training"}, 0, false,
-        "Adam optimizer", "", "",
-        {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
-        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
-        {{"learning_rate", "float", "0.001", "Learning rate", {}, ""}},
+        "Adaptive moment estimation optimizer", "", "",
+        {{"Loss", PinType::Loss, true, "Scalar training loss used for backpropagation"}},
+        {{"State", PinType::Optimizer, false, "Optional optimizer-state handle"}},
+        {{"learning_rate", "float", "0.001", "Positive parameter-update step size", {}, ""},
+         {"beta1", "float", "0.9", "First-moment decay coefficient in [0, 1)", {}, ""},
+         {"beta2", "float", "0.999", "Second-moment decay coefficient in [0, 1)", {}, ""},
+         {"epsilon", "float", "1e-8", "Positive denominator stability constant", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SGD, NodeCategory::Training, "SGD", ICON_FA_GRADUATION_CAP,
         {"sgd", "stochastic gradient descent", "optimizer", "optimization", "training"},
-        0, false, "SGD optimizer", "", "",
-        {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
-        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
-        {{"learning_rate", "float", "0.01", "Learning rate", {}, ""}},
+        0, false, "Stochastic gradient descent with optional momentum", "", "",
+        {{"Loss", PinType::Loss, true, "Scalar training loss used for backpropagation"}},
+        {{"State", PinType::Optimizer, false, "Optional optimizer-state handle"}},
+        {{"learning_rate", "float", "0.01", "Positive parameter-update step size", {}, ""},
+         {"momentum", "float", "0.9", "Momentum coefficient in [0, 1)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::AdamW, NodeCategory::Training, "AdamW", ICON_FA_GRADUATION_CAP,
         {"adamw", "adam", "weight decay", "optimizer", "optimization", "training"},
         0, false, "Adam optimizer with decoupled weight decay", "", "",
-        {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
-        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
-        {{"learning_rate", "float", "0.001", "Learning rate", {}, ""}},
+        {{"Loss", PinType::Loss, true, "Scalar training loss used for backpropagation"}},
+        {{"State", PinType::Optimizer, false, "Optional optimizer-state handle"}},
+        {{"learning_rate", "float", "0.001", "Positive parameter-update step size", {}, ""},
+         {"beta1", "float", "0.9", "First-moment decay coefficient in [0, 1)", {}, ""},
+         {"beta2", "float", "0.999", "Second-moment decay coefficient in [0, 1)", {}, ""},
+         {"epsilon", "float", "1e-8", "Positive denominator stability constant", {}, ""},
+         {"weight_decay", "float", "0.01", "Non-negative decoupled weight-decay coefficient", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RMSprop, NodeCategory::Training, "RMSprop", ICON_FA_GRADUATION_CAP,
         {"rmsprop", "optimizer", "adaptive", "optimization", "training"},
-        0, false, "RMSprop optimizer", "", "",
-        {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
-        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
-        {{"learning_rate", "float", "0.001", "Learning rate", {}, ""}},
+        0, false, "Adaptive optimizer using a moving average of squared gradients", "", "",
+        {{"Loss", PinType::Loss, true, "Scalar training loss used for backpropagation"}},
+        {{"State", PinType::Optimizer, false, "Optional optimizer-state handle"}},
+        {{"learning_rate", "float", "0.001", "Positive parameter-update step size", {}, ""},
+         {"alpha", "float", "0.99", "Squared-gradient moving-average coefficient in [0, 1)", {}, ""},
+         {"epsilon", "float", "1e-8", "Positive denominator stability constant", {}, ""},
+         {"momentum", "float", "0.0", "Momentum coefficient in [0, 1)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Adagrad, NodeCategory::Training, "Adagrad", ICON_FA_GRADUATION_CAP,
         {"adagrad", "ada grad", "optimizer", "adaptive", "optimization", "training"},
-        0, false, "Adagrad optimizer", "", "",
-        {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
-        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
-        {{"learning_rate", "float", "0.01", "Learning rate", {}, ""}},
+        0, false, "Per-parameter adaptive learning rates from accumulated squared gradients", "", "",
+        {{"Loss", PinType::Loss, true, "Scalar training loss used for backpropagation"}},
+        {{"State", PinType::Optimizer, false, "Optional optimizer-state handle"}},
+        {{"learning_rate", "float", "0.01", "Positive initial parameter-update step size", {}, ""},
+         {"epsilon", "float", "1e-10", "Positive denominator stability constant", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::NAdam, NodeCategory::Training, "NAdam", ICON_FA_GRADUATION_CAP,
         {"nadam", "nesterov adam", "adam", "optimizer", "optimization", "training"},
         0, false, "Nesterov-accelerated Adam optimizer", "", "",
-        {{"Loss", PinType::Loss, true, "Loss"}, {"Parameters", PinType::Parameters, true, "Params"}},
-        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
-        {{"learning_rate", "float", "0.002", "Learning rate", {}, ""}},
+        {{"Loss", PinType::Loss, true, "Scalar training loss used for backpropagation"}},
+        {{"State", PinType::Optimizer, false, "Optional optimizer-state handle"}},
+        {{"learning_rate", "float", "0.002", "Positive parameter-update step size", {}, ""},
+         {"beta1", "float", "0.9", "First-moment decay coefficient in [0, 1)", {}, ""},
+         {"beta2", "float", "0.999", "Second-moment decay coefficient in [0, 1)", {}, ""},
+         {"epsilon", "float", "1e-8", "Positive denominator stability constant", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::StepLR, NodeCategory::Training, "Step LR", ICON_FA_GRADUATION_CAP,

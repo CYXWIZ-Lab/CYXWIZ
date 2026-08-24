@@ -191,16 +191,18 @@ void NodeEditor::ShowContextMenu() {
             for (auto& [category, nodes] : grouped) {
                 ImGui::TextDisabled("%s", category.c_str());
                 for (auto* node : nodes) {
-                    const bool is_template = (node->status == NodeImplementationStatus::Template);
-                    if (is_template) ImGui::BeginDisabled();
+                    const bool is_unavailable =
+                        node->status == NodeImplementationStatus::Template ||
+                        node->support_blocked;
+                    if (is_unavailable) ImGui::BeginDisabled();
                     if (ImGui::MenuItem(node->name.c_str())) {
-                        if (!is_template && node->type != NodeType::Unknown) {
+                        if (!is_unavailable && node->type != NodeType::Unknown) {
                             AddNode(node->type, node->name);
                             context_menu_search_[0] = '\0';
                             ImGui::CloseCurrentPopup();
                         }
                     }
-                    if (is_template) {
+                    if (is_unavailable) {
                         if (ImGui::IsItemHovered() && !node->tooltip.empty()) {
                             ImGui::SetTooltip("%s", node->tooltip.c_str());
                         }
@@ -213,16 +215,18 @@ void NodeEditor::ShowContextMenu() {
             for (auto& [category, nodes] : grouped) {
                 if (ImGui::BeginMenu(category.c_str())) {
                     for (auto* node : nodes) {
-                        const bool is_template = (node->status == NodeImplementationStatus::Template);
-                        if (is_template) ImGui::BeginDisabled();
+                        const bool is_unavailable =
+                            node->status == NodeImplementationStatus::Template ||
+                            node->support_blocked;
+                        if (is_unavailable) ImGui::BeginDisabled();
                         if (ImGui::MenuItem(node->name.c_str())) {
-                            if (!is_template && node->type != NodeType::Unknown) {
+                            if (!is_unavailable && node->type != NodeType::Unknown) {
                                 AddNode(node->type, node->name);
                                 context_menu_search_[0] = '\0';
                                 ImGui::CloseCurrentPopup();
                             }
                         }
-                        if (is_template) {
+                        if (is_unavailable) {
                             if (ImGui::IsItemHovered() && !node->tooltip.empty()) {
                                 ImGui::SetTooltip("%s", node->tooltip.c_str());
                             }

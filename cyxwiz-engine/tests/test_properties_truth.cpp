@@ -756,12 +756,14 @@ int main() {
               "Adam legacy lr should be marked alias-used");
         const auto* beta1 = FindProperty(report, "beta1");
         Check(beta1 != nullptr,
-              "Adam should surface unsupported beta1 truth when present");
-        Check(HasStatus(*beta1,
-                        gui::properties_truth::TruthStatus::Unsupported),
-              "Adam beta1 should be marked unsupported until optimizer construction applies it");
-        Check(report.has_issue,
-              "unsupported Adam beta1 should mark report as issue");
+              "Adam should surface runtime beta1 truth when present");
+        Check(HasStatus(*beta1, gui::properties_truth::TruthStatus::OK),
+              "Adam beta1 should be runtime-owned after optimizer construction applies it");
+        const auto* epsilon = FindProperty(report, "epsilon");
+        Check(epsilon != nullptr &&
+                  HasStatus(*epsilon,
+                            gui::properties_truth::TruthStatus::Defaulted),
+              "Adam should expose the runtime epsilon default");
     }
 
     {
@@ -777,10 +779,26 @@ int main() {
               "SGD learning_rate <= 0 should be visible");
         const auto* momentum = FindProperty(report, "momentum");
         Check(momentum != nullptr,
-              "SGD should surface unsupported momentum truth when present");
-        Check(HasStatus(*momentum,
-                        gui::properties_truth::TruthStatus::Unsupported),
-              "SGD momentum should be marked unsupported until optimizer construction applies it");
+              "SGD should surface runtime momentum truth when present");
+        Check(HasStatus(*momentum, gui::properties_truth::TruthStatus::OK),
+              "SGD momentum should be runtime-owned after optimizer construction applies it");
+    }
+
+    {
+        auto adagrad = MakeNode(2, gui::NodeType::Adagrad, "Adagrad");
+        adagrad.parameters["lr_decay"] = "0.1";
+
+        const auto report = gui::properties_truth::ResolveNodeTruth(adagrad);
+        const auto* epsilon = FindProperty(report, "epsilon");
+        Check(epsilon != nullptr &&
+                  HasStatus(*epsilon,
+                            gui::properties_truth::TruthStatus::Defaulted),
+              "Adagrad should expose its runtime epsilon default");
+        const auto* lr_decay = FindProperty(report, "lr_decay");
+        Check(lr_decay != nullptr &&
+                  HasStatus(*lr_decay,
+                            gui::properties_truth::TruthStatus::Unsupported),
+              "legacy Adagrad lr_decay should remain visibly unsupported");
     }
 
     {

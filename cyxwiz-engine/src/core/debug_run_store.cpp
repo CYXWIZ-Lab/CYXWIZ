@@ -203,6 +203,8 @@ DebugReplayCompiledConfigSummary CompiledConfigSummaryFromJson(
     config.momentum = j.value("momentum", 0.0f);
     config.beta1 = j.value("beta1", 0.0f);
     config.beta2 = j.value("beta2", 0.0f);
+    config.epsilon = j.value("epsilon", 0.0f);
+    config.rmsprop_alpha = j.value("rmsprop_alpha", 0.0f);
     config.weight_decay = j.value("weight_decay", 0.0f);
     config.compiler_placement_fingerprint =
         j.value("compiler_placement_fingerprint", "");
@@ -409,6 +411,8 @@ DebugRunReplayCapsule MakeDebugRunReplayCapsule(
         compiled.momentum = config->momentum;
         compiled.beta1 = config->beta1;
         compiled.beta2 = config->beta2;
+        compiled.epsilon = config->epsilon;
+        compiled.rmsprop_alpha = config->rmsprop_alpha;
         compiled.weight_decay = config->weight_decay;
         compiled.compiler_placement_fingerprint =
             config->compiler_placement_fingerprint;
@@ -473,6 +477,8 @@ nlohmann::json DebugRunReplayCapsuleToJson(
             {"momentum", config.momentum},
             {"beta1", config.beta1},
             {"beta2", config.beta2},
+            {"epsilon", config.epsilon},
+            {"rmsprop_alpha", config.rmsprop_alpha},
             {"weight_decay", config.weight_decay},
             {"compiler_placement_fingerprint",
              config.compiler_placement_fingerprint},

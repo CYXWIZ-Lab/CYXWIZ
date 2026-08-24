@@ -1908,6 +1908,88 @@ void TestLossMetricExplainerContract() {
     spdlog::info("  OK: loss/metric explanation is truthful and bounded");
 }
 
+void TestOptimizerConfigurationBuildContract() {
+    spdlog::info("--- TestOptimizerConfigurationBuildContract ---");
+
+    TrainingConfiguration config;
+    config.learning_rate = 0.0123f;
+    config.momentum = 0.42f;
+    config.beta1 = 0.81f;
+    config.beta2 = 0.93f;
+    config.epsilon = 2e-7f;
+    config.rmsprop_alpha = 0.88f;
+    config.weight_decay = 0.07f;
+
+    const auto check_learning_rate = [&](const Optimizer& optimizer) {
+        ExpectNear(static_cast<float>(optimizer.GetLearningRate()),
+                   config.learning_rate, 1e-7f,
+                   "configured optimizer learning rate");
+    };
+
+    config.optimizer_type = gui::NodeType::SGD;
+    auto resolved = ResolveOptimizerConfiguration(config);
+    auto optimizer = BuildOptimizerFromConfig(config);
+    ExpectTrue(dynamic_cast<SGDOptimizer*>(optimizer.get()) != nullptr,
+               "SGD config should build SGDOptimizer");
+    ExpectTrue(resolved.momentum.has_value(),
+               "SGD resolver should retain momentum");
+    ExpectNear(*resolved.momentum, config.momentum, 1e-7f,
+               "SGD resolved momentum");
+    check_learning_rate(*optimizer);
+
+    config.optimizer_type = gui::NodeType::Adam;
+    resolved = ResolveOptimizerConfiguration(config);
+    optimizer = BuildOptimizerFromConfig(config);
+    ExpectTrue(dynamic_cast<AdamOptimizer*>(optimizer.get()) != nullptr,
+               "Adam config should build AdamOptimizer");
+    ExpectNear(*resolved.beta1, config.beta1, 1e-7f,
+               "Adam resolved beta1");
+    ExpectNear(*resolved.beta2, config.beta2, 1e-7f,
+               "Adam resolved beta2");
+    ExpectNear(*resolved.epsilon, config.epsilon, 1e-10f,
+               "Adam resolved epsilon");
+
+    config.optimizer_type = gui::NodeType::AdamW;
+    resolved = ResolveOptimizerConfiguration(config);
+    optimizer = BuildOptimizerFromConfig(config);
+    ExpectTrue(dynamic_cast<AdamWOptimizer*>(optimizer.get()) != nullptr,
+               "AdamW config should build AdamWOptimizer");
+    ExpectNear(*resolved.weight_decay, config.weight_decay, 1e-7f,
+               "AdamW resolved weight decay");
+
+    config.optimizer_type = gui::NodeType::RMSprop;
+    resolved = ResolveOptimizerConfiguration(config);
+    optimizer = BuildOptimizerFromConfig(config);
+    ExpectTrue(dynamic_cast<RMSpropOptimizer*>(optimizer.get()) != nullptr,
+               "RMSprop config should build RMSpropOptimizer");
+    ExpectNear(*resolved.rmsprop_alpha, config.rmsprop_alpha, 1e-7f,
+               "RMSprop resolved alpha");
+    ExpectNear(*resolved.momentum, config.momentum, 1e-7f,
+               "RMSprop resolved momentum");
+
+    config.optimizer_type = gui::NodeType::Adagrad;
+    resolved = ResolveOptimizerConfiguration(config);
+    optimizer = BuildOptimizerFromConfig(config);
+    ExpectTrue(dynamic_cast<AdaGradOptimizer*>(optimizer.get()) != nullptr,
+               "Adagrad config should build AdaGradOptimizer");
+    ExpectNear(*resolved.epsilon, config.epsilon, 1e-10f,
+               "Adagrad resolved epsilon");
+
+    config.optimizer_type = gui::NodeType::NAdam;
+    resolved = ResolveOptimizerConfiguration(config);
+    optimizer = BuildOptimizerFromConfig(config);
+    ExpectTrue(dynamic_cast<NAdamOptimizer*>(optimizer.get()) != nullptr,
+               "NAdam config should build NAdamOptimizer");
+    ExpectNear(*resolved.beta1, config.beta1, 1e-7f,
+               "NAdam resolved beta1");
+    ExpectNear(*resolved.beta2, config.beta2, 1e-7f,
+               "NAdam resolved beta2");
+    ExpectNear(*resolved.epsilon, config.epsilon, 1e-10f,
+               "NAdam resolved epsilon");
+
+    spdlog::info("  OK: all optimizer settings reach the backend constructor path");
+}
+
 } // namespace
 
 int main() {
@@ -1944,6 +2026,7 @@ int main() {
         TestDebugExecutorGradNormBookkeeping();
         TestDebugExecutorTextGraph();
         TestLossMetricExplainerContract();
+        TestOptimizerConfigurationBuildContract();
         if (run_slow_sentiment) {
             TestSentimentComputationCurrentPath();
             TestSentimentComputationMultiLayerBiGRU();

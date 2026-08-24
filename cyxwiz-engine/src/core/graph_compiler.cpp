@@ -2076,6 +2076,135 @@ bool ParseFloatParam(const std::map<std::string, std::string>& params,
     }
 }
 
+void ExtractOptimizerConfiguration(const gui::MLNode& node,
+                                   TrainingConfiguration& config) {
+    config.optimizer_type = node.type;
+    config.learning_rate = 0.001f;
+    config.momentum = 0.0f;
+    config.beta1 = 0.9f;
+    config.beta2 = 0.999f;
+    config.epsilon = 1e-8f;
+    config.rmsprop_alpha = 0.99f;
+    config.weight_decay = 0.0f;
+
+    switch (node.type) {
+        case gui::NodeType::SGD:
+            config.learning_rate = 0.01f;
+            config.momentum = 0.9f;
+            break;
+        case gui::NodeType::AdamW:
+            config.weight_decay = 0.01f;
+            break;
+        case gui::NodeType::Adagrad:
+            config.learning_rate = 0.01f;
+            config.epsilon = 1e-10f;
+            break;
+        case gui::NodeType::NAdam:
+            config.learning_rate = 0.002f;
+            break;
+        default:
+            break;
+    }
+
+    const auto parse = [&](const std::string& key,
+                           float fallback,
+                           float minimum,
+                           bool minimum_inclusive,
+                           float maximum,
+                           bool maximum_inclusive,
+                           float& destination) {
+        std::string error;
+        float value = fallback;
+        if (!ParseFloatParam(node.parameters, key, fallback, value, error)) {
+            AddIssue(config, IssueLevel::Error,
+                     "Invalid optimizer parameter: " + error,
+                     node.id, node.name, errors::Compiler::InvalidParameter);
+            return;
+        }
+        const bool below = minimum_inclusive ? value < minimum
+                                             : value <= minimum;
+        const bool above = maximum_inclusive ? value > maximum
+                                             : value >= maximum;
+        if (below || above) {
+            AddIssue(config, IssueLevel::Error,
+                     "Invalid optimizer parameter '" + key +
+                         "': value is outside the supported range",
+                     node.id, node.name, errors::Compiler::InvalidParameter);
+            return;
+        }
+        destination = value;
+    };
+
+    const auto canonical_lr = node.parameters.find("learning_rate");
+    const auto legacy_lr = node.parameters.find("lr");
+    const bool has_canonical_lr = canonical_lr != node.parameters.end() &&
+                                  !canonical_lr->second.empty();
+    const bool has_legacy_lr = legacy_lr != node.parameters.end() &&
+                               !legacy_lr->second.empty();
+    const std::string lr_key = has_canonical_lr ? "learning_rate"
+                                                : (has_legacy_lr ? "lr"
+                                                                 : "learning_rate");
+    parse(lr_key, config.learning_rate, 0.0f, false,
+          std::numeric_limits<float>::max(), true, config.learning_rate);
+    if (has_canonical_lr && has_legacy_lr &&
+        canonical_lr->second != legacy_lr->second) {
+        AddIssue(config, IssueLevel::Warning,
+                 "Both learning_rate and legacy lr are present; "
+                 "learning_rate is authoritative",
+                 node.id, node.name, errors::Compiler::InvalidParameter);
+    }
+
+    switch (node.type) {
+        case gui::NodeType::SGD:
+            parse("momentum", config.momentum, 0.0f, true, 1.0f, false,
+                  config.momentum);
+            if (node.parameters.count("weight_decay")) {
+                AddIssue(config, IssueLevel::Warning,
+                         "SGD weight_decay is not supported by the backend and "
+                         "will be ignored",
+                         node.id, node.name,
+                         errors::Compiler::UnsupportedTrainingNode);
+            }
+            break;
+        case gui::NodeType::Adam:
+        case gui::NodeType::AdamW:
+        case gui::NodeType::NAdam:
+            parse("beta1", config.beta1, 0.0f, true, 1.0f, false,
+                  config.beta1);
+            parse("beta2", config.beta2, 0.0f, true, 1.0f, false,
+                  config.beta2);
+            parse("epsilon", config.epsilon, 0.0f, false,
+                  std::numeric_limits<float>::max(), true, config.epsilon);
+            if (node.type == gui::NodeType::AdamW) {
+                parse("weight_decay", config.weight_decay, 0.0f, true,
+                      std::numeric_limits<float>::max(), true,
+                      config.weight_decay);
+            }
+            break;
+        case gui::NodeType::RMSprop:
+            parse("alpha", config.rmsprop_alpha, 0.0f, true, 1.0f, false,
+                  config.rmsprop_alpha);
+            parse("epsilon", config.epsilon, 0.0f, false,
+                  std::numeric_limits<float>::max(), true, config.epsilon);
+            parse("momentum", config.momentum, 0.0f, true, 1.0f, false,
+                  config.momentum);
+            break;
+        case gui::NodeType::Adagrad:
+            parse("epsilon", config.epsilon, 0.0f, false,
+                  std::numeric_limits<float>::max(), true, config.epsilon);
+            if (node.parameters.count("lr_decay")) {
+                AddIssue(config, IssueLevel::Warning,
+                         "Adagrad lr_decay is not supported by the backend and "
+                         "will be ignored",
+                         node.id, node.name,
+                         errors::Compiler::UnsupportedTrainingNode);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
 bool ValidateTensorScalarMathParams(gui::NodeType type,
                                     const std::map<std::string, std::string>& params,
                                     std::string& error) {
@@ -3038,14 +3167,20 @@ void ValidateTrainingPathImplementationStatus(
                  node,
                  links,
                  training_path_ids,
-                 "Context"))) {
+                 "Context") ||
+             HasConnectedSelectedInputPinNamed(
+                 node,
+                 links,
+                 training_path_ids,
+                 "Mask"))) {
             std::ostringstream msg;
             msg << "MultiHeadAttention node '" << node.name
-                << "' has a connected Key/Value/Context input on the selected "
+                << "' has a connected Key/Value/Context/Mask input on the "
+                   "selected "
                    "training path, but Studio currently supports only "
                    "single-input self-attention through "
-                   "MultiHeadAttentionModule. Cross-attention needs a "
-                   "graph-level multi-input tensor contract, mask ownership, "
+                   "MultiHeadAttentionModule. Cross-attention and masking "
+                   "need a graph-level multi-input tensor contract, mask ownership, "
                    "export/load metadata, and inference semantics before it "
                    "can compile truthfully.";
             AddIssue(config, IssueLevel::Error, msg.str(), node.id,
@@ -4338,20 +4473,7 @@ TrainingConfiguration GraphCompiler::Compile(
 
     // Extract optimizer configuration
     if (optimizer_node) {
-        config.optimizer_type = optimizer_node->type;
-
-        if (optimizer_node->parameters.count("learning_rate"))
-            config.learning_rate = std::stof(optimizer_node->parameters.at("learning_rate"));
-        if (optimizer_node->parameters.count("lr"))
-            config.learning_rate = std::stof(optimizer_node->parameters.at("lr"));
-        if (optimizer_node->parameters.count("momentum"))
-            config.momentum = std::stof(optimizer_node->parameters.at("momentum"));
-        if (optimizer_node->parameters.count("beta1"))
-            config.beta1 = std::stof(optimizer_node->parameters.at("beta1"));
-        if (optimizer_node->parameters.count("beta2"))
-            config.beta2 = std::stof(optimizer_node->parameters.at("beta2"));
-        if (optimizer_node->parameters.count("weight_decay"))
-            config.weight_decay = std::stof(optimizer_node->parameters.at("weight_decay"));
+        ExtractOptimizerConfiguration(*optimizer_node, config);
     }
 
     // Set one-hot encoding if we have classification (CrossEntropy loss)
@@ -5395,6 +5517,18 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
     layer.node_id = node.id;
     layer.name = gui::EffectiveNodeName(node);
     layer.parameters = node.parameters;
+
+    // Unsupported sequential layers are retained in the compiled inventory so
+    // placement and diagnostics can identify them. Do not interpret their
+    // parameters: legacy graphs may contain design-era encodings (for example
+    // Conv2D padding="same") that have no executable ModelBuilder contract.
+    const auto training_support =
+        ResolvePipelineTrainingBackendSupport(node.type);
+    if (!training_support.compile_supported &&
+        training_support.mode ==
+            PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer) {
+        return layer;
+    }
 
     // Extract specific parameters
     switch (node.type) {
