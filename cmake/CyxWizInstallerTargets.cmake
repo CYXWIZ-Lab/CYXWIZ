@@ -139,6 +139,21 @@ install(TARGETS cyxwiz-installer
     RUNTIME DESTINATION .
 )
 
+if(CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR)
+    get_filename_component(
+        _cyxwiz_installer_bootstrap_metadata_dir
+        "${CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR}"
+        ABSOLUTE
+        BASE_DIR "${CMAKE_SOURCE_DIR}"
+    )
+    install(
+        DIRECTORY "${_cyxwiz_installer_bootstrap_metadata_dir}/"
+        DESTINATION runtime
+    )
+    message(STATUS
+        "Installer bootstrap metadata: ${_cyxwiz_installer_bootstrap_metadata_dir}")
+endif()
+
 if(MSVC)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
     include(InstallRequiredSystemLibraries)
@@ -199,6 +214,7 @@ unset(_cyxwiz_installer_sources)
 unset(_cyxwiz_installer_candidate_runtime_directories)
 unset(_cyxwiz_installer_runtime_directory_args)
 unset(_cyxwiz_installer_runtime_directories)
+unset(_cyxwiz_installer_bootstrap_metadata_dir)
 unset(_cyxwiz_installer_generated_include)
 unset(_cyxwiz_installer_backend_dir)
 unset(_cyxwiz_installer_engine_dir)

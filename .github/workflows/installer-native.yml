@@ -120,6 +120,7 @@ jobs:
           cmake -S . -B build `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DCYXWIZ_BUILD_INSTALLER_ONLY=ON `
+            -DCYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR="$PWD/build/installer-bootstrap-metadata" `
             -DCYXWIZ_BUILD_TESTS=ON
 
       - name: Configure Ubuntu Release
@@ -129,6 +130,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DCYXWIZ_BUILD_INSTALLER_ONLY=ON \
+            -DCYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR="$GITHUB_WORKSPACE/build/installer-bootstrap-metadata" \
             -DCYXWIZ_BUILD_TESTS=ON
 
       - name: Configure macOS Release
@@ -138,6 +140,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DCYXWIZ_BUILD_INSTALLER_ONLY=ON \
+            -DCYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR="$GITHUB_WORKSPACE/build/installer-bootstrap-metadata" \
             -DCYXWIZ_BUILD_TESTS=ON
 
       - name: Build installer targets on Windows
@@ -147,6 +150,18 @@ jobs:
       - name: Build installer targets on Unix
         if: runner.os != 'Windows'
         run: cmake --build build --parallel
+
+      - name: Generate Windows signed metadata fixture
+        if: runner.os == 'Windows'
+        run: >-
+          build/bin/Release/generate_installer_metadata_fixture.exe
+          build/installer-bootstrap-metadata
+
+      - name: Generate Unix signed metadata fixture
+        if: runner.os != 'Windows'
+        run: >-
+          build/bin/generate_installer_metadata_fixture
+          build/installer-bootstrap-metadata
 
       - name: Run native installer contracts
         run: ctest --test-dir build --build-config Release --output-on-failure

@@ -90,6 +90,18 @@ unset(_cyxwiz_runtime_bootstrapper_source)
 
 if(CYXWIZ_BUILD_TESTS)
     enable_testing()
+    add_executable(generate_installer_metadata_fixture
+        generate_installer_metadata_fixture.cpp
+    )
+    target_link_libraries(generate_installer_metadata_fixture PRIVATE
+        nlohmann_json::nlohmann_json
+        OpenSSL::Crypto
+    )
+    set_target_properties(generate_installer_metadata_fixture PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+
     if(WIN32)
         set(_cyxwiz_runtime_child_source test_runtime_child.cpp)
         set(_cyxwiz_runtime_contract_source test_runtime_layout.cpp)

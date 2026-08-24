@@ -44,6 +44,72 @@ def require_file(path: Path) -> Path:
     return path
 
 
+def load_json(path: Path) -> dict[str, Any]:
+    try:
+        document = json.loads(require_file(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise PackageSmokeError(
+            f"Required package metadata is invalid: {path.name}: {error}"
+        ) from error
+    if not isinstance(document, dict):
+        raise PackageSmokeError(
+            f"Required package metadata is not an object: {path.name}"
+        )
+    return document
+
+
+def require_bootstrap_metadata(stage: Path) -> list[Path]:
+    runtime = stage / "runtime"
+    trust_path = runtime / "trust" / "trusted-keys.json"
+    catalog_path = runtime / "catalogs" / "current.json"
+    trust = load_json(trust_path)
+    catalog = load_json(catalog_path)
+    if trust.get("schema_version") != 1 or not isinstance(trust.get("keys"), list):
+        raise PackageSmokeError("The packaged trust store violates schema 1")
+    if catalog.get("schema_version") != 1 or catalog.get("kind") != (
+        "cyxwiz-backend-pack-catalog"
+    ):
+        raise PackageSmokeError("The packaged backend-pack catalog violates schema 1")
+    signed = catalog.get("signed")
+    packs = signed.get("packs") if isinstance(signed, dict) else None
+    if not isinstance(packs, list) or not packs:
+        raise PackageSmokeError("The packaged backend-pack catalog contains no packs")
+
+    manifest_directory = runtime / "catalogs" / "manifests"
+    manifests = sorted(manifest_directory.glob("*.json"))
+    manifest_backends: dict[str, str] = {}
+    for path in manifests:
+        document = load_json(path)
+        body = document.get("signed")
+        if (
+            document.get("schema_version") != 1
+            or document.get("kind") != "cyxwiz-backend-pack-manifest"
+            or not isinstance(body, dict)
+            or not isinstance(body.get("pack_id"), str)
+            or not isinstance(body.get("backend"), str)
+        ):
+            raise PackageSmokeError(
+                f"The packaged backend-pack manifest violates schema 1: {path.name}"
+            )
+        manifest_backends[body["pack_id"]] = body["backend"]
+
+    catalog_ids = {
+        pack.get("pack_id") for pack in packs
+        if isinstance(pack, dict) and isinstance(pack.get("pack_id"), str)
+    }
+    if catalog_ids != set(manifest_backends):
+        raise PackageSmokeError(
+            "The packaged catalog and cached manifest identities differ"
+        )
+    if "cpu" not in manifest_backends.values() or not any(
+        backend != "cpu" for backend in manifest_backends.values()
+    ):
+        raise PackageSmokeError(
+            "The bootstrap metadata must provide a CPU base and an optional backend pack"
+        )
+    return [trust_path, catalog_path, *manifests]
+
+
 def runtime_environment(
     runtime_root: Path, executable_directory: Path
 ) -> dict[str, str]:
@@ -222,6 +288,7 @@ def build_evidence(
 def verify(stage: Path, artifact_id: str) -> dict[str, Any]:
     stage = stage.resolve()
     suffix = ".exe" if os.name == "nt" else ""
+    require_bootstrap_metadata(stage)
     installer = require_file(stage / f"cyxwiz-installer{suffix}")
     helper = require_file(stage / f"cyxwiz-backend-pack-installer{suffix}")
     contract_tests = [

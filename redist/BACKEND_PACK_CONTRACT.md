@@ -77,6 +77,15 @@ installation is the least-privilege default; an all-users scope is an explicit
 choice and requires platform authorization. Neither scope changes the global
 loader environment.
 
+Installer packaging accepts that app-bundled source through
+`CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR`. Its contents are installed below
+`runtime/` and must contain `trust/trusted-keys.json`,
+`catalogs/current.json`, and one cached manifest for every catalog entry. A
+staged installer without a verified CPU base and at least one optional pack is
+not a production-capable component manager and must fail package verification.
+Release jobs provide release-signed metadata; native CI uses ephemeral keys and
+`packages.invalid` URLs only to exercise parsing, signatures, and UI discovery.
+
 The CPU backend is part of the required base and cannot be represented as an
 optional pack. A process resolves exactly one base and at most one pack per
 optional backend. Activation replaces `active-runtime.json` atomically only

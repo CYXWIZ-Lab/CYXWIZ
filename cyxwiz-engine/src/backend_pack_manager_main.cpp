@@ -7,6 +7,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -148,6 +149,19 @@ std::vector<std::string> SelectedPackIds(
     return {selected.begin(), selected.end()};
 }
 
+bool HasSelectableCustomPack(
+    const std::vector<cyxwiz::BackendPackManagerRecord>& records) {
+    return std::any_of(
+        records.begin(), records.end(), [](const auto& record) {
+            return record.backend != "cpu" &&
+                record.delivery_metadata_available &&
+                (record.catalog_support ==
+                     cyxwiz::BackendPackCatalogSupport::Supported ||
+                 record.catalog_support ==
+                     cyxwiz::BackendPackCatalogSupport::Diagnostic);
+        });
+}
+
 std::string Join(const std::vector<std::string>& values) {
     if (values.empty()) return "Not specified";
     std::string result;
@@ -228,7 +242,30 @@ int RunInstaller(
         return 78;
     }
     if (parsed.package_smoke) {
-        std::cout << "CyxWiz installer package smoke passed\n";
+        const auto metadata_root =
+            std::filesystem::absolute(executable_directory / "runtime");
+        auto smoke_platform =
+            cyxwiz::installer::CreateBackendPackInstallerPlatform(
+                metadata_root, metadata_root, executable_directory,
+                cyxwiz::CyxWizInstallScope::CurrentUser);
+        const auto smoke_catalog = smoke_platform->Refresh();
+        const bool base_available = std::any_of(
+            smoke_catalog.records.begin(), smoke_catalog.records.end(),
+            [](const auto& record) {
+                return record.backend == "cpu" &&
+                    record.delivery_metadata_available &&
+                    record.catalog_support ==
+                        cyxwiz::BackendPackCatalogSupport::Supported;
+            });
+        if (!smoke_catalog.available || !base_available ||
+            !HasSelectableCustomPack(smoke_catalog.records)) {
+            std::cerr << "CyxWiz installer package smoke failed: "
+                      << smoke_catalog.message << '\n';
+            return 1;
+        }
+        std::cout << "CyxWiz installer package smoke passed: "
+                  << smoke_catalog.catalog_id << " with "
+                  << smoke_catalog.records.size() << " verified packs\n";
         return 0;
     }
 
@@ -422,7 +459,11 @@ int RunInstaller(
         ImGui::SameLine();
         ImGui::RadioButton("CPU only", &choice, 1);
         ImGui::SameLine();
+        const bool custom_pack_available =
+            HasSelectableCustomPack(catalog.records);
+        ImGui::BeginDisabled(!custom_pack_available || operation_running);
         ImGui::RadioButton("Custom backend packs", &choice, 2);
+        ImGui::EndDisabled();
 
         if (choice == 0) {
             ImGui::TextDisabled(
@@ -434,8 +475,21 @@ int RunInstaller(
             ImGui::TextDisabled(
                 "Choose individual optional packs. Diagnostic-only packs require explicit consent and still cannot authorize normal training without qualification.");
         }
+        if (!custom_pack_available) {
+            ImGui::TextDisabled(
+                "Custom selection is unavailable until a verified signed catalog provides optional backend packs.");
+        }
 
         ImGui::Spacing();
+        if (catalog.records.empty()) {
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.68f, 0.28f, 1.0f),
+                "No backend packs are available to display.");
+            ImGui::TextWrapped(
+                catalog.mode == cyxwiz::CyxWizInstallerMode::FreshInstall
+                    ? "Open the component manager from a complete CyxWiz setup package containing the signed runtime catalog and trust store."
+                    : "The installed runtime does not contain a usable signed catalog. Refresh after restoring its verified metadata.");
+        }
         if (ImGui::BeginTable(
                 "BackendPacks", 7,
                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |

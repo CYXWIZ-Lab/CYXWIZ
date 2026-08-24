@@ -62,6 +62,14 @@ Both shell families call one standard-library implementation:
 The base and optional-pack profiles call `package_release.py` directly so the
 release command explicitly names the artifact being produced.
 
+Standalone installer packaging also requires an initial signed metadata
+bundle. Configure `CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR` with a directory
+containing `trust/` and `catalogs/`; CMake stages those files below the
+installer's adjacent `runtime/`. `verify_installer_package.py` fails closed if
+the CPU base, an optional backend pack, catalog, trust store, or corresponding
+cached manifest is absent. The native CI fixture uses ephemeral keys and
+non-routable package URLs and is test evidence only, never release metadata.
+
 ### Native runtime bootstrapper
 
 The installed app-level `cyxwiz-runtime-bootstrapper` (`.exe` on Windows)
