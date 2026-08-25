@@ -695,6 +695,12 @@ void Tensor::ClearDeviceCache() const {
 #endif
 
 size_t Tensor::NumElements() const {
+    for (size_t dim : shape_) {
+        if (dim == 0) {
+            return 0;
+        }
+    }
+
     size_t count = 1;
     for (size_t dim : shape_) {
         size_t next = 0;

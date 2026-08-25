@@ -16,10 +16,10 @@
       "contract": "Checked shape/byte ownership with stable dtype, logical shape, copy and move semantics.",
       "supported": "rank 0-4 ArrayFire tensors; Float32, Float64, Int32, Int64, UInt8",
       "oracle": "PyTorch tensor construction plus engine ownership invariants",
-      "tests": ["cyxwiz-tests:test_tensor"],
+      "tests": ["cyxwiz-tests:[tensor]", "cyxwiz-tests:[tensor_ownership]"],
       "execution": "host ingress or ArrayFire-resident construction",
-      "status": "partial",
-      "gaps": ["complete dtype matrix", "copy/move device-residency evidence", "overflow matrix"]
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "TENSOR-HOST-001",

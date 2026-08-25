@@ -75,6 +75,17 @@ The pinned reference package is listed in
 action; normal configuration, builds, and test runs do not invoke Python or
 require network access.
 
+`cyxwiz-tests "[tensor_ownership]"` covers Tensor construction, metadata,
+copy, move, clone, and independent mutation for Float32, Float64, Int32, Int64,
+and UInt8. The ArrayFire CPU matrix starts from device-only semantic tensors
+and proves copy/move/clone allocate no host-owned Tensor bytes and perform zero
+host synchronization. Explicit `MutableData` then materializes only the
+mutated copy and preserves the source value. Checked metadata cases cover
+dimension-product overflow, dtype-sized byte overflow, invalid dtypes, and
+PyTorch-compatible zero-element shapes: a later zero dimension short-circuits
+otherwise overflowing preceding dimensions to `NumElements() == 0` and
+`NumBytes() == 0`.
+
 `cyxwiz-tests "[flatten]"` consumes generated PyTorch 2.10
 `torch.nn.Flatten` forward/autograd fixtures for rank-2/3/4 inputs, positive
 and negative configured `start_dim`, and exact value ordering. It exercises
@@ -199,6 +210,8 @@ build\bin\Debug\test_training_batcher_setup.exe
 
 cmake --build build --config Debug --target cyxwiz-tests -- /m:4 /v:minimal
 build\bin\Debug\cyxwiz-tests.exe "[scheduler]"
+
+build\bin\Debug\cyxwiz-tests.exe "[tensor_ownership]"
 
 build\bin\Debug\cyxwiz-tests.exe "[flatten]"
 
