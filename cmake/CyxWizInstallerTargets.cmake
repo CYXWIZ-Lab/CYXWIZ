@@ -124,6 +124,9 @@ if(CYXWIZ_BUILD_TESTS)
     target_include_directories(test_product_registration PRIVATE
         "${CMAKE_SOURCE_DIR}/redist/bootstrapper"
     )
+    target_link_libraries(test_product_registration PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
     if(WIN32)
         target_link_libraries(test_product_registration PRIVATE
             advapi32 ole32 shell32
@@ -136,6 +139,21 @@ if(CYXWIZ_BUILD_TESTS)
     add_test(
         NAME product_registration_contract
         COMMAND test_product_registration
+    )
+
+    add_executable(test_product_installation_receipt
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_installation_receipt.cpp"
+    )
+    target_link_libraries(test_product_installation_receipt PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_product_installation_receipt PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME product_installation_receipt_contract
+        COMMAND test_product_installation_receipt
     )
 endif()
 

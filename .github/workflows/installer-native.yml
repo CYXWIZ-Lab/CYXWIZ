@@ -200,6 +200,7 @@ jobs:
             "test_runtime_bootstrapper.exe",
             "test_runtime_bootstrapper_child.exe",
             "test_installer_verification_summary.exe",
+            "test_product_installation_receipt.exe",
             "test_product_registration.exe"
           ) | ForEach-Object {
             Copy-Item "build/bin/Release/$_" -Destination installer-stage/smoke/
@@ -215,6 +216,7 @@ jobs:
             build/bin/test_runtime_bootstrapper \
             build/bin/test_runtime_bootstrapper_child \
             build/bin/test_installer_verification_summary \
+            build/bin/test_product_installation_receipt \
             build/bin/test_product_registration \
             installer-stage/smoke/
 

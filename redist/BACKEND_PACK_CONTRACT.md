@@ -71,6 +71,17 @@ macOS integration instead of recursively deleting unknown content. It does not
 remove `runtime/`, immutable bases, backend packs, or the product root; those
 belong to the later full-product removal transaction.
 
+Registration atomically publishes `.cyxwiz-installation.json` in the normalized
+product root before OS integration. Schema 1 contains only the receipt kind, a
+32-character lowercase hexadecimal installation ID, the exact UTF-8 product
+root, and the current-user or all-users scope. The document is bounded to
+16 KiB, must be a regular non-symlink file, rejects unknown fields, and is not
+silently replaced when invalid. Re-registration preserves the existing ID and
+locks the scope. Unregistration and full-product removal fail closed unless the
+receipt still belongs to the requested root and scope. A later removal
+finalizer must independently pin and revalidate the active runtime set and
+generation; the receipt alone never authorizes recursive deletion.
+
 The graphical `cyxwiz-installer` component manager remains in the signed
 versioned base and is resolved by the stable bootstrapper (`.exe` on Windows).
 It owns Recommended, CPU-only, and Custom package consent and launches the

@@ -30,6 +30,7 @@ CONTRACT_TESTS = (
     "test_backend_pack_lifecycle_service",
     "test_runtime_bootstrapper",
     "test_installer_verification_summary",
+    "test_product_installation_receipt",
     "test_product_registration",
 )
 

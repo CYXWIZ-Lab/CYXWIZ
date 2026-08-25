@@ -53,13 +53,32 @@ ProductRegistrationResult RegisterInstalledProduct(
     const ProductRegistrationRequest& request) {
     const auto validation = ValidateRequest(request);
     if (!validation.empty()) return {false, validation};
-    return detail::RegisterPlatformProduct(request);
+    ProductInstallationReceipt receipt;
+    std::string error;
+    if (!PublishProductInstallationReceipt(
+            request.install_root, request.scope, receipt, error)) {
+        return {false, "Cannot record CyxWiz installation ownership: " + error};
+    }
+    auto result = detail::RegisterPlatformProduct(request);
+    if (result.registered) {
+        result.message += "; installation ownership was recorded";
+    }
+    return result;
 }
 
 ProductUnregistrationResult UnregisterInstalledProduct(
     const ProductRegistrationRequest& request) {
     const auto validation = ValidateRequest(request);
     if (!validation.empty()) return {false, validation};
+    ProductInstallationReceipt receipt;
+    std::string error;
+    if (!LoadProductInstallationReceipt(
+            request.install_root, receipt, error)) {
+        return {false, "Cannot verify CyxWiz installation ownership: " + error};
+    }
+    if (receipt.scope != request.scope) {
+        return {false, "The CyxWiz installation scope does not match its receipt"};
+    }
     return detail::UnregisterPlatformProduct(request);
 }
 

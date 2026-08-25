@@ -127,6 +127,15 @@ integration for the selected scope. Linux and macOS fail closed when a managed
 entry contains unknown changes or files. This boundary does not recursively
 delete the product root; runtime deletion remains a separate transaction.
 
+Successful product registration also creates the bounded hidden receipt
+`.cyxwiz-installation.json` in the normalized product root. It records a unique
+installation ID, that exact root, and the selected scope. Repair registration
+preserves the ID and scope; a missing, malformed, redirected, or scope-mismatched
+receipt blocks unregistration and future full-product removal. The receipt is
+ownership evidence, not sufficient deletion authority by itself: a deferred
+removal finalizer must also revalidate the active runtime set and generation
+immediately before deleting any product-owned files.
+
 The packaged desktop application also includes `cyxwiz-installer` (`.exe` on
 Windows), a standalone graphical component manager. Recommended, CPU-only,
 and Custom package selection live there; the Engine Backend Manager launches

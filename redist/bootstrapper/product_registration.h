@@ -1,14 +1,11 @@
 #pragma once
 
+#include "product_installation_receipt.h"
+
 #include <filesystem>
 #include <string>
 
 namespace cyxwiz::runtime {
-
-enum class ProductInstallScope {
-    CurrentUser,
-    AllUsers,
-};
 
 struct ProductRegistrationRequest {
     std::filesystem::path install_root;
