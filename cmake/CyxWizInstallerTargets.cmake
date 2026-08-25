@@ -155,6 +155,21 @@ if(CYXWIZ_BUILD_TESTS)
         NAME product_installation_receipt_contract
         COMMAND test_product_installation_receipt
     )
+
+    add_executable(test_product_removal_authorization
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_removal_authorization.cpp"
+    )
+    target_link_libraries(test_product_removal_authorization PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_product_removal_authorization PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME product_removal_authorization_contract
+        COMMAND test_product_removal_authorization
+    )
 endif()
 
 find_package(OpenGL REQUIRED)

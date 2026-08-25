@@ -82,6 +82,15 @@ receipt still belongs to the requested root and scope. A later removal
 finalizer must independently pin and revalidate the active runtime set and
 generation; the receipt alone never authorizes recursive deletion.
 
+Removal authorization is a separate non-destructive boundary. Capture requires
+the product root to be an exact direct directory rather than a symlinked or
+lexically redirected path, and requires an exact regular stable launcher plus
+a fully resolvable active runtime. It pins the receipt ID, scope, runtime set,
+generation, base pack, and sorted optional-pack inventory. Revalidation repeats
+all path, receipt, launcher, and runtime resolution and rejects any difference.
+Only a deferred finalizer may consume that typed authorization to quarantine a
+product root after the installer and stable bootstrapper have exited.
+
 The graphical `cyxwiz-installer` component manager remains in the signed
 versioned base and is resolved by the stable bootstrapper (`.exe` on Windows).
 It owns Recommended, CPU-only, and Custom package consent and launches the

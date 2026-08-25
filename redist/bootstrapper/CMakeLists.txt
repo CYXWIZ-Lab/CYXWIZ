@@ -7,6 +7,7 @@ add_library(cyxwiz-runtime-bootstrap STATIC
     atomic_file_publisher.cpp
     backend_pack_state_service.cpp
     product_installation_receipt.cpp
+    product_removal_authorization.cpp
     runtime_layout.cpp
 )
 if(WIN32)

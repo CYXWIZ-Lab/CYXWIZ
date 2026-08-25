@@ -136,6 +136,14 @@ ownership evidence, not sufficient deletion authority by itself: a deferred
 removal finalizer must also revalidate the active runtime set and generation
 immediately before deleting any product-owned files.
 
+The shared removal-authorization boundary performs that second check without
+deleting anything. It accepts only a direct, normalized, non-root product
+directory with an exact regular stable launcher, captures the receipt ID and
+complete resolved active-runtime identity, and requires the receipt, scope,
+runtime set, generation, base, and optional-pack inventory to remain identical
+when revalidated. The later finalizer must consume this typed authorization;
+path strings supplied directly to a delete operation are not sufficient.
+
 The packaged desktop application also includes `cyxwiz-installer` (`.exe` on
 Windows), a standalone graphical component manager. Recommended, CPU-only,
 and Custom package selection live there; the Engine Backend Manager launches
