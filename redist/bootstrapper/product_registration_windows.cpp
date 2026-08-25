@@ -59,6 +59,26 @@ private:
     HKEY value_ = nullptr;
 };
 
+bool ResolveProgramsDirectory(
+    ProductInstallScope scope,
+    bool create,
+    std::filesystem::path& programs,
+    std::string& error) {
+    PWSTR raw_programs = nullptr;
+    const KNOWNFOLDERID& folder = scope == ProductInstallScope::AllUsers
+        ? FOLDERID_CommonPrograms : FOLDERID_Programs;
+    const HRESULT result = ::SHGetKnownFolderPath(
+        folder, create ? KF_FLAG_CREATE : KF_FLAG_DEFAULT,
+        nullptr, &raw_programs);
+    if (FAILED(result) || !raw_programs) {
+        error = "Cannot resolve the Windows Start Menu directory";
+        return false;
+    }
+    programs = raw_programs;
+    ::CoTaskMemFree(raw_programs);
+    return true;
+}
+
 std::wstring QuoteWindowsArgument(const std::wstring& value) {
     std::wstring quoted = L"\"";
     std::size_t backslashes = 0;
@@ -152,6 +172,19 @@ bool CreateShortcut(
     return true;
 }
 
+bool RemoveFileIfPresent(
+    const std::filesystem::path& path,
+    std::string& error) {
+    std::error_code filesystem_error;
+    std::filesystem::remove(path, filesystem_error);
+    if (filesystem_error) {
+        error = "Cannot remove CyxWiz product integration: " +
+            filesystem_error.message();
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 ProductRegistrationResult RegisterPlatformProduct(
@@ -162,18 +195,11 @@ ProductRegistrationResult RegisterPlatformProduct(
         result.message = "Cannot initialize Windows product registration";
         return result;
     }
-    PWSTR raw_programs = nullptr;
-    const KNOWNFOLDERID& folder =
-        request.scope == ProductInstallScope::AllUsers
-        ? FOLDERID_CommonPrograms : FOLDERID_Programs;
-    const HRESULT folder_result = ::SHGetKnownFolderPath(
-        folder, KF_FLAG_CREATE, nullptr, &raw_programs);
-    if (FAILED(folder_result) || !raw_programs) {
-        result.message = "Cannot resolve the Windows Start Menu directory";
+    std::filesystem::path programs;
+    if (!ResolveProgramsDirectory(
+            request.scope, true, programs, result.message)) {
         return result;
     }
-    const std::filesystem::path programs(raw_programs);
-    ::CoTaskMemFree(raw_programs);
     const auto product_folder = programs / L"CyxWiz";
     std::error_code filesystem_error;
     std::filesystem::create_directories(product_folder, filesystem_error);
@@ -230,6 +256,48 @@ ProductRegistrationResult RegisterPlatformProduct(
     result.registered = true;
     result.message =
         "CyxWiz was registered in the Start Menu and Apps & Features";
+    return result;
+}
+
+ProductUnregistrationResult UnregisterPlatformProduct(
+    const ProductRegistrationRequest& request) {
+    ProductUnregistrationResult result;
+    ComScope com;
+    if (!com.available()) {
+        result.message = "Cannot initialize Windows product unregistration";
+        return result;
+    }
+    std::filesystem::path programs;
+    if (!ResolveProgramsDirectory(
+            request.scope, false, programs, result.message)) {
+        return result;
+    }
+    const auto product_folder = programs / L"CyxWiz";
+    std::string error;
+    if (!RemoveFileIfPresent(product_folder / L"CyxWiz.lnk", error) ||
+        !RemoveFileIfPresent(
+            product_folder / L"CyxWiz Installer.lnk", error)) {
+        result.message = std::move(error);
+        return result;
+    }
+    std::error_code ignored;
+    std::filesystem::remove(product_folder, ignored);
+
+    const HKEY hive = request.scope == ProductInstallScope::AllUsers
+        ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+    const LSTATUS delete_status = ::RegDeleteKeyW(
+        hive,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\CyxWiz");
+    if (delete_status != ERROR_SUCCESS &&
+        delete_status != ERROR_FILE_NOT_FOUND) {
+        result.message =
+            "Cannot remove CyxWiz from Windows Apps & Features; Win32 error " +
+            std::to_string(delete_status);
+        return result;
+    }
+    result.unregistered = true;
+    result.message =
+        "CyxWiz Start Menu and Apps & Features entries were removed";
     return result;
 }
 

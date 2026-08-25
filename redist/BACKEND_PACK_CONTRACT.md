@@ -65,6 +65,12 @@ does not invalidate an already qualified runtime, but it is surfaced as a
 warning so repair can retry it. Full product removal is not implied by this
 registration boundary.
 
+Unregistration is a separate idempotent OS-adapter operation. It removes only
+the selected-scope CyxWiz registration entries and rejects altered Linux or
+macOS integration instead of recursively deleting unknown content. It does not
+remove `runtime/`, immutable bases, backend packs, or the product root; those
+belong to the later full-product removal transaction.
+
 The graphical `cyxwiz-installer` component manager remains in the signed
 versioned base and is resolved by the stable bootstrapper (`.exe` on Windows).
 It owns Recommended, CPU-only, and Custom package consent and launches the

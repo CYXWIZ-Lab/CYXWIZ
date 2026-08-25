@@ -121,6 +121,12 @@ installed GUI through `--installer`, and none changes the machine-wide loader
 environment. The current Apps & Features uninstall command reopens that GUI;
 full transactional product removal remains a separate lifecycle gate.
 
+The matching unregistration boundary is idempotent and removes only the exact
+CyxWiz Start Menu/Apps & Features, desktop-entry, or application-bundle
+integration for the selected scope. Linux and macOS fail closed when a managed
+entry contains unknown changes or files. This boundary does not recursively
+delete the product root; runtime deletion remains a separate transaction.
+
 The packaged desktop application also includes `cyxwiz-installer` (`.exe` on
 Windows), a standalone graphical component manager. Recommended, CPU-only,
 and Custom package selection live there; the Engine Backend Manager launches

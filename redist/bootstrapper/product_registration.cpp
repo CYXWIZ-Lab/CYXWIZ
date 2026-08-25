@@ -56,4 +56,11 @@ ProductRegistrationResult RegisterInstalledProduct(
     return detail::RegisterPlatformProduct(request);
 }
 
+ProductUnregistrationResult UnregisterInstalledProduct(
+    const ProductRegistrationRequest& request) {
+    const auto validation = ValidateRequest(request);
+    if (!validation.empty()) return {false, validation};
+    return detail::UnregisterPlatformProduct(request);
+}
+
 }  // namespace cyxwiz::runtime

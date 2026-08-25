@@ -2,6 +2,8 @@
 
 #include "backend_pack_platform.h"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
@@ -65,6 +67,54 @@ bool WriteTextAtomic(
     }
     return true;
 }
+
+bool ReadTextFile(
+    const std::filesystem::path& path,
+    std::string& content,
+    std::string& error) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) {
+        error = "Cannot read CyxWiz product integration file";
+        return false;
+    }
+    content.assign(
+        std::istreambuf_iterator<char>(stream),
+        std::istreambuf_iterator<char>());
+    if (stream.bad()) {
+        error = "Cannot read complete CyxWiz product integration file";
+        return false;
+    }
+    return true;
+}
+
+#if !defined(__APPLE__)
+bool RemoveOwnedTextFile(
+    const std::filesystem::path& path,
+    const std::string& expected,
+    std::string& error) {
+    std::error_code filesystem_error;
+    const auto status = std::filesystem::symlink_status(
+        path, filesystem_error);
+    if (status.type() == std::filesystem::file_type::not_found) return true;
+    if (filesystem_error ||
+        status.type() != std::filesystem::file_type::regular) {
+        error = "CyxWiz product integration is not a managed regular file";
+        return false;
+    }
+    std::string content;
+    if (!ReadTextFile(path, content, error)) return false;
+    if (content != expected) {
+        error = "CyxWiz product integration contains unmanaged changes";
+        return false;
+    }
+    if (!std::filesystem::remove(path, filesystem_error) || filesystem_error) {
+        error = "Cannot remove CyxWiz product integration file: " +
+            filesystem_error.message();
+        return false;
+    }
+    return true;
+}
+#endif
 
 #if !defined(__APPLE__)
 std::string QuoteDesktopExec(const std::filesystem::path& path) {
@@ -165,6 +215,82 @@ bool PublishBundle(
             bundle_name, executable_name, bundle_id, version), error);
 }
 
+bool RemoveManagedBundle(
+    const std::filesystem::path& install_root,
+    std::string_view bundle_name,
+    std::string_view executable_name,
+    std::string_view bundle_id,
+    std::string_view version,
+    bool remove,
+    std::string& error) {
+    const auto bundle = install_root / (std::string(bundle_name) + ".app");
+    const auto contents = bundle / "Contents";
+    const auto plist = contents / "Info.plist";
+    const auto macos = contents / "MacOS";
+    const auto executable = macos / std::string(executable_name);
+    const std::array expected_paths{contents, plist, macos, executable};
+
+    std::error_code filesystem_error;
+    const auto bundle_status = std::filesystem::symlink_status(
+        bundle, filesystem_error);
+    if (bundle_status.type() == std::filesystem::file_type::not_found) {
+        return true;
+    }
+    if (filesystem_error ||
+        bundle_status.type() != std::filesystem::file_type::directory) {
+        error = "The macOS CyxWiz application bundle is not managed";
+        return false;
+    }
+    std::size_t discovered = 0;
+    for (std::filesystem::recursive_directory_iterator iterator(
+             bundle, filesystem_error), end;
+         iterator != end && !filesystem_error;
+         iterator.increment(filesystem_error)) {
+        const bool expected = std::find(
+            expected_paths.begin(), expected_paths.end(), iterator->path()) !=
+            expected_paths.end();
+        if (!expected) {
+            error = "The macOS CyxWiz application bundle contains unmanaged files";
+            return false;
+        }
+        ++discovered;
+    }
+    if (filesystem_error || discovered != expected_paths.size()) {
+        error = "The macOS CyxWiz application bundle is incomplete";
+        return false;
+    }
+    std::string plist_content;
+    if (!ReadTextFile(plist, plist_content, error) ||
+        plist_content != InfoPlist(
+            bundle_name, executable_name, bundle_id, version)) {
+        if (error.empty()) {
+            error = "The macOS CyxWiz application bundle contains unmanaged metadata";
+        }
+        return false;
+    }
+    const std::filesystem::path target =
+        "../../../" + std::string(CurrentRuntimeBootstrapperExecutableName());
+    if (!std::filesystem::is_symlink(executable, filesystem_error) ||
+        filesystem_error ||
+        std::filesystem::read_symlink(executable, filesystem_error) != target ||
+        filesystem_error) {
+        error = "The macOS CyxWiz bundle launcher is not managed";
+        return false;
+    }
+    if (!remove) return true;
+    for (const auto& path :
+         std::array{executable, macos, plist, contents, bundle}) {
+        filesystem_error.clear();
+        if (!std::filesystem::remove(path, filesystem_error) ||
+            filesystem_error) {
+            error = "Cannot remove the macOS CyxWiz application bundle: " +
+                filesystem_error.message();
+            return false;
+        }
+    }
+    return true;
+}
+
 #else
 
 std::filesystem::path LinuxApplicationsDirectory(
@@ -198,6 +324,7 @@ std::string DesktopEntry(
            << (installer ? " --installer" : "") << "\n"
            << "Terminal=false\n"
            << "StartupNotify=true\n"
+           << "X-CyxWiz-Managed=true\n"
            << "Categories=Development;Science;\n";
     return output.str();
 }
@@ -244,6 +371,63 @@ ProductRegistrationResult RegisterPlatformProduct(
     result.registered = true;
     result.message =
         "CyxWiz Engine and Installer desktop entries were registered";
+#endif
+    return result;
+}
+
+ProductUnregistrationResult UnregisterPlatformProduct(
+    const ProductRegistrationRequest& request) {
+    ProductUnregistrationResult result;
+    std::string error;
+#if defined(__APPLE__)
+    const auto unregister_bundle = [&](
+        std::string_view bundle_name,
+        std::string_view executable_name,
+        std::string_view bundle_id,
+        bool remove) {
+        return RemoveManagedBundle(
+            request.install_root, bundle_name, executable_name, bundle_id,
+            request.product_version, remove, error);
+    };
+    if (!unregister_bundle(
+            "CyxWiz", "CyxWiz", "com.cyxwiz.engine", false) ||
+        !unregister_bundle(
+            "CyxWiz Installer", "CyxWiz Installer",
+            "com.cyxwiz.installer", false) ||
+        !unregister_bundle(
+            "CyxWiz", "CyxWiz", "com.cyxwiz.engine", true) ||
+        !unregister_bundle(
+            "CyxWiz Installer", "CyxWiz Installer",
+            "com.cyxwiz.installer", true)) {
+        result.message = std::move(error);
+        return result;
+    }
+    result.unregistered = true;
+    result.message =
+        "CyxWiz Engine and Installer application bundles were removed";
+#else
+    const auto applications = LinuxApplicationsDirectory(request.scope);
+    if (!applications.is_absolute()) {
+        result.message =
+            "Cannot resolve the Linux desktop applications directory";
+        return result;
+    }
+    const auto launcher = request.install_root /
+        std::string(CurrentRuntimeBootstrapperExecutableName());
+    if (!RemoveOwnedTextFile(
+            applications / "cyxwiz.desktop",
+            DesktopEntry(launcher, false), error) ||
+        !RemoveOwnedTextFile(
+            applications / "cyxwiz-installer.desktop",
+            DesktopEntry(launcher, true), error)) {
+        result.message = std::move(error);
+        return result;
+    }
+    std::error_code ignored;
+    std::filesystem::remove(applications, ignored);
+    result.unregistered = true;
+    result.message =
+        "CyxWiz Engine and Installer desktop entries were removed";
 #endif
     return result;
 }

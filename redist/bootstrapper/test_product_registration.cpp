@@ -68,6 +68,12 @@ void TestValidation() {
               missing.message.find("stable CyxWiz launcher") !=
                   std::string::npos,
           "Product registration must require the verified stable launcher");
+
+    const auto invalid_unregistration =
+        cyxwiz::runtime::UnregisterInstalledProduct(Request("relative"));
+    Check(!invalid_unregistration.unregistered &&
+              !invalid_unregistration.message.empty(),
+          "Product unregistration must reject a relative installation root");
 }
 
 #ifndef _WIN32
@@ -77,7 +83,8 @@ void CreateLauncher(const std::filesystem::path& install_root) {
         std::string(
             cyxwiz::runtime::CurrentRuntimeBootstrapperExecutableName());
     std::ofstream(launcher, std::ios::binary) << "launcher";
-    ::chmod(launcher.c_str(), 0755);
+    Check(::chmod(launcher.c_str(), 0755) == 0,
+          "Product registration fixture launcher must be executable");
 }
 
 void TestNativeRegistration() {
@@ -107,6 +114,13 @@ void TestNativeRegistration() {
                   installer_bundle / "MacOS" / "CyxWiz Installer") ==
               "../../../cyxwiz-runtime-bootstrapper",
           "macOS bundles must point only at the stable bootstrapper");
+    const auto unregistered =
+        cyxwiz::runtime::UnregisterInstalledProduct(Request(install_root));
+    Check(unregistered.unregistered &&
+              !std::filesystem::exists(install_root / "CyxWiz.app") &&
+              !std::filesystem::exists(
+                  install_root / "CyxWiz Installer.app"),
+          "macOS unregistration must remove exact managed bundles");
 #else
     const auto data_home = temporary.path() / "xdg-data";
     Check(::setenv("XDG_DATA_HOME", data_home.c_str(), 1) == 0,
@@ -125,12 +139,60 @@ void TestNativeRegistration() {
                   std::string::npos &&
               installer.find(" --installer\n") != std::string::npos,
           "Linux must register separate Engine and maintenance launch entries");
+    const auto unregistered =
+        cyxwiz::runtime::UnregisterInstalledProduct(Request(install_root));
+    Check(unregistered.unregistered &&
+              !std::filesystem::exists(
+                  applications / "cyxwiz.desktop") &&
+              !std::filesystem::exists(
+                  applications / "cyxwiz-installer.desktop"),
+          "Linux unregistration must remove exact managed desktop entries");
 #endif
+
+    const auto repeated =
+        cyxwiz::runtime::UnregisterInstalledProduct(Request(install_root));
+    Check(repeated.unregistered,
+          "Product unregistration must be idempotent");
 
     const std::string path_after = std::getenv("PATH")
         ? std::getenv("PATH") : "";
     Check(path_after == path_before,
           "Product registration must not mutate the loader or executable PATH");
+}
+
+void TestUnmanagedRegistrationProtection() {
+    TemporaryDirectory temporary;
+    const auto install_root = temporary.path() / "CyxWiz Product";
+    CreateLauncher(install_root);
+#if defined(__APPLE__)
+    const auto registered =
+        cyxwiz::runtime::RegisterInstalledProduct(Request(install_root));
+    Check(registered.registered,
+          "macOS protection fixture must register successfully");
+    const auto unmanaged =
+        install_root / "CyxWiz.app" / "Contents" / "unmanaged.txt";
+    std::ofstream(unmanaged, std::ios::binary) << "user content";
+    const auto rejected =
+        cyxwiz::runtime::UnregisterInstalledProduct(Request(install_root));
+    Check(!rejected.unregistered && std::filesystem::exists(unmanaged),
+          "macOS unregistration must preserve unmanaged bundle files");
+#else
+    const auto data_home = temporary.path() / "xdg-data";
+    Check(::setenv("XDG_DATA_HOME", data_home.c_str(), 1) == 0,
+          "Linux protection test must isolate XDG_DATA_HOME");
+    const auto registered =
+        cyxwiz::runtime::RegisterInstalledProduct(Request(install_root));
+    Check(registered.registered,
+          "Linux protection fixture must register successfully");
+    const auto desktop =
+        data_home / "applications" / "cyxwiz.desktop";
+    std::ofstream(desktop, std::ios::binary | std::ios::app)
+        << "X-User-Managed=true\n";
+    const auto rejected =
+        cyxwiz::runtime::UnregisterInstalledProduct(Request(install_root));
+    Check(!rejected.unregistered && std::filesystem::exists(desktop),
+          "Linux unregistration must preserve modified desktop entries");
+#endif
 }
 #endif
 
@@ -140,6 +202,7 @@ int main() {
     TestValidation();
 #ifndef _WIN32
     TestNativeRegistration();
+    TestUnmanagedRegistrationProtection();
 #endif
     std::cout << "Product registration contracts passed\n";
     return 0;

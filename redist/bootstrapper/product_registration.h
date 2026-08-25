@@ -22,7 +22,15 @@ struct ProductRegistrationResult {
     std::string message;
 };
 
+struct ProductUnregistrationResult {
+    bool unregistered = false;
+    std::string message;
+};
+
 ProductRegistrationResult RegisterInstalledProduct(
+    const ProductRegistrationRequest& request);
+
+ProductUnregistrationResult UnregisterInstalledProduct(
     const ProductRegistrationRequest& request);
 
 }  // namespace cyxwiz::runtime
