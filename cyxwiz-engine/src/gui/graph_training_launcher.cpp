@@ -185,10 +185,13 @@ bool DispatchTrainingOnMainThread(
     return started;
 }
 
-cyxwiz::MaterializationCacheConfig DefaultMaterializationCacheConfig() {
+cyxwiz::MaterializationCacheConfig DefaultMaterializationCacheConfig(
+    const std::filesystem::path& project_root = {}) {
     cyxwiz::MaterializationCacheConfig config;
     config.mode = cyxwiz::MaterializationCacheMode::Auto;
-    config.cache_root = std::filesystem::current_path() / ".cyxwiz";
+    config.cache_root = project_root.empty()
+        ? std::filesystem::current_path() / ".cyxwiz"
+        : project_root.lexically_normal();
     config.artifact_format = "parquet";
     return config;
 }
@@ -440,6 +443,27 @@ std::string ResolveRuntimeArrowLabelColumn(
                      dataset_name);
     }
     return resolved;
+}
+
+void ReconcileRuntimeDatasetTarget(
+    cyxwiz::TrainingConfiguration& config,
+    const std::string& resolved_label,
+    const std::string& dataset_name) {
+    if (resolved_label.empty() ||
+        config.target.origin != cyxwiz::TargetOrigin::DatasetColumn ||
+        config.target.primary_column == resolved_label) {
+        return;
+    }
+
+    spdlog::info(
+        "StartTrainingFromGraph: reconciled runtime target column '{}' -> "
+        "'{}' for dataset '{}'",
+        config.target.primary_column.empty()
+            ? "<auto>"
+            : config.target.primary_column,
+        resolved_label,
+        dataset_name);
+    config.target.primary_column = resolved_label;
 }
 
 void ReconcileRuntimeTabularFeatureWidth(
@@ -1105,8 +1129,9 @@ void SetBlockedStatus(GraphTrainingLaunchResult& result,
 
 } // namespace
 
-cyxwiz::MaterializationCacheConfig GraphMaterializationCacheConfig() {
-    return DefaultMaterializationCacheConfig();
+cyxwiz::MaterializationCacheConfig GraphMaterializationCacheConfig(
+    const std::filesystem::path& project_root) {
+    return DefaultMaterializationCacheConfig(project_root);
 }
 
 GraphMaterializationPreflightResult PreflightGraphMaterialization(
@@ -1199,7 +1224,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     GraphTrainingDispatch dispatch,
     cyxwiz::MaterializationMemoryPolicy materialization_memory_policy,
     std::optional<cyxwiz::PipelineOperatorProgress>
-        materialization_preflight_evidence) {
+        materialization_preflight_evidence,
+    std::filesystem::path project_root) {
 
     GraphTrainingLaunchResult result;
 
@@ -1241,6 +1267,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         nodes, dataset_name, config.data_source_node_id);
     label_column = ResolveRuntimeArrowLabelColumn(
         registry, dataset_name, label_column);
+    ReconcileRuntimeDatasetTarget(config, label_column, dataset_name);
     ReconcileRuntimeTabularFeatureWidth(
         registry, dataset_name, label_column, config);
     if (config.dataset_roles.train.dataset_name.empty()) {
@@ -1308,12 +1335,19 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     result.epochs = epochs;
     result.batch_size = batch_size;
 
-    const auto materialization_cache_config = DefaultMaterializationCacheConfig();
+    const auto materialization_cache_config =
+        DefaultMaterializationCacheConfig(project_root);
     result.materialization_cache_enabled =
         materialization_cache_config.mode != cyxwiz::MaterializationCacheMode::Disabled;
     result.materialization_cache_mode = materialization_cache_config.mode;
     result.materialization_cache_root =
         materialization_cache_config.cache_root.string();
+    spdlog::info(
+        "Graph materialization cache: mode={}, root='{}', owner={}",
+        cyxwiz::MaterializationCacheModeName(
+            materialization_cache_config.mode),
+        result.materialization_cache_root,
+        project_root.empty() ? "standalone_runtime" : "active_project");
 
     if (auto panel = plot_panel.lock()) {
         panel->Clear();
@@ -1468,6 +1502,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                 effective_dataset_name = materialize_result.effective_dataset_name;
                 effective_label_column = ResolveRuntimeArrowLabelColumn(
                     registry, effective_dataset_name, effective_label_column);
+                ReconcileRuntimeDatasetTarget(
+                    config, effective_label_column, effective_dataset_name);
             }
 
             ReconcileRuntimeTabularFeatureWidth(

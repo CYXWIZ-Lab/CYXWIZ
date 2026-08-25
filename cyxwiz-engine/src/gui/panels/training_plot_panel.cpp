@@ -74,6 +74,31 @@ std::string FormatTraceBytes(uint64_t bytes) {
     return out.str();
 }
 
+const char* MaterializationStatusDisplayName(const std::string& status) {
+    if (status == "cache_hit") {
+        return "Cache hit - preprocessing skipped";
+    }
+    if (status == "cache_saved") {
+        return "Prepared and cached";
+    }
+    if (status == "cache_miss") {
+        return "Cache miss - preprocessing rebuilt";
+    }
+    if (status == "cache_stale") {
+        return "Cache stale - preprocessing rebuilt";
+    }
+    if (status == "cache_corrupt") {
+        return "Cache invalid - preprocessing rebuilt";
+    }
+    if (status == "cache_save_failed") {
+        return "Prepared; cache save failed";
+    }
+    if (status == "cache_unsupported") {
+        return "Cache unavailable";
+    }
+    return status.empty() ? "Completed" : status.c_str();
+}
+
 std::string ParentDirectoryForPath(std::string path) {
     while (path.size() > 1 &&
            (path.back() == '\\' || path.back() == '/') &&
@@ -792,12 +817,32 @@ void TrainingPlotPanel::SetMaterializationComplete(
     materialization_operators_applied_ = operators_applied;
 
     MaterializationProgress event;
-    event.stage = "Complete";
-    event.message = "Materialization completed";
+    event.status = materialization_status_;
+    if (materialization_status_ == "cache_hit") {
+        event.stage = "Cache reused";
+        event.message =
+            "Preprocessing skipped: reused cached materialization.";
+        if (!materialization_events_.empty() &&
+            materialization_events_.back().status == "cache_hit" &&
+            !materialization_events_.back().message.empty()) {
+            event.message = materialization_events_.back().message;
+        }
+    } else if (materialization_status_ == "cache_saved") {
+        event.stage = "Prepared and cached";
+        event.message = "Preprocessing completed and saved to cache.";
+    } else {
+        event.stage = "Complete";
+        event.message = "Materialization completed";
+    }
     event.progress = 1.0f;
-    materialization_events_.push_back(std::move(event));
-    if (materialization_events_.size() > 24) {
-        materialization_events_.erase(materialization_events_.begin());
+    if (!materialization_events_.empty() &&
+        materialization_events_.back().stage == event.stage) {
+        materialization_events_.back() = std::move(event);
+    } else {
+        materialization_events_.push_back(std::move(event));
+        if (materialization_events_.size() > 24) {
+            materialization_events_.erase(materialization_events_.begin());
+        }
     }
 }
 
@@ -1468,10 +1513,16 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
     }
 
     if (!materialization_status_.empty()) {
-        const ImVec4 color = materialization_status_ == "completed"
+        const bool successful = materialization_status_ == "completed" ||
+                                materialization_status_ == "cache_hit" ||
+                                materialization_status_ == "cache_saved";
+        const ImVec4 color = successful
             ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
             : ImVec4(1.0f, 0.75f, 0.25f, 1.0f);
-        ImGui::TextColored(color, "Status: %s", materialization_status_.c_str());
+        ImGui::TextColored(
+            color,
+            "Status: %s",
+            MaterializationStatusDisplayName(materialization_status_));
     }
     if (!materialization_output_dataset_.empty()) {
         ImGui::TextWrapped("Output dataset: %s",
@@ -2539,6 +2590,11 @@ TrainingStatusSnapshot TrainingPlotPanel::GetStatusSnapshot() const {
     snapshot.total_training_time = total_training_time_;
     snapshot.checkpoint_epoch = checkpoint_epoch_;
     snapshot.metric_points = train_loss_.values.size();
+    snapshot.materialization_status = materialization_status_;
+    if (!materialization_events_.empty()) {
+        snapshot.materialization_message =
+            materialization_events_.back().message;
+    }
     snapshot.latest_custom_metrics.reserve(custom_metrics_.size());
     for (const auto& metric : custom_metrics_) {
         if (!metric.values.empty()) {

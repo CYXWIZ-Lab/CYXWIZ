@@ -103,6 +103,13 @@ struct MaterializeTableResult {
     std::string failed_node_name;
 };
 
+struct MaterializationCacheability {
+    bool cacheable = true;
+    bool valid = true;
+    std::string reason;
+    std::vector<MaterializationCacheDependencyIdentity> dependencies;
+};
+
 /**
  * PipelineMaterializer - Cat-1 IPipelineOperator integration point.
  *
@@ -117,6 +124,11 @@ struct MaterializeTableResult {
  */
 class PipelineMaterializer {
 public:
+    static MaterializationCacheability EvaluateCacheability(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        const std::string& source_dataset_name = {});
+
     // Runs the same operator-owned estimator used by materialization and stops
     // at its first memory decision, before that operator starts materializing.
     // Later data-dependent operators remain unknown until their inputs exist.

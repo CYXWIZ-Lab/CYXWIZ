@@ -31,6 +31,8 @@ struct TrainingStatusSnapshot {
     float total_training_time = 0.0f;
     int checkpoint_epoch = 0;
     size_t metric_points = 0;
+    std::string materialization_status;
+    std::string materialization_message;
     std::vector<std::pair<std::string, double>> latest_custom_metrics;
 };
 

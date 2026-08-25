@@ -1,4 +1,5 @@
 #include "node_documentation.h"
+#include "../core/node_metadata_registry.h"
 #include <imgui.h>
 
 namespace gui {
@@ -21,25 +22,60 @@ const NodeDocumentation* NodeDocumentationManager::GetDocumentation(NodeType typ
 }
 
 void NodeDocumentationManager::RenderTooltip(NodeType type) {
+    auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+    registry.Initialize();
+    const auto* metadata = registry.GetMetadata(type);
     const NodeDocumentation* doc = GetDocumentation(type);
-    if (!doc) return;
+    if (!metadata && !doc) return;
+
+    const std::string title = metadata ? metadata->name : doc->title;
+    const std::string category = metadata
+        ? cyxwiz::GetCategoryDisplayName(metadata->category)
+        : doc->category;
+    const std::string brief = metadata
+        ? metadata->brief_description
+        : doc->description;
+    const std::string details = metadata
+        ? metadata->help_text
+        : std::string{};
+    const std::string usage = metadata
+        ? metadata->example_usage
+        : doc->usage;
 
     ImGui::BeginTooltip();
 
     // Title with category
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", doc->title.c_str());
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", title.c_str());
     ImGui::SameLine();
-    ImGui::TextDisabled("[%s]", doc->category.c_str());
+    ImGui::TextDisabled("[%s]", category.c_str());
 
     ImGui::Separator();
 
     // Description
     ImGui::PushTextWrapPos(400.0f);
-    ImGui::TextWrapped("%s", doc->description.c_str());
+    if (!brief.empty()) {
+        ImGui::TextWrapped("%s", brief.c_str());
+    }
+    if (!details.empty() && details != brief) {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", details.c_str());
+    }
     ImGui::PopTextWrapPos();
 
     // Parameters
-    if (!doc->parameters.empty()) {
+    if (metadata && !metadata->parameters.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Parameters:");
+        for (const auto& param : metadata->parameters) {
+            const std::string& label = param.display_name.empty()
+                ? param.name
+                : param.display_name;
+            ImGui::BulletText("%s%s", label.c_str(),
+                              param.required ? " *" : "");
+            ImGui::SameLine();
+            ImGui::TextDisabled("- %s", param.description.c_str());
+        }
+    } else if (doc && !doc->parameters.empty()) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Parameters:");
         for (const auto& param : doc->parameters) {
@@ -49,8 +85,9 @@ void NodeDocumentationManager::RenderTooltip(NodeType type) {
         }
     }
 
-    // Tips
-    if (!doc->tips.empty()) {
+    // Legacy documentation remains a fallback for types not represented in
+    // the authoritative metadata registry.
+    if (!metadata && doc && !doc->tips.empty()) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.6f, 1.0f), "Tips:");
         for (const auto& tip : doc->tips) {
@@ -59,10 +96,10 @@ void NodeDocumentationManager::RenderTooltip(NodeType type) {
     }
 
     // Usage example
-    if (!doc->usage.empty()) {
+    if (!usage.empty()) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.8f, 1.0f), "Usage:");
-        ImGui::TextDisabled("%s", doc->usage.c_str());
+        ImGui::TextDisabled("%s", usage.c_str());
     }
 
     ImGui::EndTooltip();

@@ -1577,6 +1577,7 @@ set_target_properties(test_text_tokenizer_operator PROPERTIES
 # ===== Test: Computation Truth - TF-IDF + Loss Parity =====
 add_executable(test_computation_truth_tfidf_loss
     tests/computation_truth/test_computation_truth_tfidf_loss.cpp
+    src/core/preprocessing_state.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
 )
 
@@ -1599,6 +1600,37 @@ if(WIN32)
 endif()
 
 set_target_properties(test_computation_truth_tfidf_loss PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Text Vectorizer Fitted-State Persistence =====
+add_executable(test_text_vectorizer_fitted_state
+    tests/test_text_vectorizer_fitted_state.cpp
+    src/core/preprocessing_state.cpp
+    src/core/node_executors/count_vectorizer_operator.cpp
+    src/core/node_executors/tfidf_vectorizer_operator.cpp
+)
+
+target_include_directories(test_text_vectorizer_fitted_state PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_text_vectorizer_fitted_state PRIVATE
+    Arrow::arrow_shared
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_text_vectorizer_fitted_state PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_text_vectorizer_fitted_state PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
@@ -1697,6 +1729,7 @@ set_target_properties(test_language_model_inference_contract PROPERTIES
 # ===== Test: Pipeline Operator Configure Reset Semantics =====
 add_executable(test_operator_configure_resets
     tests/test_operator_configure_resets.cpp
+    src/core/preprocessing_state.cpp
     src/core/node_executors/clustering_operators.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/pca_operator.cpp
@@ -3968,6 +4001,7 @@ target_include_directories(test_materialization_cache PRIVATE
 
 target_link_libraries(test_materialization_cache PRIVATE
     Arrow::arrow_shared
+    cyxwiz-backend
 )
 
 if(WIN32)

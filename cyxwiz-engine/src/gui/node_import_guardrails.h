@@ -12,6 +12,10 @@ namespace gui::detail {
 
 inline constexpr int kLegacyDataBoundaryVersion = 1;
 inline constexpr int kCurrentDataBoundaryVersion = 2;
+inline constexpr int kLegacyDataValidatorContractVersion = 1;
+inline constexpr int kCurrentDataValidatorContractVersion = 2;
+inline constexpr int kCurrentEvaluationTableContractVersion = 2;
+inline constexpr int kCurrentClassicalTreeTableContractVersion = 2;
 
 inline int ReadSerializedDataBoundaryVersion(const nlohmann::json& graph_json) {
     if (!graph_json.contains("data_boundary_version")) {
@@ -30,6 +34,76 @@ inline int ReadSerializedDataBoundaryVersion(const nlohmann::json& graph_json) {
 inline bool PreserveLegacyDataBoundaryPins(const nlohmann::json& graph_json) {
     return ReadSerializedDataBoundaryVersion(graph_json) <
            kCurrentDataBoundaryVersion;
+}
+
+inline bool PreserveLegacyDataValidatorOutputs(
+    const nlohmann::json& graph_json) {
+    if (!graph_json.contains("data_validator_contract_version")) {
+        return true;
+    }
+    const auto& value = graph_json["data_validator_contract_version"];
+    return !value.is_number_integer() ||
+           value.get<int>() != kCurrentDataValidatorContractVersion;
+}
+
+inline bool ResolveLegacyDataValidatorOutputPinIndex(
+    const nlohmann::json& link_json,
+    int& resolved_index) {
+    resolved_index = 0;
+    if (!link_json.contains("from_pin_index") ||
+        !link_json["from_pin_index"].is_number_integer()) {
+        return false;
+    }
+
+    // Legacy output indices 0 and 1 were the unimplemented Valid/Invalid
+    // promises. Only index 2 represented the real Issues dataset.
+    return link_json["from_pin_index"].get<int>() == 2;
+}
+
+inline bool PreserveLegacyEvaluationTableInputs(
+    const nlohmann::json& graph_json) {
+    if (!graph_json.contains("evaluation_table_contract_version")) {
+        return true;
+    }
+    const auto& value = graph_json["evaluation_table_contract_version"];
+    return !value.is_number_integer() ||
+           value.get<int>() != kCurrentEvaluationTableContractVersion;
+}
+
+inline bool IsLegacySplitInputEvaluationNode(NodeType type) {
+    return type == NodeType::ConfusionMatrixNode ||
+           type == NodeType::ROCCurveNode ||
+           type == NodeType::PRCurveNode;
+}
+
+inline bool PreserveLegacyClassicalTreeTablePins(
+    const nlohmann::json& graph_json) {
+    if (!graph_json.contains("classical_tree_table_contract_version")) {
+        return true;
+    }
+    const auto& value = graph_json["classical_tree_table_contract_version"];
+    return !value.is_number_integer() ||
+           value.get<int>() != kCurrentClassicalTreeTableContractVersion;
+}
+
+inline bool IsLegacySplitInputTreeTrainer(NodeType type) {
+    return type == NodeType::DecisionTreeClassifier ||
+           type == NodeType::RandomForestClassifier ||
+           type == NodeType::GradientBoostingClassifier;
+}
+
+inline bool ResolveLegacyClassicalTreeOutputPinIndex(
+    const nlohmann::json& link_json,
+    int& resolved_index) {
+    resolved_index = 0;
+    if (!link_json.contains("from_pin_index") ||
+        !link_json["from_pin_index"].is_number_integer()) {
+        return false;
+    }
+
+    // Legacy index 0 was a fictional in-memory Model output. The real
+    // materialized prediction table was exposed at index 1.
+    return link_json["from_pin_index"].get<int>() == 1;
 }
 
 inline bool HasImportGuardParam(const std::map<std::string, std::string>& params,

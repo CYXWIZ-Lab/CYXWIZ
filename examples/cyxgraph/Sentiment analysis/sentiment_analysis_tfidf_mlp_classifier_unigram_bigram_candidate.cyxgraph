@@ -1,389 +1,399 @@
 {
-    "annotations":  [
-
-                    ],
-    "execution_mode":  0,
-    "framework":  0,
-    "groups":  [
-
-               ],
-    "links":  [
-                  {
-                      "from_node":  1,
-                      "from_pin":  1,
-                      "from_pin_index":  0,
-                      "id":  1,
-                      "link_type":  0,
-                      "to_node":  2,
-                      "to_pin":  3,
-                      "to_pin_index":  0
-                  },
-                  {
-                      "from_node":  2,
-                      "from_pin":  4,
-                      "from_pin_index":  0,
-                      "id":  2,
-                      "link_type":  0,
-                      "to_node":  3,
-                      "to_pin":  5,
-                      "to_pin_index":  0
-                  },
-                  {
-                      "from_node":  3,
-                      "from_pin":  7,
-                      "from_pin_index":  0,
-                      "id":  4,
-                      "link_type":  0,
-                      "to_node":  4,
-                      "to_pin":  13,
-                      "to_pin_index":  0
-                  },
-                  {
-                      "from_node":  4,
-                      "from_pin":  15,
-                      "from_pin_index":  0,
-                      "id":  6,
-                      "link_type":  0,
-                      "to_node":  5,
-                      "to_pin":  17,
-                      "to_pin_index":  0
-                  },
-                  {
-                      "from_node":  5,
-                      "from_pin":  18,
-                      "from_pin_index":  0,
-                      "id":  7,
-                      "link_type":  0,
-                      "to_node":  6,
-                      "to_pin":  19,
-                      "to_pin_index":  0
-                  },
-                  {
-                      "from_node":  6,
-                      "from_pin":  20,
-                      "from_pin_index":  0,
-                      "id":  8,
-                      "link_type":  0,
-                      "to_node":  7,
-                      "to_pin":  21,
-                      "to_pin_index":  0
-                  },
-                  {
-                      "from_node":  7,
-                      "from_pin":  22,
-                      "from_pin_index":  0,
-                      "id":  9,
-                      "link_type":  0,
-                      "to_node":  8,
-                      "to_pin":  23,
-                      "to_pin_index":  0
-                  },
-                  {
-                      "from_node":  8,
-                      "from_pin":  24,
-                      "from_pin_index":  0,
-                      "id":  10,
-                      "link_type":  0,
-                      "to_node":  9,
-                      "to_pin":  25,
-                      "to_pin_index":  0
-                  },
-                  {
-                      "from_node":  9,
-                      "from_pin":  26,
-                      "from_pin_index":  0,
-                      "id":  11,
-                      "link_type":  0,
-                      "to_node":  10,
-                      "to_pin":  27,
-                      "to_pin_index":  0
-                  },
-                  {
-                      "from_node":  10,
-                      "from_pin":  28,
-                      "from_pin_index":  0,
-                      "id":  12,
-                      "link_type":  0,
-                      "to_node":  11,
-                      "to_pin":  29,
-                      "to_pin_index":  0
-                  },
-                  {
-                      "from_node":  11,
-                      "from_pin":  30,
-                      "from_pin_index":  0,
-                      "id":  13,
-                      "link_type":  0,
-                      "to_node":  12,
-                      "to_pin":  31,
-                      "to_pin_index":  0
-                  },
-                  {
-                      "from_node":  4,
-                      "from_pin":  16,
-                      "from_pin_index":  1,
-                      "id":  14,
-                      "link_type":  0,
-                      "to_node":  12,
-                      "to_pin":  32,
-                      "to_pin_index":  1
-                  },
-                  {
-                      "from_node":  12,
-                      "from_pin":  33,
-                      "from_pin_index":  0,
-                      "id":  15,
-                      "link_type":  0,
-                      "to_node":  13,
-                      "to_pin":  34,
-                      "to_pin_index":  0
-                  },
-                  {
-                      "from_node":  11,
-                      "from_pin":  30,
-                      "from_pin_index":  0,
-                      "id":  16,
-                      "link_type":  0,
-                      "to_node":  14,
-                      "to_pin":  36,
-                      "to_pin_index":  0
-                  }
-              ],
-    "nodes":  [
-                  {
-                      "category":  0,
-                      "description":  "",
-                      "id":  1,
-                      "name":  "Sentiment CSV",
-                      "parameters":  {
-                                         "chunk_size":  "10000",
-                                         "columns":  "*",
-                                         "configured":  "false",
-                                         "dataset_name":  "sentiment_mental_health",
-                                         "delimiter":  ",",
-                                         "enable_streaming":  "false",
-                                         "feature_columns":  "*",
-                                         "file_category":  "text",
-                                         "file_path":  "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
-                                         "file_type":  "csv",
-                                         "hdf5_key":  "",
-                                         "header":  "true",
-                                         "max_rows":  "",
-                                         "sheet_name":  "",
-                                         "skip_rows":  "0",
-                                         "source_type":  "file",
-                                         "where_clause":  "",
-                                         "text_label_column":  "status",
-                                         "label_column":  "status",
-                                         "text_column":  "statement"
-                                     },
-                      "pos_x":  -547.0,
-                      "pos_y":  54.0,
-                      "type":  157
-                  },
-                  {
-                      "category":  35,
-                      "description":  "",
-                      "id":  2,
-                      "name":  "Candidate TF-IDF 8000 unigram+bigram tuned",
-                      "parameters":  {
-                                         "label_col":  "status",
-                                         "max_features":  "8000",
-                                         "min_df":  "1",
-                                         "ngram_max":  "2",
-                                         "ngram_min":  "1",
-                                         "ngram_range":  "1,2",
-                                         "norm":  "l2",
-                                         "smooth_idf":  "true",
-                                         "stop_words":  "none",
-                                         "text_col":  "statement",
-                                         "use_idf":  "true"
-                                     },
-                      "pos_x":  -535.0,
-                      "pos_y":  -79.0,
-                      "type":  264
-                  },
-                  {
-                      "category":  21,
-                      "description":  "",
-                      "id":  3,
-                      "name":  "Split 80/10/10",
-                      "parameters":  {
-                                         "seed":  "42",
-                                         "shuffle":  "true",
-                                         "stratified":  "true",
-                                         "test_ratio":  "0.1",
-                                         "train_ratio":  "0.8",
-                                         "val_ratio":  "0.1"
-                                     },
-                      "pos_x":  -423.0,
-                      "pos_y":  -39.0,
-                      "type":  106
-                  },
-                  {
-                      "category":  21,
-                      "description":  "",
-                      "id":  4,
-                      "name":  "DataLoader",
-                      "parameters":  {
-                                         "balance_classes":  "true",
-                                         "balance_mode":  "weighted_sampler",
-                                         "balance_seed":  "42",
-                                         "balance_target":  "median",
-                                         "batch_size":  "128",
-                                         "checkpoint_dir":  "",
-                                         "drop_last":  "false",
-                                         "early_stopping_patience":  "7",
-                                         "epochs":  "30",
-                                         "grad_accum_steps":  "1",
-                                         "log_interval":  "10",
-                                         "num_workers":  "4",
-                                         "pin_memory":  "false",
-                                         "prefetch_factor":  "2",
-                                         "save_best_checkpoint":  "true",
-                                         "seed":  "42",
-                                         "shuffle":  "true",
-                                         "validation_freq":  "1"
-                                     },
-                      "pos_x":  -356.0,
-                      "pos_y":  -168.0,
-                      "type":  104
-                  },
-                  {
-                      "category":  6,
-                      "description":  "",
-                      "id":  5,
-                      "name":  "Dense 64",
-                      "parameters":  {
-                                         "activation":  "linear",
-                                         "units":  "64",
-                                         "use_bias":  "true"
-                                     },
-                      "pos_x":  -290.0,
-                      "pos_y":  -4.0,
-                      "type":  0
-                  },
-                  {
-                      "category":  7,
-                      "description":  "",
-                      "id":  6,
-                      "name":  "ReLU 1",
-                      "parameters":  {
-
-                                     },
-                      "pos_x":  -276.0,
-                      "pos_y":  160.0,
-                      "type":  29
-                  },
-                  {
-                      "category":  16,
-                      "description":  "",
-                      "id":  7,
-                      "name":  "Dropout 1",
-                      "parameters":  {
-                                         "rate":  "0.35"
-                                     },
-                      "pos_x":  -198.0,
-                      "pos_y":  86.0,
-                      "type":  14
-                  },
-                  {
-                      "category":  6,
-                      "description":  "",
-                      "id":  8,
-                      "name":  "Dense 32",
-                      "parameters":  {
-                                         "activation":  "linear",
-                                         "units":  "32",
-                                         "use_bias":  "true"
-                                     },
-                      "pos_x":  -71.0,
-                      "pos_y":  131.0,
-                      "type":  0
-                  },
-                  {
-                      "category":  7,
-                      "description":  "",
-                      "id":  9,
-                      "name":  "ReLU 2",
-                      "parameters":  {
-
-                                     },
-                      "pos_x":  81.0,
-                      "pos_y":  101.0,
-                      "type":  29
-                  },
-                  {
-                      "category":  16,
-                      "description":  "",
-                      "id":  10,
-                      "name":  "Dropout 2",
-                      "parameters":  {
-                                         "rate":  "0.35"
-                                     },
-                      "pos_x":  720.0,
-                      "pos_y":  -42.0,
-                      "type":  14
-                  },
-                  {
-                      "category":  6,
-                      "description":  "",
-                      "id":  11,
-                      "name":  "Dense 7",
-                      "parameters":  {
-                                         "activation":  "linear",
-                                         "units":  "7",
-                                         "use_bias":  "true"
-                                     },
-                      "pos_x":  223.0,
-                      "pos_y":  -177.0,
-                      "type":  0
-                  },
-                  {
-                      "category":  15,
-                      "description":  "",
-                      "id":  12,
-                      "name":  "CrossEntropy",
-                      "parameters":  {
-                                         "class_weight":  "none",
-                                         "class_weights":  "",
-                                         "ignore_index":  "-100",
-                                         "label_smoothing":  "0.03",
-                                         "reduction":  "mean"
-                                     },
-                      "pos_x":  144.0,
-                      "pos_y":  -314.0,
-                      "type":  73
-                  },
-                  {
-                      "category":  15,
-                      "description":  "",
-                      "id":  13,
-                      "name":  "AdamW",
-                      "parameters":  {
-                                         "beta1":  "0.9",
-                                         "beta2":  "0.999",
-                                         "epsilon":  "1e-8",
-                                         "learning_rate":  "0.0005",
-                                         "weight_decay":  "0.02"
-                                     },
-                      "pos_x":  414.0,
-                      "pos_y":  -274.0,
-                      "type":  82
-                  },
-                  {
-                      "category":  15,
-                      "description":  "",
-                      "id":  14,
-                      "name":  "Output",
-                      "parameters":  {
-                                         "classes":  "7"
-                                     },
-                      "pos_x":  850.0,
-                      "pos_y":  -114.0,
-                      "type":  71
-                  }
-              ],
-    "version":  "2.1",
-    "workflow_description":  "Candidate sentiment classifier graph. Uses TF-IDF unigram+bigram features with stop_words=none to preserve negation, 8000 dense text features, and a middle-ground regularized MLP (64/32, dropout 0.35, label_smoothing 0.03, AdamW weight_decay 0.02). Compare against the unigram benchmark graph before replacing the baseline."
+    "annotations": [],
+    "data_boundary_version": 2,
+    "data_validator_contract_version": 2,
+    "evaluation_table_contract_version": 2,
+    "execution_mode": 0,
+    "framework": 0,
+    "groups": [],
+    "links": [
+        {
+            "from_node": 1,
+            "from_pin": 2,
+            "from_pin_index": 0,
+            "id": 1,
+            "link_type": 0,
+            "to_node": 2,
+            "to_pin": 4,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 2,
+            "from_pin": 5,
+            "from_pin_index": 0,
+            "id": 2,
+            "link_type": 0,
+            "to_node": 3,
+            "to_pin": 10,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 3,
+            "from_pin": 12,
+            "from_pin_index": 0,
+            "id": 4,
+            "link_type": 0,
+            "to_node": 4,
+            "to_pin": 21,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 4,
+            "from_pin": 23,
+            "from_pin_index": 0,
+            "id": 6,
+            "link_type": 0,
+            "to_node": 5,
+            "to_pin": 25,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 5,
+            "from_pin": 26,
+            "from_pin_index": 0,
+            "id": 7,
+            "link_type": 0,
+            "to_node": 6,
+            "to_pin": 27,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 6,
+            "from_pin": 28,
+            "from_pin_index": 0,
+            "id": 8,
+            "link_type": 0,
+            "to_node": 7,
+            "to_pin": 29,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 7,
+            "from_pin": 30,
+            "from_pin_index": 0,
+            "id": 9,
+            "link_type": 0,
+            "to_node": 8,
+            "to_pin": 31,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 8,
+            "from_pin": 32,
+            "from_pin_index": 0,
+            "id": 10,
+            "link_type": 0,
+            "to_node": 9,
+            "to_pin": 33,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 9,
+            "from_pin": 34,
+            "from_pin_index": 0,
+            "id": 11,
+            "link_type": 0,
+            "to_node": 10,
+            "to_pin": 35,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 10,
+            "from_pin": 36,
+            "from_pin_index": 0,
+            "id": 12,
+            "link_type": 0,
+            "to_node": 11,
+            "to_pin": 37,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 11,
+            "from_pin": 38,
+            "from_pin_index": 0,
+            "id": 13,
+            "link_type": 0,
+            "to_node": 12,
+            "to_pin": 39,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 4,
+            "from_pin": 24,
+            "from_pin_index": 1,
+            "id": 14,
+            "link_type": 0,
+            "to_node": 12,
+            "to_pin": 40,
+            "to_pin_index": 1
+        },
+        {
+            "from_node": 12,
+            "from_pin": 41,
+            "from_pin_index": 0,
+            "id": 15,
+            "link_type": 0,
+            "to_node": 13,
+            "to_pin": 42,
+            "to_pin_index": 0
+        },
+        {
+            "from_node": 11,
+            "from_pin": 38,
+            "from_pin_index": 0,
+            "id": 16,
+            "link_type": 0,
+            "to_node": 14,
+            "to_pin": 44,
+            "to_pin_index": 0
+        }
+    ],
+    "nodes": [
+        {
+            "category": 0,
+            "description": "sentiment_mental_health.csv\n52681 samples, 7 classes, vocab 58632",
+            "id": 1,
+            "name": "Sentiment CSV",
+            "parameters": {
+                "audio_filename_col": "",
+                "audio_label_col": "",
+                "audio_labels_csv": "",
+                "audio_layout": "0",
+                "columns": "*",
+                "configured": "true",
+                "data_boundary_pin_contract": "dataset.v2",
+                "data_loaded": "true",
+                "dataset_name": "sentiment_mental_health",
+                "decimal_point": ".",
+                "delimiter": ",",
+                "encoding": "0",
+                "feature_columns": "*",
+                "file_category": "text",
+                "file_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+                "file_type": "csv",
+                "folder_path": "",
+                "force_disk_backed": "false",
+                "has_header": "true",
+                "hdf5_key": "",
+                "header": "true",
+                "label_column": "status",
+                "loaded_cols": "1",
+                "loaded_rows": "52681",
+                "max_rows": "0",
+                "memory_bytes": "107890688",
+                "missing_value_tokens": "na",
+                "sheet_name": "",
+                "skip_rows": "0",
+                "source_type": "file",
+                "text_column": "statement",
+                "text_label_column": "status",
+                "text_layout": "0",
+                "text_lowercase": "true",
+                "text_max_length": "512",
+                "text_max_vocab_size": "-1",
+                "text_min_freq": "1",
+                "text_tokenizer_type": "1",
+                "where_clause": ""
+            },
+            "pos_x": -614.0,
+            "pos_y": 37.0,
+            "type": 157
+        },
+        {
+            "category": 35,
+            "description": "",
+            "id": 2,
+            "name": "Candidate TF-IDF 8000 unigram+bigram tuned",
+            "parameters": {
+                "label_col": "status",
+                "max_features": "8000",
+                "min_df": "1",
+                "ngram_range": "1,2",
+                "norm": "l2",
+                "operation_mode": "fit_transform",
+                "output_format": "dense",
+                "save_state": "false",
+                "smooth_idf": "true",
+                "state_overwrite": "false",
+                "state_path": "",
+                "stop_words": "none",
+                "text_col": "statement",
+                "use_idf": "true"
+            },
+            "pos_x": -616.0,
+            "pos_y": -134.0,
+            "type": 264
+        },
+        {
+            "category": 21,
+            "description": "",
+            "id": 3,
+            "name": "Data Split (80/10/10)",
+            "parameters": {
+                "data_boundary_pin_contract": "dataset.v2",
+                "seed": "42",
+                "stratified": "true",
+                "test_ratio": "0.1",
+                "train_ratio": "0.8",
+                "val_ratio": "0.1"
+            },
+            "pos_x": -491.0,
+            "pos_y": -123.0,
+            "type": 106
+        },
+        {
+            "category": 21,
+            "description": "",
+            "id": 4,
+            "name": "Data Loader",
+            "parameters": {
+                "balance_classes": "true",
+                "balance_mode": "weighted_sampler",
+                "balance_seed": "42",
+                "balance_target": "median",
+                "batch_size": "128",
+                "checkpoint_dir": "",
+                "data_boundary_pin_contract": "dataset.v2",
+                "drop_last": "false",
+                "early_stopping_patience": "7",
+                "epochs": "30",
+                "grad_accum_steps": "1",
+                "log_interval": "10",
+                "num_workers": "4",
+                "pin_memory": "false",
+                "prefetch_factor": "2",
+                "save_best_checkpoint": "true",
+                "seed": "42",
+                "shuffle": "true",
+                "validation_freq": "1"
+            },
+            "pos_x": -356.0,
+            "pos_y": -168.0,
+            "type": 104
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 5,
+            "name": "Dense 64",
+            "parameters": {
+                "units": "64"
+            },
+            "pos_x": -290.0,
+            "pos_y": -4.0,
+            "type": 0
+        },
+        {
+            "category": 7,
+            "description": "",
+            "id": 6,
+            "name": "ReLU 1",
+            "parameters": {},
+            "pos_x": -276.0,
+            "pos_y": 160.0,
+            "type": 29
+        },
+        {
+            "category": 16,
+            "description": "",
+            "id": 7,
+            "name": "Dropout 1",
+            "parameters": {
+                "rate": "0.35"
+            },
+            "pos_x": -198.0,
+            "pos_y": 86.0,
+            "type": 14
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 8,
+            "name": "Dense 32",
+            "parameters": {
+                "units": "32"
+            },
+            "pos_x": -71.0,
+            "pos_y": 131.0,
+            "type": 0
+        },
+        {
+            "category": 7,
+            "description": "",
+            "id": 9,
+            "name": "ReLU 2",
+            "parameters": {},
+            "pos_x": 81.0,
+            "pos_y": 101.0,
+            "type": 29
+        },
+        {
+            "category": 16,
+            "description": "",
+            "id": 10,
+            "name": "Dropout 2",
+            "parameters": {
+                "rate": "0.35"
+            },
+            "pos_x": 720.0,
+            "pos_y": -42.0,
+            "type": 14
+        },
+        {
+            "category": 6,
+            "description": "",
+            "id": 11,
+            "name": "Dense 7",
+            "parameters": {
+                "units": "7"
+            },
+            "pos_x": 223.0,
+            "pos_y": -177.0,
+            "type": 0
+        },
+        {
+            "category": 15,
+            "description": "",
+            "id": 12,
+            "name": "CrossEntropy",
+            "parameters": {
+                "class_weight": "none",
+                "class_weights": "",
+                "ignore_index": "-100",
+                "label_smoothing": "0.03",
+                "reduction": "mean"
+            },
+            "pos_x": 144.0,
+            "pos_y": -314.0,
+            "type": 73
+        },
+        {
+            "category": 15,
+            "description": "",
+            "id": 13,
+            "name": "AdamW",
+            "parameters": {
+                "beta1": "0.9",
+                "beta2": "0.999",
+                "epsilon": "1e-8",
+                "learning_rate": "0.0005",
+                "weight_decay": "0.02"
+            },
+            "pos_x": 414.0,
+            "pos_y": -274.0,
+            "type": 82
+        },
+        {
+            "category": 15,
+            "description": "",
+            "id": 14,
+            "name": "Output",
+            "parameters": {},
+            "pos_x": 850.0,
+            "pos_y": -114.0,
+            "type": 71
+        }
+    ],
+    "version": "2.1",
+    "workflow_description": "Candidate sentiment classifier graph. Uses TF-IDF unigram+bigram features with stop_words=none to preserve negation, 8000 dense text features, and a middle-ground regularized MLP (64/32, dropout 0.35, label_smoothing 0.03, AdamW weight_decay 0.02). Compare against the unigram benchmark graph before replacing the baseline."
 }

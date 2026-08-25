@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline_operator.h"
+#include "../preprocessing_state.h"
 
 namespace cyxwiz {
 
@@ -32,6 +33,13 @@ class CountVectorizerOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "CountVectorizer"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    bool IsCacheable() const override {
+        return state_options_.IsTransformOnly() ||
+               !state_options_.save_state;
+    }
+    bool CollectCacheDependencies(
+        std::vector<PipelineOperatorCacheDependency>& dependencies,
+        std::string& error) const override;
 
     bool Configure(
         const std::map<std::string, std::string>& params,
@@ -43,6 +51,8 @@ public:
     void SetProgressCallback(PipelineOperatorProgressCallback callback) override;
 
 private:
+    std::map<std::string, std::string> BuildFittedConfiguration() const;
+
     std::string text_col_;
     std::string label_col_;
     int max_features_ = 2000;
@@ -52,6 +62,7 @@ private:
     std::string norm_ = "l2";
     std::string stop_words_ = "english";
     std::string output_format_ = "dense";
+    FittedPreprocessingOptions state_options_;
     PipelineOperatorProgressCallback progress_callback_;
 };
 

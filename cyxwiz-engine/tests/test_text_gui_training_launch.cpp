@@ -13,6 +13,7 @@
 #include "../src/core/training_trace_collector.h"
 #include "../src/core/training_run_comparison.h"
 #include "../src/gui/graph_training_launcher.h"
+#include "../src/gui/panels/training_plot_panel.h"
 
 #include <arrow/api.h>
 
@@ -1111,6 +1112,11 @@ int main() {
     std::atomic<bool> callback_finished{false};
 
     auto config = MakeTrainingConfig(work_dir / "checkpoints");
+    config.target.required_by_objective = true;
+    config.target.origin = cyxwiz::TargetOrigin::DatasetColumn;
+    config.target.value_kind = cyxwiz::TargetValueKind::Categorical;
+    config.target.primary_column = "label";
+    config.target.width = 1;
     auto safe_memory_preflight = gui::PreflightGraphMaterialization(
         nodes, links, config, registry);
     Check(safe_memory_preflight.checked &&
@@ -1201,6 +1207,10 @@ int main() {
         Check(dispatch_config.dataset_name == kMaterializedDatasetName,
               "config dataset name should match materialized dataset");
         Check(label_column == "y", "dispatch should receive runtime y label");
+        Check(dispatch_config.target.primary_column == "y",
+              "materialization should reconcile the canonical target column to y");
+        Check(dispatch_config.dataset_roles.train.label_column == "y",
+              "materialization should reconcile the train role label to y");
         Check(epochs == 1, "epochs should come from compiled config");
         Check(batch_size == 2, "batch size should come from compiled config");
         Check(!dispatch_config.save_best_checkpoint,
@@ -1306,6 +1316,23 @@ int main() {
           "queued result should expose automatic materialization cache mode");
     Check(result.epochs == 1, "result epochs should match config");
     Check(result.batch_size == 2, "result batch size should match config");
+
+    cyxwiz::TrainingPlotPanel cache_status_panel;
+    cache_status_panel.RecordMaterializationProgress(
+        "MaterializationCache",
+        "Preprocessing skipped: reused cached materialization (3 rows x 5 "
+        "columns, 1.0 KB on disk -> 2.0 KB in memory, loaded in 0.1 s).",
+        0.64f,
+        0, 0, 0, -1, "", "", "cache_hit");
+    cache_status_panel.SetMaterializationComplete(
+        kMaterializedDatasetName, 1, "cache_hit");
+    const auto cache_status_snapshot =
+        cache_status_panel.GetStatusSnapshot();
+    Check(cache_status_snapshot.materialization_status == "cache_hit",
+          "training dashboard should preserve cache-hit status");
+    Check(cache_status_snapshot.materialization_message.find(
+              "Preprocessing skipped") != std::string::npos,
+          "training dashboard should clearly report skipped preprocessing");
 
     auto sequence_config =
         MakeTrainingConfig(work_dir / "sequence_launch_checkpoints");

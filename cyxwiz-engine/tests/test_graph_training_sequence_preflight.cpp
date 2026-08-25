@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -230,6 +231,19 @@ cyxwiz::TrainingConfiguration MakeSequenceConfig() {
 } // namespace
 
 int main() {
+    const auto project_root =
+        std::filesystem::temp_directory_path() / "cyxwiz_project_cache_root";
+    const auto project_cache =
+        gui::GraphMaterializationCacheConfig(project_root);
+    Check(project_cache.cache_root == project_root.lexically_normal(),
+          "graph materialization cache should use the active project root");
+    Check(cyxwiz::MaterializationCacheEntryDirectory(project_cache, "key") ==
+              project_root / "cache" / "materialized" / "key",
+          "active-project cache entries should live under cache/materialized");
+    const auto standalone_cache = gui::GraphMaterializationCacheConfig();
+    Check(standalone_cache.cache_root.filename() == ".cyxwiz",
+          "standalone graph cache should retain the runtime-local fallback");
+
     auto& registry = cyxwiz::DataRegistry::Instance();
     registry.UnregisterTabularDataset(kDatasetName);
     registry.UnregisterTabularDataset(kRoleTrainDataset);

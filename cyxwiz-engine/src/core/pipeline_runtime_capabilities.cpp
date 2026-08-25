@@ -249,6 +249,47 @@ bool ValidatePipelineRuntimeParameterCapabilities(
     return true;
 }
 
+void CanonicalizePipelineParameterAliases(
+    gui::NodeType node_type,
+    std::map<std::string, std::string>& parameters,
+    bool prefer_legacy) {
+    if (node_type == gui::NodeType::JoinTables) {
+        const auto shared_key = parameters.find("on_column");
+        if (shared_key == parameters.end()) {
+            return;
+        }
+
+        if (!TrimRuntimeValue(shared_key->second).empty()) {
+            for (const char* canonical_key : {"left_on", "right_on"}) {
+                const auto canonical = parameters.find(canonical_key);
+                if (prefer_legacy || canonical == parameters.end() ||
+                    TrimRuntimeValue(canonical->second).empty()) {
+                    parameters[canonical_key] = shared_key->second;
+                }
+            }
+        }
+        parameters.erase("on_column");
+        return;
+    }
+
+    if (node_type != gui::NodeType::GroupByAggregate) {
+        return;
+    }
+
+    const auto legacy = parameters.find("group_by");
+    if (legacy == parameters.end() ||
+        TrimRuntimeValue(legacy->second).empty()) {
+        return;
+    }
+
+    const auto canonical = parameters.find("group_columns");
+    if (prefer_legacy || canonical == parameters.end() ||
+        TrimRuntimeValue(canonical->second).empty()) {
+        parameters["group_columns"] = legacy->second;
+    }
+    parameters.erase("group_by");
+}
+
 const std::vector<PipelineOperatorRuntimeCapability>&
 GetPipelineOperatorRuntimeCapabilities() {
     static const std::vector<PipelineOperatorRuntimeCapability> capabilities = {
@@ -717,7 +758,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"ValueCounts", {"column"}},
         {"SelectColumns", {"columns"}},
         {"SortRows", {"columns"}},
-        {"Join", {"on_column"}},
+        {"Join", {"left_on", "right_on"}},
         {"GroupBy", {"group_columns", "aggregations"}},
         {"TextCleanNode", {"text_column"}},
         {"TextClean", {"text_column"}},
@@ -804,14 +845,20 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"TextVectorize", "method", "count", {"count"}},
         {"StringManipulation", "operation", "trim", {"trim", "upper", "lower", "replace", "substring"}},
         {"CountVectorizer", "norm", "l2", {"l1", "l2", "none"}},
-        {"CountVectorizer", "ngram_range", "1,1", {"1,1", "1,2", "2,2"}},
+        {"CountVectorizer", "ngram_range", "1,1", {"1,1", "1,2", "1,3", "2,2", "2,3", "3,3"}},
         {"CountVectorizer", "stop_words", "english", {"english", "none"}},
         {"CountVectorizer", "binary", "false", {"false", "true"}},
         {"CountVectorizer", "output_format", "dense", {"dense"}},
+        {"CountVectorizer", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
+        {"CountVectorizer", "save_state", "false", {"true", "false"}},
+        {"CountVectorizer", "state_overwrite", "false", {"true", "false"}},
         {"TFIDFVectorizer", "norm", "l2", {"l1", "l2", "none"}},
-        {"TFIDFVectorizer", "ngram_range", "1,1", {"1,1", "1,2", "2,2"}},
+        {"TFIDFVectorizer", "ngram_range", "1,1", {"1,1", "1,2", "1,3", "2,2", "2,3", "3,3"}},
         {"TFIDFVectorizer", "stop_words", "english", {"english", "none"}},
         {"TFIDFVectorizer", "output_format", "dense", {"dense"}},
+        {"TFIDFVectorizer", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
+        {"TFIDFVectorizer", "save_state", "false", {"true", "false"}},
+        {"TFIDFVectorizer", "state_overwrite", "false", {"true", "false"}},
         {"SentimentAnalyzer", "method", "vader", {"simple", "vader", "afinn"}},
         {"DecisionTreeClassifier", "criterion", "gini", {"gini", "entropy"}},
         {"RandomForestClassifier", "criterion", "gini", {"gini", "entropy"}},
@@ -866,11 +913,7 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"TextTokenizer", "max_vocab_size", 1, false},
         {"TextTokenizer", "pad_value", 0, false},
         {"CountVectorizer", "max_features", 1, false},
-        {"CountVectorizer", "ngram_min", 1, false},
-        {"CountVectorizer", "ngram_max", 1, false},
         {"TFIDFVectorizer", "max_features", 1, false},
-        {"TFIDFVectorizer", "ngram_min", 1, false},
-        {"TFIDFVectorizer", "ngram_max", 1, false},
         {"TokenVocabulary", "min_frequency", 1, false},
         {"TokenVocabulary", "max_size", 0, false},
         {"TokenVocabulary", "min_freq", 1, false},

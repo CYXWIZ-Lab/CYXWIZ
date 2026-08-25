@@ -89,6 +89,64 @@ const gui::NodePin* FindInputPinByName(
     return nullptr;
 }
 
+const gui::NodePin* FindPinById(
+    const std::vector<gui::NodePin>& pins,
+    int pin_id) {
+    for (const auto& pin : pins) {
+        if (pin.id == pin_id) return &pin;
+    }
+    return nullptr;
+}
+
+void CollectDatasetSourceOrigins(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    int node_id,
+    int output_pin_id,
+    std::unordered_set<int>& active_path,
+    std::unordered_set<int>& origins,
+    bool& invalid_path) {
+    const auto* node = FindNodeById(nodes, node_id);
+    const auto* output_pin = node
+        ? FindPinById(node->outputs, output_pin_id)
+        : nullptr;
+    if (!node || !output_pin || output_pin->type != gui::PinType::Dataset) {
+        invalid_path = true;
+        return;
+    }
+
+    if (IsDatasetSourceType(node->type)) {
+        origins.insert(node->id);
+        return;
+    }
+
+    const auto runtime_support = ResolvePipelineRuntimeSupport(node->type);
+    if (runtime_support.mode != PipelineRuntimeSupportMode::OperatorBacked ||
+        runtime_support.implementation_owner !=
+            PipelineRuntimeImplementationOwner::PipelineOperatorFactory ||
+        !runtime_support.materializer_arrow_table_supported) {
+        invalid_path = true;
+        return;
+    }
+
+    if (!active_path.insert(node->id).second) {
+        invalid_path = true;
+        return;
+    }
+
+    bool found_dataset_input = false;
+    for (const auto& link : links) {
+        if (link.to_node != node->id) continue;
+        const auto* input_pin = FindPinById(node->inputs, link.to_pin);
+        if (!input_pin || input_pin->type != gui::PinType::Dataset) continue;
+        found_dataset_input = true;
+        CollectDatasetSourceOrigins(nodes, links, link.from_node, link.from_pin,
+                                    active_path, origins, invalid_path);
+    }
+    if (!found_dataset_input) invalid_path = true;
+    active_path.erase(node->id);
+}
+
 const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
@@ -102,24 +160,24 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
     const auto* input_pin = FindInputPinByName(split_node, pin_name);
     if (!input_pin) return nullptr;
 
-    const gui::MLNode* resolved = nullptr;
+    std::unordered_set<int> origins;
+    std::unordered_set<int> active_path;
+    bool invalid_path = false;
     for (const auto& link : links) {
         if (link.to_node != split_node.id || link.to_pin != input_pin->id) {
             continue;
         }
         if (has_connection) *has_connection = true;
 
-        const auto* source = FindNodeById(nodes, link.from_node);
-        if (!source || !IsDatasetSourceType(source->type)) {
-            continue;
-        }
-        if (resolved && resolved->id != source->id) {
-            if (has_multiple_sources) *has_multiple_sources = true;
-            return nullptr;
-        }
-        resolved = source;
+        CollectDatasetSourceOrigins(nodes, links, link.from_node, link.from_pin,
+                                    active_path, origins, invalid_path);
     }
-    return resolved;
+    if (origins.size() > 1) {
+        if (has_multiple_sources) *has_multiple_sources = true;
+        return nullptr;
+    }
+    if (invalid_path || origins.empty()) return nullptr;
+    return FindNodeById(nodes, *origins.begin());
 }
 
 bool IsLossNodeType(gui::NodeType type);

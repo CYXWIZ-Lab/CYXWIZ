@@ -2912,218 +2912,35 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
-        case NodeType::FilterRows: {
-            // Filter Rows transformation node - SQL WHERE clause
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["condition"] = "column > 0";
-            break;
-        }
-
+        case NodeType::FilterRows:
         case NodeType::SelectColumns: {
-            // Select Columns transformation node - choose columns to keep
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["columns"] = "col1, col2, col3";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         case NodeType::DescribeStats: {
-            // Describe Statistics analytics node - computes summary stats
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            // No output pin - analytics node displays results in properties panel
-            node.parameters["show_percentiles"] = "true";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         case NodeType::JoinTables: {
-            // Join Tables transformation node - SQL JOIN
-            NodePin left_input_pin;
-            left_input_pin.id = next_pin_id_++;
-            left_input_pin.type = PinType::Dataset;
-            left_input_pin.name = "Left";
-            left_input_pin.is_input = true;
-            node.inputs.push_back(left_input_pin);
-
-            NodePin right_input_pin;
-            right_input_pin.id = next_pin_id_++;
-            right_input_pin.type = PinType::Dataset;
-            right_input_pin.name = "Right";
-            right_input_pin.is_input = true;
-            node.inputs.push_back(right_input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["join_type"] = "inner";
-            node.parameters["left_on"] = "id";
-            node.parameters["right_on"] = "id";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
-        case NodeType::SortRows: {
-            // Sort Rows transformation node - ORDER BY
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["columns"] = "column1";
-            node.parameters["ascending"] = "true";
-            break;
-        }
-
-        case NodeType::GroupByAggregate: {
-            // Group By Aggregate transformation node - SQL GROUP BY
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["group_by"] = "column1";
-            node.parameters["aggregations"] = "COUNT(*) as count";
-            break;
-        }
-
-        case NodeType::FillMissingValues: {
-            // Fill Missing Values transformation node - handle NULLs
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["strategy"] = "mean";  // mean, median, mode, constant
-            node.parameters["fill_value"] = "0";
-            node.parameters["value"] = "0";
-            node.parameters["columns"] = "";
-            node.parameters["label_col"] = "";
-            node.parameters["operation_mode"] = "fit_transform";
-            node.parameters["state_path"] = "";
-            node.parameters["save_state"] = "false";
-            node.parameters["state_overwrite"] = "false";
-            break;
-        }
-
-        case NodeType::RemoveDuplicateRows: {
-            // Remove Duplicate Rows transformation node - SQL DISTINCT
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["subset"] = "";  // Empty = all columns
-            node.parameters["keep"] = "first";  // first, last, none
-            break;
-        }
-
+        case NodeType::SortRows:
+        case NodeType::GroupByAggregate:
+        case NodeType::FillMissingValues:
+        case NodeType::RemoveDuplicateRows:
         case NodeType::RenameColumns: {
-            // Rename Columns transformation node
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["mapping"] = "old_name:new_name";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
-        case NodeType::SampleRows: {
-            // Sample Rows analytics/transform node - random sampling
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["n"] = "100";
-            node.parameters["random_state"] = "42";
+        case NodeType::SampleRows:
+        case NodeType::ValueCounts:
+        case NodeType::CorrelationMatrix: {
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -3340,142 +3157,17 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         // ===== Phase 4: Machine Learning Algorithm Nodes =====
 
         // Clustering nodes
-        case NodeType::KMeansCluster: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Clustered";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Tool-to-Node canonical params read by KMeansOperator.
-            // feature_cols empty = auto-detect numeric columns (drops label
-            // and __-prefixed metadata). label_col is excluded from
-            // auto-detect but otherwise passed through untouched.
-            node.parameters["feature_cols"] = "";
-            node.parameters["label_col"] = "";
-            node.parameters["n_clusters"] = "8";
-            node.parameters["max_iter"] = "300";
-            node.parameters["init"] = "kmeans++";
-            node.parameters["n_init"] = "10";
-            node.parameters["tol"] = "0.0001";
-            node.parameters["seed"] = "0";
-            // Legacy float-panel param (operator ignores).
-            node.parameters["random_state"] = "42";
-            break;
-        }
-
-        case NodeType::DBSCANCluster: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Clustered";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Tool-to-Node canonical params read by DBSCANOperator.
-            node.parameters["feature_cols"] = "";
-            node.parameters["label_col"] = "";
-            node.parameters["eps"] = "0.5";
-            node.parameters["min_samples"] = "5";
-            node.parameters["metric"] = "euclidean";
-            break;
-        }
-
-        case NodeType::HierarchicalCluster: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Clustered";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Tool-to-Node canonical params read by HierarchicalOperator.
-            // linkage="ward" only works with metric="euclidean" (enforced
-            // by the operator).
-            node.parameters["feature_cols"] = "";
-            node.parameters["label_col"] = "";
-            node.parameters["n_clusters"] = "3";
-            node.parameters["linkage"] = "ward";
-            node.parameters["metric"] = "euclidean";
-            break;
-        }
-
+        case NodeType::KMeansCluster:
+        case NodeType::DBSCANCluster:
+        case NodeType::HierarchicalCluster:
         case NodeType::GMMCluster: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Clustered";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Tool-to-Node canonical params read by GMMOperator.
-            node.parameters["feature_cols"] = "";
-            node.parameters["label_col"] = "";
-            node.parameters["n_components"] = "3";
-            node.parameters["covariance_type"] = "full";
-            node.parameters["max_iter"] = "100";
-            node.parameters["tol"] = "0.001";
-            node.parameters["n_init"] = "1";
-            node.parameters["seed"] = "0";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         // Dimensionality Reduction nodes
         case NodeType::PCANode: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Transformed";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Tool-to-Node canonical params read by PCAOperator.
-            // feature_cols empty = auto-detect numeric columns (drop label
-            // and __-prefixed metadata). label_col is passed through to
-            // output as `y` int32. center/scale match sklearn's PCA defaults.
-            node.parameters["feature_cols"] = "";
-            node.parameters["label_col"] = "";
-            node.parameters["n_components"] = "2";
-            node.parameters["center"] = "true";
-            node.parameters["scale"] = "false";
-            // Legacy floating-panel param (operator ignores in v1).
-            node.parameters["whiten"] = "false";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -3522,129 +3214,11 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         // Classification nodes
-        case NodeType::DecisionTreeClassifier: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Train Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin model_out;
-            model_out.id = next_pin_id_++;
-            model_out.type = PinType::Parameters;
-            model_out.name = "Model";
-            model_out.is_input = false;
-            node.outputs.push_back(model_out);
-
-            NodePin pred_out;
-            pred_out.id = next_pin_id_++;
-            pred_out.type = PinType::Labels;
-            pred_out.name = "Predictions";
-            pred_out.is_input = false;
-            node.outputs.push_back(pred_out);
-
-            node.parameters["max_depth"] = "10";
-            node.parameters["min_samples_split"] = "2";
-            node.parameters["criterion"] = "gini";
-            break;
-        }
-
-        case NodeType::RandomForestClassifier: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Train Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin model_out;
-            model_out.id = next_pin_id_++;
-            model_out.type = PinType::Parameters;
-            model_out.name = "Model";
-            model_out.is_input = false;
-            node.outputs.push_back(model_out);
-
-            NodePin pred_out;
-            pred_out.id = next_pin_id_++;
-            pred_out.type = PinType::Labels;
-            pred_out.name = "Predictions";
-            pred_out.is_input = false;
-            node.outputs.push_back(pred_out);
-
-            node.parameters["n_estimators"] = "100";
-            node.parameters["max_depth"] = "10";
-            node.parameters["min_samples_split"] = "2";
-            break;
-        }
-
-        case NodeType::GradientBoostingClassifier: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Train Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin model_out;
-            model_out.id = next_pin_id_++;
-            model_out.type = PinType::Parameters;
-            model_out.name = "Model";
-            model_out.is_input = false;
-            node.outputs.push_back(model_out);
-
-            NodePin pred_out;
-            pred_out.id = next_pin_id_++;
-            pred_out.type = PinType::Labels;
-            pred_out.name = "Predictions";
-            pred_out.is_input = false;
-            node.outputs.push_back(pred_out);
-
-            node.parameters["n_estimators"] = "100";
-            node.parameters["learning_rate"] = "0.1";
-            node.parameters["max_depth"] = "3";
-            break;
-        }
-
+        case NodeType::DecisionTreeClassifier:
+        case NodeType::RandomForestClassifier:
+        case NodeType::GradientBoostingClassifier:
         case NodeType::TreeModelPredictor: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin pred_out;
-            pred_out.id = next_pin_id_++;
-            pred_out.type = PinType::Dataset;
-            pred_out.name = "Predictions";
-            pred_out.is_input = false;
-            node.outputs.push_back(pred_out);
-
-            node.parameters["model_path"] = "";
-            node.parameters["feature_cols"] = "";
-            node.parameters["prediction_col"] = "prediction";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -3871,84 +3445,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         // ===== Phase 4: Model Evaluation Nodes =====
-        case NodeType::ConfusionMatrixNode: {
-            NodePin pred_in;
-            pred_in.id = next_pin_id_++;
-            pred_in.type = PinType::Labels;
-            pred_in.name = "Predictions";
-            pred_in.is_input = true;
-            node.inputs.push_back(pred_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "True Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin matrix_out;
-            matrix_out.id = next_pin_id_++;
-            matrix_out.type = PinType::Dataset;
-            matrix_out.name = "Matrix";
-            matrix_out.is_input = false;
-            node.outputs.push_back(matrix_out);
-
-            node.parameters["normalize"] = "false";
-            break;
-        }
-
-        case NodeType::ROCCurveNode: {
-            NodePin proba_in;
-            proba_in.id = next_pin_id_++;
-            proba_in.type = PinType::Tensor;
-            proba_in.name = "Probabilities";
-            proba_in.is_input = true;
-            node.inputs.push_back(proba_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "True Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin curve_out;
-            curve_out.id = next_pin_id_++;
-            curve_out.type = PinType::Dataset;
-            curve_out.name = "ROC Data";
-            curve_out.is_input = false;
-            node.outputs.push_back(curve_out);
-
-            NodePin auc_out;
-            auc_out.id = next_pin_id_++;
-            auc_out.type = PinType::Tensor;
-            auc_out.name = "AUC";
-            auc_out.is_input = false;
-            node.outputs.push_back(auc_out);
-            break;
-        }
-
+        case NodeType::ConfusionMatrixNode:
+        case NodeType::ROCCurveNode:
         case NodeType::PRCurveNode: {
-            NodePin proba_in;
-            proba_in.id = next_pin_id_++;
-            proba_in.type = PinType::Tensor;
-            proba_in.name = "Probabilities";
-            proba_in.is_input = true;
-            node.inputs.push_back(proba_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "True Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin curve_out;
-            curve_out.id = next_pin_id_++;
-            curve_out.type = PinType::Dataset;
-            curve_out.name = "PR Data";
-            curve_out.is_input = false;
-            node.outputs.push_back(curve_out);
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -4039,51 +3539,9 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
-        case NodeType::RegressionMetricsNode: {
-            // Runtime contract: one table containing both numeric columns.
-            // The older two-Tensor canvas shape could not connect to the
-            // implemented PipelineExecutor or the typed metadata contract.
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            data_in.description =
-                "Table containing numeric actual and predicted columns.";
-            node.inputs.push_back(data_in);
-
-            NodePin metrics_out;
-            metrics_out.id = next_pin_id_++;
-            metrics_out.type = PinType::Dataset;
-            metrics_out.name = "Metrics";
-            metrics_out.is_input = false;
-            node.outputs.push_back(metrics_out);
-
-            node.parameters["actual_col"] = "";
-            node.parameters["predicted_col"] = "";
-            node.parameters["metrics"] = "mse,rmse,mae,r2";
-            break;
-        }
-
+        case NodeType::RegressionMetricsNode:
         case NodeType::ClassificationMetricsNode: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin metrics_out;
-            metrics_out.id = next_pin_id_++;
-            metrics_out.type = PinType::Dataset;
-            metrics_out.name = "Metrics";
-            metrics_out.is_input = false;
-            node.outputs.push_back(metrics_out);
-
-            node.parameters["actual_col"] = "";
-            node.parameters["predicted_col"] = "";
-            node.parameters["metrics"] =
-                "accuracy,precision,recall,f1,weighted_f1,count";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -4093,113 +3551,12 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
-        case NodeType::MinMaxScaler: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Scaled";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Tool-to-Node canonical params read by MinMaxScalerOperator.
-            node.parameters["columns"] = "";
-            node.parameters["label_col"] = "";
-            node.parameters["min"] = "0";
-            node.parameters["max"] = "1";
-            break;
-        }
-
-        case NodeType::RobustScaler: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Scaled";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Tool-to-Node canonical params read by RobustScalerOperator.
-            node.parameters["columns"] = "";
-            node.parameters["label_col"] = "";
-            node.parameters["with_centering"] = "true";
-            node.parameters["with_scaling"] = "true";
-            node.parameters["quantile_min"] = "25";
-            node.parameters["quantile_max"] = "75";
-            break;
-        }
-
-        case NodeType::LabelEncoder: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Encoded";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["column"] = "";
-            break;
-        }
-
-        case NodeType::OrdinalEncoder: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Encoded";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["columns"] = "";
-            node.parameters["categories"] = "auto";
-            break;
-        }
-
+        case NodeType::MinMaxScaler:
+        case NodeType::RobustScaler:
+        case NodeType::LabelEncoder:
+        case NodeType::OrdinalEncoder:
         case NodeType::TargetEncoder: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Encoded";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Tool-to-Node canonical params read by TargetEncoderOperator.
-            // columns = categorical cols to encode; target_col = numeric target.
-            node.parameters["columns"] = "";
-            node.parameters["target_col"] = "";
-            node.parameters["smoothing"] = "1.0";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -4209,29 +3566,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
         // ===== Phase 8: Advanced Preprocessing Nodes (UI Consolidation) =====
         case NodeType::OutlierDetector: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin flagged_out;
-            flagged_out.id = next_pin_id_++;
-            flagged_out.type = PinType::Dataset;
-            flagged_out.name = "Flagged";
-            flagged_out.is_input = false;
-            node.outputs.push_back(flagged_out);
-
-            // Tool-to-Node canonical params read by OutlierDetectorOperator.
-            // columns="all" or empty = auto-detect numeric. method: iqr|zscore.
-            // Only "flag" action is wired in v1 (adds is_outlier column);
-            // remove/clip/isolation_forest/lof deferred to tofix.
-            node.parameters["method"] = "iqr";           // iqr, zscore (isolation_forest/lof deferred)
-            node.parameters["threshold"] = "1.5";        // IQR multiplier or Z-score threshold
-            node.parameters["columns"] = "all";          // "all" or csv list
-            node.parameters["label_col"] = "";
-            node.parameters["action"] = "flag";          // only "flag" is live; remove/clip deferred
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -4301,40 +3636,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         case NodeType::DataValidator: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin valid_out;
-            valid_out.id = next_pin_id_++;
-            valid_out.type = PinType::Dataset;
-            valid_out.name = "Valid";
-            valid_out.is_input = false;
-            node.outputs.push_back(valid_out);
-
-            NodePin invalid_out;
-            invalid_out.id = next_pin_id_++;
-            invalid_out.type = PinType::Dataset;
-            invalid_out.name = "Invalid";
-            invalid_out.is_input = false;
-            node.outputs.push_back(invalid_out);
-
-            NodePin issues_out;
-            issues_out.id = next_pin_id_++;
-            issues_out.type = PinType::Dataset;
-            issues_out.name = "Issues";
-            issues_out.is_input = false;
-            node.outputs.push_back(issues_out);
-
-            node.parameters["required_columns"] = "";       // Comma-separated required column names
-            node.parameters["unique_columns"] = "";         // Columns that must have unique values
-            node.parameters["column_types"] = "";           // JSON: {"col": "type"}
-            node.parameters["value_ranges"] = "";           // JSON: {"col": [min, max]}
-            node.parameters["not_null_columns"] = "";       // Columns that cannot have nulls
-            node.parameters["regex_patterns"] = "";         // JSON: {"col": "pattern"}
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -4564,27 +3866,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         // ===== Phase 4: Signal Processing Nodes =====
-        case NodeType::FFTNode: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Spectrum";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Tool-to-Node canonical params read by FFTOperator.
-            // signal_col is required. sample_rate controls frequency-axis
-            // scaling (Hz). Output is a frequency-domain table (row count
-            // changes) with frequency/magnitude/phase columns.
-            node.parameters["signal_col"] = "";
-            node.parameters["sample_rate"] = "1.0";
+        case NodeType::FFTNode:
+        case NodeType::FilterDesigner:
+        case NodeType::Convolution1D: {
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -4602,58 +3887,6 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             output_pin.name = "Signal";
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
-            break;
-        }
-
-        case NodeType::FilterDesigner: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Filtered";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Tool-to-Node canonical params read by FilterDesignerOperator.
-            // The operator combines filter design + application: the signal
-            // column is filtered in-place (column retyped to float32).
-            // bandpass/bandstop require cutoff_high > cutoff.
-            node.parameters["signal_col"] = "";
-            node.parameters["filter_type"] = "lowpass";
-            node.parameters["cutoff"] = "0.5";
-            node.parameters["cutoff_high"] = "0";
-            node.parameters["sample_rate"] = "1.0";
-            node.parameters["order"] = "4";
-            break;
-        }
-
-        case NodeType::Convolution1D: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Convolved";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Tool-to-Node canonical params read by Convolve1DOperator.
-            // kernel is a comma-separated list of taps. The operator
-            // preserves row alignment with same-length output.
-            node.parameters["signal_col"] = "";
-            node.parameters["kernel"] = "0.25,0.5,0.25";
-            node.parameters["mode"] = "same";
             break;
         }
 
@@ -4685,69 +3918,10 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         // ===== Phase 4: Text Analytics Nodes =====
-        case NodeType::TFIDFVectorizer: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Text";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Vectors";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Tool-to-Node canonical params read by TFIDFVectorizerOperator.
-            // text_col + label_col are required when this node runs as a real
-            // Cat-1 operator on an Arrow source. ngram_range / ngram_min /
-            // ngram_max / stop_words are real operator parameters.
-            node.parameters["text_col"] = "";
-            node.parameters["label_col"] = "";
-            node.parameters["max_features"] = "2000";
-            node.parameters["use_idf"] = "true";
-            node.parameters["smooth_idf"] = "true";
-            node.parameters["norm"] = "l2";
-            node.parameters["ngram_range"] = "1,1";
-            node.parameters["ngram_min"] = "1";
-            node.parameters["ngram_max"] = "1";
-            node.parameters["min_df"] = "1";
-            node.parameters["stop_words"] = "english";
-            node.parameters["output_format"] = "dense";
-            break;
-        }
-
-        case NodeType::CountVectorizer: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Text";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Vectors";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Tool-to-Node canonical params read by CountVectorizerOperator.
-            // text_col + label_col are required when this node runs as a real
-            // Cat-1 operator on an Arrow source. ngram_range / ngram_min /
-            // ngram_max / stop_words are real operator parameters.
-            node.parameters["text_col"] = "";
-            node.parameters["label_col"] = "";
-            node.parameters["max_features"] = "2000";
-            node.parameters["norm"] = "l2";
-            node.parameters["ngram_range"] = "1,1";
-            node.parameters["ngram_min"] = "1";
-            node.parameters["ngram_max"] = "1";
-            node.parameters["stop_words"] = "english";
-            node.parameters["binary"] = "false";
-            node.parameters["output_format"] = "dense";
+        case NodeType::TFIDFVectorizer:
+        case NodeType::CountVectorizer:
+        case NodeType::SentimentAnalyzer: {
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -4769,33 +3943,6 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             node.parameters["model"] = "word2vec";
             node.parameters["dim"] = "100";
             node.parameters["window"] = "5";
-            break;
-        }
-
-        case NodeType::SentimentAnalyzer: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Text";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Sentiment";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // Tool-to-Node canonical params read by SentimentAnalyzerOperator.
-            // text_col is required (no auto-detect — operator errors cleanly).
-            // label_col empty = no passthrough. method picks the built-in
-            // lexicon ("simple" / "vader" / "afinn").
-            node.parameters["text_col"] = "text";
-            node.parameters["label_col"] = "";
-            node.parameters["method"] = "vader";
-            // Legacy param kept for cyxgraph JSON back-compat (operator ignores).
-            node.parameters["model"] = "vader";
             break;
         }
 

@@ -561,6 +561,25 @@ int main() {
     Check(balanced_train_counts == std::vector<size_t>({8, 8}),
           "balanced Arrow oversampling should equalize train class counts");
 
+    auto stale_target_config = balanced_loader_config;
+    stale_target_config.target.required_by_objective = true;
+    stale_target_config.target.origin = cyxwiz::TargetOrigin::DatasetColumn;
+    stale_target_config.target.value_kind = cyxwiz::TargetValueKind::Categorical;
+    stale_target_config.target.primary_column = "status";
+    stale_target_config.target.width = 1;
+    auto stale_target_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        stale_target_config,
+        MakeStratifiedDataset(),
+        "label",
+        /*batch_size=*/4);
+    Check(stale_target_batchers.num_train_samples == 16,
+          "runtime label fallback should keep class balancing enabled when "
+          "the compiled target name is stale");
+    auto stale_target_counts = CountOneHotLabels(
+        *stale_target_batchers.train, 2, "stale target balanced train");
+    Check(stale_target_counts == std::vector<size_t>({8, 8}),
+          "runtime label fallback should balance using the effective label column");
+
     auto weighted_sampler_config = MakeConfig();
     weighted_sampler_config.train_ratio = 0.75f;
     weighted_sampler_config.shuffle = false;

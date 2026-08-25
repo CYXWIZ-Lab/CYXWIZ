@@ -212,6 +212,7 @@ bool TFIDFVectorizerOperator::Configure(
     norm_ = "l2";
     stop_words_ = "english";
     output_format_ = "dense";
+    state_options_ = {};
 
     auto it = params.find("text_col");
     if (it == params.end() || it->second.empty()) {
@@ -308,6 +309,39 @@ bool TFIDFVectorizerOperator::Configure(
     if (!ParseNGramRange(params, "TFIDFVectorizer",
                          ngram_min_, ngram_max_, error)) return false;
 
+    return ParseFittedPreprocessingOptions(
+        params, GetName(), state_options_, error);
+}
+
+std::map<std::string, std::string>
+TFIDFVectorizerOperator::BuildFittedConfiguration() const {
+    return {
+        {"text_col", text_col_},
+        {"max_features", std::to_string(max_features_)},
+        {"min_df", std::to_string(min_df_)},
+        {"use_idf", use_idf_ ? "true" : "false"},
+        {"smooth_idf", smooth_idf_ ? "true" : "false"},
+        {"norm", norm_},
+        {"ngram_range", std::to_string(ngram_min_) + "," +
+                            std::to_string(ngram_max_)},
+        {"stop_words", stop_words_},
+        {"output_format", output_format_},
+    };
+}
+
+bool TFIDFVectorizerOperator::CollectCacheDependencies(
+    std::vector<PipelineOperatorCacheDependency>& dependencies,
+    std::string& error) const {
+    if (!state_options_.IsTransformOnly()) {
+        return true;
+    }
+    FittedTextVectorizerState state;
+    if (!LoadFittedTextVectorizerState(
+            state_options_.state_path, GetName(), BuildFittedConfiguration(),
+            static_cast<size_t>(max_features_), state, error)) {
+        return false;
+    }
+    dependencies.push_back({"fitted_state", state_options_.state_path});
     return true;
 }
 
@@ -351,14 +385,40 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "' must be string/large_string, got '" + bad_type + "'");
     }
 
+    const auto fitted_configuration = BuildFittedConfiguration();
+    FittedTextVectorizerState fitted_state;
+    std::vector<TFIDFTermStats> fitted_terms;
+    if (state_options_.IsTransformOnly()) {
+        std::string state_error;
+        if (!LoadFittedTextVectorizerState(
+                state_options_.state_path, GetName(), fitted_configuration,
+                static_cast<size_t>(max_features_), fitted_state,
+                state_error)) {
+            return arrow::Status::Invalid(state_error);
+        }
+        fitted_terms.reserve(fitted_state.features.size());
+        for (const auto& feature : fitted_state.features) {
+            TFIDFTermStats term;
+            term.term = feature.term;
+            term.idf = feature.weight;
+            fitted_terms.push_back(std::move(term));
+        }
+        spdlog::info(
+            "TFIDFVectorizer: Transform Only loaded '{}' (fit_rows={}, "
+            "features={}, schema={})",
+            state_options_.state_path, fitted_state.fit_rows,
+            fitted_terms.size(), fitted_state.input_schema_fingerprint);
+    }
+
     const uint64_t planned_rows =
         static_cast<uint64_t>(std::max<int64_t>(0, text_column->length()));
     if (planned_rows == 0) {
         return arrow::Status::Invalid(
             "TFIDFVectorizer: empty corpus");
     }
-    const uint64_t planned_features =
-        static_cast<uint64_t>(std::max(1, max_features_));
+    const uint64_t planned_features = state_options_.IsTransformOnly()
+        ? static_cast<uint64_t>(std::max<size_t>(1, fitted_terms.size()))
+        : static_cast<uint64_t>(std::max(1, max_features_));
     const auto preflight_estimate = EstimateDenseMaterializationMemory(
         planned_rows, planned_features, static_cast<uint64_t>(sizeof(float)));
     const auto preflight_decision = EvaluateMaterializationMemory(
@@ -449,11 +509,13 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                 counts[token]++;
             }
 
-            for (const auto& pair : counts) {
-                auto& stats = term_stats_by_name[pair.first];
-                stats.term = pair.first;
-                stats.doc_freq++;
-                stats.corpus_count += pair.second;
+            if (!state_options_.IsTransformOnly()) {
+                for (const auto& pair : counts) {
+                    auto& stats = term_stats_by_name[pair.first];
+                    stats.term = pair.first;
+                    stats.doc_freq++;
+                    stats.corpus_count += pair.second;
+                }
             }
             doc_counts.push_back(std::move(counts));
             if ((row + 1) % 5000 == 0 || row + 1 == texts.size()) {
@@ -479,61 +541,74 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             std::string("TFIDFVectorizer: token counting failed: ") + e.what());
     }
 
-    const size_t full_vocab = term_stats_by_name.size();
-    if (full_vocab == 0) {
-        return arrow::Status::Invalid(
-            "TFIDFVectorizer: empty vocabulary after tokenization and stopword removal");
-    }
-
-    std::vector<TFIDFTermStats> all_terms;
-    report_progress(
-        "Selecting vocabulary",
-        "Selecting bounded vocabulary from " + std::to_string(full_vocab) +
-            " terms with min_df=" + std::to_string(min_df_) + "...",
-        0.45f,
-        initial_memory_estimate,
-        static_cast<uint64_t>(full_vocab),
-        static_cast<uint64_t>(full_vocab));
-    all_terms.reserve(full_vocab);
-    for (auto& pair : term_stats_by_name) {
-        auto stats = std::move(pair.second);
-        if (stats.doc_freq < min_df_) {
-            continue;
+    size_t full_vocab = fitted_terms.size();
+    size_t filtered_vocab = fitted_terms.size();
+    std::vector<TFIDFTermStats> all_terms = std::move(fitted_terms);
+    if (!state_options_.IsTransformOnly()) {
+        full_vocab = term_stats_by_name.size();
+        if (full_vocab == 0) {
+            return arrow::Status::Invalid(
+                "TFIDFVectorizer: empty vocabulary after tokenization and stopword removal");
         }
-        if (use_idf_) {
-            const double df = smooth_idf_
-                ? static_cast<double>(stats.doc_freq + 1)
-                : static_cast<double>(stats.doc_freq);
-            const double total = smooth_idf_
-                ? static_cast<double>(n + 1)
-                : static_cast<double>(n);
-            stats.idf = std::log(total / df) + 1.0;
-        } else {
-            stats.idf = 1.0;
+        report_progress(
+            "Selecting vocabulary",
+            "Selecting bounded vocabulary from " + std::to_string(full_vocab) +
+                " terms with min_df=" + std::to_string(min_df_) + "...",
+            0.45f,
+            initial_memory_estimate,
+            static_cast<uint64_t>(full_vocab),
+            static_cast<uint64_t>(full_vocab));
+        all_terms.reserve(full_vocab);
+        for (auto& pair : term_stats_by_name) {
+            auto stats = std::move(pair.second);
+            if (stats.doc_freq < min_df_) {
+                continue;
+            }
+            if (use_idf_) {
+                const double df = smooth_idf_
+                    ? static_cast<double>(stats.doc_freq + 1)
+                    : static_cast<double>(stats.doc_freq);
+                const double total = smooth_idf_
+                    ? static_cast<double>(n + 1)
+                    : static_cast<double>(n);
+                stats.idf = std::log(total / df) + 1.0;
+            } else {
+                stats.idf = 1.0;
+            }
+            all_terms.push_back(std::move(stats));
         }
-        all_terms.push_back(std::move(stats));
-    }
-    if (all_terms.empty()) {
-        return arrow::Status::Invalid(
-            "TFIDFVectorizer: empty vocabulary after applying min_df=" +
-            std::to_string(min_df_));
+        if (all_terms.empty()) {
+            return arrow::Status::Invalid(
+                "TFIDFVectorizer: empty vocabulary after applying min_df=" +
+                std::to_string(min_df_));
+        }
+
+        std::sort(all_terms.begin(), all_terms.end(),
+                  [](const TFIDFTermStats& a, const TFIDFTermStats& b) {
+                      return a.term < b.term;
+                  });
+        filtered_vocab = all_terms.size();
+    } else {
+        report_progress(
+            "Loading fitted vocabulary",
+            "Using " + std::to_string(all_terms.size()) +
+                " fitted TF-IDF features",
+            0.45f,
+            initial_memory_estimate,
+            static_cast<uint64_t>(all_terms.size()),
+            static_cast<uint64_t>(all_terms.size()));
     }
 
-    std::sort(all_terms.begin(), all_terms.end(),
-              [](const TFIDFTermStats& a, const TFIDFTermStats& b) {
-                  return a.term < b.term;
-              });
-
-    const size_t filtered_vocab = all_terms.size();
-    const size_t kept =
-        std::min(filtered_vocab, static_cast<size_t>(max_features_));
+    const size_t kept = state_options_.IsTransformOnly()
+        ? all_terms.size()
+        : std::min(filtered_vocab, static_cast<size_t>(max_features_));
     const auto bounded_memory_plan = EstimateDenseMaterializationMemory(
         static_cast<uint64_t>(n),
         static_cast<uint64_t>(std::max<size_t>(1, kept)),
         static_cast<uint64_t>(sizeof(float)));
     const uint64_t bounded_memory_estimate =
         bounded_memory_plan.estimated_peak_bytes;
-    if (filtered_vocab > kept) {
+    if (!state_options_.IsTransformOnly() && filtered_vocab > kept) {
         std::partial_sort(
             all_terms.begin(),
             all_terms.begin() + kept,
@@ -553,7 +628,7 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                   [](const TFIDFTermStats& a, const TFIDFTermStats& b) {
                       return a.term < b.term;
                   });
-    } else {
+    } else if (!state_options_.IsTransformOnly()) {
         all_terms.resize(kept);
     }
 
@@ -652,9 +727,14 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             const float p = 0.65f + 0.25f *
                 (static_cast<float>(r + 1) / static_cast<float>(n));
             report_progress(
-                "Building TF-IDF rows",
-                "Built " + std::to_string(r + 1) +
-                    "/" + std::to_string(n) + " TF-IDF rows",
+                state_options_.IsTransformOnly()
+                    ? "Transforming with fitted TF-IDF state"
+                    : "Building TF-IDF rows",
+                (state_options_.IsTransformOnly()
+                     ? "Transformed "
+                     : "Built ") +
+                    std::to_string(r + 1) + "/" + std::to_string(n) +
+                    " TF-IDF rows",
                 p,
                 bounded_memory_estimate,
                 static_cast<uint64_t>(r + 1) * static_cast<uint64_t>(kept),
@@ -690,14 +770,39 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     auto out_schema = arrow::schema(fields);
     auto out_table = arrow::Table::Make(out_schema, arrays, static_cast<int64_t>(n));
 
+    if (!state_options_.IsTransformOnly() && state_options_.save_state) {
+        std::vector<FittedTextVectorizerFeature> state_features;
+        state_features.reserve(all_terms.size());
+        for (const auto& term : all_terms) {
+            state_features.push_back({term.term, term.idf});
+        }
+        const auto schema_fingerprint =
+            FingerprintPreprocessingSchema(input->schema());
+        std::string state_error;
+        if (!SaveFittedTextVectorizerState(
+                state_options_.state_path, GetName(),
+                static_cast<int64_t>(n), schema_fingerprint,
+                fitted_configuration, state_features,
+                state_options_.state_overwrite, state_error)) {
+            return arrow::Status::IOError(
+                GetName() + ": failed to save fitted state: " + state_error);
+        }
+        spdlog::info(
+            "TFIDFVectorizer: saved fitted state '{}' (fit_rows={}, "
+            "features={}, schema={})",
+            state_options_.state_path, n, state_features.size(),
+            schema_fingerprint);
+    }
+
     spdlog::info("TFIDFVectorizer: {} docs x {} features (capped from {}, "
                  "filtered from {} with min_df={}), use_idf={}, "
-                 "smooth_idf={}, norm={}, stop_words={}, ngram_range={},{} classes={}, bounded=true",
+                 "smooth_idf={}, norm={}, stop_words={}, ngram_range={},{} "
+                 "classes={}, mode={}, bounded=true",
                  n, kept, filtered_vocab, full_vocab, min_df_,
                  use_idf_, smooth_idf_, norm_,
                  stop_words_,
                  ngram_min_, ngram_max_,
-                 class_names.size());
+                 class_names.size(), state_options_.operation_mode);
     report_progress(
         "TF-IDF materialization complete",
         "Materialized " + std::to_string(n) + " rows x " +

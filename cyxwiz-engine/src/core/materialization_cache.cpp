@@ -1,17 +1,19 @@
 #include "materialization_cache.h"
 
+#include <cyxwiz/utilities.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <stdexcept>
 
 namespace cyxwiz {
 namespace {
 
-constexpr int kMaterializerCacheSchemaVersion = 1;
 constexpr const char* kMaterializerOperatorVersion = "materializer-v1";
 
 std::string Hex(uint64_t value) {
@@ -69,7 +71,7 @@ std::string EscapePart(const std::string& value) {
 
 std::string CanonicalKeyInput(const MaterializationCacheKeyInput& input) {
     std::ostringstream out;
-    out << "schema_version=" << kMaterializerCacheSchemaVersion << "\n";
+    out << "schema_version=" << kMaterializationCacheSchemaVersion << "\n";
     out << "operator_version=" << kMaterializerOperatorVersion << "\n";
     out << "source_dataset_name=" << EscapePart(input.source_dataset_name) << "\n";
     out << "source_identity=" << EscapePart(input.source_identity) << "\n";
@@ -77,6 +79,24 @@ std::string CanonicalKeyInput(const MaterializationCacheKeyInput& input) {
     out << "source_file_size=" << input.source_file_size << "\n";
     out << "source_file_mtime=" << input.source_file_mtime << "\n";
     out << "source_schema=" << EscapePart(input.source_schema_fingerprint) << "\n";
+
+    auto dependencies = input.dependencies;
+    std::sort(
+        dependencies.begin(), dependencies.end(),
+        [](const MaterializationCacheDependencyIdentity& a,
+           const MaterializationCacheDependencyIdentity& b) {
+            if (a.node_id != b.node_id) return a.node_id < b.node_id;
+            if (a.role != b.role) return a.role < b.role;
+            if (a.path != b.path) return a.path < b.path;
+            return a.content_sha256 < b.content_sha256;
+        });
+    for (const auto& dependency : dependencies) {
+        out << "dependency=" << dependency.node_id << "|"
+            << EscapePart(dependency.role) << "|"
+            << EscapePart(dependency.path) << "|"
+            << dependency.byte_size << "|"
+            << EscapePart(dependency.content_sha256) << "\n";
+    }
 
     auto nodes = input.nodes;
     std::sort(nodes.begin(), nodes.end(), [](const gui::MLNode& a,
@@ -126,6 +146,16 @@ MaterializationCacheStatus StatusFromName(const std::string& name) {
 }
 
 nlohmann::json ManifestToJson(const MaterializationCacheManifest& manifest) {
+    nlohmann::json dependencies = nlohmann::json::array();
+    for (const auto& dependency : manifest.dependencies) {
+        dependencies.push_back({
+            {"node_id", dependency.node_id},
+            {"role", dependency.role},
+            {"path", dependency.path},
+            {"byte_size", dependency.byte_size},
+            {"content_sha256", dependency.content_sha256},
+        });
+    }
     return {
         {"cache_key", manifest.cache_key},
         {"source_dataset_name", manifest.source_dataset_name},
@@ -135,6 +165,7 @@ nlohmann::json ManifestToJson(const MaterializationCacheManifest& manifest) {
         {"row_count", manifest.row_count},
         {"column_count", manifest.column_count},
         {"schema_fingerprint", manifest.schema_fingerprint},
+        {"dependencies", std::move(dependencies)},
         {"operators_applied", manifest.operators_applied},
         {"engine_version", manifest.engine_version},
         {"materializer_cache_schema_version",
@@ -161,6 +192,23 @@ bool JsonToManifest(const nlohmann::json& j,
         manifest.column_count = j.value("column_count", int64_t{0});
         manifest.schema_fingerprint =
             j.value("schema_fingerprint", std::string{});
+        manifest.dependencies.clear();
+        if (const auto dependencies = j.find("dependencies");
+            dependencies != j.end()) {
+            if (!dependencies->is_array()) {
+                throw std::runtime_error("dependencies must be an array");
+            }
+            for (const auto& value : *dependencies) {
+                MaterializationCacheDependencyIdentity dependency;
+                dependency.node_id = value.value("node_id", -1);
+                dependency.role = value.value("role", std::string{});
+                dependency.path = value.value("path", std::string{});
+                dependency.byte_size = value.value("byte_size", uint64_t{0});
+                dependency.content_sha256 =
+                    value.value("content_sha256", std::string{});
+                manifest.dependencies.push_back(std::move(dependency));
+            }
+        }
         manifest.operators_applied = j.value("operators_applied", 0);
         manifest.engine_version = j.value("engine_version", std::string{});
         manifest.materializer_cache_schema_version =
@@ -230,6 +278,74 @@ std::string ComputeMaterializationCacheKey(
     return StableFingerprint(CanonicalKeyInput(input));
 }
 
+bool ResolveMaterializationCacheDependencyIdentity(
+    int node_id,
+    const std::string& role,
+    const std::string& path_text,
+    MaterializationCacheDependencyIdentity& identity,
+    std::string* error) {
+    if (role.empty()) {
+        if (error) *error = "cache dependency role is empty";
+        return false;
+    }
+    if (path_text.empty()) {
+        if (error) *error = "cache dependency path is empty";
+        return false;
+    }
+
+    std::error_code ec;
+    std::filesystem::path path(path_text);
+    auto normalized = std::filesystem::weakly_canonical(path, ec);
+    if (ec) {
+        ec.clear();
+        normalized = std::filesystem::absolute(path, ec).lexically_normal();
+    }
+    if (ec || !std::filesystem::is_regular_file(normalized, ec) || ec) {
+        if (error) {
+            *error = "cache dependency is not a readable file at '" +
+                     normalized.string() + "'";
+        }
+        return false;
+    }
+
+    const auto byte_size = std::filesystem::file_size(normalized, ec);
+    if (ec) {
+        if (error) {
+            *error = "could not read cache dependency size at '" +
+                     normalized.string() + "': " + ec.message();
+        }
+        return false;
+    }
+
+    const auto hash = Utilities::HashFile(normalized.string(), "sha256");
+    const bool valid_sha256 = hash.success &&
+        hash.sha256_hash.size() == 64 &&
+        std::all_of(
+            hash.sha256_hash.begin(), hash.sha256_hash.end(),
+            [](unsigned char ch) { return std::isxdigit(ch) != 0; });
+    if (!valid_sha256) {
+        if (error) {
+            *error = hash.error_message.empty()
+                ? "could not compute SHA-256 for cache dependency '" +
+                      normalized.string() + "'"
+                : hash.error_message;
+        }
+        return false;
+    }
+
+    identity = {};
+    identity.node_id = node_id;
+    identity.role = role;
+    identity.path = normalized.string();
+    identity.byte_size = byte_size;
+    identity.content_sha256 = hash.sha256_hash;
+    std::transform(
+        identity.content_sha256.begin(), identity.content_sha256.end(),
+        identity.content_sha256.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return true;
+}
+
 std::filesystem::path MaterializationCacheEntryDirectory(
     const MaterializationCacheConfig& config,
     const std::string& cache_key) {
@@ -274,7 +390,7 @@ bool WriteMaterializationCacheManifest(
     }
     if (to_write.materializer_cache_schema_version == 0) {
         to_write.materializer_cache_schema_version =
-            kMaterializerCacheSchemaVersion;
+            kMaterializationCacheSchemaVersion;
     }
 
     const auto temp_path = manifest_path.string() + ".tmp";
@@ -332,7 +448,7 @@ MaterializationCacheValidationResult ValidateMaterializationCacheManifest(
     result.manifest = manifest;
 
     if (manifest.materializer_cache_schema_version !=
-        kMaterializerCacheSchemaVersion) {
+        kMaterializationCacheSchemaVersion) {
         result.status = MaterializationCacheStatus::Stale;
         result.message = "materializer cache schema version changed";
         return result;

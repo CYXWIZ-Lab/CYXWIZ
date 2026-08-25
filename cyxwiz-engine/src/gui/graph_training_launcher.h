@@ -59,7 +59,8 @@ using GraphTrainingDispatch = std::function<bool(
 
 // Shared cache policy for graph preprocessing used by Train and checkpoint
 // evaluation preparation.
-cyxwiz::MaterializationCacheConfig GraphMaterializationCacheConfig();
+cyxwiz::MaterializationCacheConfig GraphMaterializationCacheConfig(
+    const std::filesystem::path& project_root = {});
 
 // Synchronous, allocation-light pre-start check. It executes the existing
 // operator-owned estimator and stops at its first memory decision; it does not
@@ -81,6 +82,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     GraphTrainingDispatch dispatch,
     cyxwiz::MaterializationMemoryPolicy materialization_memory_policy = {},
     std::optional<cyxwiz::PipelineOperatorProgress>
-        materialization_preflight_evidence = std::nullopt);
+        materialization_preflight_evidence = std::nullopt,
+    std::filesystem::path project_root = {});
 
 } // namespace gui

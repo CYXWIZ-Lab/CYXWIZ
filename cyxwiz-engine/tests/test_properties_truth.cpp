@@ -97,15 +97,23 @@ int main() {
         cyxwiz::ParameterDefinition state_overwrite;
         state_overwrite.name = "state_overwrite";
 
-        Check(gui::properties_rules::ShouldHideGenericParameter(
+        Check(!gui::properties_rules::ShouldHideGenericParameter(
                   missing, state_path),
-              "Fit + Transform should hide the engine-managed state path");
+              "Fit + Transform should expose state path when saving is enabled");
         Check(!gui::properties_rules::ShouldHideGenericParameter(
                   missing, save_state),
               "Fit + Transform should expose Save fitted state");
         Check(gui::properties_rules::ShouldHideGenericParameter(
                   missing, state_overwrite),
-              "automatic fitted-state paths should hide overwrite control");
+              "overwrite should stay hidden until a state path is selected");
+        Check(gui::properties_rules::ShouldUseSaveFileDialog(
+                  missing, state_path),
+              "Fit + Transform should browse for a fitted-state destination");
+
+        missing.parameters["state_path"] = "training.cyxstate.json";
+        Check(!gui::properties_rules::ShouldHideGenericParameter(
+                  missing, state_overwrite),
+              "selected fit-state path should expose overwrite control");
 
         missing.parameters["operation_mode"] = "transform_only";
         Check(!gui::properties_rules::ShouldHideGenericParameter(
@@ -114,6 +122,9 @@ int main() {
         Check(gui::properties_rules::ShouldHideGenericParameter(
                   missing, save_state),
               "Transform Only should hide the inapplicable save toggle");
+        Check(!gui::properties_rules::ShouldUseSaveFileDialog(
+                  missing, state_path),
+              "Transform Only should browse for an existing fitted state");
 
         auto scaler = MakeNode(
             101, gui::NodeType::StandardScaler, "Standard Scaler");
@@ -121,6 +132,14 @@ int main() {
         Check(!gui::properties_rules::ShouldHideGenericParameter(
                   scaler, state_path),
               "Standard Scaler should share the Transform Only state picker contract");
+
+        auto vectorizer = MakeNode(
+            102, gui::NodeType::TFIDFVectorizer, "TF-IDF");
+        vectorizer.parameters["operation_mode"] = "fit_transform";
+        vectorizer.parameters["save_state"] = "true";
+        Check(!gui::properties_rules::ShouldHideGenericParameter(
+                  vectorizer, state_path),
+              "TF-IDF should share the fitted-state save path contract");
     }
 
     {
@@ -694,6 +713,21 @@ int main() {
               "CountVectorizer should surface binary-count truth");
         Check(binary->effective_value == "false",
               "CountVectorizer binary should default to false");
+    }
+
+    {
+        auto count = MakeNode(2, gui::NodeType::CountVectorizer, "Count");
+        count.parameters["text_col"] = "text";
+        count.parameters["ngram_range"] = "1,2";
+        count.parameters["ngram_min"] = "3";
+        count.parameters["ngram_max"] = "3";
+
+        const auto report = gui::properties_truth::ResolveNodeTruth(count);
+        const auto* ngram_min = FindProperty(report, "ngram_min");
+        const auto* ngram_max = FindProperty(report, "ngram_max");
+        Check(ngram_min != nullptr && ngram_min->effective_value == "1" &&
+                  ngram_max != nullptr && ngram_max->effective_value == "2",
+              "ngram_range should override legacy ngram_min/ngram_max in truth diagnostics");
     }
 
     {

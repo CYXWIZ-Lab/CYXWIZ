@@ -928,6 +928,8 @@ MainWindow::MainWindow()
         fingerprint << std::hex << HashGraphStructure(nodes, links);
         const std::string graph_fingerprint = fingerprint.str();
         const std::string selected_path = *selected;
+        const std::string materialization_project_root =
+            project.GetProjectRoot();
         auto load_result =
             std::make_shared<cyxwiz::CheckpointEvaluationLoadResult>();
         std::weak_ptr<cyxwiz::TrainingPlotPanel> dashboard =
@@ -936,7 +938,8 @@ MainWindow::MainWindow()
         cyxwiz::AsyncTaskManager::Instance().RunAsync(
             "Load checkpoint for testing",
             [config = std::move(config), nodes, links, selected_path,
-             graph_fingerprint, load_result](cyxwiz::LambdaTask& task) {
+             graph_fingerprint, load_result,
+             materialization_project_root](cyxwiz::LambdaTask& task) {
                 auto evaluation_config = config;
                 task.ReportProgress(0.05f,
                                     "Preparing evaluation dataset...");
@@ -959,7 +962,8 @@ MainWindow::MainWindow()
                 const auto materialized =
                     cyxwiz::PipelineMaterializer::Materialize(
                         nodes, links, registry, effective_dataset_name,
-                        GraphMaterializationCacheConfig(),
+                        GraphMaterializationCacheConfig(
+                            materialization_project_root),
                         [&task](
                             const cyxwiz::PipelineOperatorProgress& event) {
                             const float progress =
@@ -3777,7 +3781,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             materialization_memory_policy,
             memory_preflight.estimate_available
                 ? std::make_optional(memory_preflight.evidence)
-                : std::nullopt);
+                : std::nullopt,
+            cyxwiz::ProjectManager::Instance().GetProjectRoot());
 
         if (launch_result.started) {
             spdlog::info("Training started successfully");

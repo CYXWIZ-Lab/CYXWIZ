@@ -17,6 +17,8 @@ bool TryParseIntStrict(const std::string& text, int& value);
 NumericRange ParseNumericRange(const std::string& validation);
 bool ShouldHideGenericParameter(const MLNode& node,
                                 const cyxwiz::ParameterDefinition& param);
+bool ShouldUseSaveFileDialog(const MLNode& node,
+                             const cyxwiz::ParameterDefinition& param);
 bool ValidateParameter(
     const std::string& value,
     const cyxwiz::ParameterDefinition& param,

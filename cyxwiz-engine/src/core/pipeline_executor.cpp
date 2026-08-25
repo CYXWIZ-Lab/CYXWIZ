@@ -3213,6 +3213,12 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
     try {
         auto j = nlohmann::json::parse(pipeline_json);
 
+        struct PendingInputLink {
+            int start_node = -1;
+            std::optional<int> end_pin;
+        };
+        std::map<int, std::vector<PendingInputLink>> pending_inputs;
+
         for (const auto& node_json : j["nodes"]) {
             Node node;
             node.id = node_json["id"];
@@ -3220,6 +3226,10 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
             node.runtime_type = ResolvePipelineRuntimeNodeType(node.type);
             node.name = node_json["name"];
             node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
+            if (node.runtime_type.has_value()) {
+                CanonicalizePipelineParameterAliases(
+                    *node.runtime_type, node.parameters);
+            }
             nodes.push_back(node);
         }
 
@@ -3249,7 +3259,45 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
             }
 
             start_it->outputs.push_back(end_node);
-            end_it->inputs.push_back(start_node);
+            PendingInputLink pending;
+            pending.start_node = start_node;
+            if (link_json.contains("end_pin") &&
+                link_json["end_pin"].is_number_integer()) {
+                pending.end_pin = link_json["end_pin"].get<int>();
+            }
+            pending_inputs[end_node].push_back(std::move(pending));
+        }
+
+        for (auto& [end_node, inputs] : pending_inputs) {
+            std::set<int> seen_pins;
+            bool all_pinned = !inputs.empty();
+            for (const auto& input : inputs) {
+                all_pinned = all_pinned && input.end_pin.has_value();
+                if (input.end_pin.has_value() &&
+                    !seen_pins.insert(*input.end_pin).second) {
+                    last_error_ = errors::FormatError(
+                        errors::Runtime::PipelineMalformed,
+                        "Node " + std::to_string(end_node) +
+                            " has multiple links targeting input pin " +
+                            std::to_string(*input.end_pin));
+                    return false;
+                }
+            }
+            if (all_pinned) {
+                std::stable_sort(
+                    inputs.begin(), inputs.end(),
+                    [](const PendingInputLink& lhs,
+                       const PendingInputLink& rhs) {
+                        return *lhs.end_pin < *rhs.end_pin;
+                    });
+            }
+
+            auto end_it = std::find_if(
+                nodes.begin(), nodes.end(),
+                [end_node](const Node& node) { return node.id == end_node; });
+            for (const auto& input : inputs) {
+                end_it->inputs.push_back(input.start_node);
+            }
         }
 
         return true;
@@ -5004,23 +5052,34 @@ bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
         (join_type_it != node.parameters.end()) ? join_type_it->second : "inner";
     const std::string join_type = NormalizeJoinTypeSql(raw_join_type);
 
-    auto on_column_it = node.parameters.find("on_column");
-    if (on_column_it == node.parameters.end() || on_column_it->second.empty()) {
-        ReportError("Join: Missing 'on_column' parameter");
+    auto left_on_it = node.parameters.find("left_on");
+    auto right_on_it = node.parameters.find("right_on");
+    if (left_on_it == node.parameters.end() || left_on_it->second.empty()) {
+        ReportError("Join: Missing 'left_on' parameter");
+        return false;
+    }
+    if (right_on_it == node.parameters.end() || right_on_it->second.empty()) {
+        ReportError("Join: Missing 'right_on' parameter");
         return false;
     }
 
     const std::string& left_dataset_name = input_dataset_names[0];
     const std::string& right_dataset_name = input_dataset_names[1];
-    const std::string on_column = TrimString(on_column_it->second);
-    if (on_column.empty()) {
-        ReportError("Join: Missing 'on_column' parameter");
+    const std::string left_on = TrimString(left_on_it->second);
+    const std::string right_on = TrimString(right_on_it->second);
+    if (left_on.empty()) {
+        ReportError("Join: Missing 'left_on' parameter");
+        return false;
+    }
+    if (right_on.empty()) {
+        ReportError("Join: Missing 'right_on' parameter");
         return false;
     }
     std::string output_dataset_name = "ds_join_" + std::to_string(node.id);
 
-    spdlog::info("[Data Studio] Joining '{}' and '{}' on column: {} ({})",
-                left_dataset_name, right_dataset_name, on_column, join_type);
+    spdlog::info(
+        "[Data Studio] Joining '{}' ({}) and '{}' ({}) using {} join",
+        left_dataset_name, left_on, right_dataset_name, right_on, join_type);
 
     try {
         auto& registry = DataRegistry::Instance();
@@ -5035,14 +5094,15 @@ bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
         auto left_table = left_dataset->GetArrowTable();
         auto right_table = right_dataset->GetArrowTable();
         std::string schema_error;
-        if (!RequireColumnExists(left_table, "Join", on_column,
+        if (!RequireColumnExists(left_table, "Join", left_on,
                                  "left input", schema_error) ||
-            !RequireColumnExists(right_table, "Join", on_column,
+            !RequireColumnExists(right_table, "Join", right_on,
                                  "right input", schema_error)) {
             ReportError(schema_error);
             return false;
         }
-        const std::string quoted_on_column = QuoteSqlIdentifier(on_column);
+        const std::string quoted_left_on = QuoteSqlIdentifier(left_on);
+        const std::string quoted_right_on = QuoteSqlIdentifier(right_on);
 
         // Register both tables with DuckDB
         std::string left_temp = "temp_left_" + std::to_string(node.id);
@@ -5056,8 +5116,8 @@ bool PipelineExecutor::ExecuteJoin(const Node& node, ExecutionContext& ctx) {
 
         // Execute JOIN query
         std::string sql = "SELECT * FROM " + left_temp + " " + join_type + " JOIN " +
-                         right_temp + " ON " + left_temp + "." + quoted_on_column +
-                         " = " + right_temp + "." + quoted_on_column;
+                         right_temp + " ON " + left_temp + "." + quoted_left_on +
+                         " = " + right_temp + "." + quoted_right_on;
 
         auto result_table = duckdb_->Query(sql);
 

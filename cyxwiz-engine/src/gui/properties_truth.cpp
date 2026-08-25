@@ -883,9 +883,7 @@ void AddVectorizerTruth(NodeTruthReport& report,
         true,
         false);
     if (const std::string* range = FindParameter(node, "ngram_range");
-        range && !range->empty() &&
-        !HasNonEmptyParameter(node, "ngram_min") &&
-        !HasNonEmptyParameter(node, "ngram_max")) {
+        range && !range->empty()) {
         const auto comma = range->find(',');
         if (comma == std::string::npos) {
             ngram_max.statuses.clear();
@@ -896,10 +894,13 @@ void AddVectorizerTruth(NodeTruthReport& report,
             ngram_min.effective_value = range->substr(0, comma);
             ngram_min.statuses.clear();
             AddStatus(ngram_min, TruthStatus::AliasUsed);
+            ngram_min.message =
+                "ngram_range is canonical and overrides legacy ngram_min/ngram_max values.";
             ngram_max.source_key = "ngram_range";
             ngram_max.effective_value = range->substr(comma + 1);
             ngram_max.statuses.clear();
             AddStatus(ngram_max, TruthStatus::AliasUsed);
+            ngram_max.message = ngram_min.message;
         }
     }
     RequirePositiveInt(ngram_min, "ngram_min");

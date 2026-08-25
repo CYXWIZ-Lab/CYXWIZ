@@ -89,9 +89,72 @@ gui::MLNode MakeTokenizerNode(std::string max_length = "4") {
     return node;
 }
 
+gui::MLNode MakeStatefulNode() {
+    gui::MLNode node;
+    node.id = 3;
+    node.type = gui::NodeType::StandardScaler;
+    node.category = gui::NodeCategory::Preprocessing;
+    node.name = "Stateful Transform";
+    return node;
+}
+
+gui::MLNode MakeCacheDependentNode(const std::filesystem::path& state_path) {
+    gui::MLNode node;
+    node.id = 4;
+    node.type = gui::NodeType::MinMaxScaler;
+    node.category = gui::NodeCategory::Preprocessing;
+    node.name = "Cache-dependent Transform";
+    node.parameters["state_path"] = state_path.string();
+    return node;
+}
+
 } // namespace
 
 namespace cyxwiz {
+
+class NonCacheablePassThroughOperator final : public IPipelineOperator {
+public:
+    std::string GetName() const override { return "StandardScaler"; }
+    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    bool IsCacheable() const override { return false; }
+    bool Configure(const std::map<std::string, std::string>&,
+                   std::string&) override {
+        return true;
+    }
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
+        const std::shared_ptr<arrow::Table>& input) override {
+        return input;
+    }
+};
+
+class CacheDependentPassThroughOperator final : public IPipelineOperator {
+public:
+    std::string GetName() const override { return "MinMaxScaler"; }
+    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    bool Configure(const std::map<std::string, std::string>& parameters,
+                   std::string& error) override {
+        const auto path = parameters.find("state_path");
+        if (path == parameters.end() || path->second.empty()) {
+            error = "state_path is required";
+            return false;
+        }
+        state_path_ = path->second;
+        return true;
+    }
+    bool CollectCacheDependencies(
+        std::vector<PipelineOperatorCacheDependency>& dependencies,
+        std::string&) const override {
+        dependencies.push_back({"fitted_state", state_path_});
+        return true;
+    }
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
+        const std::shared_ptr<arrow::Table>& input) override {
+        return input;
+    }
+
+private:
+    std::string state_path_;
+};
 
 PipelineOperatorFactory& PipelineOperatorFactory::Instance() {
     static PipelineOperatorFactory instance;
@@ -105,17 +168,26 @@ std::unique_ptr<IPipelineOperator> PipelineOperatorFactory::Create(
     if (type == gui::NodeType::TextTokenizer) {
         return std::make_unique<TextTokenizerOperator>();
     }
+    if (type == gui::NodeType::StandardScaler) {
+        return std::make_unique<NonCacheablePassThroughOperator>();
+    }
+    if (type == gui::NodeType::MinMaxScaler) {
+        return std::make_unique<CacheDependentPassThroughOperator>();
+    }
     return nullptr;
 }
 
 bool PipelineOperatorFactory::HasOperator(gui::NodeType type) const {
-    return type == gui::NodeType::TextTokenizer;
+    return type == gui::NodeType::TextTokenizer ||
+           type == gui::NodeType::StandardScaler ||
+           type == gui::NodeType::MinMaxScaler;
 }
 
 void PipelineOperatorFactory::RegisterCreator(gui::NodeType, Creator) {}
 
 std::vector<gui::NodeType> PipelineOperatorFactory::GetSupportedTypes() const {
-    return {gui::NodeType::TextTokenizer};
+    return {gui::NodeType::TextTokenizer, gui::NodeType::StandardScaler,
+            gui::NodeType::MinMaxScaler};
 }
 
 } // namespace cyxwiz
@@ -182,6 +254,12 @@ int main() {
     Check(hit.cache_status == cyxwiz::MaterializationCacheStatus::Hit,
           "second matching materialization should hit cache");
     Check(hit.loaded_from_cache, "cache hit should report loaded_from_cache");
+    Check(hit.cache_message.find("Preprocessing skipped") != std::string::npos,
+          "cache hit should explicitly report skipped preprocessing");
+    Check(hit.cache_message.find("on disk") != std::string::npos &&
+              hit.cache_message.find("in memory") != std::string::npos &&
+              hit.cache_message.find("loaded in") != std::string::npos,
+          "cache hit should explain disk size, expanded memory, and load time");
     Check(hit.operators_applied == 1,
           "cache hit should restore operators_applied from manifest");
     Check(hit.cache_key == saved.cache_key,
@@ -205,6 +283,85 @@ int main() {
           "changed graph should rebuild and save a new prepared dataset");
     Check(changed.cache_key != saved.cache_key,
           "changed node parameters should change materialization cache key");
+
+    const std::vector<gui::MLNode> stateful_nodes = {
+        MakeDataInputNode(kDatasetName),
+        MakeStatefulNode(),
+    };
+    const std::vector<gui::NodeLink> stateful_links = {
+        {2, 1, 0, 3, 0, gui::LinkType::TensorFlow},
+    };
+    registry.UnregisterTabularDataset(materialized_name);
+    auto stateful = cyxwiz::PipelineMaterializer::Materialize(
+        stateful_nodes, stateful_links, registry, kDatasetName, cache_config);
+    Check(stateful.success, stateful.error_message);
+    Check(stateful.operators_applied == 1,
+          "non-cacheable operator should still materialize");
+    Check(stateful.cache_status ==
+              cyxwiz::MaterializationCacheStatus::Unsupported,
+          "fitted-state operator should explicitly bypass persistent cache");
+    Check(!stateful.saved_to_cache && !stateful.loaded_from_cache,
+          "fitted-state operator should neither save nor load cache output");
+    Check(stateful.cache_message.find("reads or writes fitted state") !=
+              std::string::npos,
+          "cache bypass should explain the fitted-state boundary");
+
+    const auto state_path = cache_root / "fitted_state.cyxstate.json";
+    {
+        std::ofstream state(state_path, std::ios::binary);
+        state << "state-a";
+    }
+    const std::vector<gui::MLNode> dependent_nodes = {
+        MakeDataInputNode(kDatasetName),
+        MakeCacheDependentNode(state_path),
+    };
+    const std::vector<gui::NodeLink> dependent_links = {
+        {3, 1, 0, 4, 0, gui::LinkType::TensorFlow},
+    };
+    registry.UnregisterTabularDataset(materialized_name);
+    auto dependent_saved = cyxwiz::PipelineMaterializer::Materialize(
+        dependent_nodes, dependent_links, registry, kDatasetName,
+        cache_config);
+    Check(dependent_saved.success, dependent_saved.error_message);
+    Check(dependent_saved.cache_status ==
+              cyxwiz::MaterializationCacheStatus::Saved,
+          "cache-dependent transform should save its prepared output");
+
+    registry.UnregisterTabularDataset(materialized_name);
+    auto dependent_hit = cyxwiz::PipelineMaterializer::Materialize(
+        dependent_nodes, dependent_links, registry, kDatasetName,
+        cache_config);
+    Check(dependent_hit.success, dependent_hit.error_message);
+    Check(dependent_hit.cache_status ==
+              cyxwiz::MaterializationCacheStatus::Hit,
+          "unchanged fitted state should permit a cache hit");
+
+    {
+        std::ofstream state(state_path,
+                            std::ios::binary | std::ios::trunc);
+        state << "state-b";
+    }
+    registry.UnregisterTabularDataset(materialized_name);
+    auto dependent_changed = cyxwiz::PipelineMaterializer::Materialize(
+        dependent_nodes, dependent_links, registry, kDatasetName,
+        cache_config);
+    Check(dependent_changed.success, dependent_changed.error_message);
+    Check(dependent_changed.cache_status ==
+              cyxwiz::MaterializationCacheStatus::Saved,
+          "changed fitted state should rebuild the prepared output");
+    Check(dependent_changed.cache_key != dependent_saved.cache_key,
+          "same-path fitted-state mutation should change the cache key");
+
+    std::filesystem::remove(state_path);
+    registry.UnregisterTabularDataset(materialized_name);
+    auto dependent_missing = cyxwiz::PipelineMaterializer::Materialize(
+        dependent_nodes, dependent_links, registry, kDatasetName,
+        cache_config);
+    Check(!dependent_missing.success,
+          "missing fitted state should fail before cache lookup");
+    Check(dependent_missing.error_message.find("not a readable file") !=
+              std::string::npos,
+          "missing fitted-state failure should identify the dependency");
 
     const auto source_path = cache_root / "source.csv";
     {

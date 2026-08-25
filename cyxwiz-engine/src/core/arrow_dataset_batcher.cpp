@@ -371,6 +371,21 @@ void ArrowDatasetBatcher::InitializeColumns() {
         }
     }
 
+    // Keep the stored label contract aligned with the column that will
+    // actually be read. Class balancing and later target reads must not keep
+    // using a stale pre-materialization name after fallback selected `y`.
+    if (label_col_idx_ >= 0) {
+        const std::string& effective_label =
+            schema->field(label_col_idx_)->name();
+        if (label_column_ != effective_label) {
+            spdlog::info(
+                "ArrowDatasetBatcher: effective label column '{}' -> '{}'",
+                label_column_.empty() ? "<auto>" : label_column_,
+                effective_label);
+            label_column_ = effective_label;
+        }
+    }
+
     if (label_col_idx_ >= 0) {
         label_col_indices_.push_back(label_col_idx_);
     }

@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -59,6 +60,11 @@ using PipelineOperatorProgressCallback =
 
 using PipelineOperatorCancellationQuery = std::function<bool()>;
 using ProcessMemorySnapshotQuery = std::function<ProcessMemorySnapshot()>;
+
+struct PipelineOperatorCacheDependency {
+    std::string role;
+    std::string path;
+};
 
 struct PipelineOperatorExecutionContext {
     MaterializationMemoryContext memory;
@@ -159,6 +165,20 @@ public:
      */
     virtual bool IsCacheable() const {
         return GetBand() != PipelineBand::PhaseAware;
+    }
+
+    /**
+     * Validate and report external inputs that affect a persistent cache hit.
+     * Implementations must fail closed when a required artifact is missing,
+     * malformed, or incompatible with the configured operator. The
+     * materializer owns path normalization and content fingerprinting.
+     */
+    virtual bool CollectCacheDependencies(
+        std::vector<PipelineOperatorCacheDependency>& dependencies,
+        std::string& error) const {
+        (void)dependencies;
+        (void)error;
+        return true;
     }
 
 protected:

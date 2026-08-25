@@ -2082,6 +2082,49 @@ int main() {
                   cyxwiz::PartitionOrigin::Derived,
           "typed partition policy and manifest origins must reflect topology");
 
+    auto role_transform = Node(
+        65,
+        gui::NodeType::StandardScaler,
+        "Training Dataset Transform",
+        {Pin(6501, gui::PinType::Dataset, "Data", true)},
+        {Pin(6502, gui::PinType::Dataset, "Scaled", false)});
+
+    nodes = {role_train, role_transform, role_split, role_loader,
+             binary_dense, binary_loss, optimizer};
+    links = {
+        Link(1, 60, 6001, 65, 6501),
+        Link(2, 65, 6502, 62, 6201),
+        Link(3, 62, 6204, 63, 6301),
+        Link(4, 63, 6302, 2, 201),
+        Link(5, 2, 202, 14, 1401),
+        Link(6, 63, 6303, 14, 1402),
+        Link(7, 14, 1403, 5, 501),
+    };
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid,
+          "Dataset-preserving preprocessing before Data Split should compile");
+    Check(config.dataset_roles.train.dataset_name == "role_train_dataset" &&
+              config.dataset_roles.train.source_node_id == role_train.id,
+          "Data Split should resolve Data Input through a Dataset transform");
+    Check(!HasIssueText(config, "Training role must originate"),
+          "valid Dataset preprocessing must not obscure the Training source");
+
+    auto false_dataset_transform = Node(
+        67,
+        gui::NodeType::DataOutput,
+        "Non-materializer Dataset Node",
+        {Pin(6701, gui::PinType::Dataset, "Data", true)},
+        {Pin(6702, gui::PinType::Dataset, "Dataset", false)});
+    nodes = {role_train, false_dataset_transform, role_split, role_loader,
+             binary_dense, binary_loss, optimizer};
+    links[0] = Link(1, 60, 6001, 67, 6701);
+    links[1] = Link(2, 67, 6702, 62, 6201);
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid &&
+              HasIssueText(config, "Training role must originate"),
+          "Dataset-shaped nodes without a materializer owner must not hide "
+          "the Data Split source contract");
+
     auto role_dev = Node(
         64,
         gui::NodeType::DataInput,

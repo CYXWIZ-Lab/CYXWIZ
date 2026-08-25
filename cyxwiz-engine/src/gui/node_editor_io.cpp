@@ -6,6 +6,7 @@
 
 #include "node_editor.h"
 #include "../core/data_input_parameters.h"
+#include "../core/pipeline_runtime_capabilities.h"
 #include "node_import_guardrails.h"
 #include "../core/file_dialogs.h"
 #include "../core/project_manager.h"
@@ -344,6 +345,8 @@ static void CopyLegacyColumnIfMissing(std::map<std::string, std::string>& params
 static void MigrateLegacyNodeParameters(NodeType type,
                                         std::map<std::string, std::string>& params,
                                         bool prefer_legacy = false) {
+    cyxwiz::CanonicalizePipelineParameterAliases(
+        type, params, prefer_legacy);
     switch (type) {
         case NodeType::DataInput:
             cyxwiz::MigrateDataInputFormatAliases(params);
@@ -877,6 +880,12 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
         j["data_boundary_version"] = HasLegacyDataBoundary()
             ? detail::kLegacyDataBoundaryVersion
             : detail::kCurrentDataBoundaryVersion;
+        j["data_validator_contract_version"] =
+            detail::kCurrentDataValidatorContractVersion;
+        j["evaluation_table_contract_version"] =
+            detail::kCurrentEvaluationTableContractVersion;
+        j["classical_tree_table_contract_version"] =
+            detail::kCurrentClassicalTreeTableContractVersion;
         j["framework"] = static_cast<int>(selected_framework_);
         j["execution_mode"] = static_cast<int>(execution_mode_);  // Save execution mode
 
@@ -929,8 +938,7 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
             node_json["parameters"] = node.parameters;
 
             // Unified Canvas Phase 7: Save node category for better organization
-            NodeCategory category = GetCategoryForNodeType(node.type);
-            node_json["category"] = static_cast<int>(category);
+            node_json["category"] = static_cast<int>(node.category);
 
             // Save node position
             auto it = cached_node_positions_.find(node.id);
@@ -1007,6 +1015,9 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
 static bool ResolveSavedGraphLinkPins(const nlohmann::json& link_json,
                                       const MLNode* from_node,
                                       const MLNode* to_node,
+                                      bool preserve_legacy_data_validator_outputs,
+                                      bool preserve_legacy_evaluation_table_inputs,
+                                      bool preserve_legacy_classical_tree_pins,
                                       NodeLink& link) {
     if (!from_node || !to_node) {
         spdlog::warn(
@@ -1017,12 +1028,92 @@ static bool ResolveSavedGraphLinkPins(const nlohmann::json& link_json,
         return false;
     }
 
+    if (preserve_legacy_evaluation_table_inputs &&
+        detail::IsLegacySplitInputEvaluationNode(to_node->type)) {
+        spdlog::warn(
+            "Skipping saved graph link {} ({} -> {}): legacy '{}' used split "
+            "prediction/label inputs that cannot be inferred as the required "
+            "Dataset table; reconnect one table containing both configured columns",
+            link.id,
+            link.from_node,
+            link.to_node,
+            to_node->name);
+        return false;
+    }
+
+    if (preserve_legacy_classical_tree_pins &&
+        detail::IsLegacySplitInputTreeTrainer(to_node->type) &&
+        link_json.contains("to_pin_index") &&
+        link_json["to_pin_index"].is_number_integer() &&
+        link_json["to_pin_index"].get<int>() == 1) {
+        spdlog::warn(
+            "Skipping saved graph link {} ({} -> {}): legacy '{}' used a "
+            "separate Labels input that cannot be inferred as a target column "
+            "inside the required Dataset table; reconnect one table and set "
+            "target_col",
+            link.id,
+            link.from_node,
+            link.to_node,
+            to_node->name);
+        return false;
+    }
+
+    if (preserve_legacy_evaluation_table_inputs &&
+        from_node->type == NodeType::ROCCurveNode &&
+        link_json.contains("from_pin_index") &&
+        link_json["from_pin_index"].is_number_integer() &&
+        link_json["from_pin_index"].get<int>() == 1) {
+        spdlog::warn(
+            "Skipping saved graph link {} ({} -> {}): legacy ROC AUC output "
+            "is now the 'auc' column in the Curve table",
+            link.id,
+            link.from_node,
+            link.to_node);
+        return false;
+    }
+
     int from_pin_index = 0;
-    if (!detail::ResolveSerializedPinIndex(
-            link_json, "from_pin_index", from_node->outputs.size(), from_pin_index)) {
+    const bool legacy_data_validator_source =
+        preserve_legacy_data_validator_outputs &&
+        from_node->type == NodeType::DataValidator;
+    const bool legacy_classical_tree_source =
+        preserve_legacy_classical_tree_pins &&
+        detail::IsLegacySplitInputTreeTrainer(from_node->type);
+    const bool source_pin_resolved = legacy_data_validator_source
+        ? detail::ResolveLegacyDataValidatorOutputPinIndex(
+              link_json, from_pin_index)
+        : legacy_classical_tree_source
+            ? detail::ResolveLegacyClassicalTreeOutputPinIndex(
+                  link_json, from_pin_index)
+            : detail::ResolveSerializedPinIndex(
+                  link_json, "from_pin_index", from_node->outputs.size(),
+                  from_pin_index);
+    if (!source_pin_resolved) {
         const std::string saved_index = link_json.contains("from_pin_index")
             ? link_json["from_pin_index"].dump()
             : "legacy default 0";
+        if (legacy_data_validator_source) {
+            spdlog::warn(
+                "Skipping saved graph link {} ({} -> {}): legacy DataValidator "
+                "output index {} is not a runtime artifact; only Issues "
+                "(legacy index 2) can be migrated",
+                link.id,
+                link.from_node,
+                link.to_node,
+                saved_index);
+            return false;
+        }
+        if (legacy_classical_tree_source) {
+            spdlog::warn(
+                "Skipping saved graph link {} ({} -> {}): legacy tree Model "
+                "output index {} was not a runtime artifact; only Predictions "
+                "(legacy index 1) can be migrated to the Dataset output",
+                link.id,
+                link.from_node,
+                link.to_node,
+                saved_index);
+            return false;
+        }
         spdlog::warn(
             "Skipping saved graph link {} ({} -> {}): source pin index {} is invalid "
             "for node '{}' ({} outputs)",
@@ -1109,6 +1200,12 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
 
         const bool preserve_legacy_data_boundary =
             detail::PreserveLegacyDataBoundaryPins(graph_json);
+        const bool preserve_legacy_data_validator_outputs =
+            detail::PreserveLegacyDataValidatorOutputs(graph_json);
+        const bool preserve_legacy_evaluation_table_inputs =
+            detail::PreserveLegacyEvaluationTableInputs(graph_json);
+        const bool preserve_legacy_classical_tree_pins =
+            detail::PreserveLegacyClassicalTreeTablePins(graph_json);
         if (preserve_legacy_data_boundary) {
             spdlog::warn(
                 "Loading an unversioned/legacy data boundary without changing its pins or links. Use the Data Split migration action to adopt Dataset v2 explicitly.");
@@ -1231,6 +1328,9 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
                     link_json,
                     find_loaded_node(link.from_node),
                     find_loaded_node(link.to_node),
+                    preserve_legacy_data_validator_outputs,
+                    preserve_legacy_evaluation_table_inputs,
+                    preserve_legacy_classical_tree_pins,
                     link)) {
                 continue;
             }
@@ -1319,6 +1419,12 @@ std::string NodeEditor::GetGraphJson() const {
         j["data_boundary_version"] = HasLegacyDataBoundary()
             ? detail::kLegacyDataBoundaryVersion
             : detail::kCurrentDataBoundaryVersion;
+        j["data_validator_contract_version"] =
+            detail::kCurrentDataValidatorContractVersion;
+        j["evaluation_table_contract_version"] =
+            detail::kCurrentEvaluationTableContractVersion;
+        j["classical_tree_table_contract_version"] =
+            detail::kCurrentClassicalTreeTableContractVersion;
         j["framework"] = static_cast<int>(selected_framework_);
 
         // Serialize nodes

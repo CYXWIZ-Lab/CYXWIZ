@@ -2,6 +2,7 @@
 
 #include "arrow_dataset.h"
 #include "data_registry.h"
+#include "materialization_memory_guard.h"
 #include "pipeline_runtime_capabilities.h"
 
 #include <arrow/table.h>
@@ -128,11 +129,13 @@ MaterializationCacheKeyInput BuildCacheKeyInput(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
     const std::string& source_dataset_name,
-    const std::string& source_schema_fingerprint) {
+    const std::string& source_schema_fingerprint,
+    const std::vector<MaterializationCacheDependencyIdentity>& dependencies) {
     MaterializationCacheKeyInput input;
     input.source_dataset_name = source_dataset_name;
     input.source_identity = "arrow:" + source_dataset_name;
     input.source_schema_fingerprint = source_schema_fingerprint;
+    input.dependencies = dependencies;
     input.nodes = nodes;
     input.links = links;
     PopulateSourceFileIdentity(
@@ -380,17 +383,47 @@ MaterializeResult PipelineMaterializer::Materialize(
         source_dataset_name + kMaterializedSuffix;
     const std::string source_schema_fingerprint =
         ComputeSchemaFingerprint(source_table->schema());
-    const bool cache_enabled = CacheEnabled(cache_config);
+    MaterializationCacheability cacheability;
+    if (cache_config.mode != MaterializationCacheMode::Disabled) {
+        cacheability = EvaluateCacheability(
+            nodes, links, source_dataset_name);
+    }
+    if (!cacheability.valid) {
+        result.cache_status = MaterializationCacheStatus::Unsupported;
+        result.cache_message = "Materialization cache input is invalid: " +
+                               cacheability.reason + ".";
+        SetMaterializationFailure(
+            result, MaterializationFailureKind::Error,
+            "PipelineMaterializer: " + cacheability.reason);
+        return result;
+    }
+    const bool cache_enabled =
+        CacheEnabled(cache_config) && cacheability.cacheable;
 
     if (cache_config.mode != MaterializationCacheMode::Disabled &&
-        cache_config.cache_root.empty()) {
+        !cacheability.cacheable) {
+        result.cache_status = MaterializationCacheStatus::Unsupported;
+        result.cache_message = "Materialization cache bypassed: " +
+                               cacheability.reason + ".";
+        if (cache_config.mode == MaterializationCacheMode::RequireHit) {
+            SetMaterializationFailure(
+                result, MaterializationFailureKind::Error,
+                "PipelineMaterializer: require-hit cache policy cannot be "
+                "used because " + cacheability.reason);
+            return result;
+        }
+    }
+
+    if (cache_config.mode != MaterializationCacheMode::Disabled &&
+        cache_config.cache_root.empty() && cacheability.cacheable) {
         result.cache_status = MaterializationCacheStatus::Unsupported;
         result.cache_message = "materialization cache root is empty";
     }
 
     if (cache_enabled) {
         result.cache_key = ComputeMaterializationCacheKey(BuildCacheKeyInput(
-            nodes, links, source_dataset_name, source_schema_fingerprint));
+            nodes, links, source_dataset_name, source_schema_fingerprint,
+            cacheability.dependencies));
         const auto manifest_path =
             MaterializationCacheManifestPath(cache_config, result.cache_key);
         result.cache_manifest_path = manifest_path.string();
@@ -418,6 +451,8 @@ MaterializeResult PipelineMaterializer::Materialize(
                             execution_context, result)) {
                         return result;
                     }
+                    const auto cache_load_started =
+                        std::chrono::steady_clock::now();
                     auto cached = LoadCachedArrowDataset(
                         validation.manifest, materialized_name);
                     if (cached && cached->GetArrowTable()) {
@@ -439,13 +474,62 @@ MaterializeResult PipelineMaterializer::Materialize(
                         result.operators_applied =
                             validation.manifest.operators_applied;
                         result.cache_status = MaterializationCacheStatus::Hit;
-                        result.cache_message = "Using cached prepared dataset.";
                         result.loaded_from_cache = true;
+                        const auto cache_load_elapsed =
+                            std::chrono::steady_clock::now() -
+                            cache_load_started;
+                        const auto cache_load_ms =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                cache_load_elapsed).count();
+                        std::error_code artifact_size_error;
+                        const uint64_t artifact_bytes =
+                            static_cast<uint64_t>(std::filesystem::file_size(
+                                result.cache_artifact_path,
+                                artifact_size_error));
+                        const uint64_t safe_artifact_bytes =
+                            artifact_size_error ? 0 : artifact_bytes;
+                        const uint64_t expanded_bytes =
+                            static_cast<uint64_t>(cached->GetMemoryUsage());
+
+                        std::ostringstream cache_message;
+                        cache_message
+                            << "Preprocessing skipped: reused cached "
+                               "materialization ("
+                            << result.cache_row_count << " rows x "
+                            << result.cache_column_count << " columns";
+                        if (safe_artifact_bytes > 0) {
+                            cache_message << ", "
+                                          << FormatMaterializationBytes(
+                                                 safe_artifact_bytes)
+                                          << " on disk";
+                        }
+                        if (expanded_bytes > 0) {
+                            cache_message << " -> "
+                                          << FormatMaterializationBytes(
+                                                 expanded_bytes)
+                                          << " in memory";
+                        }
+                        cache_message << ", loaded in "
+                                      << std::fixed << std::setprecision(1)
+                                      << static_cast<double>(cache_load_ms) /
+                                             1000.0
+                                      << " s).";
+                        result.cache_message = cache_message.str();
                         SaveCacheManifestLastUsed(validation.manifest,
                                                   manifest_path);
                         spdlog::info(
-                            "PipelineMaterializer: reused cached materialization '{}' -> '{}' ({})",
-                            source_dataset_name, materialized_name,
+                            "PipelineMaterializer: cache hit; skipped {} "
+                            "preprocessing operator(s) by reusing '{}' -> '{}' "
+                            "(rows={}, columns={}, artifact_bytes={}, "
+                            "expanded_bytes={}, load_ms={}, path='{}')",
+                            result.operators_applied,
+                            source_dataset_name,
+                            materialized_name,
+                            result.cache_row_count,
+                            result.cache_column_count,
+                            safe_artifact_bytes,
+                            expanded_bytes,
+                            cache_load_ms,
                             result.cache_artifact_path);
                         return result;
                     }
@@ -527,6 +611,7 @@ MaterializeResult PipelineMaterializer::Materialize(
             result.cache_row_count = manifest.row_count;
             result.cache_column_count = manifest.column_count;
             manifest.schema_fingerprint = source_schema_fingerprint;
+            manifest.dependencies = cacheability.dependencies;
             manifest.operators_applied = result.operators_applied;
             manifest.cache_status = MaterializationCacheStatus::Saved;
 

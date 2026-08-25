@@ -12,6 +12,8 @@
 
 namespace cyxwiz {
 
+inline constexpr int kMaterializationCacheSchemaVersion = 2;
+
 enum class MaterializationCacheMode {
     Disabled,
     Auto,
@@ -36,6 +38,14 @@ struct MaterializationCacheConfig {
     std::string artifact_format = "parquet";
 };
 
+struct MaterializationCacheDependencyIdentity {
+    int node_id = -1;
+    std::string role;
+    std::string path;
+    uint64_t byte_size = 0;
+    std::string content_sha256;
+};
+
 struct MaterializationCacheKeyInput {
     std::string source_dataset_name;
     std::string source_identity;
@@ -43,6 +53,7 @@ struct MaterializationCacheKeyInput {
     uint64_t source_file_size = 0;
     uint64_t source_file_mtime = 0;
     std::string source_schema_fingerprint;
+    std::vector<MaterializationCacheDependencyIdentity> dependencies;
     std::vector<gui::MLNode> nodes;
     std::vector<gui::NodeLink> links;
 };
@@ -56,9 +67,11 @@ struct MaterializationCacheManifest {
     int64_t row_count = 0;
     int64_t column_count = 0;
     std::string schema_fingerprint;
+    std::vector<MaterializationCacheDependencyIdentity> dependencies;
     int operators_applied = 0;
     std::string engine_version;
-    int materializer_cache_schema_version = 1;
+    int materializer_cache_schema_version =
+        kMaterializationCacheSchemaVersion;
     std::string created_at;
     std::string last_used_at;
     MaterializationCacheStatus cache_status = MaterializationCacheStatus::Miss;
@@ -79,6 +92,12 @@ std::string ComputeSchemaFingerprint(
     const std::shared_ptr<arrow::Schema>& schema);
 std::string ComputeMaterializationCacheKey(
     const MaterializationCacheKeyInput& input);
+bool ResolveMaterializationCacheDependencyIdentity(
+    int node_id,
+    const std::string& role,
+    const std::string& path,
+    MaterializationCacheDependencyIdentity& identity,
+    std::string* error = nullptr);
 
 std::filesystem::path MaterializationCacheEntryDirectory(
     const MaterializationCacheConfig& config,

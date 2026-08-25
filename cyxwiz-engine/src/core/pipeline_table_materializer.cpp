@@ -336,6 +336,97 @@ std::map<std::string, std::string> BuildOperatorParams(
 
 } // namespace
 
+MaterializationCacheability PipelineMaterializer::EvaluateCacheability(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    const std::string& source_dataset_name) {
+    MaterializationCacheability result;
+    const gui::MLNode* data_input =
+        FindDataInputNode(nodes, source_dataset_name);
+    if (!data_input) {
+        result.cacheable = false;
+        result.reason = "materialization source node is unavailable";
+        return result;
+    }
+
+    std::string graph_shape_error;
+    if (!ValidateLinearMaterializerOperatorPath(
+            *data_input, nodes, links, graph_shape_error)) {
+        result.cacheable = false;
+        result.reason = graph_shape_error;
+        return result;
+    }
+
+    auto& factory = PipelineOperatorFactory::Instance();
+    std::queue<int> queue;
+    std::unordered_set<int> visited;
+    queue.push(data_input->id);
+    visited.insert(data_input->id);
+    while (!queue.empty()) {
+        const int node_id = queue.front();
+        queue.pop();
+        const gui::MLNode* node = FindNodeById(node_id, nodes);
+        if (!node) {
+            continue;
+        }
+
+        const auto operator_type =
+            ResolveArrowTableMaterializerOperatorType(node->type);
+        if (node->id != data_input->id && operator_type.has_value()) {
+            auto op = factory.Create(*operator_type);
+            if (!op) {
+                result.cacheable = false;
+                result.reason = "operator factory could not inspect node '" +
+                                node->name + "'";
+                return result;
+            }
+            std::string error;
+            const auto parameters = BuildOperatorParams(*node, nodes, links);
+            if (!op->Configure(parameters, error)) {
+                result.cacheable = false;
+                result.reason = "node '" + node->name +
+                                "' configuration is invalid: " + error;
+                return result;
+            }
+            if (!op->IsCacheable()) {
+                result.cacheable = false;
+                result.reason = "node '" + node->name +
+                                "' reads or writes fitted state";
+                return result;
+            }
+            std::vector<PipelineOperatorCacheDependency> dependencies;
+            if (!op->CollectCacheDependencies(dependencies, error)) {
+                result.cacheable = false;
+                result.valid = false;
+                result.reason = "node '" + node->name +
+                                "' cache dependency is invalid: " + error;
+                return result;
+            }
+            for (const auto& dependency : dependencies) {
+                MaterializationCacheDependencyIdentity identity;
+                if (!ResolveMaterializationCacheDependencyIdentity(
+                        node->id, dependency.role, dependency.path,
+                        identity, &error)) {
+                    result.cacheable = false;
+                    result.valid = false;
+                    result.reason = "node '" + node->name +
+                                    "' cache dependency is invalid: " + error;
+                    return result;
+                }
+                result.dependencies.push_back(std::move(identity));
+            }
+        }
+
+        for (const auto& link : links) {
+            if (link.from_node == node_id &&
+                visited.insert(link.to_node).second) {
+                queue.push(link.to_node);
+            }
+        }
+    }
+    return result;
+}
+
 MaterializeTableResult PipelineMaterializer::PreflightTable(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
