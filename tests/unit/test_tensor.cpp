@@ -304,7 +304,7 @@ TEST_CASE("Tensor squeeze removes singleton dimensions", "[tensor]") {
 
     REQUIRE(squeezed.Shape() == std::vector<size_t>{2, 3});
     REQUIRE(dim_squeezed.Shape() == std::vector<size_t>{1, 2, 3});
-    REQUIRE_THROWS_AS(t.Squeeze(1), std::runtime_error);
+    REQUIRE(t.Squeeze(1).Shape() == std::vector<size_t>{1, 2, 1, 3});
 }
 
 TEST_CASE("Tensor unsqueeze inserts singleton dimension", "[tensor]") {

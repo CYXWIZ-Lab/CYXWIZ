@@ -2632,6 +2632,235 @@
         }
       }
     ],
+    "tensor_shape_semantics_f32": {
+      "dtype": "float32",
+      "empty": {
+        "shape": [
+          2,
+          0,
+          3
+        ],
+        "values": []
+      },
+      "expected": {
+        "empty_flatten": {
+          "shape": [
+            2,
+            0
+          ],
+          "values": []
+        },
+        "empty_reshape": {
+          "shape": [
+            0,
+            6
+          ],
+          "values": []
+        },
+        "flatten_all": {
+          "shape": [
+            6
+          ],
+          "values": [
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0
+          ]
+        },
+        "flatten_middle": {
+          "shape": [
+            1,
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0
+          ]
+        },
+        "reshape": {
+          "shape": [
+            3,
+            2
+          ],
+          "values": [
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0
+          ]
+        },
+        "scalar_flatten": {
+          "shape": [
+            1
+          ],
+          "values": [
+            7.0
+          ]
+        },
+        "scalar_squeeze": {
+          "shape": [],
+          "values": [
+            7.0
+          ]
+        },
+        "scalar_squeeze_dim": {
+          "shape": [],
+          "values": [
+            7.0
+          ]
+        },
+        "scalar_unsqueeze": {
+          "shape": [
+            1
+          ],
+          "values": [
+            7.0
+          ]
+        },
+        "squeeze_all": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0
+          ]
+        },
+        "squeeze_last_non_singleton": {
+          "shape": [
+            1,
+            2,
+            1,
+            3
+          ],
+          "values": [
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0
+          ]
+        },
+        "squeeze_middle_non_singleton": {
+          "shape": [
+            1,
+            2,
+            1,
+            3
+          ],
+          "values": [
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0
+          ]
+        },
+        "squeeze_negative_singleton": {
+          "shape": [
+            1,
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0
+          ]
+        },
+        "unsqueeze_back": {
+          "shape": [
+            1,
+            2,
+            1,
+            3,
+            1
+          ],
+          "values": [
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0
+          ]
+        },
+        "unsqueeze_front": {
+          "shape": [
+            1,
+            1,
+            2,
+            1,
+            3
+          ],
+          "values": [
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0
+          ]
+        },
+        "view": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            5.0
+          ]
+        }
+      },
+      "input": {
+        "shape": [
+          1,
+          2,
+          1,
+          3
+        ],
+        "values": [
+          0.0,
+          1.0,
+          2.0,
+          3.0,
+          4.0,
+          5.0
+        ]
+      },
+      "operation": "torch.Tensor shape operations",
+      "scalar": {
+        "shape": [],
+        "values": [
+          7.0
+        ]
+      }
+    },
     "weighted_sampler_inverse_frequency": {
       "absolute_probability_tolerance": 0.03,
       "class_counts": [

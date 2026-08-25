@@ -40,33 +40,38 @@ Tensor Tensor::View(const std::vector<size_t>& new_shape) const {
     return Reshape(new_shape);
 }
 
-Tensor Tensor::Squeeze(int dim) const {
+Tensor Tensor::Squeeze() const {
     std::vector<size_t> new_shape;
-
-    if (dim == -1) {
-        for (size_t size : shape_) {
-            if (size != 1) {
-                new_shape.push_back(size);
-            }
+    for (size_t size : shape_) {
+        if (size != 1) {
+            new_shape.push_back(size);
         }
-    } else {
-        const int rank = static_cast<int>(shape_.size());
-        const int normalized = tensor_utils::NormalizeDim(dim, rank);
-        if (shape_[static_cast<size_t>(normalized)] != 1) {
-            throw std::runtime_error("Tensor::Squeeze: selected dimension must have size 1");
-        }
+    }
+    return Reshape(new_shape);
+}
 
-        new_shape.reserve(shape_.size() - 1);
-        for (size_t i = 0; i < shape_.size(); i++) {
-            if (i != static_cast<size_t>(normalized)) {
-                new_shape.push_back(shape_[i]);
-            }
+Tensor Tensor::Squeeze(int dim) const {
+    const int rank = static_cast<int>(shape_.size());
+    if (rank == 0) {
+        if (dim < -1 || dim > 0) {
+            throw std::runtime_error("Tensor dimension out of range");
+        }
+        return Reshape(shape_);
+    }
+
+    const int normalized = tensor_utils::NormalizeDim(dim, rank);
+    if (shape_[static_cast<size_t>(normalized)] != 1) {
+        return Reshape(shape_);
+    }
+
+    std::vector<size_t> new_shape;
+    new_shape.reserve(shape_.size() - 1);
+    for (size_t i = 0; i < shape_.size(); i++) {
+        if (i != static_cast<size_t>(normalized)) {
+            new_shape.push_back(shape_[i]);
         }
     }
 
-    if (new_shape.empty()) {
-        new_shape.push_back(1);
-    }
     return Reshape(new_shape);
 }
 

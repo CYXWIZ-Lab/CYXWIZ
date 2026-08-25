@@ -106,7 +106,8 @@ public:
     Tensor Clone() const;
     Tensor Reshape(const std::vector<size_t>& new_shape) const;
     Tensor View(const std::vector<size_t>& new_shape) const;
-    Tensor Squeeze(int dim = -1) const;
+    Tensor Squeeze() const;
+    Tensor Squeeze(int dim) const;
     Tensor Unsqueeze(int dim) const;
     Tensor Flatten() const;
     Tensor Flatten(int start_dim, int end_dim = -1) const;

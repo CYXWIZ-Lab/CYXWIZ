@@ -104,6 +104,15 @@ device-to-host transfers. Rank-3 native-to-semantic and semantic-to-native
 conversion use device-side reshape/reorder operations, matching the existing
 rank-2 device-resident contract.
 
+`cyxwiz-tests "[tensor_shape]"` consumes generated PyTorch 2.10 fixtures for
+reshape, view, squeeze, unsqueeze, and flatten across ordinary, scalar, and
+zero-element shapes. It also checks invalid dimensions/products and exercises
+every Tensor dtype under strict ArrayFire CPU execution, requiring zero native
+fallbacks and zero device-to-host transfers for supported device-resident
+rank transitions. Explicit `Squeeze(dim)` follows PyTorch: negative dimensions
+are normalized, non-singleton dimensions are a no-op, and rank-0 squeeze stays
+rank 0; parameterless `Squeeze()` removes all singleton dimensions.
+
 `cyxwiz-tests "[flatten]"` consumes generated PyTorch 2.10
 `torch.nn.Flatten` forward/autograd fixtures for rank-2/3/4 inputs, positive
 and negative configured `start_dim`, and exact value ordering. It exercises
@@ -234,6 +243,8 @@ build\bin\Debug\cyxwiz-tests.exe "[tensor_ownership]"
 build\bin\Debug\cyxwiz-tests.exe "[tensor_host_access]"
 
 build\bin\Debug\cyxwiz-tests.exe "[tensor_layout]"
+
+build\bin\Debug\cyxwiz-tests.exe "[tensor_shape]"
 
 build\bin\Debug\cyxwiz-tests.exe "[flatten]"
 

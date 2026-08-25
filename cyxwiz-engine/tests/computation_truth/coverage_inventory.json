@@ -64,10 +64,10 @@
       "contract": "Element order and count match PyTorch; invalid dimensions and products fail before compute.",
       "supported": "public Tensor rank and dtype domain",
       "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_tensor", "test_tensor_reshape_runtime_contract"],
+      "tests": ["cyxwiz-tests:[tensor]", "cyxwiz-tests:[tensor_shape]", "test_tensor_reshape_runtime_contract"],
       "execution": "ArrayFire-first where device-current",
-      "status": "partial",
-      "gaps": ["complete invalid/empty/rank matrix", "residency evidence"]
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "TENSOR-PERMUTE-001",

@@ -117,6 +117,44 @@ def flatten_matrix() -> list[dict[str, Any]]:
     ]
 
 
+def tensor_shape_semantics() -> dict[str, Any]:
+    input_tensor = torch.arange(6, dtype=torch.float32).reshape(1, 2, 1, 3)
+    scalar = torch.tensor(7.0, dtype=torch.float32)
+    empty = torch.empty((2, 0, 3), dtype=torch.float32)
+
+    return {
+        "operation": "torch.Tensor shape operations",
+        "dtype": "float32",
+        "input": tensor_fixture(input_tensor),
+        "scalar": tensor_fixture(scalar),
+        "empty": tensor_fixture(empty),
+        "expected": {
+            "reshape": tensor_fixture(input_tensor.reshape(3, 2)),
+            "view": tensor_fixture(input_tensor.view(2, 3)),
+            "squeeze_all": tensor_fixture(torch.squeeze(input_tensor)),
+            "squeeze_last_non_singleton": tensor_fixture(
+                torch.squeeze(input_tensor, -1)
+            ),
+            "squeeze_middle_non_singleton": tensor_fixture(
+                torch.squeeze(input_tensor, 1)
+            ),
+            "squeeze_negative_singleton": tensor_fixture(
+                torch.squeeze(input_tensor, -2)
+            ),
+            "unsqueeze_front": tensor_fixture(torch.unsqueeze(input_tensor, 0)),
+            "unsqueeze_back": tensor_fixture(torch.unsqueeze(input_tensor, -1)),
+            "flatten_all": tensor_fixture(torch.flatten(input_tensor)),
+            "flatten_middle": tensor_fixture(torch.flatten(input_tensor, 1, 2)),
+            "scalar_squeeze": tensor_fixture(torch.squeeze(scalar)),
+            "scalar_squeeze_dim": tensor_fixture(torch.squeeze(scalar, -1)),
+            "scalar_unsqueeze": tensor_fixture(torch.unsqueeze(scalar, -1)),
+            "scalar_flatten": tensor_fixture(torch.flatten(scalar)),
+            "empty_reshape": tensor_fixture(empty.reshape(0, 6)),
+            "empty_flatten": tensor_fixture(torch.flatten(empty, 1, 2)),
+        },
+    }
+
+
 def dropout_semantics() -> dict[str, Any]:
     input_tensor = torch.tensor(
         [[1.0, -2.0, 3.5], [4.0, -5.0, 6.5]],
@@ -959,6 +997,7 @@ def generate_fixture() -> dict[str, Any]:
         "cases": {
             "dropout_semantics_f32": dropout_semantics(),
             "flatten_forward_backward_f32": flatten_matrix(),
+            "tensor_shape_semantics_f32": tensor_shape_semantics(),
             "linear_basic_f32": linear_case(),
             "cross_entropy_index_mean_f32": cross_entropy_case(),
             "cross_entropy_matrix_f32": cross_entropy_matrix(),

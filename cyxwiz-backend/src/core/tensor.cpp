@@ -959,13 +959,25 @@ Tensor Tensor::RangeN(const std::vector<size_t>& shape, DataType dtype) {
 }
 
 Tensor Tensor::Reshape(const std::vector<size_t>& new_shape) const {
-    size_t new_elements = 1;
+    bool has_zero_dimension = false;
     for (size_t dim : new_shape) {
-        size_t next = 0;
-        if (!tensor_utils::SafeMultiply(new_elements, dim, next)) {
-            throw std::overflow_error("Tensor::Reshape: integer overflow in dimension product");
+        if (dim == 0) {
+            has_zero_dimension = true;
+            break;
         }
-        new_elements = next;
+    }
+
+    size_t new_elements = 1;
+    if (has_zero_dimension) {
+        new_elements = 0;
+    } else {
+        for (size_t dim : new_shape) {
+            size_t next = 0;
+            if (!tensor_utils::SafeMultiply(new_elements, dim, next)) {
+                throw std::overflow_error("Tensor::Reshape: integer overflow in dimension product");
+            }
+            new_elements = next;
+        }
     }
 
     if (new_elements != NumElements()) {
@@ -1054,7 +1066,7 @@ Tensor Tensor::Reshape(const std::vector<size_t>& new_shape) const {
     }
 #endif
 
-    return Tensor(new_shape, Data(), dtype_);
+    return Tensor(new_shape, ReadData(), dtype_);
 }
 
 Tensor Tensor::Transpose() const {
