@@ -201,6 +201,55 @@ void CheckExplicitHostAccess() {
     REQUIRE(roundtrip.ReadData<T>()[2] == static_cast<T>(42));
     REQUIRE(host.ReadData<T>()[2] == values[2]);
 }
+
+template<typename T>
+void CheckSemanticLayoutRoundTrip(const std::vector<size_t>& shape) {
+    constexpr cyxwiz::DataType dtype = TensorType<T>::value;
+    size_t element_count = 1;
+    for (size_t dim : shape) {
+        element_count *= dim;
+    }
+    std::vector<T> values(element_count);
+    for (size_t index = 0; index < element_count; ++index) {
+        values[index] = static_cast<T>(index + 1);
+    }
+
+    cyxwiz::Tensor host(shape, values.data(), dtype);
+    cyxwiz::Tensor device_only;
+    device_only.SetFromArray(host.GetArray());
+
+    g_ownership_host_sync_count = 0;
+    g_ownership_host_sync_bytes = 0;
+    cyxwiz::Tensor roundtrip;
+    {
+        const cyxwiz::ScopedArrayFireHostSyncObserver observer(
+            &CaptureOwnershipHostSync);
+        af::array semantic = device_only.GetSemanticArray();
+        for (size_t dim = 0; dim < shape.size(); ++dim) {
+            REQUIRE(semantic.dims(static_cast<unsigned int>(dim)) ==
+                    static_cast<dim_t>(shape[dim]));
+        }
+        roundtrip = cyxwiz::Tensor::FromSemanticArray(semantic, shape);
+        af::array native = roundtrip.GetArray();
+        native.eval();
+    }
+
+    REQUIRE(g_ownership_host_sync_count == 0);
+    REQUIRE(g_ownership_host_sync_bytes == 0);
+    REQUIRE(roundtrip.Shape() == shape);
+    const T* output = roundtrip.ReadData<T>();
+    for (size_t index = 0; index < element_count; ++index) {
+        REQUIRE(output[index] == values[index]);
+    }
+}
+
+template<typename T>
+void CheckSemanticLayoutMatrix() {
+    CheckSemanticLayoutRoundTrip<T>({6});
+    CheckSemanticLayoutRoundTrip<T>({2, 3});
+    CheckSemanticLayoutRoundTrip<T>({2, 2, 3});
+    CheckSemanticLayoutRoundTrip<T>({2, 2, 2, 3});
+}
 #endif
 
 } // namespace
@@ -264,5 +313,19 @@ TEST_CASE("Tensor explicit host access preserves reads and rebuilds mutations",
     CheckExplicitHostAccess<int32_t>();
     CheckExplicitHostAccess<int64_t>();
     CheckExplicitHostAccess<uint8_t>();
+}
+
+TEST_CASE("Tensor semantic layouts round-trip all dtypes without host sync",
+          "[tensor][tensor_layout][arrayfire][host_sync]") {
+    const auto activation =
+        cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
+    REQUIRE(activation.success);
+    REQUIRE(activation.execution_validated);
+
+    CheckSemanticLayoutMatrix<float>();
+    CheckSemanticLayoutMatrix<double>();
+    CheckSemanticLayoutMatrix<int32_t>();
+    CheckSemanticLayoutMatrix<int64_t>();
+    CheckSemanticLayoutMatrix<uint8_t>();
 }
 #endif

@@ -404,6 +404,20 @@ af::array Tensor::GetArray() const {
         return *af_array_;
     }
 
+    if (device_current_ && af_array_ && shape_.size() == 3 &&
+        device_layout_ == TensorDeviceLayout::RowMajor3D) {
+        af::array reordered = af::reorder(*af_array_, 2, 1, 0);
+        af::array converted = af::moddims(
+            reordered,
+            static_cast<dim_t>(shape_[0]),
+            static_cast<dim_t>(shape_[1]),
+            static_cast<dim_t>(shape_[2]));
+        converted.eval();
+        af_array_ = std::make_unique<af::array>(std::move(converted));
+        device_layout_ = TensorDeviceLayout::ArrayFireNative;
+        return *af_array_;
+    }
+
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LayoutConversion,
         "Tensor::GetArray");
@@ -472,6 +486,20 @@ af::array Tensor::GetArrayRowMajor3D() const {
         return GetArray();
     }
     if (device_current_ && af_array_ && device_layout_ == TensorDeviceLayout::RowMajor3D) {
+        return *af_array_;
+    }
+
+    if (device_current_ && af_array_ &&
+        device_layout_ == TensorDeviceLayout::ArrayFireNative) {
+        af::array reshaped = af::moddims(
+            *af_array_,
+            static_cast<dim_t>(shape_[2]),
+            static_cast<dim_t>(shape_[1]),
+            static_cast<dim_t>(shape_[0]));
+        af::array converted = af::reorder(reshaped, 2, 1, 0);
+        converted.eval();
+        af_array_ = std::make_unique<af::array>(std::move(converted));
+        device_layout_ = TensorDeviceLayout::RowMajor3D;
         return *af_array_;
     }
 

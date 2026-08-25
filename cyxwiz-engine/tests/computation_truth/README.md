@@ -97,6 +97,13 @@ manifest, including the sequence training step. The wider legacy algorithm
 surface remains named in the ledger for incremental compatibility-access
 classification rather than being claimed complete.
 
+`cyxwiz-tests "[tensor_layout]"` proves semantic ArrayFire layout round trips
+for ranks 1 through 4 and all five Tensor dtypes. The matrix checks logical
+shape and value preservation while a host-sync observer requires zero
+device-to-host transfers. Rank-3 native-to-semantic and semantic-to-native
+conversion use device-side reshape/reorder operations, matching the existing
+rank-2 device-resident contract.
+
 `cyxwiz-tests "[flatten]"` consumes generated PyTorch 2.10
 `torch.nn.Flatten` forward/autograd fixtures for rank-2/3/4 inputs, positive
 and negative configured `start_dim`, and exact value ordering. It exercises
@@ -225,6 +232,8 @@ build\bin\Debug\cyxwiz-tests.exe "[scheduler]"
 build\bin\Debug\cyxwiz-tests.exe "[tensor_ownership]"
 
 build\bin\Debug\cyxwiz-tests.exe "[tensor_host_access]"
+
+build\bin\Debug\cyxwiz-tests.exe "[tensor_layout]"
 
 build\bin\Debug\cyxwiz-tests.exe "[flatten]"
 

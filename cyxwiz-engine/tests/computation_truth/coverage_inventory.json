@@ -48,10 +48,10 @@
       "contract": "Logical row-major rank-2/rank-3 semantics are preserved without device-to-host conversion.",
       "supported": "rank 1-4; explicit semantic adapters for rank 2 and 3",
       "oracle": "PyTorch logical layout plus zero-host-sync trace",
-      "tests": ["cyxwiz-tests:test_tensor", "test_tensor_reshape_runtime_contract"],
+      "tests": ["cyxwiz-tests:[tensor]", "cyxwiz-tests:[tensor_layout]", "test_tensor_reshape_runtime_contract"],
       "execution": "ArrayFire device-to-device",
-      "status": "partial",
-      "gaps": ["explicit zero-host-sync round-trip matrix"]
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "TENSOR-SHAPE-001",
