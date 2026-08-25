@@ -32,10 +32,10 @@
       "contract": "ReadData preserves device state; MutableData invalidates device state; successful guarded compute must not use Data.",
       "supported": "all Tensor dtypes",
       "oracle": "engine ownership and host-sync trace contract",
-      "tests": ["cyxwiz-tests:test_tensor", "test_training_executor_arrow_parquet"],
+      "tests": ["cyxwiz-tests:[tensor]", "cyxwiz-tests:[tensor_host_access]", "cyxwiz-tests:[source_scan]", "test_training_executor_arrow_parquet"],
       "execution": "declared host boundary",
       "status": "partial",
-      "gaps": ["direct preservation/invalidation regression", "source guard coverage for all hot paths"]
+      "gaps": ["remaining legacy compatibility Data audit outside the guarded training manifest"]
     },
     {
       "id": "TENSOR-LAYOUT-001",

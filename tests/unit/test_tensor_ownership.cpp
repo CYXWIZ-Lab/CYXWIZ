@@ -157,6 +157,50 @@ void CheckDeviceOwnership() {
     REQUIRE(g_ownership_host_sync_bytes == 2 * original.NumBytes());
     REQUIRE(cloned.ReadData<T>()[0] == static_cast<T>(42));
 }
+
+template<typename T>
+void CheckExplicitHostAccess() {
+    constexpr cyxwiz::DataType dtype = TensorType<T>::value;
+    const auto values = Values<T>();
+    cyxwiz::Tensor host({2, 3}, values.data(), dtype);
+
+    cyxwiz::Tensor readable = cyxwiz::Tensor::FromSemanticArray(
+        host.GetSemanticArray(), {2, 3});
+    const size_t before_read = cyxwiz::MemoryManager::GetAllocatedBytes();
+    g_ownership_host_sync_count = 0;
+    g_ownership_host_sync_bytes = 0;
+    {
+        const cyxwiz::ScopedArrayFireHostSyncObserver observer(
+            &CaptureOwnershipHostSync);
+        REQUIRE(readable.ReadData<T>()[3] == values[3]);
+        REQUIRE(readable.GetSemanticArray().elements() == 6);
+        REQUIRE(readable.ReadData<T>()[4] == values[4]);
+    }
+    REQUIRE(g_ownership_host_sync_count == 1);
+    REQUIRE(g_ownership_host_sync_bytes == readable.NumBytes());
+    REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() ==
+            before_read + readable.NumBytes());
+
+    cyxwiz::Tensor writable = cyxwiz::Tensor::FromSemanticArray(
+        host.GetSemanticArray(), {2, 3});
+    g_ownership_host_sync_count = 0;
+    g_ownership_host_sync_bytes = 0;
+    af::array rebuilt_device;
+    {
+        const cyxwiz::ScopedArrayFireHostSyncObserver observer(
+            &CaptureOwnershipHostSync);
+        writable.MutableData<T>()[2] = static_cast<T>(42);
+        rebuilt_device = writable.GetSemanticArray();
+        rebuilt_device.eval();
+    }
+    REQUIRE(g_ownership_host_sync_count == 1);
+    REQUIRE(g_ownership_host_sync_bytes == writable.NumBytes());
+
+    cyxwiz::Tensor roundtrip = cyxwiz::Tensor::FromSemanticArray(
+        rebuilt_device, {2, 3});
+    REQUIRE(roundtrip.ReadData<T>()[2] == static_cast<T>(42));
+    REQUIRE(host.ReadData<T>()[2] == values[2]);
+}
 #endif
 
 } // namespace
@@ -206,5 +250,19 @@ TEST_CASE("Tensor copy move and clone preserve device-only dtype state",
     CheckDeviceOwnership<int32_t>();
     CheckDeviceOwnership<int64_t>();
     CheckDeviceOwnership<uint8_t>();
+}
+
+TEST_CASE("Tensor explicit host access preserves reads and rebuilds mutations",
+          "[tensor][tensor_host_access][arrayfire][host_sync]") {
+    const auto activation =
+        cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
+    REQUIRE(activation.success);
+    REQUIRE(activation.execution_validated);
+
+    CheckExplicitHostAccess<float>();
+    CheckExplicitHostAccess<double>();
+    CheckExplicitHostAccess<int32_t>();
+    CheckExplicitHostAccess<int64_t>();
+    CheckExplicitHostAccess<uint8_t>();
 }
 #endif

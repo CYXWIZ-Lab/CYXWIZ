@@ -363,12 +363,16 @@ TEST_CASE("ArrayFire training hot path uses semantic and explicit host Tensor ac
         "cyxwiz-backend/src/algorithms/sequential/regularization_shape_modules.cpp",
         "cyxwiz-backend/src/algorithms/optimizers/adam_family.cpp",
         "cyxwiz-engine/src/core/classification_decision.cpp",
+        "cyxwiz-engine/src/core/sequence_training_step.h",
         "cyxwiz-engine/src/core/training_executor.cpp",
     };
     const std::vector<std::string> implicit_access_needles = {
         ".GetArray()",
         ".SetFromArray(",
         ".Data<",
+        ".Data()",
+        "->Data<",
+        "->Data()",
     };
 
     std::vector<RawFallbackHit> implicit_access_hits;

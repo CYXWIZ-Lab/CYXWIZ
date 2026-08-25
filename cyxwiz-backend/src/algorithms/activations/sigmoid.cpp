@@ -76,8 +76,8 @@ Tensor Sigmoid::Forward(const Tensor& input) {
     // CPU fallback
     Tensor output(input.Shape(), input.GetDataType());
     size_t num_elements = input.NumElements();
-    const float* input_data = static_cast<const float*>(input.Data());
-    float* output_data = static_cast<float*>(output.Data());
+    const float* input_data = input.ReadData<float>();
+    float* output_data = output.MutableData<float>();
 
     for (size_t i = 0; i < num_elements; i++) {
         output_data[i] = 1.0f / (1.0f + std::exp(-input_data[i]));
@@ -114,9 +114,9 @@ Tensor Sigmoid::Backward(const Tensor& grad_output, const Tensor& input) {
     // CPU fallback
     Tensor grad_input(input.Shape(), input.GetDataType());
     size_t num_elements = input.NumElements();
-    const float* grad_out_data = static_cast<const float*>(grad_output.Data());
-    const float* input_data = static_cast<const float*>(input.Data());
-    float* grad_in_data = static_cast<float*>(grad_input.Data());
+    const float* grad_out_data = grad_output.ReadData<float>();
+    const float* input_data = input.ReadData<float>();
+    float* grad_in_data = grad_input.MutableData<float>();
 
     for (size_t i = 0; i < num_elements; i++) {
         float sigmoid_val = 1.0f / (1.0f + std::exp(-input_data[i]));

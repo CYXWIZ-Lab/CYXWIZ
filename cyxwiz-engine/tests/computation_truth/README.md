@@ -86,6 +86,17 @@ PyTorch-compatible zero-element shapes: a later zero dimension short-circuits
 otherwise overflowing preceding dimensions to `NumElements() == 0` and
 `NumBytes() == 0`.
 
+`cyxwiz-tests "[tensor_host_access]"` proves the explicit host boundary for
+all five Tensor dtypes on ArrayFire CPU. A first `ReadData` records one exact
+payload readback and preserves the current semantic device array; repeated
+reads do not synchronize again. `MutableData` records the required readback,
+invalidates the old device value, and the next semantic device access rebuilds
+the changed value without another device-to-host transfer. The source scan now
+rejects typed and untyped compatibility `Data` calls in its guarded training
+manifest, including the sequence training step. The wider legacy algorithm
+surface remains named in the ledger for incremental compatibility-access
+classification rather than being claimed complete.
+
 `cyxwiz-tests "[flatten]"` consumes generated PyTorch 2.10
 `torch.nn.Flatten` forward/autograd fixtures for rank-2/3/4 inputs, positive
 and negative configured `start_dim`, and exact value ordering. It exercises
@@ -212,6 +223,8 @@ cmake --build build --config Debug --target cyxwiz-tests -- /m:4 /v:minimal
 build\bin\Debug\cyxwiz-tests.exe "[scheduler]"
 
 build\bin\Debug\cyxwiz-tests.exe "[tensor_ownership]"
+
+build\bin\Debug\cyxwiz-tests.exe "[tensor_host_access]"
 
 build\bin\Debug\cyxwiz-tests.exe "[flatten]"
 
