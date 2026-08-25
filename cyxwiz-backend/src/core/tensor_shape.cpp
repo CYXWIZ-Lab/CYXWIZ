@@ -68,18 +68,11 @@ af::array SemanticArrayFromRowMajorLinear(
 Tensor TensorFromPermutedSemantic(
     const af::array& semantic,
     const std::vector<size_t>& shape) {
-    if (shape.size() <= 3) {
+    if (shape.size() <= 4) {
         return Tensor::FromSemanticArray(semantic, shape);
     }
-
-    af::array row_major_storage = af::reorder(semantic, 3, 2, 1, 0);
-    af::dim4 native_dims(1, 1, 1, 1);
-    for (size_t axis = 0; axis < shape.size(); ++axis) {
-        native_dims[static_cast<unsigned int>(axis)] =
-            static_cast<dim_t>(shape[axis]);
-    }
-    af::array native = af::moddims(af::flat(row_major_storage), native_dims);
-    return Tensor::FromSemanticArray(native, shape);
+    throw std::runtime_error(
+        "ArrayFire semantic permutation supports ranks 1 through 4");
 }
 
 Tensor PermuteArrayFire(const Tensor& input,

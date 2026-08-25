@@ -187,6 +187,88 @@ def tensor_permute_matrix() -> list[dict[str, Any]]:
     ]
 
 
+def tensor_slice_case(
+    name: str,
+    shape: list[int],
+    dim: int,
+    start: int,
+    end: int = -1,
+    step: int = 1,
+) -> dict[str, Any]:
+    input_tensor = torch.arange(
+        math.prod(shape), dtype=torch.float32
+    ).reshape(shape)
+    normalized_dim = dim if dim >= 0 else dim + len(shape)
+    selection = [slice(None)] * len(shape)
+    selection[normalized_dim] = slice(start, None if end == -1 else end, step)
+    output = input_tensor[tuple(selection)]
+    return {
+        "name": name,
+        "operation": "torch.Tensor.__getitem__",
+        "dim": dim,
+        "start": start,
+        "end": end,
+        "step": step,
+        "input": tensor_fixture(input_tensor),
+        "expected": tensor_fixture(output),
+    }
+
+
+def tensor_index_select_case(
+    name: str,
+    shape: list[int],
+    dim: int,
+    indices: list[int],
+) -> dict[str, Any]:
+    input_tensor = torch.arange(
+        math.prod(shape), dtype=torch.float32
+    ).reshape(shape)
+    normalized_dim = dim if dim >= 0 else dim + len(shape)
+    dim_size = shape[normalized_dim]
+    oracle_indices = [
+        index + dim_size if index < 0 else index
+        for index in indices
+    ]
+    output = torch.index_select(
+        input_tensor,
+        normalized_dim,
+        torch.tensor(oracle_indices, dtype=torch.int64),
+    )
+    return {
+        "name": name,
+        "operation": "torch.index_select",
+        "dim": dim,
+        "indices": indices,
+        "oracle_indices": oracle_indices,
+        "input": tensor_fixture(input_tensor),
+        "expected": tensor_fixture(output),
+    }
+
+
+def tensor_indexing_matrix() -> dict[str, Any]:
+    return {
+        "slice": [
+            tensor_slice_case("rank1_step", [6], 0, 1, -1, 2),
+            tensor_slice_case("rank2_negative_bounds", [3, 4], -1, -3),
+            tensor_slice_case("rank2_empty", [3, 4], 1, 3, 1),
+            tensor_slice_case("rank3_step", [2, 3, 4], 1, 0, -1, 2),
+            tensor_slice_case("rank4_middle", [2, 2, 3, 2], 2, 1, 3),
+            tensor_slice_case("clamped_bounds", [6], 0, -99, 99),
+            tensor_slice_case("explicit_negative_end", [6], 0, 1, -2),
+            tensor_slice_case("zero_dimension", [2, 0, 3], 1, 0),
+        ],
+        "index_select": [
+            tensor_index_select_case("rank1_repeat", [6], 0, [5, 1, 1, 0]),
+            tensor_index_select_case("rank2_negative_dim", [3, 4], -1, [3, 1]),
+            tensor_index_select_case("rank3_general", [2, 3, 4], 1, [2, 0]),
+            tensor_index_select_case("rank4_general", [2, 2, 3, 2], 2, [2, 0, 2]),
+            tensor_index_select_case("empty_indices", [3, 4], 1, []),
+            tensor_index_select_case("negative_extension", [3, 4], 1, [-1, 0]),
+            tensor_index_select_case("zero_other_dimension", [2, 0, 3], 0, [1, 0]),
+        ],
+    }
+
+
 def dropout_semantics() -> dict[str, Any]:
     input_tensor = torch.tensor(
         [[1.0, -2.0, 3.5], [4.0, -5.0, 6.5]],
@@ -1029,6 +1111,7 @@ def generate_fixture() -> dict[str, Any]:
         "cases": {
             "dropout_semantics_f32": dropout_semantics(),
             "flatten_forward_backward_f32": flatten_matrix(),
+            "tensor_indexing_f32": tensor_indexing_matrix(),
             "tensor_permute_f32": tensor_permute_matrix(),
             "tensor_shape_semantics_f32": tensor_shape_semantics(),
             "linear_basic_f32": linear_case(),

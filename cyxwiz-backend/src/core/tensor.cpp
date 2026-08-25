@@ -418,6 +418,21 @@ af::array Tensor::GetArray() const {
         return *af_array_;
     }
 
+    if (device_current_ && af_array_ && shape_.size() == 4 &&
+        device_layout_ == TensorDeviceLayout::RowMajor4D) {
+        af::array reordered = af::reorder(*af_array_, 3, 2, 1, 0);
+        af::array converted = af::moddims(
+            reordered,
+            static_cast<dim_t>(shape_[0]),
+            static_cast<dim_t>(shape_[1]),
+            static_cast<dim_t>(shape_[2]),
+            static_cast<dim_t>(shape_[3]));
+        converted.eval();
+        af_array_ = std::make_unique<af::array>(std::move(converted));
+        device_layout_ = TensorDeviceLayout::ArrayFireNative;
+        return *af_array_;
+    }
+
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LayoutConversion,
         "Tensor::GetArray");
@@ -524,12 +539,61 @@ af::array Tensor::GetArrayRowMajor3D() const {
     return *af_array_;
 }
 
+af::array Tensor::GetArrayRowMajor4D() const {
+    if (shape_.size() != 4) {
+        return GetArray();
+    }
+    if (device_current_ && af_array_ &&
+        device_layout_ == TensorDeviceLayout::RowMajor4D) {
+        return *af_array_;
+    }
+
+    if (device_current_ && af_array_ &&
+        device_layout_ == TensorDeviceLayout::ArrayFireNative) {
+        af::array reshaped = af::moddims(
+            *af_array_,
+            static_cast<dim_t>(shape_[3]),
+            static_cast<dim_t>(shape_[2]),
+            static_cast<dim_t>(shape_[1]),
+            static_cast<dim_t>(shape_[0]));
+        af::array converted = af::reorder(reshaped, 3, 2, 1, 0);
+        converted.eval();
+        af_array_ = std::make_unique<af::array>(std::move(converted));
+        device_layout_ = TensorDeviceLayout::RowMajor4D;
+        return *af_array_;
+    }
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayoutConversion,
+        "Tensor::GetArrayRowMajor4D");
+    EnsureHostCurrent();
+
+    af::dim4 reversed_dims(
+        static_cast<dim_t>(shape_[3]),
+        static_cast<dim_t>(shape_[2]),
+        static_cast<dim_t>(shape_[1]),
+        static_cast<dim_t>(shape_[0]));
+    af::array arr(reversed_dims, ToArrayFireType(dtype_));
+    void* host_data = HostData(host_buffer_);
+    if (host_data) {
+        arr.write(host_data, NumBytes(), afHost);
+    }
+    af_array_ = std::make_unique<af::array>(
+        af::reorder(arr, 3, 2, 1, 0));
+    device_current_ = true;
+    device_layout_ = TensorDeviceLayout::RowMajor4D;
+    return *af_array_;
+}
+
 af::array Tensor::GetSemanticArray() const {
     if (shape_.size() == 2) {
         return GetArrayRowMajor2D();
     }
     if (shape_.size() == 3) {
         return GetArrayRowMajor3D();
+    }
+    if (shape_.size() == 4) {
+        return GetArrayRowMajor4D();
     }
     return GetArray();
 }
@@ -579,6 +643,21 @@ void Tensor::SetFromArrayRowMajor3D(const af::array& arr) {
     device_layout_ = TensorDeviceLayout::RowMajor3D;
 }
 
+void Tensor::SetFromArrayRowMajor4D(const af::array& arr) {
+    shape_ = {
+        static_cast<size_t>(arr.dims(0)),
+        static_cast<size_t>(arr.dims(1)),
+        static_cast<size_t>(arr.dims(2)),
+        static_cast<size_t>(arr.dims(3))
+    };
+    dtype_ = FromArrayFireType(arr.type());
+    host_buffer_.reset();
+    af_array_ = std::make_unique<af::array>(arr);
+    host_current_ = false;
+    device_current_ = true;
+    device_layout_ = TensorDeviceLayout::RowMajor4D;
+}
+
 void Tensor::SetFromSemanticArray(
     const af::array& arr,
     std::vector<size_t> semantic_shape) {
@@ -620,6 +699,17 @@ void Tensor::SetFromSemanticArray(
         SetFromArrayRowMajor3D(arr);
         return;
     }
+    if (semantic_shape.size() == 4) {
+        if (arr.dims(0) != static_cast<dim_t>(semantic_shape[0]) ||
+            arr.dims(1) != static_cast<dim_t>(semantic_shape[1]) ||
+            arr.dims(2) != static_cast<dim_t>(semantic_shape[2]) ||
+            arr.dims(3) != static_cast<dim_t>(semantic_shape[3])) {
+            throw std::runtime_error(
+                "Tensor::SetFromSemanticArray: 4D semantic shape does not match ArrayFire dimensions");
+        }
+        SetFromArrayRowMajor4D(arr);
+        return;
+    }
 
     SetFromArray(arr);
     shape_ = std::move(semantic_shape);
@@ -634,6 +724,12 @@ Tensor Tensor::FromArrayRowMajor2D(const af::array& arr) {
 Tensor Tensor::FromArrayRowMajor3D(const af::array& arr) {
     Tensor result;
     result.SetFromArrayRowMajor3D(arr);
+    return result;
+}
+
+Tensor Tensor::FromArrayRowMajor4D(const af::array& arr) {
+    Tensor result;
+    result.SetFromArrayRowMajor4D(arr);
     return result;
 }
 
@@ -672,6 +768,11 @@ void Tensor::EnsureHostCurrent() const {
                 reordered.host(host_buffer_->Data());
                 break;
             }
+            case TensorDeviceLayout::RowMajor4D: {
+                af::array reordered = af::reorder(*af_array_, 3, 2, 1, 0);
+                reordered.host(host_buffer_->Data());
+                break;
+            }
             case TensorDeviceLayout::None:
                 throw std::runtime_error("Tensor host data is stale and device layout is unknown");
         }
@@ -686,6 +787,8 @@ void Tensor::EnsureHostCurrent() const {
                     return "row_major_2d";
                 case TensorDeviceLayout::RowMajor3D:
                     return "row_major_3d";
+                case TensorDeviceLayout::RowMajor4D:
+                    return "row_major_4d";
                 case TensorDeviceLayout::None:
                     return "none";
             }
@@ -1008,12 +1111,19 @@ Tensor Tensor::Reshape(const std::vector<size_t>& new_shape) const {
         new_elements > 0 &&
         new_shape.size() <= 4 &&
         (device_layout_ == TensorDeviceLayout::RowMajor2D ||
-         device_layout_ == TensorDeviceLayout::RowMajor3D)) {
+         device_layout_ == TensorDeviceLayout::RowMajor3D ||
+         device_layout_ == TensorDeviceLayout::RowMajor4D)) {
         try {
-            const af::array row_major_linear =
-                device_layout_ == TensorDeviceLayout::RowMajor2D
-                    ? af::flat(af::transpose(*af_array_))
-                    : af::flat(af::reorder(*af_array_, 2, 1, 0));
+            af::array row_major_linear;
+            if (device_layout_ == TensorDeviceLayout::RowMajor2D) {
+                row_major_linear = af::flat(af::transpose(*af_array_));
+            } else if (device_layout_ == TensorDeviceLayout::RowMajor3D) {
+                row_major_linear = af::flat(
+                    af::reorder(*af_array_, 2, 1, 0));
+            } else {
+                row_major_linear = af::flat(
+                    af::reorder(*af_array_, 3, 2, 1, 0));
+            }
 
             Tensor result;
             result.shape_ = new_shape;
@@ -1044,6 +1154,20 @@ Tensor Tensor::Reshape(const std::vector<size_t>& new_shape) const {
                         1,
                         0));
                 result.device_layout_ = TensorDeviceLayout::RowMajor3D;
+            } else if (new_shape.size() == 4) {
+                const af::dim4 reversed_dims(
+                    static_cast<dim_t>(new_shape[3]),
+                    static_cast<dim_t>(new_shape[2]),
+                    static_cast<dim_t>(new_shape[1]),
+                    static_cast<dim_t>(new_shape[0]));
+                result.af_array_ = std::make_unique<af::array>(
+                    af::reorder(
+                        af::moddims(row_major_linear, reversed_dims),
+                        3,
+                        2,
+                        1,
+                        0));
+                result.device_layout_ = TensorDeviceLayout::RowMajor4D;
             } else {
                 af::dim4 dims(1, 1, 1, 1);
                 for (size_t i = 0; i < new_shape.size(); ++i) {

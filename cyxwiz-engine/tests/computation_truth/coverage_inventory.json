@@ -93,13 +93,13 @@
       "owner": "cyxwiz-backend/include/cyxwiz/tensor.h",
       "implementation": ["cyxwiz-backend/src/core/tensor_indexing.cpp"],
       "callers": ["data adapters", "model heads", "debug output"],
-      "contract": "Indices, steps, bounds and selected value order match the declared logical layout.",
-      "supported": "rank 1-4 typed scalar access; public Slice/IndexSelect domain",
-      "oracle": "PyTorch plus explicit bounds contract",
-      "tests": ["cyxwiz-tests:test_tensor"],
-      "execution": "mixed bounded host scalar and ArrayFire-first tensor paths",
-      "status": "partial",
-      "gaps": ["negative/empty/step variants", "device residency"]
+      "contract": "Positive and negative dimensions, positive slice steps, clamped bounds, empty outputs and selected value order match PyTorch; IndexSelect additionally preserves the declared CyxWiz negative-index extension after normalization.",
+      "supported": "rank 1-4 Slice/IndexSelect for all Tensor dtypes on ArrayFire; rank 1-4 typed scalar access; explicit compatibility fallback above rank 4",
+      "oracle": "PyTorch 2.10 plus explicit CyxWiz negative-IndexSelect and bounded scalar-access contracts",
+      "tests": ["cyxwiz-tests:[tensor_indexing]", "cyxwiz-tests:[tensor]", "test_tensor_reshape_runtime_contract"],
+      "execution": "ArrayFire device-to-device Slice/IndexSelect through rank 4; declared native CPU compatibility fallback above rank 4; bounded At/Set are explicit host boundaries",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "TENSOR-CAT-001",

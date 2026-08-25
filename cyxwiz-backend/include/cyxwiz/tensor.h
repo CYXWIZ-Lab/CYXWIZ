@@ -82,13 +82,16 @@ public:
     af::array GetArrayRowMajor2D() const;
     // 3D row-major Tensor view as semantic ArrayFire [dim0, dim1, dim2].
     af::array GetArrayRowMajor3D() const;
-    // Rank-aware semantic view: row-major for rank 2/3, native otherwise.
+    // 4D row-major Tensor view as semantic ArrayFire [dim0, dim1, dim2, dim3].
+    af::array GetArrayRowMajor4D() const;
+    // Rank-aware semantic view: row-major for rank 2/3/4, native otherwise.
     af::array GetSemanticArray() const;
     // Set from ArrayFire array, keeping device data resident until host data is requested.
     void SetFromArray(const af::array& arr);
     // Set from semantic row-major ArrayFire views, keeping device data resident.
     void SetFromArrayRowMajor2D(const af::array& arr);
     void SetFromArrayRowMajor3D(const af::array& arr);
+    void SetFromArrayRowMajor4D(const af::array& arr);
     // Store a semantic ArrayFire result with an explicit logical shape.
     void SetFromSemanticArray(
         const af::array& arr,
@@ -97,6 +100,8 @@ public:
     static Tensor FromArrayRowMajor2D(const af::array& arr);
     // Build a row-major 3D Tensor from semantic ArrayFire [dim0, dim1, dim2].
     static Tensor FromArrayRowMajor3D(const af::array& arr);
+    // Build a row-major 4D Tensor from semantic ArrayFire [dim0, dim1, dim2, dim3].
+    static Tensor FromArrayRowMajor4D(const af::array& arr);
     static Tensor FromSemanticArray(
         const af::array& arr,
         std::vector<size_t> semantic_shape);
@@ -305,7 +310,8 @@ private:
         None,
         ArrayFireNative,
         RowMajor2D,
-        RowMajor3D
+        RowMajor3D,
+        RowMajor4D
     };
 
     mutable std::unique_ptr<af::array> af_array_;

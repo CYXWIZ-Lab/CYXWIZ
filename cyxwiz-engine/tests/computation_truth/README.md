@@ -100,9 +100,9 @@ classification rather than being claimed complete.
 `cyxwiz-tests "[tensor_layout]"` proves semantic ArrayFire layout round trips
 for ranks 1 through 4 and all five Tensor dtypes. The matrix checks logical
 shape and value preservation while a host-sync observer requires zero
-device-to-host transfers. Rank-3 native-to-semantic and semantic-to-native
-conversion use device-side reshape/reorder operations, matching the existing
-rank-2 device-resident contract.
+device-to-host transfers. Rank-3 and rank-4 native-to-semantic and
+semantic-to-native conversion use device-side reshape/reorder operations,
+matching the existing rank-2 device-resident contract.
 
 `cyxwiz-tests "[tensor_shape]"` consumes generated PyTorch 2.10 fixtures for
 reshape, view, squeeze, unsqueeze, and flatten across ordinary, scalar, and
@@ -124,6 +124,18 @@ fallback, while strict mode records and rejects it before native computation.
 Both `Transpose()` and `Transpose(dim0, dim1)` validate their public contracts
 and delegate to this same canonical permutation path, with all-dtype rank-2/3/4
 residency coverage.
+
+`cyxwiz-tests "[tensor_indexing]"` consumes generated PyTorch 2.10 fixtures for
+positive and negative dimensions, stepped and clamped slices, empty outputs,
+repeated selections, and zero-element tensors. An independent row-major oracle
+checks Slice and IndexSelect for every Tensor dtype at ranks 1 through 4 under
+strict ArrayFire CPU execution, requiring zero native fallback and zero
+device-to-host synchronization. PyTorch rejects raw negative `index_select`
+indices; CyxWiz retains its documented negative-index extension and compares
+the result with the equivalent normalized positive PyTorch indices. Ranks above
+four are a declared native CPU compatibility path and are rejected before work
+in strict mode. Bounded `At` and `Set` remain explicit, observable host
+boundaries.
 
 `cyxwiz-tests "[flatten]"` consumes generated PyTorch 2.10
 `torch.nn.Flatten` forward/autograd fixtures for rank-2/3/4 inputs, positive
@@ -259,6 +271,8 @@ build\bin\Debug\cyxwiz-tests.exe "[tensor_layout]"
 build\bin\Debug\cyxwiz-tests.exe "[tensor_shape]"
 
 build\bin\Debug\cyxwiz-tests.exe "[tensor_permute]"
+
+build\bin\Debug\cyxwiz-tests.exe "[tensor_indexing]"
 
 build\bin\Debug\cyxwiz-tests.exe "[flatten]"
 

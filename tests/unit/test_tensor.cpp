@@ -1476,7 +1476,9 @@ TEST_CASE("Tensor slice extracts stepped ranges across dimensions", "[tensor]") 
     REQUIRE(tail.Data<int32_t>()[2] == 3);
     REQUIRE(tail.Data<int32_t>()[8] == 11);
 
-    REQUIRE_THROWS_AS(t.Slice(1, 3, 1), std::runtime_error);
+    cyxwiz::Tensor empty = t.Slice(1, 3, 1);
+    REQUIRE(empty.Shape() == std::vector<size_t>{3, 0});
+    REQUIRE(empty.NumElements() == 0);
     REQUIRE_THROWS_AS(t.Slice(1, 0, -1, 0), std::runtime_error);
 }
 
