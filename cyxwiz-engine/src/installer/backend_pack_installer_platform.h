@@ -25,11 +25,17 @@ struct InstallerOperationResult {
     std::string message;
 };
 
+struct InstallerCatalogRefreshResult {
+    bool succeeded = false;
+    std::string message;
+};
+
 class BackendPackInstallerPlatform {
 public:
     virtual ~BackendPackInstallerPlatform() = default;
 
     virtual InstallerCatalogState Refresh() = 0;
+    virtual InstallerCatalogRefreshResult RefreshOnline() = 0;
     virtual InstallerOperationResult InstallBase(
         const std::string& pack_id) = 0;
     virtual InstallerOperationResult InstallOrUpdate(
@@ -44,7 +50,8 @@ CreateBackendPackInstallerPlatform(
     std::filesystem::path runtime_root,
     std::filesystem::path metadata_root,
     std::filesystem::path executable_directory,
-    CyxWizInstallScope scope = CyxWizInstallScope::CurrentUser);
+    CyxWizInstallScope scope = CyxWizInstallScope::CurrentUser,
+    std::string catalog_url = {});
 
 std::filesystem::path DefaultCyxWizInstallRoot(
     CyxWizInstallScope scope);

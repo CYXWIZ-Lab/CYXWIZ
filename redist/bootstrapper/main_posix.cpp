@@ -244,6 +244,10 @@ int main(int argc, char** argv) {
         first_forwarded_argument = 3;
     }
     bool installer_mode = false;
+#if defined(__APPLE__)
+    installer_mode = std::filesystem::path(argv[0]).filename() ==
+        "CyxWiz Installer";
+#endif
     if (argc > first_forwarded_argument &&
         std::string_view(argv[first_forwarded_argument]) == "--installer") {
         installer_mode = true;

@@ -11,7 +11,9 @@ on:
       - "cyxwiz-backend/**"
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
+      - "redist/scripts/prepare_backend_pack_repository.py"
       - "redist/scripts/verify_installer_package.py"
+      - "redist/tests/test_prepare_backend_pack_repository.py"
       - "redist/tests/test_verify_installer_package.py"
       - "vcpkg-installer.json"
   push:
@@ -26,7 +28,9 @@ on:
       - "cyxwiz-backend/**"
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
+      - "redist/scripts/prepare_backend_pack_repository.py"
       - "redist/scripts/verify_installer_package.py"
+      - "redist/tests/test_prepare_backend_pack_repository.py"
       - "redist/tests/test_verify_installer_package.py"
       - "vcpkg-installer.json"
 
@@ -58,9 +62,15 @@ jobs:
           - name: macOS arm64
             os: macos-15
             artifact: macos-arm64
+          - name: macOS Intel x64
+            os: macos-15-intel
+            artifact: macos-x64
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Run signed repository publication contract
+        run: python -B -m unittest redist.tests.test_prepare_backend_pack_repository
 
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@v7
@@ -180,7 +190,8 @@ jobs:
             "cyxwiz-runtime-bootstrapper.exe",
             "test_runtime_bootstrapper.exe",
             "test_runtime_bootstrapper_child.exe",
-            "test_installer_verification_summary.exe"
+            "test_installer_verification_summary.exe",
+            "test_product_registration.exe"
           ) | ForEach-Object {
             Copy-Item "build/bin/Release/$_" -Destination installer-stage/smoke/
           }
@@ -195,6 +206,7 @@ jobs:
             build/bin/test_runtime_bootstrapper \
             build/bin/test_runtime_bootstrapper_child \
             build/bin/test_installer_verification_summary \
+            build/bin/test_product_registration \
             installer-stage/smoke/
 
       - uses: actions/upload-artifact@v4
@@ -221,6 +233,9 @@ jobs:
           - name: macOS arm64
             os: macos-15
             artifact: macos-arm64
+          - name: macOS Intel x64
+            os: macos-15-intel
+            artifact: macos-x64
 
     steps:
       - uses: actions/checkout@v4

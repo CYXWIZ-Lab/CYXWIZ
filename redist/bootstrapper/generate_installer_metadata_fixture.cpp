@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -110,6 +111,30 @@ Json Envelope(const char *kind, Json body, const char *key_id, const Key &key) {
 Json ManifestBody(const std::string &pack_id, const std::string &backend,
                   const std::optional<std::string> &companion_base_id) {
   const bool base = backend == "cpu";
+  const auto device_kinds = [&]() {
+    if (base)
+      return Json::array({"cpu"});
+    if (backend == "cuda")
+      return Json::array({"gpu"});
+    return Json::array({"cpu", "gpu", "accelerator"});
+  }();
+  const auto provider_types = [&]() {
+    if (base)
+      return Json::array({"arrayfire-cpu"});
+    if (backend == "cuda")
+      return Json::array({"nvidia-driver"});
+    return Json::array({"opencl-icd"});
+  }();
+  const auto recommendation_targets = [&]() {
+    if (base)
+      return Json::array();
+    if (backend == "cuda")
+      return Json::array({"opencl", "cpu"});
+    return Json::array({"cuda", "oneapi", "cpu"});
+  }();
+  const auto component_name = base                ? "ci-afcpu.bin"
+                              : backend == "cuda" ? "ci-afcuda.bin"
+                                                  : "ci-afopencl.bin";
   return {
       {"pack_id", pack_id},
       {"pack_kind", base ? "base" : "backend_pack"},
@@ -124,20 +149,19 @@ Json ManifestBody(const std::string &pack_id, const std::string &backend,
        companion_base_id ? Json(*companion_base_id) : Json(nullptr)},
       {"conflicts", Json::array()},
       {"compatibility",
-       {{"device_kinds", Json::array({base ? "cpu" : "gpu"})},
+       {{"device_kinds", device_kinds},
         {"cpu_features", Json::array()},
-        {"provider_types", base ? Json::array() : Json::array({"opencl-icd"})},
+        {"provider_types", provider_types},
         {"minimum_driver_versions", Json::object()},
         {"tested_driver_ranges", Json::object()},
         {"minimum_identity_confidence",
          base ? "backend_local" : "stable_hardware"},
-        {"recommendation_targets", base ? Json::array() : Json::array({"cpu"})},
+        {"recommendation_targets", recommendation_targets},
         {"operation_matrix_id", "ci-matrix-v1"},
         {"training_scope", Json::array({"dense"})},
         {"support_status", "supported"}}},
       {"components",
-       Json::array({{{"path", base ? "runtime/ci-afcpu.bin"
-                                   : "runtime/ci-afopencl.bin"},
+       Json::array({{{"path", "runtime/" + std::string(component_name)},
                      {"size", std::uint64_t{1}},
                      {"sha256", "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738"
                                 "768511a30617afa01d"},
@@ -184,29 +208,40 @@ int main(int argc, char **argv) {
     const auto catalog_key = GenerateKey();
     const auto pack_key = GenerateKey();
     constexpr auto kBaseId = "ci-base-v1";
-    constexpr auto kOptionalId = "ci-opencl-v1";
+    constexpr auto kOpenClId = "ci-opencl-v1";
+    constexpr auto kCudaId = "ci-cuda-v1";
 
     const auto base_manifest = Envelope(
         "cyxwiz-backend-pack-manifest",
         ManifestBody(kBaseId, "cpu", std::nullopt), "ci-pack-key", pack_key);
-    const auto optional_manifest =
+    const auto opencl_manifest =
         Envelope("cyxwiz-backend-pack-manifest",
-                 ManifestBody(kOptionalId, "opencl", std::string(kBaseId)),
+                 ManifestBody(kOpenClId, "opencl", std::string(kBaseId)),
                  "ci-pack-key", pack_key);
     const auto base_bytes = WriteJson(
         manifest_directory / (std::string(kBaseId) + ".json"), base_manifest);
-    const auto optional_bytes =
-        WriteJson(manifest_directory / (std::string(kOptionalId) + ".json"),
-                  optional_manifest);
+    const auto opencl_bytes =
+        WriteJson(manifest_directory / (std::string(kOpenClId) + ".json"),
+                  opencl_manifest);
+
+    std::vector<std::pair<std::string, std::string>> catalog_entries = {
+        {kBaseId, Sha256(base_bytes)}, {kOpenClId, Sha256(opencl_bytes)}};
+    if (cyxwiz::runtime::CurrentBackendPackPlatformId() != "macos") {
+      const auto cuda_manifest =
+          Envelope("cyxwiz-backend-pack-manifest",
+                   ManifestBody(kCudaId, "cuda", std::string(kBaseId)),
+                   "ci-pack-key", pack_key);
+      const auto cuda_bytes = WriteJson(
+          manifest_directory / (std::string(kCudaId) + ".json"), cuda_manifest);
+      catalog_entries.emplace_back(kCudaId, Sha256(cuda_bytes));
+    }
 
     Json catalog_body = {{"catalog_id", "ci-installer-catalog-v1"},
                          {"generated_utc", "2026-01-01T00:00:00Z"},
                          {"expires_utc", "2099-01-01T00:00:00Z"},
                          {"minimum_client_version", "0.2.0"},
                          {"packs", Json::array()}};
-    for (const auto &entry : std::array{
-             std::pair{std::string(kBaseId), Sha256(base_bytes)},
-             std::pair{std::string(kOptionalId), Sha256(optional_bytes)}}) {
+    for (const auto &entry : catalog_entries) {
       catalog_body["packs"].push_back(
           {{"pack_id", entry.first},
            {"manifest_url",

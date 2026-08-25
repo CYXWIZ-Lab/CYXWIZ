@@ -28,6 +28,7 @@
 #endif
 
 #include "backend_pack_lifecycle_service.h"
+#include "backend_pack_metadata_refresh.h"
 #include "backend_pack_state_service.h"
 #include "core/backend_pack_catalog_adapter.h"
 #include "core/compute_runtime_paths.h"
@@ -119,7 +120,8 @@ int RunHelper(
         L"--runtime-root " + QuoteWindowsArgument(runtime_root.native()) +
         L" --metadata-root " + QuoteWindowsArgument(metadata_root.native()) +
         L" " + operation + L" " + QuoteWindowsArgument(
-            std::wstring(value.begin(), value.end()));
+            std::wstring(value.begin(), value.end())) +
+        (elevate ? L" --all-users" : L"");
     if (elevate) {
         SHELLEXECUTEINFOW execute{};
         execute.cbSize = sizeof(execute);
@@ -224,17 +226,24 @@ int RunHelper(
     const auto helper_text = helper.string();
     const auto root_text = runtime_root.string();
     const auto metadata_text = metadata_root.string();
+    const std::string operation_text(operation);
+    std::vector<std::string> arguments{
+        helper_text, "--runtime-root", root_text,
+        "--metadata-root", metadata_text, operation_text, value};
+    if (elevate) arguments.emplace_back("--all-users");
+    std::vector<char*> native_arguments;
+    native_arguments.reserve(arguments.size() + 1);
+    for (auto& argument : arguments) {
+        native_arguments.push_back(argument.data());
+    }
+    native_arguments.push_back(nullptr);
     const pid_t child = ::fork();
     if (child < 0) {
         error = "Cannot fork the signed pack helper";
         return -1;
     }
     if (child == 0) {
-        ::execl(
-            helper_text.c_str(), helper_text.c_str(), "--runtime-root",
-            root_text.c_str(), "--metadata-root", metadata_text.c_str(),
-            operation, value.c_str(),
-            static_cast<char*>(nullptr));
+        ::execv(helper_text.c_str(), native_arguments.data());
         ::_exit(127);
     }
     int status = 0;
@@ -281,10 +290,12 @@ public:
         std::filesystem::path runtime_root,
         std::filesystem::path metadata_root,
         std::filesystem::path executable_directory,
-        CyxWizInstallScope scope)
+        CyxWizInstallScope scope,
+        std::string catalog_url)
         : runtime_root_(std::move(runtime_root)),
           metadata_root_(std::move(metadata_root)),
           executable_directory_(std::move(executable_directory)),
+          catalog_url_(std::move(catalog_url)),
           elevate_(scope == CyxWizInstallScope::AllUsers) {}
 
     InstallerCatalogState Refresh() override {
@@ -340,8 +351,7 @@ public:
             active_identity);
         runtime::VerifiedBackendPackCatalogSnapshot active_only;
         state.records = BuildBackendPackCatalogRecords(active_only, active);
-        const auto catalog_root = state.mode == CyxWizInstallerMode::FreshInstall
-            ? metadata_root_ : runtime_root_;
+        const auto catalog_root = CurrentCatalogRoot();
         if (!catalog_root.is_absolute()) {
             state.message = "The signed metadata root must be absolute";
             return state;
@@ -378,6 +388,40 @@ public:
         return state;
     }
 
+    InstallerCatalogRefreshResult RefreshOnline() override {
+        InstallerCatalogRefreshResult result;
+        if (catalog_url_.empty()) {
+            result.message =
+                "Online catalog source is not configured; the packaged verified catalog remains active";
+            return result;
+        }
+        const auto catalog_root = CurrentCatalogRoot();
+        std::string error;
+        auto trust = runtime::BackendPackTrustStore::Load(
+            catalog_root / "trust" / "trusted-keys.json", error);
+        if (!trust) {
+            result.message = "Cannot load the catalog trust store: " + error;
+            return result;
+        }
+        runtime::BackendPackMetadataVerifier verifier(
+            std::move(*trust), ClientVersion(),
+            std::string(runtime::CurrentBackendPackPlatformId()),
+            std::string(runtime::CurrentBackendPackArchitectureId()));
+        runtime::HttpsBackendPackMetadataSource source;
+        runtime::BackendPackMetadataRefreshRequest request;
+        request.catalog_url = catalog_url_;
+        request.trusted_keys_path =
+            catalog_root / "trust" / "trusted-keys.json";
+        request.destination_root = runtime_root_;
+        request.current_utc = CurrentUtc();
+        const auto refreshed = runtime::RefreshBackendPackMetadata(
+            request, verifier, source);
+        result.succeeded = refreshed.status ==
+            runtime::BackendPackMetadataRefreshStatus::Refreshed;
+        result.message = refreshed.message;
+        return result;
+    }
+
     InstallerOperationResult InstallOrUpdate(
         const std::string& pack_id) override {
         InstallerOperationResult result;
@@ -393,7 +437,7 @@ public:
         }
         std::string error;
         const int exit_code = RunHelper(
-            helper, runtime_root_, metadata_root_, elevate_,
+            helper, runtime_root_, CurrentCatalogRoot(), elevate_,
 #ifdef _WIN32
             L"--pack-id",
 #else
@@ -433,7 +477,7 @@ public:
         }
         std::string error;
         const int exit_code = RunHelper(
-            helper, runtime_root_, metadata_root_, elevate_,
+            helper, runtime_root_, CurrentCatalogRoot(), elevate_,
 #ifdef _WIN32
             L"--base-pack-id",
 #else
@@ -445,6 +489,11 @@ public:
             result.activated = true;
             result.message =
                 pack_id + " was installed, CPU-qualified, and activated";
+        } else if (exit_code == 3) {
+            result.succeeded = true;
+            result.activated = true;
+            result.message = pack_id +
+                " was installed and activated, but operating-system launch integration could not be registered; the stable launcher remains available in the installation folder";
         } else if (exit_code == 2) {
             result.succeeded = true;
             result.message = pack_id +
@@ -474,7 +523,7 @@ public:
         }
         std::string error;
         const int exit_code = RunHelper(
-            helper, runtime_root_, metadata_root_, elevate_,
+            helper, runtime_root_, CurrentCatalogRoot(), elevate_,
 #ifdef _WIN32
             L"--deactivate-backend",
 #else
@@ -505,9 +554,22 @@ public:
     }
 
 private:
+    std::filesystem::path CurrentCatalogRoot() const {
+        std::error_code error;
+        const bool has_cached_catalog = std::filesystem::is_regular_file(
+            runtime::BackendPackCurrentCatalogPath(runtime_root_), error);
+        if (!error && has_cached_catalog && std::filesystem::is_regular_file(
+                runtime_root_ / "trust" / "trusted-keys.json", error) &&
+            !error) {
+            return runtime_root_;
+        }
+        return metadata_root_;
+    }
+
     std::filesystem::path runtime_root_;
     std::filesystem::path metadata_root_;
     std::filesystem::path executable_directory_;
+    std::string catalog_url_;
     bool elevate_ = false;
 };
 
@@ -518,10 +580,11 @@ CreateBackendPackInstallerPlatform(
     std::filesystem::path runtime_root,
     std::filesystem::path metadata_root,
     std::filesystem::path executable_directory,
-    CyxWizInstallScope scope) {
+    CyxWizInstallScope scope,
+    std::string catalog_url) {
     return std::make_unique<DesktopInstallerPlatform>(
         std::move(runtime_root), std::move(metadata_root),
-        std::move(executable_directory), scope);
+        std::move(executable_directory), scope, std::move(catalog_url));
 }
 
 std::filesystem::path DefaultCyxWizInstallRoot(

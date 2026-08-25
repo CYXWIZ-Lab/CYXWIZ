@@ -68,16 +68,19 @@ std::filesystem::path ExecutableDirectory() {
 
 int Run(const std::filesystem::path& executable,
         const std::filesystem::path& runtime_root,
-        bool installer = false) {
+        bool installer = false,
+        const char* invocation_name = nullptr) {
     const pid_t child = ::fork();
     if (child < 0) return -1;
     if (child == 0) {
         const auto root = runtime_root.string();
+        const char* argument_zero = invocation_name
+            ? invocation_name : executable.c_str();
         if (installer) {
-            ::execl(executable.c_str(), executable.c_str(), "--runtime-root",
+            ::execl(executable.c_str(), argument_zero, "--runtime-root",
                     root.c_str(), "--installer", nullptr);
         } else {
-            ::execl(executable.c_str(), executable.c_str(), "--runtime-root",
+            ::execl(executable.c_str(), argument_zero, "--runtime-root",
                     root.c_str(), nullptr);
         }
         ::_exit(127);
@@ -141,6 +144,11 @@ int main() {
         failures += !Expect(
             Run(bootstrapper, fixture.root, true) == 0,
             "stable launcher should start the installed manager");
+#ifdef __APPLE__
+        failures += !Expect(
+            Run(bootstrapper, fixture.root, false, "CyxWiz Installer") == 0,
+            "macOS Installer bundle name should select installed-manager mode");
+#endif
         const auto log = ReadText(fixture.root / "bootstrapper.log");
         failures += !Expect(
             log.find("launched runtime_set=set-v1") != std::string::npos &&

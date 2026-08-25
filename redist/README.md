@@ -55,6 +55,7 @@ Both shell families call one standard-library implementation:
 
 - `scripts/package_release.py`
 - `scripts/sign_pack_manifest.py`
+- `scripts/prepare_backend_pack_repository.py`
 - `bootstrapper/` native desktop launchers and shared runtime-state resolver
 - `scripts/package_minimal.bat` and `package_minimal.sh`
 - `scripts/package_full.bat` and `package_full.sh`
@@ -111,6 +112,15 @@ Its `--installer` mode resolves the same versioned `cyxwiz-installer` GUI from
 the active base, allowing later platform registration to point at one stable
 launcher without copying the GUI or dependency closure into the product root.
 
+After the signed CPU base is qualified and activated, the exact delivery helper
+registers that stable launcher with the selected install scope. Windows creates
+Engine and Installer Start Menu links and an Apps & Features entry; Linux writes
+current-user or system desktop entries; macOS publishes Engine and Installer
+application bundles in the product root. Every maintenance entry resolves the
+installed GUI through `--installer`, and none changes the machine-wide loader
+environment. The current Apps & Features uninstall command reopens that GUI;
+full transactional product removal remains a separate lifecycle gate.
+
 The packaged desktop application also includes `cyxwiz-installer` (`.exe` on
 Windows), a standalone graphical component manager. Recommended, CPU-only,
 and Custom package selection live there; the Engine Backend Manager launches
@@ -123,6 +133,17 @@ recommendation reads stable kernel vendor IDs. macOS remains conservative and
 recommends CPU-only unless a later native classifier can prove an eligible
 accelerator. Release publication still requires the clean-machine matrix for
 each shipped OS.
+
+Configure `CYXWIZ_INSTALLER_CATALOG_URL` at CMake configure time with the
+direct HTTPS URL of the production signed catalog. Leaving it empty keeps the
+packaged verified catalog available and makes online Refresh report that no
+source is configured. Local integration runs can supply
+`--catalog-url <https-url>` without changing the package. Refresh downloads
+bounded catalog and manifest documents off the render thread, verifies the
+complete snapshot with the packaged trust store, and publishes the catalog
+only after every eligible manifest is trusted. Verified online metadata is
+stored below the selected runtime root, not beside the installer executable.
+Failure retains the previous verified catalog.
 
 After local verification, the same installer shows each route's typed result,
 a bounded failure reason and next action, plus benchmark medians when present.
@@ -208,6 +229,40 @@ atomic manifest replacement, and never copies the private key. Keep production
 keys outside the repository, build trees, output directories, and application
 packages. Use the same `--runtime-set-id` and matching `--base-pack-id` when
 preparing companion artifacts.
+
+After every selected base/backend manifest is signed and its archive remains
+beside it, assemble the exact hosted and installer-bootstrap repository:
+
+```bat
+py -3 redist\scripts\prepare_backend_pack_repository.py ^
+  --manifest redist\output\cyxwiz-base-0.2.0-1-win64.zip.manifest.json ^
+  --manifest redist\output\cyxwiz-af-opencl-3.10.0-1-win64.zip.manifest.json ^
+  --trust-root D:\release-trust\trusted-keys.json ^
+  --catalog-private-key D:\release-secrets\catalog-ed25519.pem ^
+  --catalog-key-id catalog-2026 ^
+  --pack-key-id release-2026 ^
+  --catalog-id cyxwiz-alpha-2026-08 ^
+  --generated-utc 2026-08-25T12:00:00Z ^
+  --expires-utc 2026-09-25T12:00:00Z ^
+  --minimum-client-version 0.2.0 ^
+  --base-url https://packages.example.com/cyxwiz/alpha ^
+  --output redist\output\alpha-repository
+```
+
+The command verifies trust roles, every pack signature, archive size and
+SHA-256, companion base, runtime set, platform, architecture, and ArrayFire ABI
+before signing the catalog. The configured private catalog key must match the
+app-bundled public trust root. Inputs with multiple valid pack signatures
+require an explicit `--pack-key-id` so key rotation cannot change catalog
+authority implicitly.
+
+Publish only `alpha-repository/hosted/` at the exact non-redirecting HTTPS base
+URL. Configure the installer with
+`CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR=.../alpha-repository/bootstrap` and
+`CYXWIZ_INSTALLER_CATALOG_URL=https://packages.example.com/cyxwiz/alpha/catalogs/current.json`.
+The bootstrap tree intentionally excludes the large pack archives. The
+catalog-signing private key is read from its external path and is never copied
+to either output tree.
 
 Example notice layout:
 

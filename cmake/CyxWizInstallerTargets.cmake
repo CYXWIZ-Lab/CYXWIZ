@@ -5,6 +5,16 @@ set(CYXWIZ_INSTALLER_TARGETS_INCLUDED ON)
 
 set(_cyxwiz_installer_engine_dir "${CMAKE_SOURCE_DIR}/cyxwiz-engine")
 set(_cyxwiz_installer_backend_dir "${CMAKE_SOURCE_DIR}/cyxwiz-backend")
+set(CYXWIZ_INSTALLER_CATALOG_URL "" CACHE STRING
+    "Default HTTPS URL for the signed CyxWiz backend-pack catalog")
+
+if(WIN32)
+    set(_cyxwiz_product_registration_platform_source
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/product_registration_windows.cpp")
+else()
+    set(_cyxwiz_product_registration_platform_source
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/product_registration_posix.cpp")
+endif()
 
 # Installer-only builds consume the backend's public device data types without
 # building the backend library that normally generates its export header.
@@ -40,6 +50,8 @@ add_executable(cyxwiz-backend-pack-installer
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_qualification_adapter.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_service.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_snapshot.cpp"
+    "${CMAKE_SOURCE_DIR}/redist/bootstrapper/product_registration.cpp"
+    "${_cyxwiz_product_registration_platform_source}"
 )
 target_include_directories(cyxwiz-backend-pack-installer PRIVATE
     "${_cyxwiz_installer_engine_dir}/src"
@@ -56,6 +68,11 @@ target_link_libraries(cyxwiz-backend-pack-installer PRIVATE
 if(TARGET cyxwiz-route-probe)
     add_dependencies(cyxwiz-backend-pack-installer cyxwiz-route-probe)
 endif()
+if(WIN32)
+    target_link_libraries(cyxwiz-backend-pack-installer PRIVATE
+        advapi32 ole32 shell32
+    )
+endif()
 set_target_properties(cyxwiz-backend-pack-installer PROPERTIES
     CXX_STANDARD 20
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
@@ -70,9 +87,13 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/tests/test_backend_pack_manager_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_catalog_adapter.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/installer/installer_operation.cpp"
     )
     target_include_directories(test_backend_pack_manager_model PRIVATE
         "${_cyxwiz_installer_engine_dir}/src"
+        "${_cyxwiz_installer_backend_dir}/include"
+        "${CMAKE_BINARY_DIR}/cyxwiz-backend/include"
+        "${_cyxwiz_installer_generated_include}"
         "${CMAKE_SOURCE_DIR}/redist/bootstrapper"
     )
     set_target_properties(test_backend_pack_manager_model PROPERTIES
@@ -94,18 +115,45 @@ if(CYXWIZ_BUILD_TESTS)
         CXX_STANDARD 20
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
+
+    add_executable(test_product_registration
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_registration.cpp"
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/product_registration.cpp"
+        "${_cyxwiz_product_registration_platform_source}"
+    )
+    target_include_directories(test_product_registration PRIVATE
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper"
+    )
+    if(WIN32)
+        target_link_libraries(test_product_registration PRIVATE
+            advapi32 ole32 shell32
+        )
+    endif()
+    set_target_properties(test_product_registration PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME product_registration_contract
+        COMMAND test_product_registration
+    )
 endif()
 
 find_package(OpenGL REQUIRED)
 set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/backend_pack_manager_main.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/backend_pack_installer_platform.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_theme.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_view.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_operation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_catalog_adapter.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/installer_verification_summary.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_snapshot.cpp"
 )
 if(WIN32)
+    list(APPEND _cyxwiz_installer_sources
+        "${_cyxwiz_installer_engine_dir}/resources/installer_icon.rc")
     add_executable(cyxwiz-installer WIN32 ${_cyxwiz_installer_sources})
 else()
     add_executable(cyxwiz-installer ${_cyxwiz_installer_sources})
@@ -126,6 +174,9 @@ target_link_libraries(cyxwiz-installer PRIVATE
     cyxwiz-runtime-bootstrap
     nlohmann_json::nlohmann_json
 )
+target_compile_definitions(cyxwiz-installer PRIVATE
+    CYXWIZ_INSTALLER_DEFAULT_CATALOG_URL="${CYXWIZ_INSTALLER_CATALOG_URL}"
+)
 if(WIN32)
     target_link_libraries(cyxwiz-installer PRIVATE shell32)
 endif()
@@ -134,9 +185,32 @@ set_target_properties(cyxwiz-installer PROPERTIES
     CXX_STANDARD 20
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+add_custom_command(TARGET cyxwiz-installer POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "$<TARGET_FILE_DIR:cyxwiz-installer>/resources/fonts"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${_cyxwiz_installer_engine_dir}/resources/cyxwiz.png"
+        "$<TARGET_FILE_DIR:cyxwiz-installer>/resources/cyxwiz.png"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${_cyxwiz_installer_engine_dir}/resources/fonts/Inter-Regular.ttf"
+        "${_cyxwiz_installer_engine_dir}/resources/fonts/Inter-Bold.ttf"
+        "${_cyxwiz_installer_engine_dir}/resources/fonts/fa-solid-900.ttf"
+        "$<TARGET_FILE_DIR:cyxwiz-installer>/resources/fonts"
+    COMMENT "Staging CyxWiz Installer visual resources"
+)
 install(TARGETS cyxwiz-installer
     RUNTIME_DEPENDENCY_SET cyxwiz-installer-runtime-dependencies
     RUNTIME DESTINATION .
+)
+install(FILES
+    "${_cyxwiz_installer_engine_dir}/resources/cyxwiz.png"
+    DESTINATION resources
+)
+install(FILES
+    "${_cyxwiz_installer_engine_dir}/resources/fonts/Inter-Regular.ttf"
+    "${_cyxwiz_installer_engine_dir}/resources/fonts/Inter-Bold.ttf"
+    "${_cyxwiz_installer_engine_dir}/resources/fonts/fa-solid-900.ttf"
+    DESTINATION resources/fonts
 )
 
 if(CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR)

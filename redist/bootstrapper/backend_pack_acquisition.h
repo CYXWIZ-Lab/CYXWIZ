@@ -67,8 +67,23 @@ public:
         const BackendPackArtifactChunk& consume,
         const BackendPackArtifactCancelCheck& cancelled,
         std::string& error) override;
+    bool TransferBounded(
+        std::uint64_t maximum_size,
+        const BackendPackArtifactChunk& consume,
+        const BackendPackArtifactCancelCheck& cancelled,
+        std::uint64_t& received_size,
+        std::string& error);
 
 private:
+    bool Transfer(
+        std::uint64_t offset,
+        std::uint64_t size_limit,
+        bool exact_size,
+        const BackendPackArtifactChunk& consume,
+        const BackendPackArtifactCancelCheck& cancelled,
+        std::uint64_t* received_size,
+        std::string& error);
+
     std::string url_;
     std::chrono::milliseconds timeout_;
 };

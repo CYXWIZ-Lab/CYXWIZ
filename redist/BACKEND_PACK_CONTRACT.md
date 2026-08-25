@@ -54,6 +54,17 @@ remove ArrayFire, Python, and loader-injection overrides, and use exact
 `fork`/`exec` argument vectors for Engine, Installer, and deferred Repair.
 They do not invoke a shell or restore the legacy PATH-mutating launch script.
 
+Product integration is published only after the CPU base and stable launcher
+pass signed delivery and qualification. Windows registers Start Menu links and
+an Apps & Features maintenance entry in the selected user or machine scope;
+Linux publishes `.desktop` entries in the matching applications directory;
+macOS publishes Engine and Installer `.app` bundles in the product root. These
+entries always target the stable bootstrapper, with maintenance using
+`--installer`, and never modify global loader variables. Registration failure
+does not invalidate an already qualified runtime, but it is surfaced as a
+warning so repair can retry it. Full product removal is not implied by this
+registration boundary.
+
 The graphical `cyxwiz-installer` component manager remains in the signed
 versioned base and is resolved by the stable bootstrapper (`.exe` on Windows).
 It owns Recommended, CPU-only, and Custom package consent and launches the
@@ -217,6 +228,16 @@ the runtime never follows a mutable unsigned pointer or derives a manifest path
 from its HTTPS host. A valid catalog remains browsable when an individual
 manifest is absent or invalid, but delivery for that entry stays disabled.
 
+Release assembly emits two views from the same verified bytes. The hosted view
+places each signed archive beside its catalog-authorized manifest under
+`catalogs/manifests/`. The bootstrap view contains the app-bundled trust root,
+the identical signed catalog, and the identical signed manifests but excludes
+archives. The small installer consumes the bootstrap view and downloads
+archives only after explicit selection. Repository publication is atomic and
+must reject an untrusted signature, archive hash/size mismatch, missing
+companion base, runtime-set/ABI mismatch, ambiguous signing key, or catalog
+private key that does not match the bundled public trust root.
+
 ## Enterprise, Offline, and Proxy Policy
 
 Runtime inspection is local-only. `show backend packs`,
@@ -244,6 +265,18 @@ Proxy URLs and credentials are never catalog or manifest fields and must not
 be copied into support output. Redirects remain disabled on every platform.
 Failure to reach the network leaves the verified local catalog and installed
 runtime inspectable and does not downgrade to unsigned metadata.
+
+The graphical installer's explicit Refresh action may fetch a configured
+HTTPS catalog and its referenced manifests. Each document is bounded to 16
+MiB. The packaged trust store verifies the catalog signature, catalog policy,
+manifest digest, manifest signature, client version, platform, and
+architecture before publication. Verified manifests are atomically published
+first and the catalog last under the selected runtime root, never beside the
+installer executable; any source, verification, or publication failure leaves
+the previous verified catalog authoritative. The catalog endpoint must be a
+direct, non-redirecting HTTPS URL. Production builds configure it with
+`CYXWIZ_INSTALLER_CATALOG_URL`; local integration runs may override it with
+`--catalog-url`.
 
 ## Active Runtime
 

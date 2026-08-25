@@ -1,6 +1,7 @@
 #include "backend_pack_hash.h"
 #include "backend_pack_lifecycle_service.h"
 #include "backend_pack_metadata_cache.h"
+#include "backend_pack_metadata_refresh.h"
 #include "backend_pack_platform.h"
 
 #include <archive.h>
@@ -395,10 +396,106 @@ bool HasPack(const ActiveRuntimeState& state) {
            state.packs.front().pack_id == "opencl-v1";
 }
 
+class FixtureMetadataSource final : public BackendPackMetadataSource {
+public:
+    void Set(std::string url, std::filesystem::path source) {
+        for (auto& entry : documents_) {
+            if (entry.first == url) {
+                entry.second = std::move(source);
+                return;
+            }
+        }
+        documents_.emplace_back(std::move(url), std::move(source));
+    }
+
+    bool Fetch(
+        const std::string& url,
+        const std::filesystem::path& destination,
+        std::uint64_t maximum_bytes,
+        std::string& error) override {
+        const auto entry = std::find_if(
+            documents_.begin(), documents_.end(),
+            [&](const auto& candidate) { return candidate.first == url; });
+        if (entry == documents_.end()) {
+            error = "Fixture URL is unavailable";
+            return false;
+        }
+        std::error_code filesystem_error;
+        const auto size = std::filesystem::file_size(
+            entry->second, filesystem_error);
+        if (filesystem_error || size == 0 || size > maximum_bytes) {
+            error = "Fixture document violates its byte bound";
+            return false;
+        }
+        std::filesystem::create_directories(
+            destination.parent_path(), filesystem_error);
+        if (filesystem_error || !std::filesystem::copy_file(
+                entry->second, destination,
+                std::filesystem::copy_options::none, filesystem_error)) {
+            error = "Cannot copy fixture metadata document";
+            return false;
+        }
+        return true;
+    }
+
+private:
+    std::vector<std::pair<std::string, std::filesystem::path>> documents_;
+};
+
 }  // namespace
 
 int main() {
     int failures = 0;
+    {
+        Fixture fixture;
+        constexpr const char* catalog_url =
+            "https://downloads.cyxwiz.com/catalogs/current.json";
+        constexpr const char* manifest_url =
+            "https://downloads.cyxwiz.com/opencl-v1.json";
+        FixtureMetadataSource source;
+        source.Set(catalog_url, fixture.catalog_path);
+        source.Set(manifest_url, fixture.manifest_path);
+        const auto destination = fixture.root / "refreshed-metadata";
+        BackendPackMetadataRefreshRequest request;
+        request.catalog_url = catalog_url;
+        request.trusted_keys_path = fixture.trust_path;
+        request.destination_root = destination;
+        request.current_utc = "2026-08-14T12:00:00Z";
+        const auto refreshed = RefreshBackendPackMetadata(
+            request, fixture.Verifier(), source);
+
+        BackendPackLifecycleService reader(
+            destination, fixture.Verifier());
+        VerifiedBackendPackCatalogSnapshot snapshot;
+        std::string read_error;
+        const bool readable = reader.ReadCatalogSnapshot(
+            request.current_utc, snapshot, read_error);
+        failures += !Expect(
+            refreshed.status == BackendPackMetadataRefreshStatus::Refreshed &&
+                refreshed.verified_pack_count == 1 && readable &&
+                snapshot.catalog.catalog_id == "production-2026-08" &&
+                snapshot.records.size() == 1 &&
+                snapshot.records.front().manifest.has_value(),
+            "remote metadata refresh must verify and atomically publish a complete catalog snapshot");
+
+        const auto corrupt = fixture.root / "corrupt-manifest.json";
+        std::ofstream(corrupt, std::ios::binary | std::ios::trunc)
+            << "{\"corrupt\":true}";
+        source.Set(manifest_url, corrupt);
+        const auto rejected = RefreshBackendPackMetadata(
+            request, fixture.Verifier(), source);
+        snapshot = {};
+        read_error.clear();
+        const bool previous_remains = reader.ReadCatalogSnapshot(
+            request.current_utc, snapshot, read_error);
+        failures += !Expect(
+            rejected.status ==
+                    BackendPackMetadataRefreshStatus::VerificationFailure &&
+                previous_remains &&
+                snapshot.catalog.catalog_id == "production-2026-08" &&
+                snapshot.records.front().manifest.has_value(),
+            "a corrupt remote manifest must leave the previous verified catalog readable");
+    }
     {
         Fixture fixture;
         fixture.PrepareBase();

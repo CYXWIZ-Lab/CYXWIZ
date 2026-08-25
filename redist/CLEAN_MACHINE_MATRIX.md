@@ -7,8 +7,8 @@ CUDA, OpenCL, or oneAPI execution evidence.
 ## Hosted installer evidence
 
 The `Installer Native Build` workflow transfers each staged standalone
-installer to a fresh Windows x64, Ubuntu x64, or macOS arm64 runner. The fresh
-runner verifies package-local dependencies, starts the installer in bounded
+installer to a fresh Windows x64, Ubuntu x64, macOS arm64, or macOS Intel x64
+runner. The fresh runner verifies package-local dependencies, starts the installer in bounded
 smoke mode, checks the maintenance helper's fail-closed invocation, exercises
 the platform's stable-launcher contract, and runs the packaged lifecycle and
 customer-verification contract executables.

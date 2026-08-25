@@ -38,6 +38,7 @@ add_library(cyxwiz-backend-pack-service STATIC
     backend_pack_installer.cpp
     backend_pack_lifecycle_service.cpp
     backend_pack_metadata_cache.cpp
+    backend_pack_metadata_refresh.cpp
     backend_pack_metadata_verifier.cpp
     backend_pack_path.cpp
 )

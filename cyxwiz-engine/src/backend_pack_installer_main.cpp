@@ -5,6 +5,7 @@
 #include "backend_pack_metadata_cache.h"
 #include "backend_pack_platform.h"
 #include "backend_pack_state_service.h"
+#include "product_registration.h"
 
 #include <cyxwiz/version.h>
 
@@ -40,6 +41,7 @@ struct Options {
     bool base = false;
     bool repair = false;
     bool offline = false;
+    bool all_users = false;
 };
 
 template <typename Character>
@@ -126,6 +128,7 @@ bool ParseOptions(
     bool saw_pack_id = false;
     bool saw_base_pack_id = false;
     bool saw_deactivate_backend = false;
+    bool saw_all_users = false;
     for (int index = 1; index < argc; ++index) {
         const std::wstring_view argument(argv[index]);
         if (argument == L"--runtime-root" && !saw_runtime_root &&
@@ -182,6 +185,9 @@ bool ParseOptions(
             output.repair = true;
         } else if (argument == L"--offline" && !output.offline) {
             output.offline = true;
+        } else if (argument == L"--all-users" && !saw_all_users) {
+            output.all_users = true;
+            saw_all_users = true;
         } else {
             error = "Unsupported, duplicate, or incomplete installer argument";
             return false;
@@ -211,6 +217,7 @@ bool ParseOptions(
     bool saw_pack_id = false;
     bool saw_base_pack_id = false;
     bool saw_deactivate_backend = false;
+    bool saw_all_users = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--runtime-root" && !saw_runtime_root &&
@@ -251,6 +258,9 @@ bool ParseOptions(
             output.repair = true;
         } else if (argument == "--offline" && !output.offline) {
             output.offline = true;
+        } else if (argument == "--all-users" && !saw_all_users) {
+            output.all_users = true;
+            saw_all_users = true;
         } else {
             error = "Unsupported, duplicate, or incomplete installer argument";
             return false;
@@ -405,6 +415,19 @@ int main(int argc, char** argv) {
     std::cout << result.message << '\n';
     if (result.status == cyxwiz::runtime::
             BackendPackLifecycleStatus::InstalledAndActivated) {
+        if (options.base) {
+            cyxwiz::runtime::ProductRegistrationRequest registration;
+            registration.install_root = options.runtime_root.parent_path();
+            registration.runtime_root = options.runtime_root;
+            registration.scope = options.all_users
+                ? cyxwiz::runtime::ProductInstallScope::AllUsers
+                : cyxwiz::runtime::ProductInstallScope::CurrentUser;
+            registration.product_version = ClientVersion();
+            const auto registered =
+                cyxwiz::runtime::RegisterInstalledProduct(registration);
+            std::cout << registered.message << '\n';
+            if (!registered.registered) return 3;
+        }
         return 0;
     }
     if (result.status == cyxwiz::runtime::
