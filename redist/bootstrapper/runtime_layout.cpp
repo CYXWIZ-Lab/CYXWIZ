@@ -9,6 +9,7 @@
 #include <cwctype>
 #include <fstream>
 #include <iomanip>
+#include <sstream>
 #include <set>
 #include <utility>
 
@@ -427,10 +428,6 @@ void AppendBootstrapDiagnostic(
     const std::filesystem::path& runtime_root,
     const std::string& message) {
     try {
-        std::ofstream stream(runtime_root / "bootstrapper.log", std::ios::app);
-        if (!stream) {
-            return;
-        }
         const auto now = std::chrono::system_clock::now();
         const auto time = std::chrono::system_clock::to_time_t(now);
         std::tm utc{};
@@ -439,7 +436,28 @@ void AppendBootstrapDiagnostic(
 #else
         gmtime_r(&time, &utc);
 #endif
-        stream << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ") << " " << message << '\n';
+        std::ostringstream formatted;
+        formatted << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ")
+                  << " " << message << '\n';
+#ifdef _WIN32
+        const auto line = formatted.str();
+        if (line.size() > static_cast<std::size_t>(MAXDWORD)) return;
+        const auto path = runtime_root / "bootstrapper.log";
+        const HANDLE file = ::CreateFileW(
+            path.c_str(), FILE_APPEND_DATA,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return;
+        DWORD written = 0;
+        const BOOL succeeded = ::WriteFile(
+            file, line.data(), static_cast<DWORD>(line.size()),
+            &written, nullptr);
+        (void)succeeded;
+        ::CloseHandle(file);
+#else
+        std::ofstream stream(runtime_root / "bootstrapper.log", std::ios::app);
+        if (stream) stream << formatted.str();
+#endif
     } catch (...) {
         // Diagnostics must never obscure the original launch failure.
     }
