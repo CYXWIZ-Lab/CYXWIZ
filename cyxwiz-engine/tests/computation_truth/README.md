@@ -137,6 +137,19 @@ four are a declared native CPU compatibility path and are rejected before work
 in strict mode. Bounded `At` and `Set` remain explicit, observable host
 boundaries.
 
+`cyxwiz-tests "[tensor_concat]"` consumes generated PyTorch 2.10 fixtures for
+Cat, Stack, both Split overloads, and Chunk. The matrix covers positive and
+negative axes, ranks 0 through 4 where applicable, scalar Stack, PyTorch's
+one-dimensional empty Cat identity, zero-sized split sections, empty
+dimensions, uneven final partitions, and requests for more chunks than
+elements. An independent row-major oracle validates Cat and Stack for every
+Tensor dtype, while direct observers prove Cat, Stack, Split, and Chunk perform
+zero native fallback and zero device-to-host synchronization throughout the
+supported ArrayFire CPU domain. Cat outputs and Stack outputs above rank four
+are declared native CPU compatibility paths; strict mode records and rejects
+them before native work. `test_graph_executable_model` covers graph-built
+Concatenate forward, cached output, Split-based backward, and residency.
+
 `cyxwiz-tests "[flatten]"` consumes generated PyTorch 2.10
 `torch.nn.Flatten` forward/autograd fixtures for rank-2/3/4 inputs, positive
 and negative configured `start_dim`, and exact value ordering. It exercises
@@ -273,6 +286,8 @@ build\bin\Debug\cyxwiz-tests.exe "[tensor_shape]"
 build\bin\Debug\cyxwiz-tests.exe "[tensor_permute]"
 
 build\bin\Debug\cyxwiz-tests.exe "[tensor_indexing]"
+
+build\bin\Debug\cyxwiz-tests.exe "[tensor_concat]"
 
 build\bin\Debug\cyxwiz-tests.exe "[flatten]"
 

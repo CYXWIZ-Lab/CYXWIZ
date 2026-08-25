@@ -1960,8 +1960,16 @@ TEST_CASE("Tensor split and chunk reuse ArrayFire slice residency", "[tensor]") 
 TEST_CASE("Tensor split and chunk handle empty dimensions", "[tensor]") {
     cyxwiz::Tensor t({0, 3}, cyxwiz::DataType::Float32);
 
-    REQUIRE(t.Split(2, 0).empty());
-    REQUIRE(t.Chunk(2, 0).empty());
+    const std::vector<cyxwiz::Tensor> split = t.Split(2, 0);
+    const std::vector<cyxwiz::Tensor> chunks = t.Chunk(2, 0);
+    REQUIRE(split.size() == 1);
+    REQUIRE(chunks.size() == 2);
+    REQUIRE(split[0].Shape() == t.Shape());
+    REQUIRE(chunks[0].Shape() == t.Shape());
+    REQUIRE(chunks[1].Shape() == t.Shape());
+    REQUIRE(split[0].NumElements() == 0);
+    REQUIRE(chunks[0].NumElements() == 0);
+    REQUIRE(chunks[1].NumElements() == 0);
 }
 
 TEST_CASE("Tensor size calculations detect overflow", "[tensor]") {

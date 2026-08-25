@@ -109,13 +109,13 @@
       "owner": "cyxwiz-backend/include/cyxwiz/tensor.h",
       "implementation": ["cyxwiz-backend/src/core/tensor_concat.cpp"],
       "callers": ["model-family composition", "batching"],
-      "contract": "Axis, ordering, partial final chunk and invalid-shape semantics match PyTorch.",
-      "supported": "public Tensor ranks/dtypes documented by implementation",
-      "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_tensor"],
-      "execution": "ArrayFire-first where supported",
-      "status": "partial",
-      "gaps": ["variant matrix", "fallback and residency evidence"]
+      "contract": "Positive and negative axes, row-major ordering, scalar stack, PyTorch (0,) Cat identity, zero-sized split sections, empty dimensions, partial final chunks and invalid shapes match PyTorch within the declared same-dtype domain.",
+      "supported": "all Tensor dtypes: Cat ranks 1-4, Stack input ranks 0-3, and Split/Chunk ranks 1-4 on ArrayFire; explicit compatibility fallback for higher output ranks",
+      "oracle": "PyTorch 2.10",
+      "tests": ["cyxwiz-tests:[tensor_concat]", "cyxwiz-tests:[tensor]", "test_graph_executable_model"],
+      "execution": "ArrayFire device-to-device Cat/Stack through output rank 4; Split/Chunk delegate to resident Slice; declared native CPU compatibility fallback above rank 4",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "TENSOR-REDUCE-001",

@@ -2632,6 +2632,964 @@
         }
       }
     ],
+    "tensor_concat_f32": {
+      "cat": [
+        {
+          "dim": 0,
+          "expected": {
+            "shape": [
+              5
+            ],
+            "values": [
+              0.0,
+              1.0,
+              2.0,
+              3.0,
+              4.0
+            ]
+          },
+          "inputs": [
+            {
+              "shape": [
+                2
+              ],
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "shape": [
+                3
+              ],
+              "values": [
+                2.0,
+                3.0,
+                4.0
+              ]
+            }
+          ],
+          "name": "rank1",
+          "operation": "torch.cat"
+        },
+        {
+          "dim": -1,
+          "expected": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              0.0,
+              2.0,
+              3.0,
+              1.0,
+              4.0,
+              5.0
+            ]
+          },
+          "inputs": [
+            {
+              "shape": [
+                2,
+                1
+              ],
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "shape": [
+                2,
+                2
+              ],
+              "values": [
+                2.0,
+                3.0,
+                4.0,
+                5.0
+              ]
+            }
+          ],
+          "name": "rank2_negative_dim",
+          "operation": "torch.cat"
+        },
+        {
+          "dim": 1,
+          "expected": {
+            "shape": [
+              2,
+              3,
+              2
+            ],
+            "values": [
+              0.0,
+              1.0,
+              4.0,
+              5.0,
+              6.0,
+              7.0,
+              2.0,
+              3.0,
+              8.0,
+              9.0,
+              10.0,
+              11.0
+            ]
+          },
+          "inputs": [
+            {
+              "shape": [
+                2,
+                1,
+                2
+              ],
+              "values": [
+                0.0,
+                1.0,
+                2.0,
+                3.0
+              ]
+            },
+            {
+              "shape": [
+                2,
+                2,
+                2
+              ],
+              "values": [
+                4.0,
+                5.0,
+                6.0,
+                7.0,
+                8.0,
+                9.0,
+                10.0,
+                11.0
+              ]
+            }
+          ],
+          "name": "rank3_middle",
+          "operation": "torch.cat"
+        },
+        {
+          "dim": 2,
+          "expected": {
+            "shape": [
+              1,
+              2,
+              3,
+              2
+            ],
+            "values": [
+              0.0,
+              1.0,
+              4.0,
+              5.0,
+              6.0,
+              7.0,
+              2.0,
+              3.0,
+              8.0,
+              9.0,
+              10.0,
+              11.0
+            ]
+          },
+          "inputs": [
+            {
+              "shape": [
+                1,
+                2,
+                1,
+                2
+              ],
+              "values": [
+                0.0,
+                1.0,
+                2.0,
+                3.0
+              ]
+            },
+            {
+              "shape": [
+                1,
+                2,
+                2,
+                2
+              ],
+              "values": [
+                4.0,
+                5.0,
+                6.0,
+                7.0,
+                8.0,
+                9.0,
+                10.0,
+                11.0
+              ]
+            }
+          ],
+          "name": "rank4_middle",
+          "operation": "torch.cat"
+        },
+        {
+          "dim": 1,
+          "expected": {
+            "shape": [
+              2,
+              2,
+              3
+            ],
+            "values": [
+              0.0,
+              1.0,
+              2.0,
+              3.0,
+              4.0,
+              5.0,
+              6.0,
+              7.0,
+              8.0,
+              9.0,
+              10.0,
+              11.0
+            ]
+          },
+          "inputs": [
+            {
+              "shape": [
+                2,
+                0,
+                3
+              ],
+              "values": []
+            },
+            {
+              "shape": [
+                2,
+                2,
+                3
+              ],
+              "values": [
+                0.0,
+                1.0,
+                2.0,
+                3.0,
+                4.0,
+                5.0,
+                6.0,
+                7.0,
+                8.0,
+                9.0,
+                10.0,
+                11.0
+              ]
+            }
+          ],
+          "name": "empty_concat_axis",
+          "operation": "torch.cat"
+        },
+        {
+          "dim": 0,
+          "expected": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              0.0,
+              1.0,
+              2.0,
+              3.0,
+              4.0,
+              5.0
+            ]
+          },
+          "inputs": [
+            {
+              "shape": [
+                0
+              ],
+              "values": []
+            },
+            {
+              "shape": [
+                2,
+                3
+              ],
+              "values": [
+                0.0,
+                1.0,
+                2.0,
+                3.0,
+                4.0,
+                5.0
+              ]
+            }
+          ],
+          "name": "rank1_empty_identity",
+          "operation": "torch.cat"
+        },
+        {
+          "dim": 2,
+          "expected": {
+            "shape": [
+              2,
+              0,
+              3
+            ],
+            "values": []
+          },
+          "inputs": [
+            {
+              "shape": [
+                2,
+                0,
+                1
+              ],
+              "values": []
+            },
+            {
+              "shape": [
+                2,
+                0,
+                2
+              ],
+              "values": []
+            }
+          ],
+          "name": "zero_other_axis",
+          "operation": "torch.cat"
+        }
+      ],
+      "chunk": [
+        {
+          "chunks": 3,
+          "dim": 0,
+          "expected": [
+            {
+              "shape": [
+                3
+              ],
+              "values": [
+                0.0,
+                1.0,
+                2.0
+              ]
+            },
+            {
+              "shape": [
+                3
+              ],
+              "values": [
+                3.0,
+                4.0,
+                5.0
+              ]
+            },
+            {
+              "shape": [
+                1
+              ],
+              "values": [
+                6.0
+              ]
+            }
+          ],
+          "input": {
+            "shape": [
+              7
+            ],
+            "values": [
+              0.0,
+              1.0,
+              2.0,
+              3.0,
+              4.0,
+              5.0,
+              6.0
+            ]
+          },
+          "name": "uneven",
+          "operation": "torch.chunk"
+        },
+        {
+          "chunks": 5,
+          "dim": 0,
+          "expected": [
+            {
+              "shape": [
+                1
+              ],
+              "values": [
+                0.0
+              ]
+            },
+            {
+              "shape": [
+                1
+              ],
+              "values": [
+                1.0
+              ]
+            },
+            {
+              "shape": [
+                1
+              ],
+              "values": [
+                2.0
+              ]
+            }
+          ],
+          "input": {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.0,
+              1.0,
+              2.0
+            ]
+          },
+          "name": "more_chunks_than_elements",
+          "operation": "torch.chunk"
+        },
+        {
+          "chunks": 3,
+          "dim": 0,
+          "expected": [
+            {
+              "shape": [
+                0,
+                3
+              ],
+              "values": []
+            },
+            {
+              "shape": [
+                0,
+                3
+              ],
+              "values": []
+            },
+            {
+              "shape": [
+                0,
+                3
+              ],
+              "values": []
+            }
+          ],
+          "input": {
+            "shape": [
+              0,
+              3
+            ],
+            "values": []
+          },
+          "name": "empty_dimension",
+          "operation": "torch.chunk"
+        },
+        {
+          "chunks": 3,
+          "dim": -1,
+          "expected": [
+            {
+              "shape": [
+                2,
+                2
+              ],
+              "values": [
+                0.0,
+                1.0,
+                5.0,
+                6.0
+              ]
+            },
+            {
+              "shape": [
+                2,
+                2
+              ],
+              "values": [
+                2.0,
+                3.0,
+                7.0,
+                8.0
+              ]
+            },
+            {
+              "shape": [
+                2,
+                1
+              ],
+              "values": [
+                4.0,
+                9.0
+              ]
+            }
+          ],
+          "input": {
+            "shape": [
+              2,
+              5
+            ],
+            "values": [
+              0.0,
+              1.0,
+              2.0,
+              3.0,
+              4.0,
+              5.0,
+              6.0,
+              7.0,
+              8.0,
+              9.0
+            ]
+          },
+          "name": "negative_dim",
+          "operation": "torch.chunk"
+        }
+      ],
+      "split_size": [
+        {
+          "dim": 1,
+          "expected": [
+            {
+              "shape": [
+                2,
+                2
+              ],
+              "values": [
+                0.0,
+                1.0,
+                5.0,
+                6.0
+              ]
+            },
+            {
+              "shape": [
+                2,
+                2
+              ],
+              "values": [
+                2.0,
+                3.0,
+                7.0,
+                8.0
+              ]
+            },
+            {
+              "shape": [
+                2,
+                1
+              ],
+              "values": [
+                4.0,
+                9.0
+              ]
+            }
+          ],
+          "input": {
+            "shape": [
+              2,
+              5
+            ],
+            "values": [
+              0.0,
+              1.0,
+              2.0,
+              3.0,
+              4.0,
+              5.0,
+              6.0,
+              7.0,
+              8.0,
+              9.0
+            ]
+          },
+          "name": "uneven",
+          "operation": "torch.split",
+          "split_size": 2
+        },
+        {
+          "dim": 0,
+          "expected": [
+            {
+              "shape": [
+                3
+              ],
+              "values": [
+                0.0,
+                1.0,
+                2.0
+              ]
+            }
+          ],
+          "input": {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.0,
+              1.0,
+              2.0
+            ]
+          },
+          "name": "oversized",
+          "operation": "torch.split",
+          "split_size": 8
+        },
+        {
+          "dim": 0,
+          "expected": [
+            {
+              "shape": [
+                0,
+                3
+              ],
+              "values": []
+            }
+          ],
+          "input": {
+            "shape": [
+              0,
+              3
+            ],
+            "values": []
+          },
+          "name": "empty_dimension",
+          "operation": "torch.split",
+          "split_size": 2
+        }
+      ],
+      "split_sizes": [
+        {
+          "dim": 0,
+          "expected": [
+            {
+              "shape": [
+                1
+              ],
+              "values": [
+                0.0
+              ]
+            },
+            {
+              "shape": [
+                0
+              ],
+              "values": []
+            },
+            {
+              "shape": [
+                3
+              ],
+              "values": [
+                1.0,
+                2.0,
+                3.0
+              ]
+            }
+          ],
+          "input": {
+            "shape": [
+              4
+            ],
+            "values": [
+              0.0,
+              1.0,
+              2.0,
+              3.0
+            ]
+          },
+          "name": "zero_section",
+          "operation": "torch.split",
+          "sizes": [
+            1,
+            0,
+            3
+          ]
+        },
+        {
+          "dim": -1,
+          "expected": [
+            {
+              "shape": [
+                2,
+                1
+              ],
+              "values": [
+                0.0,
+                4.0
+              ]
+            },
+            {
+              "shape": [
+                2,
+                3
+              ],
+              "values": [
+                1.0,
+                2.0,
+                3.0,
+                5.0,
+                6.0,
+                7.0
+              ]
+            }
+          ],
+          "input": {
+            "shape": [
+              2,
+              4
+            ],
+            "values": [
+              0.0,
+              1.0,
+              2.0,
+              3.0,
+              4.0,
+              5.0,
+              6.0,
+              7.0
+            ]
+          },
+          "name": "negative_dim",
+          "operation": "torch.split",
+          "sizes": [
+            1,
+            3
+          ]
+        }
+      ],
+      "stack": [
+        {
+          "dim": 0,
+          "expected": {
+            "shape": [
+              2
+            ],
+            "values": [
+              0.0,
+              1.0
+            ]
+          },
+          "inputs": [
+            {
+              "shape": [],
+              "values": [
+                0.0
+              ]
+            },
+            {
+              "shape": [],
+              "values": [
+                1.0
+              ]
+            }
+          ],
+          "name": "scalar",
+          "operation": "torch.stack"
+        },
+        {
+          "dim": -1,
+          "expected": {
+            "shape": [
+              3,
+              2
+            ],
+            "values": [
+              0.0,
+              3.0,
+              1.0,
+              4.0,
+              2.0,
+              5.0
+            ]
+          },
+          "inputs": [
+            {
+              "shape": [
+                3
+              ],
+              "values": [
+                0.0,
+                1.0,
+                2.0
+              ]
+            },
+            {
+              "shape": [
+                3
+              ],
+              "values": [
+                3.0,
+                4.0,
+                5.0
+              ]
+            }
+          ],
+          "name": "rank1_last",
+          "operation": "torch.stack"
+        },
+        {
+          "dim": 1,
+          "expected": {
+            "shape": [
+              2,
+              2,
+              3
+            ],
+            "values": [
+              0.0,
+              1.0,
+              2.0,
+              6.0,
+              7.0,
+              8.0,
+              3.0,
+              4.0,
+              5.0,
+              9.0,
+              10.0,
+              11.0
+            ]
+          },
+          "inputs": [
+            {
+              "shape": [
+                2,
+                3
+              ],
+              "values": [
+                0.0,
+                1.0,
+                2.0,
+                3.0,
+                4.0,
+                5.0
+              ]
+            },
+            {
+              "shape": [
+                2,
+                3
+              ],
+              "values": [
+                6.0,
+                7.0,
+                8.0,
+                9.0,
+                10.0,
+                11.0
+              ]
+            }
+          ],
+          "name": "rank2_middle",
+          "operation": "torch.stack"
+        },
+        {
+          "dim": -1,
+          "expected": {
+            "shape": [
+              2,
+              2,
+              2,
+              2
+            ],
+            "values": [
+              0.0,
+              8.0,
+              1.0,
+              9.0,
+              2.0,
+              10.0,
+              3.0,
+              11.0,
+              4.0,
+              12.0,
+              5.0,
+              13.0,
+              6.0,
+              14.0,
+              7.0,
+              15.0
+            ]
+          },
+          "inputs": [
+            {
+              "shape": [
+                2,
+                2,
+                2
+              ],
+              "values": [
+                0.0,
+                1.0,
+                2.0,
+                3.0,
+                4.0,
+                5.0,
+                6.0,
+                7.0
+              ]
+            },
+            {
+              "shape": [
+                2,
+                2,
+                2
+              ],
+              "values": [
+                8.0,
+                9.0,
+                10.0,
+                11.0,
+                12.0,
+                13.0,
+                14.0,
+                15.0
+              ]
+            }
+          ],
+          "name": "rank3_to_rank4",
+          "operation": "torch.stack"
+        },
+        {
+          "dim": 0,
+          "expected": {
+            "shape": [
+              2,
+              2,
+              0
+            ],
+            "values": []
+          },
+          "inputs": [
+            {
+              "shape": [
+                2,
+                0
+              ],
+              "values": []
+            },
+            {
+              "shape": [
+                2,
+                0
+              ],
+              "values": []
+            }
+          ],
+          "name": "empty",
+          "operation": "torch.stack"
+        }
+      ]
+    },
     "tensor_indexing_f32": {
       "index_select": [
         {

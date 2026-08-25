@@ -269,6 +269,144 @@ def tensor_indexing_matrix() -> dict[str, Any]:
     }
 
 
+def tensor_values(shape: list[int], offset: int = 0) -> torch.Tensor:
+    return torch.arange(
+        offset, offset + math.prod(shape), dtype=torch.float32
+    ).reshape(shape)
+
+
+def tensor_cat_case(
+    name: str,
+    shapes: list[list[int]],
+    dim: int,
+) -> dict[str, Any]:
+    tensors: list[torch.Tensor] = []
+    offset = 0
+    for shape in shapes:
+        tensor = tensor_values(shape, offset)
+        tensors.append(tensor)
+        offset += tensor.numel()
+    return {
+        "name": name,
+        "operation": "torch.cat",
+        "dim": dim,
+        "inputs": [tensor_fixture(tensor) for tensor in tensors],
+        "expected": tensor_fixture(torch.cat(tensors, dim=dim)),
+    }
+
+
+def tensor_stack_case(
+    name: str,
+    shape: list[int],
+    count: int,
+    dim: int,
+) -> dict[str, Any]:
+    element_count = math.prod(shape)
+    tensors = [
+        tensor_values(shape, index * element_count)
+        for index in range(count)
+    ]
+    return {
+        "name": name,
+        "operation": "torch.stack",
+        "dim": dim,
+        "inputs": [tensor_fixture(tensor) for tensor in tensors],
+        "expected": tensor_fixture(torch.stack(tensors, dim=dim)),
+    }
+
+
+def tensor_split_size_case(
+    name: str,
+    shape: list[int],
+    split_size: int,
+    dim: int,
+) -> dict[str, Any]:
+    input_tensor = tensor_values(shape)
+    outputs = torch.split(input_tensor, split_size, dim=dim)
+    return {
+        "name": name,
+        "operation": "torch.split",
+        "dim": dim,
+        "split_size": split_size,
+        "input": tensor_fixture(input_tensor),
+        "expected": [tensor_fixture(output) for output in outputs],
+    }
+
+
+def tensor_split_sizes_case(
+    name: str,
+    shape: list[int],
+    sizes: list[int],
+    dim: int,
+) -> dict[str, Any]:
+    input_tensor = tensor_values(shape)
+    outputs = torch.split(input_tensor, sizes, dim=dim)
+    return {
+        "name": name,
+        "operation": "torch.split",
+        "dim": dim,
+        "sizes": sizes,
+        "input": tensor_fixture(input_tensor),
+        "expected": [tensor_fixture(output) for output in outputs],
+    }
+
+
+def tensor_chunk_case(
+    name: str,
+    shape: list[int],
+    chunks: int,
+    dim: int,
+) -> dict[str, Any]:
+    input_tensor = tensor_values(shape)
+    outputs = torch.chunk(input_tensor, chunks, dim=dim)
+    return {
+        "name": name,
+        "operation": "torch.chunk",
+        "dim": dim,
+        "chunks": chunks,
+        "input": tensor_fixture(input_tensor),
+        "expected": [tensor_fixture(output) for output in outputs],
+    }
+
+
+def tensor_concat_matrix() -> dict[str, Any]:
+    return {
+        "cat": [
+            tensor_cat_case("rank1", [[2], [3]], 0),
+            tensor_cat_case("rank2_negative_dim", [[2, 1], [2, 2]], -1),
+            tensor_cat_case("rank3_middle", [[2, 1, 2], [2, 2, 2]], 1),
+            tensor_cat_case(
+                "rank4_middle", [[1, 2, 1, 2], [1, 2, 2, 2]], 2
+            ),
+            tensor_cat_case("empty_concat_axis", [[2, 0, 3], [2, 2, 3]], 1),
+            tensor_cat_case("rank1_empty_identity", [[0], [2, 3]], 0),
+            tensor_cat_case("zero_other_axis", [[2, 0, 1], [2, 0, 2]], 2),
+        ],
+        "stack": [
+            tensor_stack_case("scalar", [], 2, 0),
+            tensor_stack_case("rank1_last", [3], 2, -1),
+            tensor_stack_case("rank2_middle", [2, 3], 2, 1),
+            tensor_stack_case("rank3_to_rank4", [2, 2, 2], 2, -1),
+            tensor_stack_case("empty", [2, 0], 2, 0),
+        ],
+        "split_size": [
+            tensor_split_size_case("uneven", [2, 5], 2, 1),
+            tensor_split_size_case("oversized", [3], 8, 0),
+            tensor_split_size_case("empty_dimension", [0, 3], 2, 0),
+        ],
+        "split_sizes": [
+            tensor_split_sizes_case("zero_section", [4], [1, 0, 3], 0),
+            tensor_split_sizes_case("negative_dim", [2, 4], [1, 3], -1),
+        ],
+        "chunk": [
+            tensor_chunk_case("uneven", [7], 3, 0),
+            tensor_chunk_case("more_chunks_than_elements", [3], 5, 0),
+            tensor_chunk_case("empty_dimension", [0, 3], 3, 0),
+            tensor_chunk_case("negative_dim", [2, 5], 3, -1),
+        ],
+    }
+
+
 def dropout_semantics() -> dict[str, Any]:
     input_tensor = torch.tensor(
         [[1.0, -2.0, 3.5], [4.0, -5.0, 6.5]],
@@ -1111,6 +1249,7 @@ def generate_fixture() -> dict[str, Any]:
         "cases": {
             "dropout_semantics_f32": dropout_semantics(),
             "flatten_forward_backward_f32": flatten_matrix(),
+            "tensor_concat_f32": tensor_concat_matrix(),
             "tensor_indexing_f32": tensor_indexing_matrix(),
             "tensor_permute_f32": tensor_permute_matrix(),
             "tensor_shape_semantics_f32": tensor_shape_semantics(),
