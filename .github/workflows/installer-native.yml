@@ -69,6 +69,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Select OpenSSL 3 signing tool on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          openssl_bin="$(brew --prefix openssl@3)/bin"
+          test -x "${openssl_bin}/openssl"
+          echo "${openssl_bin}" >> "${GITHUB_PATH}"
+          "${openssl_bin}/openssl" version
+
       - name: Run signed repository publication contract
         run: python -B -m unittest redist.tests.test_prepare_backend_pack_repository
 

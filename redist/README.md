@@ -223,7 +223,8 @@ py -3 redist\scripts\sign_pack_manifest.py ^
   --key-id release-2026
 ```
 
-The signer uses OpenSSL Ed25519, checks that `.signed.json` exactly matches the
+The signer requires OpenSSL 3 with Ed25519 `pkeyutl` support, checks that
+`.signed.json` exactly matches the
 canonical manifest body, verifies its newly generated signature before an
 atomic manifest replacement, and never copies the private key. Keep production
 keys outside the repository, build trees, output directories, and application
