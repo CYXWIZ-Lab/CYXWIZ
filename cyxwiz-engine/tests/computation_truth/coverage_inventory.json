@@ -75,15 +75,15 @@
       "operation": "transpose and permute",
       "tier": 0,
       "owner": "cyxwiz-backend/include/cyxwiz/tensor.h",
-      "implementation": ["cyxwiz-backend/src/core/tensor_shape.cpp"],
+      "implementation": ["cyxwiz-backend/src/core/tensor.cpp", "cyxwiz-backend/src/core/tensor_shape.cpp"],
       "callers": ["attention", "recurrent and transformer layers"],
       "contract": "Logical dimensions and row-major values match PyTorch.",
-      "supported": "public rank domain",
+      "supported": "rank 0-4 and all Tensor dtypes on ArrayFire; explicit compatibility fallback above rank 4",
       "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_tensor", "test_computation_truth_transformer_primitives"],
-      "execution": "ArrayFire-first",
-      "status": "partial",
-      "gaps": ["general permutation matrix", "strict residency evidence"]
+      "tests": ["cyxwiz-tests:[tensor]", "cyxwiz-tests:[tensor_permute]", "test_tensor_reshape_runtime_contract", "test_computation_truth_transformer_primitives"],
+      "execution": "ArrayFire device-to-device through rank 4; declared native CPU compatibility fallback above rank 4",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "TENSOR-INDEX-001",

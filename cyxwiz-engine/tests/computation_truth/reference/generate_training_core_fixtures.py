@@ -155,6 +155,38 @@ def tensor_shape_semantics() -> dict[str, Any]:
     }
 
 
+def tensor_permute_case(
+    name: str,
+    shape: list[int],
+    dims: list[int],
+) -> dict[str, Any]:
+    input_tensor = torch.arange(
+        math.prod(shape), dtype=torch.float32
+    ).reshape(shape)
+    output = input_tensor.permute(tuple(dims))
+    return {
+        "name": name,
+        "operation": "torch.Tensor.permute",
+        "dims": dims,
+        "input": tensor_fixture(input_tensor),
+        "expected": tensor_fixture(output),
+    }
+
+
+def tensor_permute_matrix() -> list[dict[str, Any]]:
+    return [
+        tensor_permute_case("scalar", [], []),
+        tensor_permute_case("rank1_identity", [6], [-1]),
+        tensor_permute_case("rank2_swap", [2, 3], [1, 0]),
+        tensor_permute_case("rank2_negative_swap", [2, 3], [-1, -2]),
+        tensor_permute_case("rank3_rotate", [2, 3, 4], [2, 0, 1]),
+        tensor_permute_case("rank3_negative", [2, 3, 4], [-2, -1, -3]),
+        tensor_permute_case("rank4_general", [2, 2, 3, 2], [3, 1, 0, 2]),
+        tensor_permute_case("rank4_identity", [2, 2, 3, 2], [0, 1, 2, 3]),
+        tensor_permute_case("empty", [2, 0, 3], [2, 0, 1]),
+    ]
+
+
 def dropout_semantics() -> dict[str, Any]:
     input_tensor = torch.tensor(
         [[1.0, -2.0, 3.5], [4.0, -5.0, 6.5]],
@@ -997,6 +1029,7 @@ def generate_fixture() -> dict[str, Any]:
         "cases": {
             "dropout_semantics_f32": dropout_semantics(),
             "flatten_forward_backward_f32": flatten_matrix(),
+            "tensor_permute_f32": tensor_permute_matrix(),
             "tensor_shape_semantics_f32": tensor_shape_semantics(),
             "linear_basic_f32": linear_case(),
             "cross_entropy_index_mean_f32": cross_entropy_case(),

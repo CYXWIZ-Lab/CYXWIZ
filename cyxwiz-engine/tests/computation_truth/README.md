@@ -113,6 +113,18 @@ rank transitions. Explicit `Squeeze(dim)` follows PyTorch: negative dimensions
 are normalized, non-singleton dimensions are a no-op, and rank-0 squeeze stays
 rank 0; parameterless `Squeeze()` removes all singleton dimensions.
 
+`cyxwiz-tests "[tensor_permute]"` consumes generated PyTorch 2.10 fixtures for
+rank-0 through rank-4 identity, positive/negative-axis, general, and
+zero-element permutations. An independent row-major index oracle covers every
+Tensor dtype for ranks 2, 3, and 4 under strict ArrayFire CPU execution with
+zero native fallback and zero device-to-host synchronization. Invalid, missing,
+duplicate, and out-of-range dimensions fail before compute. Ranks above four
+remain a declared native CPU compatibility path: compatibility mode records one
+fallback, while strict mode records and rejects it before native computation.
+Both `Transpose()` and `Transpose(dim0, dim1)` validate their public contracts
+and delegate to this same canonical permutation path, with all-dtype rank-2/3/4
+residency coverage.
+
 `cyxwiz-tests "[flatten]"` consumes generated PyTorch 2.10
 `torch.nn.Flatten` forward/autograd fixtures for rank-2/3/4 inputs, positive
 and negative configured `start_dim`, and exact value ordering. It exercises
@@ -245,6 +257,8 @@ build\bin\Debug\cyxwiz-tests.exe "[tensor_host_access]"
 build\bin\Debug\cyxwiz-tests.exe "[tensor_layout]"
 
 build\bin\Debug\cyxwiz-tests.exe "[tensor_shape]"
+
+build\bin\Debug\cyxwiz-tests.exe "[tensor_permute]"
 
 build\bin\Debug\cyxwiz-tests.exe "[flatten]"
 
