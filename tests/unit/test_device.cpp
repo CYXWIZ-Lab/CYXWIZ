@@ -1429,6 +1429,51 @@ TEST_CASE("Backend pack lifecycle qualification uses exact staged routes",
     CHECK(mismatched.disposition ==
           cyxwiz::runtime::BackendPackQualificationDisposition::InstalledUnqualified);
     CHECK(mismatched.message.find("does not match") != std::string::npos);
+
+    bool base_discovery_called = false;
+    const auto base_hook = cyxwiz::CreateBackendPackQualificationHook(
+        service, options,
+        [&](cyxwiz::RouteProbeInvocation invocation,
+            const cyxwiz::RouteQualificationCancelCheck&) {
+            base_discovery_called = true;
+            CHECK(invocation.enumerate_backend);
+            CHECK(invocation.type == cyxwiz::DeviceType::CPU);
+            REQUIRE(invocation.runtime_identity.has_value());
+            CHECK(invocation.runtime_identity->generation == 1);
+            CHECK(invocation.runtime_identity->backend_packs.empty());
+            cyxwiz::DeviceInfo route;
+            route.type = cyxwiz::DeviceType::CPU;
+            route.device_id = 0;
+            route.name = "Fixture CPU";
+            route.name_known = true;
+            route.kind = cyxwiz::DeviceKind::CPU;
+            route.identity_confidence =
+                cyxwiz::DeviceIdentityConfidence::BackendLocal;
+            route.metadata_status = cyxwiz::DeviceMetadataStatus::Available;
+            cyxwiz::IsolatedRouteDiscoveryResult result;
+            result.status = cyxwiz::RouteProbeStatus::Passed;
+            result.routes.push_back(std::move(route));
+            return result;
+        });
+    cyxwiz::runtime::VerifiedBackendPackManifest base_manifest;
+    base_manifest.kind =
+        cyxwiz::runtime::BackendPackManifestKind::Base;
+    base_manifest.pack_id = "base-v1";
+    base_manifest.backend = "cpu";
+    base_manifest.runtime_set_id = "runtime-v1";
+    base_manifest.arrayfire_version = "3.10.signed-base";
+    base_manifest.compatibility.operation_matrix_id =
+        cyxwiz::kRouteQualificationMatrixId;
+    cyxwiz::runtime::ActiveRuntimeState base_candidate;
+    base_candidate.runtime_set_id = "runtime-v1";
+    base_candidate.generation = 1;
+    base_candidate.base_pack_id = "base-v1";
+    const auto base_qualified = base_hook(
+        base_manifest, base, base_candidate);
+    INFO(base_qualified.message);
+    REQUIRE(base_discovery_called);
+    CHECK(base_qualified.disposition ==
+          cyxwiz::runtime::BackendPackQualificationDisposition::Qualified);
     std::filesystem::remove_all(root, cleanup_error);
 }
 #endif

@@ -73,6 +73,21 @@ struct ResolvedLossConfiguration {
     std::optional<float> smooth;
 };
 
+// Effective optimizer settings resolved by the same path that constructs the
+// runtime Optimizer. Optional values are present only when the selected
+// backend optimizer consumes them.
+struct ResolvedOptimizerConfiguration {
+    gui::NodeType optimizer_type = gui::NodeType::Adam;
+    std::string optimizer_name;
+    float learning_rate = 0.001f;
+    std::optional<float> momentum;
+    std::optional<float> beta1;
+    std::optional<float> beta2;
+    std::optional<float> epsilon;
+    std::optional<float> rmsprop_alpha;
+    std::optional<float> weight_decay;
+};
+
 // Build SequentialModel + Loss + Optimizer from a TrainingConfiguration.
 // Pure function — no side effects beyond logging. Shared between
 // TrainingExecutor (real training) and DebugExecutor (one-step local
@@ -85,6 +100,12 @@ std::unique_ptr<Loss> BuildLossFromConfig(
     const TrainingConfiguration& config);
 
 ResolvedLossConfiguration ResolveLossConfiguration(
+    const TrainingConfiguration& config);
+
+std::unique_ptr<Optimizer> BuildOptimizerFromConfig(
+    const TrainingConfiguration& config);
+
+ResolvedOptimizerConfiguration ResolveOptimizerConfiguration(
     const TrainingConfiguration& config);
 
 // Build the narrow executable model interface. Sequential configs wrap the

@@ -97,15 +97,23 @@ int main() {
         cyxwiz::ParameterDefinition state_overwrite;
         state_overwrite.name = "state_overwrite";
 
-        Check(gui::properties_rules::ShouldHideGenericParameter(
+        Check(!gui::properties_rules::ShouldHideGenericParameter(
                   missing, state_path),
-              "Fit + Transform should hide the engine-managed state path");
+              "Fit + Transform should expose state path when saving is enabled");
         Check(!gui::properties_rules::ShouldHideGenericParameter(
                   missing, save_state),
               "Fit + Transform should expose Save fitted state");
         Check(gui::properties_rules::ShouldHideGenericParameter(
                   missing, state_overwrite),
-              "automatic fitted-state paths should hide overwrite control");
+              "overwrite should stay hidden until a state path is selected");
+        Check(gui::properties_rules::ShouldUseSaveFileDialog(
+                  missing, state_path),
+              "Fit + Transform should browse for a fitted-state destination");
+
+        missing.parameters["state_path"] = "training.cyxstate.json";
+        Check(!gui::properties_rules::ShouldHideGenericParameter(
+                  missing, state_overwrite),
+              "selected fit-state path should expose overwrite control");
 
         missing.parameters["operation_mode"] = "transform_only";
         Check(!gui::properties_rules::ShouldHideGenericParameter(
@@ -114,6 +122,9 @@ int main() {
         Check(gui::properties_rules::ShouldHideGenericParameter(
                   missing, save_state),
               "Transform Only should hide the inapplicable save toggle");
+        Check(!gui::properties_rules::ShouldUseSaveFileDialog(
+                  missing, state_path),
+              "Transform Only should browse for an existing fitted state");
 
         auto scaler = MakeNode(
             101, gui::NodeType::StandardScaler, "Standard Scaler");
@@ -121,6 +132,14 @@ int main() {
         Check(!gui::properties_rules::ShouldHideGenericParameter(
                   scaler, state_path),
               "Standard Scaler should share the Transform Only state picker contract");
+
+        auto vectorizer = MakeNode(
+            102, gui::NodeType::TFIDFVectorizer, "TF-IDF");
+        vectorizer.parameters["operation_mode"] = "fit_transform";
+        vectorizer.parameters["save_state"] = "true";
+        Check(!gui::properties_rules::ShouldHideGenericParameter(
+                  vectorizer, state_path),
+              "TF-IDF should share the fitted-state save path contract");
     }
 
     {
@@ -697,6 +716,21 @@ int main() {
     }
 
     {
+        auto count = MakeNode(2, gui::NodeType::CountVectorizer, "Count");
+        count.parameters["text_col"] = "text";
+        count.parameters["ngram_range"] = "1,2";
+        count.parameters["ngram_min"] = "3";
+        count.parameters["ngram_max"] = "3";
+
+        const auto report = gui::properties_truth::ResolveNodeTruth(count);
+        const auto* ngram_min = FindProperty(report, "ngram_min");
+        const auto* ngram_max = FindProperty(report, "ngram_max");
+        Check(ngram_min != nullptr && ngram_min->effective_value == "1" &&
+                  ngram_max != nullptr && ngram_max->effective_value == "2",
+              "ngram_range should override legacy ngram_min/ngram_max in truth diagnostics");
+    }
+
+    {
         auto tokenizer = MakeNode(2, gui::NodeType::TextTokenizer, "Tokenizer");
         tokenizer.parameters["max_length"] = "128";
         const auto report = gui::properties_truth::ResolveNodeTruth(tokenizer);
@@ -756,12 +790,14 @@ int main() {
               "Adam legacy lr should be marked alias-used");
         const auto* beta1 = FindProperty(report, "beta1");
         Check(beta1 != nullptr,
-              "Adam should surface unsupported beta1 truth when present");
-        Check(HasStatus(*beta1,
-                        gui::properties_truth::TruthStatus::Unsupported),
-              "Adam beta1 should be marked unsupported until optimizer construction applies it");
-        Check(report.has_issue,
-              "unsupported Adam beta1 should mark report as issue");
+              "Adam should surface runtime beta1 truth when present");
+        Check(HasStatus(*beta1, gui::properties_truth::TruthStatus::OK),
+              "Adam beta1 should be runtime-owned after optimizer construction applies it");
+        const auto* epsilon = FindProperty(report, "epsilon");
+        Check(epsilon != nullptr &&
+                  HasStatus(*epsilon,
+                            gui::properties_truth::TruthStatus::Defaulted),
+              "Adam should expose the runtime epsilon default");
     }
 
     {
@@ -777,10 +813,26 @@ int main() {
               "SGD learning_rate <= 0 should be visible");
         const auto* momentum = FindProperty(report, "momentum");
         Check(momentum != nullptr,
-              "SGD should surface unsupported momentum truth when present");
-        Check(HasStatus(*momentum,
-                        gui::properties_truth::TruthStatus::Unsupported),
-              "SGD momentum should be marked unsupported until optimizer construction applies it");
+              "SGD should surface runtime momentum truth when present");
+        Check(HasStatus(*momentum, gui::properties_truth::TruthStatus::OK),
+              "SGD momentum should be runtime-owned after optimizer construction applies it");
+    }
+
+    {
+        auto adagrad = MakeNode(2, gui::NodeType::Adagrad, "Adagrad");
+        adagrad.parameters["lr_decay"] = "0.1";
+
+        const auto report = gui::properties_truth::ResolveNodeTruth(adagrad);
+        const auto* epsilon = FindProperty(report, "epsilon");
+        Check(epsilon != nullptr &&
+                  HasStatus(*epsilon,
+                            gui::properties_truth::TruthStatus::Defaulted),
+              "Adagrad should expose its runtime epsilon default");
+        const auto* lr_decay = FindProperty(report, "lr_decay");
+        Check(lr_decay != nullptr &&
+                  HasStatus(*lr_decay,
+                            gui::properties_truth::TruthStatus::Unsupported),
+              "legacy Adagrad lr_decay should remain visibly unsupported");
     }
 
     {

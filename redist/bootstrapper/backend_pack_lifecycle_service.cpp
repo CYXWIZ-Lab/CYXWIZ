@@ -1,5 +1,7 @@
 #include "backend_pack_lifecycle_service.h"
 
+#include "base_launcher_publisher.h"
+
 #include <algorithm>
 #include <chrono>
 #include <exception>
@@ -140,6 +142,14 @@ bool BackendPackLifecycleService::ReadCatalogSnapshot(
                     record.manifest_path, entry, manifest,
                     record.manifest_error)) {
                 record.manifest = std::move(manifest);
+            } else {
+                std::string base_error;
+                if (metadata_verifier_.VerifyManifest(
+                        record.manifest_path, entry, manifest, base_error,
+                        BackendPackManifestKind::Base)) {
+                    record.manifest = std::move(manifest);
+                    record.manifest_error.clear();
+                }
             }
         }
         output.records.push_back(std::move(record));
@@ -151,17 +161,29 @@ bool BackendPackLifecycleService::ReadCatalogSnapshot(
 BackendPackLifecycleResult BackendPackLifecycleService::Deliver(
     const BackendPackDeliveryRequest& request,
     BackendPackArtifactSource& source) {
-    return DeliverInternal(request, &source);
+    return DeliverInternal(request, &source, false);
 }
 
 BackendPackLifecycleResult BackendPackLifecycleService::Deliver(
     const BackendPackDeliveryRequest& request) {
-    return DeliverInternal(request, nullptr);
+    return DeliverInternal(request, nullptr, false);
+}
+
+BackendPackLifecycleResult BackendPackLifecycleService::DeliverBase(
+    const BackendPackDeliveryRequest& request,
+    BackendPackArtifactSource& source) {
+    return DeliverInternal(request, &source, true);
+}
+
+BackendPackLifecycleResult BackendPackLifecycleService::DeliverBase(
+    const BackendPackDeliveryRequest& request) {
+    return DeliverInternal(request, nullptr, true);
 }
 
 BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     const BackendPackDeliveryRequest& request,
-    BackendPackArtifactSource* source) {
+    BackendPackArtifactSource* source,
+    bool base) {
     std::unique_lock<std::mutex> operation_lock(
         operation_mutex_, std::try_to_lock);
     if (!operation_lock.owns_lock()) {
@@ -207,7 +229,9 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             request.pack_id);
     }
     if (catalog_entry->support_status == BackendPackSupportStatus::Blocked ||
-        catalog_entry->support_status == BackendPackSupportStatus::Revoked) {
+        catalog_entry->support_status == BackendPackSupportStatus::Revoked ||
+        (base && catalog_entry->support_status !=
+                     BackendPackSupportStatus::Supported)) {
         return Finish(
             BackendPackLifecycleStatus::PolicyRejected,
             "Requested pack is blocked by the verified release catalog",
@@ -219,7 +243,9 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
         "Verifying the signed backend-pack manifest");
     VerifiedBackendPackManifest manifest;
     if (!metadata_verifier_.VerifyManifest(
-            request.manifest_path, *catalog_entry, manifest, error)) {
+            request.manifest_path, *catalog_entry, manifest, error,
+            base ? BackendPackManifestKind::Base
+                 : BackendPackManifestKind::BackendPack)) {
         return Finish(
             BackendPackLifecycleStatus::MetadataFailure, error,
             request.pack_id);
@@ -228,8 +254,9 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     progress.backend = manifest.backend;
     SetProgress(progress);
 
-    const auto installed_directory = runtime_root_ / "packs" /
-        manifest.backend / manifest.pack_id;
+    const auto installed_directory = base
+        ? runtime_root_ / "base" / manifest.pack_id
+        : runtime_root_ / "packs" / manifest.backend / manifest.pack_id;
     std::error_code filesystem_error;
     const bool preexisting =
         std::filesystem::exists(installed_directory, filesystem_error) &&
@@ -304,11 +331,20 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     }
     RemovePrivateStaging cleanup(extraction);
     const auto payload = manifest.BindExtractedDirectory(extraction);
-    const auto installed = request.repair
-        ? installer_.StageRepair(
+    if (base && request.repair) {
+        return Finish(
+            BackendPackLifecycleStatus::InvalidRequest,
+            "Fresh CPU-base delivery does not accept repair mode",
+            manifest.pack_id, manifest.backend);
+    }
+    const auto installed = base
+        ? installer_.StageBase(
               payload, request.installation_disk_budget_bytes)
-        : installer_.StageInstallOrUpdate(
-              payload, request.installation_disk_budget_bytes);
+        : (request.repair
+              ? installer_.StageRepair(
+                    payload, request.installation_disk_budget_bytes)
+              : installer_.StageInstallOrUpdate(
+                    payload, request.installation_disk_budget_bytes));
     if (!IsTerminalInstallStatus(installed.status)) {
         return Finish(
             installed.status == BackendPackInstallStatus::Interrupted
@@ -326,41 +362,61 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     }
 
     ActiveRuntimeState qualification_base;
-    if (!LoadActiveRuntimeState(
-            runtime_root_ / "active-runtime.json", qualification_base,
-            error) ||
-        qualification_base.runtime_set_id != manifest.runtime_set_id ||
-        qualification_base.base_pack_id != manifest.companion_base_id ||
-        qualification_base.generation ==
-            std::numeric_limits<std::uint64_t>::max()) {
-        return Finish(
-            BackendPackLifecycleStatus::InstallationFailure,
-            error.empty()
-                ? "Active runtime identity changed before qualification"
-                : error,
-            manifest.pack_id, manifest.backend,
-            installed.installed_directory);
-    }
-    ActiveRuntimeState qualification_candidate = qualification_base;
-    const auto candidate_pack = std::find_if(
-        qualification_candidate.packs.begin(),
-        qualification_candidate.packs.end(),
-        [&](const ActivePackState& pack) {
-            return pack.backend == manifest.backend;
-        });
-    if (candidate_pack == qualification_candidate.packs.end()) {
-        qualification_candidate.packs.push_back(
-            {manifest.backend, manifest.pack_id});
+    ActiveRuntimeState qualification_candidate;
+    if (base) {
+        std::error_code active_error;
+        if (std::filesystem::exists(
+                runtime_root_ / "active-runtime.json", active_error) ||
+            active_error) {
+            return Finish(
+                BackendPackLifecycleStatus::InstallationFailure,
+                active_error
+                    ? "Cannot inspect runtime state before CPU qualification: " +
+                          active_error.message()
+                    : "An active runtime appeared before CPU qualification",
+                manifest.pack_id, manifest.backend,
+                installed.installed_directory);
+        }
+        qualification_candidate.runtime_set_id = manifest.runtime_set_id;
+        qualification_candidate.generation = 1;
+        qualification_candidate.base_pack_id = manifest.pack_id;
     } else {
-        candidate_pack->pack_id = manifest.pack_id;
+        if (!LoadActiveRuntimeState(
+                runtime_root_ / "active-runtime.json", qualification_base,
+                error) ||
+            qualification_base.runtime_set_id != manifest.runtime_set_id ||
+            qualification_base.base_pack_id != manifest.companion_base_id ||
+            qualification_base.generation ==
+                std::numeric_limits<std::uint64_t>::max()) {
+            return Finish(
+                BackendPackLifecycleStatus::InstallationFailure,
+                error.empty()
+                    ? "Active runtime identity changed before qualification"
+                    : error,
+                manifest.pack_id, manifest.backend,
+                installed.installed_directory);
+        }
+        qualification_candidate = qualification_base;
+        const auto candidate_pack = std::find_if(
+            qualification_candidate.packs.begin(),
+            qualification_candidate.packs.end(),
+            [&](const ActivePackState& pack) {
+                return pack.backend == manifest.backend;
+            });
+        if (candidate_pack == qualification_candidate.packs.end()) {
+            qualification_candidate.packs.push_back(
+                {manifest.backend, manifest.pack_id});
+        } else {
+            candidate_pack->pack_id = manifest.pack_id;
+        }
+        std::sort(
+            qualification_candidate.packs.begin(),
+            qualification_candidate.packs.end(),
+            [](const ActivePackState& left, const ActivePackState& right) {
+                return left.backend < right.backend;
+            });
+        qualification_candidate.generation = qualification_base.generation + 1;
     }
-    std::sort(
-        qualification_candidate.packs.begin(),
-        qualification_candidate.packs.end(),
-        [](const ActivePackState& left, const ActivePackState& right) {
-            return left.backend < right.backend;
-        });
-    qualification_candidate.generation = qualification_base.generation + 1;
 
     SetStage(
         BackendPackLifecycleStage::Qualifying,
@@ -393,9 +449,15 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     }
 
     ActiveRuntimeState current;
-    if (!LoadActiveRuntimeState(
-            runtime_root_ / "active-runtime.json", current, error) ||
-        !SameRuntimeState(qualification_base, current)) {
+    std::error_code current_error;
+    const bool runtime_changed = base
+        ? (std::filesystem::exists(
+               runtime_root_ / "active-runtime.json", current_error) ||
+           current_error)
+        : (!LoadActiveRuntimeState(
+               runtime_root_ / "active-runtime.json", current, error) ||
+           !SameRuntimeState(qualification_base, current));
+    if (runtime_changed) {
         return Finish(
             BackendPackLifecycleStatus::InstalledUnqualified,
             "Runtime state changed during qualification; stale evidence was not used for activation or cleanup",
@@ -419,6 +481,15 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     }
     if (qualification.disposition ==
         BackendPackQualificationDisposition::RollbackRequired) {
+        if (base) {
+            return Finish(
+                BackendPackLifecycleStatus::InstalledUnqualified,
+                qualification.message.empty()
+                    ? "CPU-base qualification failed; the complete base remains inactive"
+                    : qualification.message,
+                manifest.pack_id, manifest.backend,
+                installed.installed_directory, qualification);
+        }
         if (!preexisting) {
             const auto removal = remover_.Remove(
                 manifest.backend, manifest.pack_id);
@@ -450,17 +521,42 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             installed.installed_directory, qualification);
     }
 
+    if (base) {
+        SetStage(
+            BackendPackLifecycleStage::Installing,
+            "Publishing the verified app-level launcher");
+        const auto launcher = PublishVerifiedBaseLauncher(
+            manifest, installed.installed_directory, runtime_root_);
+        if (!launcher.published) {
+            return Finish(
+                BackendPackLifecycleStatus::InstallationFailure,
+                launcher.message, manifest.pack_id, manifest.backend,
+                installed.installed_directory, qualification);
+        }
+        if (cancel_requested_.load()) {
+            return Finish(
+                BackendPackLifecycleStatus::Interrupted,
+                "Verified launcher is installed but base activation was cancelled",
+                manifest.pack_id, manifest.backend,
+                installed.installed_directory, qualification);
+        }
+    }
+
     SetStage(
         BackendPackLifecycleStage::Activating,
-        "Activating the locally qualified backend pack");
+        base ? "Activating the locally qualified CPU base"
+             : "Activating the locally qualified backend pack");
     BackendPackStateService state_service(
         runtime_root_, execution_active_);
-    const auto activation = state_service.ActivateOptionalPack(
-        manifest.backend, manifest.pack_id);
+    const auto activation = base
+        ? state_service.InitializeBase(
+              manifest.runtime_set_id, manifest.pack_id)
+        : state_service.ActivateOptionalPack(
+              manifest.backend, manifest.pack_id);
     if (activation.status != BackendPackStateStatus::Completed) {
         return Finish(
             BackendPackLifecycleStatus::ActivationFailure,
-            "Qualified pack remains installed but activation failed: " +
+            "Qualified component remains installed but activation failed: " +
                 activation.message,
             manifest.pack_id, manifest.backend,
             installed.installed_directory, qualification);
@@ -468,7 +564,8 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     return Finish(
         BackendPackLifecycleStatus::InstalledAndActivated,
         qualification.message.empty()
-            ? "Backend pack installed, qualified, and activated"
+            ? (base ? "CPU base installed, qualified, and activated"
+                    : "Backend pack installed, qualified, and activated")
             : qualification.message,
         manifest.pack_id, manifest.backend,
         installed.installed_directory, qualification);

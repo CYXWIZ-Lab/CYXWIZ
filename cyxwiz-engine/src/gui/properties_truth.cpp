@@ -883,9 +883,7 @@ void AddVectorizerTruth(NodeTruthReport& report,
         true,
         false);
     if (const std::string* range = FindParameter(node, "ngram_range");
-        range && !range->empty() &&
-        !HasNonEmptyParameter(node, "ngram_min") &&
-        !HasNonEmptyParameter(node, "ngram_max")) {
+        range && !range->empty()) {
         const auto comma = range->find(',');
         if (comma == std::string::npos) {
             ngram_max.statuses.clear();
@@ -896,10 +894,13 @@ void AddVectorizerTruth(NodeTruthReport& report,
             ngram_min.effective_value = range->substr(0, comma);
             ngram_min.statuses.clear();
             AddStatus(ngram_min, TruthStatus::AliasUsed);
+            ngram_min.message =
+                "ngram_range is canonical and overrides legacy ngram_min/ngram_max values.";
             ngram_max.source_key = "ngram_range";
             ngram_max.effective_value = range->substr(comma + 1);
             ngram_max.statuses.clear();
             AddStatus(ngram_max, TruthStatus::AliasUsed);
+            ngram_max.message = ngram_min.message;
         }
     }
     RequirePositiveInt(ngram_min, "ngram_min");
@@ -1021,7 +1022,7 @@ void AddUnsupportedOptimizerParameterTruth(NodeTruthReport& report,
                                            const MLNode& node,
                                            const std::string& key,
                                            const std::string& label,
-                                           bool compiler_serialized) {
+                                           const std::string& message) {
     const std::string* value = FindParameter(node, key);
     if (!value || value->empty()) {
         return;
@@ -1031,15 +1032,10 @@ void AddUnsupportedOptimizerParameterTruth(NodeTruthReport& report,
     truth.canonical_key = key;
     truth.source_key = key;
     truth.effective_value = *value;
-    truth.owner = compiler_serialized ? TruthOwner::Compiler
-                                      : TruthOwner::UI;
+    truth.owner = TruthOwner::UI;
     truth.quick_editable = false;
     AddStatus(truth, TruthStatus::Unsupported);
-    truth.message = compiler_serialized
-        ? "GraphCompiler serializes this optimizer parameter, but current "
-          "optimizer construction applies only optimizer type and learning_rate."
-        : "This optimizer parameter is present on the node but is not consumed "
-          "by GraphCompiler or current optimizer construction.";
+    truth.message = message;
     report.properties.push_back(std::move(truth));
 }
 
@@ -1052,20 +1048,71 @@ void AddOptimizerTruth(NodeTruthReport& report, const MLNode& node) {
     }
     report.properties.push_back(ResolveLearningRateTruth(node, default_lr));
 
-    AddUnsupportedOptimizerParameterTruth(
-        report, node, "momentum", "Momentum", true);
-    AddUnsupportedOptimizerParameterTruth(
-        report, node, "beta1", "Beta1", true);
-    AddUnsupportedOptimizerParameterTruth(
-        report, node, "beta2", "Beta2", true);
-    AddUnsupportedOptimizerParameterTruth(
-        report, node, "weight_decay", "Weight decay", true);
-    AddUnsupportedOptimizerParameterTruth(
-        report, node, "epsilon", "Epsilon", false);
-    AddUnsupportedOptimizerParameterTruth(
-        report, node, "alpha", "RMSprop alpha", false);
-    AddUnsupportedOptimizerParameterTruth(
-        report, node, "lr_decay", "Learning-rate decay", false);
+    const auto add_bounded = [&](const std::string& key,
+                                 const std::string& label,
+                                 const std::string& default_value,
+                                 double minimum,
+                                 bool include_minimum,
+                                 double maximum,
+                                 bool include_maximum) {
+        auto truth = ResolveFloatProperty(
+            node, label, key, default_value, TruthOwner::Runtime, true, false);
+        RequireFloatInRange(truth, key, minimum, maximum,
+                            include_minimum, include_maximum);
+        report.properties.push_back(std::move(truth));
+    };
+    const auto add_positive = [&](const std::string& key,
+                                  const std::string& label,
+                                  const std::string& default_value) {
+        auto truth = ResolveFloatProperty(
+            node, label, key, default_value, TruthOwner::Runtime, true, false);
+        RequireFloatAtLeast(truth, key, 0.0, false);
+        report.properties.push_back(std::move(truth));
+    };
+
+    switch (node.type) {
+        case NodeType::SGD:
+            add_bounded("momentum", "Momentum", "0.9", 0.0, true,
+                        1.0, false);
+            AddUnsupportedOptimizerParameterTruth(
+                report, node, "weight_decay", "Weight decay",
+                "The current SGD backend has no weight-decay term; use AdamW "
+                "or an explicit supported regularization path.");
+            break;
+        case NodeType::Adam:
+        case NodeType::NAdam:
+            add_bounded("beta1", "Beta1", "0.9", 0.0, true, 1.0, false);
+            add_bounded("beta2", "Beta2", "0.999", 0.0, true, 1.0, false);
+            add_positive("epsilon", "Epsilon", "1e-8");
+            break;
+        case NodeType::AdamW:
+            add_bounded("beta1", "Beta1", "0.9", 0.0, true, 1.0, false);
+            add_bounded("beta2", "Beta2", "0.999", 0.0, true, 1.0, false);
+            add_positive("epsilon", "Epsilon", "1e-8");
+            {
+                auto weight_decay = ResolveFloatProperty(
+                    node, "Weight decay", "weight_decay", "0.01",
+                    TruthOwner::Runtime, true, false);
+                RequireFloatAtLeast(weight_decay, "weight_decay", 0.0, true);
+                report.properties.push_back(std::move(weight_decay));
+            }
+            break;
+        case NodeType::RMSprop:
+            add_bounded("alpha", "RMSprop alpha", "0.99", 0.0, true,
+                        1.0, false);
+            add_positive("epsilon", "Epsilon", "1e-8");
+            add_bounded("momentum", "Momentum", "0.0", 0.0, true,
+                        1.0, false);
+            break;
+        case NodeType::Adagrad:
+            add_positive("epsilon", "Epsilon", "1e-10");
+            AddUnsupportedOptimizerParameterTruth(
+                report, node, "lr_decay", "Learning-rate decay",
+                "The current Adagrad backend does not implement lr_decay.");
+            break;
+        default:
+            break;
+    }
 }
 
 bool IsLossNode(NodeType type) {

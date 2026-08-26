@@ -121,32 +121,39 @@ BackendPackInstaller::BackendPackInstaller(
 BackendPackInstallResult BackendPackInstaller::InstallOrUpdate(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes) {
-    return Apply(payload, disk_budget_bytes, false, true);
+    return Apply(payload, disk_budget_bytes, false, true, false);
 }
 
 BackendPackInstallResult BackendPackInstaller::StageInstallOrUpdate(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes) {
-    return Apply(payload, disk_budget_bytes, false, false);
+    return Apply(payload, disk_budget_bytes, false, false, false);
+}
+
+BackendPackInstallResult BackendPackInstaller::StageBase(
+    const VerifiedBackendPackPayload& payload,
+    std::uint64_t disk_budget_bytes) {
+    return Apply(payload, disk_budget_bytes, false, false, true);
 }
 
 BackendPackInstallResult BackendPackInstaller::Repair(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes) {
-    return Apply(payload, disk_budget_bytes, true, true);
+    return Apply(payload, disk_budget_bytes, true, true, false);
 }
 
 BackendPackInstallResult BackendPackInstaller::StageRepair(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes) {
-    return Apply(payload, disk_budget_bytes, true, false);
+    return Apply(payload, disk_budget_bytes, true, false, false);
 }
 
 BackendPackInstallResult BackendPackInstaller::Apply(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes,
     bool repair,
-    bool activate) {
+    bool activate,
+    bool base) {
     std::unique_lock<std::mutex> install_lock(
         install_mutex_, std::try_to_lock);
     if (!install_lock.owns_lock()) {
@@ -168,8 +175,10 @@ BackendPackInstallResult BackendPackInstaller::Apply(
     SetProgress(progress);
 
     if (!IsIdentifier(payload.runtime_set_id) ||
-        !IsIdentifier(payload.companion_base_id) ||
-        !IsOptionalBackend(payload.backend) ||
+        (base ? (!payload.companion_base_id.empty() ||
+                 payload.backend != "cpu")
+              : (!IsIdentifier(payload.companion_base_id) ||
+                 !IsOptionalBackend(payload.backend))) ||
         !IsIdentifier(payload.pack_id) || payload.components.empty() ||
         payload.source_directory.empty()) {
         return Finish(
@@ -178,10 +187,22 @@ BackendPackInstallResult BackendPackInstaller::Apply(
     }
     ActiveRuntimeState active;
     std::string error;
-    if (!LoadActiveRuntimeState(
-            runtime_root_ / "active-runtime.json", active, error) ||
-        active.runtime_set_id != payload.runtime_set_id ||
-        active.base_pack_id != payload.companion_base_id) {
+    if (base) {
+        std::error_code active_error;
+        if (std::filesystem::exists(
+                runtime_root_ / "active-runtime.json", active_error) ||
+            active_error) {
+            return Finish(
+                BackendPackInstallStatus::InvalidRequest,
+                active_error
+                    ? "Cannot inspect the active runtime state: " +
+                          active_error.message()
+                    : "A CPU base is already active");
+        }
+    } else if (!LoadActiveRuntimeState(
+                   runtime_root_ / "active-runtime.json", active, error) ||
+               active.runtime_set_id != payload.runtime_set_id ||
+               active.base_pack_id != payload.companion_base_id) {
         return Finish(
             BackendPackInstallStatus::InvalidRequest,
             error.empty()
@@ -237,8 +258,9 @@ BackendPackInstallResult BackendPackInstaller::Apply(
             "Pack installation interrupted after validation");
     }
 
-    const auto destination = runtime_root_ / "packs" / payload.backend /
-                             payload.pack_id;
+    const auto destination = base
+        ? runtime_root_ / "base" / payload.pack_id
+        : runtime_root_ / "packs" / payload.backend / payload.pack_id;
     const bool destination_exists =
         std::filesystem::exists(destination, filesystem_error) &&
         !filesystem_error;

@@ -3,6 +3,11 @@
 #include "core/pipeline_executor.h"
 #include "core/pipeline_materializer.h"
 #include "core/node_executors/preprocessing_operators.h"
+#include "core/node_executors/regression_operators.h"
+#include "core/node_executors/differencing_operator.h"
+#include "core/node_executors/log_transform_operator.h"
+#include "core/node_executors/sentiment_analyzer_operator.h"
+#include "core/node_executors/time_series_split_operator.h"
 
 #include <arrow/api.h>
 
@@ -42,6 +47,19 @@ std::shared_ptr<arrow::Array> FinishDoubleArray(
     const std::vector<double>& values) {
     arrow::DoubleBuilder builder;
     for (double value : values) {
+        auto status = builder.Append(value);
+        Check(status.ok(), status.ToString());
+    }
+    std::shared_ptr<arrow::Array> array;
+    auto status = builder.Finish(&array);
+    Check(status.ok(), status.ToString());
+    return array;
+}
+
+std::shared_ptr<arrow::Array> FinishStringArray(
+    const std::vector<std::string>& values) {
+    arrow::StringBuilder builder;
+    for (const auto& value : values) {
         auto status = builder.Append(value);
         Check(status.ok(), status.ToString());
     }
@@ -304,6 +322,70 @@ void TestStandardScalerEmitsMemoryPreflight() {
           "StandardScaler preflight test should preserve row count");
 }
 
+void TestMaterializerPreflightStopsBeforeApply() {
+    constexpr const char* kSourceName = "preflight_only_source";
+    const auto source_table = MakePreprocessingTable();
+    const std::vector<gui::MLNode> nodes = {
+        MakeDataInputNode(471, kSourceName),
+        MakeOperatorNode(
+            472,
+            gui::NodeType::StandardScaler,
+            "Preflight StandardScaler",
+            {{"columns", "x,y"},
+             {"with_mean", "true"},
+             {"with_std", "true"}}),
+    };
+    const std::vector<gui::NodeLink> links = {
+        {1, 471, 0, 472, 0, gui::LinkType::TensorFlow},
+    };
+
+    auto safe = cyxwiz::PipelineMaterializer::PreflightTable(
+        nodes, links, source_table, kSourceName);
+    Check(safe.success, "preflight-only materializer should complete cleanly");
+    Check(safe.memory_preflight_observed,
+          "preflight-only materializer should capture operator evidence");
+    Check(safe.memory_preflight.memory_risk_level == "safe",
+          "small deterministic preflight should be safe");
+    Check(safe.memory_preflight.node_id == 472 &&
+              safe.memory_preflight.node_name == "Preflight StandardScaler",
+          "preflight evidence should identify the responsible node");
+    Check(safe.operators_applied == 0,
+          "preflight-only materializer must stop before Apply completes");
+    Check(safe.table == source_table,
+          "preflight-only materializer must preserve the source table");
+
+    cyxwiz::MaterializationMemoryContext warning_context;
+    const uint64_t estimated_peak =
+        safe.memory_preflight.estimated_memory_bytes;
+    Check(estimated_peak > 0,
+          "preflight evidence should contain the estimated peak");
+    warning_context.snapshot_override =
+        cyxwiz::MaterializationMemorySnapshot{
+            estimated_peak * 2ULL, estimated_peak * 2ULL, true};
+    auto warning = cyxwiz::PipelineMaterializer::PreflightTable(
+        nodes, links, source_table, kSourceName, warning_context);
+    Check(warning.success && warning.memory_preflight_observed,
+          "warning preflight should remain an allocation-free decision");
+    Check(warning.memory_preflight.memory_risk_level == "warning",
+          "deterministic 50 percent estimate should require warning handling");
+    Check(warning.operators_applied == 0 && warning.table == source_table,
+          "warning preflight must stop before materialization");
+
+    cyxwiz::MaterializationMemoryContext blocked_context;
+    blocked_context.policy.hard_limit_bytes = 1;
+    blocked_context.snapshot_override =
+        cyxwiz::MaterializationMemorySnapshot{1024, 1024, true};
+    auto blocked = cyxwiz::PipelineMaterializer::PreflightTable(
+        nodes, links, source_table, kSourceName, blocked_context);
+    Check(blocked.success && blocked.memory_preflight_observed,
+          "blocked preflight should return its decision without allocating");
+    Check(blocked.memory_preflight.status == "blocked" &&
+              blocked.memory_preflight.memory_risk_level == "blocked",
+          "blocked preflight should preserve the operator decision");
+    Check(blocked.operators_applied == 0 && blocked.table == source_table,
+          "blocked preflight must leave the source table untouched");
+}
+
 void TestStandardScalerExcludesMultipleTargetColumns() {
     cyxwiz::StandardScalerOperator op;
     std::string error;
@@ -339,11 +421,366 @@ void TestStandardScalerExcludesMultipleTargetColumns() {
           "StandardScaler should reject a misspelled excluded column");
 }
 
+void TestRegressionMemoryPreflight() {
+    const auto input = MakePreprocessingTable();
+
+    cyxwiz::LinearRegressionOperator linear;
+    std::string error;
+    Check(linear.Configure({
+        {"feature_cols", "x"},
+        {"target_col", "y"},
+        {"fit_intercept", "true"},
+    }, error), error);
+    std::vector<cyxwiz::PipelineOperatorProgress> linear_progress;
+    linear.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            linear_progress.push_back(event);
+        });
+    auto linear_result = linear.Apply(input);
+    Check(linear_result.ok(), linear_result.status().ToString());
+    Check(!linear_progress.empty(),
+          "LinearRegression should emit memory preflight");
+    Check(linear_progress.front().stage ==
+              "LinearRegression memory preflight",
+          "LinearRegression should preflight before reading dense columns");
+    Check(linear_progress.front().memory_risk_level == "safe",
+          "small LinearRegression fixture should report safe memory risk");
+    Check(linear_progress.front().estimated_memory_bytes >
+              4ULL * 6ULL * static_cast<uint64_t>(sizeof(double)),
+          "LinearRegression estimate should include regression workspace");
+
+    cyxwiz::PolynomialRegressionOperator polynomial;
+    Check(polynomial.Configure({
+        {"feature_col", "x"},
+        {"target_col", "y"},
+        {"degree", "2"},
+    }, error), error);
+    std::vector<cyxwiz::PipelineOperatorProgress> polynomial_progress;
+    polynomial.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            polynomial_progress.push_back(event);
+        });
+    auto polynomial_result = polynomial.Apply(input);
+    Check(polynomial_result.ok(), polynomial_result.status().ToString());
+    Check(!polynomial_progress.empty(),
+          "PolynomialRegression should emit memory preflight");
+    Check(polynomial_progress.front().stage ==
+              "PolynomialRegression memory preflight",
+          "PolynomialRegression should preflight before reading dense columns");
+    Check(polynomial_progress.front().memory_risk_level == "safe",
+          "small PolynomialRegression fixture should report safe memory risk");
+    Check(polynomial_progress.front().estimated_memory_bytes >
+              4ULL * 7ULL * static_cast<uint64_t>(sizeof(double)),
+          "PolynomialRegression estimate should include degree workspace");
+
+    cyxwiz::MaterializationMemoryContext blocked_context;
+    blocked_context.policy.hard_limit_bytes = 1;
+    blocked_context.snapshot_override = cyxwiz::MaterializationMemorySnapshot{
+        1024, 1024, true};
+    linear.SetMaterializationMemoryContext(blocked_context);
+    linear_progress.clear();
+    const auto blocked_result = linear.Apply(input);
+    Check(!blocked_result.ok() && blocked_result.status().IsCapacityError(),
+          "LinearRegression should block before dense column reads");
+    Check(linear_progress.size() == 1,
+          "blocked LinearRegression should emit only its preflight event");
+    Check(linear_progress.front().status == "blocked",
+          "blocked LinearRegression should expose blocked status");
+}
+
+void TestRemainingRowTransformMemoryPreflight() {
+    const auto numeric_input = MakePreprocessingTable();
+    const auto text_input = arrow::Table::Make(
+        arrow::schema({
+            arrow::field("text", arrow::utf8()),
+            arrow::field("label", arrow::float64()),
+        }),
+        {
+            FinishStringArray({
+                "good bright day", "bad dull day",
+                "good calm night", "bad storm night"}),
+            FinishDoubleArray({1.0, 0.0, 1.0, 0.0}),
+        });
+
+    auto assert_safe_preflight = [&](cyxwiz::IPipelineOperator& op,
+                                     const std::shared_ptr<arrow::Table>& input,
+                                     const std::string& expected_stage,
+                                     uint64_t raw_lower_bound) {
+        std::vector<cyxwiz::PipelineOperatorProgress> events;
+        op.SetProgressCallback(
+            [&](const cyxwiz::PipelineOperatorProgress& event) {
+                events.push_back(event);
+            });
+        const auto result = op.Apply(input);
+        Check(result.ok(), result.status().ToString());
+        Check(!events.empty() && events.front().stage == expected_stage,
+              expected_stage + " should precede materializing progress");
+        Check(events.front().memory_risk_level == "safe",
+              expected_stage + " should report safe risk for the fixture");
+        Check(events.front().estimated_memory_bytes > raw_lower_bound,
+              expected_stage + " should include peak allocation overhead");
+        Check(events.front().message.find("Suggestion:") != std::string::npos,
+              expected_stage + " should include mitigation guidance");
+    };
+
+    std::string error;
+    cyxwiz::LogTransformOperator log;
+    Check(log.Configure({{"value_col", "y"}}, error), error);
+    assert_safe_preflight(
+        log,
+        numeric_input,
+        "LogTransform memory preflight",
+        4ULL * 2ULL * static_cast<uint64_t>(sizeof(float)));
+
+    cyxwiz::DifferencingOperator differencing;
+    Check(differencing.Configure({
+        {"value_col", "y"}, {"lag", "1"}, {"order", "1"}}, error), error);
+    assert_safe_preflight(
+        differencing,
+        numeric_input,
+        "Differencing memory preflight",
+        4ULL * 3ULL * static_cast<uint64_t>(sizeof(float)));
+
+    cyxwiz::TimeSeriesSplitOperator split;
+    Check(split.Configure({
+        {"train_ratio", "0.5"},
+        {"val_ratio", "0.25"},
+        {"test_ratio", "0.25"},
+    }, error), error);
+    assert_safe_preflight(
+        split,
+        numeric_input,
+        "TimeSeriesSplit memory preflight",
+        4ULL * 3ULL * static_cast<uint64_t>(sizeof(int64_t)));
+
+    cyxwiz::SentimentAnalyzerOperator sentiment;
+    Check(sentiment.Configure({
+        {"text_col", "text"},
+        {"label_col", "label"},
+        {"method", "simple"},
+    }, error), error);
+    assert_safe_preflight(
+        sentiment,
+        text_input,
+        "SentimentAnalyzer memory preflight",
+        4ULL * 5ULL * static_cast<uint64_t>(sizeof(float)));
+
+    cyxwiz::MaterializationMemoryContext blocked_context;
+    blocked_context.policy.hard_limit_bytes = 1;
+    blocked_context.snapshot_override = cyxwiz::MaterializationMemorySnapshot{
+        1024, 1024, true};
+    log.SetMaterializationMemoryContext(blocked_context);
+    std::vector<cyxwiz::PipelineOperatorProgress> blocked_events;
+    log.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            blocked_events.push_back(event);
+        });
+    const auto blocked_result = log.Apply(numeric_input);
+    Check(!blocked_result.ok() && blocked_result.status().IsCapacityError(),
+          "LogTransform should return CapacityError at its preflight boundary");
+    Check(blocked_events.size() == 1 &&
+              blocked_events.front().stage == "LogTransform memory preflight" &&
+              blocked_events.front().status == "blocked",
+          "blocked LogTransform should stop before reading its numeric column");
+}
+
+void TestMaterializerStructuredFailures() {
+    constexpr const char* kSourceName = "materializer_failure_source";
+    const std::vector<gui::MLNode> nodes = {
+        MakeDataInputNode(901, kSourceName),
+        MakeOperatorNode(
+            902,
+            gui::NodeType::LogTransform,
+            "Failure LogTransform",
+            {{"value_col", "y"}}),
+    };
+    const std::vector<gui::NodeLink> links = {
+        {1, 901, 0, 902, 0, gui::LinkType::TensorFlow},
+    };
+    const auto input = MakePreprocessingTable();
+
+    cyxwiz::PipelineOperatorExecutionContext cancelled_context;
+    cancelled_context.cancellation_requested = []() { return true; };
+    const auto cancelled = cyxwiz::PipelineMaterializer::MaterializeTable(
+        nodes, links, input, kSourceName, {}, cancelled_context);
+    Check(!cancelled.success &&
+              cancelled.failure_kind ==
+                  cyxwiz::MaterializationFailureKind::Cancelled,
+          "materializer should expose cancellation as a typed failure");
+    Check(cancelled.operators_applied == 0,
+          "cancelled materializer should not publish an applied operator");
+
+    bool cancel_during_sentiment = false;
+    cyxwiz::PipelineOperatorExecutionContext cooperative_context;
+    cooperative_context.cancellation_requested =
+        [&cancel_during_sentiment]() { return cancel_during_sentiment; };
+    const auto text_input = arrow::Table::Make(
+        arrow::schema({arrow::field("text", arrow::utf8())}),
+        {FinishStringArray({
+            "good bright day", "bad dull day",
+            "good calm night", "bad storm night"})});
+    const std::vector<gui::MLNode> sentiment_nodes = {
+        MakeDataInputNode(903, kSourceName),
+        MakeOperatorNode(
+            904,
+            gui::NodeType::SentimentAnalyzer,
+            "Cancellable Sentiment",
+            {{"text_col", "text"}, {"method", "simple"}}),
+    };
+    const std::vector<gui::NodeLink> sentiment_links = {
+        {2, 903, 0, 904, 0, gui::LinkType::TensorFlow},
+    };
+    const auto cooperative_cancel =
+        cyxwiz::PipelineMaterializer::MaterializeTable(
+            sentiment_nodes,
+            sentiment_links,
+            text_input,
+            kSourceName,
+            [&cancel_during_sentiment](
+                const cyxwiz::PipelineOperatorProgress& event) {
+                if (event.stage == "analyze") {
+                    cancel_during_sentiment = true;
+                }
+            },
+            cooperative_context);
+    Check(!cooperative_cancel.success &&
+              cooperative_cancel.failure_kind ==
+                  cyxwiz::MaterializationFailureKind::Cancelled,
+          "long row operator should cooperatively return typed cancellation");
+    Check(cooperative_cancel.failed_node_id == 904 &&
+              cooperative_cancel.operators_applied == 0,
+          "cooperative cancellation should identify the node and publish no result");
+
+    cyxwiz::PipelineOperatorExecutionContext capacity_context;
+    capacity_context.memory.policy.hard_limit_bytes = 1;
+    capacity_context.memory.snapshot_override =
+        cyxwiz::MaterializationMemorySnapshot{1024, 1024, true};
+    const auto capacity = cyxwiz::PipelineMaterializer::MaterializeTable(
+        nodes, links, input, kSourceName, {}, capacity_context);
+    Check(!capacity.success &&
+              capacity.failure_kind ==
+                  cyxwiz::MaterializationFailureKind::Capacity,
+          "materializer should preserve operator CapacityError structurally");
+    Check(capacity.failed_node_id == 902 &&
+              capacity.failed_node_name == "Failure LogTransform",
+          "capacity failure should identify the responsible node");
+    Check(capacity.operators_applied == 0,
+          "capacity failure should not publish a partial operator result");
+
+    auto runtime_sample = std::make_shared<int>(0);
+    cyxwiz::PipelineOperatorExecutionContext runtime_capacity_context;
+    runtime_capacity_context.memory.policy.hard_limit_bytes = 1024;
+    runtime_capacity_context.memory.snapshot_override =
+        cyxwiz::MaterializationMemorySnapshot{16384, 16384, true};
+    runtime_capacity_context.process_memory_snapshot =
+        [runtime_sample]() {
+            cyxwiz::ProcessMemorySnapshot snapshot;
+            snapshot.detected = true;
+            snapshot.resident_bytes = (*runtime_sample)++ == 0 ? 100 : 2200;
+            snapshot.private_bytes = snapshot.resident_bytes;
+            snapshot.private_metric_name = "test private";
+            snapshot.source = "deterministic test";
+            return snapshot;
+        };
+    const auto runtime_capacity =
+        cyxwiz::PipelineMaterializer::MaterializeTable(
+            nodes,
+            links,
+            input,
+            kSourceName,
+            {},
+            runtime_capacity_context);
+    Check(!runtime_capacity.success &&
+              runtime_capacity.failure_kind ==
+                  cyxwiz::MaterializationFailureKind::Capacity,
+          "actual process growth should trip the typed runtime capacity guard");
+    Check(runtime_capacity.failed_node_id == 902 &&
+              runtime_capacity.operators_applied == 0,
+          "runtime capacity guard should identify the node and publish no result");
+
+    std::vector<cyxwiz::PipelineOperatorProgress> evidence_events;
+    cyxwiz::PipelineOperatorExecutionContext evidence_context;
+    evidence_context.memory.snapshot_override =
+        cyxwiz::MaterializationMemorySnapshot{4096, 4096, true};
+    evidence_context.process_memory_snapshot = []() {
+        cyxwiz::ProcessMemorySnapshot snapshot;
+        snapshot.detected = true;
+        snapshot.resident_bytes = 512;
+        snapshot.private_bytes = 384;
+        snapshot.private_metric_name = "test private";
+        snapshot.source = "deterministic test";
+        return snapshot;
+    };
+    const auto evidence = cyxwiz::PipelineMaterializer::MaterializeTable(
+        nodes,
+        links,
+        input,
+        kSourceName,
+        [&evidence_events](const cyxwiz::PipelineOperatorProgress& event) {
+            evidence_events.push_back(event);
+        },
+        evidence_context);
+    Check(evidence.success && !evidence_events.empty(),
+          "safe materialization should emit memory evidence");
+    Check(evidence_events.front().available_memory_bytes == 4096 &&
+              evidence_events.front().safe_memory_budget_bytes > 0 &&
+              evidence_events.front().process_memory_detected &&
+              evidence_events.front().process_resident_memory_bytes == 512 &&
+              evidence_events.front().process_private_memory_bytes == 384 &&
+              evidence_events.front().process_memory_source ==
+                  "deterministic test",
+          "materialization evidence should carry budget and process snapshot truth");
+
+    const auto allocation_failure =
+        cyxwiz::PipelineMaterializer::MaterializeTable(
+            nodes,
+            links,
+            input,
+            kSourceName,
+            [](const cyxwiz::PipelineOperatorProgress&) {
+                throw std::bad_alloc();
+            });
+    Check(!allocation_failure.success &&
+              allocation_failure.failure_kind ==
+                  cyxwiz::MaterializationFailureKind::Capacity,
+          "materializer should translate bad_alloc into a capacity failure");
+    Check(allocation_failure.failed_node_id == 902,
+          "translated bad_alloc should identify the active node");
+
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    registry.UnloadDataset(kSourceName);
+    registry.UnloadDataset(
+        std::string(kSourceName) +
+        cyxwiz::PipelineMaterializer::kMaterializedSuffix);
+    Check(registry.RegisterArrowTable(input, kSourceName) != nullptr,
+          "structured failure source should register");
+    const auto registry_capacity = cyxwiz::PipelineMaterializer::Materialize(
+        nodes,
+        links,
+        registry,
+        kSourceName,
+        {},
+        capacity_context);
+    Check(!registry_capacity.success &&
+              registry_capacity.failure_kind ==
+                  cyxwiz::MaterializationFailureKind::Capacity,
+          "registry materializer should propagate typed capacity failure");
+    Check(registry.GetArrowDataset(
+              std::string(kSourceName) +
+              cyxwiz::PipelineMaterializer::kMaterializedSuffix) == nullptr,
+          "failed materialization should not register a partial dataset");
+    registry.UnloadDataset(kSourceName);
+}
+
 } // namespace
 
 int main() {
     TestStandardScalerEmitsMemoryPreflight();
+    TestMaterializerPreflightStopsBeforeApply();
     TestStandardScalerExcludesMultipleTargetColumns();
+    TestRegressionMemoryPreflight();
+    TestRemainingRowTransformMemoryPreflight();
+    TestMaterializerStructuredFailures();
 
     const auto csv_path = std::filesystem::temp_directory_path() /
         "cyxwiz_operator_materializer_parity.csv";

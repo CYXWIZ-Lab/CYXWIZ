@@ -203,6 +203,8 @@ DebugReplayCompiledConfigSummary CompiledConfigSummaryFromJson(
     config.momentum = j.value("momentum", 0.0f);
     config.beta1 = j.value("beta1", 0.0f);
     config.beta2 = j.value("beta2", 0.0f);
+    config.epsilon = j.value("epsilon", 0.0f);
+    config.rmsprop_alpha = j.value("rmsprop_alpha", 0.0f);
     config.weight_decay = j.value("weight_decay", 0.0f);
     config.compiler_placement_fingerprint =
         j.value("compiler_placement_fingerprint", "");
@@ -248,6 +250,8 @@ nlohmann::json ExecutionSummaryToJson(
     const DebugRunExecutionSummary& execution) {
     return {
         {"available", execution.available},
+        {"correlated", execution.correlated},
+        {"evidence_scope", execution.evidence_scope},
         {"training_run_id", execution.training_run_id},
         {"status", execution.status},
         {"requested_backend", execution.requested_backend},
@@ -269,6 +273,10 @@ nlohmann::json ExecutionSummaryToJson(
 DebugRunExecutionSummary ExecutionSummaryFromJson(const nlohmann::json& j) {
     DebugRunExecutionSummary execution;
     execution.available = j.value("available", false);
+    execution.correlated = j.value("correlated", false);
+    execution.evidence_scope = j.value(
+        "evidence_scope",
+        execution.available ? "latest_training_run_unlinked" : "unobserved");
     execution.training_run_id = j.value("training_run_id", "");
     execution.status = j.value("status", "");
     execution.requested_backend = j.value("requested_backend", "");
@@ -403,6 +411,8 @@ DebugRunReplayCapsule MakeDebugRunReplayCapsule(
         compiled.momentum = config->momentum;
         compiled.beta1 = config->beta1;
         compiled.beta2 = config->beta2;
+        compiled.epsilon = config->epsilon;
+        compiled.rmsprop_alpha = config->rmsprop_alpha;
         compiled.weight_decay = config->weight_decay;
         compiled.compiler_placement_fingerprint =
             config->compiler_placement_fingerprint;
@@ -412,7 +422,7 @@ DebugRunReplayCapsule MakeDebugRunReplayCapsule(
     }
 
     if (execution.available) {
-        capsule.backend_evidence_scope = "linked_training_run";
+        capsule.backend_evidence_scope = execution.evidence_scope;
         capsule.backend_source_run_id = execution.training_run_id;
         capsule.requested_backend = execution.requested_backend;
         capsule.requested_device_id = execution.requested_device_id;
@@ -467,6 +477,8 @@ nlohmann::json DebugRunReplayCapsuleToJson(
             {"momentum", config.momentum},
             {"beta1", config.beta1},
             {"beta2", config.beta2},
+            {"epsilon", config.epsilon},
+            {"rmsprop_alpha", config.rmsprop_alpha},
             {"weight_decay", config.weight_decay},
             {"compiler_placement_fingerprint",
              config.compiler_placement_fingerprint},
@@ -553,9 +565,16 @@ DebugRunReplayCapsule DebugRunReplayCapsuleFromJson(
 }
 
 DebugRunExecutionSummary MakeDebugRunExecutionSummary(
-    const TrainingTraceSummary& trace) {
+    const TrainingTraceSummary& trace,
+    bool explicitly_selected) {
     DebugRunExecutionSummary execution;
     execution.available = trace.available && !trace.run_id.empty();
+    execution.correlated = execution.available && explicitly_selected;
+    execution.evidence_scope = !execution.available
+        ? "unobserved"
+        : (execution.correlated
+            ? "selected_training_run"
+            : "latest_training_run_unlinked");
     execution.training_run_id = trace.run_id;
     execution.status = trace.status;
     execution.requested_backend = trace.requested_backend;

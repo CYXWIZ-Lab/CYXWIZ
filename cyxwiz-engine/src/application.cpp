@@ -1,6 +1,7 @@
 #include "application.h"
 #include "gui/main_window.h"
 #include "gui/console.h"
+#include "gui/display_density.h"
 #include "gui/editor_fonts.h"
 #include "gui/theme.h"
 #include "gui/dialogs/python_setup_wizard.h"
@@ -394,8 +395,27 @@ bool CyxWizApp::Initialize() {
     ImGui_ImplGlfw_InitForOpenGL(window_, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
 
+    // Match font rasterization to the physical framebuffer while preserving
+    // logical font metrics and UI layout.
+    font_rasterizer_density_ = DetectFontRasterizerDensity(true);
+
     // Load professional fonts
     LoadFonts(io);
+
+    GLint max_texture_size = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);
+    spdlog::info("Font atlas dimensions: {}x{} (GPU maximum texture size: {})",
+                 io.Fonts->TexWidth, io.Fonts->TexHeight, max_texture_size);
+    if (io.Fonts->TexWidth > max_texture_size ||
+        io.Fonts->TexHeight > max_texture_size) {
+        spdlog::error("Font atlas exceeds the GPU texture-size limit");
+        return false;
+    }
+    if (!ImGui_ImplOpenGL3_CreateFontsTexture()) {
+        spdlog::error("Failed to upload initial font atlas texture");
+        return false;
+    }
+    spdlog::info("Initial font atlas texture uploaded successfully");
 
 #ifdef CYXWIZ_HAS_PYTHON
     // Scan for Python on startup (no initialization yet).
@@ -730,6 +750,8 @@ void CyxWizApp::Update(float delta_time) {
 }
 
 void CyxWizApp::Render() {
+    RefreshFontRasterizerDensity();
+
     // Start ImGui frame
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -909,12 +931,79 @@ void CyxWizApp::Shutdown() {
     _exit(0);
 }
 
+float CyxWizApp::DetectFontRasterizerDensity(bool log_metrics) const {
+    int window_width = 0;
+    int window_height = 0;
+    int framebuffer_width = 0;
+    int framebuffer_height = 0;
+    if (window_) {
+        glfwGetWindowSize(window_, &window_width, &window_height);
+        glfwGetFramebufferSize(window_, &framebuffer_width, &framebuffer_height);
+    }
+
+    float density = 1.0f;
+#if defined(__APPLE__) || defined(__linux__)
+    const bool has_valid_dimensions =
+        window_width > 0 && window_height > 0 && framebuffer_width > 0 &&
+        framebuffer_height > 0;
+    density = has_valid_dimensions
+                  ? cyxwiz::gui::CalculateFramebufferDensity(
+                        window_width, window_height, framebuffer_width,
+                        framebuffer_height)
+                  : font_rasterizer_density_;
+#endif
+
+    if (log_metrics) {
+        spdlog::info(
+            "Display metrics: logical={}x{} framebuffer={}x{} font_density={:.2f}x",
+            window_width, window_height, framebuffer_width, framebuffer_height,
+            density);
+    }
+    return density;
+}
+
+void CyxWizApp::RefreshFontRasterizerDensity() {
+#if defined(__APPLE__) || defined(__linux__)
+    const float detected_density = DetectFontRasterizerDensity(false);
+    if (!cyxwiz::gui::HasMaterialFontDensityChange(
+            font_rasterizer_density_, detected_density)) {
+        return;
+    }
+
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.Fonts->Locked) {
+        spdlog::warn("Deferring font atlas density change while atlas is locked");
+        return;
+    }
+
+    spdlog::info("Display density changed from {:.2f}x to {:.2f}x; rebuilding font atlas",
+                 font_rasterizer_density_, detected_density);
+    ImGui_ImplOpenGL3_DestroyFontsTexture();
+    io.FontDefault = nullptr;
+    cyxwiz::gui::ClearEditorMonoFonts();
+    font_regular_ = nullptr;
+    font_medium_ = nullptr;
+    font_bold_ = nullptr;
+    font_mono_ = nullptr;
+    font_mono_bold_ = nullptr;
+    io.Fonts->Clear();
+
+    font_rasterizer_density_ = detected_density;
+    LoadFonts(io);
+    if (!ImGui_ImplOpenGL3_CreateFontsTexture()) {
+        spdlog::error("Failed to upload rebuilt font atlas texture");
+    }
+#endif
+}
+
 void CyxWizApp::LoadFonts(ImGuiIO& io) {
     // Font configuration for crisp rendering (high quality)
     ImFontConfig font_config;
-    font_config.OversampleH = 3;  // Higher oversampling for sharper text/icons
-    font_config.OversampleV = 2;  // Vertical oversampling for better quality
+    const bool needs_manual_oversampling = font_rasterizer_density_ <= 1.0f;
+    font_config.OversampleH = needs_manual_oversampling ? 3 : 1;
+    font_config.OversampleV = needs_manual_oversampling ? 2 : 1;
     font_config.PixelSnapH = true;
+    font_config.RasterizerDensity = font_rasterizer_density_;
 
     // Try multiple font paths (running from different directories)
     std::vector<std::string> font_paths = {
@@ -965,7 +1054,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     if (font_base_path.empty()) {
         spdlog::warn("Custom fonts not found in any of the search paths, using default ImGui font");
         spdlog::warn("Current working directory: {}", std::filesystem::current_path().string());
-        io.Fonts->AddFontDefault();
+        io.Fonts->AddFontDefault(&font_config);
         return;
     }
 
@@ -983,6 +1072,19 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     // Load JetBrains Mono (code font)
     std::string mono_regular = font_base_path + "JetBrainsMono-Regular.ttf";
     std::string mono_bold = font_base_path + "JetBrainsMono-Bold.ttf";
+
+    std::string terminal_symbol_fallback;
+#ifdef _WIN32
+    wchar_t windows_directory[MAX_PATH]{};
+    const UINT windows_directory_length =
+        GetWindowsDirectoryW(windows_directory, MAX_PATH);
+    if (windows_directory_length > 0 && windows_directory_length < MAX_PATH) {
+        const auto candidate = std::filesystem::path(windows_directory) /
+                               "Fonts" / "seguisym.ttf";
+        if (std::filesystem::is_regular_file(candidate))
+            terminal_symbol_fallback = candidate.string();
+    }
+#endif
 
     // FontAwesome icon font
     std::string fa_solid = font_base_path + "fa-solid-900.ttf";
@@ -1012,8 +1114,9 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     ImFontConfig icon_config;
     icon_config.MergeMode = true;
     icon_config.PixelSnapH = true;
-    icon_config.OversampleH = 3;  // Sharp icons
-    icon_config.OversampleV = 2;
+    icon_config.OversampleH = needs_manual_oversampling ? 3 : 1;
+    icon_config.OversampleV = needs_manual_oversampling ? 2 : 1;
+    icon_config.RasterizerDensity = font_rasterizer_density_;
     icon_config.GlyphMinAdvanceX = base_font_size;  // Make icons monospaced
 
     // Load regular font (this becomes the default)
@@ -1099,7 +1202,12 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
         for (size_t i = 0; i < cyxwiz::gui::kEditorFontScales.size(); ++i) {
             const float scale = cyxwiz::gui::kEditorFontScales[i];
             const float pixel_size = cyxwiz::gui::kEditorMonoFontPixels[i];
-            ImFont* mono_font = io.Fonts->AddFontFromFileTTF(mono_regular.c_str(), pixel_size, &font_config);
+            ImFont* mono_font = cyxwiz::gui::AddTerminalCapableMonoFont(
+                io.Fonts, mono_regular.c_str(),
+                terminal_symbol_fallback.empty()
+                    ? nullptr
+                    : terminal_symbol_fallback.c_str(),
+                pixel_size, &font_config);
             if (mono_font) {
                 cyxwiz::gui::RegisterEditorMonoFont(scale, mono_font);
                 if (i == 0) {
@@ -1128,12 +1236,15 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     // If no fonts were loaded, add default
     if (!font_regular_) {
         spdlog::warn("Failed to load Inter-Regular, using default font");
-        io.Fonts->AddFontDefault();
+        io.Fonts->AddFontDefault(&font_config);
     }
+
+    io.FontDefault = font_regular_;
 
     // Build font atlas
     spdlog::info("Building font atlas...");
     spdlog::default_logger()->flush();  // Force flush before potential crash
     io.Fonts->Build();
-    spdlog::info("Font atlas built successfully");
+    spdlog::info("Font atlas built successfully at {:.2f}x rasterizer density",
+                 font_rasterizer_density_);
 }

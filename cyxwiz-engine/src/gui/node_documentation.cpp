@@ -1,4 +1,5 @@
 #include "node_documentation.h"
+#include "../core/node_metadata_registry.h"
 #include <imgui.h>
 
 namespace gui {
@@ -21,25 +22,60 @@ const NodeDocumentation* NodeDocumentationManager::GetDocumentation(NodeType typ
 }
 
 void NodeDocumentationManager::RenderTooltip(NodeType type) {
+    auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+    registry.Initialize();
+    const auto* metadata = registry.GetMetadata(type);
     const NodeDocumentation* doc = GetDocumentation(type);
-    if (!doc) return;
+    if (!metadata && !doc) return;
+
+    const std::string title = metadata ? metadata->name : doc->title;
+    const std::string category = metadata
+        ? cyxwiz::GetCategoryDisplayName(metadata->category)
+        : doc->category;
+    const std::string brief = metadata
+        ? metadata->brief_description
+        : doc->description;
+    const std::string details = metadata
+        ? metadata->help_text
+        : std::string{};
+    const std::string usage = metadata
+        ? metadata->example_usage
+        : doc->usage;
 
     ImGui::BeginTooltip();
 
     // Title with category
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", doc->title.c_str());
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", title.c_str());
     ImGui::SameLine();
-    ImGui::TextDisabled("[%s]", doc->category.c_str());
+    ImGui::TextDisabled("[%s]", category.c_str());
 
     ImGui::Separator();
 
     // Description
     ImGui::PushTextWrapPos(400.0f);
-    ImGui::TextWrapped("%s", doc->description.c_str());
+    if (!brief.empty()) {
+        ImGui::TextWrapped("%s", brief.c_str());
+    }
+    if (!details.empty() && details != brief) {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", details.c_str());
+    }
     ImGui::PopTextWrapPos();
 
     // Parameters
-    if (!doc->parameters.empty()) {
+    if (metadata && !metadata->parameters.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Parameters:");
+        for (const auto& param : metadata->parameters) {
+            const std::string& label = param.display_name.empty()
+                ? param.name
+                : param.display_name;
+            ImGui::BulletText("%s%s", label.c_str(),
+                              param.required ? " *" : "");
+            ImGui::SameLine();
+            ImGui::TextDisabled("- %s", param.description.c_str());
+        }
+    } else if (doc && !doc->parameters.empty()) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "Parameters:");
         for (const auto& param : doc->parameters) {
@@ -49,8 +85,9 @@ void NodeDocumentationManager::RenderTooltip(NodeType type) {
         }
     }
 
-    // Tips
-    if (!doc->tips.empty()) {
+    // Legacy documentation remains a fallback for types not represented in
+    // the authoritative metadata registry.
+    if (!metadata && doc && !doc->tips.empty()) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.6f, 1.0f), "Tips:");
         for (const auto& tip : doc->tips) {
@@ -59,10 +96,10 @@ void NodeDocumentationManager::RenderTooltip(NodeType type) {
     }
 
     // Usage example
-    if (!doc->usage.empty()) {
+    if (!usage.empty()) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.8f, 1.0f), "Usage:");
-        ImGui::TextDisabled("%s", doc->usage.c_str());
+        ImGui::TextDisabled("%s", usage.c_str());
     }
 
     ImGui::EndTooltip();
@@ -1245,9 +1282,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Add momentum for faster convergence.",
         "weight = weight - lr * gradient.",
         {
-            {"lr", "Learning rate (e.g., 0.01)"},
-            {"momentum", "Momentum factor (0.9 typical)"},
-            {"weight_decay", "L2 regularization"}
+            {"learning_rate", "Positive update step size (0.01 default)"},
+            {"momentum", "Momentum coefficient in [0, 1)"}
         },
         {
             "Use momentum >= 0.9 for better convergence",
@@ -1262,9 +1298,10 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Good default choice that works well for most tasks.",
         "Tracks running mean and variance of gradients.",
         {
-            {"lr", "Learning rate (e.g., 0.001)"},
-            {"betas", "Coefficients for running averages (0.9, 0.999)"},
-            {"eps", "Numerical stability (1e-8)"}
+            {"learning_rate", "Positive update step size (0.001 default)"},
+            {"beta1", "First-moment decay coefficient"},
+            {"beta2", "Second-moment decay coefficient"},
+            {"epsilon", "Positive numerical-stability constant"}
         },
         {
             "Default choice for most deep learning",
@@ -1279,8 +1316,10 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Better generalization than standard Adam.",
         "Weight decay applied directly to weights, not to gradient.",
         {
-            {"lr", "Learning rate"},
-            {"betas", "Running average coefficients"},
+            {"learning_rate", "Positive update step size"},
+            {"beta1", "First-moment decay coefficient"},
+            {"beta2", "Second-moment decay coefficient"},
+            {"epsilon", "Positive numerical-stability constant"},
             {"weight_decay", "Weight decay coefficient (0.01 typical)"}
         },
         {
@@ -1296,9 +1335,10 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Good for non-stationary objectives and RNNs.",
         "Divides learning rate by running average of recent gradient magnitudes.",
         {
-            {"lr", "Learning rate (0.01 typical)"},
+            {"learning_rate", "Positive update step size (0.001 default)"},
             {"alpha", "Smoothing constant (0.99)"},
-            {"eps", "Numerical stability"}
+            {"epsilon", "Positive numerical-stability constant"},
+            {"momentum", "Momentum coefficient in [0, 1)"}
         },
         {
             "Often works well for RNNs",
@@ -1313,8 +1353,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Good for sparse data but learning rate decays aggressively.",
         "Parameters with large gradients get smaller updates.",
         {
-            {"lr", "Initial learning rate"},
-            {"eps", "Numerical stability"}
+            {"learning_rate", "Positive initial update step size"},
+            {"epsilon", "Positive numerical-stability constant"}
         },
         {
             "Good for sparse features (NLP, recommender systems)",
@@ -1329,8 +1369,10 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Often slightly faster convergence than Adam.",
         "Combines Adam's adaptivity with Nesterov's look-ahead.",
         {
-            {"lr", "Learning rate"},
-            {"betas", "Running average coefficients"}
+            {"learning_rate", "Positive update step size"},
+            {"beta1", "First-moment decay coefficient"},
+            {"beta2", "Second-moment decay coefficient"},
+            {"epsilon", "Positive numerical-stability constant"}
         },
         {
             "Try if Adam is working well",

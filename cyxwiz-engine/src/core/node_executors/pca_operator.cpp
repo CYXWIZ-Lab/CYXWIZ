@@ -78,21 +78,6 @@ bool ReadBoolParam(const std::map<std::string, std::string>& params,
     return false;
 }
 
-const char* MaterializationMemoryProgressStatus(
-    MaterializationMemoryRisk risk) {
-    switch (risk) {
-    case MaterializationMemoryRisk::Safe:
-        return "running";
-    case MaterializationMemoryRisk::Warning:
-        return "warning";
-    case MaterializationMemoryRisk::Risky:
-        return "risky";
-    case MaterializationMemoryRisk::Blocked:
-        return "blocked";
-    }
-    return "running";
-}
-
 std::string BuildPcaMemoryPreflightMessage(
     const MaterializationMemoryEstimate& estimate,
     const MaterializationMemoryDecision& decision,
@@ -238,7 +223,7 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     const auto preflight_estimate = EstimateDenseMaterializationMemory(
         planned_rows, planned_columns, static_cast<uint64_t>(sizeof(double)));
     const auto preflight_decision = EvaluateMaterializationMemory(
-        preflight_estimate, DetectMaterializationMemorySnapshot());
+        preflight_estimate, GetMaterializationMemoryContext());
     const std::string preflight_message = BuildPcaMemoryPreflightMessage(
         preflight_estimate, preflight_decision,
         planned_features, planned_components);
@@ -250,7 +235,7 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = "PCA memory preflight";
         event.message = preflight_message;
-        event.status = MaterializationMemoryProgressStatus(
+        event.status = MaterializationMemoryRiskToProgressStatus(
             preflight_decision.risk);
         event.progress = 0.17f;
         event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;

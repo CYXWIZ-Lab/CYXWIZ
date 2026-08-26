@@ -324,6 +324,8 @@ EditorSettings EditorSettings::FromJson(const nlohmann::json& j) {
     // Application-wide settings
     settings.app_theme = j.value("app_theme", 0);
     settings.ui_scale = j.value("ui_scale", 1.0f);
+    settings.materialization_memory_limit_bytes =
+        j.value("materialization_memory_limit_bytes", uint64_t{0});
     return settings;
 }
 
@@ -341,6 +343,8 @@ nlohmann::json EditorSettings::ToJson() const {
     // Application-wide settings
     j["app_theme"] = app_theme;
     j["ui_scale"] = ui_scale;
+    j["materialization_memory_limit_bytes"] =
+        materialization_memory_limit_bytes;
     return j;
 }
 

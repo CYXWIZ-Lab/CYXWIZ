@@ -231,6 +231,45 @@ void TestCountVectorizerRejectsSparseOutputFormat() {
           "CountVectorizer sparse output error should be specific: " + error);
 }
 
+void TestCountVectorizerBlocksBeforeAllocationHeavyWork() {
+    cyxwiz::CountVectorizerOperator op;
+    std::string error;
+    Check(op.Configure({
+        {"text_col", "text"},
+        {"max_features", "4"},
+    }, error), error);
+
+    cyxwiz::MaterializationMemoryContext memory_context;
+    memory_context.policy.hard_limit_bytes = 1;
+    memory_context.snapshot_override = cyxwiz::MaterializationMemorySnapshot{
+        1024, 1024, true};
+    op.SetMaterializationMemoryContext(memory_context);
+
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
+
+    const auto result = op.Apply(MakeTextTable());
+    Check(!result.ok(),
+          "CountVectorizer should reject a request above the hard limit");
+    Check(result.status().IsCapacityError(),
+          "blocked CountVectorizer should return a capacity error");
+    Check(progress_events.size() == 1,
+          "blocked CountVectorizer should stop after its preflight event");
+    Check(progress_events.front().stage ==
+              "CountVectorizer memory preflight",
+          "blocked CountVectorizer should identify the preflight stage");
+    Check(progress_events.front().status == "blocked",
+          "blocked CountVectorizer should expose blocked status");
+    Check(progress_events.front().memory_risk_level == "blocked",
+          "blocked CountVectorizer should expose blocked memory risk");
+    Check(progress_events.front().message.find("configured hard limit") !=
+              std::string::npos,
+          "blocked CountVectorizer should explain the configured hard limit");
+}
+
 void TestKMeansEmitsMemoryPreflight() {
     cyxwiz::KMeansOperator op;
     const auto input = MakeTimeSeriesTable();
@@ -591,6 +630,7 @@ int main() {
     TestCountVectorizerPrefersNGramRangeWhenDefaultsArePresent();
     TestCountVectorizerBinaryModeEmitsPresenceValues();
     TestCountVectorizerRejectsSparseOutputFormat();
+    TestCountVectorizerBlocksBeforeAllocationHeavyWork();
     TestKMeansEmitsMemoryPreflight();
     TestPcaEmitsMemoryPreflight();
     TestTimeSeriesFeaturesClearsStaleFeatureLists();

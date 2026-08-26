@@ -35,7 +35,6 @@
 #include "panels/training_dashboard.h"
 #include "panels/training_plot_panel.h"
 #include "panels/plot_test_control.h"
-#include "panels/command_window.h"
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
 #include "panels/data_explorer_panel.h"
@@ -50,7 +49,6 @@
 #include "panels/query_console.h"
 #include "panels/custom_node_editor.h"
 #include "panels/theme_editor.h"
-#include "panels/profiling_panel.h"
 #include "panels/memory_panel.h"
 #include "panels/memory_monitor.h"
 #include "panels/variable_explorer.h"
@@ -542,6 +540,12 @@ MainWindow::MainWindow()
 
     // Initialize scripting engine (shared resource)
     scripting_engine_ = std::make_shared<scripting::ScriptingEngine>();
+    console_->SetScriptingEngine(scripting_engine_);
+    console_->SetAssistantCommandHandler(
+        [](const cyxwiz::plugin::AssistantCommandRequest& request) {
+            return cyxwiz::plugin::PluginManager::Instance()
+                .RunAssistantCommand(request);
+        });
 
     // New panel system
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
@@ -549,7 +553,6 @@ MainWindow::MainWindow()
     training_plot_panel_ = std::make_shared<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
 
     plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
-    command_window_ = std::make_unique<cyxwiz::CommandWindowPanel>();
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
     table_viewer_ = std::make_unique<cyxwiz::TableViewerPanel>();
     data_explorer_panel_ = std::make_unique<cyxwiz::DataExplorerPanel>();
@@ -563,7 +566,6 @@ MainWindow::MainWindow()
     query_console_ = std::make_unique<cyxwiz::QueryConsolePanel>();
     custom_node_editor_ = std::make_unique<gui::CustomNodeEditorPanel>();
     theme_editor_ = std::make_unique<gui::ThemeEditorPanel>();
-    profiling_panel_ = std::make_unique<cyxwiz::ProfilingPanel>();
     memory_panel_ = std::make_unique<cyxwiz::MemoryPanel>();
     memory_monitor_ = std::make_unique<cyxwiz::MemoryMonitor>();
     variable_explorer_ = std::make_unique<cyxwiz::VariableExplorerPanel>();
@@ -749,12 +751,8 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set scripting engine for command window and script editor
-    command_window_->SetScriptingEngine(scripting_engine_);
-    command_window_->SetAssistantCommandHandler(
-        [](const cyxwiz::plugin::AssistantCommandRequest& request) {
-            return cyxwiz::plugin::PluginManager::Instance().RunAssistantCommand(request);
-        });
+    // Set scripting engine for the Script Editor. The Console-owned Python
+    // REPL already received the same shared engine above.
     script_editor_->SetScriptingEngine(scripting_engine_);
 
     // Expose TrainingPlotPanel to Python scripts through the scripting engine
@@ -766,8 +764,7 @@ MainWindow::MainWindow()
     // Connect Viewport to TrainingPlotPanel for real-time metrics display
     viewport_->SetTrainingPanel(training_plot_panel_.get());
 
-    // Connect script editor to command window for output display
-    script_editor_->SetCommandWindow(command_window_.get());
+    script_editor_->SetScriptOutputSink(console_.get());
 
     // Connect Node Editor to Script Editor for code generation output
     node_editor_->SetScriptEditor(script_editor_.get());
@@ -931,6 +928,8 @@ MainWindow::MainWindow()
         fingerprint << std::hex << HashGraphStructure(nodes, links);
         const std::string graph_fingerprint = fingerprint.str();
         const std::string selected_path = *selected;
+        const std::string materialization_project_root =
+            project.GetProjectRoot();
         auto load_result =
             std::make_shared<cyxwiz::CheckpointEvaluationLoadResult>();
         std::weak_ptr<cyxwiz::TrainingPlotPanel> dashboard =
@@ -939,7 +938,8 @@ MainWindow::MainWindow()
         cyxwiz::AsyncTaskManager::Instance().RunAsync(
             "Load checkpoint for testing",
             [config = std::move(config), nodes, links, selected_path,
-             graph_fingerprint, load_result](cyxwiz::LambdaTask& task) {
+             graph_fingerprint, load_result,
+             materialization_project_root](cyxwiz::LambdaTask& task) {
                 auto evaluation_config = config;
                 task.ReportProgress(0.05f,
                                     "Preparing evaluation dataset...");
@@ -956,10 +956,14 @@ MainWindow::MainWindow()
                 }
 
                 auto& registry = cyxwiz::DataRegistry::Instance();
+                cyxwiz::PipelineOperatorExecutionContext materialization_context;
+                materialization_context.cancellation_requested =
+                    [&task]() { return task.ShouldStop(); };
                 const auto materialized =
                     cyxwiz::PipelineMaterializer::Materialize(
                         nodes, links, registry, effective_dataset_name,
-                        GraphMaterializationCacheConfig(),
+                        GraphMaterializationCacheConfig(
+                            materialization_project_root),
                         [&task](
                             const cyxwiz::PipelineOperatorProgress& event) {
                             const float progress =
@@ -970,7 +974,12 @@ MainWindow::MainWindow()
                                 event.message.empty()
                                     ? event.stage
                                     : event.message);
-                        });
+                        },
+                        std::move(materialization_context));
+                if (materialized.failure_kind ==
+                    cyxwiz::MaterializationFailureKind::Cancelled) {
+                    return;
+                }
                 if (!materialized.success) {
                     throw std::runtime_error(
                         "Checkpoint evaluation preprocessing failed: " +
@@ -1579,9 +1588,10 @@ MainWindow::MainWindow()
 
     // Set up Profiler callback
     toolbar_->SetOpenProfilerCallback([this]() {
-        if (profiling_panel_) {
-            profiling_panel_->Show();
-            spdlog::info("Opened Performance Profiler panel");
+        if (studio_debugger_panel_) {
+            studio_debugger_panel_->ShowRuntimeProfile();
+            spdlog::info(
+                "Opened canonical Studio Debugger runtime profile");
         }
     });
 
@@ -2109,18 +2119,26 @@ MainWindow::MainWindow()
     toolbar_->SetNodeEditorMinimapPtr(node_editor_->GetShowMinimapPtr());
     toolbar_->SetScriptEditorMinimapPtr(script_editor_->GetShowMinimapPtr());
 
-    // Register callbacks with ProjectManager for project lifecycle events
-    cyxwiz::ProjectManager::Instance().SetOnProjectOpened([this](const std::string& project_root) {
+    // Register callbacks with ProjectManager for project lifecycle events.
+    auto& lifecycle_project_manager = cyxwiz::ProjectManager::Instance();
+    lifecycle_project_manager.SetOnProjectOpened([this](const std::string& project_root) {
         this->OnProjectOpened(project_root);
     });
 
-    cyxwiz::ProjectManager::Instance().SetOnProjectClosed([this](const std::string& project_root) {
+    lifecycle_project_manager.SetOnProjectClosed([this](const std::string& project_root) {
         this->OnProjectClosed(project_root);
     });
 
-    cyxwiz::ProjectManager::Instance().SetOnProjectVenvReady([this](const std::string& project_root) {
+    lifecycle_project_manager.SetOnProjectVenvReady([this](const std::string& project_root) {
         this->OnProjectVenvReady(project_root);
     });
+
+    // Start Page can open a project before MainWindow exists. Synchronize the
+    // newly registered observers because the subsequent same-project open is
+    // intentionally idempotent and does not emit another callback.
+    if (lifecycle_project_manager.HasActiveProject()) {
+        OnProjectOpened(lifecycle_project_manager.GetProjectRoot());
+    }
 
     // Set up New Script callback - creates new untitled script and opens editor
     toolbar_->SetNewScriptCallback([this]() {
@@ -2144,9 +2162,12 @@ MainWindow::MainWindow()
 
     // Set up Open Python Console callback
     toolbar_->SetOpenPythonConsoleCallback([this]() {
-        if (command_window_) {
-            command_window_->SetVisible(true);
-            spdlog::info("Opened Python Console (Command Window)");
+        if (console_) {
+            if (console_->ActivatePythonRepl()) {
+                spdlog::info("Opened Python REPL in Console");
+            } else {
+                spdlog::warn("Python REPL requires an active project");
+            }
         }
     });
 
@@ -2422,7 +2443,7 @@ MainWindow::MainWindow()
     // Load and execute startup scripts
     if (startup_script_manager_->LoadConfig()) {
         spdlog::info("Executing startup scripts...");
-        startup_script_manager_->ExecuteAll(command_window_.get());
+        startup_script_manager_->ExecuteAll(console_.get());
     } else {
         spdlog::debug("No startup scripts configured or startup_scripts.txt not found");
     }
@@ -2481,8 +2502,8 @@ MainWindow::~MainWindow() {
     // IMPORTANT: Destroy panels that hold shared_ptr<ScriptingEngine> BEFORE
     // the MainWindow's scripting_engine_, so all references are released
     // before we begin any Python cleanup
-    spdlog::info("~MainWindow: command_window_ (holds scripting_engine)");
-    command_window_.reset();
+    spdlog::info("~MainWindow: console_ (holds scripting_engine)");
+    console_.reset();
     spdlog::info("~MainWindow: script_editor_ (holds scripting_engine)");
     script_editor_.reset();
     spdlog::info("~MainWindow: variable_explorer_ (holds scripting_engine)");
@@ -2636,8 +2657,6 @@ MainWindow::~MainWindow() {
     memory_monitor_.reset();
     spdlog::info("~MainWindow: memory_panel_");
     memory_panel_.reset();
-    spdlog::info("~MainWindow: profiling_panel_");
-    profiling_panel_.reset();
     spdlog::info("~MainWindow: theme_editor_");
     theme_editor_.reset();
     spdlog::info("~MainWindow: custom_node_editor_");
@@ -2660,7 +2679,7 @@ MainWindow::~MainWindow() {
     table_viewer_.reset();
     spdlog::info("~MainWindow: data_explorer_panel_");
     data_explorer_panel_.reset();
-    // script_editor_, command_window_ already reset at the beginning (with scripting_engine panels)
+    // script_editor_ and console_ already reset with the scripting-engine panels.
     // plot_test_control_, training_plot_panel_ already reset at the beginning
     spdlog::info("~MainWindow: asset_browser_");
     asset_browser_.reset();
@@ -2670,8 +2689,6 @@ MainWindow::~MainWindow() {
     properties_.reset();
     spdlog::info("~MainWindow: viewport_");
     viewport_.reset();
-    spdlog::info("~MainWindow: console_");
-    console_.reset();
     spdlog::info("~MainWindow: node_editor_");
     node_editor_.reset();
 
@@ -2899,8 +2916,12 @@ void MainWindow::Render() {
 
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
 
-    cyxwiz::plugin::PluginManager::Instance().SetAssistantContextSnapshotForAll(
-        BuildAssistantContextSnapshot(node_editor_.get(), studio_debugger_panel_.get()));
+    auto& plugin_manager = cyxwiz::plugin::PluginManager::Instance();
+    if (plugin_manager.GetPluginCount() > 0) {
+        plugin_manager.SetAssistantContextSnapshotForAll(
+            BuildAssistantContextSnapshot(
+                node_editor_.get(), studio_debugger_panel_.get()));
+    }
 
     // Check if we need to connect P2PClient to monitoring panel
     if (!monitoring_job_id_.empty() && job_manager_ && p2p_training_panel_) {
@@ -2924,7 +2945,6 @@ void MainWindow::Render() {
     if (asset_browser_) asset_browser_->Render();
     if (training_plot_panel_) training_plot_panel_->Render();  // Now "Training Dashboard"
     if (plot_test_control_) plot_test_control_->Render();
-    if (command_window_) command_window_->Render();
     if (script_editor_) script_editor_->Render();
     if (table_viewer_) table_viewer_->Render();
     if (data_explorer_panel_) data_explorer_panel_->Render();
@@ -2939,7 +2959,6 @@ void MainWindow::Render() {
     if (query_console_) query_console_->Render();
     if (custom_node_editor_) custom_node_editor_->Render();
     if (theme_editor_) theme_editor_->Render();
-    if (profiling_panel_) profiling_panel_->Render();
     if (memory_panel_) memory_panel_->Render();
     if (memory_monitor_) memory_monitor_->Render();
     if (variable_explorer_) variable_explorer_->Render();
@@ -3084,6 +3103,7 @@ void MainWindow::Render() {
 
     // Render the Compile Graph result popup (triggered from Train -> Compile Graph menu)
     RenderCompileResultPopup();
+    RenderMaterializationMemoryConfirmationPopup();
 
     // Render tutorial overlay (on top of all panels)
     cyxwiz::TutorialSystem::Instance().Render();
@@ -3242,7 +3262,6 @@ void MainWindow::BuildInitialDockLayout() {
     ImGui::DockBuilderDockWindow("Data Studio", dock_id_center_right); // Beside CyxWiz Studio
     ImGui::DockBuilderDockWindow("Properties", dock_id_right);
     ImGui::DockBuilderDockWindow("Console", dock_id_bottom_left);
-    ImGui::DockBuilderDockWindow("Command Window", dock_id_bottom_left); // Tabbed with Console
     ImGui::DockBuilderDockWindow("Training Dashboard", dock_id_bottom_right);
     ImGui::DockBuilderDockWindow("Viewport", dock_id_bottom_bottom);
 
@@ -3308,9 +3327,6 @@ void MainWindow::RegisterPanelsWithSidebar() {
     // Bottom panels
     if (console_) {
         dock_style.RegisterPanel("Console", ICON_FA_TERMINAL, console_->GetVisiblePtr());
-    }
-    if (command_window_) {
-        dock_style.RegisterPanel("Command", ICON_FA_CHEVRON_RIGHT, command_window_->GetVisiblePtr());
     }
     if (training_plot_panel_) {
         dock_style.RegisterPanel("Training", ICON_FA_CHART_LINE, training_plot_panel_->GetVisiblePtr());
@@ -3407,7 +3423,6 @@ void MainWindow::SetDefaultPanelVisibility() {
     // Main panels - hide by default
     if (training_plot_panel_) training_plot_panel_->SetVisible(false);
     if (plot_test_control_) plot_test_control_->SetVisible(false);
-    if (command_window_) command_window_->SetVisible(false);
     if (script_editor_) script_editor_->SetVisible(false);
     if (table_viewer_) table_viewer_->SetVisible(false);
     if (job_status_panel_) job_status_panel_->SetVisible(false);
@@ -3418,7 +3433,6 @@ void MainWindow::SetDefaultPanelVisibility() {
     if (query_console_) query_console_->SetVisible(false);
     if (custom_node_editor_) custom_node_editor_->SetVisible(false);
     if (theme_editor_) theme_editor_->SetVisible(false);
-    if (profiling_panel_) profiling_panel_->SetVisible(false);
     if (memory_panel_) memory_panel_->SetVisible(false);
     if (memory_monitor_) memory_monitor_->SetVisible(false);
     if (variable_explorer_) variable_explorer_->SetVisible(false);
@@ -3525,6 +3539,17 @@ void MainWindow::SetDefaultPanelVisibility() {
 }
 
 void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
+    const bool memory_confirmation_accepted =
+        materialization_memory_confirmation_accepted_once_;
+    const int accepted_memory_node_id =
+        accepted_materialization_memory_node_id_;
+    const uint64_t accepted_memory_estimated_bytes =
+        accepted_materialization_memory_estimated_bytes_;
+    const std::string accepted_memory_risk =
+        std::move(accepted_materialization_memory_risk_);
+    materialization_memory_confirmation_accepted_once_ = false;
+    accepted_materialization_memory_node_id_ = -1;
+    accepted_materialization_memory_estimated_bytes_ = 0;
     try {
         spdlog::info("StartTrainingFromGraph: Compiling {} nodes, {} links", nodes.size(), links.size());
 
@@ -3605,6 +3630,81 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         auto& registry = cyxwiz::DataRegistry::Instance();
         auto& tm = cyxwiz::TrainingManager::Instance();
 
+        cyxwiz::MaterializationMemoryPolicy materialization_memory_policy;
+        materialization_memory_policy.hard_limit_bytes =
+            project.GetConfig()
+                .editor_settings
+                .materialization_memory_limit_bytes;
+
+        cyxwiz::MaterializationMemoryContext preflight_memory_context;
+        preflight_memory_context.policy = materialization_memory_policy;
+        spdlog::info(
+            "StartTrainingFromGraph: preparing materialization memory plan");
+        const auto memory_preflight = PreflightGraphMaterialization(
+            nodes, links, config, registry,
+            std::move(preflight_memory_context));
+        if (memory_preflight.blocked) {
+            compile_result_success_ = false;
+            compile_result_mode_ = CompileResultMode::BlockedTrain;
+            compile_result_message_ = memory_preflight.status_title;
+            compile_result_summary_ = memory_preflight.status_detail;
+            compile_result_backend_placements_.clear();
+            compile_result_issues_.clear();
+            compile_result_issues_.push_back({
+                cyxwiz::IssueLevel::Error,
+                memory_preflight.evidence.node_id,
+                memory_preflight.evidence.node_name,
+                memory_preflight.status_detail,
+                cyxwiz::errors::Training::InvalidTrainingSetup});
+            show_compile_result_popup_ = true;
+            spdlog::error(
+                "StartTrainingFromGraph: pre-start materialization memory "
+                "check blocked training: {}",
+                memory_preflight.status_detail);
+            return;
+        }
+        const auto memory_risk_rank = [](const std::string& risk) {
+            if (risk == "risky") return 2;
+            if (risk == "warning") return 1;
+            return 0;
+        };
+        const bool accepted_current_estimate =
+            memory_confirmation_accepted &&
+            accepted_memory_node_id == memory_preflight.evidence.node_id &&
+            accepted_memory_estimated_bytes ==
+                memory_preflight.evidence.estimated_memory_bytes &&
+            memory_risk_rank(memory_preflight.evidence.memory_risk_level) <=
+                memory_risk_rank(accepted_memory_risk);
+        if (memory_preflight.requires_confirmation &&
+            !accepted_current_estimate) {
+            pending_memory_confirmation_nodes_ = nodes;
+            pending_memory_confirmation_links_ = links;
+            materialization_memory_confirmation_node_id_ =
+                memory_preflight.evidence.node_id;
+            materialization_memory_confirmation_estimated_bytes_ =
+                memory_preflight.evidence.estimated_memory_bytes;
+            materialization_memory_confirmation_detail_ =
+                memory_preflight.status_detail;
+            materialization_memory_confirmation_risk_ =
+                memory_preflight.evidence.memory_risk_level;
+            materialization_memory_confirmation_node_ =
+                memory_preflight.evidence.node_name;
+            show_materialization_memory_confirmation_popup_ = true;
+            spdlog::warn(
+                "StartTrainingFromGraph: awaiting main-thread confirmation "
+                "for {} materialization estimate at node '{}'",
+                materialization_memory_confirmation_risk_,
+                materialization_memory_confirmation_node_);
+            return;
+        }
+        if (memory_preflight.requires_confirmation) {
+            spdlog::warn(
+                "StartTrainingFromGraph: user accepted {} materialization "
+                "estimate at node '{}'",
+                memory_preflight.evidence.memory_risk_level,
+                memory_preflight.evidence.node_name);
+        }
+
         // Set up node editor callback to update training animation and pin state.
         // When training ends, flip all nodes' pin state to Trained so pins go
         // solid green - the user's at-a-glance signal that the graph has been run.
@@ -3677,7 +3777,12 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
 
         auto launch_result = StartGraphTrainingFromCompiledConfig(
             nodes, links, std::move(config), registry, training_plot_panel_,
-            node_editor_callback, dispatch_training);
+            node_editor_callback, dispatch_training,
+            materialization_memory_policy,
+            memory_preflight.estimate_available
+                ? std::make_optional(memory_preflight.evidence)
+                : std::nullopt,
+            cyxwiz::ProjectManager::Instance().GetProjectRoot());
 
         if (launch_result.started) {
             spdlog::info("Training started successfully");
@@ -3708,6 +3813,101 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         spdlog::error("StartTrainingFromGraph exception: {}", e.what());
     } catch (...) {
         spdlog::error("StartTrainingFromGraph unknown exception");
+    }
+}
+
+void MainWindow::RenderMaterializationMemoryConfirmationPopup() {
+    constexpr const char* kPopupTitle = "Confirm Materialization Memory Risk";
+    if (show_materialization_memory_confirmation_popup_) {
+        ImGui::OpenPopup(kPopupTitle);
+        show_materialization_memory_confirmation_popup_ = false;
+    }
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(720, 430), ImGuiCond_Appearing);
+
+    bool continue_training = false;
+    bool cancel_training = false;
+    if (ImGui::BeginPopupModal(
+            kPopupTitle, nullptr, ImGuiWindowFlags_NoResize)) {
+        const bool risky = materialization_memory_confirmation_risk_ == "risky";
+        const ImVec4 risk_color = risky
+            ? ImVec4(1.0f, 0.48f, 0.30f, 1.0f)
+            : ImVec4(1.0f, 0.82f, 0.28f, 1.0f);
+        ImGui::TextColored(
+            risk_color, "%s memory estimate",
+            risky ? "Risky" : "Warning");
+        if (!materialization_memory_confirmation_node_.empty()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled(
+                "- %s", materialization_memory_confirmation_node_.c_str());
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::BeginChild(
+            "MaterializationMemoryConfirmationBody",
+            ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 18.0f), true);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(
+            materialization_memory_confirmation_detail_.c_str());
+        ImGui::Spacing();
+        ImGui::TextColored(
+            risk_color,
+            "Continuing may cause paging, a slow or unresponsive UI, or a "
+            "capacity stop. No background materialization has started yet.");
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+
+        const float button_width = 160.0f;
+        const float gap = ImGui::GetStyle().ItemSpacing.x;
+        const float total_width = button_width * 2.0f + gap;
+        ImGui::SetCursorPosX(
+            (ImGui::GetWindowSize().x - total_width) * 0.5f);
+        if (ImGui::Button("Cancel", ImVec2(button_width, 0)) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            cancel_training = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Continue anyway", ImVec2(button_width, 0))) {
+            continue_training = true;
+        }
+
+        if (continue_training || cancel_training) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (cancel_training) {
+        pending_memory_confirmation_nodes_.clear();
+        pending_memory_confirmation_links_.clear();
+        materialization_memory_confirmation_detail_.clear();
+        materialization_memory_confirmation_risk_.clear();
+        materialization_memory_confirmation_node_.clear();
+        materialization_memory_confirmation_node_id_ = -1;
+        materialization_memory_confirmation_estimated_bytes_ = 0;
+        spdlog::info(
+            "StartTrainingFromGraph: materialization memory confirmation "
+            "cancelled by user");
+    } else if (continue_training) {
+        auto nodes = std::move(pending_memory_confirmation_nodes_);
+        auto links = std::move(pending_memory_confirmation_links_);
+        accepted_materialization_memory_node_id_ =
+            materialization_memory_confirmation_node_id_;
+        accepted_materialization_memory_estimated_bytes_ =
+            materialization_memory_confirmation_estimated_bytes_;
+        accepted_materialization_memory_risk_ =
+            materialization_memory_confirmation_risk_;
+        materialization_memory_confirmation_detail_.clear();
+        materialization_memory_confirmation_risk_.clear();
+        materialization_memory_confirmation_node_.clear();
+        materialization_memory_confirmation_node_id_ = -1;
+        materialization_memory_confirmation_estimated_bytes_ = 0;
+        materialization_memory_confirmation_accepted_once_ = true;
+        StartTrainingFromGraph(nodes, links);
     }
 }
 
@@ -4020,7 +4220,9 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     if (training_trace.available) {
         session.training_trace = training_trace;
         session.execution =
-            cyxwiz::MakeDebugRunExecutionSummary(session.training_trace);
+            cyxwiz::MakeDebugRunExecutionSummary(
+                session.training_trace,
+                mode == cyxwiz::StudioDebuggerRunMode::RuntimeTrace);
     }
     const std::string& run_id = session.run_id;
     cyxwiz::DebugRunReplayCapsule replay_capsule =
@@ -4153,7 +4355,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
 
     session.studio_events.push_back({
         run_id,
-        "",
+        NowLocalTimestampForDebugStore(),
         session.graph_hash,
         -1,
         "StudioDebugger.Run",
@@ -4256,7 +4458,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 run_id, session.graph_hash, placement));
         }
         session.studio_events.push_back({
-            run_id, "", session.graph_hash, -1,
+            run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
             "BackendPlacementAudit", "captured",
             "Captured " + std::to_string(config.backend_placements.size()) +
                 " compiler placement decision(s); actual runtime backend "
@@ -4298,7 +4500,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 session.recommendations));
             session.studio_events.push_back({
                 run_id,
-                "",
+                NowLocalTimestampForDebugStore(),
                 session.graph_hash,
                 explain_node_id,
                 "StudioDebugger.ExplainNode",
@@ -4313,7 +4515,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             session.failure_summary = "Compile gate failed.";
         }
         session.studio_events.push_back({
-            run_id, "", session.graph_hash, -1,
+            run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
             "Compile", "failed", session.failure_summary
         });
         if (explain_node_id >= 0) {
@@ -4328,7 +4530,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         return false;
     }
     session.studio_events.push_back({
-        run_id, "", session.graph_hash, -1,
+        run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
         "Compile", "passed", "Compile gate passed before Local Debug."
     });
 
@@ -4362,7 +4564,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     preflight_trace.payload["summary"] = session.preflight.summary;
     session.traces.push_back(std::move(preflight_trace));
     session.studio_events.push_back({
-        run_id, "", session.graph_hash, -1,
+        run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
         "Preflight", session.preflight.ready ? "ready" : "blocked",
         session.preflight.ready ? "Preflight checks passed." : "Preflight reported blocking issues."
     });
@@ -4400,7 +4602,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 std::make_move_iterator(operator_traces.end()));
             if (has_operator_traces) {
                 session.studio_events.push_back({
-                    run_id, "", session.graph_hash, -1,
+                    run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
                     "OperatorPreprocessingTrace", "captured",
                     "Captured operator-backed Arrow preprocessing trace."
                 });
@@ -4416,7 +4618,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                               std::make_move_iterator(preprocessing_traces.end()));
         if (!preprocessing_traces.empty()) {
             session.studio_events.push_back({
-                run_id, "", session.graph_hash, -1,
+                run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
                 "TextPreprocessingTrace", "captured",
                 "Captured text preprocessing trace for sample " +
                     std::to_string(selected_sample_index) + "."
@@ -4431,13 +4633,13 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                               std::make_move_iterator(session.smoke_result.traces.end()));
         if (session.smoke_result.supported) {
             session.studio_events.push_back({
-                run_id, "", session.graph_hash, -1,
+                run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
                 "SmokeRun", session.smoke_result.success ? "passed" : "failed",
                 session.smoke_result.summary
             });
         } else {
             session.studio_events.push_back({
-                run_id, "", session.graph_hash, -1,
+                run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
                 "SmokeRun", "unsupported", session.smoke_result.summary
             });
         }
@@ -4460,7 +4662,10 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         session.failure_summary = session.debug_result.failure_summary;
 
         if (!session.debug_result.issues.empty()) {
-            session.issues = session.debug_result.issues;
+            session.issues.insert(
+                session.issues.end(),
+                session.debug_result.issues.begin(),
+                session.debug_result.issues.end());
         }
 
         if (!session.debug_result.model_build_traces.empty()) {
@@ -4827,7 +5032,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             session.traces.push_back(std::move(record));
         }
         session.studio_events.push_back({
-            run_id, "", session.graph_hash, -1,
+            run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
             "LocalDebug", session.debug_result.success ? "passed" : "failed",
             session.debug_result.success ? "Local Debug completed." : session.debug_result.failure_summary
         });
@@ -4865,7 +5070,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             cyxwiz::errors::Training::TrainingExecutionFailed
         });
         session.studio_events.push_back({
-            run_id, "", session.graph_hash, -1,
+            run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
             "LocalDebug", "failed", session.failure_summary
         });
         append_error_timeline();
@@ -4877,6 +5082,29 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         session.success =
             session.smoke_result.supported && session.smoke_result.success;
         session.failure_summary = session.success ? "" : session.smoke_result.summary;
+    }
+
+    if (run_full) {
+        session.success = cyxwiz::DebugSessionManager::FullWorkflowSucceeded(
+            compile_success,
+            session.preflight.ready,
+            session.smoke_result.supported,
+            session.smoke_result.success,
+            session.has_debug_result,
+            session.debug_result.success);
+        if (!session.success && session.failure_summary.empty()) {
+            if (!session.preflight.ready) {
+                session.failure_summary = "Preflight reported blocking issues.";
+            } else if (!session.smoke_result.supported ||
+                       !session.smoke_result.success) {
+                session.failure_summary = session.smoke_result.summary.empty()
+                    ? "Smoke Run did not complete successfully."
+                    : session.smoke_result.summary;
+            } else {
+                session.failure_summary =
+                    "Local Debug did not complete successfully.";
+            }
+        }
     }
 
     if (run_runtime) {
@@ -5620,11 +5848,14 @@ void MainWindow::HandleGlobalShortcuts() {
     // GLOBAL SHORTCUTS - Work in any context
     // ========================================================================
 
-    // Python Console (F12) - Always available
+    // Python REPL (F12) - requires an active project.
     if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F12)) {
-        if (command_window_) {
-            command_window_->SetVisible(true);
-            spdlog::info("Opened Python Console via F12");
+        if (console_) {
+            if (console_->ActivatePythonRepl()) {
+                spdlog::info("Opened Python REPL in Console via F12");
+            } else {
+                spdlog::warn("F12 Python REPL requires an active project");
+            }
         }
     }
 
@@ -5817,6 +6048,10 @@ void MainWindow::SaveProjectSettings() {
     // Save application-wide settings
     settings.app_theme = static_cast<int>(GetTheme().GetCurrentPreset());
     settings.ui_scale = ImGui::GetIO().FontGlobalScale;
+    if (toolbar_) {
+        settings.materialization_memory_limit_bytes =
+            toolbar_->GetMaterializationMemoryLimitBytes();
+    }
 
     // Save layout file
     SaveLayout();
@@ -5853,6 +6088,8 @@ void MainWindow::LoadProjectSettings() {
         toolbar_->SetEditorShowWhitespace(settings.show_whitespace);
         toolbar_->SetEditorWordWrap(settings.word_wrap);
         toolbar_->SetEditorAutoIndent(settings.auto_indent);
+        toolbar_->SetMaterializationMemoryLimitBytes(
+            settings.materialization_memory_limit_bytes);
     }
 
     // Apply application theme
@@ -5890,6 +6127,8 @@ void MainWindow::LoadProjectSettings() {
 void MainWindow::OnProjectOpened(const std::string& project_root) {
     spdlog::info("Project opened: {}", project_root);
 
+    if (console_) console_->SetProjectRoot(project_root);
+
     // Load project settings and layout
     LoadProjectSettings();
 
@@ -5909,6 +6148,8 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
 
 void MainWindow::OnProjectClosed(const std::string& project_root) {
     spdlog::info("Project closed: {}", project_root);
+
+    if (console_) console_->CloseProject(project_root);
 
     // Note: Settings should be saved before CloseProject() is called
     // (the toolbar handles this in its Close Project menu action)

@@ -38,21 +38,6 @@ bool IsStringLikeColumn(const std::shared_ptr<arrow::ChunkedArray>& column,
     return true;
 }
 
-const char* MaterializationMemoryProgressStatus(
-    MaterializationMemoryRisk risk) {
-    switch (risk) {
-    case MaterializationMemoryRisk::Safe:
-        return "running";
-    case MaterializationMemoryRisk::Warning:
-        return "warning";
-    case MaterializationMemoryRisk::Risky:
-        return "risky";
-    case MaterializationMemoryRisk::Blocked:
-        return "blocked";
-    }
-    return "running";
-}
-
 std::string BuildTokenizerMemoryPreflightMessage(
     const MaterializationMemoryEstimate& estimate,
     const MaterializationMemoryDecision& decision) {
@@ -219,7 +204,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         planned_output_columns,
         static_cast<uint64_t>(sizeof(float)));
     const auto preflight_decision = EvaluateMaterializationMemory(
-        preflight_estimate, DetectMaterializationMemorySnapshot());
+        preflight_estimate, GetMaterializationMemoryContext());
     const std::string preflight_message = BuildTokenizerMemoryPreflightMessage(
         preflight_estimate, preflight_decision);
     uint64_t planned_cells = 0;
@@ -230,7 +215,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = "TextTokenizer memory preflight";
         event.message = preflight_message;
-        event.status = MaterializationMemoryProgressStatus(
+        event.status = MaterializationMemoryRiskToProgressStatus(
             preflight_decision.risk);
         event.progress = 0.03f;
         event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
@@ -244,6 +229,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         return arrow::Status::CapacityError(
             "Materialization blocked: " + preflight_message);
     }
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
 
     report_progress("Reading text",
                     "Reading text column '" + text_col_ + "'",
@@ -253,7 +239,9 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                     preflight_estimate.estimated_peak_bytes);
 
     std::vector<std::string> texts;
-    if (!ReadColumnAsStrings(text_column, texts, bad_type)) {
+    if (!ReadColumnAsStrings(
+            text_column, texts, bad_type, GetCancellationQuery())) {
+        ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         return arrow::Status::TypeError(
             "TextTokenizer: text column '" + text_col_ +
             "' must be string/large_string, got '" + bad_type + "'");
@@ -302,6 +290,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                         total_rows,
                         estimated_token_matrix_bytes);
         tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
+        ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         const std::filesystem::path path(vocab_file_);
         if (path.has_parent_path()) {
             std::error_code ec;
@@ -331,6 +320,7 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                         total_rows,
                         estimated_token_matrix_bytes);
         tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
+        ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
     }
     const size_t trained_vocab_size = tokenizer.GetVocabulary().Size();
     report_progress("Vocabulary ready",
@@ -350,15 +340,22 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                     total_rows,
                     estimated_token_matrix_bytes);
     auto encoded = tokenizer.EncodeBatch(texts);
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
     auto padded = tokenizer.PadBatch(encoded, max_length_);
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
     if (pad_value_ != tokenizer.GetVocabulary().PadIndex()) {
         const int tokenizer_pad = tokenizer.GetVocabulary().PadIndex();
+        size_t row_index = 0;
         for (auto& row : padded) {
+            if ((row_index & 1023) == 0) {
+                ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+            }
             for (int& id : row) {
                 if (id == tokenizer_pad) {
                     id = pad_value_;
                 }
             }
+            ++row_index;
         }
     }
 
@@ -381,7 +378,10 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                 "TextTokenizer: label column '" + label_col_ + "' not found");
         }
         std::string lbad;
-        if (!ReadLabelColumnAsInt(label_column, labels, class_names, lbad)) {
+        if (!ReadLabelColumnAsInt(
+                label_column, labels, class_names, lbad,
+                GetCancellationQuery())) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
             return arrow::Status::TypeError(
                 "TextTokenizer: label column '" + label_col_ +
                 "' has unsupported type '" + lbad + "'");
@@ -413,6 +413,9 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     for (size_t r = 0; r < n; ++r) {
+        if ((r & 1023) == 0) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        }
         const auto& row = padded[r];
         for (int i = 0; i < max_length_; ++i) {
             const float v = (i < static_cast<int>(row.size()))

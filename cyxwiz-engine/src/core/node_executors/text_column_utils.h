@@ -3,6 +3,7 @@
 #include <arrow/api.h>
 #include <algorithm>
 #include <cctype>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -35,9 +36,12 @@ inline std::string NormalizeTextParameterChoice(const std::string& value) {
 inline bool ReadColumnAsStrings(
     const std::shared_ptr<arrow::ChunkedArray>& column,
     std::vector<std::string>& out,
-    std::string& error_type_name) {
+    std::string& error_type_name,
+    const std::function<bool()>& cancellation_requested = {},
+    bool* cancelled = nullptr) {
 
     out.clear();
+    if (cancelled) *cancelled = false;
     out.reserve(static_cast<size_t>(column->length()));
 
     for (int c = 0; c < column->num_chunks(); ++c) {
@@ -51,6 +55,11 @@ inline bool ReadColumnAsStrings(
         if (chunk->type_id() == arrow::Type::STRING) {
             auto arr = std::static_pointer_cast<arrow::StringArray>(chunk);
             for (int64_t i = 0; i < chunk_len; ++i) {
+                if ((i & 1023) == 0 && cancellation_requested &&
+                    cancellation_requested()) {
+                    if (cancelled) *cancelled = true;
+                    return false;
+                }
                 if (chunk->IsNull(i)) {
                     out.emplace_back();
                 } else {
@@ -60,6 +69,11 @@ inline bool ReadColumnAsStrings(
         } else {
             auto arr = std::static_pointer_cast<arrow::LargeStringArray>(chunk);
             for (int64_t i = 0; i < chunk_len; ++i) {
+                if ((i & 1023) == 0 && cancellation_requested &&
+                    cancellation_requested()) {
+                    if (cancelled) *cancelled = true;
+                    return false;
+                }
                 if (chunk->IsNull(i)) {
                     out.emplace_back();
                 } else {
@@ -79,9 +93,12 @@ inline bool ReadLabelColumnAsInt(
     const std::shared_ptr<arrow::ChunkedArray>& column,
     std::vector<int>& out,
     std::vector<std::string>& class_names,
-    std::string& error_type_name) {
+    std::string& error_type_name,
+    const std::function<bool()>& cancellation_requested = {},
+    bool* cancelled = nullptr) {
 
     out.clear();
+    if (cancelled) *cancelled = false;
     out.reserve(static_cast<size_t>(column->length()));
     class_names.clear();
 
@@ -95,6 +112,11 @@ inline bool ReadLabelColumnAsInt(
             auto chunk = column->chunk(c);
             const int64_t chunk_len = chunk->length();
             for (int64_t i = 0; i < chunk_len; ++i) {
+                if ((i & 1023) == 0 && cancellation_requested &&
+                    cancellation_requested()) {
+                    if (cancelled) *cancelled = true;
+                    return false;
+                }
                 std::string s;
                 if (!chunk->IsNull(i)) {
                     if (chunk->type_id() == arrow::Type::STRING) {
@@ -122,6 +144,11 @@ inline bool ReadLabelColumnAsInt(
         auto chunk = column->chunk(c);
         const int64_t chunk_len = chunk->length();
         for (int64_t i = 0; i < chunk_len; ++i) {
+            if ((i & 1023) == 0 && cancellation_requested &&
+                cancellation_requested()) {
+                if (cancelled) *cancelled = true;
+                return false;
+            }
             if (chunk->IsNull(i)) { out.push_back(0); continue; }
             switch (chunk->type_id()) {
                 case arrow::Type::INT64:

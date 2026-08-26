@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -233,8 +234,28 @@ void RenderParameter(
         }
         ImGui::SameLine();
         if (ImGui::Button("Browse")) {
-            if (auto selected_file = cyxwiz::FileDialogs::OpenFile(
-                    "Select File", {{"All Files", "*"}}, value.empty() ? nullptr : value.c_str())) {
+            std::optional<std::string> selected_file;
+            if (properties_rules::ShouldUseSaveFileDialog(node, param)) {
+                selected_file = cyxwiz::FileDialogs::SaveFile(
+                    "Save Fitted State",
+                    {{"CyxWiz Fitted State", "cyxstate.json"},
+                     {"JSON", "json"}},
+                    value.empty() ? nullptr : value.c_str(),
+                    "fitted_state.cyxstate.json");
+            } else {
+                selected_file = cyxwiz::FileDialogs::OpenFile(
+                    param.name == "state_path"
+                        ? "Load Fitted State"
+                        : "Select File",
+                    param.name == "state_path"
+                        ? cyxwiz::FileDialogs::FilterList{
+                              {"CyxWiz Fitted State", "cyxstate.json"},
+                              {"JSON", "json"}}
+                        : cyxwiz::FileDialogs::FilterList{
+                              {"All Files", "*"}},
+                    value.empty() ? nullptr : value.c_str());
+            }
+            if (selected_file) {
                 value = *selected_file;
                 changed = true;
             }

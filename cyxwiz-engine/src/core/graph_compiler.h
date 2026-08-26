@@ -529,6 +529,8 @@ struct TrainingConfiguration {
     float momentum = 0.9f;
     float beta1 = 0.9f;
     float beta2 = 0.999f;
+    float epsilon = 1e-8f;
+    float rmsprop_alpha = 0.99f;
     float weight_decay = 0.0f;
 
     // Validation

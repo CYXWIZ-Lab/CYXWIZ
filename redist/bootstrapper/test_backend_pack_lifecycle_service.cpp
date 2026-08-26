@@ -1,5 +1,7 @@
 #include "backend_pack_hash.h"
 #include "backend_pack_lifecycle_service.h"
+#include "backend_pack_metadata_cache.h"
+#include "backend_pack_metadata_refresh.h"
 #include "backend_pack_platform.h"
 
 #include <archive.h>
@@ -16,6 +18,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -108,7 +111,11 @@ Json Envelope(
              {"algorithm", "ed25519"}, {"value", Sign(body, key)}}})}};
 }
 
-bool WriteZip(const std::filesystem::path& path) {
+bool WriteZip(
+    const std::filesystem::path& path,
+    const std::vector<std::string>& entries = {
+        "runtime/afopencl.dll",
+        "THIRD_PARTY_LICENSES/ArrayFire/LICENSE.txt"}) {
     std::filesystem::create_directories(path.parent_path());
     archive* writer = archive_write_new();
     if (!writer || archive_write_set_format_zip(writer) != ARCHIVE_OK ||
@@ -120,9 +127,7 @@ bool WriteZip(const std::filesystem::path& path) {
         if (writer) archive_write_free(writer);
         return false;
     }
-    for (const std::string entry_path : {
-             "runtime/afopencl.dll",
-             "THIRD_PARTY_LICENSES/ArrayFire/LICENSE.txt"}) {
+    for (const auto& entry_path : entries) {
         archive_entry* entry = archive_entry_new();
         archive_entry_set_pathname_utf8(entry, entry_path.c_str());
         archive_entry_set_filetype(entry, AE_IFREG);
@@ -240,6 +245,78 @@ public:
             "catalog-2026", catalog_key_));
     }
 
+    void PrepareBase() {
+        std::error_code error;
+        std::filesystem::remove(runtime / "active-runtime.json", error);
+        std::filesystem::remove_all(runtime / "base" / "base-v1", error);
+        archive = root / "base-v1.zip";
+        manifest_path = root / "base-manifest.json";
+        catalog_path = root / "base-catalog.json";
+        const std::string engine(CurrentEngineExecutableName());
+        const std::string launcher(
+            CurrentRuntimeBootstrapperExecutableName());
+        if (!WriteZip(archive, {engine, launcher, "LICENSE"})) {
+            throw std::runtime_error("Cannot create base archive");
+        }
+        const auto archive_size = std::filesystem::file_size(archive);
+        std::string archive_hash;
+        std::string hash_error;
+        if (!Sha256File(archive, archive_hash, hash_error)) {
+            throw std::runtime_error(hash_error);
+        }
+        Json body = {
+            {"pack_id", "base-v1"}, {"pack_kind", "base"},
+            {"backend", "cpu"}, {"package_version", "1.0.0"},
+            {"platform", "win64"}, {"architecture", "x86_64"},
+            {"runtime_set_id", "set-v1"},
+            {"cyxwiz_release", {{"minimum", "0.2.0"}, {"maximum", "0.2.x"}}},
+            {"arrayfire", {{"version", "3.10.0"}, {"abi", "arrayfire-3.10"}}},
+            {"companion_base_id", nullptr}, {"conflicts", Json::array()},
+            {"compatibility", {
+                {"device_kinds", Json::array({"cpu"})},
+                {"cpu_features", Json::array()},
+                {"provider_types", Json::array()},
+                {"minimum_driver_versions", Json::object()},
+                {"tested_driver_ranges", Json::object()},
+                {"minimum_identity_confidence", "backend_local"},
+                {"recommendation_targets", Json::array({"cpu"})},
+                {"operation_matrix_id", "matrix-v1"},
+                {"training_scope", Json::array({"dense"})},
+                {"support_status", "supported"}}},
+            {"components", Json::array({{
+                {"path", engine}, {"size", std::uint64_t{1}},
+                {"sha256", kZeroByteSha256}, {"source", "cyxwiz"},
+                {"executable", true}}, {
+                {"path", launcher}, {"size", std::uint64_t{1}},
+                {"sha256", kZeroByteSha256}, {"source", "cyxwiz"},
+                {"executable", true}}, {
+                {"path", "LICENSE"}, {"size", std::uint64_t{1}},
+                {"sha256", kZeroByteSha256}, {"source", "cyxwiz-license"},
+                {"executable", false}}})},
+            {"licenses", Json::array({{{"component", "cyxwiz"},
+                {"path", "LICENSE"}}})},
+            {"archive", {{"file_name", "base-v1.zip"},
+                {"size", archive_size}, {"sha256", archive_hash}}},
+            {"generated_utc", "2026-08-13T20:00:00Z"}};
+        const auto manifest_bytes = WriteJson(
+            manifest_path, Envelope(
+                "cyxwiz-backend-pack-manifest", std::move(body),
+                "pack-2026", pack_key_));
+        Json catalog = {
+            {"catalog_id", "production-2026-08"},
+            {"generated_utc", "2026-08-13T20:00:00Z"},
+            {"expires_utc", "2026-09-13T20:00:00Z"},
+            {"minimum_client_version", "0.2.0"},
+            {"packs", Json::array({{{"pack_id", "base-v1"},
+                {"manifest_url", "https://downloads.cyxwiz.com/base-v1.json"},
+                {"manifest_sha256", Hash(manifest_bytes)},
+                {"signing_key_id", "pack-2026"},
+                {"support_status", "supported"}}})}};
+        WriteJson(catalog_path, Envelope(
+            "cyxwiz-backend-pack-catalog", std::move(catalog),
+            "catalog-2026", catalog_key_));
+    }
+
     BackendPackMetadataVerifier Verifier() const {
         std::string error;
         auto trust = BackendPackTrustStore::Load(trust_path, error);
@@ -319,10 +396,177 @@ bool HasPack(const ActiveRuntimeState& state) {
            state.packs.front().pack_id == "opencl-v1";
 }
 
+class FixtureMetadataSource final : public BackendPackMetadataSource {
+public:
+    void Set(std::string url, std::filesystem::path source) {
+        for (auto& entry : documents_) {
+            if (entry.first == url) {
+                entry.second = std::move(source);
+                return;
+            }
+        }
+        documents_.emplace_back(std::move(url), std::move(source));
+    }
+
+    bool Fetch(
+        const std::string& url,
+        const std::filesystem::path& destination,
+        std::uint64_t maximum_bytes,
+        std::string& error) override {
+        const auto entry = std::find_if(
+            documents_.begin(), documents_.end(),
+            [&](const auto& candidate) { return candidate.first == url; });
+        if (entry == documents_.end()) {
+            error = "Fixture URL is unavailable";
+            return false;
+        }
+        std::error_code filesystem_error;
+        const auto size = std::filesystem::file_size(
+            entry->second, filesystem_error);
+        if (filesystem_error || size == 0 || size > maximum_bytes) {
+            error = "Fixture document violates its byte bound";
+            return false;
+        }
+        std::filesystem::create_directories(
+            destination.parent_path(), filesystem_error);
+        if (filesystem_error || !std::filesystem::copy_file(
+                entry->second, destination,
+                std::filesystem::copy_options::none, filesystem_error)) {
+            error = "Cannot copy fixture metadata document";
+            return false;
+        }
+        return true;
+    }
+
+private:
+    std::vector<std::pair<std::string, std::filesystem::path>> documents_;
+};
+
 }  // namespace
 
 int main() {
     int failures = 0;
+    {
+        Fixture fixture;
+        constexpr const char* catalog_url =
+            "https://downloads.cyxwiz.com/catalogs/current.json";
+        constexpr const char* manifest_url =
+            "https://downloads.cyxwiz.com/opencl-v1.json";
+        FixtureMetadataSource source;
+        source.Set(catalog_url, fixture.catalog_path);
+        source.Set(manifest_url, fixture.manifest_path);
+        const auto destination = fixture.root / "refreshed-metadata";
+        BackendPackMetadataRefreshRequest request;
+        request.catalog_url = catalog_url;
+        request.trusted_keys_path = fixture.trust_path;
+        request.destination_root = destination;
+        request.current_utc = "2026-08-14T12:00:00Z";
+        const auto refreshed = RefreshBackendPackMetadata(
+            request, fixture.Verifier(), source);
+
+        BackendPackLifecycleService reader(
+            destination, fixture.Verifier());
+        VerifiedBackendPackCatalogSnapshot snapshot;
+        std::string read_error;
+        const bool readable = reader.ReadCatalogSnapshot(
+            request.current_utc, snapshot, read_error);
+        failures += !Expect(
+            refreshed.status == BackendPackMetadataRefreshStatus::Refreshed &&
+                refreshed.verified_pack_count == 1 && readable &&
+                snapshot.catalog.catalog_id == "production-2026-08" &&
+                snapshot.records.size() == 1 &&
+                snapshot.records.front().manifest.has_value(),
+            "remote metadata refresh must verify and atomically publish a complete catalog snapshot");
+
+        const auto corrupt = fixture.root / "corrupt-manifest.json";
+        std::ofstream(corrupt, std::ios::binary | std::ios::trunc)
+            << "{\"corrupt\":true}";
+        source.Set(manifest_url, corrupt);
+        const auto rejected = RefreshBackendPackMetadata(
+            request, fixture.Verifier(), source);
+        snapshot = {};
+        read_error.clear();
+        const bool previous_remains = reader.ReadCatalogSnapshot(
+            request.current_utc, snapshot, read_error);
+        failures += !Expect(
+            rejected.status ==
+                    BackendPackMetadataRefreshStatus::VerificationFailure &&
+                previous_remains &&
+                snapshot.catalog.catalog_id == "production-2026-08" &&
+                snapshot.records.front().manifest.has_value(),
+            "a corrupt remote manifest must leave the previous verified catalog readable");
+    }
+    {
+        Fixture fixture;
+        fixture.PrepareBase();
+        bool saw_candidate = false;
+        BackendPackLifecycleService service(
+            fixture.runtime, fixture.Verifier(), [] { return false; },
+            [&](const auto& manifest, const auto& installed,
+                const ActiveRuntimeState& candidate) {
+                saw_candidate =
+                    manifest.kind == BackendPackManifestKind::Base &&
+                    manifest.backend == "cpu" &&
+                    std::filesystem::is_directory(installed) &&
+                    candidate.generation == 1 &&
+                    candidate.base_pack_id == "base-v1" &&
+                    candidate.packs.empty();
+                return BackendPackQualificationDecision{
+                    BackendPackQualificationDisposition::Qualified,
+                    "CPU base qualified"};
+            });
+        auto request = fixture.Request();
+        request.pack_id = "base-v1";
+        OfflineBackendPackArtifactSource source(fixture.archive);
+        const auto result = service.DeliverBase(request, source);
+        const auto active = fixture.Active();
+        failures += !Expect(
+            result.status ==
+                    BackendPackLifecycleStatus::InstalledAndActivated &&
+                saw_candidate && active.generation == 1 &&
+                active.base_pack_id == "base-v1" && active.packs.empty() &&
+                std::filesystem::is_regular_file(
+                    fixture.root /
+                    std::string(CurrentRuntimeBootstrapperExecutableName())) &&
+                Fixture::ReadByte(
+                    fixture.root /
+                    std::string(CurrentRuntimeBootstrapperExecutableName())) ==
+                    '\0',
+            "fresh base delivery must verify, stage, publish its launcher, qualify, and initialize generation 1");
+    }
+    {
+        Fixture fixture;
+        fixture.PrepareBase();
+        const auto published_launcher = fixture.root /
+            std::string(CurrentRuntimeBootstrapperExecutableName());
+        std::ofstream(
+            published_launcher, std::ios::binary | std::ios::trunc)
+            .put('p');
+        BackendPackLifecycleService service(
+            fixture.runtime, fixture.Verifier(), [] { return false; },
+            [&](const auto&, const auto& installed, const auto&) {
+                std::ofstream(
+                    installed /
+                        std::string(
+                            CurrentRuntimeBootstrapperExecutableName()),
+                    std::ios::binary | std::ios::trunc)
+                    .put('x');
+                return BackendPackQualificationDecision{
+                    BackendPackQualificationDisposition::Qualified,
+                    "CPU base qualified before launcher tamper"};
+            });
+        auto request = fixture.Request();
+        request.pack_id = "base-v1";
+        OfflineBackendPackArtifactSource source(fixture.archive);
+        const auto result = service.DeliverBase(request, source);
+        std::error_code active_error;
+        failures += !Expect(
+            result.status == BackendPackLifecycleStatus::InstallationFailure &&
+                !std::filesystem::exists(
+                    fixture.runtime / "active-runtime.json", active_error) &&
+                !active_error && Fixture::ReadByte(published_launcher) == 'p',
+            "post-qualification launcher tampering must block activation and preserve the previous app-level launcher");
+    }
     {
         Fixture fixture;
         fixture.PublishCatalogCache();
@@ -361,6 +605,39 @@ int main() {
                 !snapshot.records.front().manifest.has_value() &&
                 !snapshot.records.front().manifest_error.empty(),
             "an invalid cached manifest must disable only its catalog entry");
+    }
+    {
+        Fixture fixture;
+        fixture.PublishCatalogCache();
+        BackendPackLifecycleService source_service(
+            fixture.runtime, fixture.Verifier(), [] { return false; });
+        VerifiedBackendPackCatalogSnapshot snapshot;
+        std::string error;
+        const auto destination = fixture.root / "published-runtime";
+        const bool read = source_service.ReadCatalogSnapshot(
+            "2026-08-14T12:00:00Z", snapshot, error);
+        const bool published = read && PublishVerifiedBackendPackMetadata(
+            fixture.trust_path, snapshot, destination, error);
+        auto trust = BackendPackTrustStore::Load(
+            destination / "trust" / "trusted-keys.json", error);
+        bool reread = false;
+        VerifiedBackendPackCatalogSnapshot installed_snapshot;
+        if (trust) {
+            BackendPackLifecycleService installed_service(
+                destination,
+                BackendPackMetadataVerifier(
+                    std::move(*trust), "0.2.0", "win64", "x86_64"),
+                [] { return false; });
+            reread = installed_service.ReadCatalogSnapshot(
+                "2026-08-14T12:00:00Z", installed_snapshot, error);
+        }
+        failures += !Expect(
+            published && reread && installed_snapshot.records.size() == 1 &&
+                installed_snapshot.records.front().manifest.has_value() &&
+                !PublishVerifiedBackendPackMetadata(
+                    fixture.trust_path, snapshot,
+                    std::filesystem::path("relative-runtime"), error),
+            "verified setup metadata must publish atomically into a distinct absolute runtime cache");
     }
     {
         Fixture fixture;

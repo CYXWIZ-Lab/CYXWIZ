@@ -38,6 +38,8 @@ struct TrainingStatusSnapshot {
     std::string checkpoint_used;
     std::string active_model_provenance;
     size_t metric_points = 0;
+    std::string materialization_status;
+    std::string materialization_message;
     std::vector<std::pair<std::string, double>> latest_custom_metrics;
 };
 
@@ -94,6 +96,14 @@ public:
                                        const std::string& node_name = "",
                                        const std::string& memory_risk_level = "",
                                        const std::string& status = "running",
+                                       uint64_t available_memory_bytes = 0,
+                                       uint64_t safe_memory_budget_bytes = 0,
+                                       bool process_memory_detected = false,
+                                       uint64_t process_resident_memory_bytes = 0,
+                                       uint64_t process_private_memory_bytes = 0,
+                                       uint64_t process_resident_growth_bytes = 0,
+                                       const std::string& process_private_memory_name = "",
+                                       const std::string& process_memory_source = "",
                                        const std::string& cache_key = "",
                                        const std::string& cache_artifact_path = "",
                                        const std::string& cache_manifest_path = "",
@@ -162,7 +172,15 @@ private:
         int node_id = -1;
         float progress = 0.0f;
         uint64_t estimated_memory_bytes = 0;
+        uint64_t available_memory_bytes = 0;
+        uint64_t safe_memory_budget_bytes = 0;
         std::string memory_risk_level;
+        bool process_memory_detected = false;
+        uint64_t process_resident_memory_bytes = 0;
+        uint64_t process_private_memory_bytes = 0;
+        uint64_t process_resident_growth_bytes = 0;
+        std::string process_private_memory_name;
+        std::string process_memory_source;
         uint64_t processed_items = 0;
         uint64_t total_items = 0;
         std::string cache_key;

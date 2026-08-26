@@ -3,11 +3,15 @@
 #include <arrow/type.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <system_error>
+#include <unordered_set>
 
 namespace cyxwiz {
 namespace {
@@ -16,6 +20,49 @@ using json = nlohmann::json;
 
 constexpr const char* kArtifactType = "cyxwiz.preprocessing_state";
 constexpr int kArtifactVersion = 1;
+
+std::string TrimAndLower(std::string value) {
+    const auto first = std::find_if_not(
+        value.begin(), value.end(), [](unsigned char ch) {
+            return std::isspace(ch) != 0;
+        });
+    const auto last = std::find_if_not(
+        value.rbegin(), value.rend(), [](unsigned char ch) {
+            return std::isspace(ch) != 0;
+        }).base();
+    value = first < last ? std::string(first, last) : std::string{};
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char ch) {
+                       return static_cast<char>(std::tolower(ch));
+                   });
+    return value;
+}
+
+bool ReadBooleanOption(
+    const std::map<std::string, std::string>& parameters,
+    const char* name,
+    bool default_value,
+    const std::string& operator_name,
+    bool& result,
+    std::string& error) {
+    const auto it = parameters.find(name);
+    if (it == parameters.end() || it->second.empty()) {
+        result = default_value;
+        return true;
+    }
+    const std::string value = TrimAndLower(it->second);
+    if (value == "true") {
+        result = true;
+        return true;
+    }
+    if (value == "false") {
+        result = false;
+        return true;
+    }
+    error = operator_name + ": '" + name +
+            "' must be 'true' or 'false' (got '" + it->second + "')";
+    return false;
+}
 
 bool IsNumericArrowType(const std::shared_ptr<arrow::DataType>& type) {
     if (!type) {
@@ -119,6 +166,165 @@ bool FromJson(const json& value,
 }
 
 }  // namespace
+
+bool ParseFittedPreprocessingOptions(
+    const std::map<std::string, std::string>& parameters,
+    const std::string& operator_name,
+    FittedPreprocessingOptions& options,
+    std::string& error) {
+    options = {};
+
+    const auto mode = parameters.find("operation_mode");
+    if (mode != parameters.end() && !mode->second.empty()) {
+        options.operation_mode = TrimAndLower(mode->second);
+    }
+    if (options.operation_mode != "fit_transform" &&
+        options.operation_mode != "transform_only") {
+        error = operator_name +
+                ": 'operation_mode' must be 'fit_transform' or "
+                "'transform_only' (got '" + options.operation_mode + "')";
+        return false;
+    }
+
+    const auto path = parameters.find("state_path");
+    if (path != parameters.end()) {
+        options.state_path = path->second;
+        const auto first = std::find_if_not(
+            options.state_path.begin(), options.state_path.end(),
+            [](unsigned char ch) { return std::isspace(ch) != 0; });
+        const auto last = std::find_if_not(
+            options.state_path.rbegin(), options.state_path.rend(),
+            [](unsigned char ch) { return std::isspace(ch) != 0; }).base();
+        options.state_path = first < last
+            ? std::string(first, last)
+            : std::string{};
+    }
+
+    if (!ReadBooleanOption(parameters, "save_state", false, operator_name,
+                           options.save_state, error) ||
+        !ReadBooleanOption(parameters, "state_overwrite", false,
+                           operator_name, options.state_overwrite, error)) {
+        return false;
+    }
+    if (options.IsTransformOnly() && options.state_path.empty()) {
+        error = operator_name +
+                ": Transform Only requires 'state_path'. Fit this node on "
+                "training data with 'Save fitted state' enabled, then select "
+                "that artifact.";
+        return false;
+    }
+    if (!options.IsTransformOnly() && options.save_state &&
+        options.state_path.empty()) {
+        error = operator_name +
+                ": 'Save fitted state' is enabled but 'state_path' is empty. "
+                "Choose a .cyxstate.json path or disable saving.";
+        return false;
+    }
+    return true;
+}
+
+bool ValidateFittedPreprocessingConfiguration(
+    const FittedPreprocessingState& state,
+    const std::map<std::string, std::string>& expected,
+    std::string& error) {
+    for (const auto& [name, expected_value] : expected) {
+        const auto actual = state.configuration.find(name);
+        if (actual == state.configuration.end()) {
+            error = state.operator_name + ": fitted state is missing '" +
+                    name + "'. Refit the artifact with this CyxWiz version.";
+            return false;
+        }
+        if (actual->second != expected_value) {
+            error = state.operator_name + ": node setting '" + name +
+                    "' is '" + expected_value +
+                    "', but the fitted artifact requires '" +
+                    actual->second +
+                    "'. Match the training setting or choose the correct "
+                    "artifact.";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool SaveFittedTextVectorizerState(
+    const std::string& path,
+    const std::string& operator_name,
+    int64_t fit_rows,
+    const std::string& input_schema_fingerprint,
+    const std::map<std::string, std::string>& configuration,
+    const std::vector<FittedTextVectorizerFeature>& features,
+    bool overwrite,
+    std::string& error) {
+    FittedPreprocessingState persisted;
+    persisted.operator_name = operator_name;
+    persisted.operator_version = 1;
+    persisted.fit_rows = fit_rows;
+    persisted.input_schema_fingerprint = input_schema_fingerprint;
+    persisted.configuration = configuration;
+    persisted.features.reserve(features.size());
+    for (const auto& feature : features) {
+        PreprocessingFeatureState persisted_feature;
+        persisted_feature.name = feature.term;
+        persisted_feature.data_type = "text_token";
+        persisted_feature.numeric_values["weight"] = feature.weight;
+        persisted.features.push_back(std::move(persisted_feature));
+    }
+    return SaveFittedPreprocessingState(
+        path, persisted, overwrite, error);
+}
+
+bool LoadFittedTextVectorizerState(
+    const std::string& path,
+    const std::string& expected_operator,
+    const std::map<std::string, std::string>& expected_configuration,
+    size_t max_features,
+    FittedTextVectorizerState& state,
+    std::string& error) {
+    FittedPreprocessingState persisted;
+    if (!LoadFittedPreprocessingState(
+            path, expected_operator, persisted, error)) {
+        return false;
+    }
+    if (persisted.operator_version != 1) {
+        error = expected_operator +
+                ": fitted state uses unsupported operator version " +
+                std::to_string(persisted.operator_version) +
+                ". Refit it with this CyxWiz version.";
+        return false;
+    }
+    if (!ValidateFittedPreprocessingConfiguration(
+            persisted, expected_configuration, error)) {
+        return false;
+    }
+    if (persisted.features.size() > max_features) {
+        error = expected_operator +
+                ": fitted vocabulary exceeds max_features. Select the "
+                "matching artifact or refit it.";
+        return false;
+    }
+
+    state = {};
+    state.fit_rows = persisted.fit_rows;
+    state.input_schema_fingerprint = persisted.input_schema_fingerprint;
+    state.features.reserve(persisted.features.size());
+    std::unordered_set<std::string> unique_terms;
+    for (const auto& feature : persisted.features) {
+        const auto weight = feature.numeric_values.find("weight");
+        if (feature.name.empty() || feature.data_type != "text_token" ||
+            weight == feature.numeric_values.end() ||
+            !std::isfinite(weight->second) || weight->second <= 0.0 ||
+            !unique_terms.insert(feature.name).second) {
+            error = expected_operator +
+                    ": fitted state contains an invalid or duplicate "
+                    "vocabulary term. Refit the artifact.";
+            state = {};
+            return false;
+        }
+        state.features.push_back({feature.name, weight->second});
+    }
+    return true;
+}
 
 std::string FingerprintPreprocessingSchema(
     const std::shared_ptr<arrow::Schema>& schema) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "plugin_types.h"
+#include <mutex>
 #include <string>
 #include <spdlog/spdlog.h>
 
@@ -46,13 +47,18 @@ public:
     PluginContext(PluginContext&& other) noexcept
         : plugin_id_(std::move(other.plugin_id_)),
           plugin_(other.plugin_),
-          assistant_context_(std::move(other.assistant_context_)) {
+          plugin_dir_(std::move(other.plugin_dir_)) {
+        std::lock_guard lock(other.assistant_context_mutex_);
+        assistant_context_ = std::move(other.assistant_context_);
         other.plugin_ = nullptr;
     }
     PluginContext& operator=(PluginContext&& other) noexcept {
         if (this != &other) {
+            std::scoped_lock lock(
+                assistant_context_mutex_, other.assistant_context_mutex_);
             plugin_id_ = std::move(other.plugin_id_);
             plugin_ = other.plugin_;
+            plugin_dir_ = std::move(other.plugin_dir_);
             assistant_context_ = std::move(other.assistant_context_);
             other.plugin_ = nullptr;
         }
@@ -65,9 +71,11 @@ public:
 
     // === Assistant context ===
     void SetAssistantContextSnapshot(const AssistantContextSnapshot& snapshot) {
+        std::lock_guard lock(assistant_context_mutex_);
         assistant_context_ = snapshot;
     }
-    const AssistantContextSnapshot& GetAssistantContextSnapshot() const {
+    AssistantContextSnapshot GetAssistantContextSnapshot() const {
+        std::lock_guard lock(assistant_context_mutex_);
         return assistant_context_;
     }
 
@@ -108,6 +116,7 @@ private:
     IPlugin* plugin_;  // Non-owning
     std::filesystem::path plugin_dir_;
     AssistantContextSnapshot assistant_context_;
+    mutable std::mutex assistant_context_mutex_;
 
     // Permission check helper
     bool CheckPermission(PluginPermission required, const char* action) const;

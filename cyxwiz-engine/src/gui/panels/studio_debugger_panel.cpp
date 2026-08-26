@@ -807,8 +807,10 @@ void StudioDebuggerPanel::SetSession(const StudioDebuggerSnapshot& session) {
     if (training_trace.available) {
         session_.training_trace = training_trace;
         current_session_.training_trace = training_trace;
-        session_.execution = MakeDebugRunExecutionSummary(training_trace);
-        current_session_.execution = session_.execution;
+        if (!session_.execution.available) {
+            session_.execution = MakeDebugRunExecutionSummary(training_trace);
+            current_session_.execution = session_.execution;
+        }
     }
     session_.run_history = DebugRunStore::ListRecent(8);
     current_session_.run_history = session_.run_history;
@@ -817,6 +819,14 @@ void StudioDebuggerPanel::SetSession(const StudioDebuggerSnapshot& session) {
     run_comparison_trace_.reset();
     run_comparison_baseline_id_.clear();
     run_comparison_current_id_.clear();
+}
+
+void StudioDebuggerPanel::ShowRuntimeProfile() {
+    active_section_ = StudioDebuggerSection::Runtime;
+    section_selection_pending_ = true;
+    active_lens_ = StudioDebuggerLens::Runtime;
+    next_training_trace_refresh_ = {};
+    Show();
 }
 
 void StudioDebuggerPanel::ShowNodeExplanation(int node_id) {
@@ -848,6 +858,7 @@ void StudioDebuggerPanel::Clear() {
     run_comparison_trace_.reset();
     run_comparison_baseline_id_.clear();
     run_comparison_current_id_.clear();
+    next_training_trace_refresh_ = {};
 }
 
 std::string StudioDebuggerPanel::GetSelectedTraceIdForAssistant() const {
@@ -1382,11 +1393,22 @@ void StudioDebuggerPanel::RenderRunComparison() {
 }
 
 void StudioDebuggerPanel::RefreshLiveTrainingTrace() {
+    const auto now = std::chrono::steady_clock::now();
+    if (now < next_training_trace_refresh_) {
+        return;
+    }
+    next_training_trace_refresh_ = now + std::chrono::milliseconds(250);
     const auto trace = TrainingTraceCollector::LatestTrace();
     if (trace.available) {
-        session_.training_trace = trace;
         if (has_current_session_) {
             current_session_.training_trace = trace;
+        }
+        const bool viewing_saved_history = has_current_session_ &&
+            !current_run_id_.empty() &&
+            !session_.run_id.empty() &&
+            session_.run_id != current_run_id_;
+        if (!viewing_saved_history) {
+            session_.training_trace = trace;
         }
     }
 }
@@ -1702,8 +1724,9 @@ void StudioDebuggerPanel::RenderRunHistory() {
                             static_cast<unsigned long long>(run.graph_hash));
         if (run.execution.available) {
             ImGui::TextDisabled(
-                "training=%s effective=%s:%d device=%s residency=%s",
+                "training=%s evidence=%s effective=%s:%d device=%s residency=%s",
                 run.execution.training_run_id.c_str(),
+                run.execution.evidence_scope.c_str(),
                 run.execution.effective_backend.empty()
                     ? "unknown"
                     : run.execution.effective_backend.c_str(),
@@ -2064,6 +2087,28 @@ void StudioDebuggerPanel::RenderMaterializationTrace(
     if (!latest.memory_risk_level.empty()) {
         ImGui::Text("Memory risk: %s", latest.memory_risk_level.c_str());
     }
+    if (latest.available_memory_bytes > 0) {
+        ImGui::Text("Available RAM / safe budget: %s / %s",
+                    FormatBytesCompact(latest.available_memory_bytes).c_str(),
+                    FormatBytesCompact(latest.safe_memory_budget_bytes).c_str());
+    }
+    if (latest.process_memory_detected) {
+        ImGui::Text("Process resident / growth: %s / +%s",
+                    FormatBytesCompact(
+                        latest.process_resident_memory_bytes).c_str(),
+                    FormatBytesCompact(
+                        latest.process_resident_growth_bytes).c_str());
+        if (latest.process_private_memory_bytes > 0) {
+            ImGui::Text("Process %s: %s",
+                        latest.process_private_memory_name.empty()
+                            ? "private memory"
+                            : latest.process_private_memory_name.c_str(),
+                        FormatBytesCompact(
+                            latest.process_private_memory_bytes).c_str());
+        }
+        ImGui::TextDisabled(
+            "Process RAM; ArrayFire device memory is reported separately.");
+    }
     if (!latest.message.empty()) {
         ImGui::TextWrapped("%s", latest.message.c_str());
     }
@@ -2138,6 +2183,13 @@ void StudioDebuggerPanel::RenderMaterializationTrace(
                                 event.estimated_memory_bytes).c_str());
             } else {
                 ImGui::TextDisabled("-");
+            }
+            if (event.process_memory_detected) {
+                ImGui::TextDisabled("actual %s (+%s)",
+                    FormatBytesCompact(
+                        event.process_resident_memory_bytes).c_str(),
+                    FormatBytesCompact(
+                        event.process_resident_growth_bytes).c_str());
             }
 
             ImGui::TableSetColumnIndex(5);
@@ -2438,7 +2490,7 @@ void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
         ImGui::EndTooltip();
     }
 
-    ImGui::TextColored(ImVec4(0.30f, 0.78f, 0.52f, 1.0f), "CPU allocated");
+    ImGui::TextColored(ImVec4(0.30f, 0.78f, 0.52f, 1.0f), "CyxWiz tensor allocator");
     ImGui::SameLine();
     ImGui::TextColored(ImVec4(0.35f, 0.60f, 1.0f, 1.0f), "ArrayFire allocated");
     ImGui::SameLine();
@@ -2446,8 +2498,9 @@ void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
     ImGui::SameLine();
     ImGui::TextDisabled("scale max %s", FormatBytesCompact(max_bytes).c_str());
     ImGui::TextDisabled(
-        "Hint: rising CPU with flat GPU can indicate fallback or host-side copies; "
-        "rising AF locked memory can indicate GPU pressure or retained device buffers.");
+        "These counters exclude process RSS, framework heaps, mapped files, and "
+        "driver allocations. Use System Monitor for whole-process memory. Rising "
+        "tensor allocation with flat device use can still indicate host-side copies.");
 
     const float full_w = std::max(120.0f, ImGui::GetContentRegionAvail().x - 140.0f);
     auto draw_bar = [&](const char* label, uint64_t bytes, ImU32 color) {
@@ -3512,14 +3565,41 @@ void StudioDebuggerPanel::RenderLayerTimingBreakdown(const TrainingTraceSummary&
         }
     }
 
+    bool using_local_debug_samples = false;
+    if (rows.empty() && session_.has_debug_result) {
+        rows.reserve(session_.debug_result.layer_traces.size());
+        for (const auto& layer : session_.debug_result.layer_traces) {
+            LayerTimingRow row;
+            row.direction = "Forward";
+            row.layer = static_cast<int>(layer.compiled_layer_index);
+            row.name = layer.name.empty() ? layer.module_name : layer.name;
+            row.input_shape = FormatShape(layer.actual_input_shape);
+            row.output_shape = FormatShape(layer.actual_shape);
+            row.duration_ms = layer.forward_ms;
+            rows.push_back(std::move(row));
+        }
+        using_local_debug_samples = !rows.empty();
+    }
+
     ImGui::Spacing();
     ImGui::Text("Layer Timing");
     ImGui::BeginChild("StudioDebuggerLayerTiming", ImVec2(0, 190), false);
     if (rows.empty()) {
-        ImGui::TextDisabled("No layer timing events yet.");
-        ImGui::TextDisabled("Restart the rebuilt engine and begin a new training run to capture ModelForward/ModelBackward events.");
+        ImGui::TextDisabled("Exact per-layer training timing is unavailable.");
+        ImGui::TextWrapped(
+            "The canonical training trace does not force per-layer accelerator "
+            "synchronization. Run Local Debug for bounded synthetic forward "
+            "host-wall samples; use the Runtime Timeline for real training-stage evidence.");
         ImGui::EndChild();
         return;
+    }
+
+    if (using_local_debug_samples) {
+        ImGui::TextDisabled(
+            "Local Debug synthetic forward samples (host wall clock; device kernel time unproven)."
+        );
+    } else {
+        ImGui::TextDisabled("Canonical training layer events.");
     }
 
     std::sort(rows.begin(), rows.end(), [](const LayerTimingRow& a, const LayerTimingRow& b) {

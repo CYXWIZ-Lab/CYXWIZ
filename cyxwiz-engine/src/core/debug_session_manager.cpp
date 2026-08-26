@@ -1,8 +1,27 @@
 #include "debug_session_manager.h"
 
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
+
 namespace cyxwiz {
 
 namespace {
+
+std::string NowLocalTimestamp() {
+    const auto now = std::chrono::system_clock::now();
+    const auto now_time = std::chrono::system_clock::to_time_t(now);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &now_time);
+#else
+    localtime_r(&now_time, &tm);
+#endif
+    std::ostringstream out;
+    out << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+    return out.str();
+}
 
 DebugGraphNodeSnapshot SnapshotNode(const gui::MLNode& node) {
     DebugGraphNodeSnapshot out;
@@ -59,7 +78,7 @@ DebugSession DebugSessionManager::StartSession(
 
     session.studio_events.push_back({
         run_id,
-        "",
+        NowLocalTimestamp(),
         graph_hash,
         -1,
         "DebugSession.Start",
@@ -128,6 +147,21 @@ DebugTraceRecord DebugSessionManager::BuildGraphSnapshotTrace(const DebugSession
     trace.payload["links"] = links;
 
     return trace;
+}
+
+bool DebugSessionManager::FullWorkflowSucceeded(
+    bool compile_success,
+    bool preflight_ready,
+    bool smoke_supported,
+    bool smoke_success,
+    bool has_debug_result,
+    bool debug_success) {
+    return compile_success &&
+        preflight_ready &&
+        smoke_supported &&
+        smoke_success &&
+        has_debug_result &&
+        debug_success;
 }
 
 } // namespace cyxwiz

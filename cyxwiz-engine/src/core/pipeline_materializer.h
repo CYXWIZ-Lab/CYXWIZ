@@ -25,6 +25,15 @@ enum class PipelineMaterializerSourceKind {
     TextDataset,
 };
 
+enum class MaterializationFailureKind {
+    None,
+    Cancelled,
+    Capacity,
+    Error,
+};
+
+const char* MaterializationFailureKindName(MaterializationFailureKind kind);
+
 const char* PipelineMaterializerSourceKindName(
     PipelineMaterializerSourceKind kind);
 
@@ -70,6 +79,9 @@ struct MaterializeResult {
     bool saved_to_cache = false;
     bool success = true;
     std::string error_message;
+    MaterializationFailureKind failure_kind = MaterializationFailureKind::None;
+    int failed_node_id = -1;
+    std::string failed_node_name;
 };
 
 /**
@@ -82,8 +94,20 @@ struct MaterializeResult {
 struct MaterializeTableResult {
     std::shared_ptr<arrow::Table> table;
     int operators_applied = 0;
+    bool memory_preflight_observed = false;
+    PipelineOperatorProgress memory_preflight;
     bool success = true;
     std::string error_message;
+    MaterializationFailureKind failure_kind = MaterializationFailureKind::None;
+    int failed_node_id = -1;
+    std::string failed_node_name;
+};
+
+struct MaterializationCacheability {
+    bool cacheable = true;
+    bool valid = true;
+    std::string reason;
+    std::vector<MaterializationCacheDependencyIdentity> dependencies;
 };
 
 /**
@@ -100,19 +124,36 @@ struct MaterializeTableResult {
  */
 class PipelineMaterializer {
 public:
+    static MaterializationCacheability EvaluateCacheability(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        const std::string& source_dataset_name = {});
+
+    // Runs the same operator-owned estimator used by materialization and stops
+    // at its first memory decision, before that operator starts materializing.
+    // Later data-dependent operators remain unknown until their inputs exist.
+    static MaterializeTableResult PreflightTable(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        const std::shared_ptr<arrow::Table>& source_table,
+        const std::string& source_dataset_name = {},
+        MaterializationMemoryContext memory_context = {});
+
     static MaterializeTableResult MaterializeTable(
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,
         const std::shared_ptr<arrow::Table>& source_table,
         const std::string& source_dataset_name = {},
-        PipelineOperatorProgressCallback progress_callback = {});
+        PipelineOperatorProgressCallback progress_callback = {},
+        PipelineOperatorExecutionContext execution_context = {});
 
     static MaterializeResult Materialize(
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,
         DataRegistry& registry,
         const std::string& source_dataset_name,
-        PipelineOperatorProgressCallback progress_callback = {});
+        PipelineOperatorProgressCallback progress_callback = {},
+        PipelineOperatorExecutionContext execution_context = {});
 
     static MaterializeResult Materialize(
         const std::vector<gui::MLNode>& nodes,
@@ -120,7 +161,8 @@ public:
         DataRegistry& registry,
         const std::string& source_dataset_name,
         const MaterializationCacheConfig& cache_config,
-        PipelineOperatorProgressCallback progress_callback = {});
+        PipelineOperatorProgressCallback progress_callback = {},
+        PipelineOperatorExecutionContext execution_context = {});
 
     // Suffix used to register the transformed Arrow table when ops fire.
     // Exposed for the DataRegistry cleanup cascade and tests.

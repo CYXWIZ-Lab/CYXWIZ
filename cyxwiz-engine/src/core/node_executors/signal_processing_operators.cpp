@@ -92,21 +92,6 @@ arrow::Result<int64_t> CheckedSizeForArrow(size_t size, const std::string& conte
     return static_cast<int64_t>(size);
 }
 
-const char* MaterializationMemoryProgressStatus(
-    MaterializationMemoryRisk risk) {
-    switch (risk) {
-    case MaterializationMemoryRisk::Safe:
-        return "running";
-    case MaterializationMemoryRisk::Warning:
-        return "warning";
-    case MaterializationMemoryRisk::Risky:
-        return "risky";
-    case MaterializationMemoryRisk::Blocked:
-        return "blocked";
-    }
-    return "running";
-}
-
 std::string BuildFftMemoryPreflightMessage(
     const MaterializationMemoryEstimate& estimate,
     const MaterializationMemoryDecision& decision) {
@@ -215,7 +200,7 @@ FFTOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     const auto preflight_estimate = EstimateDenseMaterializationMemory(
         planned_samples, planned_columns, static_cast<uint64_t>(sizeof(double)));
     const auto preflight_decision = EvaluateMaterializationMemory(
-        preflight_estimate, DetectMaterializationMemorySnapshot());
+        preflight_estimate, GetMaterializationMemoryContext());
     const std::string preflight_message = BuildFftMemoryPreflightMessage(
         preflight_estimate, preflight_decision);
     uint64_t planned_cells = 0;
@@ -226,7 +211,7 @@ FFTOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = "FFT memory preflight";
         event.message = preflight_message;
-        event.status = MaterializationMemoryProgressStatus(
+        event.status = MaterializationMemoryRiskToProgressStatus(
             preflight_decision.risk);
         event.progress = 0.03f;
         event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
@@ -394,7 +379,7 @@ Convolve1DOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     const auto preflight_estimate = EstimateDenseMaterializationMemory(
         planned_samples, planned_columns, static_cast<uint64_t>(sizeof(double)));
     const auto preflight_decision = EvaluateMaterializationMemory(
-        preflight_estimate, DetectMaterializationMemorySnapshot());
+        preflight_estimate, GetMaterializationMemoryContext());
     const std::string preflight_message =
         BuildSignalReplacementMemoryPreflightMessage(
             "Convolve1D", preflight_estimate, preflight_decision);
@@ -406,7 +391,7 @@ Convolve1DOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = "Convolve1D memory preflight";
         event.message = preflight_message;
-        event.status = MaterializationMemoryProgressStatus(
+        event.status = MaterializationMemoryRiskToProgressStatus(
             preflight_decision.risk);
         event.progress = 0.03f;
         event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
@@ -607,7 +592,7 @@ FilterDesignerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     const auto preflight_estimate = EstimateDenseMaterializationMemory(
         planned_samples, planned_columns, static_cast<uint64_t>(sizeof(double)));
     const auto preflight_decision = EvaluateMaterializationMemory(
-        preflight_estimate, DetectMaterializationMemorySnapshot());
+        preflight_estimate, GetMaterializationMemoryContext());
     const std::string preflight_message =
         BuildSignalReplacementMemoryPreflightMessage(
             "FilterDesigner", preflight_estimate, preflight_decision);
@@ -619,7 +604,7 @@ FilterDesignerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = "FilterDesigner memory preflight";
         event.message = preflight_message;
-        event.status = MaterializationMemoryProgressStatus(
+        event.status = MaterializationMemoryRiskToProgressStatus(
             preflight_decision.risk);
         event.progress = 0.03f;
         event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;

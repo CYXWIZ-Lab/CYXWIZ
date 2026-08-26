@@ -275,6 +275,7 @@ DebugTraceRecord DebugMemoryOwnershipTracer::BuildTensorLifecycleTrace(
     const std::vector<DebugTraceRecord>& traces,
     const DebugRunExecutionSummary& execution) const {
     const bool backend_observed = execution.available &&
+        execution.correlated &&
         execution.training_run_id == run_id &&
         !execution.effective_backend.empty();
     const std::string backend = backend_observed
@@ -313,8 +314,8 @@ DebugTraceRecord DebugMemoryOwnershipTracer::BuildTensorLifecycleTrace(
         "canonical traces and graph topology. Retained/freed state remains "
         "unobserved until allocator hooks provide direct evidence.";
     payload["runtime_backend_observed"] = backend_observed;
-    payload["runtime_backend_evidence_scope"] = backend_observed
-        ? "same_run_execution_summary"
+    payload["runtime_backend_evidence_scope"] = execution.available
+        ? execution.evidence_scope
         : "unobserved";
     payload["effective_backend"] = backend;
     payload["effective_device"] = device;

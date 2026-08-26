@@ -2,18 +2,28 @@
 #include "debug_run_paths.h"
 #include "algorithms/arrayfire_backend_utils.h"
 #include "execution_device_context.h"
+#include "process_memory_snapshot.h"
 
 #include <cyxwiz/cyxwiz.h>
 #include <cyxwiz/memory_manager.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <map>
 #include <sstream>
+#include <system_error>
 #include <thread>
 #include <utility>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -31,9 +41,59 @@ std::filesystem::path CurrentTracePath() {
     return TraceDir() / "current_training_trace.json";
 }
 
+bool PublishTraceAtomically(const std::filesystem::path& temporary,
+                            const std::filesystem::path& target) {
+#ifdef _WIN32
+    return MoveFileExW(
+               temporary.c_str(), target.c_str(),
+               MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
+#else
+    std::error_code error;
+    std::filesystem::rename(temporary, target, error);
+    return !error;
+#endif
+}
+
+bool WriteTraceAtomically(const std::filesystem::path& target,
+                          const nlohmann::json& document) {
+    auto temporary = target;
+    temporary += ".tmp";
+
+    {
+        std::ofstream file(temporary, std::ios::trunc);
+        if (!file) {
+            return false;
+        }
+        file << std::setw(2) << document << '\n';
+        file.flush();
+        if (!file) {
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
+            return false;
+        }
+    }
+
+    if (PublishTraceAtomically(temporary, target)) {
+        return true;
+    }
+
+    std::error_code ignored;
+    std::filesystem::remove(temporary, ignored);
+    return false;
+}
+
 void PopulateMemorySnapshot(TrainingTraceEvent& event) {
     event.cpu_allocated_bytes = static_cast<uint64_t>(MemoryManager::GetAllocatedBytes());
     event.cpu_peak_bytes = static_cast<uint64_t>(MemoryManager::GetPeakBytes());
+
+    if (!event.process_memory_detected) {
+        const auto process = DetectProcessMemorySnapshot();
+        event.process_memory_detected = process.detected;
+        event.process_resident_memory_bytes = process.resident_bytes;
+        event.process_private_memory_bytes = process.private_bytes;
+        event.process_private_memory_name = process.private_metric_name;
+        event.process_memory_source = process.source;
+    }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     if (cyxwiz::IsInitialized()) {
@@ -247,7 +307,15 @@ nlohmann::json EventToJson(const TrainingTraceEvent& event) {
         {"node_id", event.node_id},
         {"node_name", event.node_name},
         {"estimated_memory_bytes", event.estimated_memory_bytes},
+        {"available_memory_bytes", event.available_memory_bytes},
+        {"safe_memory_budget_bytes", event.safe_memory_budget_bytes},
         {"memory_risk_level", event.memory_risk_level},
+        {"process_memory_detected", event.process_memory_detected},
+        {"process_resident_memory_bytes", event.process_resident_memory_bytes},
+        {"process_private_memory_bytes", event.process_private_memory_bytes},
+        {"process_resident_growth_bytes", event.process_resident_growth_bytes},
+        {"process_private_memory_name", event.process_private_memory_name},
+        {"process_memory_source", event.process_memory_source},
         {"processed_items", event.processed_items},
         {"total_items", event.total_items},
         {"pin_memory_requested", event.pin_memory_requested},
@@ -339,7 +407,19 @@ TrainingTraceEvent EventFromJson(const nlohmann::json& j) {
     event.node_id = j.value("node_id", -1);
     event.node_name = j.value("node_name", "");
     event.estimated_memory_bytes = j.value("estimated_memory_bytes", uint64_t{0});
+    event.available_memory_bytes = j.value("available_memory_bytes", uint64_t{0});
+    event.safe_memory_budget_bytes = j.value("safe_memory_budget_bytes", uint64_t{0});
     event.memory_risk_level = j.value("memory_risk_level", "");
+    event.process_memory_detected = j.value("process_memory_detected", false);
+    event.process_resident_memory_bytes =
+        j.value("process_resident_memory_bytes", uint64_t{0});
+    event.process_private_memory_bytes =
+        j.value("process_private_memory_bytes", uint64_t{0});
+    event.process_resident_growth_bytes =
+        j.value("process_resident_growth_bytes", uint64_t{0});
+    event.process_private_memory_name =
+        j.value("process_private_memory_name", "");
+    event.process_memory_source = j.value("process_memory_source", "");
     event.processed_items = j.value("processed_items", uint64_t{0});
     event.total_items = j.value("total_items", uint64_t{0});
     event.pin_memory_requested = j.value("pin_memory_requested", false);
@@ -420,6 +500,10 @@ bool IsTerminalStatus(const std::string& status) {
 
 bool IsSuccessfulTerminalStatus(const std::string& status) {
     return status == "completed" || status == "early_stopped";
+}
+
+bool IsFailureStatus(const std::string& status) {
+    return status == "warning" || status == "error" || status == "failed";
 }
 
 void PopulateRunLevelTraceSummary(TrainingTraceSummary& summary) {
@@ -649,9 +733,30 @@ void TrainingTraceCollector::StartRun(const std::string& run_id) {
     arrayfire_host_sync_groups_.clear();
     declared_output_boundary_count_ = 0;
     events_since_write_ = 0;
-    if (settings_.persist_enabled) {
-        WriteLocked();
+    MaybePersistLocked(true);
+}
+
+bool TrainingTraceCollector::ContinueRun(const std::string& run_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id.empty() || run_id_.empty() || status_ != "running") {
+        return false;
     }
+
+    run_id_ = run_id;
+    for (auto& event : events_) {
+        event.run_id = run_id_;
+    }
+    for (auto& event : materialization_events_) {
+        event.run_id = run_id_;
+    }
+    if (has_execution_context_event_) {
+        execution_context_event_.run_id = run_id_;
+    }
+    if (has_placement_plan_event_) {
+        placement_plan_event_.run_id = run_id_;
+    }
+    MaybePersistLocked(true);
+    return true;
 }
 
 void TrainingTraceCollector::RecordStage(TrainingTraceStage stage,
@@ -704,14 +809,7 @@ void TrainingTraceCollector::RecordStage(TrainingTraceStage stage,
         }
     }
 
-    events_since_write_++;
-    const int write_interval = std::max(1, settings_.persist_every_n_events);
-    if (settings_.persist_enabled &&
-        (events_since_write_ >= static_cast<size_t>(write_interval) ||
-         status != "ok")) {
-        WriteLocked();
-        events_since_write_ = 0;
-    }
+    MaybePersistLocked(IsFailureStatus(status));
 }
 
 void TrainingTraceCollector::RecordRuntimeWarning(const std::string& source,
@@ -761,10 +859,7 @@ void TrainingTraceCollector::RecordRuntimeEvent(const std::string& stage,
         events_.pop_front();
     }
 
-    if (settings_.persist_enabled) {
-        WriteLocked();
-        events_since_write_ = 0;
-    }
+    MaybePersistLocked(IsFailureStatus(event.status));
 }
 
 void TrainingTraceCollector::RecordPinMemoryTransferStatus(
@@ -820,10 +915,7 @@ void TrainingTraceCollector::RecordPinMemoryTransferStatus(
         events_.pop_front();
     }
 
-    if (settings_.persist_enabled) {
-        WriteLocked();
-        events_since_write_ = 0;
-    }
+    MaybePersistLocked(IsFailureStatus(event.status));
 }
 
 void TrainingTraceCollector::RecordNativeCpuFallback(
@@ -879,10 +971,7 @@ void TrainingTraceCollector::RecordNativeCpuFallback(
         warnings_.erase(warnings_.begin());
     }
 
-    if (settings_.persist_enabled) {
-        WriteLocked();
-        events_since_write_ = 0;
-    }
+    MaybePersistLocked(true);
 }
 
 void TrainingTraceCollector::RecordArrayFireHostSync(
@@ -954,10 +1043,7 @@ void TrainingTraceCollector::RecordArrayFireHostSync(
         events_.pop_front();
     }
 
-    if (settings_.persist_enabled) {
-        WriteLocked();
-        events_since_write_ = 0;
-    }
+    MaybePersistLocked(false);
 }
 
 void TrainingTraceCollector::RecordExecutionDeviceContext(
@@ -1026,10 +1112,7 @@ void TrainingTraceCollector::RecordExecutionDeviceContext(
         }
     }
 
-    if (settings_.persist_enabled) {
-        WriteLocked();
-        events_since_write_ = 0;
-    }
+    MaybePersistLocked(true);
 }
 
 void TrainingTraceCollector::RecordPlacementPlan(
@@ -1061,10 +1144,7 @@ void TrainingTraceCollector::RecordPlacementPlan(
         events_.pop_front();
     }
 
-    if (settings_.persist_enabled) {
-        WriteLocked();
-        events_since_write_ = 0;
-    }
+    MaybePersistLocked(true);
 }
 
 void TrainingTraceCollector::RecordTaskProgress(
@@ -1079,7 +1159,15 @@ void TrainingTraceCollector::RecordTaskProgress(
     uint64_t estimated_memory_bytes,
     uint64_t processed_items,
     uint64_t total_items,
-    const std::string& memory_risk_level) {
+    const std::string& memory_risk_level,
+    uint64_t available_memory_bytes,
+    uint64_t safe_memory_budget_bytes,
+    bool process_memory_detected,
+    uint64_t process_resident_memory_bytes,
+    uint64_t process_private_memory_bytes,
+    uint64_t process_resident_growth_bytes,
+    const std::string& process_private_memory_name,
+    const std::string& process_memory_source) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (run_id_.empty()) {
         return;
@@ -1100,7 +1188,15 @@ void TrainingTraceCollector::RecordTaskProgress(
     event.node_id = node_id;
     event.node_name = node_name;
     event.estimated_memory_bytes = estimated_memory_bytes;
+    event.available_memory_bytes = available_memory_bytes;
+    event.safe_memory_budget_bytes = safe_memory_budget_bytes;
     event.memory_risk_level = memory_risk_level;
+    event.process_memory_detected = process_memory_detected;
+    event.process_resident_memory_bytes = process_resident_memory_bytes;
+    event.process_private_memory_bytes = process_private_memory_bytes;
+    event.process_resident_growth_bytes = process_resident_growth_bytes;
+    event.process_private_memory_name = process_private_memory_name;
+    event.process_memory_source = process_memory_source;
     event.processed_items = processed_items;
     event.total_items = total_items;
     if (!events_.empty()) {
@@ -1120,17 +1216,22 @@ void TrainingTraceCollector::RecordTaskProgress(
         events_.pop_front();
     }
 
-    if (event.status != "running" && !event.message.empty()) {
+    if (event.node_id >= 0) {
+        materialization_events_.push_back(event);
+        while (materialization_events_.size() > settings_.max_recent_events) {
+            materialization_events_.pop_front();
+        }
+    }
+
+    if (IsTrainingTaskAttentionStatus(event.status) &&
+        !event.message.empty()) {
         warnings_.push_back(task_name + ": " + event.message);
         if (warnings_.size() > 50) {
             warnings_.erase(warnings_.begin());
         }
     }
 
-    if (settings_.persist_enabled) {
-        WriteLocked();
-        events_since_write_ = 0;
-    }
+    MaybePersistLocked(event.status != "running");
 }
 
 void TrainingTraceCollector::RecordValidationMetrics(
@@ -1164,10 +1265,7 @@ void TrainingTraceCollector::RecordValidationMetrics(
         events_.pop_front();
     }
 
-    if (settings_.persist_enabled) {
-        WriteLocked();
-        events_since_write_ = 0;
-    }
+    MaybePersistLocked(true);
 }
 
 void TrainingTraceCollector::RecordCheckpointSaved(
@@ -1199,10 +1297,7 @@ void TrainingTraceCollector::RecordCheckpointSaved(
         events_.pop_front();
     }
 
-    if (settings_.persist_enabled) {
-        WriteLocked();
-        events_since_write_ = 0;
-    }
+    MaybePersistLocked(true);
 }
 
 void TrainingTraceCollector::RecordCheckpointRestored(
@@ -1307,18 +1402,13 @@ void TrainingTraceCollector::RecordTerminalEvent(
         events_.pop_front();
     }
 
-    if (settings_.persist_enabled) {
-        WriteLocked();
-        events_since_write_ = 0;
-    }
+    MaybePersistLocked(true);
 }
 
 void TrainingTraceCollector::FinishRun(const std::string& status) {
     std::lock_guard<std::mutex> lock(mutex_);
     status_ = status;
-    if (settings_.persist_enabled) {
-        WriteLocked();
-    }
+    MaybePersistLocked(true);
 }
 
 void TrainingTraceCollector::Configure(const TrainingTraceSettings& settings) {
@@ -1333,9 +1423,7 @@ void TrainingTraceCollector::Configure(const TrainingTraceSettings& settings) {
     while (events_.size() > settings_.max_recent_events) {
         events_.pop_front();
     }
-    if (settings_.persist_enabled) {
-        WriteLocked();
-    }
+    MaybePersistLocked(true);
 }
 
 TrainingTraceSettings TrainingTraceCollector::GetSettings() const {
@@ -1436,13 +1524,90 @@ TrainingTraceSummary TrainingTraceCollector::Snapshot() const {
     return summary;
 }
 
+namespace {
+
+constexpr auto kPersistedTraceValidationInterval = std::chrono::seconds(1);
+
+struct PersistedTraceCache {
+    std::mutex mutex;
+    std::filesystem::path path;
+    std::optional<std::filesystem::file_time_type> write_time;
+    uintmax_t file_size = 0;
+    std::optional<TrainingTraceSummary> summary;
+    std::chrono::steady_clock::time_point next_validation{};
+    bool initialized = false;
+};
+
+PersistedTraceCache& GetPersistedTraceCache() {
+    static PersistedTraceCache cache;
+    return cache;
+}
+
+void InvalidatePersistedTraceCache() {
+    auto& cache = GetPersistedTraceCache();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    cache.initialized = false;
+    cache.next_validation = {};
+}
+
+std::optional<TrainingTraceSummary> LoadCachedLastTrace() {
+    const auto path = CurrentTracePath();
+    const auto now = std::chrono::steady_clock::now();
+    auto& cache = GetPersistedTraceCache();
+    std::lock_guard<std::mutex> lock(cache.mutex);
+
+    if (cache.initialized && cache.path == path &&
+        now < cache.next_validation) {
+        return cache.summary;
+    }
+
+    std::error_code error;
+    const auto write_time = std::filesystem::last_write_time(path, error);
+    if (error) {
+        cache.path = path;
+        cache.write_time.reset();
+        cache.file_size = 0;
+        cache.summary.reset();
+        cache.next_validation = now + kPersistedTraceValidationInterval;
+        cache.initialized = true;
+        return std::nullopt;
+    }
+
+    const auto file_size = std::filesystem::file_size(path, error);
+    if (error) {
+        return std::nullopt;
+    }
+
+    if (cache.initialized && cache.path == path &&
+        cache.write_time.has_value() &&
+        *cache.write_time == write_time && cache.file_size == file_size) {
+        cache.next_validation = now + kPersistedTraceValidationInterval;
+        return cache.summary;
+    }
+
+    auto summary = TrainingTraceCollector::LoadLastTrace();
+    if (!summary.has_value()) {
+        return std::nullopt;
+    }
+
+    cache.path = path;
+    cache.write_time = write_time;
+    cache.file_size = file_size;
+    cache.summary = summary;
+    cache.next_validation = now + kPersistedTraceValidationInterval;
+    cache.initialized = true;
+    return summary;
+}
+
+} // namespace
+
 TrainingTraceSummary TrainingTraceCollector::LatestTrace() {
     auto live = Instance().Snapshot();
     if (live.available && !live.run_id.empty()) {
         return live;
     }
-    if (const auto persisted = LoadLastTrace()) {
-        return *persisted;
+    if (auto persisted = LoadCachedLastTrace()) {
+        return std::move(*persisted);
     }
     return live;
 }
@@ -1535,6 +1700,7 @@ std::optional<TrainingTraceSummary> TrainingTraceCollector::LoadLastTrace() {
                 summary.recent_events.push_back(EventFromJson(item));
             }
         }
+        training_trace_detail::RemoveLegacyNonAttentionTaskWarnings(summary);
         if (j.contains("materialization_events") &&
             j["materialization_events"].is_array()) {
             for (const auto& item : j["materialization_events"]) {
@@ -1563,6 +1729,24 @@ std::optional<TrainingTraceSummary> TrainingTraceCollector::LoadLastTrace() {
     } catch (...) {
         return std::nullopt;
     }
+}
+
+void TrainingTraceCollector::MaybePersistLocked(bool force) {
+    if (!settings_.persist_enabled) {
+        return;
+    }
+
+    if (!force) {
+        ++events_since_write_;
+        const auto write_interval = static_cast<size_t>(
+            std::max(1, settings_.persist_every_n_events));
+        if (events_since_write_ < write_interval) {
+            return;
+        }
+    }
+
+    WriteLocked();
+    events_since_write_ = 0;
 }
 
 void TrainingTraceCollector::WriteLocked() const {
@@ -1739,8 +1923,9 @@ void TrainingTraceCollector::WriteLocked() const {
         j["placement_summary"] = summary.placement_summary;
         j["residency_verdict"] = summary.residency_verdict;
         j["residency_reason"] = summary.residency_reason;
-        std::ofstream file(CurrentTracePath(), std::ios::trunc);
-        file << std::setw(2) << j << '\n';
+        if (WriteTraceAtomically(CurrentTracePath(), j)) {
+            InvalidatePersistedTraceCache();
+        }
     } catch (...) {
         // Debug tracing must never break training.
     }

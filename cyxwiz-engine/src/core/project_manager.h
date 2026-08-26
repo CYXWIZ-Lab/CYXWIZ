@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <map>
@@ -27,6 +28,7 @@ struct EditorSettings {
     // Application-wide settings
     int app_theme = 0;       // 0=CyxWizDark, 1=CyxWizLight, 2=VSCodeDark, 3=UnrealEngine, 4=ModernDark, 5=HighContrast
     float ui_scale = 1.0f;   // Global UI scale (0.8 to 2.0)
+    uint64_t materialization_memory_limit_bytes = 0; // 0 = automatic RAM budget
 
     // JSON serialization
     static EditorSettings FromJson(const nlohmann::json& j);

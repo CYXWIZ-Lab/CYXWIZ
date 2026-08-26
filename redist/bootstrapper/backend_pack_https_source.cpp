@@ -149,6 +149,33 @@ bool HttpsBackendPackArtifactSource::TransferFrom(
     const BackendPackArtifactChunk& consume,
     const BackendPackArtifactCancelCheck& cancelled,
     std::string& error) {
+    return Transfer(offset, expected_size, true, consume, cancelled, nullptr,
+                    error);
+}
+
+bool HttpsBackendPackArtifactSource::TransferBounded(
+    std::uint64_t maximum_size,
+    const BackendPackArtifactChunk& consume,
+    const BackendPackArtifactCancelCheck& cancelled,
+    std::uint64_t& received_size,
+    std::string& error) {
+    received_size = 0;
+    if (maximum_size == 0) {
+        error = "A positive HTTPS document byte bound is required";
+        return false;
+    }
+    return Transfer(0, maximum_size, false, consume, cancelled,
+                    &received_size, error);
+}
+
+bool HttpsBackendPackArtifactSource::Transfer(
+    std::uint64_t offset,
+    std::uint64_t expected_size,
+    bool exact_size,
+    const BackendPackArtifactChunk& consume,
+    const BackendPackArtifactCancelCheck& cancelled,
+    std::uint64_t* received_size,
+    std::string& error) {
 #ifdef _WIN32
     if (offset > expected_size || url_.rfind("https://", 0) != 0 ||
         url_.find('#') != std::string::npos || timeout_.count() <= 0 ||
@@ -259,8 +286,12 @@ bool HttpsBackendPackArtifactSource::TransferFrom(
             request.get(), WINHTTP_QUERY_CONTENT_LENGTH,
             content_length_text) ||
         !ParseUnsigned(content_length_text, content_length) ||
-        content_length != expected_size - offset) {
-        error = "HTTPS Content-Length differs from signed artifact metadata";
+        content_length == 0 ||
+        (exact_size && content_length != expected_size - offset) ||
+        (!exact_size && content_length > expected_size)) {
+        error = exact_size
+            ? "HTTPS Content-Length differs from signed artifact metadata"
+            : "HTTPS document exceeds its byte bound";
         return false;
     }
     if (offset > 0) {
@@ -299,10 +330,14 @@ bool HttpsBackendPackArtifactSource::TransferFrom(
         }
         transferred += read;
     }
-    if (transferred != expected_size) {
-        error = "HTTPS artifact response ended before its signed size";
+    if ((exact_size && transferred != expected_size) ||
+        (!exact_size && transferred - offset != content_length)) {
+        error = exact_size
+            ? "HTTPS artifact response ended before its signed size"
+            : "HTTPS document response length is inconsistent";
         return false;
     }
+    if (received_size) *received_size = transferred - offset;
     return true;
 #else
     if (offset > expected_size || timeout_.count() <= 0) {
@@ -335,6 +370,7 @@ bool HttpsBackendPackArtifactSource::TransferFrom(
             "Range", "bytes=" + std::to_string(offset) + "-");
     }
     std::uint64_t transferred = offset;
+    std::uint64_t response_content_length = 0;
     bool headers_accepted = false;
     std::string response_error;
     if (cancelled()) {
@@ -349,14 +385,17 @@ bool HttpsBackendPackArtifactSource::TransferFrom(
                     "HTTPS artifact server did not honor the exact transfer request";
                 return false;
             }
-            std::uint64_t content_length = 0;
             if (!response.has_header("Content-Length") ||
                 !ParseUnsigned(
                     response.get_header_value("Content-Length"),
-                    content_length) ||
-                content_length != expected_size - offset) {
-                response_error =
-                    "HTTPS Content-Length differs from signed artifact metadata";
+                    response_content_length) ||
+                response_content_length == 0 ||
+                (exact_size &&
+                 response_content_length != expected_size - offset) ||
+                (!exact_size && response_content_length > expected_size)) {
+                response_error = exact_size
+                    ? "HTTPS Content-Length differs from signed artifact metadata"
+                    : "HTTPS document exceeds its byte bound";
                 return false;
             }
             if (offset > 0) {
@@ -401,10 +440,15 @@ bool HttpsBackendPackArtifactSource::TransferFrom(
             : std::move(response_error);
         return false;
     }
-    if (transferred != expected_size) {
-        error = "HTTPS artifact response ended before its signed size";
+    if ((exact_size && transferred != expected_size) ||
+        (!exact_size &&
+         transferred - offset != response_content_length)) {
+        error = exact_size
+            ? "HTTPS artifact response ended before its signed size"
+            : "HTTPS document response length is inconsistent";
         return false;
     }
+    if (received_size) *received_size = transferred - offset;
     return true;
 #endif
 }

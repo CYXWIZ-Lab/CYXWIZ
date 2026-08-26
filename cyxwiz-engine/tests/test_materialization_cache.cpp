@@ -39,6 +39,13 @@ cyxwiz::MaterializationCacheKeyInput MakeKeyInput() {
     input.source_file_size = 1024;
     input.source_file_mtime = 2048;
     input.source_schema_fingerprint = "schema_a";
+    input.dependencies = {{
+        2,
+        "fitted_state",
+        "D:/artifacts/tfidf.cyxstate.json",
+        512,
+        std::string(64, 'a'),
+    }};
     input.nodes = {
         MakeNode(2, gui::NodeType::TextTokenizer, "Tokenizer",
                  {{"text_col", "statement"}, {"max_length", "128"}}),
@@ -103,12 +110,43 @@ int main() {
     Check(cyxwiz::ComputeMaterializationCacheKey(changed_source) != key,
           "source file size changes should invalidate the cache key");
 
+    auto changed_dependency = input;
+    changed_dependency.dependencies[0].content_sha256 = std::string(64, 'b');
+    Check(cyxwiz::ComputeMaterializationCacheKey(changed_dependency) != key,
+          "fitted-state content changes should invalidate the cache key");
+
     const fs::path root =
         fs::temp_directory_path() / "cyxwiz_materialization_cache_test";
     fs::remove_all(root);
     cyxwiz::MaterializationCacheConfig config;
     config.mode = cyxwiz::MaterializationCacheMode::Auto;
     config.cache_root = root / ".cyxwiz";
+
+    const auto dependency_path = root / "fitted_state.cyxstate.json";
+    fs::create_directories(root);
+    {
+        std::ofstream state(dependency_path, std::ios::binary);
+        state << "state-a";
+    }
+    cyxwiz::MaterializationCacheDependencyIdentity dependency_a;
+    std::string error;
+    Check(cyxwiz::ResolveMaterializationCacheDependencyIdentity(
+              2, "fitted_state", dependency_path.string(), dependency_a,
+              &error),
+          "fitted-state identity should resolve: " + error);
+    {
+        std::ofstream state(dependency_path,
+                            std::ios::binary | std::ios::trunc);
+        state << "state-b";
+    }
+    cyxwiz::MaterializationCacheDependencyIdentity dependency_b;
+    Check(cyxwiz::ResolveMaterializationCacheDependencyIdentity(
+              2, "fitted_state", dependency_path.string(), dependency_b,
+              &error),
+          "changed fitted-state identity should resolve: " + error);
+    Check(dependency_a.path == dependency_b.path &&
+              dependency_a.content_sha256 != dependency_b.content_sha256,
+          "same-path fitted-state mutation should change SHA-256 identity");
     const auto entry_dir =
         cyxwiz::MaterializationCacheEntryDirectory(config, key);
     const auto manifest_path =
@@ -137,12 +175,13 @@ int main() {
     manifest.row_count = 3;
     manifest.column_count = 2;
     manifest.schema_fingerprint = cyxwiz::ComputeSchemaFingerprint(schema);
+    manifest.dependencies = input.dependencies;
     manifest.operators_applied = 1;
     manifest.engine_version = "test";
-    manifest.materializer_cache_schema_version = 1;
+    manifest.materializer_cache_schema_version =
+        cyxwiz::kMaterializationCacheSchemaVersion;
     manifest.cache_status = cyxwiz::MaterializationCacheStatus::Saved;
 
-    std::string error;
     Check(cyxwiz::WriteMaterializationCacheManifest(
               manifest, manifest_path, &error),
           "manifest write should succeed: " + error);
@@ -155,6 +194,10 @@ int main() {
           "cache key should round-trip through manifest JSON");
     Check(loaded.cache_status == cyxwiz::MaterializationCacheStatus::Saved,
           "cache status should round-trip through manifest JSON");
+    Check(loaded.dependencies.size() == 1 &&
+              loaded.dependencies[0].content_sha256 ==
+                  input.dependencies[0].content_sha256,
+          "cache dependency identity should round-trip through manifest JSON");
 
     auto validation = cyxwiz::ValidateMaterializationCacheManifest(
         loaded, key, manifest.schema_fingerprint);

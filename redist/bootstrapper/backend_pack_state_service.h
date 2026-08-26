@@ -57,6 +57,9 @@ public:
         BackendPackExecutionActiveCheck execution_active = {},
         BackendPackStateObserver observer = {});
 
+    BackendPackStateResult InitializeBase(
+        std::string runtime_set_id,
+        std::string base_pack_id);
     BackendPackStateResult ActivateOptionalPack(
         std::string backend,
         std::string pack_id);

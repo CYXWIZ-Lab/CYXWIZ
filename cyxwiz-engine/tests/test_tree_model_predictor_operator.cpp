@@ -140,6 +140,29 @@ void TestDecisionTreeArtifactInference(const std::filesystem::path& root) {
           "DecisionTree artifact predicts first row");
     Check(ReadDoubleValue(output, "tree_pred", 3) == 1.0,
           "DecisionTree artifact predicts last row");
+
+    cyxwiz::MaterializationMemoryContext blocked_context;
+    blocked_context.policy.hard_limit_bytes = 1;
+    blocked_context.snapshot_override = cyxwiz::MaterializationMemorySnapshot{
+        1024, 1024, true};
+    op.SetMaterializationMemoryContext(blocked_context);
+    progress_events.clear();
+    const auto blocked_result = op.Apply(MakeInferenceTable());
+    Check(!blocked_result.ok() && blocked_result.status().IsCapacityError(),
+          "TreeModelPredictor should return CapacityError at preflight");
+    bool saw_blocked_preflight = false;
+    bool saw_feature_read = false;
+    for (const auto& event : progress_events) {
+        saw_blocked_preflight = saw_blocked_preflight ||
+            (event.stage == "TreeModelPredictor memory preflight" &&
+             event.status == "blocked");
+        saw_feature_read = saw_feature_read ||
+            event.stage == "Reading feature matrix";
+    }
+    Check(saw_blocked_preflight,
+          "TreeModelPredictor should expose its blocked preflight event");
+    Check(!saw_feature_read,
+          "blocked TreeModelPredictor should not read the feature matrix");
 }
 
 void TestRandomForestStringLabelInference(const std::filesystem::path& root) {

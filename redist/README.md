@@ -55,22 +55,43 @@ Both shell families call one standard-library implementation:
 
 - `scripts/package_release.py`
 - `scripts/sign_pack_manifest.py`
-- `bootstrapper/` native Windows launcher and runtime-state resolver
+- `scripts/prepare_backend_pack_repository.py`
+- `bootstrapper/` native desktop launchers and shared runtime-state resolver
 - `scripts/package_minimal.bat` and `package_minimal.sh`
 - `scripts/package_full.bat` and `package_full.sh`
 
 The base and optional-pack profiles call `package_release.py` directly so the
 release command explicitly names the artifact being produced.
 
-### Windows runtime bootstrapper
+Standalone installer packaging also requires an initial signed metadata
+bundle. Configure `CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR` with a directory
+containing `trust/` and `catalogs/`; CMake stages those files below the
+installer's adjacent `runtime/`. `verify_installer_package.py` fails closed if
+the CPU base, an optional backend pack, catalog, trust store, or corresponding
+cached manifest is absent. The native CI fixture uses ephemeral keys and
+non-routable package URLs and is test evidence only, never release metadata.
 
-The installed app-level `cyxwiz-runtime-bootstrapper.exe` reads only
+### Native runtime bootstrapper
+
+The installed app-level `cyxwiz-runtime-bootstrapper` (`.exe` on Windows)
+reads only
 `runtime/active-runtime.json`, resolves one versioned base and its explicitly
-selected optional packs, and launches the Engine from that base. It replaces
-the inherited developer `PATH`, removes ArrayFire/Python path overrides, and
-the Engine installs `SetDefaultDllDirectories`/`AddDllDirectory` restrictions
-before it initializes optional runtimes. Direct Engine launch remains
-available for development builds when `CYXWIZ_ACTIVE_RUNTIME_ROOT` is absent.
+selected optional packs, and launches the Engine from that base. Windows
+replaces inherited developer `PATH`, and the Engine installs
+`SetDefaultDllDirectories`/`AddDllDirectory` restrictions before initializing
+optional runtimes. Linux and macOS replace inherited dynamic-loader paths with
+the exact active base/pack directories and launch through `fork`/`exec` without
+a shell. All platforms remove ArrayFire/Python overrides, propagate exact
+runtime identity, support `--installer`, and apply queued Repair only after the
+Engine exits. Direct Engine launch remains available for development builds
+when `CYXWIZ_ACTIVE_RUNTIME_ROOT` is absent.
+
+The Engine's bounded `--package-smoke` diagnostic is accepted only through an
+active runtime layout. It verifies that inherited ArrayFire/Python overrides
+were removed, activates the exact ArrayFire CPU route, executes a small tensor
+calculation, reports machine-readable route truth, and exits before graphical
+initialization. Release automation pairs it with the package-local route probe
+for the denser forward/backward execution check.
 
 Bootstrap failures are printed to stderr and appended to the package-local
 `runtime/bootstrapper.log`. A base archive is a runtime component and no longer
@@ -78,12 +99,50 @@ contains the legacy PATH-mutating batch launcher; activation and the app-level
 bootstrapper are required.
 
 Repair is intentionally split from the minimal launcher. After the Engine
-queues an exact pack Repair and exits, the bootstrapper dispatches the sibling
-`cyxwiz-backend-pack-installer` (`.exe` on Windows). That helper verifies the signed catalog
-and pack, stages an immutable replacement, and qualifies it through the
-isolated route probe before activation. It does not link the backend or
-ArrayFire DLLs, and a failed qualification leaves the pack inactive and the
-request available for retry.
+queues an exact pack Repair and exits, the bootstrapper dispatches the exact
+`cyxwiz-backend-pack-installer` (`.exe` on Windows) from the active signed base.
+That helper verifies the signed catalog and pack, stages an immutable
+replacement, and qualifies it through the isolated route probe before
+activation. It does not link the backend or ArrayFire DLLs, and a failed
+qualification leaves the pack inactive and the request available for retry.
+
+Fresh delivery rechecks and atomically publishes the signed base's stable
+`cyxwiz-runtime-bootstrapper` beside `runtime/` before generation-1 activation.
+Its `--installer` mode resolves the same versioned `cyxwiz-installer` GUI from
+the active base, allowing later platform registration to point at one stable
+launcher without copying the GUI or dependency closure into the product root.
+
+After the signed CPU base is qualified and activated, the exact delivery helper
+registers that stable launcher with the selected install scope. Windows creates
+Engine and Installer Start Menu links and an Apps & Features entry; Linux writes
+current-user or system desktop entries; macOS publishes Engine and Installer
+application bundles in the product root. Every maintenance entry resolves the
+installed GUI through `--installer`, and none changes the machine-wide loader
+environment. The current Apps & Features uninstall command reopens that GUI;
+full transactional product removal remains a separate lifecycle gate.
+
+The matching unregistration boundary is idempotent and removes only the exact
+CyxWiz Start Menu/Apps & Features, desktop-entry, or application-bundle
+integration for the selected scope. Linux and macOS fail closed when a managed
+entry contains unknown changes or files. This boundary does not recursively
+delete the product root; runtime deletion remains a separate transaction.
+
+Successful product registration also creates the bounded hidden receipt
+`.cyxwiz-installation.json` in the normalized product root. It records a unique
+installation ID, that exact root, and the selected scope. Repair registration
+preserves the ID and scope; a missing, malformed, redirected, or scope-mismatched
+receipt blocks unregistration and future full-product removal. The receipt is
+ownership evidence, not sufficient deletion authority by itself: a deferred
+removal finalizer must also revalidate the active runtime set and generation
+immediately before deleting any product-owned files.
+
+The shared removal-authorization boundary performs that second check without
+deleting anything. It accepts only a direct, normalized, non-root product
+directory with an exact regular stable launcher, captures the receipt ID and
+complete resolved active-runtime identity, and requires the receipt, scope,
+runtime set, generation, base, and optional-pack inventory to remain identical
+when revalidated. The later finalizer must consume this typed authorization;
+path strings supplied directly to a delete operation are not sufficient.
 
 The packaged desktop application also includes `cyxwiz-installer` (`.exe` on
 Windows), a standalone graphical component manager. Recommended, CPU-only,
@@ -97,6 +156,23 @@ recommendation reads stable kernel vendor IDs. macOS remains conservative and
 recommends CPU-only unless a later native classifier can prove an eligible
 accelerator. Release publication still requires the clean-machine matrix for
 each shipped OS.
+
+Configure `CYXWIZ_INSTALLER_CATALOG_URL` at CMake configure time with the
+direct HTTPS URL of the production signed catalog. Leaving it empty keeps the
+packaged verified catalog available and makes online Refresh report that no
+source is configured. Local integration runs can supply
+`--catalog-url <https-url>` without changing the package. Refresh downloads
+bounded catalog and manifest documents off the render thread, verifies the
+complete snapshot with the packaged trust store, and publishes the catalog
+only after every eligible manifest is trusted. Verified online metadata is
+stored below the selected runtime root, not beside the installer executable.
+Failure retains the previous verified catalog.
+
+After local verification, the same installer shows each route's typed result,
+a bounded failure reason and next action, plus benchmark medians when present.
+It identifies a best measured configuration only when two or more active,
+verified routes have comparable fixed-benchmark evidence. Internal evidence
+keys and engineering ticket names are never customer-facing result text.
 
 This keeps validation, backend closure rules, manifests, hashes, and README
 rendering consistent across platforms.
@@ -170,12 +246,47 @@ py -3 redist\scripts\sign_pack_manifest.py ^
   --key-id release-2026
 ```
 
-The signer uses OpenSSL Ed25519, checks that `.signed.json` exactly matches the
+The signer requires OpenSSL 3 with Ed25519 `pkeyutl` support, checks that
+`.signed.json` exactly matches the
 canonical manifest body, verifies its newly generated signature before an
 atomic manifest replacement, and never copies the private key. Keep production
 keys outside the repository, build trees, output directories, and application
 packages. Use the same `--runtime-set-id` and matching `--base-pack-id` when
 preparing companion artifacts.
+
+After every selected base/backend manifest is signed and its archive remains
+beside it, assemble the exact hosted and installer-bootstrap repository:
+
+```bat
+py -3 redist\scripts\prepare_backend_pack_repository.py ^
+  --manifest redist\output\cyxwiz-base-0.2.0-1-win64.zip.manifest.json ^
+  --manifest redist\output\cyxwiz-af-opencl-3.10.0-1-win64.zip.manifest.json ^
+  --trust-root D:\release-trust\trusted-keys.json ^
+  --catalog-private-key D:\release-secrets\catalog-ed25519.pem ^
+  --catalog-key-id catalog-2026 ^
+  --pack-key-id release-2026 ^
+  --catalog-id cyxwiz-alpha-2026-08 ^
+  --generated-utc 2026-08-25T12:00:00Z ^
+  --expires-utc 2026-09-25T12:00:00Z ^
+  --minimum-client-version 0.2.0 ^
+  --base-url https://packages.example.com/cyxwiz/alpha ^
+  --output redist\output\alpha-repository
+```
+
+The command verifies trust roles, every pack signature, archive size and
+SHA-256, companion base, runtime set, platform, architecture, and ArrayFire ABI
+before signing the catalog. The configured private catalog key must match the
+app-bundled public trust root. Inputs with multiple valid pack signatures
+require an explicit `--pack-key-id` so key rotation cannot change catalog
+authority implicitly.
+
+Publish only `alpha-repository/hosted/` at the exact non-redirecting HTTPS base
+URL. Configure the installer with
+`CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR=.../alpha-repository/bootstrap` and
+`CYXWIZ_INSTALLER_CATALOG_URL=https://packages.example.com/cyxwiz/alpha/catalogs/current.json`.
+The bootstrap tree intentionally excludes the large pack archives. The
+catalog-signing private key is read from its external path and is never copied
+to either output tree.
 
 Example notice layout:
 
@@ -268,6 +379,11 @@ Before publication:
 
 A successful GUI launch proves dependency loading only. It does not prove that
 a selected accelerator executed computation.
+
+The portable installer workflow and the remaining physical-hardware evidence
+are defined in [CLEAN_MACHINE_MATRIX.md](CLEAN_MACHINE_MATRIX.md). Hosted
+runners publish installed-size and timing evidence without claiming an
+accelerator route that was not physically exercised.
 
 ## Official Downloads
 

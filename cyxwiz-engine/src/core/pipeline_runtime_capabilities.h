@@ -185,6 +185,14 @@ struct PipelineRuntimeSupport {
         PipelineRuntimeImplementationOwner::Unknown;
 };
 
+// Canonicalize saved/runtime parameter aliases without advertising them in
+// new-node metadata. Legacy values may replace constructor defaults while
+// importing pattern templates.
+void CanonicalizePipelineParameterAliases(
+    gui::NodeType node_type,
+    std::map<std::string, std::string>& parameters,
+    bool prefer_legacy = false);
+
 const std::vector<PipelineOperatorRuntimeCapability>&
 GetPipelineOperatorRuntimeCapabilities();
 

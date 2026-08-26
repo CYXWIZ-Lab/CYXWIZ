@@ -1,6 +1,6 @@
 #include "startup_script_manager.h"
 #include "scripting_engine.h"
-#include "../gui/panels/command_window.h"
+#include "script_output_sink.h"
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <sstream>
@@ -64,7 +64,7 @@ bool StartupScriptManager::SaveConfig(const std::string& config_file) {
     return true;
 }
 
-bool StartupScriptManager::ExecuteAll(cyxwiz::CommandWindowPanel* output_window) {
+bool StartupScriptManager::ExecuteAll(IScriptOutputSink* output_sink) {
     if (!enabled_) {
         spdlog::info("Startup scripts disabled, skipping execution");
         return false;
@@ -77,8 +77,8 @@ bool StartupScriptManager::ExecuteAll(cyxwiz::CommandWindowPanel* output_window)
 
     spdlog::info("Executing {} startup scripts...", script_paths_.size());
 
-    if (output_window) {
-        output_window->DisplayScriptOutput(
+    if (output_sink) {
+        output_sink->AppendScriptOutput(
             "Startup Scripts",
             "=== Running startup scripts ===",
             false
@@ -90,7 +90,7 @@ bool StartupScriptManager::ExecuteAll(cyxwiz::CommandWindowPanel* output_window)
     int error_count = 0;
 
     for (const auto& script_path : script_paths_) {
-        bool result = ExecuteScript(script_path, output_window);
+        bool result = ExecuteScript(script_path, output_sink);
         if (result) {
             success_count++;
         } else {
@@ -111,8 +111,8 @@ bool StartupScriptManager::ExecuteAll(cyxwiz::CommandWindowPanel* output_window)
             << error_count << " errors, "
             << duration.count() / 1000.0 << "s) ===";
 
-    if (output_window) {
-        output_window->DisplayScriptOutput("Startup Scripts", summary.str(), false);
+    if (output_sink) {
+        output_sink->AppendScriptOutput("Startup Scripts", summary.str(), false);
     }
 
     spdlog::info(summary.str());
@@ -120,13 +120,15 @@ bool StartupScriptManager::ExecuteAll(cyxwiz::CommandWindowPanel* output_window)
     return error_count == 0;
 }
 
-bool StartupScriptManager::ExecuteScript(const std::string& filepath, cyxwiz::CommandWindowPanel* output_window) {
+bool StartupScriptManager::ExecuteScript(
+    const std::string& filepath,
+    IScriptOutputSink* output_sink) {
     if (!FileExists(filepath)) {
         std::string error_msg = "Script not found: " + filepath;
         spdlog::error(error_msg);
 
-        if (output_window) {
-            output_window->DisplayScriptOutput(filepath, error_msg, true);
+        if (output_sink) {
+            output_sink->AppendScriptOutput(filepath, error_msg, true);
         }
 
         return false;
@@ -134,16 +136,16 @@ bool StartupScriptManager::ExecuteScript(const std::string& filepath, cyxwiz::Co
 
     spdlog::info("Executing startup script: {}", filepath);
 
-    if (output_window) {
-        output_window->DisplayScriptOutput(filepath, "Executing: " + filepath, false);
+    if (output_sink) {
+        output_sink->AppendScriptOutput(filepath, "Executing: " + filepath, false);
     }
 
     if (!scripting_engine_) {
         std::string error_msg = "ScriptingEngine not initialized";
         spdlog::error(error_msg);
 
-        if (output_window) {
-            output_window->DisplayScriptOutput(filepath, error_msg, true);
+        if (output_sink) {
+            output_sink->AppendScriptOutput(filepath, error_msg, true);
         }
 
         return false;
@@ -155,8 +157,8 @@ bool StartupScriptManager::ExecuteScript(const std::string& filepath, cyxwiz::Co
         std::string error_msg = "Failed to open script: " + filepath;
         spdlog::error(error_msg);
 
-        if (output_window) {
-            output_window->DisplayScriptOutput(filepath, error_msg, true);
+        if (output_sink) {
+            output_sink->AppendScriptOutput(filepath, error_msg, true);
         }
 
         return false;
@@ -170,13 +172,13 @@ bool StartupScriptManager::ExecuteScript(const std::string& filepath, cyxwiz::Co
     auto result = scripting_engine_->ExecuteScript(script_content);
 
     // Display output
-    if (output_window) {
+    if (output_sink) {
         if (!result.output.empty()) {
-            output_window->DisplayScriptOutput(filepath, result.output, false);
+            output_sink->AppendScriptOutput(filepath, result.output, false);
         }
 
         if (!result.success) {
-            output_window->DisplayScriptOutput(filepath, "Error: " + result.error_message, true);
+            output_sink->AppendScriptOutput(filepath, "Error: " + result.error_message, true);
         }
     }
 

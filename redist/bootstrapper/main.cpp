@@ -1,5 +1,6 @@
 #include "runtime_layout.h"
 #include "backend_pack_maintenance_request.h"
+#include "backend_pack_platform.h"
 
 #include <filesystem>
 #include <iostream>
@@ -112,12 +113,13 @@ bool SetRuntimeIdentityEnvironment(
 }
 
 bool RunBackendPackRepair(
-    const std::filesystem::path& executable_directory,
+    const std::filesystem::path& active_base_directory,
     const std::filesystem::path& runtime_root,
     const cyxwiz::runtime::BackendPackMaintenanceRequest& request,
     std::string& message) {
     const auto helper =
-        executable_directory / "cyxwiz-backend-pack-installer.exe";
+        active_base_directory /
+        cyxwiz::runtime::CurrentBackendPackInstallerExecutableName();
     if (!std::filesystem::is_regular_file(helper)) {
         message = "Backend-pack repair helper is missing";
         return false;
@@ -133,7 +135,7 @@ bool RunBackendPackRepair(
     PROCESS_INFORMATION process{};
     if (!::CreateProcessW(
             helper.c_str(), mutable_command.data(), nullptr, nullptr,
-            FALSE, 0, nullptr, executable_directory.c_str(),
+            FALSE, 0, nullptr, active_base_directory.c_str(),
             &startup, &process)) {
         message = "Cannot launch backend-pack repair helper; Win32 error " +
             std::to_string(::GetLastError());
@@ -171,6 +173,12 @@ int wmain(int argc, wchar_t** argv) {
     if (argc >= 3 && std::wstring_view(argv[1]) == L"--runtime-root") {
         runtime_root = argv[2];
         first_forwarded_argument = 3;
+    }
+    bool installer_mode = false;
+    if (argc > first_forwarded_argument &&
+        std::wstring_view(argv[first_forwarded_argument]) == L"--installer") {
+        installer_mode = true;
+        ++first_forwarded_argument;
     }
 
     cyxwiz::runtime::ActiveRuntime runtime;
@@ -213,7 +221,22 @@ int wmain(int argc, wchar_t** argv) {
         }
     }
 
-    std::wstring command_line = QuoteArgument(runtime.engine_executable.native());
+    const auto launched_executable = installer_mode
+        ? runtime.base_directory /
+              cyxwiz::runtime::CurrentInstallerManagerExecutableName()
+        : runtime.engine_executable;
+    if (!std::filesystem::is_regular_file(launched_executable)) {
+        return Fail(
+            runtime.runtime_root,
+            installer_mode
+                ? "active base does not contain the CyxWiz Installer"
+                : "active base does not contain the CyxWiz Engine");
+    }
+    std::wstring command_line = QuoteArgument(launched_executable.native());
+    if (installer_mode) {
+        command_line += L" --runtime-root ";
+        command_line += QuoteArgument(runtime.runtime_root.native());
+    }
     for (int index = first_forwarded_argument; index < argc; ++index) {
         command_line.push_back(L' ');
         command_line += QuoteArgument(argv[index]);
@@ -225,7 +248,7 @@ int wmain(int argc, wchar_t** argv) {
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
     const BOOL created = ::CreateProcessW(
-        runtime.engine_executable.c_str(), mutable_command.data(), nullptr, nullptr,
+        launched_executable.c_str(), mutable_command.data(), nullptr, nullptr,
         FALSE, 0, nullptr, runtime.base_directory.c_str(), &startup, &process);
     if (!created) {
         return Fail(runtime.runtime_root,
@@ -235,7 +258,9 @@ int wmain(int argc, wchar_t** argv) {
     ::CloseHandle(process.hThread);
     cyxwiz::runtime::AppendBootstrapDiagnostic(
         runtime.runtime_root,
-        "launched runtime_set=" + runtime.runtime_set_id +
+        std::string(installer_mode ? "launched installer runtime_set="
+                                   : "launched runtime_set=") +
+            runtime.runtime_set_id +
             " generation=" + std::to_string(runtime.generation) +
             " base=" + runtime.base_pack_id);
 
@@ -246,16 +271,17 @@ int wmain(int argc, wchar_t** argv) {
     } else {
         cyxwiz::runtime::AppendBootstrapDiagnostic(
             runtime.runtime_root,
-            "wait for Engine failed with Win32 error " + std::to_string(::GetLastError()));
+            "wait for child failed with Win32 error " +
+                std::to_string(::GetLastError()));
     }
     ::CloseHandle(process.hProcess);
-    if (wait_result == WAIT_OBJECT_0) {
+    if (wait_result == WAIT_OBJECT_0 && !installer_mode) {
         const auto maintenance =
             cyxwiz::runtime::ApplyPendingBackendPackMaintenance(
                 runtime.runtime_root, launched_runtime,
                 [&](const auto& request, std::string& message) {
                     return RunBackendPackRepair(
-                        executable_directory, runtime.runtime_root,
+                        runtime.base_directory, runtime.runtime_root,
                         request, message);
                 });
         if (maintenance.status != cyxwiz::runtime::

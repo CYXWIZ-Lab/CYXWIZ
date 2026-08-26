@@ -1,85 +1,122 @@
 ---
 name: lean-software-guardrails
-description: Apply lean software engineering guardrails based on Niklaus Wirth's "A Plea for Lean Software." Use when planning, implementing, reviewing, refactoring, or debugging coding and software engineering projects where complexity, feature creep, bloated dependencies, weak decomposition, extensibility, performance, maintainability, or engineering discipline matter.
+description: Apply lean, modular software engineering guardrails when planning, implementing, reviewing, refactoring, optimizing, or debugging code. Use for architecture and code changes involving file growth, weak decomposition, C++ safety and performance, HTML/CSS/JavaScript/TypeScript or web frameworks, dependencies, maintainability, extensibility, testing, or avoidable complexity.
 ---
 
 # Lean Software Guardrails
 
 ## Core Stance
 
-Keep software small, understandable, and extensible. Treat every feature,
-dependency, abstraction, layer, background service, generated artifact, and
-configuration knob as a cost until it proves essential.
+Keep software small, understandable, testable, and extensible. Treat every
+feature, dependency, abstraction, layer, background service, generated
+artifact, configuration knob, and new source file as a cost until it proves
+essential.
 
-Software growth often tracks available hardware rather than user value.
-Counter that tendency with disciplined design, simple primitives, coherent
-modules, strong interfaces, and iterative refinement.
+Prefer cohesive modules with narrow typed boundaries. Do not solve growth by
+continuing to append unrelated responsibilities to an already large file.
 
-Read [wirth-lean-software.md](references/wirth-lean-software.md) when work
-involves architecture, code review, major refactoring, framework choice, or
-adding functionality.
+Read the references that match the task:
+
+- Read [wirth-lean-software.md](references/wirth-lean-software.md) for
+  architecture, major refactoring, framework choice, or feature expansion.
+- Read [modularity.md](references/modularity.md) before adding substantial
+  behavior to an existing file or changing module boundaries.
+- Read [cpp-practices.md](references/cpp-practices.md) for C or C++ design,
+  implementation, review, optimization, concurrency, or portability work.
+- Read [web-practices.md](references/web-practices.md) for HTML, CSS,
+  JavaScript, TypeScript, browser UI, or web-framework work.
 
 ## Operating Workflow
 
-1. Identify the essential user or system capability.
-2. Separate essentials from conveniences, compatibility burdens, visual
-   embellishments, and nice-to-have features.
-3. Prefer the smallest design that solves the essential capability clearly.
-4. Keep extension points narrow and typed. Extend by composing modules, not by
-   broadening the core.
-5. Move optional behavior outside the core when it can be loaded, configured,
-   or composed only when needed.
-6. Challenge abstractions that cannot be explained through concrete data,
-   operations, and module boundaries.
-7. Review for avoidable complexity before optimizing for speed, novelty, or
-   completeness.
-8. Validate with tests, examples, and readable code paths that prove the
-   simpler design is sufficient.
+1. Inspect the existing source, callers, tests, ownership, and local
+   conventions before designing or coding.
+2. State the essential capability and the invariants that must remain true.
+3. Separate required behavior from conveniences, compatibility burdens,
+   visual embellishments, and speculative extension points.
+4. Locate the smallest cohesive module that should own the behavior. If the
+   apparent target is already large or has mixed responsibilities, evaluate
+   extraction before adding more code.
+5. Define data flow, ownership, errors, concurrency, and platform boundaries
+   explicitly. Use types and tests to enforce them.
+6. Reuse a sound existing primitive or service when it fits. Do not create a
+   parallel implementation or compatibility layer without a migration need.
+7. Implement the smallest complete vertical change. Keep optional behavior
+   outside the core and load or activate it only when needed.
+8. Inspect the resulting diff for duplication, file growth, hidden state,
+   unnecessary allocation, dependency expansion, and weakened boundaries.
+9. Validate behavior, failure paths, integration points, and relevant
+   performance claims in proportion to risk.
+10. Simplify names, interfaces, code paths, and documentation before declaring
+    the work complete.
 
-## Guardrail Checklist
+## Mandatory Guardrails
+
+- Do not add substantial code to a large file without first explaining why
+  the responsibility belongs there and why extraction would make the design
+  worse.
+- Treat file and function size as investigation signals, not automatic quality
+  verdicts. Generated code, declarative tables, and cohesive algorithms may be
+  legitimately large.
+- Do not mix UI rendering, domain logic, persistence, I/O, task orchestration,
+  and platform integration in one component when narrow interfaces can
+  separate them.
+- Do not create generic `utils`, `helpers`, `common`, or manager modules as a
+  dumping ground. Name modules after the capability or invariant they own.
+- Do not duplicate an existing source of truth. Migrate consumers toward one
+  canonical contract.
+- Do not hide expensive copies, blocking I/O, background work, global state,
+  or platform fallback behind innocent-looking APIs.
+- Do not claim optimization without a baseline, a representative measurement,
+  and correctness validation.
+- Do not accept warnings, ignored errors, swallowed exceptions, unsafe casts,
+  or disabled checks as normal completion conditions.
+- Do not add a dependency or framework for behavior that a small local module
+  can express clearly and safely.
+
+## Design and Review Questions
 
 Before making or approving a change, ask:
 
-- Does this add functionality users need now, or serve only a possible future?
-- Does this make the common path simpler or harder to understand?
-- Can this behavior be a module, adapter, command, plugin, or optional
-  integration instead of core logic?
-- Can types, schemas, or tests enforce the boundary?
-- Does a new abstraction remove real duplication or merely rename complexity?
-- Is the implementation larger because it compensates for unclear design?
-- Can one capable engineer understand the changed area without tribal
+- What user or system capability is essential now?
+- Which module owns the invariant, and which modules only consume it?
+- Is the proposed file growing because it is cohesive, or because ownership is
+  unclear?
+- Can invalid states be prevented through types, schemas, or construction?
+- Does the abstraction remove real duplication or merely rename complexity?
+- Are lifetime, thread, cancellation, and failure behavior explicit?
+- Can optional behavior remain outside the common path?
+- Can one capable engineer understand and test the changed area without tribal
   knowledge?
-- Did time pressure create an addition that should be a small redesign?
+- What should be removed, extracted, or simplified before completion?
 
-## Coding Guidance
+## Validation Expectations
 
-Prefer:
-
-- small modules with explicit imports, exports, ownership, and invariants;
-- strong typing or clear runtime validation at module boundaries;
-- straightforward data structures before framework-heavy machinery;
-- iterative refinement: design, implement, inspect, simplify, then polish;
-- tests that prove behavior without overconstraining implementation;
-- publication-quality names, examples, and error paths.
-
-Avoid:
-
-- monoliths where every optional feature is permanently loaded;
-- feature accumulation as a proxy for product quality;
-- compatibility layers that preserve old concepts while duplicating them;
-- broad hooks that expose internals or weaken invariants;
-- dependencies that save a few lines but add a large conceptual surface;
-- premature generality, hidden global state, and just-in-case configuration.
+- Run the narrowest relevant formatter, compiler, static analysis, and tests.
+- Add or update tests at the module boundary, not only inside implementation
+  details.
+- Cover success, invalid input, failure, cancellation, lifetime, and platform
+  behavior when relevant.
+- Measure memory, CPU, latency, allocation, bundle size, or compile-time effects
+  only when the change makes a related claim.
+- Record what was not validated and why; never convert an unverified assumption
+  into a claim.
 
 ## Review Output
 
-Lead with concrete risks:
+Lead with concrete risks using the applicable labels:
 
-- `Complexity`: unnecessary features, abstractions, dependencies, or states.
-- `Core bloat`: logic that should be optional or modular.
-- `Weak boundary`: unclear ownership, typing, validation, or API contracts.
+- `Complexity`: unnecessary states, abstractions, dependencies, or code paths.
+- `Module growth`: a file, class, or function accumulating another
+  responsibility.
+- `Weak boundary`: unclear ownership, typing, validation, lifetime, or API
+  contract.
+- `C++ safety`: resource, lifetime, undefined-behavior, concurrency, ABI, or
+  portability risk.
+- `Web correctness`: accessibility, security, state, browser, API, or rendering
+  risk.
+- `Performance evidence`: an optimization claim without representative proof.
 - `Missed simplification`: a smaller design that preserves the goal.
-- `Validation gap`: missing tests or examples for the intended behavior.
+- `Validation gap`: missing tests, tools, examples, or platform coverage.
 
 Then propose the smallest practical correction that preserves the user-visible
-goal.
+goal and identify any deliberate tradeoff.

@@ -23,6 +23,80 @@ BackendPackStateService::BackendPackStateService(
       execution_active_(std::move(execution_active)),
       observer_(std::move(observer)) {}
 
+BackendPackStateResult BackendPackStateService::InitializeBase(
+    std::string runtime_set_id,
+    std::string base_pack_id) {
+    std::unique_lock<std::mutex> mutation_lock(
+        mutation_mutex_, std::try_to_lock);
+    if (!mutation_lock.owns_lock()) {
+        return {BackendPackStateStatus::Busy,
+                "A runtime initialization is already running"};
+    }
+    RuntimeMutationLease runtime_mutation;
+    if (!runtime_mutation.OwnsMutation() ||
+        (execution_active_ && execution_active_())) {
+        return {BackendPackStateStatus::ExecutionActive,
+                "Runtime initialization is blocked while an execution context is active"};
+    }
+    if (runtime_set_id.empty() || base_pack_id.empty()) {
+        return {BackendPackStateStatus::InvalidRequest,
+                "Runtime-set and base-pack identities are required"};
+    }
+
+    const auto active_path = runtime_root_ / "active-runtime.json";
+    std::error_code filesystem_error;
+    if (std::filesystem::exists(active_path, filesystem_error) ||
+        filesystem_error) {
+        return {BackendPackStateStatus::InvalidRuntime,
+                filesystem_error
+                    ? "Cannot inspect the active runtime state: " +
+                          filesystem_error.message()
+                    : "An active runtime already exists"};
+    }
+
+    BackendPackStateProgress progress;
+    progress.stage = BackendPackStateStage::Validating;
+    progress.operation = "initialize_base";
+    progress.pack_id = base_pack_id;
+    progress.generation = 1;
+    progress.message = "Validating the complete CPU-base runtime";
+    SetProgress(progress);
+
+    ActiveRuntimeState candidate;
+    candidate.runtime_set_id = std::move(runtime_set_id);
+    candidate.generation = 1;
+    candidate.base_pack_id = std::move(base_pack_id);
+    ActiveRuntime resolved;
+    std::string error;
+    if (!ResolveRuntimeState(runtime_root_, candidate, resolved, error)) {
+        progress.stage = BackendPackStateStage::Failed;
+        progress.message = error;
+        SetProgress(progress);
+        return {BackendPackStateStatus::InvalidRuntime, error};
+    }
+
+    progress.stage = BackendPackStateStage::Publishing;
+    progress.message = "Publishing the initial runtime state";
+    SetProgress(progress);
+    if (std::filesystem::exists(active_path, filesystem_error) ||
+        filesystem_error ||
+        !SaveActiveRuntimeStateAtomic(active_path, candidate, error)) {
+        progress.stage = BackendPackStateStage::Failed;
+        progress.message = filesystem_error
+            ? filesystem_error.message()
+            : (error.empty() ? "An active runtime appeared during initialization"
+                             : error);
+        SetProgress(progress);
+        return {BackendPackStateStatus::PublishFailed, progress.message};
+    }
+
+    progress.stage = BackendPackStateStage::Complete;
+    progress.message = "Initial CPU-base runtime published atomically";
+    SetProgress(progress);
+    return {BackendPackStateStatus::Completed,
+            progress.message, std::nullopt, candidate};
+}
+
 BackendPackStateResult BackendPackStateService::ActivateOptionalPack(
     std::string backend,
     std::string pack_id) {

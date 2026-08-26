@@ -16,6 +16,8 @@ struct DebugSession;
 
 struct DebugRunExecutionSummary {
     bool available = false;
+    bool correlated = false;
+    std::string evidence_scope = "unobserved";
     std::string training_run_id;
     std::string status;
     std::string requested_backend;
@@ -34,7 +36,8 @@ struct DebugRunExecutionSummary {
 };
 
 DebugRunExecutionSummary MakeDebugRunExecutionSummary(
-    const TrainingTraceSummary& trace);
+    const TrainingTraceSummary& trace,
+    bool explicitly_selected = false);
 
 struct DebugRunStoreSummary {
     std::string run_id;
@@ -76,6 +79,8 @@ struct DebugReplayCompiledConfigSummary {
     float momentum = 0.0f;
     float beta1 = 0.0f;
     float beta2 = 0.0f;
+    float epsilon = 0.0f;
+    float rmsprop_alpha = 0.0f;
     float weight_decay = 0.0f;
     std::string compiler_placement_fingerprint;
     size_t backend_placement_count = 0;

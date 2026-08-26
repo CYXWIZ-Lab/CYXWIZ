@@ -2,6 +2,7 @@
 
 #include <arrow/type_fwd.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -27,6 +28,57 @@ struct FittedPreprocessingState {
     std::map<std::string, std::string> configuration;
     std::vector<PreprocessingFeatureState> features;
 };
+
+struct FittedPreprocessingOptions {
+    std::string operation_mode = "fit_transform";
+    std::string state_path;
+    bool save_state = false;
+    bool state_overwrite = false;
+
+    bool IsTransformOnly() const {
+        return operation_mode == "transform_only";
+    }
+};
+
+struct FittedTextVectorizerFeature {
+    std::string term;
+    double weight = 1.0;
+};
+
+struct FittedTextVectorizerState {
+    int64_t fit_rows = 0;
+    std::string input_schema_fingerprint;
+    std::vector<FittedTextVectorizerFeature> features;
+};
+
+bool ParseFittedPreprocessingOptions(
+    const std::map<std::string, std::string>& parameters,
+    const std::string& operator_name,
+    FittedPreprocessingOptions& options,
+    std::string& error);
+
+bool ValidateFittedPreprocessingConfiguration(
+    const FittedPreprocessingState& state,
+    const std::map<std::string, std::string>& expected,
+    std::string& error);
+
+bool SaveFittedTextVectorizerState(
+    const std::string& path,
+    const std::string& operator_name,
+    int64_t fit_rows,
+    const std::string& input_schema_fingerprint,
+    const std::map<std::string, std::string>& configuration,
+    const std::vector<FittedTextVectorizerFeature>& features,
+    bool overwrite,
+    std::string& error);
+
+bool LoadFittedTextVectorizerState(
+    const std::string& path,
+    const std::string& expected_operator,
+    const std::map<std::string, std::string>& expected_configuration,
+    size_t max_features,
+    FittedTextVectorizerState& state,
+    std::string& error);
 
 std::string FingerprintPreprocessingSchema(
     const std::shared_ptr<arrow::Schema>& schema);

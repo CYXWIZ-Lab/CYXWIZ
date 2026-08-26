@@ -3883,10 +3883,10 @@ int main(int argc, char** argv) {
 
     cyxwiz::PipelineExecutor missing_join_executor;
     Check(!missing_join_executor.ExecutePipeline(missing_join_column_json),
-          "Join missing on_column should fail validation");
+          "Join missing left_on/right_on should fail validation");
     Check(missing_join_executor.GetLastError().find(
-              "missing required parameter 'on_column'") != std::string::npos,
-          "Join missing on_column validation should be specific: " +
+              "missing required parameter 'left_on'") != std::string::npos,
+          "Join missing left_on validation should be specific: " +
               missing_join_executor.GetLastError());
 
     const std::string join_json =
@@ -3903,7 +3903,7 @@ int main(int argc, char** argv) {
 
     cyxwiz::PipelineExecutor join_executor;
     Check(join_executor.ExecutePipeline(join_json),
-          "Join should validate and quote the join column on both inputs: " +
+          "Join should preserve the legacy shared-key on_column alias: " +
               join_executor.GetLastError());
     auto joined = registry.GetArrowDataset("ds_join_103");
     Check(joined != nullptr, "Join output dataset is registered");
@@ -3911,6 +3911,84 @@ int main(int argc, char** argv) {
     Check(joined_table != nullptr, "Join output table exists");
     Check(joined_table->num_rows() == 3,
           "Join on x should match all rows in the self-join fixture");
+
+    const fs::path join_left_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_join_left.csv";
+    const fs::path join_right_csv_path =
+        fs::temp_directory_path() / "cyxwiz_pipeline_executor_join_right.csv";
+    {
+        std::ofstream csv(join_left_csv_path);
+        csv << "left_id,left_value\n";
+        csv << "1,alpha\n";
+        csv << "2,beta\n";
+    }
+    {
+        std::ofstream csv(join_right_csv_path);
+        csv << "right_id,right_value\n";
+        csv << "2,two\n";
+        csv << "3,three\n";
+    }
+
+    const std::string asymmetric_join_json =
+        R"({"nodes":[)"
+        R"({"id":92100,"type":"DataInput","name":"Left","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(join_left_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":92101,"type":"DataInput","name":"Right","parameters":{)"
+        R"("source_type":"file","file_path":")" +
+        JsonEscapePath(join_right_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":92102,"type":"Join","name":"Join","parameters":{)"
+        R"("left_on":"left_id","right_on":"right_id","join_type":"inner"}})"
+        R"(],"links":[)"
+        R"({"start_node":92101,"end_node":92102,"end_pin":7002},)"
+        R"({"start_node":92100,"end_node":92102,"end_pin":7001})"
+        R"(]})";
+
+    cyxwiz::PipelineExecutor asymmetric_join_executor;
+    Check(asymmetric_join_executor.ExecutePipeline(asymmetric_join_json),
+          "Join should honor target-pin order and differently named keys: " +
+              asymmetric_join_executor.GetLastError());
+    auto asymmetric_joined = registry.GetArrowDataset("ds_join_92102");
+    Check(asymmetric_joined != nullptr,
+          "asymmetric Join output dataset is registered");
+    auto asymmetric_joined_table = asymmetric_joined->GetArrowTable();
+    Check(asymmetric_joined_table != nullptr &&
+              asymmetric_joined_table->num_rows() == 1,
+          "asymmetric Join should retain the one matching row");
+    Check(ReadStringValue(asymmetric_joined_table, "left_value", 0) == "beta" &&
+              ReadStringValue(asymmetric_joined_table, "right_value", 0) == "two",
+          "asymmetric Join should preserve the expected left/right row values");
+
+    registry.UnloadDataset("ds_datainput_92100");
+    registry.UnloadDataset("ds_datainput_92101");
+    registry.UnloadDataset("ds_join_92102");
+    fs::remove(join_left_csv_path);
+    fs::remove(join_right_csv_path);
+
+    const std::string duplicate_join_pin_json =
+        R"({"nodes":[)"
+        R"({"id":92200,"type":"DataInput","name":"Left","parameters":{)"
+        R"("source_type":"file","file_path":"left.csv","type":"csv"}},)"
+        R"({"id":92201,"type":"DataInput","name":"Right","parameters":{)"
+        R"("source_type":"file","file_path":"right.csv","type":"csv"}},)"
+        R"({"id":92202,"type":"Join","name":"Join","parameters":{)"
+        R"("left_on":"x","right_on":"x","join_type":"inner"}})"
+        R"(],"links":[)"
+        R"({"start_node":92200,"end_node":92202,"end_pin":7100},)"
+        R"({"start_node":92201,"end_node":92202,"end_pin":7100})"
+        R"(]})";
+
+    cyxwiz::PipelineExecutor duplicate_join_pin_executor;
+    Check(!duplicate_join_pin_executor.ExecutePipeline(duplicate_join_pin_json),
+          "Join duplicate target-pin wiring should fail closed");
+    Check(duplicate_join_pin_executor.GetLastError().find(
+              "multiple links targeting input pin 7100") != std::string::npos,
+          "Join duplicate target-pin error should be specific: " +
+              duplicate_join_pin_executor.GetLastError());
+    Check(registry.GetArrowDataset("ds_datainput_92200") == nullptr,
+          "duplicate target-pin wiring should fail before loading data");
 
     const std::string bad_join_type_json =
         R"({"nodes":[)"
@@ -6679,6 +6757,25 @@ int main(int argc, char** argv) {
           "GroupBy x should produce one group per x fixture value");
     Check(grouped_table->schema()->GetFieldIndex("count_rows") >= 0,
           "GroupBy should preserve aggregation alias");
+
+    const std::string legacy_group_by_json =
+        R"({"nodes":[)"
+        R"({"id":126,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":127,"type":"GroupBy","name":"LegacyGroup","parameters":{)"
+        R"("group_by":"x","aggregations":"COUNT(*) AS count_rows"}})"
+        R"(],"links":[{"start_node":126,"end_node":127}]})";
+
+    cyxwiz::PipelineExecutor legacy_group_by_executor;
+    Check(legacy_group_by_executor.ExecutePipeline(legacy_group_by_json),
+          "GroupBy should migrate the saved UI group_by alias: " +
+              legacy_group_by_executor.GetLastError());
+    auto legacy_grouped = registry.GetArrowDataset("ds_groupby_127");
+    Check(legacy_grouped != nullptr &&
+              legacy_grouped->GetArrowTable() != nullptr &&
+              legacy_grouped->GetArrowTable()->num_rows() == 3,
+          "GroupBy legacy group_by alias should preserve grouping behavior");
 
     const std::string group_by_multi_agg_json =
         R"({"nodes":[)"

@@ -41,6 +41,8 @@ private:
     void Update(float delta_time);
     void Render();
     void LoadFonts(ImGuiIO& io);
+    float DetectFontRasterizerDensity(bool log_metrics) const;
+    void RefreshFontRasterizerDensity();
 
     GLFWwindow* window_;
     std::unique_ptr<gui::MainWindow> main_window_;
@@ -91,6 +93,7 @@ private:
     ImFont* font_bold_ = nullptr;
     ImFont* font_mono_ = nullptr;
     ImFont* font_mono_bold_ = nullptr;
+    float font_rasterizer_density_ = 1.0f;
 
     // Idle detection for GPU power saving
     double last_activity_time_ = 0.0;

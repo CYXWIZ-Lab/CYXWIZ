@@ -1,5 +1,7 @@
 #pragma once
 
+#include "materialization_memory_types.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -29,49 +31,6 @@
 
 namespace cyxwiz {
 
-enum class MaterializationMemoryRisk {
-    Safe,
-    Warning,
-    Risky,
-    Blocked,
-};
-
-struct MaterializationMemorySnapshot {
-    uint64_t total_bytes = 0;
-    uint64_t available_bytes = 0;
-    bool detected = false;
-};
-
-struct MaterializationMemoryEstimate {
-    uint64_t rows = 0;
-    uint64_t output_features = 0;
-    uint64_t bytes_per_value = 0;
-    uint64_t raw_output_bytes = 0;
-    uint64_t temporary_bytes = 0;
-    uint64_t arrow_overhead_bytes = 0;
-    uint64_t estimated_peak_bytes = 0;
-    bool overflow = false;
-    std::string confidence = "medium";
-};
-
-struct MaterializationMemoryPolicy {
-    double warning_fraction = 0.40;
-    double risky_fraction = 0.70;
-    double blocked_fraction = 0.90;
-    uint64_t hard_limit_bytes = 0;
-    uint64_t fallback_available_bytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
-};
-
-struct MaterializationMemoryDecision {
-    MaterializationMemoryRisk risk = MaterializationMemoryRisk::Safe;
-    bool blocked = false;
-    uint64_t available_bytes = 0;
-    uint64_t safe_budget_bytes = 0;
-    double available_fraction = 0.0;
-    std::string reason;
-    std::string suggestion;
-};
-
 inline const char* MaterializationMemoryRiskName(
     MaterializationMemoryRisk risk) {
     switch (risk) {
@@ -85,6 +44,21 @@ inline const char* MaterializationMemoryRiskName(
         return "blocked";
     }
     return "unknown";
+}
+
+inline const char* MaterializationMemoryRiskToProgressStatus(
+    MaterializationMemoryRisk risk) {
+    switch (risk) {
+    case MaterializationMemoryRisk::Safe:
+        return "running";
+    case MaterializationMemoryRisk::Warning:
+        return "warning";
+    case MaterializationMemoryRisk::Risky:
+        return "risky";
+    case MaterializationMemoryRisk::Blocked:
+        return "blocked";
+    }
+    return "running";
 }
 
 inline bool CheckedMulU64(uint64_t a, uint64_t b, uint64_t& out) {
@@ -249,9 +223,18 @@ inline MaterializationMemoryDecision EvaluateMaterializationMemory(
     }
 
     decision.suggestion =
-        "Reduce TF-IDF max_features, sample fewer rows first, or use a future "
-        "sparse/chunked materialization path.";
+        "Reduce output dimensions or input rows, or use a sparse/chunked "
+        "materialization path when supported.";
     return decision;
+}
+
+inline MaterializationMemoryDecision EvaluateMaterializationMemory(
+    const MaterializationMemoryEstimate& estimate,
+    const MaterializationMemoryContext& context) {
+    const auto snapshot = context.snapshot_override.has_value()
+        ? *context.snapshot_override
+        : DetectMaterializationMemorySnapshot();
+    return EvaluateMaterializationMemory(estimate, snapshot, context.policy);
 }
 
 inline std::string FormatMaterializationBytes(uint64_t bytes) {
@@ -270,6 +253,30 @@ inline std::string FormatMaterializationBytes(uint64_t bytes) {
         out << std::fixed << std::setprecision(value >= 10.0 ? 1 : 2)
             << value << " " << units[unit];
     }
+    return out.str();
+}
+
+inline std::string BuildMaterializationMemoryPreflightMessage(
+    const std::string& operation,
+    const std::string& dimension_name,
+    const MaterializationMemoryEstimate& estimate,
+    const MaterializationMemoryDecision& decision,
+    const std::string& suggestion = {}) {
+    std::ostringstream out;
+    out << operation << " memory preflight: risk="
+        << MaterializationMemoryRiskName(decision.risk)
+        << ", rows=" << estimate.rows
+        << ", " << dimension_name << "=" << estimate.output_features
+        << ", raw=" << FormatMaterializationBytes(estimate.raw_output_bytes)
+        << ", estimated_peak="
+        << FormatMaterializationBytes(estimate.estimated_peak_bytes)
+        << ", available="
+        << FormatMaterializationBytes(decision.available_bytes)
+        << ", safe_budget="
+        << FormatMaterializationBytes(decision.safe_budget_bytes)
+        << ". " << decision.reason
+        << ". Suggestion: "
+        << (suggestion.empty() ? decision.suggestion : suggestion);
     return out.str();
 }
 

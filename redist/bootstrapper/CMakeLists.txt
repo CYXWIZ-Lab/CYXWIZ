@@ -4,7 +4,10 @@ if(NOT WIN32)
 endif()
 
 add_library(cyxwiz-runtime-bootstrap STATIC
+    atomic_file_publisher.cpp
     backend_pack_state_service.cpp
+    product_installation_receipt.cpp
+    product_removal_authorization.cpp
     runtime_layout.cpp
 )
 if(WIN32)
@@ -31,10 +34,13 @@ target_link_libraries(cyxwiz-backend-pack-maintenance PUBLIC
 add_library(cyxwiz-backend-pack-service STATIC
     backend_pack_acquisition.cpp
     backend_pack_archive_extractor.cpp
+    base_launcher_publisher.cpp
     backend_pack_hash.cpp
     backend_pack_https_source.cpp
     backend_pack_installer.cpp
     backend_pack_lifecycle_service.cpp
+    backend_pack_metadata_cache.cpp
+    backend_pack_metadata_refresh.cpp
     backend_pack_metadata_verifier.cpp
     backend_pack_path.cpp
 )
@@ -65,23 +71,50 @@ else()
 endif()
 
 if(WIN32)
-    add_executable(cyxwiz-runtime-bootstrapper main.cpp)
-    target_link_libraries(cyxwiz-runtime-bootstrapper PRIVATE
-        cyxwiz-backend-pack-maintenance
-        cyxwiz-runtime-bootstrap
-    )
-    set_target_properties(cyxwiz-runtime-bootstrapper PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-    )
-    if(NOT CYXWIZ_BUILD_INSTALLER_ONLY)
-        install(TARGETS cyxwiz-runtime-bootstrapper RUNTIME DESTINATION .)
-    endif()
+    set(_cyxwiz_runtime_bootstrapper_source main.cpp)
+else()
+    set(_cyxwiz_runtime_bootstrapper_source main_posix.cpp)
 endif()
+add_executable(cyxwiz-runtime-bootstrapper
+    ${_cyxwiz_runtime_bootstrapper_source}
+)
+target_link_libraries(cyxwiz-runtime-bootstrapper PRIVATE
+    cyxwiz-backend-pack-maintenance
+    cyxwiz-runtime-bootstrap
+)
+set_target_properties(cyxwiz-runtime-bootstrapper PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(NOT CYXWIZ_BUILD_INSTALLER_ONLY)
+    install(TARGETS cyxwiz-runtime-bootstrapper RUNTIME DESTINATION .)
+endif()
+unset(_cyxwiz_runtime_bootstrapper_source)
 
 if(CYXWIZ_BUILD_TESTS)
     enable_testing()
+    add_executable(generate_installer_metadata_fixture
+        generate_installer_metadata_fixture.cpp
+    )
+    target_link_libraries(generate_installer_metadata_fixture PRIVATE
+        nlohmann_json::nlohmann_json
+        OpenSSL::Crypto
+    )
+    set_target_properties(generate_installer_metadata_fixture PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+
     if(WIN32)
-    add_executable(test_runtime_bootstrapper_child test_runtime_child.cpp)
+        set(_cyxwiz_runtime_child_source test_runtime_child.cpp)
+        set(_cyxwiz_runtime_contract_source test_runtime_layout.cpp)
+    else()
+        set(_cyxwiz_runtime_child_source test_runtime_child_posix.cpp)
+        set(_cyxwiz_runtime_contract_source test_runtime_layout_posix.cpp)
+    endif()
+    add_executable(test_runtime_bootstrapper_child
+        ${_cyxwiz_runtime_child_source}
+    )
     target_link_libraries(test_runtime_bootstrapper_child PRIVATE
         cyxwiz-runtime-bootstrap
     )
@@ -89,7 +122,9 @@ if(CYXWIZ_BUILD_TESTS)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
 
-    add_executable(test_runtime_bootstrapper test_runtime_layout.cpp)
+    add_executable(test_runtime_bootstrapper
+        ${_cyxwiz_runtime_contract_source}
+    )
     target_link_libraries(test_runtime_bootstrapper PRIVATE
         cyxwiz-runtime-bootstrap
     )
@@ -101,7 +136,8 @@ if(CYXWIZ_BUILD_TESTS)
         test_runtime_bootstrapper_child
     )
     add_test(NAME runtime_bootstrapper_contract COMMAND test_runtime_bootstrapper)
-    endif()
+    unset(_cyxwiz_runtime_child_source)
+    unset(_cyxwiz_runtime_contract_source)
 
     add_executable(test_backend_pack_state_service
         test_backend_pack_state_service.cpp

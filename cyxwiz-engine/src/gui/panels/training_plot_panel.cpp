@@ -80,6 +80,31 @@ std::string FormatTraceBytes(uint64_t bytes) {
     return out.str();
 }
 
+const char* MaterializationStatusDisplayName(const std::string& status) {
+    if (status == "cache_hit") {
+        return "Cache hit - preprocessing skipped";
+    }
+    if (status == "cache_saved") {
+        return "Prepared and cached";
+    }
+    if (status == "cache_miss") {
+        return "Cache miss - preprocessing rebuilt";
+    }
+    if (status == "cache_stale") {
+        return "Cache stale - preprocessing rebuilt";
+    }
+    if (status == "cache_corrupt") {
+        return "Cache invalid - preprocessing rebuilt";
+    }
+    if (status == "cache_save_failed") {
+        return "Prepared; cache save failed";
+    }
+    if (status == "cache_unsupported") {
+        return "Cache unavailable";
+    }
+    return status.empty() ? "Completed" : status.c_str();
+}
+
 std::string ParentDirectoryForPath(std::string path) {
     while (path.size() > 1 &&
            (path.back() == '\\' || path.back() == '/') &&
@@ -781,6 +806,14 @@ void TrainingPlotPanel::RecordMaterializationProgress(
     const std::string& node_name,
     const std::string& memory_risk_level,
     const std::string& status,
+    uint64_t available_memory_bytes,
+    uint64_t safe_memory_budget_bytes,
+    bool process_memory_detected,
+    uint64_t process_resident_memory_bytes,
+    uint64_t process_private_memory_bytes,
+    uint64_t process_resident_growth_bytes,
+    const std::string& process_private_memory_name,
+    const std::string& process_memory_source,
     const std::string& cache_key,
     const std::string& cache_artifact_path,
     const std::string& cache_manifest_path,
@@ -796,7 +829,15 @@ void TrainingPlotPanel::RecordMaterializationProgress(
     event.node_id = node_id;
     event.progress = std::clamp(progress, 0.0f, 1.0f);
     event.estimated_memory_bytes = estimated_memory_bytes;
+    event.available_memory_bytes = available_memory_bytes;
+    event.safe_memory_budget_bytes = safe_memory_budget_bytes;
     event.memory_risk_level = memory_risk_level;
+    event.process_memory_detected = process_memory_detected;
+    event.process_resident_memory_bytes = process_resident_memory_bytes;
+    event.process_private_memory_bytes = process_private_memory_bytes;
+    event.process_resident_growth_bytes = process_resident_growth_bytes;
+    event.process_private_memory_name = process_private_memory_name;
+    event.process_memory_source = process_memory_source;
     event.processed_items = processed_items;
     event.total_items = total_items;
     event.cache_key = cache_key;
@@ -841,12 +882,32 @@ void TrainingPlotPanel::SetMaterializationComplete(
     materialization_operators_applied_ = operators_applied;
 
     MaterializationProgress event;
-    event.stage = "Complete";
-    event.message = "Materialization completed";
+    event.status = materialization_status_;
+    if (materialization_status_ == "cache_hit") {
+        event.stage = "Cache reused";
+        event.message =
+            "Preprocessing skipped: reused cached materialization.";
+        if (!materialization_events_.empty() &&
+            materialization_events_.back().status == "cache_hit" &&
+            !materialization_events_.back().message.empty()) {
+            event.message = materialization_events_.back().message;
+        }
+    } else if (materialization_status_ == "cache_saved") {
+        event.stage = "Prepared and cached";
+        event.message = "Preprocessing completed and saved to cache.";
+    } else {
+        event.stage = "Complete";
+        event.message = "Materialization completed";
+    }
     event.progress = 1.0f;
-    materialization_events_.push_back(std::move(event));
-    if (materialization_events_.size() > 24) {
-        materialization_events_.erase(materialization_events_.begin());
+    if (!materialization_events_.empty() &&
+        materialization_events_.back().stage == event.stage) {
+        materialization_events_.back() = std::move(event);
+    } else {
+        materialization_events_.push_back(std::move(event));
+        if (materialization_events_.size() > 24) {
+            materialization_events_.erase(materialization_events_.begin());
+        }
     }
 }
 
@@ -1517,10 +1578,16 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
     }
 
     if (!materialization_status_.empty()) {
-        const ImVec4 color = materialization_status_ == "completed"
+        const bool successful = materialization_status_ == "completed" ||
+                                materialization_status_ == "cache_hit" ||
+                                materialization_status_ == "cache_saved";
+        const ImVec4 color = successful
             ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
             : ImVec4(1.0f, 0.75f, 0.25f, 1.0f);
-        ImGui::TextColored(color, "Status: %s", materialization_status_.c_str());
+        ImGui::TextColored(
+            color,
+            "Status: %s",
+            MaterializationStatusDisplayName(materialization_status_));
     }
     if (!materialization_output_dataset_.empty()) {
         ImGui::TextWrapped("Output dataset: %s",
@@ -1585,6 +1652,28 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
             ImGui::Text("Estimated memory: %s",
                         FormatTraceBytes(latest.estimated_memory_bytes).c_str());
         }
+        if (latest.available_memory_bytes > 0) {
+            ImGui::Text("Available RAM / safe budget: %s / %s",
+                        FormatTraceBytes(latest.available_memory_bytes).c_str(),
+                        FormatTraceBytes(latest.safe_memory_budget_bytes).c_str());
+        }
+        if (latest.process_memory_detected) {
+            ImGui::Text("Process resident / growth: %s / +%s",
+                        FormatTraceBytes(
+                            latest.process_resident_memory_bytes).c_str(),
+                        FormatTraceBytes(
+                            latest.process_resident_growth_bytes).c_str());
+            if (latest.process_private_memory_bytes > 0) {
+                ImGui::Text("Process %s: %s",
+                            latest.process_private_memory_name.empty()
+                                ? "private memory"
+                                : latest.process_private_memory_name.c_str(),
+                            FormatTraceBytes(
+                                latest.process_private_memory_bytes).c_str());
+            }
+            ImGui::TextDisabled(
+                "Process RAM; ArrayFire device memory is reported separately.");
+        }
         if (!latest.memory_risk_level.empty()) {
             ImGui::Text("Memory risk: %s", latest.memory_risk_level.c_str());
         }
@@ -1616,6 +1705,13 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         if (event.estimated_memory_bytes > 0) {
             ImGui::Text("Estimated memory: %s",
                         FormatTraceBytes(event.estimated_memory_bytes).c_str());
+        }
+        if (event.process_memory_detected) {
+            ImGui::Text("Process resident: %s (+%s)",
+                        FormatTraceBytes(
+                            event.process_resident_memory_bytes).c_str(),
+                        FormatTraceBytes(
+                            event.process_resident_growth_bytes).c_str());
         }
         if (!event.memory_risk_level.empty()) {
             ImGui::Text("Memory risk: %s", event.memory_risk_level.c_str());
@@ -2582,6 +2678,11 @@ TrainingStatusSnapshot TrainingPlotPanel::GetStatusSnapshot() const {
     snapshot.checkpoint_used = checkpoint_used_;
     snapshot.active_model_provenance = active_model_provenance_;
     snapshot.metric_points = train_loss_.values.size();
+    snapshot.materialization_status = materialization_status_;
+    if (!materialization_events_.empty()) {
+        snapshot.materialization_message =
+            materialization_events_.back().message;
+    }
     snapshot.latest_custom_metrics.reserve(custom_metrics_.size());
     for (const auto& metric : custom_metrics_) {
         if (!metric.values.empty()) {

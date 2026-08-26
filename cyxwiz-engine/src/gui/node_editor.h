@@ -1166,6 +1166,7 @@ private:
 
     // Node management
     void AddNode(NodeType type, const std::string& name);
+    bool CanAddNodeToGraph(NodeType type) const;
     void DeleteNode(int node_id);
     void ClearGraph();
 

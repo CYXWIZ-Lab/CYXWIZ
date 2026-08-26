@@ -101,6 +101,22 @@ void ToolbarPanel::RenderPreferencesDialog() {
 
                     ImGui::Checkbox("Confirm before exit with unsaved changes", &general_confirm_on_exit_);
 
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Materialization Memory");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    ImGui::Text("Hard limit (MB):");
+                    ImGui::SetNextItemWidth(160.0f);
+                    ImGui::InputInt("##materialization_memory_limit_mb",
+                                    &materialization_memory_limit_mb_,
+                                    256,
+                                    1024);
+                    materialization_memory_limit_mb_ = std::clamp(
+                        materialization_memory_limit_mb_, 0, 2000000);
+                    ImGui::TextDisabled(
+                        "0 uses the automatic available-RAM safety budget.");
+
                     ImGui::EndTabItem();
                 }
 

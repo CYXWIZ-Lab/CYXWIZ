@@ -182,6 +182,8 @@ nlohmann::json CompiledConfigJson(
         {"momentum", config.momentum},
         {"beta1", config.beta1},
         {"beta2", config.beta2},
+        {"epsilon", config.epsilon},
+        {"rmsprop_alpha", config.rmsprop_alpha},
         {"weight_decay", config.weight_decay},
         {"compiler_placement_fingerprint",
          config.compiler_placement_fingerprint},

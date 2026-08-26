@@ -291,6 +291,12 @@ set(ENGINE_SOURCES
     src/gui/node_editor_icons.cpp
     src/gui/node_documentation.cpp
     src/gui/console.cpp
+    src/gui/console_session_model.cpp
+    src/gui/console_workbench.cpp
+    src/gui/panels/agent_llm_session.cpp
+    src/gui/panels/local_shell_process.cpp
+    src/gui/panels/local_shell_session.cpp
+    src/gui/panels/terminal_buffer.cpp
     src/gui/viewport.cpp
     src/gui/properties.cpp
     src/gui/properties_advanced.cpp
@@ -350,7 +356,7 @@ set(ENGINE_SOURCES
     src/gui/panels/python_plot_window_registry.cpp
     src/gui/panels/plot_test_control.cpp
     src/gui/panels/plot_output_panel.cpp
-    src/gui/panels/command_window.cpp
+    src/gui/panels/python_repl_session.cpp
     src/gui/panels/script_editor.cpp
     src/gui/panels/script_editor_edit.cpp
     src/gui/panels/script_editor_search.cpp
@@ -659,6 +665,12 @@ set(ENGINE_HEADERS
     src/gui/node_editor.h
     src/gui/node_documentation.h
     src/gui/console.h
+    src/gui/console_session_model.h
+    src/gui/console_workbench.h
+    src/gui/panels/agent_llm_session.h
+    src/gui/panels/local_shell_process.h
+    src/gui/panels/local_shell_session.h
+    src/gui/panels/terminal_buffer.h
     src/gui/console_sink.h  # Compatibility alias to the core runtime sink
     src/gui/viewport.h
     src/gui/properties.h
@@ -671,7 +683,7 @@ set(ENGINE_HEADERS
     src/gui/panels/python_plot_window_registry.h
     src/gui/panels/plot_test_control.h
     src/gui/panels/plot_output_panel.h
-    src/gui/panels/command_window.h
+    src/gui/panels/python_repl_session.h
     src/gui/panels/script_editor.h
     src/gui/panels/table_viewer.h
     src/gui/panels/data_explorer_panel.h
@@ -788,6 +800,7 @@ set(ENGINE_HEADERS
     src/scripting/script_manager.h
     src/scripting/scripting_engine.h
     src/scripting/python_sandbox.h
+    src/scripting/script_output_sink.h
     src/scripting/startup_script_manager.h
     src/scripting/cell.h
     src/scripting/cell_manager.h
@@ -895,6 +908,7 @@ target_link_libraries(cyxwiz-engine PRIVATE
     cyxwiz-protocol
     cyxwiz-plugin-sdk
     nfd::nfd
+    libvterm::vterm
     Arrow::arrow_shared
     Parquet::parquet_shared
     duckdb
@@ -962,6 +976,10 @@ if(APPLE)
         "-framework IOKit"
         "-framework CoreVideo"
     )
+endif()
+
+if(UNIX AND NOT APPLE)
+    target_link_libraries(cyxwiz-engine PRIVATE util)
 endif()
 
 # Copy resources to build directory (use cyxwiz-engine's resources, not root)
@@ -1559,6 +1577,7 @@ set_target_properties(test_text_tokenizer_operator PROPERTIES
 # ===== Test: Computation Truth - TF-IDF + Loss Parity =====
 add_executable(test_computation_truth_tfidf_loss
     tests/computation_truth/test_computation_truth_tfidf_loss.cpp
+    src/core/preprocessing_state.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
 )
 
@@ -1600,6 +1619,37 @@ if(WIN32)
 endif()
 
 set_target_properties(test_computation_truth_tfidf_loss PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Text Vectorizer Fitted-State Persistence =====
+add_executable(test_text_vectorizer_fitted_state
+    tests/test_text_vectorizer_fitted_state.cpp
+    src/core/preprocessing_state.cpp
+    src/core/node_executors/count_vectorizer_operator.cpp
+    src/core/node_executors/tfidf_vectorizer_operator.cpp
+)
+
+target_include_directories(test_text_vectorizer_fitted_state PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_text_vectorizer_fitted_state PRIVATE
+    Arrow::arrow_shared
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_text_vectorizer_fitted_state PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_text_vectorizer_fitted_state PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
@@ -1698,6 +1748,7 @@ set_target_properties(test_language_model_inference_contract PROPERTIES
 # ===== Test: Pipeline Operator Configure Reset Semantics =====
 add_executable(test_operator_configure_resets
     tests/test_operator_configure_resets.cpp
+    src/core/preprocessing_state.cpp
     src/core/node_executors/clustering_operators.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/pca_operator.cpp
@@ -3547,6 +3598,48 @@ set_target_properties(test_runtime_console_commands PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Console session model =====
+add_executable(test_console_session_model
+    tests/test_console_session_model.cpp
+    src/gui/console_session_model.cpp
+    src/gui/console_workbench.cpp
+    src/gui/panels/local_shell_process.cpp
+    src/gui/panels/terminal_buffer.cpp
+)
+
+target_include_directories(test_console_session_model PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_console_session_model PRIVATE
+    imgui::imgui
+    libvterm::vterm
+)
+
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_console_session_model PRIVATE util)
+endif()
+
+if(WIN32)
+    target_compile_definitions(test_console_session_model PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+    # ConPTY attachment differs for console-subsystem parents. CyxWiz is a GUI
+    # application, so exercise the shell backend under the same host topology.
+    set_target_properties(test_console_session_model PROPERTIES
+        WIN32_EXECUTABLE TRUE
+    )
+    target_link_options(test_console_session_model PRIVATE
+        /ENTRY:mainCRTStartup
+    )
+endif()
+
+set_target_properties(test_console_session_model PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== TrainingExecutor test and benchmark runtime =====
 set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     src/core/training_executor.cpp
@@ -4023,6 +4116,7 @@ target_include_directories(test_materialization_cache PRIVATE
 
 target_link_libraries(test_materialization_cache PRIVATE
     Arrow::arrow_shared
+    cyxwiz-backend
 )
 
 if(WIN32)

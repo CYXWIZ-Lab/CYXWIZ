@@ -31,6 +31,7 @@ private:
     char search_buf_[256] = {};
     char install_path_buf_[512] = {};
     bool show_install_popup_ = false;
+    bool close_install_popup_ = false;
     bool is_installing_plugin_ = false;
     uint64_t install_task_id_ = 0;
     std::string install_status_;

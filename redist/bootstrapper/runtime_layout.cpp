@@ -309,18 +309,9 @@ bool SaveActiveRuntimeStateAtomic(
         }
         stream.close();
 #ifdef _WIN32
-        if (std::filesystem::exists(path, filesystem_error)) {
-            if (!::ReplaceFileW(
-                    path.c_str(), temporary.c_str(), nullptr,
-                    REPLACEFILE_WRITE_THROUGH, nullptr, nullptr)) {
-                error = "cannot atomically replace runtime state; Win32 error " +
-                        std::to_string(::GetLastError());
-                std::filesystem::remove(temporary, filesystem_error);
-                return false;
-            }
-        } else if (!::MoveFileExW(
-                       temporary.c_str(), path.c_str(),
-                       MOVEFILE_WRITE_THROUGH | MOVEFILE_REPLACE_EXISTING)) {
+        if (!::MoveFileExW(
+                temporary.c_str(), path.c_str(),
+                MOVEFILE_WRITE_THROUGH | MOVEFILE_REPLACE_EXISTING)) {
             error = "cannot atomically publish runtime state; Win32 error " +
                     std::to_string(::GetLastError());
             std::filesystem::remove(temporary, filesystem_error);

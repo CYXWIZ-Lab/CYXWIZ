@@ -117,25 +117,43 @@ bool ShouldHideGenericParameter(
     }
 
     if (type == NodeType::FillMissingValues ||
-        type == NodeType::StandardScaler) {
+        type == NodeType::StandardScaler ||
+        type == NodeType::TFIDFVectorizer ||
+        type == NodeType::CountVectorizer) {
         const auto mode_it = node.parameters.find("operation_mode");
         const bool transform_only =
             mode_it != node.parameters.end() &&
             mode_it->second == "transform_only";
+        const auto save_it = node.parameters.find("save_state");
+        const bool save_state =
+            save_it != node.parameters.end() &&
+            (save_it->second == "true" || save_it->second == "1");
         if (param.name == "state_path") {
-            return !transform_only;
+            return !transform_only && !save_state;
         }
         if (param.name == "save_state") {
             return transform_only;
         }
         if (param.name == "state_overwrite") {
             const auto path_it = node.parameters.find("state_path");
-            return transform_only || path_it == node.parameters.end() ||
+            return transform_only || !save_state ||
+                   path_it == node.parameters.end() ||
                    path_it->second.empty();
         }
     }
 
     return false;
+}
+
+bool ShouldUseSaveFileDialog(
+    const MLNode& node,
+    const cyxwiz::ParameterDefinition& param) {
+    if (param.name != "state_path") {
+        return false;
+    }
+    const auto mode = node.parameters.find("operation_mode");
+    return mode == node.parameters.end() ||
+           mode->second != "transform_only";
 }
 
 bool ValidateParameter(

@@ -591,7 +591,8 @@ bool BackendPackMetadataVerifier::VerifyManifest(
     const std::filesystem::path& manifest_path,
     const BackendPackCatalogEntry& catalog_entry,
     VerifiedBackendPackManifest& output,
-    std::string& error) const {
+    std::string& error,
+    BackendPackManifestKind expected_kind) const {
     output = {};
     if (catalog_entry.support_status == BackendPackSupportStatus::Blocked ||
         catalog_entry.support_status == BackendPackSupportStatus::Revoked) {
@@ -613,6 +614,7 @@ bool BackendPackMetadataVerifier::VerifyManifest(
             catalog_entry.signing_key_id, false, signed_body, error)) {
         return false;
     }
+    std::string pack_kind;
     if (!HasExactKeys(
             *signed_body,
             {"pack_id", "pack_kind", "backend", "package_version",
@@ -622,7 +624,7 @@ bool BackendPackMetadataVerifier::VerifyManifest(
         !ReadIdentifier(*signed_body, "pack_id", output.pack_id, error) ||
         output.pack_id != catalog_entry.pack_id ||
         !ReadIdentifier(*signed_body, "backend", output.backend, error) ||
-        !IsAllowedBackend(output.backend) || output.backend == "cpu" ||
+        !IsAllowedBackend(output.backend) ||
         !ReadVersion(
             *signed_body, "package_version", output.package_version, error) ||
         !ReadString(*signed_body, "platform", output.platform, error) ||
@@ -633,16 +635,30 @@ bool BackendPackMetadataVerifier::VerifyManifest(
         output.architecture != architecture_ ||
         !ReadIdentifier(
             *signed_body, "runtime_set_id", output.runtime_set_id, error) ||
-        !ReadIdentifier(
-            *signed_body, "companion_base_id",
-            output.companion_base_id, error) ||
-        output.companion_base_id == output.pack_id ||
         !ReadString(*signed_body, "generated_utc", output.generated_utc, error) ||
         !IsUtc(output.generated_utc) ||
-        !(*signed_body)["pack_kind"].is_string() ||
-        (*signed_body)["pack_kind"].get<std::string>() != "backend_pack") {
+        !ReadString(*signed_body, "pack_kind", pack_kind, error)) {
         error = "Signed manifest identity violates schema 1 or this client target";
         return false;
+    }
+    if (expected_kind == BackendPackManifestKind::BackendPack) {
+        if (pack_kind != "backend_pack" || output.backend == "cpu" ||
+            !ReadIdentifier(
+                *signed_body, "companion_base_id",
+                output.companion_base_id, error) ||
+            output.companion_base_id == output.pack_id) {
+            error = "Signed manifest is not an optional backend pack";
+            return false;
+        }
+        output.kind = BackendPackManifestKind::BackendPack;
+    } else {
+        if (pack_kind != "base" || output.backend != "cpu" ||
+            !(*signed_body)["companion_base_id"].is_null()) {
+            error = "Signed manifest is not a CPU base pack";
+            return false;
+        }
+        output.kind = BackendPackManifestKind::Base;
+        output.companion_base_id.clear();
     }
 
     const auto& release = (*signed_body)["cyxwiz_release"];

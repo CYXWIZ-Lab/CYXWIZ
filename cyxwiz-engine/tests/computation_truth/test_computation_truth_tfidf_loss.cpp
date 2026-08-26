@@ -259,6 +259,81 @@ void TestMaterializationMemoryGuardThresholds() {
     Check(overflow.overflow, "overflowing estimate should be marked");
     decision = cyxwiz::EvaluateMaterializationMemory(overflow, snapshot);
     Check(decision.blocked, "overflowing estimate should block");
+
+    cyxwiz::MaterializationMemoryPolicy hard_limit_policy;
+    hard_limit_policy.hard_limit_bytes = 1000;
+    snapshot.available_bytes = 10000;
+    decision = cyxwiz::EvaluateMaterializationMemory(
+        estimate, snapshot, hard_limit_policy);
+    Check(decision.blocked,
+          "configured hard limit should block independently of available RAM");
+    Check(decision.reason.find("configured hard limit") != std::string::npos,
+          "hard-limit decision should explain the configured limit");
+
+    cyxwiz::MaterializationMemoryPolicy unknown_memory_policy;
+    unknown_memory_policy.fallback_available_bytes = 0;
+    snapshot = {};
+    decision = cyxwiz::EvaluateMaterializationMemory(
+        estimate, snapshot, unknown_memory_policy);
+    Check(decision.blocked,
+          "unknown memory without a conservative fallback should fail closed");
+    Check(decision.reason.find("unknown") != std::string::npos,
+          "unknown-memory decision should explain missing system memory");
+
+    constexpr uint64_t kAcceptanceRows = 53043;
+    const auto tfidf_5000 = cyxwiz::EstimateDenseMaterializationMemory(
+        kAcceptanceRows, 5000, static_cast<uint64_t>(sizeof(float)));
+    const auto tfidf_8000 = cyxwiz::EstimateDenseMaterializationMemory(
+        kAcceptanceRows, 8000, static_cast<uint64_t>(sizeof(float)));
+    Check(!tfidf_5000.overflow &&
+              tfidf_5000.raw_output_bytes == 1060860000ULL &&
+              tfidf_5000.estimated_peak_bytes == 3315187500ULL,
+          "5,000-feature TF-IDF acceptance estimate should remain exact");
+    Check(!tfidf_8000.overflow &&
+              tfidf_8000.raw_output_bytes == 1697376000ULL &&
+              tfidf_8000.estimated_peak_bytes == 5304300000ULL,
+          "8,000-feature TF-IDF acceptance estimate should remain exact");
+}
+
+void TestTFIDFBlocksBeforeAllocationHeavyWork() {
+    auto text = FinishStringArray({"alpha beta", "beta gamma"});
+    auto input = arrow::Table::Make(
+        arrow::schema({arrow::field("text", arrow::utf8())}), {text}, 2);
+
+    cyxwiz::TFIDFVectorizerOperator op;
+    std::string error;
+    Check(op.Configure({
+        {"text_col", "text"},
+        {"max_features", "4"},
+    }, error), error);
+
+    cyxwiz::MaterializationMemoryContext memory_context;
+    memory_context.policy.hard_limit_bytes = 1;
+    memory_context.snapshot_override = cyxwiz::MaterializationMemorySnapshot{
+        1024, 1024, true};
+    op.SetMaterializationMemoryContext(memory_context);
+
+    std::vector<cyxwiz::PipelineOperatorProgress> progress_events;
+    op.SetProgressCallback(
+        [&](const cyxwiz::PipelineOperatorProgress& event) {
+            progress_events.push_back(event);
+        });
+
+    const auto result = op.Apply(input);
+    Check(!result.ok(), "TF-IDF should reject a request above the hard limit");
+    Check(result.status().IsCapacityError(),
+          "blocked TF-IDF should return a structured capacity error");
+    Check(progress_events.size() == 1,
+          "blocked TF-IDF should stop after its preflight event");
+    Check(progress_events.front().stage == "TF-IDF memory preflight",
+          "blocked TF-IDF should identify the preflight stage");
+    Check(progress_events.front().status == "blocked",
+          "blocked TF-IDF should expose blocked status");
+    Check(progress_events.front().memory_risk_level == "blocked",
+          "blocked TF-IDF should expose blocked memory risk");
+    Check(progress_events.front().message.find("configured hard limit") !=
+              std::string::npos,
+          "blocked TF-IDF should explain the configured hard limit");
 }
 
 void TestBoundedTFIDFMaterialization() {
@@ -685,6 +760,7 @@ int main(int argc, char** argv) {
         argc > 0 ? fs::path(argv[0]) : fs::path{}, argc > 1 ? argv[1] : nullptr);
     const auto& cases = fixture.at("cases");
     TestMaterializationMemoryGuardThresholds();
+    TestTFIDFBlocksBeforeAllocationHeavyWork();
     TestBoundedTFIDFMaterialization();
     TestTFIDFNGramMaterialization();
     TestArrayFireCpuTrainingCoreTruth(cases);

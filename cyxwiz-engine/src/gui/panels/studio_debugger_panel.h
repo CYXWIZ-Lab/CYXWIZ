@@ -11,6 +11,7 @@
 #include "../../core/async_task_manager.h"
 #include "../icons.h"
 #include <cstddef>
+#include <chrono>
 #include <imgui.h>
 #include <functional>
 #include <memory>
@@ -91,6 +92,7 @@ public:
     void SetFocusNodeCallback(FocusNodeCallback callback) { focus_node_callback_ = std::move(callback); }
 
     void SetSession(const StudioDebuggerSnapshot& session);
+    void ShowRuntimeProfile();
     void ShowNodeExplanation(int node_id);
     void Clear();
 
@@ -162,7 +164,7 @@ private:
     int selected_trace_index_ = -1;
     bool trace_settings_initialized_ = false;
     bool trace_persist_enabled_ = true;
-    int trace_persist_every_n_events_ = 10;
+    int trace_persist_every_n_events_ = 1000;
     int trace_max_recent_events_ = 200;
     StudioDebuggerSection active_section_ = StudioDebuggerSection::Overview;
     bool section_selection_pending_ = false;
@@ -181,6 +183,7 @@ private:
     bool inspector_expanded_ = false;
     bool run_in_progress_ = false;
     std::string run_status_message_;
+    std::chrono::steady_clock::time_point next_training_trace_refresh_{};
 };
 
 } // namespace cyxwiz

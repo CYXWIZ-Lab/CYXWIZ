@@ -59,11 +59,25 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
         if (candidate.manifest) {
             record.backend = candidate.manifest->backend;
             record.package_version = candidate.manifest->package_version;
+            record.runtime_set_id = candidate.manifest->runtime_set_id;
+            record.companion_base_id =
+                candidate.manifest->companion_base_id;
             record.download_size_bytes = candidate.manifest->archive.size;
             record.licenses = candidate.manifest->licenses;
             record.provider_requirements =
                 candidate.manifest->compatibility.provider_types;
-            installed = FindActiveBackend(active_runtime, record.backend);
+            if (record.backend == "cpu") {
+                if (!active_runtime.base_pack_id.empty()) {
+                    record.installed = true;
+                    record.installed_pack_id = active_runtime.base_pack_id;
+                    record.active =
+                        record.installed_pack_id == record.pack_id;
+                    record.update_available =
+                        record.installed_pack_id != record.pack_id;
+                }
+            } else {
+                installed = FindActiveBackend(active_runtime, record.backend);
+            }
         } else {
             installed = FindActivePack(active_runtime, record.pack_id);
             if (installed) record.backend = installed->backend;
@@ -77,6 +91,23 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
                 record.installed_pack_id != record.pack_id;
         }
         records.push_back(std::move(record));
+    }
+
+    if (!active_runtime.base_pack_id.empty()) {
+        const bool base_represented = std::any_of(
+            records.begin(), records.end(), [&](const auto& record) {
+                return record.backend == "cpu" &&
+                       record.installed_pack_id == active_runtime.base_pack_id;
+            });
+        if (!base_represented) {
+            BackendPackManagerRecord record;
+            record.backend = "cpu";
+            record.pack_id = active_runtime.base_pack_id;
+            record.installed_pack_id = active_runtime.base_pack_id;
+            record.installed = true;
+            record.active = true;
+            records.push_back(std::move(record));
+        }
     }
 
     for (const auto& installed : active_runtime.packs) {

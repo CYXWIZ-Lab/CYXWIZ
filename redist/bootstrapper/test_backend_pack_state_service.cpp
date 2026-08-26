@@ -101,6 +101,22 @@ int main() {
     int failures = 0;
     {
         Fixture fixture;
+        std::filesystem::remove(fixture.root / "active-runtime.json");
+        cyxwiz::runtime::BackendPackStateService service(fixture.root);
+        const auto initialized = service.InitializeBase("set-v1", "base-v1");
+        const auto repeated = service.InitializeBase("set-v1", "base-v1");
+        failures += !Expect(
+            initialized.status ==
+                    cyxwiz::runtime::BackendPackStateStatus::Completed &&
+                initialized.current.has_value() &&
+                initialized.current->generation == 1 &&
+                initialized.current->base_pack_id == "base-v1" &&
+                repeated.status ==
+                    cyxwiz::runtime::BackendPackStateStatus::InvalidRuntime,
+            "fresh initialization must publish generation 1 exactly once");
+    }
+    {
+        Fixture fixture;
         std::vector<cyxwiz::runtime::BackendPackStateStage> stages;
         cyxwiz::runtime::BackendPackStateService service(
             fixture.root, [] { return false; },

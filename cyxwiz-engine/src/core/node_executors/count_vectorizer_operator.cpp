@@ -185,42 +185,6 @@ bool IsStringLikeColumn(const std::shared_ptr<arrow::ChunkedArray>& column,
     return true;
 }
 
-const char* MaterializationMemoryProgressStatus(
-    MaterializationMemoryRisk risk) {
-    switch (risk) {
-    case MaterializationMemoryRisk::Safe:
-        return "running";
-    case MaterializationMemoryRisk::Warning:
-        return "warning";
-    case MaterializationMemoryRisk::Risky:
-        return "risky";
-    case MaterializationMemoryRisk::Blocked:
-        return "blocked";
-    }
-    return "running";
-}
-
-std::string BuildCountMemoryPreflightMessage(
-    const MaterializationMemoryEstimate& estimate,
-    const MaterializationMemoryDecision& decision) {
-    std::ostringstream ss;
-    ss << "CountVectorizer memory preflight: risk="
-       << MaterializationMemoryRiskName(decision.risk)
-       << ", rows=" << estimate.rows
-       << ", max_features=" << estimate.output_features
-       << ", raw=" << FormatMaterializationBytes(estimate.raw_output_bytes)
-       << ", estimated_peak="
-       << FormatMaterializationBytes(estimate.estimated_peak_bytes)
-       << ", available="
-       << FormatMaterializationBytes(decision.available_bytes)
-       << ", safe_budget="
-       << FormatMaterializationBytes(decision.safe_budget_bytes)
-       << ". " << decision.reason
-       << ". Suggestion: Reduce CountVectorizer max_features, sample fewer "
-          "rows first, or use a future sparse/chunked materialization path.";
-    return ss.str();
-}
-
 } // namespace
 
 bool CountVectorizerOperator::Configure(
@@ -236,6 +200,7 @@ bool CountVectorizerOperator::Configure(
     norm_ = "l2";
     stop_words_ = "english";
     output_format_ = "dense";
+    state_options_ = {};
 
     auto it = params.find("text_col");
     if (it == params.end() || it->second.empty()) {
@@ -308,6 +273,37 @@ bool CountVectorizerOperator::Configure(
         }
     }
 
+    return ParseFittedPreprocessingOptions(
+        params, GetName(), state_options_, error);
+}
+
+std::map<std::string, std::string>
+CountVectorizerOperator::BuildFittedConfiguration() const {
+    return {
+        {"text_col", text_col_},
+        {"max_features", std::to_string(max_features_)},
+        {"norm", norm_},
+        {"ngram_range", std::to_string(ngram_min_) + "," +
+                            std::to_string(ngram_max_)},
+        {"stop_words", stop_words_},
+        {"binary", binary_ ? "true" : "false"},
+        {"output_format", output_format_},
+    };
+}
+
+bool CountVectorizerOperator::CollectCacheDependencies(
+    std::vector<PipelineOperatorCacheDependency>& dependencies,
+    std::string& error) const {
+    if (!state_options_.IsTransformOnly()) {
+        return true;
+    }
+    FittedTextVectorizerState state;
+    if (!LoadFittedTextVectorizerState(
+            state_options_.state_path, GetName(), BuildFittedConfiguration(),
+            static_cast<size_t>(max_features_), state, error)) {
+        return false;
+    }
+    dependencies.push_back({"fitted_state", state_options_.state_path});
     return true;
 }
 
@@ -351,20 +347,48 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "' must be string/large_string, got '" + bad_type + "'");
     }
 
+    const auto fitted_configuration = BuildFittedConfiguration();
+    FittedTextVectorizerState fitted_state;
+    std::vector<CountTermStats> fitted_terms;
+    if (state_options_.IsTransformOnly()) {
+        std::string state_error;
+        if (!LoadFittedTextVectorizerState(
+                state_options_.state_path, GetName(), fitted_configuration,
+                static_cast<size_t>(max_features_), fitted_state,
+                state_error)) {
+            return arrow::Status::Invalid(state_error);
+        }
+        fitted_terms.reserve(fitted_state.features.size());
+        for (const auto& feature : fitted_state.features) {
+            CountTermStats term;
+            term.term = feature.term;
+            fitted_terms.push_back(std::move(term));
+        }
+        spdlog::info(
+            "CountVectorizer: Transform Only loaded '{}' (fit_rows={}, "
+            "features={}, schema={})",
+            state_options_.state_path, fitted_state.fit_rows,
+            fitted_terms.size(), fitted_state.input_schema_fingerprint);
+    }
+
     const uint64_t planned_rows =
         static_cast<uint64_t>(std::max<int64_t>(0, text_column->length()));
     if (planned_rows == 0) {
         return arrow::Status::Invalid("CountVectorizer: empty corpus");
     }
-    const uint64_t planned_features =
-        static_cast<uint64_t>(std::max(1, max_features_));
+    const uint64_t planned_features = state_options_.IsTransformOnly()
+        ? static_cast<uint64_t>(std::max<size_t>(1, fitted_terms.size()))
+        : static_cast<uint64_t>(std::max(1, max_features_));
     const auto preflight_estimate = EstimateDenseMaterializationMemory(
         planned_rows, planned_features, static_cast<uint64_t>(sizeof(float)));
     const auto preflight_decision = EvaluateMaterializationMemory(
-        preflight_estimate, DetectMaterializationMemorySnapshot());
+        preflight_estimate, GetMaterializationMemoryContext());
     const std::string preflight_message =
-        BuildCountMemoryPreflightMessage(
-            preflight_estimate, preflight_decision);
+        BuildMaterializationMemoryPreflightMessage(
+            "CountVectorizer", "max_features",
+            preflight_estimate, preflight_decision,
+            "Reduce CountVectorizer max_features, sample fewer rows first, "
+            "or use a sparse/chunked materialization path when supported.");
     uint64_t planned_cells = 0;
     if (!CheckedMulU64(planned_rows, planned_features, planned_cells)) {
         planned_cells = std::numeric_limits<uint64_t>::max();
@@ -373,7 +397,7 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         PipelineOperatorProgress event;
         event.stage = "CountVectorizer memory preflight";
         event.message = preflight_message;
-        event.status = MaterializationMemoryProgressStatus(
+        event.status = MaterializationMemoryRiskToProgressStatus(
             preflight_decision.risk);
         event.progress = 0.03f;
         event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
@@ -387,9 +411,12 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         return arrow::Status::CapacityError(
             "Materialization blocked: " + preflight_message);
     }
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
 
     std::vector<std::string> texts;
-    if (!ReadColumnAsStrings(text_column, texts, bad_type)) {
+    if (!ReadColumnAsStrings(
+            text_column, texts, bad_type, GetCancellationQuery())) {
+        ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         return arrow::Status::TypeError(
             "CountVectorizer: text column '" + text_col_ +
             "' must be string/large_string, got '" + bad_type + "'");
@@ -415,6 +442,9 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     doc_token_counts.reserve(n);
 
     for (size_t row = 0; row < texts.size(); ++row) {
+        if ((row & 1023) == 0) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        }
         auto tokenized = TextProcessing::Tokenize(
             texts[row], "word", 2, /*lowercase=*/true,
             /*remove_punctuation=*/true);
@@ -434,13 +464,21 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         for (const auto& token : tokens) {
             counts[token]++;
         }
-        for (const auto& pair : counts) {
-            auto& stats = term_stats_by_name[pair.first];
-            stats.term = pair.first;
-            stats.doc_freq++;
-            stats.corpus_count += pair.second;
+        if (!state_options_.IsTransformOnly()) {
+            for (const auto& pair : counts) {
+                auto& stats = term_stats_by_name[pair.first];
+                stats.term = pair.first;
+                stats.doc_freq++;
+                stats.corpus_count += pair.second;
+            }
         }
         doc_counts.push_back(std::move(counts));
+    }
+
+    if (state_options_.IsTransformOnly()) {
+        for (auto& term : fitted_terms) {
+            term_stats_by_name.emplace(term.term, std::move(term));
+        }
     }
 
     const size_t full_vocab = term_stats_by_name.size();
@@ -525,7 +563,10 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                 "CountVectorizer: label column '" + label_col_ + "' not found");
         }
         std::string lbad;
-        if (!ReadLabelColumnAsInt(label_column, labels, class_names, lbad)) {
+        if (!ReadLabelColumnAsInt(
+                label_column, labels, class_names, lbad,
+                GetCancellationQuery())) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
             return arrow::Status::TypeError(
                 "CountVectorizer: label column '" + label_col_ +
                 "' has unsupported type '" + lbad + "'");
@@ -557,6 +598,9 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     for (size_t r = 0; r < n; ++r) {
+        if ((r & 1023) == 0) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        }
         std::vector<float> row_values(kept, 0.0f);
         const auto& counts = doc_counts[r];
         const size_t token_count = doc_token_counts[r];
@@ -584,9 +628,14 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             const float p = 0.65f + 0.25f *
                 (static_cast<float>(r + 1) / static_cast<float>(n));
             report_progress(
-                "Building count rows",
-                "Built " + std::to_string(r + 1) +
-                    "/" + std::to_string(n) + " count rows",
+                state_options_.IsTransformOnly()
+                    ? "Transforming with fitted Count state"
+                    : "Building count rows",
+                (state_options_.IsTransformOnly()
+                     ? "Transformed "
+                     : "Built ") +
+                    std::to_string(r + 1) + "/" + std::to_string(n) +
+                    " count rows",
                 p,
                 bounded_memory_estimate,
                 static_cast<uint64_t>(r + 1) * static_cast<uint64_t>(kept),
@@ -622,10 +671,36 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     auto out_schema = arrow::schema(fields);
     auto out_table = arrow::Table::Make(out_schema, arrays, static_cast<int64_t>(n));
 
+    if (!state_options_.IsTransformOnly() && state_options_.save_state) {
+        std::vector<FittedTextVectorizerFeature> state_features;
+        state_features.reserve(all_terms.size());
+        for (const auto& term : all_terms) {
+            state_features.push_back({term.term, 1.0});
+        }
+        const auto schema_fingerprint =
+            FingerprintPreprocessingSchema(input->schema());
+        std::string state_error;
+        if (!SaveFittedTextVectorizerState(
+                state_options_.state_path, GetName(),
+                static_cast<int64_t>(n), schema_fingerprint,
+                fitted_configuration, state_features,
+                state_options_.state_overwrite, state_error)) {
+            return arrow::Status::IOError(
+                GetName() + ": failed to save fitted state: " + state_error);
+        }
+        spdlog::info(
+            "CountVectorizer: saved fitted state '{}' (fit_rows={}, "
+            "features={}, schema={})",
+            state_options_.state_path, n, state_features.size(),
+            schema_fingerprint);
+    }
+
     spdlog::info("CountVectorizer: {} docs x {} features (capped from {}), "
-                 "binary={}, norm={}, stop_words={}, ngram_range={},{} classes={}",
+                 "binary={}, norm={}, stop_words={}, ngram_range={},{} "
+                 "classes={}, mode={}",
                  n, kept, full_vocab, binary_, norm_, stop_words_,
-                 ngram_min_, ngram_max_, class_names.size());
+                 ngram_min_, ngram_max_, class_names.size(),
+                 state_options_.operation_mode);
     report_progress(
         "CountVectorizer materialization complete",
         "Materialized " + std::to_string(n) + " rows x " +

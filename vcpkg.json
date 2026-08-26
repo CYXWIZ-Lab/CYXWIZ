@@ -45,6 +45,7 @@
       "platform": "!osx"
     },
     "nativefiledialog-extended",
+    "libvterm",
     "duckdb",
     "libsndfile",
     "fftw3",

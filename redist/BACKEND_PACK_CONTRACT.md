@@ -13,7 +13,7 @@ CyxWiz owns one application-local runtime root selected by an app-level native
 bootstrapper:
 
 ```text
-cyxwiz-runtime-bootstrapper.exe       # Windows app-level launcher
+cyxwiz-runtime-bootstrapper[.exe]     # app-level launcher
 cyxwiz-installer[.exe]
 cyxwiz-backend-pack-installer[.exe]
 runtime/
@@ -36,16 +36,65 @@ runtime/
   active-runtime.json
 ```
 
-The bootstrapper is installed beside `runtime/`, not inside a versioned base.
-It resolves the selected Engine from `active-runtime.json`; a base archive does
-not contain an independently launchable PATH-mutating script.
-The installer helper is installed beside the bootstrapper. It is a separate
-process that does not link the backend or ArrayFire runtime, so it can replace
-an inactive pack without keeping any pack DLL loaded.
+The stable bootstrapper is installed beside `runtime/` and retained inside the
+signed versioned base as its verified publication source. Fresh base delivery
+rechecks its signed size/hash and atomically publishes it before activating
+`active-runtime.json`. It resolves the selected Engine from that state; a base
+archive does not contain an independently launchable PATH-mutating script.
+The bootstrapper resolves installer/repair executables from the active base so
+the full GUI and helper dependency closure stays versioned instead of being
+duplicated at the product root. The helper remains a separate process that
+does not link the backend or ArrayFire runtime, so it can replace an inactive
+pack without keeping any pack DLL loaded.
 
-The graphical `cyxwiz-installer` component manager is also installed beside
-the bootstrapper (`.exe` on Windows). It owns Recommended, CPU-only, and Custom
-package consent and launches the signed delivery helper with an exact pack ID.
+Windows and POSIX launchers enforce the same state and child-process contract.
+Linux and macOS resolve the active base through the shared runtime validator,
+replace inherited loader paths with only the active package directories,
+remove ArrayFire, Python, and loader-injection overrides, and use exact
+`fork`/`exec` argument vectors for Engine, Installer, and deferred Repair.
+They do not invoke a shell or restore the legacy PATH-mutating launch script.
+
+Product integration is published only after the CPU base and stable launcher
+pass signed delivery and qualification. Windows registers Start Menu links and
+an Apps & Features maintenance entry in the selected user or machine scope;
+Linux publishes `.desktop` entries in the matching applications directory;
+macOS publishes Engine and Installer `.app` bundles in the product root. These
+entries always target the stable bootstrapper, with maintenance using
+`--installer`, and never modify global loader variables. Registration failure
+does not invalidate an already qualified runtime, but it is surfaced as a
+warning so repair can retry it. Full product removal is not implied by this
+registration boundary.
+
+Unregistration is a separate idempotent OS-adapter operation. It removes only
+the selected-scope CyxWiz registration entries and rejects altered Linux or
+macOS integration instead of recursively deleting unknown content. It does not
+remove `runtime/`, immutable bases, backend packs, or the product root; those
+belong to the later full-product removal transaction.
+
+Registration atomically publishes `.cyxwiz-installation.json` in the normalized
+product root before OS integration. Schema 1 contains only the receipt kind, a
+32-character lowercase hexadecimal installation ID, the exact UTF-8 product
+root, and the current-user or all-users scope. The document is bounded to
+16 KiB, must be a regular non-symlink file, rejects unknown fields, and is not
+silently replaced when invalid. Re-registration preserves the existing ID and
+locks the scope. Unregistration and full-product removal fail closed unless the
+receipt still belongs to the requested root and scope. A later removal
+finalizer must independently pin and revalidate the active runtime set and
+generation; the receipt alone never authorizes recursive deletion.
+
+Removal authorization is a separate non-destructive boundary. Capture requires
+the product root to be an exact direct directory rather than a symlinked or
+lexically redirected path, and requires an exact regular stable launcher plus
+a fully resolvable active runtime. It pins the receipt ID, scope, runtime set,
+generation, base pack, and sorted optional-pack inventory. Revalidation repeats
+all path, receipt, launcher, and runtime resolution and rejects any difference.
+Only a deferred finalizer may consume that typed authorization to quarantine a
+product root after the installer and stable bootstrapper have exited.
+
+The graphical `cyxwiz-installer` component manager remains in the signed
+versioned base and is resolved by the stable bootstrapper (`.exe` on Windows).
+It owns Recommended, CPU-only, and Custom package consent and launches the
+same-base signed delivery helper with an exact pack ID.
 It uses a portable ImGui/GLFW shell and a narrow desktop adapter; it must not
 link the CyxWiz compute backend or ArrayFire. Windows uses WinHTTP and
 `CreateProcessW`; Linux and macOS use the same certificate-verifying HTTPS
@@ -55,13 +104,33 @@ activation, and no-global-environment contract. Recommendation is deliberately
 conservative: an OS with no trusted hardware classification defaults to the
 CPU-only choice instead of guessing an accelerator pack.
 
+A fresh setup may keep its app-bundled trust store and signed catalog under a
+separate absolute metadata root while the customer selects an empty runtime
+destination. The exact helper verifies that source, publishes the parsed trust
+store and verified manifest files into the destination cache with the signed
+catalog published last, and only then stages and qualifies the CPU base.
+Maintenance reads metadata from the installed runtime cache. Current-user
+installation is the least-privilege default; an all-users scope is an explicit
+choice and requires platform authorization. Neither scope changes the global
+loader environment.
+
+Installer packaging accepts that app-bundled source through
+`CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR`. Its contents are installed below
+`runtime/` and must contain `trust/trusted-keys.json`,
+`catalogs/current.json`, and one cached manifest for every catalog entry. A
+staged installer without a verified CPU base and at least one optional pack is
+not a production-capable component manager and must fail package verification.
+Release jobs provide release-signed metadata; native CI uses ephemeral keys and
+`packages.invalid` URLs only to exercise parsing, signatures, and UI discovery.
+
 The CPU backend is part of the required base and cannot be represented as an
 optional pack. A process resolves exactly one base and at most one pack per
 optional backend. Activation replaces `active-runtime.json` atomically only
 after all staged files, notices, manifests, and compatibility gates pass.
 
 No normal workflow modifies the machine-wide `PATH`, `LD_LIBRARY_PATH`, or
-equivalent. Hardware drivers and vendor providers remain host prerequisites.
+equivalent. The launcher supplies a bounded child-only loader environment.
+Hardware drivers and vendor providers remain host prerequisites.
 
 `trusted-keys.json` is an app-bundled schema-1 document with exactly
 `schema_version` and `keys`. Each key entry contains exactly `key_id`,
@@ -185,6 +254,16 @@ the runtime never follows a mutable unsigned pointer or derives a manifest path
 from its HTTPS host. A valid catalog remains browsable when an individual
 manifest is absent or invalid, but delivery for that entry stays disabled.
 
+Release assembly emits two views from the same verified bytes. The hosted view
+places each signed archive beside its catalog-authorized manifest under
+`catalogs/manifests/`. The bootstrap view contains the app-bundled trust root,
+the identical signed catalog, and the identical signed manifests but excludes
+archives. The small installer consumes the bootstrap view and downloads
+archives only after explicit selection. Repository publication is atomic and
+must reject an untrusted signature, archive hash/size mismatch, missing
+companion base, runtime-set/ABI mismatch, ambiguous signing key, or catalog
+private key that does not match the bundled public trust root.
+
 ## Enterprise, Offline, and Proxy Policy
 
 Runtime inspection is local-only. `show backend packs`,
@@ -213,6 +292,18 @@ be copied into support output. Redirects remain disabled on every platform.
 Failure to reach the network leaves the verified local catalog and installed
 runtime inspectable and does not downgrade to unsigned metadata.
 
+The graphical installer's explicit Refresh action may fetch a configured
+HTTPS catalog and its referenced manifests. Each document is bounded to 16
+MiB. The packaged trust store verifies the catalog signature, catalog policy,
+manifest digest, manifest signature, client version, platform, and
+architecture before publication. Verified manifests are atomically published
+first and the catalog last under the selected runtime root, never beside the
+installer executable; any source, verification, or publication failure leaves
+the previous verified catalog authoritative. The catalog endpoint must be a
+direct, non-redirecting HTTPS URL. Production builds configure it with
+`CYXWIZ_INSTALLER_CATALOG_URL`; local integration runs may override it with
+`--catalog-url`.
+
 ## Active Runtime
 
 `active-runtime.json` is local transaction state, not signed publication
@@ -234,6 +325,22 @@ passes that identity to the shared qualification adapter. It activates only a
 `supported` pack with a qualified result, and only if the active runtime state
 is unchanged when qualification completes. Diagnostic, missing-adapter,
 failed, cancelled, and stale-evidence results leave a complete pack inactive.
+
+## Customer Verification Summary
+
+The consolidated installer reads the shared machine-local qualification
+snapshot; it does not run a second probe registry. It presents route outcomes
+from typed status and count fields and never renders internal matrix IDs,
+evidence IDs, benchmark IDs, ticket names, or raw probe messages as customer
+text. Crashes, timeouts, failed operations, unavailable operations, stale
+evidence, and incomplete evidence remain distinct results with bounded next
+actions.
+
+A route may be labeled `Best measured` only when at least two active routes
+passed the complete operation contract and contain finite positive samples
+from the same fixed CyxWiz performance benchmark. One measured route is shown
+as evidence without a comparative claim. Failed, inactive, unmatched, stale,
+or differently benchmarked routes are never performance recommendations.
 
 ## Repair and Removal
 

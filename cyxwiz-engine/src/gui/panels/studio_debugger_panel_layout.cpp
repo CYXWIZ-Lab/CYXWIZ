@@ -9,6 +9,58 @@ namespace cyxwiz {
 
 namespace {
 
+struct RunModeOption {
+    StudioDebuggerRunMode mode;
+    const char* label;
+    const char* description;
+};
+
+constexpr std::array<RunModeOption, 5> kRunModeOptions = {{
+    {StudioDebuggerRunMode::FullWorkflow,
+     "Full Workflow",
+     "Runs compile, Preflight, Smoke Run, Local Debug, and Runtime Trace. "
+     "Success requires every required stage to pass. Smoke Run currently "
+     "supports text graphs only."},
+    {StudioDebuggerRunMode::Preflight,
+     "Preflight",
+     "Compiles the graph and checks dataset, preprocessing, shape, loss, and "
+     "training readiness. It does not execute model forward or backward passes."},
+    {StudioDebuggerRunMode::LocalDebug,
+     "Local Debug",
+     "Compiles and validates the graph, then executes one bounded synthetic "
+     "batch through forward, loss, backward, gradient, and optimizer checks. "
+     "Timings are host wall-clock evidence; device kernel time is not claimed."},
+    {StudioDebuggerRunMode::SmokeRun,
+     "Smoke Run",
+     "Exercises supported preprocessing and a bounded real-data training sample "
+     "before full training. The current implementation supports text graphs "
+     "only and reports other graph types as unsupported."},
+    {StudioDebuggerRunMode::RuntimeTrace,
+     "Runtime Trace",
+     "Inspects the selected persisted training trace, including runtime status, "
+     "warnings, transfers, synchronizations, fallbacks, and crash evidence. It "
+     "does not execute the graph."}
+}};
+
+const RunModeOption& GetRunModeOption(StudioDebuggerRunMode mode) {
+    const auto option = std::find_if(
+        kRunModeOptions.begin(), kRunModeOptions.end(),
+        [mode](const RunModeOption& candidate) {
+            return candidate.mode == mode;
+        });
+    return option == kRunModeOptions.end() ? kRunModeOptions.front() : *option;
+}
+
+void RenderRunModeTooltip(const RunModeOption& option) {
+    ImGui::BeginTooltip();
+    ImGui::TextUnformatted(option.label);
+    ImGui::Separator();
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 34.0f);
+    ImGui::TextUnformatted(option.description);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+}
+
 std::string CompactRunLabel(const std::string& run_id) {
     constexpr size_t kVisibleSuffix = 28;
     if (run_id.empty()) {
@@ -52,9 +104,7 @@ void StudioDebuggerPanel::SelectSection(StudioDebuggerSection section) {
 }
 
 void StudioDebuggerPanel::RenderToolbar() {
-    const std::array<const char*, 5> run_modes = {
-        "Full Workflow", "Preflight", "Local Debug", "Smoke Run", "Runtime Trace"
-    };
+    const bool controls_disabled = run_in_progress_;
     bool open_options_popup = false;
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 6.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 4.0f));
@@ -68,18 +118,29 @@ void StudioDebuggerPanel::RenderToolbar() {
         ImGui::TableNextRow();
 
         ImGui::TableSetColumnIndex(0);
-        int run_mode_index = static_cast<int>(run_mode_);
+        const RunModeOption& selected_mode = GetRunModeOption(run_mode_);
         ImGui::SetNextItemWidth(-FLT_MIN);
-        if (ImGui::Combo("##StudioDebuggerRunMode", &run_mode_index,
-                         run_modes.data(), static_cast<int>(run_modes.size()))) {
-            run_mode_ = static_cast<StudioDebuggerRunMode>(run_mode_index);
+        if (ImGui::BeginCombo("##StudioDebuggerRunMode", selected_mode.label)) {
+            for (const auto& option : kRunModeOptions) {
+                const bool selected = option.mode == run_mode_;
+                if (ImGui::Selectable(option.label, selected)) {
+                    run_mode_ = option.mode;
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                    RenderRunModeTooltip(option);
+                }
+                if (selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
         }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Debugger run mode");
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+            RenderRunModeTooltip(GetRunModeOption(run_mode_));
         }
 
         ImGui::TableSetColumnIndex(1);
-        if (run_in_progress_) {
+        if (controls_disabled) {
             ImGui::BeginDisabled();
         }
         const ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive);
@@ -88,9 +149,10 @@ void StudioDebuggerPanel::RenderToolbar() {
                               ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,
                               ImGui::GetStyleColorVec4(ImGuiCol_Header));
-        if (ImGui::Button(run_in_progress_
-                ? ICON_FA_CLOCK " Running"
-                : ICON_FA_PLAY " Run", ImVec2(-FLT_MIN, 0.0f))) {
+        const char* run_label = controls_disabled
+            ? ICON_FA_CLOCK " Running##StudioDebuggerRunAction"
+            : ICON_FA_PLAY " Run##StudioDebuggerRunAction";
+        if (ImGui::Button(run_label, ImVec2(-FLT_MIN, 0.0f))) {
             if (run_debug_callback_) {
                 const StudioDebuggerRunMode mode = run_mode_;
                 const int sample_index = selected_sample_index_;
@@ -148,7 +210,7 @@ void StudioDebuggerPanel::RenderToolbar() {
             }
         }
         ImGui::PopStyleColor(3);
-        if (run_in_progress_) {
+        if (controls_disabled) {
             ImGui::EndDisabled();
         }
 
@@ -212,14 +274,14 @@ void StudioDebuggerPanel::RenderToolbar() {
         RenderTraceSettings();
         ImGui::Separator();
         ImGui::TextDisabled("SESSION");
-        if (run_in_progress_) {
+        if (controls_disabled) {
             ImGui::BeginDisabled();
         }
         if (ImGui::Button("Clear current session", ImVec2(-FLT_MIN, 0.0f))) {
             Clear();
             ImGui::CloseCurrentPopup();
         }
-        if (run_in_progress_) {
+        if (controls_disabled) {
             ImGui::EndDisabled();
         }
         ImGui::EndPopup();
@@ -270,7 +332,8 @@ void StudioDebuggerPanel::RenderSessionStatusStrip() {
     if (show_execution) {
         ImGui::SameLine();
         if (session_.execution.available) {
-            ImGui::TextDisabled("|  %s:%d  %s",
+            ImGui::TextDisabled("|  %s  %s:%d  %s",
+                session_.execution.evidence_scope.c_str(),
                 session_.execution.effective_backend.empty()
                     ? "unknown" : session_.execution.effective_backend.c_str(),
                 session_.execution.effective_device_id,
@@ -284,11 +347,12 @@ void StudioDebuggerPanel::RenderSessionStatusStrip() {
 }
 
 void StudioDebuggerPanel::RenderPreprocessingSampleSelector() {
+    const bool controls_disabled = run_in_progress_;
     ImGui::BeginGroup();
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("Preprocessing sample");
     ImGui::SameLine();
-    if (run_in_progress_) {
+    if (controls_disabled) {
         ImGui::BeginDisabled();
     }
     if (ImGui::SmallButton("-##StudioDebuggerPreprocessingSample")) {
@@ -300,7 +364,7 @@ void StudioDebuggerPanel::RenderPreprocessingSampleSelector() {
     if (ImGui::SmallButton("+##StudioDebuggerPreprocessingSample")) {
         ++selected_sample_index_;
     }
-    if (run_in_progress_) {
+    if (controls_disabled) {
         ImGui::EndDisabled();
     }
     ImGui::SameLine();

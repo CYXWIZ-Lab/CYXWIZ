@@ -1,15 +1,25 @@
 #pragma once
 
 #include "crash_run_recorder.h"
+#include <algorithm>
 #include <cstdint>
 #include <deque>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cyxwiz {
+
+inline bool IsTrainingTaskAttentionStatus(std::string_view status) {
+    return status == "warning" ||
+        status == "error" ||
+        status == "failed" ||
+        status == "cancel_requested" ||
+        status == "cancelled";
+}
 
 struct PinMemoryTransferStatus;
 struct ArrayFireNativeCpuFallbackEvent;
@@ -48,7 +58,15 @@ struct TrainingTraceEvent {
     int node_id = -1;
     std::string node_name;
     uint64_t estimated_memory_bytes = 0;
+    uint64_t available_memory_bytes = 0;
+    uint64_t safe_memory_budget_bytes = 0;
     std::string memory_risk_level;
+    bool process_memory_detected = false;
+    uint64_t process_resident_memory_bytes = 0;
+    uint64_t process_private_memory_bytes = 0;
+    uint64_t process_resident_growth_bytes = 0;
+    std::string process_private_memory_name;
+    std::string process_memory_source;
     uint64_t processed_items = 0;
     uint64_t total_items = 0;
     bool pin_memory_requested = false;
@@ -167,9 +185,34 @@ struct TrainingTraceSummary {
     std::string residency_reason;
 };
 
+namespace training_trace_detail {
+
+inline void RemoveLegacyNonAttentionTaskWarnings(
+    TrainingTraceSummary& summary) {
+    for (const auto& event : summary.recent_events) {
+        const bool is_task_event =
+            event.metric_scope == "task" || event.task_id != 0;
+        if (!is_task_event ||
+            IsTrainingTaskAttentionStatus(event.status) ||
+            event.message.empty()) {
+            continue;
+        }
+
+        const std::string legacy_warning =
+            event.task_name + ": " + event.message;
+        const auto warning = std::find(
+            summary.warnings.begin(), summary.warnings.end(), legacy_warning);
+        if (warning != summary.warnings.end()) {
+            summary.warnings.erase(warning);
+        }
+    }
+}
+
+} // namespace training_trace_detail
+
 struct TrainingTraceSettings {
     bool persist_enabled = true;
-    int persist_every_n_events = 10;
+    int persist_every_n_events = 1000;
     size_t max_recent_events = 200;
 };
 
@@ -178,6 +221,9 @@ public:
     static TrainingTraceCollector& Instance();
 
     void StartRun(const std::string& run_id);
+    // Rebind an active preparation trace to the runtime's canonical run ID
+    // without discarding already-recorded materialization evidence.
+    bool ContinueRun(const std::string& run_id);
     void RecordStage(TrainingTraceStage stage,
                      int epoch,
                      int batch,
@@ -216,7 +262,15 @@ public:
                             uint64_t estimated_memory_bytes = 0,
                             uint64_t processed_items = 0,
                             uint64_t total_items = 0,
-                            const std::string& memory_risk_level = "");
+                            const std::string& memory_risk_level = "",
+                            uint64_t available_memory_bytes = 0,
+                            uint64_t safe_memory_budget_bytes = 0,
+                            bool process_memory_detected = false,
+                            uint64_t process_resident_memory_bytes = 0,
+                            uint64_t process_private_memory_bytes = 0,
+                            uint64_t process_resident_growth_bytes = 0,
+                            const std::string& process_private_memory_name = "",
+                            const std::string& process_memory_source = "");
     void RecordValidationMetrics(int epoch,
                                  float train_loss,
                                  float train_accuracy,
@@ -254,6 +308,7 @@ public:
 private:
     TrainingTraceCollector() = default;
 
+    void MaybePersistLocked(bool force);
     void WriteLocked() const;
     static std::string NowLocal();
     static std::string ThreadIdString();

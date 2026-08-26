@@ -513,27 +513,33 @@ void NodeEditor::Render() {
                 // Get the dropped node type
                 cyxwiz::NodeType dropped_type = *(const cyxwiz::NodeType*)payload->Data;
 
-                // Get metadata to create proper node name
-                auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
-                auto* metadata = registry.GetMetadata(dropped_type);
-                std::string node_name = metadata ? metadata->name : "Node";
+                if (!CanAddNodeToGraph(dropped_type)) {
+                    spdlog::warn(
+                        "Blocked drag-drop graph add for unsupported node type {}",
+                        static_cast<int>(dropped_type));
+                } else {
+                    // Get metadata to create proper node name
+                    auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+                    auto* metadata = registry.GetMetadata(dropped_type);
+                    std::string node_name = metadata ? metadata->name : "Node";
 
-                // Calculate drop position in grid space (reuse mouse_pos from earlier)
-                ImVec2 editor_origin = ImGui::GetWindowPos();
-                ImVec2 panning = ImNodes::EditorContextGetPanning();
-                ImVec2 drop_pos(
-                    (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
-                    (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_  // Offset for toolbar
-                );
+                    // Calculate drop position in grid space (reuse mouse_pos from earlier)
+                    ImVec2 editor_origin = ImGui::GetWindowPos();
+                    ImVec2 panning = ImNodes::EditorContextGetPanning();
+                    ImVec2 drop_pos(
+                        (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
+                        (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_  // Offset for toolbar
+                    );
 
-                // Queue node for addition
-                PendingNode pending;
-                pending.type = static_cast<NodeType>(dropped_type);
-                pending.name = node_name;
-                pending.position = drop_pos;
-                pending_nodes_.push_back(pending);
+                    // Queue node for addition
+                    PendingNode pending;
+                    pending.type = static_cast<NodeType>(dropped_type);
+                    pending.name = node_name;
+                    pending.position = drop_pos;
+                    pending_nodes_.push_back(pending);
 
-                spdlog::info("Drag-drop: Adding {} node at ({}, {})", node_name, drop_pos.x, drop_pos.y);
+                    spdlog::info("Drag-drop: Adding {} node at ({}, {})", node_name, drop_pos.x, drop_pos.y);
+                }
             }
 
             // Handle ANNOTATION drag-drop
@@ -4448,6 +4454,12 @@ SubgraphData* NodeEditor::GetSubgraphData(int node_id) {
 // ========== Menu Operations Implementation ==========
 
 void NodeEditor::AddNodeFromMenu(NodeType type, const std::string& name) {
+    if (!CanAddNodeToGraph(type)) {
+        spdlog::warn("Blocked toolbar graph add for unsupported node '{}' (type={})",
+                     name, static_cast<int>(type));
+        return;
+    }
+
     // Get center of the visible area for node placement
     ImVec2 panning = ImNodes::EditorContextGetPanning();
     ImVec2 visible_center(-panning.x + 400, -panning.y + 300);

@@ -365,11 +365,8 @@ DebugTraceRecord DebugRuntimeBackendClassifier::BuildAuditTrace(
     payload["cost_estimate_reason"] =
         "No calibrated per-node backend cost model is attached.";
     payload["linked_execution_context_available"] = execution.available;
-    payload["linked_execution_scope"] = !execution.available
-        ? "unobserved"
-        : (execution.training_run_id == run_id
-            ? "same_run"
-            : "linked_training_run");
+    payload["linked_execution_scope"] = execution.evidence_scope;
+    payload["linked_execution_correlated"] = execution.correlated;
     payload["linked_training_run_id"] = execution.training_run_id;
     payload["linked_requested_backend"] = execution.requested_backend;
     payload["linked_effective_backend"] = execution.effective_backend;
@@ -386,7 +383,7 @@ DebugTraceRecord DebugRuntimeBackendClassifier::BuildAuditTrace(
     payload["scope_note"] =
         "Placement is intended execution. Actual backend is populated only "
         "from a same-debug-run node trace that explicitly marks it observed. "
-        "A linked training context is shown separately and is not promoted "
+        "A training context is shown with its evidence scope and is not promoted "
         "to per-node actual evidence.";
     DebugNodeTraceContract::AttachDiagnosticContext(
         result,

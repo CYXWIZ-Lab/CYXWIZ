@@ -16,12 +16,11 @@
 #include <cstdint>
 
 namespace scripting {
+    class IScriptOutputSink;
     class ScriptingEngine;
 }
 
 namespace cyxwiz {
-
-class CommandWindowPanel;  // Forward declaration
 
 /**
  * Script Editor Panel
@@ -38,8 +37,7 @@ public:
     // Set scripting engine (shared with other panels)
     void SetScriptingEngine(std::shared_ptr<scripting::ScriptingEngine> engine);
 
-    // Set command window for output display
-    void SetCommandWindow(CommandWindowPanel* command_window);
+    void SetScriptOutputSink(scripting::IScriptOutputSink* output_sink);
 
     // File operations
     void NewFile();
@@ -247,7 +245,7 @@ private:
         std::make_shared<std::atomic<bool>>(true);
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
     std::unique_ptr<scripting::DebuggerManager> debugger_;
-    CommandWindowPanel* command_window_;  // For output display
+    scripting::IScriptOutputSink* script_output_sink_ = nullptr;
 
     // Debugger state
     bool debug_mode_active_ = false;      // True when debugging is active

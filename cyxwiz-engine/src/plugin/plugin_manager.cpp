@@ -90,7 +90,8 @@ bool PluginManager::LoadPlugin(const std::filesystem::path& plugin_dir) {
         if (PluginLoader::ParseManifest(plugin_dir, manifest, manifest_error)) {
             std::lock_guard lock(mutex_);
             if (plugins_.count(manifest.id)) {
-                return false;  // Already loaded, skip silently
+                spdlog::debug("PluginManager: Plugin {} is already loaded", manifest.id);
+                return true;
             }
         }
     }
@@ -140,6 +141,11 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
     }
 
     auto& plugin = it->second;
+
+    if (plugin->state == PluginState::Initialized ||
+        plugin->state == PluginState::Active) {
+        return true;
+    }
 
     if (plugin->state != PluginState::Loaded) {
         spdlog::warn("PluginManager: Plugin {} is in state {}, expected Loaded",
@@ -341,17 +347,29 @@ void PluginManager::InitializeAll() {
     // Get load order from dependency resolution
     auto order = ResolveLoadOrder();
 
-    size_t success_count = 0;
+    size_t ready_count = 0;
+    size_t initialized_count = 0;
     for (const auto& id : order) {
+        const auto state = GetPluginState(id);
+        if (state == PluginState::Initialized || state == PluginState::Active) {
+            ready_count++;
+            continue;
+        }
+        if (state != PluginState::Loaded) {
+            continue;
+        }
         if (InitializePlugin(id)) {
-            success_count++;
+            ready_count++;
+            initialized_count++;
         }
     }
 
-    spdlog::info("PluginManager: Initialized {}/{} plugins", success_count, order.size());
+    spdlog::info("PluginManager: {}/{} plugins ready ({} initialized)",
+                 ready_count, order.size(), initialized_count);
 }
 
 void PluginManager::ShutdownPlugin(const std::string& plugin_id) {
+    std::lock_guard assistant_lock(assistant_command_mutex_);
     std::lock_guard lock(mutex_);
 
     auto it = plugins_.find(plugin_id);

@@ -11,7 +11,10 @@ on:
       - "cyxwiz-backend/**"
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
+      - "redist/scripts/prepare_backend_pack_repository.py"
       - "redist/scripts/verify_installer_package.py"
+      - "redist/tests/test_prepare_backend_pack_repository.py"
+      - "redist/tests/test_verify_installer_package.py"
       - "vcpkg-installer.json"
   push:
     branches:
@@ -25,7 +28,10 @@ on:
       - "cyxwiz-backend/**"
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
+      - "redist/scripts/prepare_backend_pack_repository.py"
       - "redist/scripts/verify_installer_package.py"
+      - "redist/tests/test_prepare_backend_pack_repository.py"
+      - "redist/tests/test_verify_installer_package.py"
       - "vcpkg-installer.json"
 
 permissions:
@@ -56,9 +62,24 @@ jobs:
           - name: macOS arm64
             os: macos-15
             artifact: macos-arm64
+          - name: macOS Intel x64
+            os: macos-15-intel
+            artifact: macos-x64
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select OpenSSL 3 signing tool on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          openssl_bin="$(brew --prefix openssl@3)/bin"
+          test -x "${openssl_bin}/openssl"
+          echo "${openssl_bin}" >> "${GITHUB_PATH}"
+          "${openssl_bin}/openssl" version
+
+      - name: Run signed repository publication contract
+        run: python -B -m unittest redist.tests.test_prepare_backend_pack_repository
 
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@v7
@@ -118,6 +139,7 @@ jobs:
           cmake -S . -B build `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DCYXWIZ_BUILD_INSTALLER_ONLY=ON `
+            -DCYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR="$PWD/build/installer-bootstrap-metadata" `
             -DCYXWIZ_BUILD_TESTS=ON
 
       - name: Configure Ubuntu Release
@@ -127,6 +149,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DCYXWIZ_BUILD_INSTALLER_ONLY=ON \
+            -DCYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR="$GITHUB_WORKSPACE/build/installer-bootstrap-metadata" \
             -DCYXWIZ_BUILD_TESTS=ON
 
       - name: Configure macOS Release
@@ -136,26 +159,31 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DCYXWIZ_BUILD_INSTALLER_ONLY=ON \
+            -DCYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR="$GITHUB_WORKSPACE/build/installer-bootstrap-metadata" \
             -DCYXWIZ_BUILD_TESTS=ON
 
       - name: Build installer targets on Windows
         if: runner.os == 'Windows'
-        run: >-
-          cmake --build build --config Release --parallel
-          --target cyxwiz-installer cyxwiz-backend-pack-installer
-          test_backend_pack_manager_model
+        run: cmake --build build --config Release --parallel
 
       - name: Build installer targets on Unix
         if: runner.os != 'Windows'
-        run: >-
-          cmake --build build --parallel
-          --target cyxwiz-installer cyxwiz-backend-pack-installer
-          test_backend_pack_manager_model
+        run: cmake --build build --parallel
 
-      - name: Run installer model contract
+      - name: Generate Windows signed metadata fixture
+        if: runner.os == 'Windows'
         run: >-
-          ctest --test-dir build --build-config Release --output-on-failure
-          -R ^backend_pack_manager_model_contract$
+          build/bin/Release/generate_installer_metadata_fixture.exe
+          build/installer-bootstrap-metadata
+
+      - name: Generate Unix signed metadata fixture
+        if: runner.os != 'Windows'
+        run: >-
+          build/bin/generate_installer_metadata_fixture
+          build/installer-bootstrap-metadata
+
+      - name: Run native installer contracts
+        run: ctest --test-dir build --build-config Release --output-on-failure
 
       - name: Stage installer package
         run: cmake --install build --config Release --prefix installer-stage
@@ -165,13 +193,34 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force installer-stage/smoke | Out-Null
-          Copy-Item build/bin/Release/test_backend_pack_manager_model.exe installer-stage/smoke/
+          Get-ChildItem build/bin/Release/test_backend_pack_*.exe |
+            Copy-Item -Destination installer-stage/smoke/
+          @(
+            "cyxwiz-runtime-bootstrapper.exe",
+            "test_runtime_bootstrapper.exe",
+            "test_runtime_bootstrapper_child.exe",
+            "test_installer_verification_summary.exe",
+            "test_product_installation_receipt.exe",
+            "test_product_removal_authorization.exe",
+            "test_product_registration.exe"
+          ) | ForEach-Object {
+            Copy-Item "build/bin/Release/$_" -Destination installer-stage/smoke/
+          }
 
       - name: Add Unix package smoke contract
         if: runner.os != 'Windows'
         run: |
           mkdir -p installer-stage/smoke
-          cp build/bin/test_backend_pack_manager_model installer-stage/smoke/
+          cp build/bin/test_backend_pack_* installer-stage/smoke/
+          cp \
+            build/bin/cyxwiz-runtime-bootstrapper \
+            build/bin/test_runtime_bootstrapper \
+            build/bin/test_runtime_bootstrapper_child \
+            build/bin/test_installer_verification_summary \
+            build/bin/test_product_installation_receipt \
+            build/bin/test_product_removal_authorization \
+            build/bin/test_product_registration \
+            installer-stage/smoke/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -197,6 +246,9 @@ jobs:
           - name: macOS arm64
             os: macos-15
             artifact: macos-arm64
+          - name: macOS Intel x64
+            os: macos-15-intel
+            artifact: macos-x64
 
     steps:
       - uses: actions/checkout@v4
@@ -206,5 +258,18 @@ jobs:
           name: cyxwiz-installer-${{ matrix.artifact }}
           path: installer-stage
 
+      - name: Run clean-machine evidence contract
+        run: python -m unittest redist.tests.test_verify_installer_package
+
       - name: Verify staged package on fresh runner
-        run: python redist/scripts/verify_installer_package.py installer-stage
+        run: >-
+          python redist/scripts/verify_installer_package.py installer-stage
+          --artifact-id ${{ matrix.artifact }}
+          --evidence clean-machine-evidence/${{ matrix.artifact }}.json
+
+      - name: Upload clean-machine evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-installer-evidence-${{ matrix.artifact }}
+          path: clean-machine-evidence/${{ matrix.artifact }}.json
+          if-no-files-found: error

@@ -1,4 +1,5 @@
 #include "time_series_split_operator.h"
+#include "materialization_memory_preflight.h"
 #include "../profiler_trace.h"
 
 #include <arrow/api.h>
@@ -207,10 +208,29 @@ TimeSeriesSplitOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "probably produced no windows");
     }
 
+    // The leakage-safe path can simultaneously own two int64 metadata copies,
+    // an int8 assignment vector, and the Arrow partition output. Three int64
+    // row units conservatively cover both split policies.
+    const auto split_estimate = EstimateDenseMaterializationMemory(
+        static_cast<uint64_t>(n), 3, static_cast<uint64_t>(sizeof(int64_t)));
+    ARROW_ASSIGN_OR_RAISE(
+        auto preflight_estimate,
+        EmitMaterializationMemoryPreflight(
+            split_estimate,
+            "TimeSeriesSplit",
+            "planned_row_buffers",
+            "Reduce input windows or split a smaller materialized dataset.",
+            GetMaterializationMemoryContext(),
+            progress_callback_,
+            SaturatingMaterializationItemCount(static_cast<uint64_t>(n), 3),
+            0.10f));
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+
     if (boundary_policy_ == "targets_within_partition") {
         ReportProgress(progress_callback_, "plan_split",
                        "Planning target-contained chronological split", 0.30f,
-                       0, static_cast<uint64_t>(n), static_cast<uint64_t>(n));
+                       0, static_cast<uint64_t>(n),
+                       preflight_estimate.estimated_peak_bytes);
 
         ARROW_ASSIGN_OR_RAISE(
             auto target_starts,
@@ -255,6 +275,9 @@ TimeSeriesSplitOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         std::vector<int8_t> assignments;
         assignments.reserve(static_cast<size_t>(n));
         for (int64_t row = 0; row < n; ++row) {
+            if ((row & 1023) == 0) {
+                ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+            }
             const int64_t target_start =
                 target_starts[static_cast<size_t>(row)];
             const int64_t target_end = target_ends[static_cast<size_t>(row)];
@@ -287,9 +310,13 @@ TimeSeriesSplitOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         ARROW_RETURN_NOT_OK(builder.Reserve(n));
         ReportProgress(progress_callback_, "write_partitions",
                        "Writing target-contained partition assignments", 0.60f,
-                       0, static_cast<uint64_t>(n), static_cast<uint64_t>(n));
-        for (int8_t assignment : assignments) {
-            ARROW_RETURN_NOT_OK(builder.Append(assignment));
+                       0, static_cast<uint64_t>(n),
+                       preflight_estimate.estimated_peak_bytes);
+        for (size_t row = 0; row < assignments.size(); ++row) {
+            if ((row & 1023) == 0) {
+                ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+            }
+            ARROW_RETURN_NOT_OK(builder.Append(assignments[row]));
         }
         std::shared_ptr<arrow::Array> partition_array;
         ARROW_RETURN_NOT_OK(builder.Finish(&partition_array));
@@ -310,7 +337,7 @@ TimeSeriesSplitOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         ReportProgress(progress_callback_, "complete",
                        "Leakage-safe time-series split complete", 1.0f,
                        static_cast<uint64_t>(n), static_cast<uint64_t>(n),
-                       static_cast<uint64_t>(n));
+                        preflight_estimate.estimated_peak_bytes);
         return out_table;
     }
 
@@ -324,7 +351,8 @@ TimeSeriesSplitOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     ReportProgress(progress_callback_, "plan_split",
                    "Planning chronological train/val/test split", 0.30f, 0,
-                   static_cast<uint64_t>(n), static_cast<uint64_t>(n));
+                   static_cast<uint64_t>(n),
+                   preflight_estimate.estimated_peak_bytes);
 
     // Guard: if val or test is zero because n is too small for the
     // requested ratio, warn and steal a single row from train. This
@@ -345,14 +373,24 @@ TimeSeriesSplitOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     ReportProgress(progress_callback_, "write_partitions",
                    "Writing partition assignments", 0.60f, 0,
-                   static_cast<uint64_t>(n), static_cast<uint64_t>(n));
+                   static_cast<uint64_t>(n),
+                   preflight_estimate.estimated_peak_bytes);
     for (int64_t i = 0; i < train_count; ++i) {
+        if ((i & 1023) == 0) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        }
         ARROW_RETURN_NOT_OK(builder.Append(0));
     }
     for (int64_t i = 0; i < val_count; ++i) {
+        if ((i & 1023) == 0) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        }
         ARROW_RETURN_NOT_OK(builder.Append(1));
     }
     for (int64_t i = 0; i < test_count; ++i) {
+        if ((i & 1023) == 0) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        }
         ARROW_RETURN_NOT_OK(builder.Append(2));
     }
 
@@ -368,7 +406,7 @@ TimeSeriesSplitOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     ReportProgress(progress_callback_, "append_output",
                    "Appending partition column", 0.90f,
                    static_cast<uint64_t>(n), static_cast<uint64_t>(n),
-                   static_cast<uint64_t>(n));
+                   preflight_estimate.estimated_peak_bytes);
     ARROW_ASSIGN_OR_RAISE(
         auto out_table,
         input->AddColumn(input->num_columns(), partition_field, partition_chunked));
@@ -381,7 +419,7 @@ TimeSeriesSplitOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     ReportProgress(progress_callback_, "complete",
                    "Time-series split complete", 1.0f,
                    static_cast<uint64_t>(n), static_cast<uint64_t>(n),
-                   static_cast<uint64_t>(n));
+                   preflight_estimate.estimated_peak_bytes);
     return out_table;
 }
 

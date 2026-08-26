@@ -18,6 +18,11 @@ enum class BackendPackSupportStatus {
     Revoked
 };
 
+enum class BackendPackManifestKind {
+    BackendPack,
+    Base
+};
+
 struct BackendPackCatalogEntry {
     std::string pack_id;
     std::string manifest_url;
@@ -56,6 +61,7 @@ struct BackendPackArchiveIdentity {
 };
 
 struct VerifiedBackendPackManifest {
+    BackendPackManifestKind kind = BackendPackManifestKind::BackendPack;
     std::string pack_id;
     std::string backend;
     std::string package_version;
@@ -115,7 +121,9 @@ public:
         const std::filesystem::path& manifest_path,
         const BackendPackCatalogEntry& catalog_entry,
         VerifiedBackendPackManifest& output,
-        std::string& error) const;
+        std::string& error,
+        BackendPackManifestKind expected_kind =
+            BackendPackManifestKind::BackendPack) const;
 
 private:
     BackendPackTrustStore trust_store_;

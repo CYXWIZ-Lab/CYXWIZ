@@ -34,7 +34,6 @@ class ToolbarPanel;
 class AssetBrowserPanel;
 class TrainingPlotPanel;
 class PlotTestControlPanel;
-class CommandWindowPanel;
 class ScriptEditorPanel;
 class TableViewerPanel;
 class DataExplorerPanel;
@@ -45,7 +44,6 @@ class JobStatusPanel;
 class P2PTrainingPanel;
 class PatternBrowserPanel;
 class QueryConsolePanel;
-class ProfilingPanel;
 class MemoryPanel;
 class MemoryMonitor;
 class VariableExplorerPanel;
@@ -234,6 +232,7 @@ private:
     // Compile the current graph as a dry-run (no training) and show results in a popup
     void CompileGraphAndReport();
     void RenderCompileResultPopup();
+    void RenderMaterializationMemoryConfirmationPopup();
     bool BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& session,
                                     cyxwiz::StudioDebuggerRunMode mode,
                                     int sample_index);
@@ -287,6 +286,21 @@ private:
     std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
     std::vector<cyxwiz::BackendPlacementEntry> compile_result_backend_placements_;
 
+    // Main-thread confirmation state for a warning/risky operator estimate.
+    // The worker is not queued until the user accepts this frozen graph copy.
+    bool show_materialization_memory_confirmation_popup_ = false;
+    bool materialization_memory_confirmation_accepted_once_ = false;
+    int materialization_memory_confirmation_node_id_ = -1;
+    uint64_t materialization_memory_confirmation_estimated_bytes_ = 0;
+    std::string materialization_memory_confirmation_detail_;
+    std::string materialization_memory_confirmation_risk_;
+    std::string materialization_memory_confirmation_node_;
+    int accepted_materialization_memory_node_id_ = -1;
+    uint64_t accepted_materialization_memory_estimated_bytes_ = 0;
+    std::string accepted_materialization_memory_risk_;
+    std::vector<MLNode> pending_memory_confirmation_nodes_;
+    std::vector<NodeLink> pending_memory_confirmation_links_;
+
     // Local Debug staleness cache. `last_debug_graph_hash_` is a stable
     // fingerprint of the (nodes, links) tuple at the moment of the last
     // *successful* Local Debug run. `have_last_debug_result_` gates the
@@ -309,7 +323,6 @@ private:
     std::unique_ptr<cyxwiz::AssetBrowserPanel> asset_browser_;
     std::shared_ptr<cyxwiz::TrainingPlotPanel> training_plot_panel_;
     std::unique_ptr<cyxwiz::PlotTestControlPanel> plot_test_control_;
-    std::unique_ptr<cyxwiz::CommandWindowPanel> command_window_;
     std::unique_ptr<cyxwiz::ScriptEditorPanel> script_editor_;
     std::unique_ptr<cyxwiz::TableViewerPanel> table_viewer_;
     std::unique_ptr<cyxwiz::DataExplorerPanel> data_explorer_panel_;
@@ -324,7 +337,6 @@ private:
     std::unique_ptr<cyxwiz::QueryConsolePanel> query_console_;
     std::unique_ptr<gui::CustomNodeEditorPanel> custom_node_editor_;
     std::unique_ptr<gui::ThemeEditorPanel> theme_editor_;
-    std::unique_ptr<cyxwiz::ProfilingPanel> profiling_panel_;
     std::unique_ptr<cyxwiz::MemoryPanel> memory_panel_;
     std::unique_ptr<cyxwiz::MemoryMonitor> memory_monitor_;
     std::unique_ptr<cyxwiz::VariableExplorerPanel> variable_explorer_;

@@ -351,21 +351,25 @@ bool DockStyle::RenderSidebarToggles() {
     }
 
     float sidebar_height = viewport->WorkSize.y - top_offset;
+    const float sidebar_content_height =
+        icon_padding + static_cast<float>(panels_.size()) * (icon_size + icon_padding);
     float alpha = sidebar_visibility_;
 
     // Create actual window for sidebar (not just drawing on foreground)
     ImGui::SetNextWindowPos(sidebar_pos);
     ImGui::SetNextWindowSize(ImVec2(sidebar_width, sidebar_height));
+    ImGui::SetNextWindowContentSize(ImVec2(0.0f, sidebar_content_height));
     ImGui::SetNextWindowBgAlpha(0.95f * alpha);
 
     ImGuiWindowFlags sidebar_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                                     ImGuiWindowFlags_NoMove |
                                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse |
                                      ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNav;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);  // No sidebar border
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 4.0f);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.10f, 0.10f, 0.95f * alpha));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.15f, 0.15f, 0.15f, 0.3f * alpha));  // Very subtle
 
@@ -374,14 +378,15 @@ bool DockStyle::RenderSidebarToggles() {
 
         // Don't process interactions if not fully visible
         if (sidebar_visibility_ >= 0.5f) {
+            const ImVec2 content_origin = ImGui::GetCursorScreenPos();
             float y_offset = icon_padding;
 
             for (auto& panel : panels_) {
                 bool is_visible = panel.visible_ptr ? *panel.visible_ptr : false;
 
                 ImVec2 icon_pos = ImVec2(
-                    sidebar_pos.x + (sidebar_width - icon_size) * 0.5f,
-                    sidebar_pos.y + y_offset
+                    content_origin.x + (sidebar_width - icon_size) * 0.5f,
+                    content_origin.y + y_offset
                 );
 
                 ImVec2 icon_min = icon_pos;
@@ -524,7 +529,7 @@ bool DockStyle::RenderSidebarToggles() {
     ImGui::End();
 
     ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar(3);
+    ImGui::PopStyleVar(4);
 
     return any_changed;
 }

@@ -122,6 +122,34 @@ int main() {
     int failures = 0;
     {
         Fixture fixture;
+        std::filesystem::remove(fixture.root / "active-runtime.json");
+        std::filesystem::remove_all(fixture.root / "base" / "base-v1");
+        std::filesystem::remove_all(fixture.source);
+        Fixture::Touch(
+            fixture.source /
+            cyxwiz::runtime::CurrentEngineExecutableName());
+        cyxwiz::runtime::VerifiedBackendPackPayload base;
+        base.runtime_set_id = "set-v1";
+        base.backend = "cpu";
+        base.pack_id = "base-v1";
+        base.source_directory = fixture.source;
+        base.components = {{
+            std::string(cyxwiz::runtime::CurrentEngineExecutableName()), 1,
+            kZeroByteSha256}};
+        cyxwiz::runtime::BackendPackInstaller installer(fixture.root);
+        const auto result = installer.StageBase(base, 1024);
+        failures += !Expect(
+            result.status == cyxwiz::runtime::BackendPackInstallStatus::
+                                 InstalledUnqualified &&
+                std::filesystem::is_regular_file(
+                    fixture.root / "base" / "base-v1" /
+                    cyxwiz::runtime::CurrentEngineExecutableName()) &&
+                !std::filesystem::exists(
+                    fixture.root / "active-runtime.json"),
+            "fresh CPU base must publish completely but remain inactive until qualification");
+    }
+    {
+        Fixture fixture;
         std::vector<cyxwiz::runtime::BackendPackInstallProgress> progress;
         cyxwiz::runtime::BackendPackInstaller installer(
             fixture.root, [] { return false; },

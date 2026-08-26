@@ -1194,6 +1194,78 @@ int ResolveCrossEntropyIgnoreIndex(const TrainingConfiguration& config) {
     return -100;
 }
 
+ResolvedOptimizerConfiguration ResolveOptimizerConfigurationImpl(
+    const TrainingConfiguration& config) {
+    ResolvedOptimizerConfiguration out;
+    out.optimizer_type = config.optimizer_type;
+    out.optimizer_name = config.GetOptimizerName();
+    out.learning_rate = config.learning_rate;
+
+    switch (config.optimizer_type) {
+        case gui::NodeType::SGD:
+            out.momentum = config.momentum;
+            break;
+        case gui::NodeType::Adam:
+        case gui::NodeType::NAdam:
+            out.beta1 = config.beta1;
+            out.beta2 = config.beta2;
+            out.epsilon = config.epsilon;
+            break;
+        case gui::NodeType::AdamW:
+            out.beta1 = config.beta1;
+            out.beta2 = config.beta2;
+            out.epsilon = config.epsilon;
+            out.weight_decay = config.weight_decay;
+            break;
+        case gui::NodeType::RMSprop:
+            out.rmsprop_alpha = config.rmsprop_alpha;
+            out.epsilon = config.epsilon;
+            out.momentum = config.momentum;
+            break;
+        case gui::NodeType::Adagrad:
+            out.epsilon = config.epsilon;
+            break;
+        default:
+            break;
+    }
+    return out;
+}
+
+std::unique_ptr<Optimizer> BuildOptimizerFromConfigImpl(
+    const TrainingConfiguration& config) {
+    const ResolvedOptimizerConfiguration resolved =
+        ResolveOptimizerConfigurationImpl(config);
+
+    switch (config.optimizer_type) {
+        case gui::NodeType::SGD:
+            return std::make_unique<SGDOptimizer>(
+                resolved.learning_rate, resolved.momentum.value());
+        case gui::NodeType::Adam:
+            return std::make_unique<AdamOptimizer>(
+                resolved.learning_rate, resolved.beta1.value(),
+                resolved.beta2.value(), resolved.epsilon.value());
+        case gui::NodeType::AdamW:
+            return std::make_unique<AdamWOptimizer>(
+                resolved.learning_rate, resolved.beta1.value(),
+                resolved.beta2.value(), resolved.epsilon.value(),
+                resolved.weight_decay.value());
+        case gui::NodeType::RMSprop:
+            return std::make_unique<RMSpropOptimizer>(
+                resolved.learning_rate, resolved.rmsprop_alpha.value(),
+                resolved.epsilon.value(), resolved.momentum.value());
+        case gui::NodeType::Adagrad:
+            return std::make_unique<AdaGradOptimizer>(
+                resolved.learning_rate, resolved.epsilon.value());
+        case gui::NodeType::NAdam:
+            return std::make_unique<NAdamOptimizer>(
+                resolved.learning_rate, resolved.beta1.value(),
+                resolved.beta2.value(), resolved.epsilon.value());
+        default:
+            return CreateOptimizer(config.GetOptimizerType(),
+                                   resolved.learning_rate);
+    }
+}
+
 ResolvedLossConfiguration ResolveLossConfigurationImpl(
     const TrainingConfiguration& config) {
     ResolvedLossConfiguration out;
@@ -1406,6 +1478,16 @@ ResolvedLossConfiguration ResolveLossConfiguration(
     return ResolveLossConfigurationImpl(config);
 }
 
+std::unique_ptr<Optimizer> BuildOptimizerFromConfig(
+    const TrainingConfiguration& config) {
+    return BuildOptimizerFromConfigImpl(config);
+}
+
+ResolvedOptimizerConfiguration ResolveOptimizerConfiguration(
+    const TrainingConfiguration& config) {
+    return ResolveOptimizerConfigurationImpl(config);
+}
+
 BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config) {
     BuiltModel out;
 
@@ -1420,8 +1502,7 @@ BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config) {
         }
 
         out.loss = BuildLossFromConfig(config);
-        out.optimizer =
-            CreateOptimizer(config.GetOptimizerType(), config.learning_rate);
+        out.optimizer = BuildOptimizerFromConfig(config);
         if (!out.loss) {
             out.error_message = errors::FormatError(
                 errors::Training::LossSetupFailed,
@@ -1508,8 +1589,7 @@ BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration&
         try {
             sequential.model = std::make_unique<SequentialModel>();
             sequential.loss = BuildLossFromConfig(config);
-            sequential.optimizer = CreateOptimizer(config.GetOptimizerType(),
-                                                   config.learning_rate);
+            sequential.optimizer = BuildOptimizerFromConfig(config);
         } catch (const std::exception& e) {
             out.error_message = errors::FormatError(
                 errors::Training::ModelBuildFailed,

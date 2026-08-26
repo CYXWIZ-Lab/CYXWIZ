@@ -3,12 +3,14 @@
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/gui/data_studio/pipeline_canvas.h"
 #include "../src/gui/data_studio/node_registry.h"
+#include "../src/gui/node_import_guardrails.h"
 #include "../src/gui/properties_contract.h"
 #include "../src/gui/properties_truth.h"
 
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -68,6 +70,19 @@ bool HasParameter(const cyxwiz::NodeMetadata* meta,
     for (const auto& param : meta->parameters) {
         if (param.name == name) {
             return true;
+        }
+    }
+    return false;
+}
+
+bool ParameterMatches(const cyxwiz::NodeMetadata* meta,
+                      const std::string& name,
+                      const std::string& type,
+                      const std::string& default_value) {
+    if (!meta) return false;
+    for (const auto& param : meta->parameters) {
+        if (param.name == name) {
+            return param.type == type && param.default_value == default_value;
         }
     }
     return false;
@@ -154,24 +169,18 @@ void CheckSupportAxis(const cyxwiz::NodeMetadata* meta,
               context);
 }
 
-bool HasUnsupportedSupportAxis(const cyxwiz::NodeMetadata* meta,
-                               const std::string& name) {
+void CheckSupportAxisReasonContains(const cyxwiz::NodeMetadata* meta,
+                                    const std::string& name,
+                                    const std::string& expected,
+                                    const std::string& context) {
     const auto* axis = FindSupportAxis(meta, name);
-    return axis != nullptr && !axis->supported;
-}
-
-bool FrontendGraphAddBlockedBySupportAxes(
-    const cyxwiz::NodeMetadata* meta) {
-    if (!meta) return false;
-    const auto* support_state = FindSupportAxis(meta, "Support State");
-    if (support_state && support_state->value == "blocked") {
-        return true;
+    Check(axis != nullptr, "missing support axis " + name + ": " + context);
+    Check(!axis->reason.empty(),
+          "support axis " + name + " is missing its reason for " + context);
+    if (!expected.empty()) {
+        Check(axis->reason.find(expected) != std::string::npos,
+              "support axis " + name + " reason is incomplete for " + context);
     }
-    return HasUnsupportedSupportAxis(meta, "Runtime") ||
-           HasUnsupportedSupportAxis(meta, "Pipeline Executor") ||
-           HasUnsupportedSupportAxis(meta, "Training Backend") ||
-           HasUnsupportedSupportAxis(meta, "Compile") ||
-           HasUnsupportedSupportAxis(meta, "Training");
 }
 
 std::string FrontendSupportBlockReasonFromAxes(
@@ -517,11 +526,25 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
     std::size_t custom_sequence_count = 0;
     std::size_t metadata_rendered_count = 0;
     std::size_t custom_fallback_count = 0;
+    const std::vector<std::string> generated_help_prefixes = {
+        "Product support:",
+        "Runtime support:",
+        "Training backend support:",
+        "Training role:",
+        "Task guidance:",
+        "Workflow lane:",
+    };
 
     for (const auto category : metadata.GetCategories()) {
         for (const auto* meta : metadata.GetByCategory(category, true)) {
             if (!meta || !seen.insert(meta->type).second) {
                 continue;
+            }
+
+            for (const auto& prefix : generated_help_prefixes) {
+                Check(meta->help_text.find(prefix) == std::string::npos,
+                      "authored help must not contain generated support text: " +
+                          meta->name + " -> " + prefix);
             }
 
             std::set<std::string> param_names;
@@ -804,14 +827,12 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
           "SGD metadata should expose canonical learning_rate");
     Check(!HasParameter(sgd, "lr"),
           "SGD metadata should not expose legacy lr as editable");
-    Check(!HasParameter(sgd, "momentum"),
-          "SGD metadata should not expose momentum until optimizer "
-          "construction applies it");
+    Check(HasParameter(sgd, "momentum"),
+          "SGD metadata should expose runtime-consumed momentum");
     const auto* adamw = metadata.GetMetadata(gui::NodeType::AdamW);
     Check(adamw != nullptr, "AdamW metadata should exist");
-    Check(!HasParameter(adamw, "weight_decay"),
-          "AdamW metadata should not expose weight_decay until optimizer "
-          "construction applies it");
+    Check(HasParameter(adamw, "weight_decay"),
+          "AdamW metadata should expose runtime-consumed weight_decay");
     const auto* batch_norm = metadata.GetMetadata(gui::NodeType::BatchNorm);
     Check(batch_norm != nullptr, "BatchNorm metadata should exist");
     Check(HasParameter(batch_norm, "eps"),
@@ -851,6 +872,1412 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
     }
 }
 
+void CheckMultiHeadAttentionReferenceContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const auto* meta = metadata.GetMetadata(gui::NodeType::MultiHeadAttention);
+    Check(meta != nullptr, "MultiHeadAttention metadata should exist");
+    Check(meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+          "MultiHeadAttention should remain implemented self-attention");
+
+    Check(HasInput(meta, "Query", true),
+          "MultiHeadAttention should require one Query sequence input");
+    Check(HasInput(meta, "Key", false),
+          "MultiHeadAttention should expose reserved optional Key input");
+    Check(HasInput(meta, "Value", false),
+          "MultiHeadAttention should expose reserved optional Value input");
+    Check(HasInput(meta, "Mask", false),
+          "MultiHeadAttention should expose reserved optional Mask input");
+    Check(HasOutputType(meta, "Output", gui::PinType::Tensor),
+          "MultiHeadAttention should expose its runtime tensor output");
+    Check(!HasOutputType(meta, "Attn Weights", gui::PinType::Tensor),
+          "MultiHeadAttention must not advertise unmaterialized attention "
+          "weights");
+
+    Check(ParameterMatches(meta, "embed_dim", "int", "512"),
+          "MultiHeadAttention embed_dim contract should match new-node defaults");
+    Check(ParameterMatches(meta, "num_heads", "int", "8"),
+          "MultiHeadAttention num_heads contract should match new-node defaults");
+    Check(ParameterMatches(meta, "dropout", "float", "0.0"),
+          "MultiHeadAttention dropout contract should match ModelBuilder input");
+    Check(ParameterMatches(meta, "use_bias", "bool", "true"),
+          "MultiHeadAttention use_bias contract should match ModelBuilder input");
+    Check(!HasParameter(meta, "batch_first"),
+          "MultiHeadAttention must not expose the unused batch_first parameter");
+}
+
+void CheckDenseReferenceContract(cyxwiz::NodeMetadataRegistry& metadata) {
+    const auto* meta = metadata.GetMetadata(gui::NodeType::Dense);
+    Check(meta != nullptr, "Dense metadata should exist");
+    Check(meta->category == gui::NodeCategory::Layers,
+          "Dense metadata should own its layer category");
+    Check(HasInput(meta, "Input", true),
+          "Dense metadata should require one input tensor");
+    Check(HasOutputType(meta, "Output", gui::PinType::Tensor),
+          "Dense metadata should expose one output tensor");
+    Check(ParameterMatches(meta, "units", "int", "64"),
+          "Dense metadata should own the ordinary units default");
+    Check(!HasParameter(meta, "activation"),
+          "Dense must require an explicit activation node");
+    Check(!HasParameter(meta, "use_bias"),
+          "Dense must not expose use_bias while ModelBuilder fixes bias on");
+}
+
+void CheckStandardScalerReferenceContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const auto* meta = metadata.GetMetadata(gui::NodeType::StandardScaler);
+    Check(meta != nullptr, "StandardScaler metadata should exist");
+    Check(meta->category == gui::NodeCategory::Preprocessing,
+          "StandardScaler metadata should own its preprocessing category");
+    Check(HasInputType(meta, "Data", gui::PinType::Dataset),
+          "StandardScaler should require one table input");
+    Check(HasOutputType(meta, "Scaled", gui::PinType::Dataset),
+          "StandardScaler should expose one scaled table output");
+    Check(meta->parameters.size() == 10,
+          "StandardScaler metadata should declare every operator parameter");
+    Check(ParameterMatches(meta, "columns", "string", "") &&
+              ParameterMatches(meta, "label_col", "string", "") &&
+              ParameterMatches(meta, "exclude_columns", "string", "") &&
+              ParameterMatches(meta, "with_mean", "bool", "true") &&
+              ParameterMatches(meta, "with_std", "bool", "true") &&
+              ParameterMatches(meta, "transform_role", "enum", "features") &&
+              ParameterMatches(meta, "operation_mode", "enum", "fit_transform") &&
+              ParameterMatches(meta, "save_state", "bool", "false") &&
+              ParameterMatches(meta, "state_path", "file", "") &&
+              ParameterMatches(meta, "state_overwrite", "bool", "false"),
+          "StandardScaler defaults should match its operator contract");
+    CheckSupportAxis(meta, "Implementation Owner", "pipeline_operator_factory",
+                     true, "StandardScaler");
+}
+
+void CheckDataInputDialogReferenceContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const auto* meta = metadata.GetMetadata(gui::NodeType::DataInput);
+    Check(meta != nullptr, "DataInput metadata should exist");
+    Check(gui::properties_contract::ClassifyPanelContractPath(
+              gui::NodeType::DataInput, meta) ==
+              gui::properties_contract::PanelContractPath::DialogOnly,
+          "DataInput dynamic fields should remain dialog-owned");
+    Check(meta->category == gui::NodeCategory::DataSources,
+          "DataInput metadata should own its data-source category");
+    Check(meta->inputs.empty(), "DataInput should not expose static inputs");
+    Check(HasOutputType(meta, "Dataset", gui::PinType::Dataset),
+          "DataInput should expose one Dataset artifact");
+    Check(meta->parameters.size() == 3,
+          "DataInput metadata should contain only its static dialog bootstrap fields");
+    Check(ParameterMatches(meta, "file_path", "file", "") &&
+              ParameterMatches(meta, "file_type", "enum", "auto") &&
+              ParameterMatches(meta, "configured", "bool", "false"),
+          "DataInput metadata should own its dialog bootstrap defaults");
+    Check(!HasParameter(meta, "chunk_size") &&
+              !HasParameter(meta, "enable_streaming"),
+          "DataInput must not seed removed streaming fields");
+}
+
+void CheckConv2DBlockedReferenceContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const auto* meta = metadata.GetMetadata(gui::NodeType::Conv2D);
+    Check(meta != nullptr, "Conv2D metadata should exist");
+    Check(meta->status == cyxwiz::NodeImplementationStatus::Template,
+          "Conv2D should remain blocked until ModelBuilder supports it");
+    Check(!cyxwiz::CanAddNodeToGraph(*meta),
+          "central graph-add policy should reject blocked Conv2D");
+    Check(HasInputType(meta, "Input", gui::PinType::Tensor) &&
+              HasOutputType(meta, "Output", gui::PinType::Tensor),
+          "Conv2D metadata should preserve its saved-graph pin contract");
+    Check(meta->parameters.size() == 4,
+          "Conv2D metadata should expose only its preserved layer fields");
+    Check(ParameterMatches(meta, "filters", "int", "32") &&
+              ParameterMatches(meta, "kernel_size", "int", "3") &&
+              ParameterMatches(meta, "stride", "int", "1") &&
+              ParameterMatches(meta, "padding", "enum", "same"),
+          "Conv2D metadata defaults should match the preserved graph contract");
+    Check(!HasParameter(meta, "activation"),
+          "Conv2D must not advertise an unexecuted inline activation");
+    CheckSupportAxis(meta, "Training Backend",
+                     "unsupported_sequential_model_layer", false, "Conv2D");
+    CheckSupportAxis(meta, "Compile", "unsupported", false, "Conv2D");
+    CheckSupportAxisReasonContains(
+        meta, "Support State", "not supported", "Conv2D");
+}
+
+void CheckDataValidatorReferenceContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const auto* meta = metadata.GetMetadata(gui::NodeType::DataValidator);
+    Check(meta != nullptr, "DataValidator metadata should exist");
+    Check(meta->category == gui::NodeCategory::Analytics,
+          "DataValidator should be categorized as analytics");
+    Check(meta->inputs.size() == 1 &&
+              HasInputType(meta, "Data", gui::PinType::Dataset),
+          "DataValidator should accept one Data dataset");
+    Check(meta->outputs.size() == 1 &&
+              HasOutputType(meta, "Issues", gui::PinType::Dataset),
+          "DataValidator should expose only its runtime issue report");
+    Check(meta->parameters.size() == 3,
+          "DataValidator should expose only implemented rule families");
+    Check(ParameterMatches(meta, "required_columns", "string", "") &&
+              ParameterMatches(meta, "not_null_columns", "string", "") &&
+              ParameterMatches(meta, "unique_columns", "string", ""),
+          "DataValidator rule fields should match executor inputs");
+    Check(!HasParameter(meta, "column_types") &&
+              !HasParameter(meta, "value_ranges") &&
+              !HasParameter(meta, "regex_patterns"),
+          "DataValidator must not advertise unsupported rule families");
+}
+
+void CheckDataValidatorOutputMigrationGuard() {
+    nlohmann::json legacy_graph = nlohmann::json::object();
+    Check(gui::detail::PreserveLegacyDataValidatorOutputs(legacy_graph),
+          "unversioned graphs should use legacy DataValidator link migration");
+
+    nlohmann::json modern_graph = {
+        {"data_validator_contract_version",
+         gui::detail::kCurrentDataValidatorContractVersion}};
+    Check(!gui::detail::PreserveLegacyDataValidatorOutputs(modern_graph),
+          "current DataValidator graphs should use the truthful output index");
+
+    nlohmann::json malformed_graph = {
+        {"data_validator_contract_version", "2"}};
+    Check(gui::detail::PreserveLegacyDataValidatorOutputs(malformed_graph),
+          "malformed DataValidator versions should fail safe to legacy migration");
+
+    int index = -1;
+    nlohmann::json issues_link = {{"from_pin_index", 2}};
+    Check(gui::detail::ResolveLegacyDataValidatorOutputPinIndex(
+              issues_link, index) && index == 0,
+          "legacy DataValidator Issues links should migrate from index 2 to 0");
+
+    for (const int unsupported_index : {0, 1}) {
+        nlohmann::json unsupported_link = {
+            {"from_pin_index", unsupported_index}};
+        Check(!gui::detail::ResolveLegacyDataValidatorOutputPinIndex(
+                  unsupported_link, index),
+              "legacy DataValidator fake outputs must not become Issues links");
+    }
+}
+
+void CheckTabularAnalyticsFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const auto* sample = metadata.GetMetadata(gui::NodeType::SampleRows);
+    const auto* counts = metadata.GetMetadata(gui::NodeType::ValueCounts);
+    const auto* stats = metadata.GetMetadata(gui::NodeType::DescribeStats);
+    const auto* correlation =
+        metadata.GetMetadata(gui::NodeType::CorrelationMatrix);
+
+    for (const auto* meta : {sample, counts, stats, correlation}) {
+        Check(meta != nullptr, "tabular analytics metadata should exist");
+        Check(meta->category == gui::NodeCategory::Analytics,
+              "tabular analytics node should use the Analytics category: " +
+                  TypeId(meta->type));
+        Check(meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+              "tabular analytics node should be implemented: " +
+                  TypeId(meta->type));
+        Check(meta->inputs.size() == 1 &&
+                  HasInputType(meta, "Table", gui::PinType::Dataset),
+              "tabular analytics node should accept one table dataset: " +
+                  TypeId(meta->type));
+        Check(cyxwiz::ResolvePipelineRuntimeSupport(meta->type).mode ==
+                  cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+              "tabular analytics node should retain its executor owner: " +
+                  TypeId(meta->type));
+    }
+
+    Check(sample->outputs.size() == 1 &&
+              HasOutputType(sample, "Sample", gui::PinType::Dataset) &&
+              sample->parameters.size() == 1 &&
+              ParameterMatches(sample, "count", "int", "100") &&
+              !HasParameter(sample, "n") &&
+              !HasParameter(sample, "random_state") &&
+              !ContainsString(sample->keywords, "random"),
+          "SampleRows should declare deterministic leading-row behavior");
+
+    const auto* count_column = FindParameter(counts, "column");
+    Check(counts->outputs.size() == 1 &&
+              HasOutputType(counts, "Counts", gui::PinType::Dataset) &&
+              counts->parameters.size() == 1 && count_column != nullptr &&
+              count_column->required,
+          "ValueCounts should require the executor-consumed column");
+
+    Check(stats->outputs.size() == 1 &&
+              HasOutputType(stats, "Stats", gui::PinType::Dataset) &&
+              stats->parameters.empty() &&
+              !HasParameter(stats, "show_percentiles"),
+          "DescribeStats should expose its real output without fake options");
+
+    Check(correlation->outputs.size() == 1 &&
+              HasOutputType(correlation, "Matrix", gui::PinType::Dataset) &&
+              correlation->parameters.empty() &&
+              !HasParameter(correlation, "method"),
+          "CorrelationMatrix should advertise only implemented Pearson behavior");
+}
+
+void CheckEvaluationTableFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const std::vector<gui::NodeType> types = {
+        gui::NodeType::RegressionMetricsNode,
+        gui::NodeType::ClassificationMetricsNode,
+        gui::NodeType::ConfusionMatrixNode,
+        gui::NodeType::ROCCurveNode,
+        gui::NodeType::PRCurveNode,
+    };
+    for (const auto type : types) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr &&
+                  meta->category == gui::NodeCategory::Analytics &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+              "evaluation table node should be implemented Analytics metadata: " +
+                  TypeId(type));
+        Check(meta->inputs.size() == 1 &&
+                  HasInputType(meta, "Data", gui::PinType::Dataset) &&
+                  meta->outputs.size() == 1 &&
+                  meta->outputs.front().type == gui::PinType::Dataset,
+              "evaluation node should use one Dataset table input/output: " +
+                  TypeId(type));
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(type);
+        Check(support.mode ==
+                  cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+              "evaluation node should retain PipelineExecutor ownership: " +
+                  TypeId(type));
+    }
+
+    const auto* regression =
+        metadata.GetMetadata(gui::NodeType::RegressionMetricsNode);
+    const auto* classification =
+        metadata.GetMetadata(gui::NodeType::ClassificationMetricsNode);
+    const auto* confusion =
+        metadata.GetMetadata(gui::NodeType::ConfusionMatrixNode);
+    const auto* roc = metadata.GetMetadata(gui::NodeType::ROCCurveNode);
+    const auto* pr = metadata.GetMetadata(gui::NodeType::PRCurveNode);
+
+    Check(HasOutputType(regression, "Metrics", gui::PinType::Dataset) &&
+              regression->parameters.size() == 3 &&
+              FindParameter(regression, "actual_col")->required &&
+              FindParameter(regression, "predicted_col")->required &&
+              ParameterMatches(regression, "metrics", "string",
+                               "mse,rmse,mae,r2"),
+          "RegressionMetrics should expose its consumed columns and metrics");
+    Check(HasOutputType(classification, "Metrics", gui::PinType::Dataset) &&
+              classification->parameters.size() == 3 &&
+              FindParameter(classification, "actual_col")->required &&
+              FindParameter(classification, "predicted_col")->required &&
+              ParameterMatches(classification, "metrics", "string",
+                               "accuracy,precision,recall,f1,weighted_f1,count"),
+          "ClassificationMetrics should expose its consumed columns and metrics");
+    Check(HasOutputType(confusion, "Matrix", gui::PinType::Dataset) &&
+              confusion->parameters.size() == 3 &&
+              FindParameter(confusion, "actual_col")->required &&
+              FindParameter(confusion, "predicted_col")->required &&
+              ParameterMatches(confusion, "normalize", "enum", "none") &&
+              HasEnumValue(confusion, "normalize", "true") &&
+              HasEnumValue(confusion, "normalize", "pred") &&
+              HasEnumValue(confusion, "normalize", "all"),
+          "ConfusionMatrix should expose only its table-backed normalization contract");
+    for (const auto* curve : {roc, pr}) {
+        Check(HasOutputType(curve, "Curve", gui::PinType::Dataset) &&
+                  curve->parameters.size() == 3 &&
+                  FindParameter(curve, "actual_col")->required &&
+                  FindParameter(curve, "score_col")->required &&
+                  ParameterMatches(curve, "positive_label", "string", "1"),
+              "binary evaluation curve should expose its consumed table fields");
+    }
+}
+
+void CheckEvaluationTableMigrationGuard() {
+    nlohmann::json legacy_graph = nlohmann::json::object();
+    Check(gui::detail::PreserveLegacyEvaluationTableInputs(legacy_graph),
+          "unversioned graphs should use evaluation-table link migration");
+
+    nlohmann::json current_graph = {
+        {"evaluation_table_contract_version",
+         gui::detail::kCurrentEvaluationTableContractVersion}};
+    Check(!gui::detail::PreserveLegacyEvaluationTableInputs(current_graph),
+          "current evaluation-table graphs should preserve current links");
+
+    nlohmann::json malformed_graph = {
+        {"evaluation_table_contract_version", "invalid"}};
+    Check(gui::detail::PreserveLegacyEvaluationTableInputs(malformed_graph),
+          "malformed evaluation-table versions should fail closed as legacy");
+    Check(gui::detail::IsLegacySplitInputEvaluationNode(
+              gui::NodeType::ConfusionMatrixNode) &&
+              gui::detail::IsLegacySplitInputEvaluationNode(
+                  gui::NodeType::ROCCurveNode) &&
+              gui::detail::IsLegacySplitInputEvaluationNode(
+                  gui::NodeType::PRCurveNode) &&
+              !gui::detail::IsLegacySplitInputEvaluationNode(
+                  gui::NodeType::RegressionMetricsNode),
+          "only obsolete split-input evaluation nodes should need migration");
+}
+
+void CheckSignalProcessingFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const std::vector<gui::NodeType> types = {
+        gui::NodeType::FFTNode,
+        gui::NodeType::FilterDesigner,
+        gui::NodeType::Convolution1D,
+    };
+    for (const auto type : types) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr &&
+                  meta->category == gui::NodeCategory::Signal &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+              "signal operator should be implemented Signal metadata: " +
+                  TypeId(type));
+        Check(meta->inputs.size() == 1 &&
+                  meta->inputs.front().type == gui::PinType::Dataset &&
+                  meta->outputs.size() == 1 &&
+                  meta->outputs.front().type == gui::PinType::Dataset,
+              "signal operator should use one Dataset input/output: " +
+                  TypeId(type));
+        const auto* signal_col = FindParameter(meta, "signal_col");
+        Check(signal_col != nullptr && signal_col->required,
+              "signal operator should require its consumed signal column: " +
+                  TypeId(type));
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(type);
+        Check(support.mode ==
+                  cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+              "signal operator should retain PipelineOperatorFactory ownership: " +
+                  TypeId(type));
+
+        auto op = cyxwiz::PipelineOperatorFactory::Instance().Create(type);
+        Check(op != nullptr,
+              "signal metadata should have a pipeline operator: " +
+                  TypeId(type));
+        std::map<std::string, std::string> params;
+        for (const auto& parameter : meta->parameters) {
+            params.emplace(parameter.name, parameter.default_value);
+        }
+        std::string error;
+        Check(!op->Configure(params, error),
+              "empty required signal column should fail operator configuration: " +
+                  TypeId(type));
+        params["signal_col"] = "signal";
+        error.clear();
+        Check(op->Configure(params, error),
+              "signal metadata defaults should configure after selecting a column: " +
+                  TypeId(type) + ": " + error);
+    }
+
+    const auto* fft = metadata.GetMetadata(gui::NodeType::FFTNode);
+    const auto* filter = metadata.GetMetadata(gui::NodeType::FilterDesigner);
+    const auto* convolution =
+        metadata.GetMetadata(gui::NodeType::Convolution1D);
+    Check(fft->parameters.size() == 2 &&
+              ParameterMatches(fft, "sample_rate", "float", "1.0"),
+          "FFT metadata should expose only its operator parameters");
+    Check(filter->parameters.size() == 6 &&
+              ParameterMatches(filter, "filter_type", "dropdown", "lowpass") &&
+              HasEnumValue(filter, "filter_type", "highpass") &&
+              HasEnumValue(filter, "filter_type", "bandpass") &&
+              HasEnumValue(filter, "filter_type", "bandstop") &&
+              ParameterMatches(filter, "cutoff", "float", "0.5") &&
+              ParameterMatches(filter, "cutoff_high", "float", "0") &&
+              ParameterMatches(filter, "sample_rate", "float", "1.0") &&
+              ParameterMatches(filter, "order", "int", "4"),
+          "FilterDesigner metadata should match its operator defaults/options");
+    Check(convolution->parameters.size() == 2 &&
+              FindParameter(convolution, "kernel") != nullptr &&
+              FindParameter(convolution, "kernel")->required &&
+              ParameterMatches(convolution, "kernel", "string",
+                               "0.25,0.5,0.25") &&
+              !HasParameter(convolution, "mode"),
+          "Convolution1D should not advertise its ignored legacy mode");
+
+    const auto* ifft = metadata.GetMetadata(gui::NodeType::IFFTNode);
+    const auto* wavelet = metadata.GetMetadata(gui::NodeType::WaveletTransform);
+    Check(ifft != nullptr && ifft->IsTemplate() &&
+              wavelet != nullptr && wavelet->IsTemplate(),
+          "IFFT and Wavelet should remain explicitly blocked outside this family");
+}
+
+void CheckTextVectorizerSentimentFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const std::vector<gui::NodeType> types = {
+        gui::NodeType::TFIDFVectorizer,
+        gui::NodeType::CountVectorizer,
+        gui::NodeType::SentimentAnalyzer,
+    };
+    for (const auto type : types) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr &&
+                  meta->category == gui::NodeCategory::TextProcessing &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+              "text operator should be implemented TextProcessing metadata: " +
+                  TypeId(type));
+        Check(meta->inputs.size() == 1 &&
+                  meta->inputs.front().type == gui::PinType::Dataset &&
+                  meta->outputs.size() == 1 &&
+                  meta->outputs.front().type == gui::PinType::Dataset,
+              "text operator should expose its one-table runtime contract: " +
+                  TypeId(type));
+        const auto* text_col = FindParameter(meta, "text_col");
+        Check(text_col != nullptr && text_col->required,
+              "text operator should require its consumed text column: " +
+                  TypeId(type));
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(type);
+        Check(support.mode ==
+                  cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+              "text operator should retain PipelineOperatorFactory ownership: " +
+                  TypeId(type));
+
+        auto op = cyxwiz::PipelineOperatorFactory::Instance().Create(type);
+        Check(op != nullptr,
+              "text metadata should have a pipeline operator: " + TypeId(type));
+        std::map<std::string, std::string> params;
+        for (const auto& parameter : meta->parameters) {
+            params.emplace(parameter.name, parameter.default_value);
+        }
+        std::string error;
+        Check(!op->Configure(params, error),
+              "empty required text column should fail operator configuration: " +
+                  TypeId(type));
+        params["text_col"] = "text";
+        error.clear();
+        Check(op->Configure(params, error),
+              "text metadata defaults should configure after selecting a column: " +
+                  TypeId(type) + ": " + error);
+    }
+
+    const auto* tfidf =
+        metadata.GetMetadata(gui::NodeType::TFIDFVectorizer);
+    const auto* count =
+        metadata.GetMetadata(gui::NodeType::CountVectorizer);
+    const auto* sentiment =
+        metadata.GetMetadata(gui::NodeType::SentimentAnalyzer);
+    for (const auto* vectorizer : {tfidf, count}) {
+        Check(HasOutputType(vectorizer, "Vectors", gui::PinType::Dataset) &&
+                  !HasOutputType(vectorizer, "Vocabulary", gui::PinType::Dataset) &&
+                  ParameterMatches(vectorizer, "ngram_range", "dropdown", "1,1") &&
+                  HasEnumValue(vectorizer, "ngram_range", "1,3") &&
+                  HasEnumValue(vectorizer, "ngram_range", "2,3") &&
+                  HasEnumValue(vectorizer, "ngram_range", "3,3") &&
+                  !HasParameter(vectorizer, "ngram_min") &&
+                  !HasParameter(vectorizer, "ngram_max") &&
+                  ParameterMatches(vectorizer, "operation_mode", "enum",
+                                   "fit_transform") &&
+                  HasEnumValue(vectorizer, "operation_mode",
+                               "transform_only") &&
+                  ParameterMatches(vectorizer, "save_state", "bool",
+                                   "false") &&
+                  ParameterMatches(vectorizer, "state_path", "file", "") &&
+                  ParameterMatches(vectorizer, "state_overwrite", "bool",
+                                   "false"),
+              "vectorizer should expose one output, one canonical n-gram control, and fitted-state workflow");
+
+        auto legacy_op =
+            cyxwiz::PipelineOperatorFactory::Instance().Create(vectorizer->type);
+        Check(legacy_op != nullptr,
+              "legacy vectorizer compatibility should retain its operator");
+        std::map<std::string, std::string> legacy_params;
+        for (const auto& parameter : vectorizer->parameters) {
+            if (parameter.name != "ngram_range") {
+                legacy_params.emplace(parameter.name, parameter.default_value);
+            }
+        }
+        legacy_params["text_col"] = "text";
+        legacy_params["ngram_min"] = "1";
+        legacy_params["ngram_max"] = "3";
+        std::string legacy_error;
+        Check(legacy_op->Configure(legacy_params, legacy_error),
+              "saved vectorizer ngram_min/ngram_max aliases should still configure: " +
+                  TypeId(vectorizer->type) + ": " + legacy_error);
+    }
+    Check(tfidf->parameters.size() == 14 &&
+              ParameterMatches(tfidf, "min_df", "int", "1") &&
+              ParameterMatches(tfidf, "use_idf", "bool", "true") &&
+              ParameterMatches(tfidf, "smooth_idf", "bool", "true"),
+          "TFIDF metadata should match its materializer fields");
+    Check(count->parameters.size() == 12 &&
+              ParameterMatches(count, "binary", "bool", "false"),
+          "CountVectorizer metadata should match its materializer fields");
+    Check(HasOutputType(sentiment, "Sentiment", gui::PinType::Dataset) &&
+              sentiment->parameters.size() == 3 &&
+              HasParameter(sentiment, "label_col") &&
+              ParameterMatches(sentiment, "method", "enum", "vader") &&
+              !HasParameter(sentiment, "model"),
+          "SentimentAnalyzer should expose its lexicon table contract without a fake model");
+}
+
+void CheckTabularTransformFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const std::vector<gui::NodeType> types = {
+        gui::NodeType::FilterRows,
+        gui::NodeType::SelectColumns,
+        gui::NodeType::SortRows,
+        gui::NodeType::GroupByAggregate,
+        gui::NodeType::FillMissingValues,
+        gui::NodeType::RemoveDuplicateRows,
+        gui::NodeType::RenameColumns,
+    };
+
+    for (const auto type : types) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr &&
+                  meta->category == gui::NodeCategory::DataTransform &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+              "tabular transform should have implemented metadata: " +
+                  TypeId(type));
+        Check(meta->inputs.size() == 1 &&
+                  meta->inputs.front().type == gui::PinType::Dataset &&
+                  meta->outputs.size() == 1 &&
+                  meta->outputs.front().type == gui::PinType::Dataset,
+              "tabular transform should expose one Dataset input/output: " +
+                  TypeId(type));
+
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(type);
+        CheckRuntimeOwnerContract(
+            support,
+            cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+            cyxwiz::PipelineRuntimeImplementationOwner::PipelineExecutor,
+            "tabular transform " + TypeId(type));
+    }
+
+    const auto* filter = metadata.GetMetadata(gui::NodeType::FilterRows);
+    const auto* select = metadata.GetMetadata(gui::NodeType::SelectColumns);
+    const auto* sort = metadata.GetMetadata(gui::NodeType::SortRows);
+    const auto* group =
+        metadata.GetMetadata(gui::NodeType::GroupByAggregate);
+    const auto* fill =
+        metadata.GetMetadata(gui::NodeType::FillMissingValues);
+    const auto* dedupe =
+        metadata.GetMetadata(gui::NodeType::RemoveDuplicateRows);
+    const auto* rename =
+        metadata.GetMetadata(gui::NodeType::RenameColumns);
+    const auto* join = metadata.GetMetadata(gui::NodeType::JoinTables);
+
+    Check(filter->parameters.size() == 1 &&
+              ParameterMatches(filter, "condition", "string", "") &&
+              FindParameter(filter, "condition")->required,
+          "FilterRows should require the condition consumed by its executor");
+    Check(select->parameters.size() == 1 &&
+              ParameterMatches(select, "columns", "string", "") &&
+              FindParameter(select, "columns")->required,
+          "SelectColumns should require its canonical column list");
+    Check(sort->parameters.size() == 3 &&
+              FindParameter(sort, "columns")->required &&
+              ParameterMatches(sort, "order", "enum", "asc") &&
+              HasEnumValue(sort, "order", "desc") &&
+              FindParameter(sort, "ascending")->advanced,
+          "SortRows should expose order and retain ascending only as an advanced compatibility alias");
+    Check(group->parameters.size() == 2 &&
+              FindParameter(group, "group_columns")->required &&
+              FindParameter(group, "aggregations")->required &&
+              !HasParameter(group, "group_by"),
+          "GroupBy should expose only the parameter names consumed by its executor");
+    Check(fill->parameters.size() == 8 &&
+              ParameterMatches(fill, "value", "string", "0") &&
+              !HasParameter(fill, "fill_value"),
+          "FillMissing should keep one canonical constant-value control");
+    Check(dedupe->parameters.size() == 1 &&
+              ParameterMatches(dedupe, "columns", "string", "") &&
+              !HasParameter(dedupe, "subset") &&
+              !HasParameter(dedupe, "keep"),
+          "RemoveDuplicateRows should expose its implemented column scope without ignored controls");
+    Check(rename->parameters.size() == 1 &&
+              ParameterMatches(rename, "mapping", "string", "") &&
+              FindParameter(rename, "mapping")->required &&
+              !HasParameter(rename, "rename_map"),
+          "RenameColumns should be implemented metadata with one canonical mapping control");
+    Check(join != nullptr &&
+              join->category == gui::NodeCategory::DataTransform &&
+              join->status == cyxwiz::NodeImplementationStatus::Implemented &&
+              join->inputs.size() == 2 &&
+              HasInputType(join, "Left", gui::PinType::Dataset) &&
+              HasInputType(join, "Right", gui::PinType::Dataset) &&
+              HasOutputType(join, "Joined", gui::PinType::Dataset),
+          "Join should expose two named Dataset inputs and one Dataset output");
+    Check(join->parameters.size() == 3 &&
+              ParameterMatches(join, "left_on", "string", "") &&
+              FindParameter(join, "left_on")->required &&
+              ParameterMatches(join, "right_on", "string", "") &&
+              FindParameter(join, "right_on")->required &&
+              ParameterMatches(join, "join_type", "enum", "inner") &&
+              HasEnumValue(join, "join_type", "left") &&
+              HasEnumValue(join, "join_type", "right") &&
+              HasEnumValue(join, "join_type", "outer") &&
+              !HasParameter(join, "on_column"),
+          "Join should expose separate canonical keys plus its implemented join modes");
+    const auto join_support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::JoinTables);
+    CheckRuntimeOwnerContract(
+        join_support,
+        cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+        cyxwiz::PipelineRuntimeImplementationOwner::PipelineExecutor,
+        "tabular transform " + TypeId(gui::NodeType::JoinTables));
+    Check(join_support.required_input_count.has_value() &&
+              *join_support.required_input_count == 2,
+          "Join runtime should require exactly two inputs");
+
+    std::map<std::string, std::string> saved_group_parameters = {
+        {"group_by", "region"},
+        {"aggregations", "COUNT(*) AS rows"},
+    };
+    cyxwiz::CanonicalizePipelineParameterAliases(
+        gui::NodeType::GroupByAggregate, saved_group_parameters);
+    Check(saved_group_parameters.find("group_by") ==
+                  saved_group_parameters.end() &&
+              saved_group_parameters["group_columns"] == "region",
+          "saved GroupBy group_by aliases should migrate to the canonical property");
+
+    std::map<std::string, std::string> saved_join_parameters = {
+        {"on_column", "record_id"},
+        {"join_type", "inner"},
+    };
+    cyxwiz::CanonicalizePipelineParameterAliases(
+        gui::NodeType::JoinTables, saved_join_parameters);
+    Check(saved_join_parameters.find("on_column") ==
+                  saved_join_parameters.end() &&
+              saved_join_parameters["left_on"] == "record_id" &&
+              saved_join_parameters["right_on"] == "record_id",
+          "saved Join on_column aliases should migrate to both canonical keys");
+}
+
+void CheckClusteringFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
+    const std::vector<gui::NodeType> types = {
+        gui::NodeType::KMeansCluster,
+        gui::NodeType::DBSCANCluster,
+        gui::NodeType::HierarchicalCluster,
+        gui::NodeType::GMMCluster,
+    };
+
+    for (const auto type : types) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr &&
+                  meta->category == gui::NodeCategory::Analytics &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+              "clustering node should have implemented Analytics metadata: " +
+                  TypeId(type));
+        Check(meta->inputs.size() == 1 &&
+                  HasInputType(meta, "Data", gui::PinType::Dataset) &&
+                  meta->outputs.size() == 1 &&
+                  HasOutputType(meta, "Clustered", gui::PinType::Dataset),
+              "clustering node should expose its input-plus-cluster_id table contract: " +
+                  TypeId(type));
+        Check(ParameterMatches(meta, "feature_cols", "string", "") &&
+                  ParameterMatches(meta, "label_col", "string", ""),
+              "clustering node should expose shared feature and label selection: " +
+                  TypeId(type));
+
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(type);
+        CheckRuntimeOwnerContract(
+            support,
+            cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+            cyxwiz::PipelineRuntimeImplementationOwner::PipelineOperatorFactory,
+            "clustering node " + TypeId(type));
+
+        auto op = cyxwiz::PipelineOperatorFactory::Instance().Create(type);
+        Check(op != nullptr,
+              "clustering metadata should have a pipeline operator: " +
+                  TypeId(type));
+        std::map<std::string, std::string> params;
+        for (const auto& parameter : meta->parameters) {
+            params.emplace(parameter.name, parameter.default_value);
+        }
+        std::string error;
+        Check(op->Configure(params, error),
+              "clustering metadata defaults should configure its operator: " +
+                  TypeId(type) + ": " + error);
+    }
+
+    const auto* kmeans = metadata.GetMetadata(gui::NodeType::KMeansCluster);
+    const auto* dbscan = metadata.GetMetadata(gui::NodeType::DBSCANCluster);
+    const auto* hierarchical =
+        metadata.GetMetadata(gui::NodeType::HierarchicalCluster);
+    const auto* gmm = metadata.GetMetadata(gui::NodeType::GMMCluster);
+
+    Check(kmeans->parameters.size() == 8 &&
+              ParameterMatches(kmeans, "n_clusters", "int", "8") &&
+              ParameterMatches(kmeans, "max_iter", "int", "300") &&
+              ParameterMatches(kmeans, "init", "enum", "kmeans++") &&
+              HasEnumValue(kmeans, "init", "random") &&
+              ParameterMatches(kmeans, "n_init", "int", "10") &&
+              ParameterMatches(kmeans, "tol", "float", "0.0001") &&
+              ParameterMatches(kmeans, "seed", "int", "0") &&
+              !HasParameter(kmeans, "random_state"),
+          "KMeans metadata should match every consumed operator field");
+    Check(dbscan->parameters.size() == 5 &&
+              ParameterMatches(dbscan, "eps", "float", "0.5") &&
+              ParameterMatches(dbscan, "min_samples", "int", "5") &&
+              ParameterMatches(dbscan, "metric", "enum", "euclidean") &&
+              HasEnumValue(dbscan, "metric", "cosine"),
+          "DBSCAN metadata should match every consumed operator field");
+    Check(hierarchical->parameters.size() == 5 &&
+              ParameterMatches(hierarchical, "n_clusters", "int", "3") &&
+              ParameterMatches(hierarchical, "linkage", "enum", "ward") &&
+              HasEnumValue(hierarchical, "linkage", "single") &&
+              ParameterMatches(hierarchical, "metric", "enum", "euclidean"),
+          "Hierarchical metadata should match every consumed operator field");
+    Check(gmm->parameters.size() == 8 &&
+              ParameterMatches(gmm, "n_components", "int", "3") &&
+              ParameterMatches(gmm, "covariance_type", "enum", "full") &&
+              HasEnumValue(gmm, "covariance_type", "spherical") &&
+              ParameterMatches(gmm, "max_iter", "int", "100") &&
+              ParameterMatches(gmm, "tol", "float", "0.001") &&
+              ParameterMatches(gmm, "n_init", "int", "1") &&
+              ParameterMatches(gmm, "seed", "int", "0"),
+          "GMM metadata should match every consumed operator field");
+}
+
+void CheckPcaContract(cyxwiz::NodeMetadataRegistry& metadata) {
+    const auto* pca = metadata.GetMetadata(gui::NodeType::PCANode);
+    Check(pca != nullptr &&
+              pca->category == gui::NodeCategory::Analytics &&
+              pca->status == cyxwiz::NodeImplementationStatus::Implemented,
+          "PCA should have implemented Analytics metadata");
+    Check(pca->inputs.size() == 1 &&
+              HasInputType(pca, "Data", gui::PinType::Dataset) &&
+              pca->outputs.size() == 1 &&
+              HasOutputType(pca, "Transformed", gui::PinType::Dataset) &&
+              !HasOutputType(pca, "Components", gui::PinType::Dataset),
+          "PCA should expose only the table its operator materializes");
+    Check(pca->parameters.size() == 5 &&
+              ParameterMatches(pca, "feature_cols", "string", "") &&
+              ParameterMatches(pca, "label_col", "string", "") &&
+              ParameterMatches(pca, "n_components", "int", "2") &&
+              ParameterMatches(pca, "center", "bool", "true") &&
+              ParameterMatches(pca, "scale", "bool", "false") &&
+              !HasParameter(pca, "whiten"),
+          "PCA metadata should match every consumed operator field without whitening");
+
+    const auto support =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::PCANode);
+    CheckRuntimeOwnerContract(
+        support,
+        cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+        cyxwiz::PipelineRuntimeImplementationOwner::PipelineOperatorFactory,
+        "PCA");
+
+    auto op = cyxwiz::PipelineOperatorFactory::Instance().Create(
+        gui::NodeType::PCANode);
+    Check(op != nullptr, "PCA metadata should have a pipeline operator");
+    std::map<std::string, std::string> params;
+    for (const auto& parameter : pca->parameters) {
+        params.emplace(parameter.name, parameter.default_value);
+    }
+    std::string error;
+    Check(op->Configure(params, error),
+          "PCA metadata defaults should configure its operator: " + error);
+}
+
+void CheckClassicalTreeFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const std::vector<gui::NodeType> training_types = {
+        gui::NodeType::DecisionTreeClassifier,
+        gui::NodeType::RandomForestClassifier,
+        gui::NodeType::GradientBoostingClassifier,
+    };
+
+    for (const auto type : training_types) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr &&
+                  meta->category == gui::NodeCategory::Analytics &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+              "tree classifier should have implemented Analytics metadata: " +
+                  TypeId(type));
+        Check(meta->inputs.size() == 1 &&
+                  HasInputType(meta, "Data", gui::PinType::Dataset) &&
+                  meta->outputs.size() == 1 &&
+                  HasOutputType(meta, "Predictions", gui::PinType::Dataset) &&
+                  !HasInputType(meta, "Labels", gui::PinType::Labels) &&
+                  !HasOutputType(meta, "Model", gui::PinType::Parameters),
+              "tree classifier should expose one table-in/table-out contract: " +
+                  TypeId(type));
+        Check(FindParameter(meta, "target_col") != nullptr &&
+                  FindParameter(meta, "target_col")->required &&
+                  ParameterMatches(meta, "feature_cols", "string", "") &&
+                  ParameterMatches(meta, "prediction_col", "string", "prediction") &&
+                  ParameterMatches(meta, "model_path", "string", ""),
+              "tree classifier should expose its shared table/artifact fields: " +
+                  TypeId(type));
+
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(type);
+        CheckRuntimeOwnerContract(
+            support,
+            cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+            cyxwiz::PipelineRuntimeImplementationOwner::PipelineOperatorFactory,
+            "tree classifier " + TypeId(type));
+
+        auto op = cyxwiz::PipelineOperatorFactory::Instance().Create(type);
+        Check(op != nullptr,
+              "tree classifier metadata should have a pipeline operator: " +
+                  TypeId(type));
+        std::map<std::string, std::string> params;
+        for (const auto& parameter : meta->parameters) {
+            params.emplace(parameter.name, parameter.default_value);
+        }
+        params["target_col"] = "target";
+        std::string error;
+        Check(op->Configure(params, error),
+              "tree classifier metadata defaults should configure its operator: " +
+                  TypeId(type) + ": " + error);
+    }
+
+    const auto* decision =
+        metadata.GetMetadata(gui::NodeType::DecisionTreeClassifier);
+    const auto* forest =
+        metadata.GetMetadata(gui::NodeType::RandomForestClassifier);
+    const auto* boosting =
+        metadata.GetMetadata(gui::NodeType::GradientBoostingClassifier);
+    const auto* predictor =
+        metadata.GetMetadata(gui::NodeType::TreeModelPredictor);
+    Check(decision->parameters.size() == 8 &&
+              ParameterMatches(decision, "max_depth", "int", "10") &&
+              ParameterMatches(decision, "min_samples_split", "int", "2") &&
+              ParameterMatches(decision, "min_samples_leaf", "int", "1") &&
+              ParameterMatches(decision, "criterion", "enum", "gini"),
+          "DecisionTree metadata should match every consumed operator field");
+    Check(forest->parameters.size() == 11 &&
+              ParameterMatches(forest, "n_estimators", "int", "100") &&
+              ParameterMatches(forest, "max_features", "enum", "sqrt") &&
+              ParameterMatches(forest, "seed", "int", "42"),
+          "RandomForest metadata should match every consumed operator field");
+    Check(boosting->parameters.size() == 9 &&
+              ParameterMatches(boosting, "n_estimators", "int", "100") &&
+              ParameterMatches(boosting, "learning_rate", "float", "0.1") &&
+              ParameterMatches(boosting, "max_depth", "int", "3"),
+          "GradientBoosting metadata should match every consumed operator field");
+    Check(predictor != nullptr && predictor->inputs.size() == 1 &&
+              predictor->outputs.size() == 1 &&
+              predictor->parameters.size() == 3 &&
+              FindParameter(predictor, "model_path") != nullptr &&
+              FindParameter(predictor, "model_path")->required &&
+              ParameterMatches(predictor, "prediction_col", "string", "prediction"),
+          "TreeModelPredictor should expose its required artifact table contract");
+
+    auto predictor_op = cyxwiz::PipelineOperatorFactory::Instance().Create(
+        gui::NodeType::TreeModelPredictor);
+    std::string predictor_error;
+    Check(predictor_op != nullptr &&
+              predictor_op->Configure({{"model_path", "model.json"}},
+                                      predictor_error),
+          "TreeModelPredictor metadata contract should configure its operator: " +
+              predictor_error);
+}
+
+void CheckClassicalTreeMigrationGuard() {
+    const nlohmann::json legacy_graph = nlohmann::json::object();
+    Check(gui::detail::PreserveLegacyClassicalTreeTablePins(legacy_graph),
+          "unversioned graphs should use classical-tree pin migration");
+    const nlohmann::json current_graph = {
+        {"classical_tree_table_contract_version",
+         gui::detail::kCurrentClassicalTreeTableContractVersion}};
+    Check(!gui::detail::PreserveLegacyClassicalTreeTablePins(current_graph),
+          "current classical-tree graphs should use truthful table pins");
+
+    int resolved_index = -1;
+    Check(gui::detail::ResolveLegacyClassicalTreeOutputPinIndex(
+              {{"from_pin_index", 1}}, resolved_index) &&
+              resolved_index == 0,
+          "legacy tree Predictions output should migrate from index 1 to 0");
+    Check(!gui::detail::ResolveLegacyClassicalTreeOutputPinIndex(
+              {{"from_pin_index", 0}}, resolved_index),
+          "legacy fictional tree Model output must not become Predictions");
+}
+
+void CheckStaticCreationAdapter(cyxwiz::NodeMetadataRegistry& metadata) {
+    for (const auto type : {
+             gui::NodeType::Dense,
+             gui::NodeType::MultiHeadAttention,
+             gui::NodeType::StandardScaler,
+             gui::NodeType::MinMaxScaler,
+             gui::NodeType::RobustScaler,
+             gui::NodeType::LabelEncoder,
+             gui::NodeType::OrdinalEncoder,
+             gui::NodeType::TargetEncoder,
+             gui::NodeType::OutlierDetector,
+             gui::NodeType::DataValidator,
+             gui::NodeType::SampleRows,
+             gui::NodeType::ValueCounts,
+             gui::NodeType::DescribeStats,
+             gui::NodeType::CorrelationMatrix,
+             gui::NodeType::RegressionMetricsNode,
+             gui::NodeType::ClassificationMetricsNode,
+             gui::NodeType::ConfusionMatrixNode,
+             gui::NodeType::ROCCurveNode,
+             gui::NodeType::PRCurveNode,
+             gui::NodeType::FFTNode,
+             gui::NodeType::FilterDesigner,
+             gui::NodeType::Convolution1D,
+             gui::NodeType::TFIDFVectorizer,
+             gui::NodeType::CountVectorizer,
+             gui::NodeType::SentimentAnalyzer,
+             gui::NodeType::FilterRows,
+             gui::NodeType::SelectColumns,
+             gui::NodeType::SortRows,
+             gui::NodeType::GroupByAggregate,
+             gui::NodeType::FillMissingValues,
+             gui::NodeType::RemoveDuplicateRows,
+             gui::NodeType::RenameColumns,
+             gui::NodeType::JoinTables,
+             gui::NodeType::KMeansCluster,
+             gui::NodeType::DBSCANCluster,
+             gui::NodeType::HierarchicalCluster,
+             gui::NodeType::GMMCluster,
+             gui::NodeType::PCANode,
+             gui::NodeType::DecisionTreeClassifier,
+             gui::NodeType::RandomForestClassifier,
+             gui::NodeType::GradientBoostingClassifier,
+             gui::NodeType::TreeModelPredictor,
+             gui::NodeType::DataInput,
+             gui::NodeType::Conv2D,
+             gui::NodeType::ReLU,
+             gui::NodeType::Sigmoid,
+             gui::NodeType::Tanh,
+             gui::NodeType::Softmax,
+             gui::NodeType::LeakyReLU,
+             gui::NodeType::ELU,
+             gui::NodeType::GELU,
+             gui::NodeType::Swish,
+             gui::NodeType::Mish,
+             gui::NodeType::Dropout,
+             gui::NodeType::BatchNorm,
+             gui::NodeType::LayerNorm,
+             gui::NodeType::GroupNorm,
+             gui::NodeType::InstanceNorm,
+             gui::NodeType::Flatten,
+             gui::NodeType::Reshape,
+             gui::NodeType::View,
+             gui::NodeType::Permute,
+             gui::NodeType::Squeeze,
+             gui::NodeType::Unsqueeze,
+             gui::NodeType::TensorBroadcastTo,
+             gui::NodeType::TensorExpand,
+             gui::NodeType::TensorIndexSelect,
+             gui::NodeType::TensorSum,
+             gui::NodeType::TensorMean,
+             gui::NodeType::TensorMax,
+             gui::NodeType::TensorMin,
+             gui::NodeType::TensorProd,
+             gui::NodeType::TensorVar,
+             gui::NodeType::TensorStd,
+             gui::NodeType::TensorPow,
+             gui::NodeType::TensorSqrt,
+             gui::NodeType::TensorExp,
+             gui::NodeType::TensorLog,
+             gui::NodeType::TensorAbs,
+             gui::NodeType::TensorSign,
+             gui::NodeType::TensorClip,
+             gui::NodeType::TensorDot,
+             gui::NodeType::TensorBatchMatMul,
+             gui::NodeType::TensorCompare,
+             gui::NodeType::TensorLogicalMask,
+             gui::NodeType::MSELoss,
+             gui::NodeType::CrossEntropyLoss,
+             gui::NodeType::FocalLoss,
+             gui::NodeType::SoftDiceLoss,
+             gui::NodeType::TverskyLoss,
+             gui::NodeType::JaccardLoss,
+             gui::NodeType::BCELoss,
+             gui::NodeType::BCEWithLogits,
+             gui::NodeType::L1Loss,
+             gui::NodeType::SmoothL1Loss,
+             gui::NodeType::HuberLoss,
+             gui::NodeType::NLLLoss,
+             gui::NodeType::SGD,
+             gui::NodeType::Adam,
+             gui::NodeType::AdamW,
+             gui::NodeType::RMSprop,
+             gui::NodeType::Adagrad,
+             gui::NodeType::NAdam,
+         }) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr,
+              "creation-adapter reference metadata should exist: " +
+                  TypeId(type));
+
+        gui::MLNode created;
+        created.type = type;
+        int next_pin_id = 100;
+        cyxwiz::ApplyStaticNodeMetadataContract(*meta, created, next_pin_id);
+
+        Check(created.category == meta->category,
+              "creation adapter category drift: " + TypeId(type));
+        Check(created.inputs.size() == meta->inputs.size() &&
+                  created.outputs.size() == meta->outputs.size(),
+              "creation adapter pin-count drift: " + TypeId(type));
+        Check(created.parameters.size() == meta->parameters.size(),
+              "creation adapter parameter-count drift: " + TypeId(type));
+
+        for (std::size_t i = 0; i < meta->inputs.size(); ++i) {
+            const auto& port = meta->inputs[i];
+            const auto& pin = created.inputs[i];
+            Check(pin.name == port.name && pin.type == port.type &&
+                      pin.is_input && pin.is_required == port.required &&
+                      pin.description == port.description,
+                  "creation adapter input-pin drift: " + TypeId(type));
+        }
+        for (std::size_t i = 0; i < meta->outputs.size(); ++i) {
+            const auto& port = meta->outputs[i];
+            const auto& pin = created.outputs[i];
+            Check(pin.name == port.name && pin.type == port.type &&
+                      !pin.is_input && pin.is_required == port.required &&
+                      pin.description == port.description,
+                  "creation adapter output-pin drift: " + TypeId(type));
+        }
+        for (const auto& parameter : meta->parameters) {
+            const auto it = created.parameters.find(parameter.name);
+            Check(it != created.parameters.end() &&
+                      it->second == parameter.default_value,
+                  "creation adapter parameter-default drift: " +
+                      TypeId(type) + "." + parameter.name);
+        }
+    }
+}
+
+void CheckPreprocessingScalerEncoderFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const auto* minmax = metadata.GetMetadata(gui::NodeType::MinMaxScaler);
+    Check(minmax != nullptr && minmax->parameters.size() == 4,
+          "MinMaxScaler should declare every operator parameter");
+    Check(ParameterMatches(minmax, "columns", "string", "") &&
+              ParameterMatches(minmax, "label_col", "string", "") &&
+              ParameterMatches(minmax, "min", "float", "0.0") &&
+              ParameterMatches(minmax, "max", "float", "1.0"),
+          "MinMaxScaler metadata defaults should match its operator");
+
+    const auto* robust = metadata.GetMetadata(gui::NodeType::RobustScaler);
+    Check(robust != nullptr && robust->parameters.size() == 6,
+          "RobustScaler should declare every operator parameter");
+    Check(ParameterMatches(robust, "columns", "string", "") &&
+              ParameterMatches(robust, "label_col", "string", "") &&
+              ParameterMatches(robust, "with_centering", "bool", "true") &&
+              ParameterMatches(robust, "with_scaling", "bool", "true") &&
+              ParameterMatches(robust, "quantile_min", "float", "25") &&
+              ParameterMatches(robust, "quantile_max", "float", "75"),
+          "RobustScaler metadata defaults should match its operator");
+
+    const auto* label = metadata.GetMetadata(gui::NodeType::LabelEncoder);
+    const auto* ordinal = metadata.GetMetadata(gui::NodeType::OrdinalEncoder);
+    const auto* target = metadata.GetMetadata(gui::NodeType::TargetEncoder);
+    const auto* outlier = metadata.GetMetadata(gui::NodeType::OutlierDetector);
+    Check(FindParameter(label, "column") != nullptr &&
+              FindParameter(label, "column")->required,
+          "LabelEncoder should require the column consumed by its operator");
+    Check(FindParameter(ordinal, "columns") != nullptr &&
+              FindParameter(ordinal, "columns")->required &&
+              ParameterMatches(ordinal, "categories", "enum", "auto"),
+          "OrdinalEncoder should require columns and expose its supported ordering");
+    Check(FindParameter(target, "columns") != nullptr &&
+              FindParameter(target, "columns")->required &&
+              FindParameter(target, "target_col") != nullptr &&
+              FindParameter(target, "target_col")->required &&
+              ParameterMatches(target, "smoothing", "float", "1.0"),
+          "TargetEncoder should require its categorical and numeric target columns");
+    Check(outlier != nullptr && outlier->parameters.size() == 4 &&
+              ParameterMatches(outlier, "columns", "string", "all") &&
+              ParameterMatches(outlier, "label_col", "string", "") &&
+              ParameterMatches(outlier, "method", "dropdown", "iqr") &&
+              HasEnumValue(outlier, "method", "zscore") &&
+              ParameterMatches(outlier, "threshold", "float", "1.5") &&
+              !HasParameter(outlier, "action"),
+          "OutlierDetector metadata should match its flag-only operator contract");
+
+    const auto configure_defaults = [](const cyxwiz::NodeMetadata* meta,
+                                       bool expected) {
+        auto op = cyxwiz::PipelineOperatorFactory::Instance().Create(meta->type);
+        Check(op != nullptr,
+              "preprocessing metadata should have a pipeline operator: " +
+                  TypeId(meta->type));
+        std::map<std::string, std::string> params;
+        for (const auto& parameter : meta->parameters) {
+            params.emplace(parameter.name, parameter.default_value);
+        }
+        std::string error;
+        Check(op->Configure(params, error) == expected,
+              "preprocessing metadata defaults disagree with operator validation: " +
+                  TypeId(meta->type));
+    };
+
+    configure_defaults(minmax, true);
+    configure_defaults(robust, true);
+    configure_defaults(label, false);
+    configure_defaults(ordinal, false);
+    configure_defaults(target, false);
+    configure_defaults(outlier, true);
+}
+
+void CheckCoreLayerFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
+    const auto* softmax = metadata.GetMetadata(gui::NodeType::Softmax);
+    Check(softmax != nullptr && !HasParameter(softmax, "dim"),
+          "Softmax must not expose a dimension ignored by SoftmaxModule");
+
+    const auto* batch_norm = metadata.GetMetadata(gui::NodeType::BatchNorm);
+    Check(ParameterMatches(batch_norm, "eps", "float", "1e-5") &&
+              ParameterMatches(batch_norm, "momentum", "float", "0.1"),
+          "BatchNorm metadata should match GraphCompiler parameter keys");
+    Check(!HasParameter(batch_norm, "epsilon"),
+          "BatchNorm must not seed the legacy epsilon spelling on new nodes");
+
+    const auto* layer_norm = metadata.GetMetadata(gui::NodeType::LayerNorm);
+    Check(ParameterMatches(layer_norm, "normalized_shape", "string", "") &&
+              ParameterMatches(layer_norm, "eps", "float", "1e-5") &&
+              ParameterMatches(layer_norm, "elementwise_affine", "bool", "true"),
+          "LayerNorm metadata should match ModelBuilder's automatic shape contract");
+}
+
+void CheckShapeOperationFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    for (const auto type : {
+             gui::NodeType::Reshape,
+             gui::NodeType::View,
+         }) {
+        const auto* meta = metadata.GetMetadata(type);
+        const auto* shape = FindParameter(meta, "shape");
+        Check(shape != nullptr && shape->type == "string" &&
+                  shape->default_value.empty() && shape->required,
+              "Reshape/View should require a shape instead of seeding a "
+              "rank-specific default: " + TypeId(type));
+    }
+
+    const auto* permute = metadata.GetMetadata(gui::NodeType::Permute);
+    const auto* dims = FindParameter(permute, "dims");
+    Check(dims != nullptr && dims->type == "string" &&
+              dims->default_value.empty() && dims->required,
+          "Permute should require an input-rank-specific dimension order");
+
+    Check(ParameterMatches(metadata.GetMetadata(gui::NodeType::Squeeze),
+                           "dim", "int", "-1"),
+          "Squeeze should default to the compiler's all-singleton policy");
+    Check(ParameterMatches(metadata.GetMetadata(gui::NodeType::Unsqueeze),
+                           "dim", "int", "0"),
+          "Unsqueeze should default to inserting the leading sample axis");
+
+    for (const auto type : {
+             gui::NodeType::TensorBroadcastTo,
+             gui::NodeType::TensorExpand,
+         }) {
+        const auto* shape =
+            FindParameter(metadata.GetMetadata(type), "shape");
+        Check(shape != nullptr && shape->type == "string" &&
+                  shape->default_value.empty() && shape->required,
+              "broadcast shape operation should require a target shape: " +
+                  TypeId(type));
+    }
+
+    const auto* index_select =
+        metadata.GetMetadata(gui::NodeType::TensorIndexSelect);
+    const auto* indices = FindParameter(index_select, "indices");
+    Check(ParameterMatches(index_select, "dim", "int", "0") &&
+              indices != nullptr && indices->type == "string" &&
+              indices->default_value.empty() && indices->required,
+          "TensorIndexSelect should expose a safe dimension and required indices");
+}
+
+void CheckTensorMathFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    for (const auto type : {
+             gui::NodeType::TensorSum,
+             gui::NodeType::TensorMean,
+             gui::NodeType::TensorMax,
+             gui::NodeType::TensorMin,
+             gui::NodeType::TensorProd,
+             gui::NodeType::TensorVar,
+             gui::NodeType::TensorStd,
+         }) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(ParameterMatches(meta, "dim", "int", "-1") &&
+                  ParameterMatches(meta, "keepdim", "bool", "false"),
+              "tensor reduction metadata should match compiler and "
+              "ModelBuilder defaults: " + TypeId(type));
+    }
+
+    Check(ParameterMatches(metadata.GetMetadata(gui::NodeType::TensorPow),
+                           "exponent", "float", "2.0"),
+          "TensorPow metadata should match ModelBuilder's exponent default");
+
+    const auto* clip = metadata.GetMetadata(gui::NodeType::TensorClip);
+    Check(ParameterMatches(clip, "min", "float", "0.0") &&
+              ParameterMatches(clip, "max", "float", "1.0"),
+          "TensorClip metadata should match compiler and ModelBuilder bounds");
+
+    for (const auto type : {
+             gui::NodeType::TensorSqrt,
+             gui::NodeType::TensorExp,
+             gui::NodeType::TensorLog,
+             gui::NodeType::TensorAbs,
+             gui::NodeType::TensorSign,
+         }) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr && meta->parameters.empty(),
+              "parameter-free unary tensor node should not seed unused "
+              "properties: " + TypeId(type));
+    }
+}
+
+void CheckTensorFanInFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const auto* dot = metadata.GetMetadata(gui::NodeType::TensorDot);
+    Check(dot != nullptr && dot->IsImplemented() &&
+              cyxwiz::CanAddNodeToGraph(*dot) &&
+              HasInput(dot, "A", true) && HasInput(dot, "B", true) &&
+              HasOutputType(dot, "Output", gui::PinType::Tensor) &&
+              dot->parameters.empty(),
+          "TensorDot should expose its implemented two-input graph contract");
+
+    const auto* batch_matmul =
+        metadata.GetMetadata(gui::NodeType::TensorBatchMatMul);
+    Check(batch_matmul != nullptr && batch_matmul->IsTemplate() &&
+              batch_matmul->badge == "Blocked" &&
+              !cyxwiz::CanAddNodeToGraph(*batch_matmul) &&
+              HasInput(batch_matmul, "A", true) &&
+              HasInput(batch_matmul, "B", true),
+          "TensorBatchMatMul should preserve its static contract while "
+          "remaining blocked from new graphs");
+
+    const auto* compare = metadata.GetMetadata(gui::NodeType::TensorCompare);
+    Check(compare != nullptr && HasInput(compare, "A", true) &&
+              HasInput(compare, "B", false) &&
+              HasOutputType(compare, "Mask", gui::PinType::Tensor) &&
+              ParameterMatches(compare, "op", "enum", ">") &&
+              ParameterMatches(compare, "scalar", "float", "0.0") &&
+              HasEnumValue(compare, "op", ">") &&
+              HasEnumValue(compare, "op", "==") &&
+              HasEnumValue(compare, "op", "!="),
+          "TensorCompare should expose scalar and optional tensor modes");
+
+    const auto* logical =
+        metadata.GetMetadata(gui::NodeType::TensorLogicalMask);
+    Check(logical != nullptr && HasInput(logical, "A", true) &&
+              HasInput(logical, "B", false) &&
+              HasOutputType(logical, "Mask", gui::PinType::Tensor) &&
+              ParameterMatches(logical, "op", "enum", "not") &&
+              HasEnumValue(logical, "op", "not") &&
+              HasEnumValue(logical, "op", "and") &&
+              HasEnumValue(logical, "op", "or"),
+          "TensorLogicalMask should expose unary and optional binary modes");
+}
+
+void CheckLossFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
+    for (const auto type : {
+             gui::NodeType::MSELoss,
+             gui::NodeType::CrossEntropyLoss,
+             gui::NodeType::FocalLoss,
+             gui::NodeType::SoftDiceLoss,
+             gui::NodeType::TverskyLoss,
+             gui::NodeType::JaccardLoss,
+             gui::NodeType::BCELoss,
+             gui::NodeType::BCEWithLogits,
+             gui::NodeType::L1Loss,
+             gui::NodeType::SmoothL1Loss,
+             gui::NodeType::HuberLoss,
+             gui::NodeType::NLLLoss,
+         }) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr && meta->IsImplemented() &&
+                  cyxwiz::CanAddNodeToGraph(*meta),
+              "executable loss should be addable: " + TypeId(type));
+        Check(meta->inputs.size() == 2 && meta->outputs.size() == 1 &&
+                  meta->inputs[0].type == gui::PinType::Tensor &&
+                  meta->inputs[0].required &&
+                  meta->inputs[1].type == gui::PinType::Labels &&
+                  meta->inputs[1].required &&
+                  meta->outputs[0].type == gui::PinType::Loss &&
+                  meta->outputs[0].required,
+              "loss pins should expose prediction, semantic target, and loss roles: " +
+                  TypeId(type));
+        Check(ParameterMatches(meta, "reduction", "enum", "mean") &&
+                  HasEnumValue(meta, "reduction", "mean") &&
+                  HasEnumValue(meta, "reduction", "sum") &&
+                  HasEnumValue(meta, "reduction", "none"),
+              "loss reduction should match the backend contract: " +
+                  TypeId(type));
+    }
+
+    const auto* cross_entropy =
+        metadata.GetMetadata(gui::NodeType::CrossEntropyLoss);
+    Check(HasInputType(cross_entropy, "Logits", gui::PinType::Tensor) &&
+              HasInputType(cross_entropy, "Labels", gui::PinType::Labels) &&
+              ParameterMatches(cross_entropy, "ignore_index", "int", "-100") &&
+              ParameterMatches(cross_entropy, "label_smoothing", "float", "0.0") &&
+              ParameterMatches(cross_entropy, "class_weight", "enum", "none") &&
+              ParameterMatches(cross_entropy, "class_weights", "string", ""),
+          "CrossEntropy should expose the compiler and backend-owned options");
+
+    const auto* focal = metadata.GetMetadata(gui::NodeType::FocalLoss);
+    Check(HasInputType(focal, "Logits", gui::PinType::Tensor) &&
+              HasInputType(focal, "Labels", gui::PinType::Labels) &&
+              ParameterMatches(focal, "alpha", "float", "0.25") &&
+              ParameterMatches(focal, "gamma", "float", "2.0"),
+          "FocalLoss should expose logit/class-label semantics and defaults");
+
+    const auto* bce_logits =
+        metadata.GetMetadata(gui::NodeType::BCEWithLogits);
+    Check(HasInputType(bce_logits, "Logits", gui::PinType::Tensor) &&
+              ParameterMatches(bce_logits, "pos_weight", "float", "1.0"),
+          "BCEWithLogits should expose its stable-logit and weighting contract");
+
+    Check(ParameterMatches(metadata.GetMetadata(gui::NodeType::SmoothL1Loss),
+                           "beta", "float", "1.0") &&
+              ParameterMatches(metadata.GetMetadata(gui::NodeType::HuberLoss),
+                               "beta", "float", "1.0"),
+          "SmoothL1 and its Huber alias should expose the consumed transition width");
+    Check(ParameterMatches(metadata.GetMetadata(gui::NodeType::NLLLoss),
+                           "ignore_index", "int", "-100") &&
+              HasInputType(metadata.GetMetadata(gui::NodeType::NLLLoss),
+                           "Log Probabilities", gui::PinType::Tensor),
+          "NLLLoss should expose log-probability input and ignore-index semantics");
+}
+
+void CheckOptimizerFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
+    for (const auto type : {
+             gui::NodeType::SGD,
+             gui::NodeType::Adam,
+             gui::NodeType::AdamW,
+             gui::NodeType::RMSprop,
+             gui::NodeType::Adagrad,
+             gui::NodeType::NAdam,
+         }) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr && meta->IsImplemented() &&
+                  cyxwiz::CanAddNodeToGraph(*meta),
+              "executable optimizer should be addable: " + TypeId(type));
+        Check(meta->inputs.size() == 1 && meta->outputs.size() == 1 &&
+                  meta->inputs[0].name == "Loss" &&
+                  meta->inputs[0].type == gui::PinType::Loss &&
+                  meta->inputs[0].required &&
+                  meta->outputs[0].name == "State" &&
+                  meta->outputs[0].type == gui::PinType::Optimizer &&
+                  !meta->outputs[0].required,
+              "optimizer pins should expose one loss input and optional state output: " +
+                  TypeId(type));
+    }
+
+    Check(ParameterMatches(metadata.GetMetadata(gui::NodeType::SGD),
+                           "learning_rate", "float", "0.01") &&
+              ParameterMatches(metadata.GetMetadata(gui::NodeType::SGD),
+                               "momentum", "float", "0.9") &&
+              !HasParameter(metadata.GetMetadata(gui::NodeType::SGD),
+                            "weight_decay"),
+          "SGD metadata should match the backend constructor contract");
+
+    for (const auto type : {gui::NodeType::Adam, gui::NodeType::NAdam}) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(ParameterMatches(meta, "beta1", "float", "0.9") &&
+                  ParameterMatches(meta, "beta2", "float", "0.999") &&
+                  ParameterMatches(meta, "epsilon", "float", "1e-8"),
+              "Adam-family moments should match backend defaults: " +
+                  TypeId(type));
+    }
+    Check(ParameterMatches(metadata.GetMetadata(gui::NodeType::NAdam),
+                           "learning_rate", "float", "0.002"),
+          "NAdam should expose its backend learning-rate default");
+
+    const auto* adamw = metadata.GetMetadata(gui::NodeType::AdamW);
+    Check(ParameterMatches(adamw, "epsilon", "float", "1e-8") &&
+              ParameterMatches(adamw, "weight_decay", "float", "0.01"),
+          "AdamW should expose all backend-consumed options");
+
+    const auto* rmsprop = metadata.GetMetadata(gui::NodeType::RMSprop);
+    Check(ParameterMatches(rmsprop, "alpha", "float", "0.99") &&
+              ParameterMatches(rmsprop, "epsilon", "float", "1e-8") &&
+              ParameterMatches(rmsprop, "momentum", "float", "0.0"),
+          "RMSprop should expose all backend-consumed options");
+
+    const auto* adagrad = metadata.GetMetadata(gui::NodeType::Adagrad);
+    Check(ParameterMatches(adagrad, "learning_rate", "float", "0.01") &&
+              ParameterMatches(adagrad, "epsilon", "float", "1e-10") &&
+              !HasParameter(adagrad, "lr_decay"),
+          "Adagrad should not advertise unsupported learning-rate decay");
+}
+
 } // namespace
 
 int main() {
@@ -858,6 +2285,31 @@ int main() {
     metadata.Initialize();
 
     CheckPropertyTruthInventory(metadata);
+    CheckMultiHeadAttentionReferenceContract(metadata);
+    CheckDenseReferenceContract(metadata);
+    CheckStandardScalerReferenceContract(metadata);
+    CheckDataInputDialogReferenceContract(metadata);
+    CheckConv2DBlockedReferenceContract(metadata);
+    CheckDataValidatorReferenceContract(metadata);
+    CheckDataValidatorOutputMigrationGuard();
+    CheckTabularAnalyticsFamilyContract(metadata);
+    CheckEvaluationTableFamilyContract(metadata);
+    CheckEvaluationTableMigrationGuard();
+    CheckSignalProcessingFamilyContract(metadata);
+    CheckTextVectorizerSentimentFamilyContract(metadata);
+    CheckTabularTransformFamilyContract(metadata);
+    CheckClusteringFamilyContract(metadata);
+    CheckPcaContract(metadata);
+    CheckClassicalTreeFamilyContract(metadata);
+    CheckClassicalTreeMigrationGuard();
+    CheckStaticCreationAdapter(metadata);
+    CheckPreprocessingScalerEncoderFamilyContract(metadata);
+    CheckCoreLayerFamilyContract(metadata);
+    CheckShapeOperationFamilyContract(metadata);
+    CheckTensorMathFamilyContract(metadata);
+    CheckTensorFanInFamilyContract(metadata);
+    CheckLossFamilyContract(metadata);
+    CheckOptimizerFamilyContract(metadata);
 
     {
         const auto* data_input = metadata.GetMetadata(gui::NodeType::DataInput);
@@ -1678,26 +3130,6 @@ int main() {
         Check(meta->badge != "Blocked",
               std::string("operator-backed real runtime metadata should not be blocked: ") +
                   capability.legacy_type_name);
-        Check(meta->help_text.find(cyxwiz::PipelineRuntimeSupportModeName(
-                  support.mode)) != std::string::npos,
-              std::string("operator-backed metadata should expose runtime support mode: ") +
-                  capability.legacy_type_name);
-        Check(meta->help_text.find(cyxwiz::PipelineRuntimeFailModeName(
-                  support.fail_mode)) != std::string::npos,
-              std::string("operator-backed metadata should expose fail mode: ") +
-                  capability.legacy_type_name);
-        Check(meta->help_text.find("pipeline_executor=supported") !=
-                  std::string::npos,
-              std::string("operator-backed metadata should expose pipeline executor support: ") +
-                  capability.legacy_type_name);
-        Check(meta->help_text.find(cyxwiz::PipelineMaterializerStorageSupportName(
-                  support.materializer_storage_support)) != std::string::npos,
-              std::string("operator-backed metadata should expose materializer support scope: ") +
-                  capability.legacy_type_name);
-        Check(meta->help_text.find(cyxwiz::PipelineRuntimeImplementationOwnerName(
-                  support.implementation_owner)) != std::string::npos,
-              std::string("operator-backed metadata should expose implementation owner: ") +
-                  capability.legacy_type_name);
         CheckSupportAxis(
             meta,
             "Runtime",
@@ -1878,9 +3310,11 @@ int main() {
                           std::string("fail-closed metadata should keep runtime owner or stronger training owner: ") +
                               capability.legacy_type_name);
                 }
-                Check(meta->help_text.find(reason) != std::string::npos,
-                      std::string("fail-closed metadata should expose reason: ") +
-                          capability.legacy_type_name);
+                CheckSupportAxisReasonContains(
+                    meta,
+                    "Runtime",
+                    reason,
+                    capability.legacy_type_name);
             }
         }
     }
@@ -3163,9 +4597,8 @@ int main() {
             "supported",
             true,
             TypeId(role_case.node_type));
-        Check(meta->help_text.find("Training role: role=") != std::string::npos,
-              "training role metadata should explain role ownership for type " +
-                  TypeId(role_case.node_type));
+        CheckSupportAxisReasonContains(
+            meta, "Training Role", "", TypeId(role_case.node_type));
     }
 
     const auto* linear_regression_meta =
@@ -3177,8 +4610,9 @@ int main() {
         "classic_ml",
         true,
         "LinearRegression");
-    Check(linear_regression_meta->help_text.find("classical ML") != std::string::npos,
-          "LinearRegression workflow lane guidance should name the classical ML lane");
+    CheckSupportAxisReasonContains(
+        linear_regression_meta, "Workflow Lane", "classical ML",
+        "LinearRegression");
 
     const auto* polynomial_regression_meta =
         metadata.GetMetadata(gui::NodeType::PolynomialRegressionNode);
@@ -3189,8 +4623,9 @@ int main() {
         "classic_ml",
         true,
         "PolynomialRegression");
-    Check(polynomial_regression_meta->help_text.find("classical ML") != std::string::npos,
-          "PolynomialRegression workflow lane guidance should name the classical ML lane");
+    CheckSupportAxisReasonContains(
+        polynomial_regression_meta, "Workflow Lane", "classical ML",
+        "PolynomialRegression");
 
     const auto* decision_tree_meta =
         metadata.GetMetadata(gui::NodeType::DecisionTreeClassifier);
@@ -3221,8 +4656,9 @@ int main() {
         "classic_ml",
         true,
         "DecisionTreeClassifier");
-    Check(decision_tree_meta->help_text.find("classical ML") != std::string::npos,
-          "DecisionTree workflow lane guidance should name the classical ML lane");
+    CheckSupportAxisReasonContains(
+        decision_tree_meta, "Workflow Lane", "classical ML",
+        "DecisionTreeClassifier");
 
     const auto* random_forest_meta =
         metadata.GetMetadata(gui::NodeType::RandomForestClassifier);
@@ -3260,8 +4696,9 @@ int main() {
         "classic_ml",
         true,
         "RandomForestClassifier");
-    Check(random_forest_meta->help_text.find("classical ML") != std::string::npos,
-          "RandomForest workflow lane guidance should name the classical ML lane");
+    CheckSupportAxisReasonContains(
+        random_forest_meta, "Workflow Lane", "classical ML",
+        "RandomForestClassifier");
 
     const auto* gradient_boosting_meta =
         metadata.GetMetadata(gui::NodeType::GradientBoostingClassifier);
@@ -3293,9 +4730,9 @@ int main() {
         "classic_ml",
         true,
         "GradientBoostingClassifier");
-    Check(gradient_boosting_meta->help_text.find("classical ML") !=
-              std::string::npos,
-          "GradientBoosting workflow lane guidance should name the classical ML lane");
+    CheckSupportAxisReasonContains(
+        gradient_boosting_meta, "Workflow Lane", "classical ML",
+        "GradientBoostingClassifier");
 
     const auto* tree_predictor_meta =
         metadata.GetMetadata(gui::NodeType::TreeModelPredictor);
@@ -3321,9 +4758,9 @@ int main() {
         "classic_ml",
         true,
         "TreeModelPredictor");
-    Check(tree_predictor_meta->help_text.find("classical ML") !=
-              std::string::npos,
-          "TreeModelPredictor workflow lane guidance should name the classical ML lane");
+    CheckSupportAxisReasonContains(
+        tree_predictor_meta, "Workflow Lane", "classical ML",
+        "TreeModelPredictor");
 
     for (auto type : {
              gui::NodeType::StandardScaler,
@@ -3341,16 +4778,15 @@ int main() {
             "data_studio_analytics",
             true,
             TypeId(type));
-        Check(meta->help_text.find("Data Studio analytics") != std::string::npos,
-              "Data Studio analytics workflow lane guidance should explain type " +
-                  TypeId(type));
+        CheckSupportAxisReasonContains(
+            meta, "Workflow Lane", "Data Studio analytics", TypeId(type));
     }
 
     const auto* mse_loss_meta = metadata.GetMetadata(gui::NodeType::MSELoss);
     Check(mse_loss_meta != nullptr, "MSELoss metadata should exist");
     CheckSupportAxis(mse_loss_meta, "Task Type", "regression", true, "MSELoss");
-    Check(mse_loss_meta->help_text.find("numeric targets") != std::string::npos,
-          "MSELoss task guidance should point users to numeric regression targets");
+    CheckSupportAxisReasonContains(
+        mse_loss_meta, "Task Type", "numeric targets", "MSELoss");
 
     const auto* cross_entropy_meta =
         metadata.GetMetadata(gui::NodeType::CrossEntropyLoss);
@@ -3365,8 +4801,8 @@ int main() {
         "multiclass_classification",
         true,
         "CrossEntropyLoss");
-    Check(cross_entropy_meta->help_text.find("class labels") != std::string::npos,
-          "CrossEntropyLoss task guidance should point users to class-label classification");
+    CheckSupportAxisReasonContains(
+        cross_entropy_meta, "Task Type", "class labels", "CrossEntropyLoss");
 
     Check(SearchContainsType(metadata, "bce", gui::NodeType::BCELoss),
           "searching bce should find BCE Loss metadata");
@@ -3419,10 +4855,11 @@ int main() {
           "BarChart should remain an implemented UI workflow node");
     CheckSupportAxis(bar_chart_meta, "Implementation Owner", "ui_only", true, "BarChart");
     CheckSupportAxis(bar_chart_meta, "Support State", "partial", true, "BarChart");
-    Check(!FrontendGraphAddBlockedBySupportAxes(bar_chart_meta),
+    Check(cyxwiz::CanAddNodeToGraph(*bar_chart_meta),
           "frontend blocked state for UI-only partial nodes should come from support_axes");
-    Check(bar_chart_meta->help_text.find("UI/panel workflow surface") != std::string::npos,
-          "UI-only metadata should explain the current ownership boundary");
+    CheckSupportAxisReasonContains(
+        bar_chart_meta, "Implementation Owner", "UI/panel workflow surface",
+        "BarChart");
 
     const auto* standard_scaler_meta =
         metadata.GetMetadata(gui::NodeType::StandardScaler);
@@ -3430,7 +4867,7 @@ int main() {
           "StandardScaler metadata should exist for frontend support-axis guard");
     CheckSupportAxis(standard_scaler_meta, "Support State", "real", true,
                      "StandardScaler");
-    Check(!FrontendGraphAddBlockedBySupportAxes(standard_scaler_meta),
+    Check(cyxwiz::CanAddNodeToGraph(*standard_scaler_meta),
           "frontend should not block real operator-backed nodes when support_axes are supported");
 
     for (const auto& capability :
@@ -3462,10 +4899,6 @@ int main() {
                   std::string("non-blocking fail-closed runtime metadata should stay registered: ") +
                       capability.legacy_type_name);
         }
-        Check(capability.reason != nullptr &&
-                  meta->help_text.find(capability.reason) != std::string::npos,
-              std::string("fail-closed runtime metadata should expose central reason: ") +
-                  capability.legacy_type_name);
         CheckSupportAxis(
             meta,
             "Runtime",
@@ -3505,9 +4938,16 @@ int main() {
                   std::string("non-blocking fail-closed runtime metadata should keep supported state: ") +
                       capability.legacy_type_name);
         }
-        Check(FrontendGraphAddBlockedBySupportAxes(meta),
-              std::string("frontend blocked state should be derived from fail-closed support_axes: ") +
-                  capability.legacy_type_name);
+        if (capability.blocks_metadata_status || meta->IsTemplate() ||
+            meta->badge == "Blocked") {
+            Check(!cyxwiz::CanAddNodeToGraph(*meta),
+                  std::string("globally blocked fail-closed metadata should not be addable: ") +
+                      capability.legacy_type_name);
+        } else {
+            Check(cyxwiz::CanAddNodeToGraph(*meta),
+                  std::string("lane-specific PipelineExecutor limitations should not block another executable lane: ") +
+                      capability.legacy_type_name);
+        }
         Check(!FrontendSupportBlockReasonFromAxes(meta).empty(),
               std::string("frontend blocked reason should be available from fail-closed support_axes: ") +
                   capability.legacy_type_name);
@@ -3525,15 +4965,6 @@ int main() {
         Check(meta->badge == "Blocked",
               "unsupported training type " + TypeId(type) +
                   " should carry blocked badge");
-        Check(meta->help_text.find(cyxwiz::PipelineTrainingBackendSupportModeName(
-                  cyxwiz::PipelineTrainingBackendSupportMode::
-                      UnsupportedSequentialModelLayer)) != std::string::npos,
-              "unsupported training type " + TypeId(type) +
-                  " should expose training backend support mode");
-        Check(capability.reason != nullptr &&
-                  meta->help_text.find(capability.reason) != std::string::npos,
-              "unsupported training type " + TypeId(type) +
-                  " should expose central training backend reason");
         CheckSupportAxis(
             meta,
             "Training Backend",
@@ -3547,7 +4978,7 @@ int main() {
         CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
         CheckSupportAxis(meta, "Implementation Owner", "training_backend", true, TypeId(type));
         CheckSupportAxis(meta, "Support State", "blocked", false, TypeId(type));
-        Check(FrontendGraphAddBlockedBySupportAxes(meta),
+        Check(!cyxwiz::CanAddNodeToGraph(*meta),
               "frontend should block unsupported training nodes from support_axes: " +
                   TypeId(type));
         Check(!FrontendSupportBlockReasonFromAxes(meta).empty(),
@@ -3574,15 +5005,6 @@ int main() {
         Check(meta->badge == "Blocked",
               "unsupported training control " + TypeId(capability.node_type) +
                   " should carry blocked badge");
-        Check(meta->help_text.find(cyxwiz::PipelineTrainingBackendSupportModeName(
-                  cyxwiz::PipelineTrainingBackendSupportMode::
-                      UnsupportedTrainingControl)) != std::string::npos,
-              "unsupported training control " + TypeId(capability.node_type) +
-                  " should expose training backend support mode");
-        Check(capability.reason != nullptr &&
-                  meta->help_text.find(capability.reason) != std::string::npos,
-              "unsupported training control " + TypeId(capability.node_type) +
-                  " should expose central training backend reason");
         CheckSupportAxis(
             meta,
             "Training Backend",
@@ -3622,7 +5044,7 @@ int main() {
             "blocked",
             false,
             TypeId(capability.node_type));
-        Check(FrontendGraphAddBlockedBySupportAxes(meta),
+        Check(!cyxwiz::CanAddNodeToGraph(*meta),
               "frontend should block unsupported training controls from support_axes: " +
                   TypeId(capability.node_type));
         Check(!FrontendSupportBlockReasonFromAxes(meta).empty(),

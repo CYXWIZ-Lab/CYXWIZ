@@ -39,12 +39,8 @@ void ToolbarPanel::RenderNodesMenu() {
             if (ImGui::MenuItem(ICON_FA_BARS " Dense/Linear")) {
                 if (add_dense_node_callback_) add_dense_node_callback_();
             }
-            if (ImGui::MenuItem(ICON_FA_TABLE " Convolutional")) {
-                if (add_conv_node_callback_) add_conv_node_callback_();
-            }
-            if (ImGui::MenuItem(ICON_FA_COMPRESS " Pooling")) {
-                if (add_pooling_node_callback_) add_pooling_node_callback_();
-            }
+            RenderPlannedMenuItem(ICON_FA_TABLE " Convolutional");
+            RenderPlannedMenuItem(ICON_FA_COMPRESS " Pooling");
             if (ImGui::MenuItem(ICON_FA_DICE " Dropout")) {
                 if (add_dropout_node_callback_) add_dropout_node_callback_();
             }
@@ -282,7 +278,7 @@ void ToolbarPanel::RenderScriptMenu() {
             }
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Open interactive Python command window");
+            ImGui::SetTooltip("Open the Python REPL in Console");
         }
 
         ImGui::Separator();

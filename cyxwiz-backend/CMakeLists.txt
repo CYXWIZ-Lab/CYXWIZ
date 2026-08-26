@@ -306,6 +306,15 @@ target_link_libraries(cyxwiz-backend PUBLIC
     cyxwiz-protocol
 )
 
+# Utilities exposes SHA/MD5 file and text hashing. Keep its advertised result
+# truthful: enable the existing OpenSSL implementation when Crypto is
+# available; callers that require SHA fail closed when it is unavailable.
+find_package(OpenSSL QUIET)
+if(OpenSSL_FOUND)
+    target_link_libraries(cyxwiz-backend PRIVATE OpenSSL::Crypto)
+    target_compile_definitions(cyxwiz-backend PRIVATE CYXWIZ_HAS_OPENSSL)
+endif()
+
 # Platform-specific libraries for distributed training
 if(WIN32)
     target_link_libraries(cyxwiz-backend PRIVATE ws2_32)

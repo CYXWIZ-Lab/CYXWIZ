@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdlib>
 #include <cwctype>
 #include <fstream>
 #include <iomanip>
@@ -18,6 +19,7 @@
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <shellapi.h>
 
 #else
 #include <sys/types.h>
@@ -26,8 +28,11 @@
 #endif
 
 #include "backend_pack_lifecycle_service.h"
+#include "backend_pack_metadata_refresh.h"
 #include "backend_pack_state_service.h"
 #include "core/backend_pack_catalog_adapter.h"
+#include "core/compute_runtime_paths.h"
+#include "core/route_qualification_snapshot.h"
 
 namespace cyxwiz::installer {
 namespace {
@@ -42,6 +47,14 @@ bool IsIdentifier(const std::string& value) {
             return std::islower(character) || std::isdigit(character) ||
                    character == '.' || character == '_' || character == '-';
         });
+}
+
+std::optional<DeviceType> BackendType(const std::string& backend) {
+    if (backend == "cpu") return DeviceType::CPU;
+    if (backend == "cuda") return DeviceType::CUDA;
+    if (backend == "opencl") return DeviceType::OPENCL;
+    if (backend == "oneapi") return DeviceType::ONEAPI;
+    return std::nullopt;
 }
 
 std::string CurrentUtc() {
@@ -98,13 +111,49 @@ std::wstring QuoteWindowsArgument(const std::wstring& value) {
 int RunHelper(
     const std::filesystem::path& helper,
     const std::filesystem::path& runtime_root,
+    const std::filesystem::path& metadata_root,
+    bool elevate,
     const std::wstring& operation,
     const std::string& value,
     std::string& error) {
-    std::wstring command = QuoteWindowsArgument(helper.native()) +
-        L" --runtime-root " + QuoteWindowsArgument(runtime_root.native()) +
+    const std::wstring parameters =
+        L"--runtime-root " + QuoteWindowsArgument(runtime_root.native()) +
+        L" --metadata-root " + QuoteWindowsArgument(metadata_root.native()) +
         L" " + operation + L" " + QuoteWindowsArgument(
-            std::wstring(value.begin(), value.end()));
+            std::wstring(value.begin(), value.end())) +
+        (elevate ? L" --all-users" : L"");
+    if (elevate) {
+        SHELLEXECUTEINFOW execute{};
+        execute.cbSize = sizeof(execute);
+        execute.fMask = SEE_MASK_NOCLOSEPROCESS;
+        execute.lpVerb = L"runas";
+        execute.lpFile = helper.c_str();
+        execute.lpParameters = parameters.c_str();
+        execute.lpDirectory = helper.parent_path().c_str();
+        execute.nShow = SW_HIDE;
+        if (!::ShellExecuteExW(&execute) || !execute.hProcess) {
+            const auto code = ::GetLastError();
+            error = code == ERROR_CANCELLED
+                ? "System-wide installation authorization was cancelled"
+                : "Cannot launch the authorized pack helper; Win32 error " +
+                      std::to_string(code);
+            return -1;
+        }
+        const DWORD wait = ::WaitForSingleObject(execute.hProcess, INFINITE);
+        DWORD exit_code = 1;
+        if (wait == WAIT_OBJECT_0 &&
+            ::GetExitCodeProcess(execute.hProcess, &exit_code)) {
+            ::CloseHandle(execute.hProcess);
+            return exit_code <= static_cast<DWORD>(
+                       std::numeric_limits<int>::max())
+                ? static_cast<int>(exit_code) : -1;
+        }
+        error = "Waiting for the authorized pack helper failed";
+        ::CloseHandle(execute.hProcess);
+        return -1;
+    }
+    std::wstring command = QuoteWindowsArgument(helper.native()) + L" " +
+        parameters;
     std::vector<wchar_t> mutable_command(command.begin(), command.end());
     mutable_command.push_back(L'\0');
     STARTUPINFOW startup{};
@@ -164,21 +213,37 @@ std::vector<std::string> RecommendedBackends() {
 int RunHelper(
     const std::filesystem::path& helper,
     const std::filesystem::path& runtime_root,
+    const std::filesystem::path& metadata_root,
+    bool elevate,
     const char* operation,
     const std::string& value,
     std::string& error) {
+    if (elevate && ::geteuid() != 0) {
+        error =
+            "System-wide installation requires launching CyxWiz Installer with administrative privileges";
+        return -1;
+    }
     const auto helper_text = helper.string();
     const auto root_text = runtime_root.string();
+    const auto metadata_text = metadata_root.string();
+    const std::string operation_text(operation);
+    std::vector<std::string> arguments{
+        helper_text, "--runtime-root", root_text,
+        "--metadata-root", metadata_text, operation_text, value};
+    if (elevate) arguments.emplace_back("--all-users");
+    std::vector<char*> native_arguments;
+    native_arguments.reserve(arguments.size() + 1);
+    for (auto& argument : arguments) {
+        native_arguments.push_back(argument.data());
+    }
+    native_arguments.push_back(nullptr);
     const pid_t child = ::fork();
     if (child < 0) {
         error = "Cannot fork the signed pack helper";
         return -1;
     }
     if (child == 0) {
-        ::execl(
-            helper_text.c_str(), helper_text.c_str(), "--runtime-root",
-            root_text.c_str(), operation, value.c_str(),
-            static_cast<char*>(nullptr));
+        ::execv(helper_text.c_str(), native_arguments.data());
         ::_exit(127);
     }
     int status = 0;
@@ -223,9 +288,15 @@ class DesktopInstallerPlatform final : public BackendPackInstallerPlatform {
 public:
     DesktopInstallerPlatform(
         std::filesystem::path runtime_root,
-        std::filesystem::path executable_directory)
+        std::filesystem::path metadata_root,
+        std::filesystem::path executable_directory,
+        CyxWizInstallScope scope,
+        std::string catalog_url)
         : runtime_root_(std::move(runtime_root)),
-          executable_directory_(std::move(executable_directory)) {}
+          metadata_root_(std::move(metadata_root)),
+          executable_directory_(std::move(executable_directory)),
+          catalog_url_(std::move(catalog_url)),
+          elevate_(scope == CyxWizInstallScope::AllUsers) {}
 
     InstallerCatalogState Refresh() override {
         InstallerCatalogState state;
@@ -235,21 +306,64 @@ public:
         }
         runtime::ActiveRuntimeState active;
         std::string error;
-        if (!runtime::LoadActiveRuntimeState(
-                runtime_root_ / "active-runtime.json", active, error)) {
-            state.message = "Cannot load the packaged runtime: " + error;
+        const auto active_path = runtime_root_ / "active-runtime.json";
+        std::error_code filesystem_error;
+        const bool active_exists =
+            std::filesystem::exists(active_path, filesystem_error);
+        if (filesystem_error) {
+            state.message = "Cannot inspect the installation state: " +
+                filesystem_error.message();
             return state;
         }
+        if (active_exists) {
+            if (!std::filesystem::is_regular_file(
+                    active_path, filesystem_error) || filesystem_error ||
+                !runtime::LoadActiveRuntimeState(
+                    active_path, active, error)) {
+                state.message =
+                    "The existing installation is incomplete or invalid: " +
+                    (error.empty() ? filesystem_error.message() : error);
+                return state;
+            }
+            state.mode = CyxWizInstallerMode::Maintenance;
+        } else {
+            state.mode = CyxWizInstallerMode::FreshInstall;
+        }
+        RuntimeQualificationIdentity active_identity;
+        active_identity.runtime_set_id = active.runtime_set_id;
+        active_identity.generation = active.generation;
+        active_identity.base_pack_id = active.base_pack_id;
+        for (const auto& pack : active.packs) {
+            const auto backend = BackendType(pack.backend);
+            if (backend.has_value()) {
+                active_identity.backend_packs.push_back(
+                    {*backend, pack.pack_id});
+            }
+        }
+        ClearRouteQualificationSnapshot();
+        const auto qualification_load =
+            LoadAndInstallRouteQualificationSnapshot(
+                GetRouteQualificationCachePath());
+        state.verification = BuildInstallerVerificationSummary(
+            qualification_load.loaded
+                ? GetRouteQualificationSnapshot()
+                : std::optional<RouteQualificationSnapshot>{},
+            active_identity);
         runtime::VerifiedBackendPackCatalogSnapshot active_only;
         state.records = BuildBackendPackCatalogRecords(active_only, active);
+        const auto catalog_root = CurrentCatalogRoot();
+        if (!catalog_root.is_absolute()) {
+            state.message = "The signed metadata root must be absolute";
+            return state;
+        }
         auto trust = runtime::BackendPackTrustStore::Load(
-            runtime_root_ / "trust" / "trusted-keys.json", error);
+            catalog_root / "trust" / "trusted-keys.json", error);
         if (!trust) {
             state.message = "Cannot load the bundled trust store: " + error;
             return state;
         }
         runtime::BackendPackLifecycleService lifecycle(
-            runtime_root_, runtime::BackendPackMetadataVerifier(
+            catalog_root, runtime::BackendPackMetadataVerifier(
                 std::move(*trust), ClientVersion(),
                 std::string(runtime::CurrentBackendPackPlatformId()),
                 std::string(runtime::CurrentBackendPackArchitectureId())));
@@ -262,6 +376,7 @@ public:
         const auto recommended = RecommendedBackends();
         for (auto& record : state.records) {
             record.recommended =
+                record.backend != "cpu" &&
                 record.catalog_support == BackendPackCatalogSupport::Supported &&
                 std::find(
                     recommended.begin(), recommended.end(), record.backend) !=
@@ -271,6 +386,40 @@ public:
         state.catalog_id = snapshot.catalog.catalog_id;
         state.message = "Verified signed catalog " + state.catalog_id;
         return state;
+    }
+
+    InstallerCatalogRefreshResult RefreshOnline() override {
+        InstallerCatalogRefreshResult result;
+        if (catalog_url_.empty()) {
+            result.message =
+                "Online catalog source is not configured; the packaged verified catalog remains active";
+            return result;
+        }
+        const auto catalog_root = CurrentCatalogRoot();
+        std::string error;
+        auto trust = runtime::BackendPackTrustStore::Load(
+            catalog_root / "trust" / "trusted-keys.json", error);
+        if (!trust) {
+            result.message = "Cannot load the catalog trust store: " + error;
+            return result;
+        }
+        runtime::BackendPackMetadataVerifier verifier(
+            std::move(*trust), ClientVersion(),
+            std::string(runtime::CurrentBackendPackPlatformId()),
+            std::string(runtime::CurrentBackendPackArchitectureId()));
+        runtime::HttpsBackendPackMetadataSource source;
+        runtime::BackendPackMetadataRefreshRequest request;
+        request.catalog_url = catalog_url_;
+        request.trusted_keys_path =
+            catalog_root / "trust" / "trusted-keys.json";
+        request.destination_root = runtime_root_;
+        request.current_utc = CurrentUtc();
+        const auto refreshed = runtime::RefreshBackendPackMetadata(
+            request, verifier, source);
+        result.succeeded = refreshed.status ==
+            runtime::BackendPackMetadataRefreshStatus::Refreshed;
+        result.message = refreshed.message;
+        return result;
     }
 
     InstallerOperationResult InstallOrUpdate(
@@ -288,7 +437,7 @@ public:
         }
         std::string error;
         const int exit_code = RunHelper(
-            helper, runtime_root_,
+            helper, runtime_root_, CurrentCatalogRoot(), elevate_,
 #ifdef _WIN32
             L"--pack-id",
 #else
@@ -313,6 +462,51 @@ public:
         return result;
     }
 
+    InstallerOperationResult InstallBase(
+        const std::string& pack_id) override {
+        InstallerOperationResult result;
+        if (!IsIdentifier(pack_id)) {
+            result.message = "The required base identity is invalid";
+            return result;
+        }
+        const auto helper = HelperPath(executable_directory_);
+        if (!std::filesystem::is_regular_file(helper)) {
+            result.message =
+                "The signed product-installation helper is missing";
+            return result;
+        }
+        std::string error;
+        const int exit_code = RunHelper(
+            helper, runtime_root_, CurrentCatalogRoot(), elevate_,
+#ifdef _WIN32
+            L"--base-pack-id",
+#else
+            "--base-pack-id",
+#endif
+            pack_id, error);
+        if (exit_code == 0) {
+            result.succeeded = true;
+            result.activated = true;
+            result.message =
+                pack_id + " was installed, CPU-qualified, and activated";
+        } else if (exit_code == 3) {
+            result.succeeded = true;
+            result.activated = true;
+            result.message = pack_id +
+                " was installed and activated, but operating-system launch integration could not be registered; the stable launcher remains available in the installation folder";
+        } else if (exit_code == 2) {
+            result.succeeded = true;
+            result.message = pack_id +
+                " was installed but CPU qualification did not authorize activation";
+        } else {
+            result.message = error.empty()
+                ? "Base installation failed with helper exit code " +
+                      std::to_string(exit_code)
+                : std::move(error);
+        }
+        return result;
+    }
+
     InstallerOperationResult DeactivateBackend(
         const std::string& backend) override {
         InstallerOperationResult result;
@@ -329,7 +523,7 @@ public:
         }
         std::string error;
         const int exit_code = RunHelper(
-            helper, runtime_root_,
+            helper, runtime_root_, CurrentCatalogRoot(), elevate_,
 #ifdef _WIN32
             L"--deactivate-backend",
 #else
@@ -360,8 +554,23 @@ public:
     }
 
 private:
+    std::filesystem::path CurrentCatalogRoot() const {
+        std::error_code error;
+        const bool has_cached_catalog = std::filesystem::is_regular_file(
+            runtime::BackendPackCurrentCatalogPath(runtime_root_), error);
+        if (!error && has_cached_catalog && std::filesystem::is_regular_file(
+                runtime_root_ / "trust" / "trusted-keys.json", error) &&
+            !error) {
+            return runtime_root_;
+        }
+        return metadata_root_;
+    }
+
     std::filesystem::path runtime_root_;
+    std::filesystem::path metadata_root_;
     std::filesystem::path executable_directory_;
+    std::string catalog_url_;
+    bool elevate_ = false;
 };
 
 }  // namespace
@@ -369,9 +578,45 @@ private:
 std::unique_ptr<BackendPackInstallerPlatform>
 CreateBackendPackInstallerPlatform(
     std::filesystem::path runtime_root,
-    std::filesystem::path executable_directory) {
+    std::filesystem::path metadata_root,
+    std::filesystem::path executable_directory,
+    CyxWizInstallScope scope,
+    std::string catalog_url) {
     return std::make_unique<DesktopInstallerPlatform>(
-        std::move(runtime_root), std::move(executable_directory));
+        std::move(runtime_root), std::move(metadata_root),
+        std::move(executable_directory), scope, std::move(catalog_url));
+}
+
+std::filesystem::path DefaultCyxWizInstallRoot(
+    CyxWizInstallScope scope) {
+#ifdef _WIN32
+    const wchar_t* variable = scope == CyxWizInstallScope::AllUsers
+        ? _wgetenv(L"ProgramFiles") : _wgetenv(L"LOCALAPPDATA");
+    if (variable && *variable) {
+        return std::filesystem::path(variable) / "CyxWiz";
+    }
+    return scope == CyxWizInstallScope::AllUsers
+        ? std::filesystem::path("C:\\Program Files\\CyxWiz")
+        : std::filesystem::temp_directory_path() / "CyxWiz";
+#elif defined(__APPLE__)
+    if (scope == CyxWizInstallScope::AllUsers) {
+        return "/Applications/CyxWiz";
+    }
+    const char* home = std::getenv("HOME");
+    return home && *home
+        ? std::filesystem::path(home) / "Applications" / "CyxWiz"
+        : std::filesystem::temp_directory_path() / "CyxWiz";
+#else
+    if (scope == CyxWizInstallScope::AllUsers) return "/opt/cyxwiz";
+    const char* data_home = std::getenv("XDG_DATA_HOME");
+    if (data_home && *data_home) {
+        return std::filesystem::path(data_home) / "cyxwiz";
+    }
+    const char* home = std::getenv("HOME");
+    return home && *home
+        ? std::filesystem::path(home) / ".local" / "share" / "cyxwiz"
+        : std::filesystem::temp_directory_path() / "cyxwiz";
+#endif
 }
 
 }  // namespace cyxwiz::installer

@@ -21,6 +21,8 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 option(CYXWIZ_BUILD_ENGINE "Build CyxWiz Engine (Desktop Client)" ON)
 option(CYXWIZ_BUILD_SERVER_NODE "Build CyxWiz Server Node" ON)
 option(CYXWIZ_BUILD_INSTALLER_ONLY "Build only the standalone installer and backend manager" OFF)
+set(CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR "" CACHE PATH
+    "Release-signed trust, catalog, and manifest bundle staged below runtime/")
 option(CYXWIZ_BUILD_TESTS "Build tests" ON)
 option(CYXWIZ_BUILD_DOCS "Build documentation" OFF)
 option(CYXWIZ_ENABLE_CUDA "Enable CUDA support for ArrayFire" ON)
@@ -139,6 +141,10 @@ if(CYXWIZ_BUILD_INSTALLER_ONLY)
             NAME backend_pack_manager_model_contract
             COMMAND test_backend_pack_manager_model
         )
+        add_test(
+            NAME installer_verification_summary_contract
+            COMMAND test_installer_verification_summary
+        )
     endif()
 
     message(STATUS "Configured standalone CyxWiz installer targets")
@@ -153,6 +159,9 @@ find_package(Protobuf CONFIG REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
+if(CYXWIZ_BUILD_ENGINE)
+    find_package(libvterm CONFIG REQUIRED)
+endif()
 
 # Python/pybind11 (optional)
 option(CYXWIZ_ENABLE_PYTHON "Enable Python scripting support" ON)
@@ -479,6 +488,12 @@ if(CYXWIZ_BUILD_TESTS)
         add_test(
             NAME backend_pack_manager_model_contract
             COMMAND test_backend_pack_manager_model
+        )
+    endif()
+    if(TARGET test_installer_verification_summary)
+        add_test(
+            NAME installer_verification_summary_contract
+            COMMAND test_installer_verification_summary
         )
     endif()
     add_subdirectory(tests)
