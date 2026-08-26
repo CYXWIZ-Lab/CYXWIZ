@@ -8,14 +8,6 @@ set(_cyxwiz_installer_backend_dir "${CMAKE_SOURCE_DIR}/cyxwiz-backend")
 set(CYXWIZ_INSTALLER_CATALOG_URL "" CACHE STRING
     "Default HTTPS URL for the signed CyxWiz backend-pack catalog")
 
-if(WIN32)
-    set(_cyxwiz_product_registration_platform_source
-        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/product_registration_windows.cpp")
-else()
-    set(_cyxwiz_product_registration_platform_source
-        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/product_registration_posix.cpp")
-endif()
-
 # Installer-only builds consume the backend's public device data types without
 # building the backend library that normally generates its export header.
 set(_cyxwiz_installer_generated_include "")
@@ -50,8 +42,6 @@ add_executable(cyxwiz-backend-pack-installer
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_qualification_adapter.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_service.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_snapshot.cpp"
-    "${CMAKE_SOURCE_DIR}/redist/bootstrapper/product_registration.cpp"
-    "${_cyxwiz_product_registration_platform_source}"
 )
 target_include_directories(cyxwiz-backend-pack-installer PRIVATE
     "${_cyxwiz_installer_engine_dir}/src"
@@ -118,8 +108,6 @@ if(CYXWIZ_BUILD_TESTS)
 
     add_executable(test_product_registration
         "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_registration.cpp"
-        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/product_registration.cpp"
-        "${_cyxwiz_product_registration_platform_source}"
     )
     target_include_directories(test_product_registration PRIVATE
         "${CMAKE_SOURCE_DIR}/redist/bootstrapper"
@@ -219,6 +207,17 @@ if(CYXWIZ_BUILD_TESTS)
         COMMAND test_product_removal_finalizer
     )
 
+    add_executable(test_product_removal_finalizer_child
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_removal_finalizer_child.cpp"
+    )
+    target_link_libraries(test_product_removal_finalizer_child PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_product_removal_finalizer_child PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+
     add_executable(test_product_removal_handoff
         "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_removal_handoff.cpp"
     )
@@ -230,7 +229,7 @@ if(CYXWIZ_BUILD_TESTS)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
     add_dependencies(test_product_removal_handoff
-        cyxwiz-product-removal-finalizer
+        test_product_removal_finalizer_child
     )
     add_test(
         NAME product_removal_handoff_contract
@@ -250,6 +249,21 @@ if(CYXWIZ_BUILD_TESTS)
     add_test(
         NAME product_removal_cleanup_contract
         COMMAND test_product_removal_cleanup
+    )
+
+    add_executable(test_product_removal_transaction
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_removal_transaction.cpp"
+    )
+    target_link_libraries(test_product_removal_transaction PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_product_removal_transaction PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME product_removal_transaction_contract
+        COMMAND test_product_removal_transaction
     )
 endif()
 

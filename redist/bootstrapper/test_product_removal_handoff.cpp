@@ -197,8 +197,11 @@ int main(int argc, char** argv) {
         std::filesystem::absolute(argv[0]), error).parent_path();
     Check(!error, "The test executable directory must resolve");
     const auto finalizer = binary_directory /
-        std::string(
-            cyxwiz::runtime::CurrentProductRemovalFinalizerExecutableName());
+#ifdef _WIN32
+        "test_product_removal_finalizer_child.exe";
+#else
+        "test_product_removal_finalizer_child";
+#endif
     Check(std::filesystem::is_regular_file(finalizer),
           "The built removal finalizer is required");
     TemporaryDirectory temporary;

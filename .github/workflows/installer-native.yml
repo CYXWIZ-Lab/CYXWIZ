@@ -206,8 +206,10 @@ jobs:
             "test_product_removal_cleanup.exe",
             "test_product_removal_quarantine.exe",
             "test_product_removal_finalizer.exe",
+            "test_product_removal_finalizer_child.exe",
             "test_product_removal_handoff.exe",
             "test_product_removal_request.exe",
+            "test_product_removal_transaction.exe",
             "test_product_registration.exe"
           ) | ForEach-Object {
             Copy-Item "build/bin/Release/$_" -Destination installer-stage/smoke/
@@ -229,8 +231,10 @@ jobs:
             build/bin/test_product_removal_cleanup \
             build/bin/test_product_removal_quarantine \
             build/bin/test_product_removal_finalizer \
+            build/bin/test_product_removal_finalizer_child \
             build/bin/test_product_removal_handoff \
             build/bin/test_product_removal_request \
+            build/bin/test_product_removal_transaction \
             build/bin/test_product_registration \
             installer-stage/smoke/
 

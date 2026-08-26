@@ -159,14 +159,20 @@ to block on an inherited read-only lifetime pipe; the stable bootstrapper owns
 the only write end, so EOF is tied to process exit rather than a reusable PID.
 Only after EOF does the finalizer reload the durable request and repeat live
 authorization validation. The Windows finalizer uses the static CRT and depends
-only on system `KERNEL32.dll`, allowing it to run from a temporary directory
-after the product runtime is released. This checkpoint performs no deletion;
-the detached scheduler now copies that exact, 16 MiB-bounded, non-redirected
+only on system `KERNEL32.dll`, `ADVAPI32.dll`, `ole32.dll`, and `SHELL32.dll`,
+allowing it to run from a temporary directory after the product runtime is
+released. After authorization it performs the ordered removal transaction:
+exact native unregistration, atomic quarantine, then bounded no-follow cleanup.
+If quarantine fails, exact native registration is restored. Cleanup failure
+keeps the partially cleaned quarantine and its recovery evidence; it never
+restores a partial product tree.
+
+The detached scheduler copies that exact, 16 MiB-bounded, non-redirected
 executable into an exclusive temporary directory and launches it with only the read token
 inherited. Windows uses an explicit process handle list; POSIX uses a detached
 double-fork/`exec` boundary. A bounded result marker proves the child stayed
-blocked until the parent token closed. Stable-bootstrapper invocation and
-bounded no-follow cleanup are subsequent lifecycle stages.
+blocked until the parent token closed. The handoff contract uses a dedicated
+non-destructive child, so tests never mutate a developer's native registration.
 
 Removal request schema 2 also pins the exact CyxWiz product version from the
 active signed base pack's bounded, non-redirected `RUNTIME_VERSIONS.json`.

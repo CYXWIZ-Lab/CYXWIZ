@@ -7,6 +7,7 @@ add_library(cyxwiz-runtime-bootstrap STATIC
     atomic_file_publisher.cpp
     backend_pack_state_service.cpp
     product_installation_receipt.cpp
+    product_registration.cpp
     product_release_version.cpp
     product_removal_authorization.cpp
     product_removal_cleanup.cpp
@@ -14,16 +15,19 @@ add_library(cyxwiz-runtime-bootstrap STATIC
     product_removal_handoff.cpp
     product_removal_quarantine.cpp
     product_removal_request.cpp
+    product_removal_transaction.cpp
     runtime_layout.cpp
 )
 if(WIN32)
     target_sources(cyxwiz-runtime-bootstrap PRIVATE
+        product_registration_windows.cpp
         product_removal_cleanup_windows.cpp
         product_removal_handoff_windows.cpp
         windows_dll_search.cpp
     )
 else()
     target_sources(cyxwiz-runtime-bootstrap PRIVATE
+        product_registration_posix.cpp
         product_removal_cleanup_posix.cpp
         product_removal_handoff_posix.cpp
     )
@@ -34,6 +38,11 @@ target_include_directories(cyxwiz-runtime-bootstrap PUBLIC
 target_link_libraries(cyxwiz-runtime-bootstrap PUBLIC
     nlohmann_json::nlohmann_json
 )
+if(WIN32)
+    target_link_libraries(cyxwiz-runtime-bootstrap PUBLIC
+        advapi32 ole32 shell32
+    )
+endif()
 
 add_library(cyxwiz-backend-pack-maintenance STATIC
     backend_pack_maintenance_request.cpp
@@ -112,19 +121,39 @@ unset(_cyxwiz_runtime_bootstrapper_source)
 add_executable(cyxwiz-product-removal-finalizer
     product_removal_finalizer_main.cpp
     product_removal_finalizer.cpp
+    product_removal_transaction.cpp
+    product_removal_quarantine.cpp
+    product_removal_cleanup.cpp
     product_removal_request.cpp
     product_removal_authorization.cpp
+    product_registration.cpp
     product_release_version.cpp
     product_installation_receipt.cpp
     atomic_file_publisher.cpp
     runtime_layout.cpp
 )
+if(WIN32)
+    target_sources(cyxwiz-product-removal-finalizer PRIVATE
+        product_registration_windows.cpp
+        product_removal_cleanup_windows.cpp
+    )
+else()
+    target_sources(cyxwiz-product-removal-finalizer PRIVATE
+        product_registration_posix.cpp
+        product_removal_cleanup_posix.cpp
+    )
+endif()
 target_include_directories(cyxwiz-product-removal-finalizer PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 target_link_libraries(cyxwiz-product-removal-finalizer PRIVATE
     nlohmann_json::nlohmann_json
 )
+if(WIN32)
+    target_link_libraries(cyxwiz-product-removal-finalizer PRIVATE
+        advapi32 ole32 shell32
+    )
+endif()
 set_target_properties(cyxwiz-product-removal-finalizer PROPERTIES
     CXX_STANDARD 20
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

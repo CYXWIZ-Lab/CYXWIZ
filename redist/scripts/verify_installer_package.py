@@ -37,12 +37,14 @@ CONTRACT_TESTS = (
     "test_product_removal_finalizer",
     "test_product_removal_handoff",
     "test_product_removal_request",
+    "test_product_removal_transaction",
     "test_product_registration",
 )
 
 CONTRACT_SUPPORT_EXECUTABLES = (
     "cyxwiz-product-removal-finalizer",
     "cyxwiz-runtime-bootstrapper",
+    "test_product_removal_finalizer_child",
     "test_runtime_bootstrapper_child",
 )
 

@@ -1,4 +1,5 @@
 #include "product_removal_finalizer.h"
+#include "product_removal_transaction.h"
 
 #include <charconv>
 #include <cstdint>
@@ -103,7 +104,14 @@ int wmain(int argc, wchar_t** argv) {
         std::cerr << "CyxWiz product removal finalizer: " << error << '\n';
         return 78;
     }
-    return PublishResult(std::filesystem::path(argv[0]), "authorized\n")
+    cyxwiz::runtime::ProductRemovalTransactionResult result;
+    if (!cyxwiz::runtime::ExecuteProductRemovalTransaction(
+            authorization, result, error)) {
+        PublishResult(std::filesystem::path(argv[0]), "incomplete\n");
+        std::cerr << "CyxWiz product removal finalizer: " << error << '\n';
+        return 70;
+    }
+    return PublishResult(std::filesystem::path(argv[0]), "removed\n")
         ? 0 : 78;
 }
 #else
@@ -127,7 +135,14 @@ int main(int argc, char** argv) {
         std::cerr << "CyxWiz product removal finalizer: " << error << '\n';
         return 78;
     }
-    return PublishResult(std::filesystem::path(argv[0]), "authorized\n")
+    cyxwiz::runtime::ProductRemovalTransactionResult result;
+    if (!cyxwiz::runtime::ExecuteProductRemovalTransaction(
+            authorization, result, error)) {
+        PublishResult(std::filesystem::path(argv[0]), "incomplete\n");
+        std::cerr << "CyxWiz product removal finalizer: " << error << '\n';
+        return 70;
+    }
+    return PublishResult(std::filesystem::path(argv[0]), "removed\n")
         ? 0 : 78;
 }
 #endif
