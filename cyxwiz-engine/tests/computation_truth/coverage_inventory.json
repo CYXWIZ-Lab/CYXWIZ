@@ -125,13 +125,13 @@
       "owner": "cyxwiz-backend/include/cyxwiz/tensor.h",
       "implementation": ["cyxwiz-backend/src/core/tensor_reductions.cpp"],
       "callers": ["losses", "metrics", "normalization", "optimizers"],
-      "contract": "Axis, keepdim, denominator, dtype and empty behavior are explicit and match the selected PyTorch semantic variant.",
-      "supported": "public Tensor dtype/rank domain",
-      "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_tensor"],
-      "execution": "ArrayFire-first with bounded scalar output only when requested",
-      "status": "partial",
-      "gaps": ["reduction/keepdim/dtype matrix", "variance correction contract", "host-sync evidence"]
+      "contract": "Global and axis shape, negative dimensions, keepdim, correction, dtype, empty and invalid-domain behavior match the selected PyTorch semantic variant.",
+      "supported": "all public Tensor dtypes at ranks 0-4 on ArrayFire; explicit compatibility fallback for ranks above 4",
+      "oracle": "PyTorch 2.10",
+      "tests": ["cyxwiz-tests:[tensor_reduction]", "cyxwiz-tests:[tensor]"],
+      "execution": "ArrayFire device-to-device reductions through rank 4 with zero compute host sync; declared native CPU compatibility fallback above rank 4 and pre-compute rejection in strict mode",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "TENSOR-ELEM-001",

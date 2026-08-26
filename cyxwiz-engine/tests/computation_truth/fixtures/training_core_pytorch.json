@@ -4737,6 +4737,3680 @@
         "operation": "torch.Tensor.permute"
       }
     ],
+    "tensor_reductions": [
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            28.5
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": false,
+        "name": "f32_sum_global",
+        "operation": "torch.sum",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            3,
+            1
+          ],
+          "values": [
+            -5.25,
+            5.75,
+            2.75,
+            6.75,
+            10.75,
+            7.75
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": true,
+        "name": "f32_sum_negative_dim_keepdim",
+        "operation": "torch.sum",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            1.1875
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": false,
+        "name": "f32_mean_global",
+        "operation": "torch.mean",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            3,
+            1
+          ],
+          "values": [
+            -1.3125,
+            1.4375,
+            0.6875,
+            1.6875,
+            2.6875,
+            1.9375
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": true,
+        "name": "f32_mean_negative_dim_keepdim",
+        "operation": "torch.mean",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            5.5
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": false,
+        "name": "f32_max_global",
+        "operation": "torch.max",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": 0,
+        "expected": {
+          "shape": [
+            3,
+            4
+          ],
+          "values": [
+            3.5,
+            4.625,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            4.375,
+            5.5,
+            0.125,
+            1.25,
+            2.375
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": false,
+        "name": "f32_max_dim0",
+        "operation": "torch.max",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            -3.0
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": false,
+        "name": "f32_min_global",
+        "operation": "torch.min",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -2.125,
+            -1.0,
+            -1.25,
+            1.0,
+            -0.375
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": false,
+        "name": "f32_min_negative_dim",
+        "operation": "torch.min",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            4083.0634765625
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": false,
+        "name": "f32_prod_global",
+        "operation": "torch.prod",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": 0,
+        "expected": {
+          "shape": [
+            1,
+            3,
+            4
+          ],
+          "values": [
+            -10.5,
+            -8.671875,
+            0.9375,
+            -0.046875,
+            1.5,
+            5.578125,
+            12.1875,
+            -9.296875,
+            -5.5,
+            -0.046875,
+            0.9375,
+            4.453125
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": true,
+        "name": "f32_prod_dim0_keepdim",
+        "operation": "torch.prod",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            5.009114742279053
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": false,
+        "name": "f32_var_global_population",
+        "operation": "torch.var",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 1,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            2.109375,
+            6.484375,
+            2.109375,
+            7.942708492279053,
+            2.109375,
+            6.484375
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": false,
+        "name": "f32_var_negative_dim_sample",
+        "operation": "torch.var",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            2.238105058670044
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": false,
+        "name": "f32_std_global_population",
+        "operation": "torch.std",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 1,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            1.4523687362670898,
+            2.5464437007904053,
+            1.4523687362670898,
+            2.8182811737060547,
+            1.4523687362670898,
+            2.5464437007904053
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": false,
+        "name": "f32_std_negative_dim_sample",
+        "operation": "torch.std",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            28.5
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": false,
+        "name": "f64_sum_global",
+        "operation": "torch.sum",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            2,
+            2,
+            1
+          ],
+          "values": [
+            -5.625,
+            4.5,
+            0.625,
+            3.75,
+            6.875,
+            3.0,
+            13.125,
+            2.25
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": true,
+        "name": "f64_sum_negative_dim_keepdim",
+        "operation": "torch.sum",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            1.1875
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": false,
+        "name": "f64_mean_global",
+        "operation": "torch.mean",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            2,
+            2,
+            1
+          ],
+          "values": [
+            -1.875,
+            1.5,
+            0.20833333333333334,
+            1.25,
+            2.2916666666666665,
+            1.0,
+            4.375,
+            0.75
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": true,
+        "name": "f64_mean_negative_dim_keepdim",
+        "operation": "torch.mean",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            5.5
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": false,
+        "name": "f64_max_global",
+        "operation": "torch.max",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 0,
+        "dim": 0,
+        "expected": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            3.5,
+            4.625,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            4.375,
+            5.5,
+            0.125,
+            1.25,
+            2.375
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": false,
+        "name": "f64_max_dim0",
+        "operation": "torch.max",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            -3.0
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": false,
+        "name": "f64_min_global",
+        "operation": "torch.min",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            2,
+            2
+          ],
+          "values": [
+            -3.0,
+            0.375,
+            -2.125,
+            0.125,
+            -1.25,
+            -0.125,
+            3.25,
+            -0.375
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": false,
+        "name": "f64_min_negative_dim",
+        "operation": "torch.min",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            4083.0633635799904
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": false,
+        "name": "f64_prod_global",
+        "operation": "torch.prod",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 0,
+        "dim": 0,
+        "expected": {
+          "shape": [
+            1,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -10.5,
+            -8.671875,
+            0.9375,
+            -0.046875,
+            1.5,
+            5.578125,
+            12.1875,
+            -9.296875,
+            -5.5,
+            -0.046875,
+            0.9375,
+            4.453125
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": true,
+        "name": "f64_prod_dim0_keepdim",
+        "operation": "torch.prod",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            5.009114583333333
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": false,
+        "name": "f64_var_global_population",
+        "operation": "torch.var",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 1,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            2,
+            2
+          ],
+          "values": [
+            1.265625,
+            1.265625,
+            9.723958333333334,
+            1.265625,
+            9.723958333333334,
+            1.265625,
+            1.265625,
+            1.265625
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": false,
+        "name": "f64_var_negative_dim_sample",
+        "operation": "torch.var",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            2.238105132323621
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": false,
+        "name": "f64_std_global_population",
+        "operation": "torch.std",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 1,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            2,
+            2
+          ],
+          "values": [
+            1.125,
+            1.125,
+            3.1183262070112763,
+            1.125,
+            3.1183262070112763,
+            1.125,
+            1.125,
+            1.125
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": false,
+        "name": "f64_std_negative_dim_sample",
+        "operation": "torch.std",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            -1
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_sum_global",
+        "operation": "torch.sum",
+        "output_dtype": "int32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            1
+          ],
+          "values": [
+            -4,
+            3
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": true,
+        "name": "i32_sum_negative_dim_keepdim",
+        "operation": "torch.sum",
+        "output_dtype": "int32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            -0.1666666716337204
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_mean_global",
+        "operation": "torch.mean",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            1
+          ],
+          "values": [
+            -1.3333333730697632,
+            1.0
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": true,
+        "name": "i32_mean_negative_dim_keepdim",
+        "operation": "torch.mean",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            2
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_max_global",
+        "operation": "torch.max",
+        "output_dtype": "int32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": 0,
+        "expected": {
+          "shape": [
+            3
+          ],
+          "values": [
+            0,
+            1,
+            2
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_max_dim0",
+        "operation": "torch.max",
+        "output_dtype": "int32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            -3
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_min_global",
+        "operation": "torch.min",
+        "output_dtype": "int32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2
+          ],
+          "values": [
+            -3,
+            0
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_min_negative_dim",
+        "operation": "torch.min",
+        "output_dtype": "int32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            0
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_prod_global",
+        "operation": "torch.prod",
+        "output_dtype": "int32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": 0,
+        "expected": {
+          "shape": [
+            1,
+            3
+          ],
+          "values": [
+            0,
+            -1,
+            0
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": true,
+        "name": "i32_prod_dim0_keepdim",
+        "operation": "torch.prod",
+        "output_dtype": "int32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            2.472222328186035
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_var_global_population",
+        "operation": "torch.var",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 1,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2
+          ],
+          "values": [
+            2.3333332538604736,
+            1.0
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_var_negative_dim_sample",
+        "operation": "torch.var",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            1.5723302364349365
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_std_global_population",
+        "operation": "torch.std",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 1,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2
+          ],
+          "values": [
+            1.5275251865386963,
+            1.0
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_std_negative_dim_sample",
+        "operation": "torch.std",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            2
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            2
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2,
+            3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int64",
+        "keepdim": false,
+        "name": "i64_sum_global",
+        "operation": "torch.sum",
+        "output_dtype": "int64",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            3,
+            1
+          ],
+          "values": [
+            -4,
+            0,
+            3,
+            1,
+            -1,
+            3
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            2
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2,
+            3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int64",
+        "keepdim": true,
+        "name": "i64_sum_negative_dim_keepdim",
+        "operation": "torch.sum",
+        "output_dtype": "int64",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            0.1666666716337204
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            2
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2,
+            3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int64",
+        "keepdim": false,
+        "name": "i64_mean_global",
+        "operation": "torch.mean",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            3,
+            1
+          ],
+          "values": [
+            -2.0,
+            0.0,
+            1.5,
+            0.5,
+            -0.5,
+            1.5
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            2
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2,
+            3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int64",
+        "keepdim": true,
+        "name": "i64_mean_negative_dim_keepdim",
+        "operation": "torch.mean",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            3
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            2
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2,
+            3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int64",
+        "keepdim": false,
+        "name": "i64_max_global",
+        "operation": "torch.max",
+        "output_dtype": "int64",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": 0,
+        "expected": {
+          "shape": [
+            3,
+            2
+          ],
+          "values": [
+            3,
+            -1,
+            0,
+            0,
+            1,
+            2
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            2
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2,
+            3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int64",
+        "keepdim": false,
+        "name": "i64_max_dim0",
+        "operation": "torch.max",
+        "output_dtype": "int64",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            -3
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            2
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2,
+            3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int64",
+        "keepdim": false,
+        "name": "i64_min_global",
+        "operation": "torch.min",
+        "output_dtype": "int64",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            0,
+            1,
+            -2,
+            -1,
+            1
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            2
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2,
+            3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int64",
+        "keepdim": false,
+        "name": "i64_min_negative_dim",
+        "operation": "torch.min",
+        "output_dtype": "int64",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            0
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            2
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2,
+            3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int64",
+        "keepdim": false,
+        "name": "i64_prod_global",
+        "operation": "torch.prod",
+        "output_dtype": "int64",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": 0,
+        "expected": {
+          "shape": [
+            1,
+            3,
+            2
+          ],
+          "values": [
+            -9,
+            2,
+            0,
+            0,
+            1,
+            4
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            2
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2,
+            3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int64",
+        "keepdim": true,
+        "name": "i64_prod_dim0_keepdim",
+        "operation": "torch.prod",
+        "output_dtype": "int64",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            2.805555582046509
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            2
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2,
+            3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int64",
+        "keepdim": false,
+        "name": "i64_var_global_population",
+        "operation": "torch.var",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 1,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            2.0,
+            0.0,
+            0.5,
+            12.5,
+            0.5,
+            0.5
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            2
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2,
+            3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int64",
+        "keepdim": false,
+        "name": "i64_var_negative_dim_sample",
+        "operation": "torch.var",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            1.674979329109192
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            2
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2,
+            3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int64",
+        "keepdim": false,
+        "name": "i64_std_global_population",
+        "operation": "torch.std",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 1,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            1.4142135381698608,
+            0.0,
+            0.7071067690849304,
+            3.535533905029297,
+            0.7071067690849304,
+            0.7071067690849304
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            2
+          ],
+          "values": [
+            -3,
+            -1,
+            0,
+            0,
+            1,
+            2,
+            3,
+            -2,
+            -1,
+            0,
+            1,
+            2
+          ]
+        },
+        "input_dtype": "int64",
+        "keepdim": false,
+        "name": "i64_std_negative_dim_sample",
+        "operation": "torch.std",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            30
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "input_dtype": "uint8",
+        "keepdim": false,
+        "name": "u8_sum_global",
+        "operation": "torch.sum",
+        "output_dtype": "uint8",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            2,
+            1
+          ],
+          "values": [
+            6,
+            7,
+            8,
+            9
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "input_dtype": "uint8",
+        "keepdim": true,
+        "name": "u8_sum_negative_dim_keepdim",
+        "operation": "torch.sum",
+        "output_dtype": "uint8",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            2.5
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "input_dtype": "uint8",
+        "keepdim": false,
+        "name": "u8_mean_global",
+        "operation": "torch.mean",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            2,
+            1
+          ],
+          "values": [
+            2.0,
+            2.3333332538604736,
+            2.6666667461395264,
+            3.0
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "input_dtype": "uint8",
+        "keepdim": true,
+        "name": "u8_mean_negative_dim_keepdim",
+        "operation": "torch.mean",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            4
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "input_dtype": "uint8",
+        "keepdim": false,
+        "name": "u8_max_global",
+        "operation": "torch.max",
+        "output_dtype": "uint8",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": 0,
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            3,
+            4,
+            3,
+            4,
+            3,
+            4
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "input_dtype": "uint8",
+        "keepdim": false,
+        "name": "u8_max_dim0",
+        "operation": "torch.max",
+        "output_dtype": "uint8",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            1
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "input_dtype": "uint8",
+        "keepdim": false,
+        "name": "u8_min_global",
+        "operation": "torch.min",
+        "output_dtype": "uint8",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            1,
+            1,
+            1,
+            2
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "input_dtype": "uint8",
+        "keepdim": false,
+        "name": "u8_min_negative_dim",
+        "operation": "torch.min",
+        "output_dtype": "uint8",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            0
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "input_dtype": "uint8",
+        "keepdim": false,
+        "name": "u8_prod_global",
+        "operation": "torch.prod",
+        "output_dtype": "uint8",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": 0,
+        "expected": {
+          "shape": [
+            1,
+            2,
+            3
+          ],
+          "values": [
+            3,
+            8,
+            3,
+            8,
+            3,
+            8
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "input_dtype": "uint8",
+        "keepdim": true,
+        "name": "u8_prod_dim0_keepdim",
+        "operation": "torch.prod",
+        "output_dtype": "uint8",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            1.25
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "input_dtype": "uint8",
+        "keepdim": false,
+        "name": "u8_var_global_population",
+        "operation": "torch.var",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 1,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            1.0,
+            2.3333332538604736,
+            2.3333332538604736,
+            1.0
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "input_dtype": "uint8",
+        "keepdim": false,
+        "name": "u8_var_negative_dim_sample",
+        "operation": "torch.var",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            1.1180340051651
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "input_dtype": "uint8",
+        "keepdim": false,
+        "name": "u8_std_global_population",
+        "operation": "torch.std",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 1,
+        "dim": -1,
+        "expected": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            1.0,
+            1.5275251865386963,
+            1.5275251865386963,
+            1.0
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "input_dtype": "uint8",
+        "keepdim": false,
+        "name": "u8_std_negative_dim_sample",
+        "operation": "torch.std",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": 1,
+        "expected": {
+          "shape": [
+            2,
+            4
+          ],
+          "values": [
+            -2.5,
+            0.875,
+            4.25,
+            0.625,
+            10.0,
+            6.375,
+            2.75,
+            6.125
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": false,
+        "name": "f32_sum_middle_dim",
+        "operation": "torch.sum",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 2,
+        "dim": 1,
+        "expected": {
+          "shape": [
+            2,
+            1,
+            4
+          ],
+          "values": [
+            10.166666984558105,
+            10.166666984558105,
+            10.166666984558105,
+            10.166666984558105,
+            10.166666984558105,
+            12.5,
+            10.166666984558105,
+            10.166666984558105
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3,
+            4
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": true,
+        "name": "f32_var_middle_dim_keepdim_correction2",
+        "operation": "torch.var",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": -1,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            2.192886225958839
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -1.875,
+            -0.75,
+            0.375,
+            1.5,
+            2.625,
+            3.75,
+            -2.125,
+            -1.0,
+            0.125,
+            1.25,
+            2.375,
+            3.5,
+            4.625,
+            -1.25,
+            -0.125,
+            1.0,
+            2.125,
+            3.25,
+            4.375,
+            5.5,
+            -0.375,
+            0.75,
+            1.875
+          ]
+        },
+        "input_dtype": "float64",
+        "keepdim": false,
+        "name": "f64_std_global_negative_correction",
+        "operation": "torch.std",
+        "output_dtype": "float64",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "correction": 0,
+        "dim": 0,
+        "expected": {
+          "shape": [],
+          "values": [
+            -3.0
+          ]
+        },
+        "input": {
+          "shape": [],
+          "values": [
+            -3.0
+          ]
+        },
+        "input_dtype": "float32",
+        "keepdim": true,
+        "name": "scalar_mean_dim0",
+        "operation": "torch.mean",
+        "output_dtype": "float32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            -2147483648
+          ]
+        },
+        "input": {
+          "shape": [
+            2
+          ],
+          "values": [
+            2147483647,
+            1
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_sum_global_overflow",
+        "operation": "torch.sum",
+        "output_dtype": "int32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": 1,
+        "expected": {
+          "shape": [
+            2
+          ],
+          "values": [
+            -2147483648,
+            2147483647
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            2147483647,
+            1,
+            -2147483648,
+            -1
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_sum_axis_overflow",
+        "operation": "torch.sum",
+        "output_dtype": "int32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": null,
+        "expected": {
+          "shape": [],
+          "values": [
+            -2
+          ]
+        },
+        "input": {
+          "shape": [
+            2
+          ],
+          "values": [
+            2147483647,
+            2
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_prod_global_overflow",
+        "operation": "torch.prod",
+        "output_dtype": "int32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "correction": 0,
+        "dim": 1,
+        "expected": {
+          "shape": [
+            2
+          ],
+          "values": [
+            -2,
+            -2147483648
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            2147483647,
+            2,
+            -2147483648,
+            -1
+          ]
+        },
+        "input_dtype": "int32",
+        "keepdim": false,
+        "name": "i32_prod_axis_overflow",
+        "operation": "torch.prod",
+        "output_dtype": "int32",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      }
+    ],
     "tensor_shape_semantics_f32": {
       "dtype": "float32",
       "empty": {

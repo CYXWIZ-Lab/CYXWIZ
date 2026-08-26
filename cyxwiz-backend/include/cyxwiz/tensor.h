@@ -190,10 +190,17 @@ public:
     Tensor Min(int dim, bool keepdim = false) const;
     Tensor Prod() const;
     Tensor Prod(int dim, bool keepdim = false) const;
+    // Population variance/stddev remain the compatibility default
+    // (correction=0). The named global overloads avoid ambiguity with the
+    // existing Var(dim)/Std(dim) APIs.
     Tensor Var() const;
+    Tensor VarWithCorrection(int64_t correction) const;
     Tensor Var(int dim, bool keepdim = false) const;
+    Tensor Var(int dim, bool keepdim, int64_t correction) const;
     Tensor Std() const;
+    Tensor StdWithCorrection(int64_t correction) const;
     Tensor Std(int dim, bool keepdim = false) const;
+    Tensor Std(int dim, bool keepdim, int64_t correction) const;
 
     // Math operations
     Tensor operator+(const Tensor& other) const;

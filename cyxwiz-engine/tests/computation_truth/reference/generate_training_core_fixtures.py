@@ -407,6 +407,220 @@ def tensor_concat_matrix() -> dict[str, Any]:
     }
 
 
+def tensor_reduction_input(
+    shape: list[int],
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    count = math.prod(shape)
+    if dtype == torch.uint8:
+        return torch.tensor(
+            [(index % 4) + 1 for index in range(count)], dtype=dtype
+        ).reshape(shape)
+    values = torch.arange(count, dtype=torch.float64).reshape(shape)
+    values = (values.remainder(7) - 3).add(values * 0.125)
+    return values.to(dtype)
+
+
+def tensor_reduction_result(
+    input_tensor: torch.Tensor,
+    operation: str,
+    dim: int | None,
+    keepdim: bool,
+    correction: int,
+) -> torch.Tensor:
+    dimension_args: dict[str, Any] = {}
+    if dim is not None:
+        dimension_args = {"dim": dim, "keepdim": keepdim}
+
+    if operation == "sum":
+        return torch.sum(
+            input_tensor, dtype=input_tensor.dtype, **dimension_args
+        )
+    if operation == "prod":
+        return torch.prod(
+            input_tensor, dtype=input_tensor.dtype, **dimension_args
+        )
+    if operation == "max":
+        return torch.amax(input_tensor, **dimension_args)
+    if operation == "min":
+        return torch.amin(input_tensor, **dimension_args)
+
+    real_dtype = (
+        torch.float64
+        if input_tensor.dtype == torch.float64
+        else torch.float32
+    )
+    real_input = input_tensor.to(real_dtype)
+    if operation == "mean":
+        return torch.mean(real_input, **dimension_args)
+    if operation == "var":
+        return torch.var(
+            real_input, correction=correction, **dimension_args
+        )
+    if operation == "std":
+        return torch.std(
+            real_input, correction=correction, **dimension_args
+        )
+    raise ValueError(f"unsupported Tensor reduction: {operation}")
+
+
+def tensor_reduction_case(
+    name: str,
+    shape: list[int],
+    dtype: torch.dtype,
+    operation: str,
+    dim: int | None = None,
+    keepdim: bool = False,
+    correction: int = 0,
+) -> dict[str, Any]:
+    input_tensor = tensor_reduction_input(shape, dtype)
+    return tensor_reduction_case_from_input(
+        name, input_tensor, operation, dim, keepdim, correction
+    )
+
+
+def tensor_reduction_case_from_input(
+    name: str,
+    input_tensor: torch.Tensor,
+    operation: str,
+    dim: int | None = None,
+    keepdim: bool = False,
+    correction: int = 0,
+) -> dict[str, Any]:
+    expected = tensor_reduction_result(
+        input_tensor, operation, dim, keepdim, correction
+    )
+    return {
+        "name": name,
+        "operation": f"torch.{operation}",
+        "input_dtype": str(input_tensor.dtype).removeprefix("torch."),
+        "output_dtype": str(expected.dtype).removeprefix("torch."),
+        "dim": dim,
+        "keepdim": keepdim,
+        "correction": correction,
+        "input": tensor_fixture(input_tensor),
+        "expected": tensor_fixture(expected),
+        "tolerance": {
+            "atol": 1.0e-10 if expected.dtype == torch.float64 else 1.0e-5,
+            "rtol": 1.0e-10 if expected.dtype == torch.float64 else 1.0e-5,
+        },
+    }
+
+
+def tensor_reduction_matrix() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    dtype_matrix = [
+        ("f32", torch.float32, [2, 3, 4]),
+        ("f64", torch.float64, [2, 2, 2, 3]),
+        ("i32", torch.int32, [2, 3]),
+        ("i64", torch.int64, [2, 3, 2]),
+        ("u8", torch.uint8, [2, 2, 3]),
+    ]
+    for dtype_name, dtype, shape in dtype_matrix:
+        cases.extend([
+            tensor_reduction_case(
+                f"{dtype_name}_sum_global", shape, dtype, "sum"
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_sum_negative_dim_keepdim",
+                shape, dtype, "sum", -1, True
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_mean_global", shape, dtype, "mean"
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_mean_negative_dim_keepdim",
+                shape, dtype, "mean", -1, True
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_max_global", shape, dtype, "max"
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_max_dim0", shape, dtype, "max", 0
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_min_global", shape, dtype, "min"
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_min_negative_dim",
+                shape, dtype, "min", -1
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_prod_global", shape, dtype, "prod"
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_prod_dim0_keepdim",
+                shape, dtype, "prod", 0, True
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_var_global_population",
+                shape, dtype, "var", correction=0
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_var_negative_dim_sample",
+                shape, dtype, "var", -1, False, 1
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_std_global_population",
+                shape, dtype, "std", correction=0
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_std_negative_dim_sample",
+                shape, dtype, "std", -1, False, 1
+            ),
+        ])
+
+    cases.extend([
+        tensor_reduction_case(
+            "f32_sum_middle_dim", [2, 3, 4], torch.float32, "sum", 1
+        ),
+        tensor_reduction_case(
+            "f32_var_middle_dim_keepdim_correction2",
+            [2, 3, 4], torch.float32, "var", 1, True, 2
+        ),
+        tensor_reduction_case(
+            "f64_std_global_negative_correction",
+            [2, 2, 2, 3], torch.float64, "std", correction=-1
+        ),
+        tensor_reduction_case(
+            "scalar_mean_dim0", [], torch.float32, "mean", 0, True
+        ),
+        tensor_reduction_case_from_input(
+            "i32_sum_global_overflow",
+            torch.tensor([torch.iinfo(torch.int32).max, 1], dtype=torch.int32),
+            "sum",
+        ),
+        tensor_reduction_case_from_input(
+            "i32_sum_axis_overflow",
+            torch.tensor(
+                [
+                    [torch.iinfo(torch.int32).max, 1],
+                    [torch.iinfo(torch.int32).min, -1],
+                ],
+                dtype=torch.int32,
+            ),
+            "sum", 1,
+        ),
+        tensor_reduction_case_from_input(
+            "i32_prod_global_overflow",
+            torch.tensor([torch.iinfo(torch.int32).max, 2], dtype=torch.int32),
+            "prod",
+        ),
+        tensor_reduction_case_from_input(
+            "i32_prod_axis_overflow",
+            torch.tensor(
+                [
+                    [torch.iinfo(torch.int32).max, 2],
+                    [torch.iinfo(torch.int32).min, -1],
+                ],
+                dtype=torch.int32,
+            ),
+            "prod", 1,
+        ),
+    ])
+    return cases
+
+
 def dropout_semantics() -> dict[str, Any]:
     input_tensor = torch.tensor(
         [[1.0, -2.0, 3.5], [4.0, -5.0, 6.5]],
@@ -1252,6 +1466,7 @@ def generate_fixture() -> dict[str, Any]:
             "tensor_concat_f32": tensor_concat_matrix(),
             "tensor_indexing_f32": tensor_indexing_matrix(),
             "tensor_permute_f32": tensor_permute_matrix(),
+            "tensor_reductions": tensor_reduction_matrix(),
             "tensor_shape_semantics_f32": tensor_shape_semantics(),
             "linear_basic_f32": linear_case(),
             "cross_entropy_index_mean_f32": cross_entropy_case(),

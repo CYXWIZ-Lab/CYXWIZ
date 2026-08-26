@@ -524,11 +524,12 @@ TEST_CASE("Tensor scalar variance preserves Float64 output", "[tensor]") {
     REQUIRE(stddev.Data<double>()[0] == Catch::Approx(std::sqrt(2.0 / 3.0)));
 }
 
-TEST_CASE("Tensor scalar variance rejects empty tensors", "[tensor]") {
+TEST_CASE("Tensor scalar statistical reductions return NaN for empty tensors", "[tensor]") {
     cyxwiz::Tensor t({0}, cyxwiz::DataType::Float32);
 
-    REQUIRE_THROWS_AS(t.Var(), std::runtime_error);
-    REQUIRE_THROWS_AS(t.Std(), std::runtime_error);
+    REQUIRE(std::isnan(t.Mean().Data<float>()[0]));
+    REQUIRE(std::isnan(t.Var().Data<float>()[0]));
+    REQUIRE(std::isnan(t.Std().Data<float>()[0]));
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -541,9 +542,9 @@ TEST_CASE("Tensor scalar reductions keep Float32 ArrayFire output device-residen
     cyxwiz::Tensor product = input.Prod();
 
     REQUIRE(sum.GetDataType() == cyxwiz::DataType::Float32);
-    REQUIRE(sum.Shape() == std::vector<size_t>{1});
+    REQUIRE(sum.Shape().empty());
     REQUIRE(product.GetDataType() == cyxwiz::DataType::Float32);
-    REQUIRE(product.Shape() == std::vector<size_t>{1});
+    REQUIRE(product.Shape().empty());
     REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
 
     REQUIRE(sum.Data<float>()[0] == 6.0f);
@@ -560,11 +561,11 @@ TEST_CASE("Tensor scalar reductions keep Float64 ArrayFire output device-residen
     cyxwiz::Tensor min = input.Min();
 
     REQUIRE(mean.GetDataType() == cyxwiz::DataType::Float64);
-    REQUIRE(mean.Shape() == std::vector<size_t>{1});
+    REQUIRE(mean.Shape().empty());
     REQUIRE(max.GetDataType() == cyxwiz::DataType::Float64);
-    REQUIRE(max.Shape() == std::vector<size_t>{1});
+    REQUIRE(max.Shape().empty());
     REQUIRE(min.GetDataType() == cyxwiz::DataType::Float64);
-    REQUIRE(min.Shape() == std::vector<size_t>{1});
+    REQUIRE(min.Shape().empty());
     REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_host_bytes);
 
     REQUIRE(mean.Data<double>()[0] == Catch::Approx(1.5));
@@ -581,9 +582,9 @@ TEST_CASE("Tensor scalar variance reductions keep ArrayFire output device-reside
     cyxwiz::Tensor float_std = float_input.Std();
 
     REQUIRE(float_var.GetDataType() == cyxwiz::DataType::Float32);
-    REQUIRE(float_var.Shape() == std::vector<size_t>{1});
+    REQUIRE(float_var.Shape().empty());
     REQUIRE(float_std.GetDataType() == cyxwiz::DataType::Float32);
-    REQUIRE(float_std.Shape() == std::vector<size_t>{1});
+    REQUIRE(float_std.Shape().empty());
     REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_float_host_bytes);
 
     REQUIRE(float_var.Data<float>()[0] == Catch::Approx(5.25f));
@@ -597,9 +598,9 @@ TEST_CASE("Tensor scalar variance reductions keep ArrayFire output device-reside
     cyxwiz::Tensor double_std = double_input.Std();
 
     REQUIRE(double_var.GetDataType() == cyxwiz::DataType::Float64);
-    REQUIRE(double_var.Shape() == std::vector<size_t>{1});
+    REQUIRE(double_var.Shape().empty());
     REQUIRE(double_std.GetDataType() == cyxwiz::DataType::Float64);
-    REQUIRE(double_std.Shape() == std::vector<size_t>{1});
+    REQUIRE(double_std.Shape().empty());
     REQUIRE(cyxwiz::MemoryManager::GetAllocatedBytes() == before_double_host_bytes);
 
     REQUIRE(double_var.Data<double>()[0] == Catch::Approx(2.0 / 3.0));
@@ -785,9 +786,9 @@ TEST_CASE("Tensor dimension reductions validate dimensions and empty inputs", "[
     REQUIRE_THROWS_AS(t.Mean(2), std::runtime_error);
     REQUIRE_THROWS_AS(empty.Max(0), std::runtime_error);
     REQUIRE_THROWS_AS(empty.Min(0), std::runtime_error);
-    REQUIRE_THROWS_AS(empty.Mean(0), std::runtime_error);
-    REQUIRE_THROWS_AS(empty.Var(0), std::runtime_error);
-    REQUIRE_THROWS_AS(empty.Std(0), std::runtime_error);
+    REQUIRE(std::isnan(empty.Mean(0).Data<float>()[0]));
+    REQUIRE(std::isnan(empty.Var(0).Data<float>()[0]));
+    REQUIRE(std::isnan(empty.Std(0).Data<float>()[0]));
 }
 
 TEST_CASE("Tensor dot computes 1D inner products", "[tensor]") {
