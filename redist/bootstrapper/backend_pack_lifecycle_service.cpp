@@ -1,6 +1,6 @@
 #include "backend_pack_lifecycle_service.h"
 
-#include "base_launcher_publisher.h"
+#include "base_stable_tool_publisher.h"
 
 #include <algorithm>
 #include <chrono>
@@ -524,19 +524,19 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     if (base) {
         SetStage(
             BackendPackLifecycleStage::Installing,
-            "Publishing the verified app-level launcher");
-        const auto launcher = PublishVerifiedBaseLauncher(
+            "Publishing the verified stable product tools");
+        const auto stable_tools = PublishVerifiedBaseStableTools(
             manifest, installed.installed_directory, runtime_root_);
-        if (!launcher.published) {
+        if (!stable_tools.published) {
             return Finish(
                 BackendPackLifecycleStatus::InstallationFailure,
-                launcher.message, manifest.pack_id, manifest.backend,
+                stable_tools.message, manifest.pack_id, manifest.backend,
                 installed.installed_directory, qualification);
         }
         if (cancel_requested_.load()) {
             return Finish(
                 BackendPackLifecycleStatus::Interrupted,
-                "Verified launcher is installed but base activation was cancelled",
+                "Verified stable tools are installed but base activation was cancelled",
                 manifest.pack_id, manifest.backend,
                 installed.installed_directory, qualification);
         }

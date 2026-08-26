@@ -58,7 +58,7 @@ target_link_libraries(cyxwiz-backend-pack-maintenance PUBLIC
 add_library(cyxwiz-backend-pack-service STATIC
     backend_pack_acquisition.cpp
     backend_pack_archive_extractor.cpp
-    base_launcher_publisher.cpp
+    base_stable_tool_publisher.cpp
     backend_pack_hash.cpp
     backend_pack_https_source.cpp
     backend_pack_installer.cpp

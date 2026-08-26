@@ -7,13 +7,14 @@
 
 namespace cyxwiz::runtime {
 
-struct BaseLauncherPublishResult {
+struct BaseStableToolsPublishResult {
     bool published = false;
-    std::filesystem::path installed_path;
+    std::filesystem::path launcher_path;
+    std::filesystem::path finalizer_path;
     std::string message;
 };
 
-BaseLauncherPublishResult PublishVerifiedBaseLauncher(
+BaseStableToolsPublishResult PublishVerifiedBaseStableTools(
     const VerifiedBackendPackManifest& manifest,
     const std::filesystem::path& installed_base_directory,
     const std::filesystem::path& runtime_root);

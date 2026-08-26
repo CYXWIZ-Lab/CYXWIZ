@@ -107,7 +107,10 @@ activation. It does not link the backend or ArrayFire DLLs, and a failed
 qualification leaves the pack inactive and the request available for retry.
 
 Fresh delivery rechecks and atomically publishes the signed base's stable
-`cyxwiz-runtime-bootstrapper` beside `runtime/` before generation-1 activation.
+`cyxwiz-product-removal-finalizer` first and
+`cyxwiz-runtime-bootstrapper` second beside `runtime/` before generation-1
+activation. Publishing the finalizer first cannot strand a launcher without
+its removal closure.
 Its `--installer` mode resolves the same versioned `cyxwiz-installer` GUI from
 the active base, allowing later platform registration to point at one stable
 launcher without copying the GUI or dependency closure into the product root.
@@ -118,8 +121,9 @@ Engine and Installer Start Menu links and an Apps & Features entry; Linux writes
 current-user or system desktop entries; macOS publishes Engine and Installer
 application bundles in the product root. Every maintenance entry resolves the
 installed GUI through `--installer`, and none changes the machine-wide loader
-environment. The current Apps & Features uninstall command reopens that GUI;
-full transactional product removal remains a separate lifecycle gate.
+environment. The Apps & Features uninstall command reopens that GUI; explicit
+GUI confirmation and stable-bootstrapper handoff are the remaining product
+removal lifecycle gate.
 
 The matching unregistration boundary is idempotent and removes only the exact
 CyxWiz Start Menu/Apps & Features, desktop-entry, or application-bundle
