@@ -174,6 +174,13 @@ Registration and removal share the same safe-version rule. Schema 1 removal
 requests fail closed because they cannot prove which version of native OS
 registration may be removed or restored.
 
+Native unregistration preflights ownership before changing external state.
+Windows verifies the exact install root, version, uninstall commands, and both
+Start Menu shortcut identities before deleting fixed CyxWiz entries. Linux
+validates both managed desktop entries before removing either one; macOS
+likewise preflights both exact managed application bundles. An entry belonging
+to another installation or containing unmanaged changes fails closed.
+
 After every running installed process has released the product, the removal
 transaction revalidates authorization and atomically renames the exact product
 root to a deterministic sibling `.cyxwiz-removing-<install-id>` quarantine. It

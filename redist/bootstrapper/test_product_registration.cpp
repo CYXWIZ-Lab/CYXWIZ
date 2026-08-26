@@ -186,12 +186,15 @@ void TestUnmanagedRegistrationProtection() {
           "Linux protection fixture must register successfully");
     const auto desktop =
         data_home / "applications" / "cyxwiz.desktop";
-    std::ofstream(desktop, std::ios::binary | std::ios::app)
+    const auto installer_desktop =
+        data_home / "applications" / "cyxwiz-installer.desktop";
+    std::ofstream(installer_desktop, std::ios::binary | std::ios::app)
         << "X-User-Managed=true\n";
     const auto rejected =
         cyxwiz::runtime::UnregisterInstalledProduct(Request(install_root));
-    Check(!rejected.unregistered && std::filesystem::exists(desktop),
-          "Linux unregistration must preserve modified desktop entries");
+    Check(!rejected.unregistered && std::filesystem::exists(desktop) &&
+              std::filesystem::exists(installer_desktop),
+          "Linux unregistration must preflight and preserve all desktop entries");
 #endif
 }
 #endif

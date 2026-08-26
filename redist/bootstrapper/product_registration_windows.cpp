@@ -2,9 +2,11 @@
 
 #include "backend_pack_platform.h"
 
+#include <array>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
@@ -185,6 +187,130 @@ bool RemoveFileIfPresent(
     return true;
 }
 
+bool ReadRegistryString(
+    HKEY key,
+    const wchar_t* name,
+    std::wstring& value,
+    std::string& error) {
+    DWORD type = 0;
+    DWORD bytes = 0;
+    LSTATUS status = ::RegQueryValueExW(
+        key, name, nullptr, &type, nullptr, &bytes);
+    if (status != ERROR_SUCCESS || type != REG_SZ || bytes < sizeof(wchar_t) ||
+        bytes > 64 * 1024 || bytes % sizeof(wchar_t) != 0) {
+        error = "The Windows CyxWiz registration is incomplete or unmanaged";
+        return false;
+    }
+    std::vector<wchar_t> buffer(bytes / sizeof(wchar_t));
+    status = ::RegQueryValueExW(
+        key, name, nullptr, &type,
+        reinterpret_cast<BYTE*>(buffer.data()), &bytes);
+    if (status != ERROR_SUCCESS || buffer.empty() || buffer.back() != L'\0') {
+        error = "Cannot read the exact Windows CyxWiz registration";
+        return false;
+    }
+    value.assign(buffer.data(), buffer.size() - 1);
+    return true;
+}
+
+bool ValidateRegistryRegistration(
+    HKEY hive,
+    const ProductRegistrationRequest& request,
+    std::string& error) {
+    RegistryKey key;
+    const LSTATUS open_status = ::RegOpenKeyExW(
+        hive,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\CyxWiz",
+        0, KEY_READ, key.output());
+    if (open_status == ERROR_FILE_NOT_FOUND) return true;
+    if (open_status != ERROR_SUCCESS) {
+        error = "Cannot inspect Windows CyxWiz registration; Win32 error " +
+            std::to_string(open_status);
+        return false;
+    }
+
+    const auto launcher = request.install_root /
+        std::string(CurrentRuntimeBootstrapperExecutableName());
+    const auto uninstall = QuoteWindowsArgument(launcher.native()) +
+        L" --installer";
+    const std::wstring version(
+        request.product_version.begin(), request.product_version.end());
+    const std::array expected{
+        std::pair{L"DisplayName", std::wstring(L"CyxWiz")},
+        std::pair{L"Publisher", std::wstring(L"CyxWiz")},
+        std::pair{L"DisplayVersion", version},
+        std::pair{L"InstallLocation", request.install_root.native()},
+        std::pair{L"DisplayIcon", launcher.native()},
+        std::pair{L"UninstallString", uninstall},
+        std::pair{L"ModifyPath", uninstall},
+    };
+    for (const auto& [name, expected_value] : expected) {
+        std::wstring actual;
+        if (!ReadRegistryString(key.get(), name, actual, error)) return false;
+        if (actual != expected_value) {
+            error = "The Windows CyxWiz registration belongs to another installation";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ValidateShortcutIfPresent(
+    const std::filesystem::path& shortcut,
+    const std::filesystem::path& launcher,
+    const wchar_t* arguments,
+    const wchar_t* description,
+    std::string& error) {
+    std::error_code filesystem_error;
+    const auto status = std::filesystem::symlink_status(
+        shortcut, filesystem_error);
+    if (status.type() == std::filesystem::file_type::not_found) return true;
+    if (filesystem_error ||
+        status.type() != std::filesystem::file_type::regular) {
+        error = "The Windows CyxWiz shortcut is redirected or unmanaged";
+        return false;
+    }
+
+    ComOwner<IShellLinkW> link;
+    HRESULT result = ::CoCreateInstance(
+        CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+        IID_IShellLinkW, reinterpret_cast<void**>(link.output()));
+    if (FAILED(result) || !link) {
+        error = "Cannot inspect the Windows CyxWiz shortcut";
+        return false;
+    }
+    ComOwner<IPersistFile> persistence;
+    result = link->QueryInterface(
+        IID_IPersistFile, reinterpret_cast<void**>(persistence.output()));
+    if (FAILED(result) || !persistence ||
+        FAILED(persistence->Load(shortcut.c_str(), STGM_READ))) {
+        error = "Cannot load the Windows CyxWiz shortcut";
+        return false;
+    }
+
+    constexpr int kBufferCharacters = 32768;
+    std::vector<wchar_t> buffer(kBufferCharacters);
+    int icon_index = -1;
+    if (FAILED(link->GetPath(
+            buffer.data(), kBufferCharacters, nullptr, SLGP_RAWPATH)) ||
+        std::filesystem::path(buffer.data()).lexically_normal() != launcher ||
+        FAILED(link->GetArguments(buffer.data(), kBufferCharacters)) ||
+        std::wstring_view(buffer.data()) != arguments ||
+        FAILED(link->GetWorkingDirectory(buffer.data(), kBufferCharacters)) ||
+        std::filesystem::path(buffer.data()).lexically_normal() !=
+            launcher.parent_path() ||
+        FAILED(link->GetDescription(buffer.data(), kBufferCharacters)) ||
+        std::wstring_view(buffer.data()) != description ||
+        FAILED(link->GetIconLocation(
+            buffer.data(), kBufferCharacters, &icon_index)) ||
+        std::filesystem::path(buffer.data()).lexically_normal() != launcher ||
+        icon_index != 0) {
+        error = "The Windows CyxWiz shortcut belongs to another installation";
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 ProductRegistrationResult RegisterPlatformProduct(
@@ -273,7 +399,21 @@ ProductUnregistrationResult UnregisterPlatformProduct(
         return result;
     }
     const auto product_folder = programs / L"CyxWiz";
+    const auto launcher = request.install_root /
+        std::string(CurrentRuntimeBootstrapperExecutableName());
     std::string error;
+    const HKEY hive = request.scope == ProductInstallScope::AllUsers
+        ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+    if (!ValidateRegistryRegistration(hive, request, error) ||
+        !ValidateShortcutIfPresent(
+            product_folder / L"CyxWiz.lnk", launcher, L"",
+            L"Launch CyxWiz Engine", error) ||
+        !ValidateShortcutIfPresent(
+            product_folder / L"CyxWiz Installer.lnk", launcher,
+            L"--installer", L"Modify or repair CyxWiz", error)) {
+        result.message = std::move(error);
+        return result;
+    }
     if (!RemoveFileIfPresent(product_folder / L"CyxWiz.lnk", error) ||
         !RemoveFileIfPresent(
             product_folder / L"CyxWiz Installer.lnk", error)) {
@@ -283,8 +423,6 @@ ProductUnregistrationResult UnregisterPlatformProduct(
     std::error_code ignored;
     std::filesystem::remove(product_folder, ignored);
 
-    const HKEY hive = request.scope == ProductInstallScope::AllUsers
-        ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
     const LSTATUS delete_status = ::RegDeleteKeyW(
         hive,
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\CyxWiz");
