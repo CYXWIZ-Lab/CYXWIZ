@@ -153,6 +153,15 @@ schema and repeat live authorization validation; copying the request to another
 root or changing the active runtime makes it stale. A new explicit confirmation
 may replace a corrupt or stale request, but it never replaces ownership evidence.
 
+After every running installed process has released the product, the removal
+transaction revalidates authorization and atomically renames the exact product
+root to a deterministic sibling `.cyxwiz-removing-<install-id>` quarantine. It
+never overwrites or merges an existing quarantine. The moved receipt continues
+to name the original root and must match the pinned ID and scope; failed
+post-rename validation attempts an immediate rollback. Quarantine does not
+recursively delete content—bounded no-follow cleanup remains a separate finalizer
+stage so interruption cannot be mistaken for successful removal.
+
 The packaged desktop application also includes `cyxwiz-installer` (`.exe` on
 Windows), a standalone graphical component manager. Recommended, CPU-only,
 and Custom package selection live there; the Engine Backend Manager launches

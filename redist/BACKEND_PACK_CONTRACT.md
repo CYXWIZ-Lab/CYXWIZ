@@ -101,6 +101,16 @@ request is intent plus pinned state, not ownership evidence and not independent
 deletion authority. A fresh explicit confirmation may replace it; the receipt
 remains immutable across that operation.
 
+Product deactivation is one atomic sibling rename from the exact install root
+to `.cyxwiz-removing-<install-id>`. The transaction revalidates authorization
+immediately before the rename, refuses any pre-existing destination, and never
+merges or overwrites content. After rename it validates the relocated regular
+receipt against the original root, pinned installation ID, and scope; failure
+attempts rollback. The quarantine module performs no recursive cleanup. A
+separate platform adapter must remove entries without following symlinks,
+junctions, reparse points, or mounted filesystems and must preserve recovery
+evidence until all other owned content is gone.
+
 The graphical `cyxwiz-installer` component manager remains in the signed
 versioned base and is resolved by the stable bootstrapper (`.exe` on Windows).
 It owns Recommended, CPU-only, and Custom package consent and launches the

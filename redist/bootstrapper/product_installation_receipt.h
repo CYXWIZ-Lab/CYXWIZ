@@ -36,4 +36,10 @@ bool LoadProductInstallationReceipt(
     ProductInstallationReceipt& receipt,
     std::string& error);
 
+bool LoadRelocatedProductInstallationReceipt(
+    const std::filesystem::path& relocated_root,
+    const std::filesystem::path& original_install_root,
+    ProductInstallationReceipt& receipt,
+    std::string& error);
+
 }  // namespace cyxwiz::runtime

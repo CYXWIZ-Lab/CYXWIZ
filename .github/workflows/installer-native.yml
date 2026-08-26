@@ -202,6 +202,7 @@ jobs:
             "test_installer_verification_summary.exe",
             "test_product_installation_receipt.exe",
             "test_product_removal_authorization.exe",
+            "test_product_removal_quarantine.exe",
             "test_product_removal_request.exe",
             "test_product_registration.exe"
           ) | ForEach-Object {
@@ -220,6 +221,7 @@ jobs:
             build/bin/test_installer_verification_summary \
             build/bin/test_product_installation_receipt \
             build/bin/test_product_removal_authorization \
+            build/bin/test_product_removal_quarantine \
             build/bin/test_product_removal_request \
             build/bin/test_product_registration \
             installer-stage/smoke/

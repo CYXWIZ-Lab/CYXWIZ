@@ -197,6 +197,32 @@ bool LoadProductInstallationReceipt(
     return true;
 }
 
+bool LoadRelocatedProductInstallationReceipt(
+    const std::filesystem::path& relocated_root,
+    const std::filesystem::path& original_install_root,
+    ProductInstallationReceipt& receipt,
+    std::string& error) {
+    receipt = {};
+    if (!IsNormalizedProductRoot(relocated_root) ||
+        !IsNormalizedProductRoot(original_install_root) ||
+        relocated_root.parent_path() != original_install_root.parent_path() ||
+        relocated_root == original_install_root) {
+        error = "Normalized sibling product roots are required";
+        return false;
+    }
+    if (!ReadReceiptFile(
+            ProductInstallationReceiptPath(relocated_root), receipt, error)) {
+        return false;
+    }
+    if (receipt.install_root != original_install_root) {
+        receipt = {};
+        error = "The relocated product receipt belongs to another root";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 bool PublishProductInstallationReceipt(
     const std::filesystem::path& install_root,
     ProductInstallScope scope,
