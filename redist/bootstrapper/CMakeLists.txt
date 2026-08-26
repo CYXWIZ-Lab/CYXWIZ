@@ -9,12 +9,20 @@ add_library(cyxwiz-runtime-bootstrap STATIC
     product_installation_receipt.cpp
     product_removal_authorization.cpp
     product_removal_finalizer.cpp
+    product_removal_handoff.cpp
     product_removal_quarantine.cpp
     product_removal_request.cpp
     runtime_layout.cpp
 )
 if(WIN32)
-    target_sources(cyxwiz-runtime-bootstrap PRIVATE windows_dll_search.cpp)
+    target_sources(cyxwiz-runtime-bootstrap PRIVATE
+        product_removal_handoff_windows.cpp
+        windows_dll_search.cpp
+    )
+else()
+    target_sources(cyxwiz-runtime-bootstrap PRIVATE
+        product_removal_handoff_posix.cpp
+    )
 endif()
 target_include_directories(cyxwiz-runtime-bootstrap PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"

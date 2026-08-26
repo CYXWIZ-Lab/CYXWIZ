@@ -110,7 +110,14 @@ finalizer treats only EOF as the lifetime boundary, rejects pipe data or wait
 errors, closes its token, and then reloads the durable request so authorization
 cannot be carried across the wait unchecked. On Windows it is built with the
 static CRT and has no product-local runtime DLL dependency. This boundary is
-non-destructive until the detached-launch and cleanup transaction consumes it.
+non-destructive. The detached scheduler bounds the source to 16 MiB and copies
+it without following a
+reparse point or symlink into a newly created temporary directory, passes only
+the pipe read token, and retains the write token under explicit parent-process
+ownership. Windows restricts inheritance with
+`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`; POSIX uses a double fork plus exact
+`execv`. The scheduler is not invoked by the stable bootstrapper until the
+cleanup transaction is complete.
 
 Product deactivation is one atomic sibling rename from the exact install root
 to `.cyxwiz-removing-<install-id>`. The transaction revalidates authorization

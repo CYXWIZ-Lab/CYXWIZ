@@ -196,6 +196,7 @@ jobs:
           Get-ChildItem build/bin/Release/test_backend_pack_*.exe |
             Copy-Item -Destination installer-stage/smoke/
           @(
+            "cyxwiz-product-removal-finalizer.exe",
             "cyxwiz-runtime-bootstrapper.exe",
             "test_runtime_bootstrapper.exe",
             "test_runtime_bootstrapper_child.exe",
@@ -204,6 +205,7 @@ jobs:
             "test_product_removal_authorization.exe",
             "test_product_removal_quarantine.exe",
             "test_product_removal_finalizer.exe",
+            "test_product_removal_handoff.exe",
             "test_product_removal_request.exe",
             "test_product_registration.exe"
           ) | ForEach-Object {
@@ -216,6 +218,7 @@ jobs:
           mkdir -p installer-stage/smoke
           cp build/bin/test_backend_pack_* installer-stage/smoke/
           cp \
+            build/bin/cyxwiz-product-removal-finalizer \
             build/bin/cyxwiz-runtime-bootstrapper \
             build/bin/test_runtime_bootstrapper \
             build/bin/test_runtime_bootstrapper_child \
@@ -224,6 +227,7 @@ jobs:
             build/bin/test_product_removal_authorization \
             build/bin/test_product_removal_quarantine \
             build/bin/test_product_removal_finalizer \
+            build/bin/test_product_removal_handoff \
             build/bin/test_product_removal_request \
             build/bin/test_product_registration \
             installer-stage/smoke/

@@ -9,6 +9,13 @@
 #ifdef _WIN32
 #include <cerrno>
 #include <cwchar>
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <cerrno>
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -37,6 +44,42 @@ bool ParseToken(std::string_view text, std::uintptr_t& token) {
 }
 #endif
 
+bool PublishResult(
+    const std::filesystem::path& executable,
+    std::string_view value) {
+    if (!executable.is_absolute()) return false;
+    const auto path = executable.parent_path() / "result.txt";
+#ifdef _WIN32
+    const HANDLE file = ::CreateFileW(
+        path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE || value.size() > MAXDWORD) return false;
+    DWORD written = 0;
+    const BOOL succeeded = ::WriteFile(
+        file, value.data(), static_cast<DWORD>(value.size()),
+        &written, nullptr);
+    ::CloseHandle(file);
+    return succeeded && written == value.size();
+#else
+    const int file = ::open(
+        path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+        0600);
+    if (file < 0) return false;
+    std::size_t offset = 0;
+    while (offset < value.size()) {
+        const auto written = ::write(
+            file, value.data() + offset, value.size() - offset);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) {
+            ::close(file);
+            return false;
+        }
+        offset += static_cast<std::size_t>(written);
+    }
+    return ::close(file) == 0;
+#endif
+}
+
 }  // namespace
 
 #ifdef _WIN32
@@ -56,10 +99,12 @@ int wmain(int argc, wchar_t** argv) {
     if (!cyxwiz::runtime::AwaitAuthorizedProductRemoval(
             std::filesystem::path(argv[2]).lexically_normal(), token,
             authorization, error)) {
+        PublishResult(std::filesystem::path(argv[0]), "rejected\n");
         std::cerr << "CyxWiz product removal finalizer: " << error << '\n';
         return 78;
     }
-    return 0;
+    return PublishResult(std::filesystem::path(argv[0]), "authorized\n")
+        ? 0 : 78;
 }
 #else
 int main(int argc, char** argv) {
@@ -78,9 +123,11 @@ int main(int argc, char** argv) {
     if (!cyxwiz::runtime::AwaitAuthorizedProductRemoval(
             std::filesystem::path(argv[2]).lexically_normal(), token,
             authorization, error)) {
+        PublishResult(std::filesystem::path(argv[0]), "rejected\n");
         std::cerr << "CyxWiz product removal finalizer: " << error << '\n';
         return 78;
     }
-    return 0;
+    return PublishResult(std::filesystem::path(argv[0]), "authorized\n")
+        ? 0 : 78;
 }
 #endif

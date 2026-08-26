@@ -161,7 +161,12 @@ Only after EOF does the finalizer reload the durable request and repeat live
 authorization validation. The Windows finalizer uses the static CRT and depends
 only on system `KERNEL32.dll`, allowing it to run from a temporary directory
 after the product runtime is released. This checkpoint performs no deletion;
-detached launch and bounded no-follow cleanup are subsequent lifecycle stages.
+the detached scheduler now copies that exact, 16 MiB-bounded, non-redirected
+executable into an exclusive temporary directory and launches it with only the read token
+inherited. Windows uses an explicit process handle list; POSIX uses a detached
+double-fork/`exec` boundary. A bounded result marker proves the child stayed
+blocked until the parent token closed. Stable-bootstrapper invocation and
+bounded no-follow cleanup are subsequent lifecycle stages.
 
 After every running installed process has released the product, the removal
 transaction revalidates authorization and atomically renames the exact product
