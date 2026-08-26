@@ -168,6 +168,12 @@ double-fork/`exec` boundary. A bounded result marker proves the child stayed
 blocked until the parent token closed. Stable-bootstrapper invocation and
 bounded no-follow cleanup are subsequent lifecycle stages.
 
+Removal request schema 2 also pins the exact CyxWiz product version from the
+active signed base pack's bounded, non-redirected `RUNTIME_VERSIONS.json`.
+Registration and removal share the same safe-version rule. Schema 1 removal
+requests fail closed because they cannot prove which version of native OS
+registration may be removed or restored.
+
 After every running installed process has released the product, the removal
 transaction revalidates authorization and atomically renames the exact product
 root to a deterministic sibling `.cyxwiz-removing-<install-id>` quarantine. It

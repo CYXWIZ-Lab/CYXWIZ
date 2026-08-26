@@ -43,10 +43,12 @@ private:
     std::filesystem::path path_;
 };
 
-void Touch(const std::filesystem::path& path) {
+void Touch(
+    const std::filesystem::path& path,
+    const std::string& content = "fixture\n") {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream stream(path, std::ios::binary | std::ios::trunc);
-    stream << "fixture\n";
+    stream << content;
     Check(static_cast<bool>(stream), "Fixture file creation must succeed");
 }
 
@@ -59,6 +61,9 @@ struct QuarantineFixture {
             cyxwiz::runtime::CurrentRuntimeBootstrapperExecutableName()));
         Touch(base / std::string(
             cyxwiz::runtime::CurrentEngineExecutableName()));
+        Touch(
+            base / "RUNTIME_VERSIONS.json",
+            R"({"arrayfire":"3.10.0","cyxwiz":"0.2.0","python":"3.12.0"})");
         Touch(base / "resources" / "nested" / "asset.bin");
         cyxwiz::runtime::ActiveRuntimeState active;
         active.runtime_set_id = "set-v1";

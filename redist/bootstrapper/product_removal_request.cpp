@@ -1,6 +1,7 @@
 #include "product_removal_request.h"
 
 #include "atomic_file_publisher.h"
+#include "product_release_version.h"
 
 #include <nlohmann/json.hpp>
 
@@ -52,11 +53,12 @@ Json RequestDocument(const ProductRemovalAuthorization& authorization) {
         });
     }
     return {
-        {"schema_version", std::uint64_t{1}},
+        {"schema_version", std::uint64_t{2}},
         {"kind", kRequestKind},
         {"install_root", PathUtf8(authorization.install_root)},
         {"scope", ProductInstallScopeName(authorization.scope)},
         {"install_id", authorization.install_id},
+        {"product_version", authorization.product_version},
         {"runtime", {
             {"runtime_set_id", authorization.runtime.runtime_set_id},
             {"generation", authorization.runtime.generation},
@@ -99,14 +101,17 @@ bool ReadRequestFile(
     if (stream.bad() || document.is_discarded() ||
         !HasExactKeys(document, {
             "schema_version", "kind", "install_root", "scope",
-            "install_id", "runtime"}) ||
+            "install_id", "product_version", "runtime"}) ||
         !document["schema_version"].is_number_unsigned() ||
-        document["schema_version"].get<std::uint64_t>() != 1 ||
+        document["schema_version"].get<std::uint64_t>() != 2 ||
         !document["kind"].is_string() ||
         document["kind"].get<std::string>() != kRequestKind ||
         !document["install_root"].is_string() ||
         !document["scope"].is_string() ||
         !document["install_id"].is_string() ||
+        !document["product_version"].is_string() ||
+        !IsSafeProductVersion(
+            document["product_version"].get_ref<const std::string&>()) ||
         !HasExactKeys(document["runtime"], {
             "runtime_set_id", "generation", "base_pack_id", "packs"})) {
         error = "The product removal request schema is invalid";
@@ -124,6 +129,8 @@ bool ReadRequestFile(
     authorization.install_root = Utf8Path(
         document["install_root"].get<std::string>());
     authorization.install_id = document["install_id"].get<std::string>();
+    authorization.product_version =
+        document["product_version"].get<std::string>();
     if (!ParseProductInstallScope(
             document["scope"].get<std::string>(), authorization.scope)) {
         error = "The product removal request scope is invalid";
@@ -157,6 +164,7 @@ bool SameAuthorization(
     const ProductRemovalAuthorization& right) {
     if (left.install_root != right.install_root ||
         left.scope != right.scope || left.install_id != right.install_id ||
+        left.product_version != right.product_version ||
         left.runtime.runtime_set_id != right.runtime.runtime_set_id ||
         left.runtime.generation != right.runtime.generation ||
         left.runtime.base_pack_id != right.runtime.base_pack_id ||

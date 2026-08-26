@@ -12,6 +12,7 @@ struct ProductRemovalAuthorization {
     std::filesystem::path install_root;
     ProductInstallScope scope = ProductInstallScope::CurrentUser;
     std::string install_id;
+    std::string product_version;
     ActiveRuntimeState runtime;
 };
 

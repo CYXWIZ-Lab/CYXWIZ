@@ -37,9 +37,11 @@ private:
     std::filesystem::path path_;
 };
 
-void Touch(const std::filesystem::path& path) {
+void Touch(
+    const std::filesystem::path& path,
+    const std::string& content = "fixture\n") {
     std::ofstream stream(path, std::ios::binary | std::ios::trunc);
-    stream << "fixture\n";
+    stream << content;
     Check(static_cast<bool>(stream), "Fixture file creation must succeed");
 }
 
@@ -52,6 +54,9 @@ struct ProductFixture {
             cyxwiz::runtime::CurrentRuntimeBootstrapperExecutableName()));
         Touch(base / std::string(
             cyxwiz::runtime::CurrentEngineExecutableName()));
+        Touch(
+            base / "RUNTIME_VERSIONS.json",
+            R"({"arrayfire":"3.10.0","cyxwiz":"0.2.0","python":"3.12.0"})");
         active.runtime_set_id = "set-v1";
         active.generation = 5;
         active.base_pack_id = "base-v1";

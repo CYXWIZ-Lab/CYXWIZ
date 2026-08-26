@@ -57,6 +57,9 @@ struct ProductFixture {
             base / std::string(
                 cyxwiz::runtime::CurrentEngineExecutableName()),
             "engine\n");
+        WriteText(
+            base / "RUNTIME_VERSIONS.json",
+            R"({"arrayfire":"3.10.0","cyxwiz":"0.2.0","python":"3.12.0"})");
         active.runtime_set_id = "set-v1";
         active.generation = 3;
         active.base_pack_id = "base-v1";
@@ -86,12 +89,14 @@ void TestQueuesAndLoadsExactAuthorization() {
               cyxwiz::runtime::ProductInstallScope::CurrentUser,
               queued, error) &&
               queued.install_root == product.root &&
-              queued.runtime.generation == 3,
+              queued.runtime.generation == 3 &&
+              queued.product_version == "0.2.0",
           "An exact installation must queue removal: " + error);
     cyxwiz::runtime::ProductRemovalAuthorization loaded;
     Check(cyxwiz::runtime::LoadProductRemovalRequest(
               product.root, loaded, error) &&
               loaded.install_id == queued.install_id &&
+              loaded.product_version == "0.2.0" &&
               loaded.runtime.base_pack_id == "base-v1",
           "A fresh exact removal request must load: " + error);
 
@@ -129,7 +134,7 @@ void TestRejectsCopiedAndUnknownFieldRequests() {
 
     WriteText(
         cyxwiz::runtime::ProductRemovalRequestPath(first.root),
-        R"({"schema_version":1,"kind":"cyxwiz-product-removal","install_root":"x","scope":"current_user","install_id":"x","runtime":{},"unknown":true})");
+        R"({"schema_version":2,"kind":"cyxwiz-product-removal","install_root":"x","scope":"current_user","install_id":"x","product_version":"0.2.0","runtime":{},"unknown":true})");
     Check(!cyxwiz::runtime::LoadProductRemovalRequest(
               first.root, loaded, error) &&
               error.find("schema") != std::string::npos,
@@ -140,6 +145,20 @@ void TestRejectsCopiedAndUnknownFieldRequests() {
               cyxwiz::runtime::ProductInstallScope::CurrentUser,
               queued, error),
           "A fresh explicit removal choice may replace a corrupt stale request");
+}
+
+void TestRejectsLegacyRequestWithoutPinnedVersion() {
+    TemporaryDirectory temporary;
+    ProductFixture product(temporary.path());
+    WriteText(
+        cyxwiz::runtime::ProductRemovalRequestPath(product.root),
+        R"({"schema_version":1,"kind":"cyxwiz-product-removal","install_root":"x","scope":"current_user","install_id":"x","runtime":{}})");
+    cyxwiz::runtime::ProductRemovalAuthorization authorization;
+    std::string error;
+    Check(!cyxwiz::runtime::LoadProductRemovalRequest(
+              product.root, authorization, error) &&
+              error.find("schema") != std::string::npos,
+          "A legacy request without a pinned product version must fail closed");
 }
 
 void TestRejectsWrongScopeAndUnsafeRequestFile() {
@@ -167,6 +186,7 @@ int main() {
     TestQueuesAndLoadsExactAuthorization();
     TestRejectsCopiedAndUnknownFieldRequests();
     TestRejectsWrongScopeAndUnsafeRequestFile();
+    TestRejectsLegacyRequestWithoutPinnedVersion();
     std::cout << "Product removal request contracts passed\n";
     return 0;
 }

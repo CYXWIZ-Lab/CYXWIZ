@@ -7,6 +7,7 @@ add_library(cyxwiz-runtime-bootstrap STATIC
     atomic_file_publisher.cpp
     backend_pack_state_service.cpp
     product_installation_receipt.cpp
+    product_release_version.cpp
     product_removal_authorization.cpp
     product_removal_cleanup.cpp
     product_removal_finalizer.cpp
@@ -113,6 +114,7 @@ add_executable(cyxwiz-product-removal-finalizer
     product_removal_finalizer.cpp
     product_removal_request.cpp
     product_removal_authorization.cpp
+    product_release_version.cpp
     product_installation_receipt.cpp
     atomic_file_publisher.cpp
     runtime_layout.cpp

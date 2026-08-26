@@ -1,23 +1,13 @@
 #include "product_registration.h"
 
 #include "backend_pack_platform.h"
+#include "product_release_version.h"
 #include "product_registration_internal.h"
 
-#include <algorithm>
-#include <cctype>
-#include <string_view>
 #include <system_error>
 
 namespace cyxwiz::runtime {
 namespace {
-
-bool IsSafeVersion(std::string_view value) {
-    return !value.empty() && value.size() <= 64 &&
-        std::all_of(value.begin(), value.end(), [](unsigned char character) {
-            return std::isalnum(character) || character == '.' ||
-                   character == '_' || character == '+' || character == '-';
-        });
-}
 
 std::string ValidateRequest(const ProductRegistrationRequest& request) {
     if (!request.install_root.is_absolute() ||
@@ -26,7 +16,7 @@ std::string ValidateRequest(const ProductRegistrationRequest& request) {
         request.runtime_root != request.runtime_root.lexically_normal() ||
         request.install_root == request.install_root.root_path() ||
         request.runtime_root != request.install_root / "runtime" ||
-        !IsSafeVersion(request.product_version)) {
+        !IsSafeProductVersion(request.product_version)) {
         return "A normalized absolute product root, matching runtime root, and safe version are required";
     }
 #ifndef _WIN32
