@@ -139,15 +139,15 @@
       "operation": "tensor/scalar arithmetic, Pow, Sqrt, Exp, Log, Abs, Sign, Clip and negation",
       "tier": 0,
       "owner": "cyxwiz-backend/include/cyxwiz/tensor.h",
-      "implementation": ["cyxwiz-backend/src/core/tensor_elementwise.cpp"],
+      "implementation": ["cyxwiz-backend/src/core/tensor_arithmetic.cpp", "cyxwiz-backend/src/core/tensor_elementwise.cpp", "cyxwiz-backend/src/core/tensor_math_utils.h"],
       "callers": ["all trainable computation families"],
       "contract": "Broadcasting, dtype, finite/extreme behavior and element order match PyTorch within declared tolerance.",
-      "supported": "implementation-defined subset of public Tensor dtypes",
-      "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_tensor"],
-      "execution": "ArrayFire-first",
-      "status": "partial",
-      "gaps": ["dtype/broadcast/extreme matrix", "fallback and residency evidence"]
+      "supported": "Float32, Float64, Int32, Int64 and UInt8 across public arithmetic and unary APIs; ArrayFire ranks 0-4 and declared rank-above-4 native compatibility",
+      "oracle": "PyTorch 2.10",
+      "tests": ["cyxwiz-tests:[tensor_elementwise]", "cyxwiz-tests:[tensor]", "test_computation_truth_tfidf_loss", "test_training_executor_arrow_parquet"],
+      "execution": "ArrayFire device-to-device through rank 4 with zero compute host sync; declared native CPU compatibility fallback above rank 4 and pre-compute rejection in strict mode",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "TENSOR-CMP-001",

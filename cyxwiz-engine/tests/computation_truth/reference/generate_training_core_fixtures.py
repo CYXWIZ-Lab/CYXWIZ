@@ -621,6 +621,163 @@ def tensor_reduction_matrix() -> list[dict[str, Any]]:
     return cases
 
 
+def tensor_elementwise_input(
+    shape: list[int],
+    dtype: torch.dtype,
+    offset: int,
+) -> torch.Tensor:
+    count = math.prod(shape)
+    values = [((index + offset) % 5) + 1 for index in range(count)]
+    return torch.tensor(values, dtype=dtype).reshape(shape)
+
+
+def tensor_elementwise_case(
+    name: str,
+    operation: str,
+    left: torch.Tensor,
+    right: torch.Tensor | float | None = None,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> dict[str, Any]:
+    if operation == "add":
+        expected = left + right
+    elif operation == "subtract":
+        expected = left - right
+    elif operation == "multiply":
+        expected = left * right
+    elif operation == "divide":
+        expected = left / right
+    elif operation == "pow":
+        expected = torch.pow(left, right)
+    elif operation == "sqrt":
+        expected = torch.sqrt(left)
+    elif operation == "exp":
+        expected = torch.exp(left)
+    elif operation == "log":
+        expected = torch.log(left)
+    elif operation == "abs":
+        expected = torch.abs(left)
+    elif operation == "sign":
+        expected = torch.sign(left)
+    elif operation == "clip":
+        expected = torch.clamp(left, minimum, maximum)
+    elif operation == "negate":
+        expected = torch.neg(left)
+    else:
+        raise ValueError(f"unsupported Tensor elementwise operation: {operation}")
+
+    result = {
+        "name": name,
+        "operation": operation,
+        "input_dtype": str(left.dtype).removeprefix("torch."),
+        "output_dtype": str(expected.dtype).removeprefix("torch."),
+        "input": tensor_fixture(left),
+        "expected": tensor_fixture(expected),
+        "tolerance": {
+            "atol": 1.0e-10 if expected.dtype == torch.float64 else 1.0e-5,
+            "rtol": 1.0e-10 if expected.dtype == torch.float64 else 1.0e-5,
+        },
+    }
+    if isinstance(right, torch.Tensor):
+        result["rhs_kind"] = "tensor"
+        result["rhs_dtype"] = str(right.dtype).removeprefix("torch.")
+        result["rhs"] = tensor_fixture(right)
+    elif right is not None:
+        result["rhs_kind"] = "scalar"
+        result["scalar"] = float(right)
+    else:
+        result["rhs_kind"] = "none"
+    if minimum is not None:
+        result["minimum"] = minimum
+    if maximum is not None:
+        result["maximum"] = maximum
+    return result
+
+
+def tensor_elementwise_matrix() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    dtypes = [
+        ("f32", torch.float32),
+        ("f64", torch.float64),
+        ("i32", torch.int32),
+        ("i64", torch.int64),
+        ("u8", torch.uint8),
+    ]
+
+    # Every public dtype pair exercises PyTorch promotion and rank-3
+    # right-aligned broadcasting for the four tensor arithmetic operators.
+    for left_name, left_dtype in dtypes:
+        for right_name, right_dtype in dtypes:
+            left = tensor_elementwise_input([2, 1, 3], left_dtype, 0)
+            right = tensor_elementwise_input([1, 2, 1], right_dtype, 1)
+            for operation in ["add", "subtract", "multiply", "divide"]:
+                cases.append(tensor_elementwise_case(
+                    f"tensor_{operation}_{left_name}_{right_name}_broadcast",
+                    operation,
+                    left,
+                    right,
+                ))
+
+    # Pow has its own promotion/output contract and uses the same complete
+    # dtype-pair broadcast matrix with small exact exponents.
+    for left_name, left_dtype in dtypes:
+        for right_name, right_dtype in dtypes:
+            left = tensor_elementwise_input([2, 1, 3], left_dtype, 0)
+            right = torch.tensor([1, 2], dtype=right_dtype).reshape(1, 2, 1)
+            cases.append(tensor_elementwise_case(
+                f"tensor_pow_{left_name}_{right_name}_broadcast",
+                "pow",
+                left,
+                right,
+            ))
+
+    for dtype_name, dtype in dtypes:
+        scalar_input = tensor_elementwise_input([2, 3], dtype, 0)
+        for operation in ["add", "subtract", "multiply", "divide"]:
+            cases.append(tensor_elementwise_case(
+                f"scalar_{operation}_{dtype_name}",
+                operation,
+                scalar_input,
+                2.5,
+            ))
+        cases.append(tensor_elementwise_case(
+            f"scalar_pow_{dtype_name}", "pow", scalar_input, 2.0
+        ))
+
+        positive = tensor_elementwise_input([2, 3], dtype, 0)
+        signed_values = (
+            torch.tensor([-3, 0, 2, -1, 4, 1], dtype=dtype).reshape(2, 3)
+            if dtype != torch.uint8
+            else torch.tensor([0, 1, 2, 3, 4, 255], dtype=dtype).reshape(2, 3)
+        )
+        for operation in ["sqrt", "exp", "log"]:
+            cases.append(tensor_elementwise_case(
+                f"unary_{operation}_{dtype_name}", operation, positive
+            ))
+        for operation in ["abs", "sign", "negate"]:
+            cases.append(tensor_elementwise_case(
+                f"unary_{operation}_{dtype_name}", operation, signed_values
+            ))
+        cases.append(tensor_elementwise_case(
+            f"unary_clip_{dtype_name}",
+            "clip",
+            signed_values,
+            minimum=-1.5,
+            maximum=2.5,
+        ))
+
+    # Rank and empty-shape sentinels complement the rank-3 dtype matrix.
+    rank_shapes = [[], [3], [2, 3], [1, 2, 1, 3], [2, 0, 3]]
+    for index, shape in enumerate(rank_shapes):
+        left = tensor_elementwise_input(shape, torch.float32, 0)
+        scalar = torch.tensor(2.0, dtype=torch.float32)
+        cases.append(tensor_elementwise_case(
+            f"rank_{index}_add_scalar_tensor", "add", left, scalar
+        ))
+
+    return cases
+
+
 def dropout_semantics() -> dict[str, Any]:
     input_tensor = torch.tensor(
         [[1.0, -2.0, 3.5], [4.0, -5.0, 6.5]],
@@ -1464,6 +1621,7 @@ def generate_fixture() -> dict[str, Any]:
             "dropout_semantics_f32": dropout_semantics(),
             "flatten_forward_backward_f32": flatten_matrix(),
             "tensor_concat_f32": tensor_concat_matrix(),
+            "tensor_elementwise": tensor_elementwise_matrix(),
             "tensor_indexing_f32": tensor_indexing_matrix(),
             "tensor_permute_f32": tensor_permute_matrix(),
             "tensor_reductions": tensor_reduction_matrix(),

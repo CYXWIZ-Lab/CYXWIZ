@@ -74,6 +74,7 @@ set(BACKEND_SOURCES
     src/core/tensor_shape.cpp
     src/core/tensor_reductions.cpp
     src/core/tensor_elementwise.cpp
+    src/core/tensor_arithmetic.cpp
     src/core/tensor_comparison.cpp
     src/core/tensor_logical.cpp
     src/core/tensor_linalg.cpp

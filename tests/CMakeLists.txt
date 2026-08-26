@@ -12,6 +12,7 @@ add_executable(cyxwiz-tests
     unit/test_tensor_indexing_contract.cpp
     unit/test_tensor_concat_contract.cpp
     unit/test_tensor_reduction_contract.cpp
+    unit/test_tensor_elementwise_contract.cpp
     unit/test_engine.cpp
     unit/test_c_api.cpp
     unit/test_activations.cpp
@@ -79,6 +80,10 @@ set_source_files_properties(unit/test_tensor_concat_contract.cpp PROPERTIES
         "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
 )
 set_source_files_properties(unit/test_tensor_reduction_contract.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_tensor_elementwise_contract.cpp PROPERTIES
     COMPILE_DEFINITIONS
         "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
 )

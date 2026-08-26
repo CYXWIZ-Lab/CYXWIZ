@@ -952,7 +952,7 @@ TEST_CASE("Tensor batch matmul validates rank shape and dtype", "[tensor]") {
     REQUIRE_THROWS_AS(left.BatchMatMul(bad_dtype), std::runtime_error);
 }
 
-TEST_CASE("Tensor scalar arithmetic preserves tensor dtype", "[tensor]") {
+TEST_CASE("Tensor scalar arithmetic follows PyTorch float-scalar promotion", "[tensor]") {
     float float_data[] = {1.0f, -2.0f, 3.0f};
     cyxwiz::Tensor f({3}, float_data, cyxwiz::DataType::Float32);
 
@@ -970,10 +970,10 @@ TEST_CASE("Tensor scalar arithmetic preserves tensor dtype", "[tensor]") {
     cyxwiz::Tensor i({2}, int_data, cyxwiz::DataType::Int32);
     cyxwiz::Tensor int_divided = i / 2.0f;
 
-    REQUIRE(int_divided.GetDataType() == cyxwiz::DataType::Int32);
-    REQUIRE(int_divided.Data<int32_t>()[0] == 2);
-    REQUIRE(int_divided.Data<int32_t>()[1] == 3);
-    REQUIRE_THROWS_AS(i / 0.0f, std::runtime_error);
+    REQUIRE(int_divided.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(int_divided.Data<float>()[0] == 2.5f);
+    REQUIRE(int_divided.Data<float>()[1] == 3.0f);
+    REQUIRE(std::isinf((i / 0.0f).Data<float>()[0]));
 }
 
 TEST_CASE("Tensor unary elementwise math returns expected values", "[tensor]") {
@@ -1007,11 +1007,12 @@ TEST_CASE("Tensor elementwise abs sign clip and negate work", "[tensor]") {
     REQUIRE(sign.Data<int32_t>()[0] == -1);
     REQUIRE(sign.Data<int32_t>()[1] == 0);
     REQUIRE(sign.Data<int32_t>()[2] == 1);
-    REQUIRE(clipped.Data<int32_t>()[0] == -1);
-    REQUIRE(clipped.Data<int32_t>()[2] == 5);
+    REQUIRE(clipped.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(clipped.Data<float>()[0] == -1.0f);
+    REQUIRE(clipped.Data<float>()[2] == 5.0f);
     REQUIRE(negated.Data<int32_t>()[0] == 3);
     REQUIRE(negated.Data<int32_t>()[2] == -7);
-    REQUIRE_THROWS_AS(t.Clip(2.0f, 1.0f), std::runtime_error);
+    REQUIRE(t.Clip(2.0f, 1.0f).Data<float>()[0] == 1.0f);
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -1305,6 +1306,8 @@ TEST_CASE("Tensor broadcast shape helpers follow NumPy-style rules", "[tensor]")
             std::vector<size_t>{2, 3, 4});
     REQUIRE(cyxwiz::Tensor::BroadcastShape({5, 1}, {1, 7}) ==
             std::vector<size_t>{5, 7});
+    REQUIRE(cyxwiz::Tensor::BroadcastShape({2, 0, 3}, {}) ==
+            std::vector<size_t>{2, 0, 3});
     REQUIRE_THROWS_AS(cyxwiz::Tensor::BroadcastShape({2, 3}, {4, 3}), std::runtime_error);
 }
 

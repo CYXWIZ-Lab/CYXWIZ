@@ -202,7 +202,9 @@ public:
     Tensor Std(int dim, bool keepdim = false) const;
     Tensor Std(int dim, bool keepdim, int64_t correction) const;
 
-    // Math operations
+    // Math operations follow PyTorch right-aligned broadcasting and promotion
+    // over the public dtypes. Division of integral tensors and operations with
+    // a float scalar produce Float32 (Float64 inputs remain Float64).
     Tensor operator+(const Tensor& other) const;
     Tensor operator-(const Tensor& other) const;
     Tensor operator*(const Tensor& other) const;

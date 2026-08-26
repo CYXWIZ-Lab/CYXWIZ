@@ -96,7 +96,13 @@ std::vector<size_t> Tensor::BroadcastShape(const std::vector<size_t>& shape1,
     for (size_t i = 0; i < rank; i++) {
         const size_t d1 = i < shape1.size() ? shape1[shape1.size() - 1 - i] : 1;
         const size_t d2 = i < shape2.size() ? shape2[shape2.size() - 1 - i] : 1;
-        result[rank - 1 - i] = (std::max)(d1, d2);
+        if (d1 == d2) {
+            result[rank - 1 - i] = d1;
+        } else if (d1 == 1) {
+            result[rank - 1 - i] = d2;
+        } else {
+            result[rank - 1 - i] = d1;
+        }
     }
     return result;
 }

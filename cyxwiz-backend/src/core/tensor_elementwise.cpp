@@ -1,11 +1,17 @@
 #include "cyxwiz/tensor.h"
 
 #include "tensor_backend_observation_utils.h"
+#include "tensor_math_utils.h"
+#include "tensor_utils.h"
 
-#include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
+#include <string>
+#include <type_traits>
+#include <vector>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -16,514 +22,515 @@ namespace cyxwiz {
 
 namespace {
 
-enum class UnaryRealOp {
+enum class UnaryOp {
     Pow,
     Sqrt,
     Exp,
-    Log
+    Log,
+    Abs,
+    Sign,
+    Clip,
+    Negate
 };
 
-template <typename In, typename Out, typename Fn>
-void ApplyUnary(const In* src, Out* dst, size_t count, Fn fn) {
-    for (size_t i = 0; i < count; i++) {
-        dst[i] = static_cast<Out>(fn(src[i]));
+const char* UnaryOperationName(UnaryOp operation) {
+    switch (operation) {
+        case UnaryOp::Pow: return "Tensor::Pow(scalar)";
+        case UnaryOp::Sqrt: return "Tensor::Sqrt";
+        case UnaryOp::Exp: return "Tensor::Exp";
+        case UnaryOp::Log: return "Tensor::Log";
+        case UnaryOp::Abs: return "Tensor::Abs";
+        case UnaryOp::Sign: return "Tensor::Sign";
+        case UnaryOp::Clip: return "Tensor::Clip";
+        case UnaryOp::Negate: return "Tensor::operator-()";
     }
+    return "Tensor::unary";
 }
 
-template <typename T, typename Fn>
-Tensor ApplyPreservingType(const Tensor& input, Fn fn) {
-    Tensor result(input.Shape(), input.GetDataType());
-    ApplyUnary(input.Data<T>(), result.Data<T>(), input.NumElements(), fn);
-    return result;
-}
-
-template <typename Fn>
-Tensor ApplyPreservingType(const Tensor& input, Fn fn) {
-    switch (input.GetDataType()) {
-        case DataType::Float32: return ApplyPreservingType<float>(input, fn);
-        case DataType::Float64: return ApplyPreservingType<double>(input, fn);
-        case DataType::Int32: return ApplyPreservingType<int32_t>(input, fn);
-        case DataType::Int64: return ApplyPreservingType<int64_t>(input, fn);
-        case DataType::UInt8: return ApplyPreservingType<uint8_t>(input, fn);
+const char* UnaryName(UnaryOp operation) {
+    switch (operation) {
+        case UnaryOp::Pow: return "pow";
+        case UnaryOp::Sqrt: return "sqrt";
+        case UnaryOp::Exp: return "exp";
+        case UnaryOp::Log: return "log";
+        case UnaryOp::Abs: return "abs";
+        case UnaryOp::Sign: return "sign";
+        case UnaryOp::Clip: return "clip";
+        case UnaryOp::Negate: return "negate";
     }
-    throw std::runtime_error("Tensor elementwise operation: unsupported data type");
+    return "unknown";
 }
 
 template <typename T>
-Tensor ApplyRealMath(const Tensor& input, UnaryRealOp op, float value = 0.0f) {
-    const size_t count = input.NumElements();
-    const T* src = input.Data<T>();
-
-    if (input.GetDataType() == DataType::Float64) {
-        Tensor result(input.Shape(), DataType::Float64);
-        double* dst = result.Data<double>();
-        for (size_t i = 0; i < count; i++) {
-            const double x = static_cast<double>(src[i]);
-            switch (op) {
-                case UnaryRealOp::Pow: dst[i] = std::pow(x, static_cast<double>(value)); break;
-                case UnaryRealOp::Sqrt: dst[i] = std::sqrt(x); break;
-                case UnaryRealOp::Exp: dst[i] = std::exp(x); break;
-                case UnaryRealOp::Log: dst[i] = std::log(x); break;
-            }
+T NegateWrapped(T value) {
+    if constexpr (std::is_integral_v<T>) {
+        using Unsigned = std::make_unsigned_t<T>;
+        const Unsigned result = Unsigned{} - static_cast<Unsigned>(value);
+        if constexpr (std::is_signed_v<T>) {
+            return std::bit_cast<T>(result);
+        } else {
+            return static_cast<T>(result);
         }
-        return result;
+    } else {
+        return -value;
     }
+}
 
-    Tensor result(input.Shape(), DataType::Float32);
-    float* dst = result.Data<float>();
-    for (size_t i = 0; i < count; i++) {
-        const float x = static_cast<float>(src[i]);
-        switch (op) {
-            case UnaryRealOp::Pow: dst[i] = std::pow(x, value); break;
-            case UnaryRealOp::Sqrt: dst[i] = std::sqrt(x); break;
-            case UnaryRealOp::Exp: dst[i] = std::exp(x); break;
-            case UnaryRealOp::Log: dst[i] = std::log(x); break;
+template <typename T>
+T MultiplyWrapped(T left, T right) {
+    if constexpr (std::is_integral_v<T>) {
+        using Unsigned = std::make_unsigned_t<T>;
+        const Unsigned result =
+            static_cast<Unsigned>(left) * static_cast<Unsigned>(right);
+        if constexpr (std::is_signed_v<T>) {
+            return std::bit_cast<T>(result);
+        } else {
+            return static_cast<T>(result);
+        }
+    } else {
+        return left * right;
+    }
+}
+
+template <typename T>
+T IntegerPower(T base, T exponent) {
+    if constexpr (std::is_signed_v<T>) {
+        if (exponent < 0) return T{};
+    }
+    using UnsignedExponent = std::make_unsigned_t<T>;
+    UnsignedExponent remaining = static_cast<UnsignedExponent>(exponent);
+    T result = static_cast<T>(1);
+    while (remaining != 0) {
+        if ((remaining & static_cast<UnsignedExponent>(1)) != 0) {
+            result = MultiplyWrapped(result, base);
+        }
+        remaining >>= 1;
+        if (remaining != 0) {
+            base = MultiplyWrapped(base, base);
         }
     }
     return result;
 }
 
-Tensor ApplyRealMath(const Tensor& input, UnaryRealOp op, float value = 0.0f) {
+template <typename In, typename Out>
+Tensor NativeRealUnaryTyped(const Tensor& input,
+                            UnaryOp operation,
+                            float first,
+                            float second,
+                            DataType output_dtype) {
+    Tensor result(input.Shape(), output_dtype);
+    const In* source = input.ReadData<In>();
+    Out* output = result.MutableData<Out>();
+    for (size_t index = 0; index < input.NumElements(); ++index) {
+        const Out value = static_cast<Out>(source[index]);
+        switch (operation) {
+            case UnaryOp::Pow:
+                output[index] = std::pow(value, static_cast<Out>(first));
+                break;
+            case UnaryOp::Sqrt: output[index] = std::sqrt(value); break;
+            case UnaryOp::Exp: output[index] = std::exp(value); break;
+            case UnaryOp::Log: output[index] = std::log(value); break;
+            case UnaryOp::Clip:
+                output[index] = (std::min)(
+                    (std::max)(value, static_cast<Out>(first)),
+                    static_cast<Out>(second));
+                break;
+            default:
+                throw std::runtime_error("Tensor real unary: invalid operation");
+        }
+    }
+    return result;
+}
+
+template <typename In>
+Tensor NativeRealUnaryOutput(const Tensor& input,
+                             UnaryOp operation,
+                             float first,
+                             float second,
+                             DataType output_dtype) {
+    if (output_dtype == DataType::Float64) {
+        return NativeRealUnaryTyped<In, double>(
+            input, operation, first, second, output_dtype);
+    }
+    return NativeRealUnaryTyped<In, float>(
+        input, operation, first, second, output_dtype);
+}
+
+Tensor NativeRealUnary(const Tensor& input,
+                       UnaryOp operation,
+                       float first,
+                       float second,
+                       DataType output_dtype) {
     switch (input.GetDataType()) {
-        case DataType::Float32: return ApplyRealMath<float>(input, op, value);
-        case DataType::Float64: return ApplyRealMath<double>(input, op, value);
-        case DataType::Int32: return ApplyRealMath<int32_t>(input, op, value);
-        case DataType::Int64: return ApplyRealMath<int64_t>(input, op, value);
-        case DataType::UInt8: return ApplyRealMath<uint8_t>(input, op, value);
+        case DataType::Float32: return NativeRealUnaryOutput<float>(input, operation, first, second, output_dtype);
+        case DataType::Float64: return NativeRealUnaryOutput<double>(input, operation, first, second, output_dtype);
+        case DataType::Int32: return NativeRealUnaryOutput<int32_t>(input, operation, first, second, output_dtype);
+        case DataType::Int64: return NativeRealUnaryOutput<int64_t>(input, operation, first, second, output_dtype);
+        case DataType::UInt8: return NativeRealUnaryOutput<uint8_t>(input, operation, first, second, output_dtype);
     }
-    throw std::runtime_error("Tensor real-valued operation: unsupported data type");
+    throw std::runtime_error("Tensor real unary: unsupported data type");
 }
 
-template <typename Base, typename Exp>
-Tensor ApplyTensorPow(const Tensor& base, const Tensor& exponent, DataType result_dtype) {
-    const size_t count = base.NumElements();
-    const Base* base_data = base.Data<Base>();
-    const Exp* exponent_data = exponent.Data<Exp>();
-
-    if (result_dtype == DataType::Float64) {
-        Tensor result(base.Shape(), DataType::Float64);
-        double* dst = result.Data<double>();
-        for (size_t i = 0; i < count; i++) {
-            dst[i] = std::pow(static_cast<double>(base_data[i]), static_cast<double>(exponent_data[i]));
+template <typename T>
+Tensor NativePreservingUnaryTyped(const Tensor& input, UnaryOp operation) {
+    Tensor result(input.Shape(), input.GetDataType());
+    const T* source = input.ReadData<T>();
+    T* output = result.MutableData<T>();
+    for (size_t index = 0; index < input.NumElements(); ++index) {
+        const T value = source[index];
+        switch (operation) {
+            case UnaryOp::Abs:
+                output[index] = value < T{} ? NegateWrapped(value) : value;
+                break;
+            case UnaryOp::Sign:
+                output[index] = value > T{} ? static_cast<T>(1)
+                    : value < T{} ? static_cast<T>(-1) : T{};
+                break;
+            case UnaryOp::Negate:
+                output[index] = NegateWrapped(value);
+                break;
+            default:
+                throw std::runtime_error("Tensor preserving unary: invalid operation");
         }
-        return result;
-    }
-
-    Tensor result(base.Shape(), DataType::Float32);
-    float* dst = result.Data<float>();
-    for (size_t i = 0; i < count; i++) {
-        dst[i] = std::pow(static_cast<float>(base_data[i]), static_cast<float>(exponent_data[i]));
     }
     return result;
+}
+
+Tensor NativePreservingUnary(const Tensor& input, UnaryOp operation) {
+    switch (input.GetDataType()) {
+        case DataType::Float32: return NativePreservingUnaryTyped<float>(input, operation);
+        case DataType::Float64: return NativePreservingUnaryTyped<double>(input, operation);
+        case DataType::Int32: return NativePreservingUnaryTyped<int32_t>(input, operation);
+        case DataType::Int64: return NativePreservingUnaryTyped<int64_t>(input, operation);
+        case DataType::UInt8: return NativePreservingUnaryTyped<uint8_t>(input, operation);
+    }
+    throw std::runtime_error("Tensor preserving unary: unsupported data type");
+}
+
+template <typename Base, typename Exponent, typename Out>
+Tensor NativeTensorPowTyped(const Tensor& base,
+                            const Tensor& exponent,
+                            const std::vector<size_t>& output_shape,
+                            DataType output_dtype) {
+    Tensor result(output_shape, output_dtype);
+    const size_t count = result.NumElements();
+    if (count == 0) return result;
+    const auto output_strides = tensor_utils::RowMajorStrides(
+        output_shape, "Tensor::Pow: output stride overflow");
+    const auto base_strides = tensor_utils::RowMajorStrides(
+        base.Shape(), "Tensor::Pow: base stride overflow", true);
+    const auto exponent_strides = tensor_utils::RowMajorStrides(
+        exponent.Shape(), "Tensor::Pow: exponent stride overflow", true);
+    const Base* base_data = base.ReadData<Base>();
+    const Exponent* exponent_data = exponent.ReadData<Exponent>();
+    Out* output = result.MutableData<Out>();
+    for (size_t index = 0; index < count; ++index) {
+        const size_t base_index = tensor_math_utils::BroadcastIndex(
+            index, output_shape, output_strides, base.Shape(), base_strides);
+        const size_t exponent_index = tensor_math_utils::BroadcastIndex(
+            index, output_shape, output_strides,
+            exponent.Shape(), exponent_strides);
+        const Out left = static_cast<Out>(base_data[base_index]);
+        const Out right = static_cast<Out>(exponent_data[exponent_index]);
+        if constexpr (std::is_integral_v<Out>) {
+            output[index] = IntegerPower(left, right);
+        } else {
+            output[index] = std::pow(left, right);
+        }
+    }
+    return result;
+}
+
+template <typename Base, typename Exponent>
+Tensor DispatchPowOutput(const Tensor& base,
+                         const Tensor& exponent,
+                         const std::vector<size_t>& output_shape,
+                         DataType output_dtype) {
+    switch (output_dtype) {
+        case DataType::Float32: return NativeTensorPowTyped<Base, Exponent, float>(base, exponent, output_shape, output_dtype);
+        case DataType::Float64: return NativeTensorPowTyped<Base, Exponent, double>(base, exponent, output_shape, output_dtype);
+        case DataType::Int32: return NativeTensorPowTyped<Base, Exponent, int32_t>(base, exponent, output_shape, output_dtype);
+        case DataType::Int64: return NativeTensorPowTyped<Base, Exponent, int64_t>(base, exponent, output_shape, output_dtype);
+        case DataType::UInt8: return NativeTensorPowTyped<Base, Exponent, uint8_t>(base, exponent, output_shape, output_dtype);
+    }
+    throw std::runtime_error("Tensor::Pow: unsupported output data type");
 }
 
 template <typename Base>
-Tensor DispatchTensorPowExponent(const Tensor& base, const Tensor& exponent, DataType result_dtype) {
+Tensor DispatchPowExponent(const Tensor& base,
+                           const Tensor& exponent,
+                           const std::vector<size_t>& output_shape,
+                           DataType output_dtype) {
     switch (exponent.GetDataType()) {
-        case DataType::Float32: return ApplyTensorPow<Base, float>(base, exponent, result_dtype);
-        case DataType::Float64: return ApplyTensorPow<Base, double>(base, exponent, result_dtype);
-        case DataType::Int32: return ApplyTensorPow<Base, int32_t>(base, exponent, result_dtype);
-        case DataType::Int64: return ApplyTensorPow<Base, int64_t>(base, exponent, result_dtype);
-        case DataType::UInt8: return ApplyTensorPow<Base, uint8_t>(base, exponent, result_dtype);
+        case DataType::Float32: return DispatchPowOutput<Base, float>(base, exponent, output_shape, output_dtype);
+        case DataType::Float64: return DispatchPowOutput<Base, double>(base, exponent, output_shape, output_dtype);
+        case DataType::Int32: return DispatchPowOutput<Base, int32_t>(base, exponent, output_shape, output_dtype);
+        case DataType::Int64: return DispatchPowOutput<Base, int64_t>(base, exponent, output_shape, output_dtype);
+        case DataType::UInt8: return DispatchPowOutput<Base, uint8_t>(base, exponent, output_shape, output_dtype);
     }
     throw std::runtime_error("Tensor::Pow: unsupported exponent data type");
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-bool IsArrayFireRealElementwiseSupported(DataType dtype) {
-    return dtype == DataType::Float32 || dtype == DataType::Float64;
-}
-
-af::array ArrayFireSign(const af::array& values) {
-    const af::dim4 dims = values.dims();
-    const af::dtype dtype = values.type();
-    const af::array one = af::constant(1, dims, dtype);
-    const af::array zero = af::constant(0, dims, dtype);
-    const af::array negative_one = af::constant(-1, dims, dtype);
-    return af::select(values > 0, one, af::select(values < 0, negative_one, zero));
-}
-
-std::string RecordElementwiseArrayFireFallback(
-    const char* operation_name,
-    const Tensor& input,
-    const std::string& attributes,
-    const char* error_message) {
-    return tensor_backend_observation::RecordArrayFireFallback(
-        operation_name,
-        tensor_backend_observation::DataTypeName(input.GetDataType()),
-        tensor_backend_observation::BuildTensorOpSignature(
-            {input.Shape()},
-            input.Shape(),
-            input.GetDataType(),
-            attributes),
-        error_message);
-}
-
-std::string RecordElementwiseArrayFireFallback(
-    const char* operation_name,
-    const Tensor& left,
-    const Tensor& right,
-    const std::vector<size_t>& output_shape,
-    const std::string& attributes,
-    const char* error_message) {
-    return tensor_backend_observation::RecordArrayFireFallback(
-        operation_name,
-        tensor_backend_observation::DataTypeName(left.GetDataType()),
-        tensor_backend_observation::BuildTensorOpSignature(
-            {left.Shape(), right.Shape()},
-            output_shape,
-            left.GetDataType(),
-            attributes),
-        error_message);
-}
-#endif
-
-} // namespace
-
-Tensor Tensor::operator+(float scalar) const {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsArrayFireRealElementwiseSupported(dtype_)) {
-        if (shape_.size() == 2) {
-            try {
-                return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() + scalar);
-            } catch (const af::exception& e) {
-                spdlog::debug("Tensor::operator+(scalar): row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
-            }
-        }
-        try {
-            return Tensor(GetArray() + scalar);
-        } catch (const af::exception& e) {
-            spdlog::warn("{}",
-                         RecordElementwiseArrayFireFallback(
-                             "Tensor::operator+(scalar)", *this,
-                             "rhs=scalar", e.what()));
-        }
-    }
-#endif
-    return ApplyPreservingType(*this, [scalar](auto value) {
-        return value + scalar;
-    });
-}
-
-Tensor Tensor::operator-(float scalar) const {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsArrayFireRealElementwiseSupported(dtype_)) {
-        if (shape_.size() == 2) {
-            try {
-                return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() - scalar);
-            } catch (const af::exception& e) {
-                spdlog::debug("Tensor::operator-(scalar): row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
-            }
-        }
-        try {
-            return Tensor(GetArray() - scalar);
-        } catch (const af::exception& e) {
-            spdlog::warn("{}",
-                         RecordElementwiseArrayFireFallback(
-                             "Tensor::operator-(scalar)", *this,
-                             "rhs=scalar", e.what()));
-        }
-    }
-#endif
-    return ApplyPreservingType(*this, [scalar](auto value) {
-        return value - scalar;
-    });
-}
-
-Tensor Tensor::operator*(float scalar) const {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsArrayFireRealElementwiseSupported(dtype_)) {
-        if (shape_.size() == 2) {
-            try {
-                return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() * scalar);
-            } catch (const af::exception& e) {
-                spdlog::debug("Tensor::operator*(scalar): row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
-            }
-        }
-        try {
-            return Tensor(GetArray() * scalar);
-        } catch (const af::exception& e) {
-            spdlog::warn("{}",
-                         RecordElementwiseArrayFireFallback(
-                             "Tensor::operator*(scalar)", *this,
-                             "rhs=scalar", e.what()));
-        }
-    }
-#endif
-    return ApplyPreservingType(*this, [scalar](auto value) {
-        return value * scalar;
-    });
-}
-
-Tensor Tensor::operator/(float scalar) const {
-    if (scalar == 0.0f) {
-        throw std::runtime_error("Tensor::operator/: division by zero");
-    }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsArrayFireRealElementwiseSupported(dtype_)) {
-        if (shape_.size() == 2) {
-            try {
-                return Tensor::FromArrayRowMajor2D(GetArrayRowMajor2D() / scalar);
-            } catch (const af::exception& e) {
-                spdlog::debug("Tensor::operator/(scalar): row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
-            }
-        }
-        try {
-            return Tensor(GetArray() / scalar);
-        } catch (const af::exception& e) {
-            spdlog::warn("{}",
-                         RecordElementwiseArrayFireFallback(
-                             "Tensor::operator/(scalar)", *this,
-                             "rhs=scalar", e.what()));
-        }
-    }
-#endif
-    return ApplyPreservingType(*this, [scalar](auto value) {
-        return value / scalar;
-    });
-}
-
-Tensor Tensor::Pow(float exponent) const {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsArrayFireRealElementwiseSupported(dtype_)) {
-        if (shape_.size() == 2) {
-            try {
-                return Tensor::FromArrayRowMajor2D(af::pow(GetArrayRowMajor2D(), exponent));
-            } catch (const af::exception& e) {
-                spdlog::debug("Tensor::Pow(scalar): row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
-            }
-        }
-        try {
-            return Tensor(af::pow(GetArray(), exponent));
-        } catch (const af::exception& e) {
-            spdlog::warn("{}",
-                         RecordElementwiseArrayFireFallback(
-                             "Tensor::Pow(scalar)", *this,
-                             "exponent=scalar", e.what()));
-        }
-    }
-#endif
-    return ApplyRealMath(*this, UnaryRealOp::Pow, exponent);
-}
-
-Tensor Tensor::Pow(const Tensor& exponent) const {
-    if (shape_ != exponent.Shape()) {
-        throw std::runtime_error("Tensor::Pow: shapes must match");
-    }
-
-    const DataType result_dtype =
-        (dtype_ == DataType::Float64 || exponent.GetDataType() == DataType::Float64)
-            ? DataType::Float64
-            : DataType::Float32;
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (dtype_ == exponent.GetDataType() &&
-        IsArrayFireRealElementwiseSupported(dtype_)) {
-        if (shape_.size() == 2) {
-            try {
-                return Tensor::FromArrayRowMajor2D(
-                    af::pow(GetArrayRowMajor2D(), exponent.GetArrayRowMajor2D()));
-            } catch (const af::exception& e) {
-                spdlog::debug("Tensor::Pow(tensor): row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
-            }
-        }
-        try {
-            return Tensor(af::pow(GetArray(), exponent.GetArray()));
-        } catch (const af::exception& e) {
-            spdlog::warn("{}",
-                         RecordElementwiseArrayFireFallback(
-                             "Tensor::Pow(tensor)", *this, exponent, shape_,
-                             "exponent=tensor", e.what()));
-        }
-    }
-#endif
-
-    switch (dtype_) {
-        case DataType::Float32: return DispatchTensorPowExponent<float>(*this, exponent, result_dtype);
-        case DataType::Float64: return DispatchTensorPowExponent<double>(*this, exponent, result_dtype);
-        case DataType::Int32: return DispatchTensorPowExponent<int32_t>(*this, exponent, result_dtype);
-        case DataType::Int64: return DispatchTensorPowExponent<int64_t>(*this, exponent, result_dtype);
-        case DataType::UInt8: return DispatchTensorPowExponent<uint8_t>(*this, exponent, result_dtype);
+Tensor NativeTensorPow(const Tensor& base,
+                       const Tensor& exponent,
+                       const std::vector<size_t>& output_shape,
+                       DataType output_dtype) {
+    switch (base.GetDataType()) {
+        case DataType::Float32: return DispatchPowExponent<float>(base, exponent, output_shape, output_dtype);
+        case DataType::Float64: return DispatchPowExponent<double>(base, exponent, output_shape, output_dtype);
+        case DataType::Int32: return DispatchPowExponent<int32_t>(base, exponent, output_shape, output_dtype);
+        case DataType::Int64: return DispatchPowExponent<int64_t>(base, exponent, output_shape, output_dtype);
+        case DataType::UInt8: return DispatchPowExponent<uint8_t>(base, exponent, output_shape, output_dtype);
     }
     throw std::runtime_error("Tensor::Pow: unsupported base data type");
 }
 
-Tensor Tensor::Sqrt() const {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsArrayFireRealElementwiseSupported(dtype_)) {
-        if (shape_.size() == 2) {
-            try {
-                return Tensor::FromArrayRowMajor2D(af::sqrt(GetArrayRowMajor2D()));
-            } catch (const af::exception& e) {
-                spdlog::debug("Tensor::Sqrt: row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
+void RecordUnaryArrayFireFallback(const char* operation_name,
+                         const Tensor& input,
+                         const std::vector<size_t>& output_shape,
+                         DataType output_dtype,
+                         const std::string& attributes,
+                         const char* error_message) {
+    const std::string message = tensor_backend_observation::RecordArrayFireFallback(
+        operation_name,
+        tensor_backend_observation::DataTypeName(output_dtype),
+        tensor_backend_observation::BuildTensorOpSignature(
+            {input.Shape()}, output_shape, output_dtype, attributes),
+        error_message);
+    spdlog::warn("{}", message);
+}
+
+void RecordPowArrayFireFallback(const Tensor& base,
+                       const Tensor& exponent,
+                       const std::vector<size_t>& output_shape,
+                       DataType output_dtype,
+                       const char* error_message) {
+    const std::string message = tensor_backend_observation::RecordArrayFireFallback(
+        "Tensor::Pow(tensor)",
+        tensor_backend_observation::DataTypeName(output_dtype),
+        tensor_backend_observation::BuildTensorOpSignature(
+            {base.Shape(), exponent.Shape()}, output_shape, output_dtype,
+            "op=pow;exponent=tensor;broadcast=true"),
+        error_message);
+    spdlog::warn("{}", message);
+}
+
+Tensor ArrayFireRealUnary(const Tensor& input,
+                          UnaryOp operation,
+                          float first,
+                          float second,
+                          DataType output_dtype) {
+    const af::array values =
+        input.GetSemanticArray().as(
+            tensor_math_utils::ArrayFireType(output_dtype));
+    af::array output;
+    switch (operation) {
+        case UnaryOp::Pow: output = af::pow(values, first); break;
+        case UnaryOp::Sqrt: output = af::sqrt(values); break;
+        case UnaryOp::Exp: output = af::exp(values); break;
+        case UnaryOp::Log: output = af::log(values); break;
+        case UnaryOp::Clip:
+            output = (af::min)((af::max)(values, first), second);
+            break;
+        default:
+            throw std::runtime_error("Tensor real unary: invalid ArrayFire operation");
+    }
+    output = output.as(tensor_math_utils::ArrayFireType(output_dtype));
+    output.eval();
+    return Tensor::FromSemanticArray(output, input.Shape());
+}
+
+af::array ArrayFireSign(const af::array& values) {
+    const af::array one = af::constant(1, values.dims(), values.type());
+    const af::array zero = af::constant(0, values.dims(), values.type());
+    const af::array negative_one =
+        af::constant(-1, values.dims(), values.type());
+    return af::select(
+        values > 0, one, af::select(values < 0, negative_one, zero));
+}
+
+Tensor ArrayFirePreservingUnary(const Tensor& input, UnaryOp operation) {
+    const af::array values = input.GetSemanticArray();
+    af::array output;
+    switch (operation) {
+        case UnaryOp::Abs: output = af::abs(values); break;
+        case UnaryOp::Sign: output = ArrayFireSign(values); break;
+        case UnaryOp::Negate:
+            output = af::constant(0, values.dims(), values.type()) - values;
+            break;
+        default:
+            throw std::runtime_error(
+                "Tensor preserving unary: invalid ArrayFire operation");
+    }
+    output = output.as(
+        tensor_math_utils::ArrayFireType(input.GetDataType()));
+    output.eval();
+    return Tensor::FromSemanticArray(output, input.Shape());
+}
+
+Tensor ArrayFireTensorPow(const Tensor& base,
+                          const Tensor& exponent,
+                          const std::vector<size_t>& output_shape,
+                          DataType output_dtype) {
+    af::array left = tensor_math_utils::BroadcastArray(
+        base, output_shape, output_dtype);
+    af::array right =
+        tensor_math_utils::BroadcastArray(
+            exponent, output_shape, output_dtype);
+    af::array output;
+    if (tensor_math_utils::IsIntegralType(output_dtype)) {
+        const unsigned bit_count = output_dtype == DataType::UInt8 ? 8u
+            : output_dtype == DataType::Int32 ? 32u : 64u;
+        const af::array nonnegative = right >= 0;
+        af::array remaining = af::select(
+            nonnegative, right, af::constant(0, right.dims(), right.type())).as(u64);
+        af::array factor = left;
+        output = af::constant(
+            1, left.dims(), tensor_math_utils::ArrayFireType(output_dtype));
+        for (unsigned bit = 0; bit < bit_count; ++bit) {
+            const af::array odd = (remaining & 1u) != 0u;
+            output = af::select(
+                odd,
+                (output * factor).as(
+                    tensor_math_utils::ArrayFireType(output_dtype)),
+                output);
+            remaining = remaining >> 1u;
+            if (bit + 1u < bit_count) {
+                factor = (factor * factor).as(
+                    tensor_math_utils::ArrayFireType(output_dtype));
             }
         }
+        output = af::select(
+            nonnegative,
+            output,
+            af::constant(0, output.dims(), output.type()));
+    } else {
+        output = af::pow(left, right);
+    }
+    output = output.as(tensor_math_utils::ArrayFireType(output_dtype));
+    output.eval();
+    return Tensor::FromSemanticArray(output, output_shape);
+}
+#endif
+
+Tensor ApplyRealUnary(const Tensor& input,
+                      UnaryOp operation,
+                      float first = 0.0f,
+                      float second = 0.0f) {
+    const DataType output_dtype =
+        tensor_math_utils::RealType(input.GetDataType());
+    if (input.NumElements() == 0) return Tensor(input.Shape(), output_dtype);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const char* operation_name = UnaryOperationName(operation);
+    const std::string attributes =
+        "op=" + std::string(UnaryName(operation));
+    if (input.Shape().size() <= 4) {
         try {
-            return Tensor(af::sqrt(GetArray()));
-        } catch (const af::exception& e) {
-            spdlog::warn("{}",
-                         RecordElementwiseArrayFireFallback(
-                             "Tensor::Sqrt", *this, "op=sqrt", e.what()));
+            return ArrayFireRealUnary(
+                input, operation, first, second, output_dtype);
+        } catch (const af::exception& error) {
+            RecordUnaryArrayFireFallback(
+                operation_name, input, input.Shape(), output_dtype,
+                attributes, error.what());
         }
+    } else {
+        RecordUnaryArrayFireFallback(
+            operation_name, input, input.Shape(), output_dtype, attributes,
+            "ArrayFire Tensor elementwise operations support ranks up to 4");
     }
 #endif
-    return ApplyRealMath(*this, UnaryRealOp::Sqrt);
+    return NativeRealUnary(
+        input, operation, first, second, output_dtype);
+}
+
+Tensor ApplyPreservingUnary(const Tensor& input, UnaryOp operation) {
+    if (input.NumElements() == 0) {
+        return Tensor(input.Shape(), input.GetDataType());
+    }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const char* operation_name = UnaryOperationName(operation);
+    const std::string attributes =
+        "op=" + std::string(UnaryName(operation));
+    if (input.Shape().size() <= 4) {
+        try {
+            return ArrayFirePreservingUnary(input, operation);
+        } catch (const af::exception& error) {
+            RecordUnaryArrayFireFallback(
+                operation_name, input, input.Shape(), input.GetDataType(),
+                attributes, error.what());
+        }
+    } else {
+        RecordUnaryArrayFireFallback(
+            operation_name, input, input.Shape(), input.GetDataType(),
+            attributes,
+            "ArrayFire Tensor elementwise operations support ranks up to 4");
+    }
+#endif
+    return NativePreservingUnary(input, operation);
+}
+
+} // namespace
+
+Tensor Tensor::Pow(float exponent) const {
+    return ApplyRealUnary(*this, UnaryOp::Pow, exponent);
+}
+
+Tensor Tensor::Pow(const Tensor& exponent) const {
+    const std::vector<size_t> output_shape =
+        Tensor::BroadcastShape(shape_, exponent.Shape());
+    const DataType output_dtype =
+        tensor_math_utils::PromoteTypes(dtype_, exponent.GetDataType());
+    if (tensor_utils::CheckedProduct(
+            output_shape, 0, output_shape.size(),
+            "Tensor::Pow: output shape overflow") == 0) {
+        return Tensor(output_shape, output_dtype);
+    }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (output_shape.size() <= 4) {
+        try {
+            return ArrayFireTensorPow(
+                *this, exponent, output_shape, output_dtype);
+        } catch (const af::exception& error) {
+            RecordPowArrayFireFallback(
+                *this, exponent, output_shape, output_dtype, error.what());
+        }
+    } else {
+        RecordPowArrayFireFallback(
+            *this, exponent, output_shape, output_dtype,
+            "ArrayFire Tensor elementwise operations support ranks up to 4");
+    }
+#endif
+    return NativeTensorPow(
+        *this, exponent, output_shape, output_dtype);
+}
+
+Tensor Tensor::Sqrt() const {
+    return ApplyRealUnary(*this, UnaryOp::Sqrt);
 }
 
 Tensor Tensor::Exp() const {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsArrayFireRealElementwiseSupported(dtype_)) {
-        if (shape_.size() == 2) {
-            try {
-                return Tensor::FromArrayRowMajor2D(af::exp(GetArrayRowMajor2D()));
-            } catch (const af::exception& e) {
-                spdlog::debug("Tensor::Exp: row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
-            }
-        }
-        try {
-            return Tensor(af::exp(GetArray()));
-        } catch (const af::exception& e) {
-            spdlog::warn("{}",
-                         RecordElementwiseArrayFireFallback(
-                             "Tensor::Exp", *this, "op=exp", e.what()));
-        }
-    }
-#endif
-    return ApplyRealMath(*this, UnaryRealOp::Exp);
+    return ApplyRealUnary(*this, UnaryOp::Exp);
 }
 
 Tensor Tensor::Log() const {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsArrayFireRealElementwiseSupported(dtype_)) {
-        if (shape_.size() == 2) {
-            try {
-                return Tensor::FromArrayRowMajor2D(af::log(GetArrayRowMajor2D()));
-            } catch (const af::exception& e) {
-                spdlog::debug("Tensor::Log: row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
-            }
-        }
-        try {
-            return Tensor(af::log(GetArray()));
-        } catch (const af::exception& e) {
-            spdlog::warn("{}",
-                         RecordElementwiseArrayFireFallback(
-                             "Tensor::Log", *this, "op=log", e.what()));
-        }
-    }
-#endif
-    return ApplyRealMath(*this, UnaryRealOp::Log);
+    return ApplyRealUnary(*this, UnaryOp::Log);
 }
 
 Tensor Tensor::Abs() const {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsArrayFireRealElementwiseSupported(dtype_)) {
-        if (shape_.size() == 2) {
-            try {
-                return Tensor::FromArrayRowMajor2D(af::abs(GetArrayRowMajor2D()));
-            } catch (const af::exception& e) {
-                spdlog::debug("Tensor::Abs: row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
-            }
-        }
-        try {
-            return Tensor(af::abs(GetArray()));
-        } catch (const af::exception& e) {
-            spdlog::warn("{}",
-                         RecordElementwiseArrayFireFallback(
-                             "Tensor::Abs", *this, "op=abs", e.what()));
-        }
-    }
-#endif
-    return ApplyPreservingType(*this, [](auto value) {
-        return value < 0 ? -value : value;
-    });
+    return ApplyPreservingUnary(*this, UnaryOp::Abs);
 }
 
 Tensor Tensor::Sign() const {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsArrayFireRealElementwiseSupported(dtype_)) {
-        if (shape_.size() == 2) {
-            try {
-                return Tensor::FromArrayRowMajor2D(ArrayFireSign(GetArrayRowMajor2D()));
-            } catch (const af::exception& e) {
-                spdlog::debug("Tensor::Sign: row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
-            }
-        }
-        try {
-            return Tensor(ArrayFireSign(GetArray()));
-        } catch (const af::exception& e) {
-            spdlog::warn("{}",
-                         RecordElementwiseArrayFireFallback(
-                             "Tensor::Sign", *this, "op=sign", e.what()));
-        }
-    }
-#endif
-    return ApplyPreservingType(*this, [](auto value) {
-        using T = decltype(value);
-        if (value > static_cast<T>(0)) {
-            return static_cast<T>(1);
-        }
-        if (value < static_cast<T>(0)) {
-            return static_cast<T>(-1);
-        }
-        return static_cast<T>(0);
-    });
+    return ApplyPreservingUnary(*this, UnaryOp::Sign);
 }
 
 Tensor Tensor::Clip(float min_val, float max_val) const {
-    if (min_val > max_val) {
-        throw std::runtime_error("Tensor::Clip: min_val must be <= max_val");
-    }
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsArrayFireRealElementwiseSupported(dtype_)) {
-        if (shape_.size() == 2) {
-            try {
-                const af::array values = GetArrayRowMajor2D();
-                return Tensor::FromArrayRowMajor2D((af::min)((af::max)(values, min_val), max_val));
-            } catch (const af::exception& e) {
-                spdlog::debug("Tensor::Clip: row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
-            }
-        }
-        try {
-            const af::array values = GetArray();
-            return Tensor((af::min)((af::max)(values, min_val), max_val));
-        } catch (const af::exception& e) {
-            spdlog::warn("{}",
-                         RecordElementwiseArrayFireFallback(
-                             "Tensor::Clip", *this, "op=clip", e.what()));
-        }
-    }
-#endif
-    return ApplyPreservingType(*this, [min_val, max_val](auto value) {
-        using T = decltype(value);
-        const T lo = static_cast<T>(min_val);
-        const T hi = static_cast<T>(max_val);
-        return (std::min)((std::max)(value, lo), hi);
-    });
+    return ApplyRealUnary(*this, UnaryOp::Clip, min_val, max_val);
 }
 
 Tensor Tensor::operator-() const {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (IsArrayFireRealElementwiseSupported(dtype_)) {
-        if (shape_.size() == 2) {
-            try {
-                return Tensor::FromArrayRowMajor2D(-GetArrayRowMajor2D());
-            } catch (const af::exception& e) {
-                spdlog::debug("Tensor::operator-(): row-major ArrayFire path failed, retrying ArrayFire native layout: {}", e.what());
-            }
-        }
-        try {
-            return Tensor(-GetArray());
-        } catch (const af::exception& e) {
-            spdlog::warn("{}",
-                         RecordElementwiseArrayFireFallback(
-                             "Tensor::operator-()", *this, "op=negate",
-                             e.what()));
-        }
-    }
-#endif
-    return ApplyPreservingType(*this, [](auto value) {
-        return -value;
-    });
+    return ApplyPreservingUnary(*this, UnaryOp::Negate);
 }
 
 } // namespace cyxwiz
