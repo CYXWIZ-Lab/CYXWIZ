@@ -778,6 +778,135 @@ def tensor_elementwise_matrix() -> list[dict[str, Any]]:
     return cases
 
 
+def tensor_mask_input(
+    shape: list[int],
+    dtype: torch.dtype,
+    offset: int,
+) -> torch.Tensor:
+    count = math.prod(shape)
+    if dtype == torch.uint8:
+        values = [((index + offset) % 5) for index in range(count)]
+    else:
+        values = [((index + offset) % 7) - 3 for index in range(count)]
+    return torch.tensor(values, dtype=dtype).reshape(shape)
+
+
+def tensor_mask_case(
+    name: str,
+    operation: str,
+    left: torch.Tensor,
+    right: torch.Tensor | float | None = None,
+) -> dict[str, Any]:
+    if operation == "greater":
+        expected = torch.gt(left, right)
+    elif operation == "greater_equal":
+        expected = torch.ge(left, right)
+    elif operation == "less":
+        expected = torch.lt(left, right)
+    elif operation == "less_equal":
+        expected = torch.le(left, right)
+    elif operation == "equal":
+        expected = torch.eq(left, right)
+    elif operation == "not_equal":
+        expected = torch.ne(left, right)
+    elif operation == "logical_and":
+        expected = torch.logical_and(left, right)
+    elif operation == "logical_or":
+        expected = torch.logical_or(left, right)
+    elif operation == "logical_not":
+        expected = torch.logical_not(left)
+    else:
+        raise ValueError(f"unsupported Tensor mask operation: {operation}")
+
+    result = {
+        "name": name,
+        "operation": operation,
+        "input_dtype": str(left.dtype).removeprefix("torch."),
+        "input": tensor_fixture(left),
+        "expected": tensor_fixture(expected.to(torch.uint8)),
+    }
+    if isinstance(right, torch.Tensor):
+        result["rhs_kind"] = "tensor"
+        result["rhs_dtype"] = str(right.dtype).removeprefix("torch.")
+        result["rhs"] = tensor_fixture(right)
+    elif right is not None:
+        result["rhs_kind"] = "scalar"
+        result["scalar"] = float(right)
+    else:
+        result["rhs_kind"] = "none"
+    return result
+
+
+def tensor_mask_matrix() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    dtypes = [
+        ("f32", torch.float32),
+        ("f64", torch.float64),
+        ("i32", torch.int32),
+        ("i64", torch.int64),
+        ("u8", torch.uint8),
+    ]
+    comparisons = [
+        "greater",
+        "greater_equal",
+        "less",
+        "less_equal",
+        "equal",
+        "not_equal",
+    ]
+
+    for left_name, left_dtype in dtypes:
+        for right_name, right_dtype in dtypes:
+            left = tensor_mask_input([2, 1, 3], left_dtype, 0)
+            right = tensor_mask_input([1, 2, 1], right_dtype, 2)
+            for operation in comparisons:
+                cases.append(tensor_mask_case(
+                    f"tensor_{operation}_{left_name}_{right_name}_broadcast",
+                    operation,
+                    left,
+                    right,
+                ))
+            for operation in ["logical_and", "logical_or"]:
+                cases.append(tensor_mask_case(
+                    f"tensor_{operation}_{left_name}_{right_name}_broadcast",
+                    operation,
+                    left,
+                    right,
+                ))
+
+    for dtype_name, dtype in dtypes:
+        scalar_input = tensor_mask_input([2, 3], dtype, 0)
+        for operation in comparisons:
+            cases.append(tensor_mask_case(
+                f"scalar_{operation}_{dtype_name}",
+                operation,
+                scalar_input,
+                2.5,
+            ))
+        cases.append(tensor_mask_case(
+            f"logical_not_{dtype_name}",
+            "logical_not",
+            scalar_input,
+        ))
+
+    for rank, shape in enumerate([[], [3], [2, 3], [2, 0, 3], [1, 2, 1, 3]]):
+        value = tensor_mask_input(shape, torch.float32, rank)
+        cases.append(tensor_mask_case(
+            f"rank_{rank}_equal_scalar", "equal", value, 2.5
+        ))
+        cases.append(tensor_mask_case(
+            f"rank_{rank}_logical_not", "logical_not", value
+        ))
+
+    cases.append(tensor_mask_case(
+        "mixed_i64_f32_precision_equal",
+        "equal",
+        torch.tensor([16_777_217], dtype=torch.int64),
+        torch.tensor([16_777_216], dtype=torch.float32),
+    ))
+    return cases
+
+
 def dropout_semantics() -> dict[str, Any]:
     input_tensor = torch.tensor(
         [[1.0, -2.0, 3.5], [4.0, -5.0, 6.5]],
@@ -1622,6 +1751,7 @@ def generate_fixture() -> dict[str, Any]:
             "flatten_forward_backward_f32": flatten_matrix(),
             "tensor_concat_f32": tensor_concat_matrix(),
             "tensor_elementwise": tensor_elementwise_matrix(),
+            "tensor_masks": tensor_mask_matrix(),
             "tensor_indexing_f32": tensor_indexing_matrix(),
             "tensor_permute_f32": tensor_permute_matrix(),
             "tensor_reductions": tensor_reduction_matrix(),
