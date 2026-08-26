@@ -8,6 +8,7 @@ add_library(cyxwiz-runtime-bootstrap STATIC
     backend_pack_state_service.cpp
     product_installation_receipt.cpp
     product_removal_authorization.cpp
+    product_removal_finalizer.cpp
     product_removal_quarantine.cpp
     product_removal_request.cpp
     runtime_layout.cpp
@@ -92,6 +93,36 @@ if(NOT CYXWIZ_BUILD_INSTALLER_ONLY)
     install(TARGETS cyxwiz-runtime-bootstrapper RUNTIME DESTINATION .)
 endif()
 unset(_cyxwiz_runtime_bootstrapper_source)
+
+# This executable is copied outside the installation before destructive
+# cleanup. Compile its small validation closure directly so Windows can use a
+# static CRT and the finalizer never depends on DLLs inside the product root.
+add_executable(cyxwiz-product-removal-finalizer
+    product_removal_finalizer_main.cpp
+    product_removal_finalizer.cpp
+    product_removal_request.cpp
+    product_removal_authorization.cpp
+    product_installation_receipt.cpp
+    atomic_file_publisher.cpp
+    runtime_layout.cpp
+)
+target_include_directories(cyxwiz-product-removal-finalizer PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+target_link_libraries(cyxwiz-product-removal-finalizer PRIVATE
+    nlohmann_json::nlohmann_json
+)
+set_target_properties(cyxwiz-product-removal-finalizer PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(MSVC)
+    set_property(TARGET cyxwiz-product-removal-finalizer PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+if(NOT CYXWIZ_BUILD_INSTALLER_ONLY)
+    install(TARGETS cyxwiz-product-removal-finalizer RUNTIME DESTINATION .)
+endif()
 
 if(CYXWIZ_BUILD_TESTS)
     enable_testing()

@@ -33,6 +33,7 @@ CONTRACT_TESTS = (
     "test_product_installation_receipt",
     "test_product_removal_authorization",
     "test_product_removal_quarantine",
+    "test_product_removal_finalizer",
     "test_product_removal_request",
     "test_product_registration",
 )

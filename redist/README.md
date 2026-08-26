@@ -153,6 +153,16 @@ schema and repeat live authorization validation; copying the request to another
 root or changing the active runtime makes it stale. A new explicit confirmation
 may replace a corrupt or stale request, but it never replaces ownership evidence.
 
+The CPU base also carries the dependency-isolated
+`cyxwiz-product-removal-finalizer` (`.exe` on Windows). Its first operation is
+to block on an inherited read-only lifetime pipe; the stable bootstrapper owns
+the only write end, so EOF is tied to process exit rather than a reusable PID.
+Only after EOF does the finalizer reload the durable request and repeat live
+authorization validation. The Windows finalizer uses the static CRT and depends
+only on system `KERNEL32.dll`, allowing it to run from a temporary directory
+after the product runtime is released. This checkpoint performs no deletion;
+detached launch and bounded no-follow cleanup are subsequent lifecycle stages.
+
 After every running installed process has released the product, the removal
 transaction revalidates authorization and atomically renames the exact product
 root to a deterministic sibling `.cyxwiz-removing-<install-id>` quarantine. It

@@ -45,6 +45,7 @@ class PackageReleaseTests(unittest.TestCase):
             "cyxwiz-route-probe.exe",
             "cyxwiz-installer.exe",
             "cyxwiz-runtime-bootstrapper.exe",
+            "cyxwiz-product-removal-finalizer.exe",
             "cyxwiz-backend-pack-installer.exe",
             "cyxwiz-backend.dll",
             "fmt.dll",
@@ -270,6 +271,7 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertEqual(first_hash, package_release.sha256_file(rebuilt))
         self.assertTrue((stage / "arrayfire" / "bin" / "af.dll").is_file())
         self.assertTrue((stage / "arrayfire" / "bin" / "afcpu.dll").is_file())
+        self.assertTrue((stage / "cyxwiz-product-removal-finalizer.exe").is_file())
         self.assertFalse((stage / "arrayfire" / "bin" / "afopencl.dll").exists())
         self.assertFalse((stage / "start_cyxwiz.bat").exists())
         manifest = json.loads(

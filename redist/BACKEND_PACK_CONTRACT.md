@@ -14,6 +14,7 @@ bootstrapper:
 
 ```text
 cyxwiz-runtime-bootstrapper[.exe]     # app-level launcher
+cyxwiz-product-removal-finalizer[.exe] # copied out for deferred removal
 cyxwiz-installer[.exe]
 cyxwiz-backend-pack-installer[.exe]
 runtime/
@@ -100,6 +101,16 @@ roots, and any request made stale by receipt, launcher, or runtime changes. The
 request is intent plus pinned state, not ownership evidence and not independent
 deletion authority. A fresh explicit confirmation may replace it; the receipt
 remains immutable across that operation.
+
+The signed CPU base includes a small
+`cyxwiz-product-removal-finalizer[.exe]`. It accepts only the exact install root
+and an inherited native pipe token. The read token is owned by the finalizer;
+the stable bootstrapper owns the sole write token until process exit. The
+finalizer treats only EOF as the lifetime boundary, rejects pipe data or wait
+errors, closes its token, and then reloads the durable request so authorization
+cannot be carried across the wait unchecked. On Windows it is built with the
+static CRT and has no product-local runtime DLL dependency. This boundary is
+non-destructive until the detached-launch and cleanup transaction consumes it.
 
 Product deactivation is one atomic sibling rename from the exact install root
 to `.cyxwiz-removing-<install-id>`. The transaction revalidates authorization

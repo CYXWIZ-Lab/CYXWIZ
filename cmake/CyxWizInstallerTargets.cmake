@@ -200,6 +200,24 @@ if(CYXWIZ_BUILD_TESTS)
         NAME product_removal_quarantine_contract
         COMMAND test_product_removal_quarantine
     )
+
+    add_executable(test_product_removal_finalizer
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_removal_finalizer.cpp"
+    )
+    target_link_libraries(test_product_removal_finalizer PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_product_removal_finalizer PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_dependencies(test_product_removal_finalizer
+        cyxwiz-product-removal-finalizer
+    )
+    add_test(
+        NAME product_removal_finalizer_contract
+        COMMAND test_product_removal_finalizer
+    )
 endif()
 
 find_package(OpenGL REQUIRED)
