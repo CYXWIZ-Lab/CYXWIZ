@@ -236,6 +236,21 @@ if(CYXWIZ_BUILD_TESTS)
         NAME product_removal_handoff_contract
         COMMAND test_product_removal_handoff
     )
+
+    add_executable(test_product_removal_cleanup
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_removal_cleanup.cpp"
+    )
+    target_link_libraries(test_product_removal_cleanup PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_product_removal_cleanup PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME product_removal_cleanup_contract
+        COMMAND test_product_removal_cleanup
+    )
 endif()
 
 find_package(OpenGL REQUIRED)

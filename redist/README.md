@@ -177,6 +177,17 @@ post-rename validation attempts an immediate rollback. Quarantine does not
 recursively delete content—bounded no-follow cleanup remains a separate finalizer
 stage so interruption cannot be mistaken for successful removal.
 
+The cleanup boundary now preflights that quarantine before deleting payload.
+It is bounded to 256 directory levels and one million entries. POSIX traverses
+with `openat`/`fstatat(AT_SYMLINK_NOFOLLOW)`/`unlinkat`, pins inode and device
+identity, removes links as links, and refuses another filesystem device.
+Windows pins directories without delete sharing, rejects redirected traversal,
+and removes files, directories, junctions, and reparse entries through exact
+handles. Both platforms keep the removal request and ownership receipt while
+payload cleanup is incomplete, remove the request next, and remove the receipt
+only after all other entries are gone. An interrupted cleanup can therefore be
+retried from the deterministic quarantine without following external targets.
+
 The packaged desktop application also includes `cyxwiz-installer` (`.exe` on
 Windows), a standalone graphical component manager. Recommended, CPU-only,
 and Custom package selection live there; the Engine Backend Manager launches

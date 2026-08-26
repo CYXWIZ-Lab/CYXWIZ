@@ -203,6 +203,7 @@ jobs:
             "test_installer_verification_summary.exe",
             "test_product_installation_receipt.exe",
             "test_product_removal_authorization.exe",
+            "test_product_removal_cleanup.exe",
             "test_product_removal_quarantine.exe",
             "test_product_removal_finalizer.exe",
             "test_product_removal_handoff.exe",
@@ -225,6 +226,7 @@ jobs:
             build/bin/test_installer_verification_summary \
             build/bin/test_product_installation_receipt \
             build/bin/test_product_removal_authorization \
+            build/bin/test_product_removal_cleanup \
             build/bin/test_product_removal_quarantine \
             build/bin/test_product_removal_finalizer \
             build/bin/test_product_removal_handoff \

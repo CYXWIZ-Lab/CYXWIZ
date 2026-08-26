@@ -8,6 +8,7 @@ add_library(cyxwiz-runtime-bootstrap STATIC
     backend_pack_state_service.cpp
     product_installation_receipt.cpp
     product_removal_authorization.cpp
+    product_removal_cleanup.cpp
     product_removal_finalizer.cpp
     product_removal_handoff.cpp
     product_removal_quarantine.cpp
@@ -16,11 +17,13 @@ add_library(cyxwiz-runtime-bootstrap STATIC
 )
 if(WIN32)
     target_sources(cyxwiz-runtime-bootstrap PRIVATE
+        product_removal_cleanup_windows.cpp
         product_removal_handoff_windows.cpp
         windows_dll_search.cpp
     )
 else()
     target_sources(cyxwiz-runtime-bootstrap PRIVATE
+        product_removal_cleanup_posix.cpp
         product_removal_handoff_posix.cpp
     )
 endif()

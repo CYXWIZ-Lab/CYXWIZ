@@ -129,6 +129,18 @@ separate platform adapter must remove entries without following symlinks,
 junctions, reparse points, or mounted filesystems and must preserve recovery
 evidence until all other owned content is gone.
 
+Cleanup performs a complete bounded preflight before mutation: at most 256
+directory levels and one million entries. POSIX uses directory-relative
+`openat`, `fstatat(AT_SYMLINK_NOFOLLOW)`, inode/device comparison, and
+`unlinkat`; a different filesystem device is rejected and symbolic links are
+unlinked without traversal. Windows pins direct directory handles without
+delete sharing, rejects reparse traversal, and deletes exact opened entries so
+junctions and reparse points are removed as links. Payload failure retains both
+`.cyxwiz-removal-request.json` and `.cyxwiz-installation.json`. After payload is
+empty, cleanup removes the request, then the receipt, then the verified empty
+quarantine root. A retry may complete if request evidence was already removed,
+but never proceeds without the relocated ownership receipt.
+
 The graphical `cyxwiz-installer` component manager remains in the signed
 versioned base and is resolved by the stable bootstrapper (`.exe` on Windows).
 It owns Recommended, CPU-only, and Custom package consent and launches the
