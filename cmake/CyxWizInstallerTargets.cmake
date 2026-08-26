@@ -106,6 +106,26 @@ if(CYXWIZ_BUILD_TESTS)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
 
+    add_executable(test_installer_product_removal
+        "${_cyxwiz_installer_engine_dir}/tests/test_installer_product_removal.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
+    )
+    target_include_directories(test_installer_product_removal PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper"
+    )
+    target_link_libraries(test_installer_product_removal PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_installer_product_removal PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME installer_product_removal_contract
+        COMMAND test_installer_product_removal
+    )
+
     add_executable(test_product_registration
         "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_registration.cpp"
     )
@@ -274,6 +294,8 @@ set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_theme.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_view.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_operation.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_removal_view.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_catalog_adapter.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/installer_verification_summary.cpp"

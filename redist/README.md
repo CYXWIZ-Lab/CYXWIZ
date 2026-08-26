@@ -121,9 +121,14 @@ Engine and Installer Start Menu links and an Apps & Features entry; Linux writes
 current-user or system desktop entries; macOS publishes Engine and Installer
 application bundles in the product root. Every maintenance entry resolves the
 installed GUI through `--installer`, and none changes the machine-wide loader
-environment. The Apps & Features uninstall command reopens that GUI; explicit
-GUI confirmation and stable-bootstrapper handoff are the remaining product
-removal lifecycle gate.
+environment. The Apps & Features uninstall command reopens that GUI through
+the stable bootstrapper. In maintenance mode the GUI offers full removal only
+for an exact installed runtime with a valid ownership receipt and finalizer.
+After explicit acknowledgement, it queues the version-pinned removal request
+and exits with the private removal code. The stable bootstrapper then schedules
+the detached finalizer and retains the lifetime token until its own process
+exits, ensuring installed binaries are released before unregistration,
+quarantine, and cleanup begin. Direct base-GUI launch cannot enable this flow.
 
 The matching unregistration boundary is idempotent and removes only the exact
 CyxWiz Start Menu/Apps & Features, desktop-entry, or application-bundle

@@ -1,6 +1,8 @@
 #include "runtime_layout.h"
 #include "backend_pack_maintenance_request.h"
 #include "backend_pack_platform.h"
+#include "product_removal_handoff.h"
+#include "product_removal_protocol.h"
 
 #include <cerrno>
 #include <cstdint>
@@ -275,6 +277,7 @@ int main(int argc, char** argv) {
     if (installer_mode) {
         child_arguments.push_back("--runtime-root");
         child_arguments.push_back(runtime.runtime_root.string());
+        child_arguments.push_back("--product-removal-host");
     }
     for (int index = first_forwarded_argument; index < argc; ++index) {
         child_arguments.emplace_back(argv[index]);
@@ -291,6 +294,22 @@ int main(int argc, char** argv) {
             runtime.runtime_set_id +
             " generation=" + std::to_string(runtime.generation) +
             " base=" + runtime.base_pack_id);
+    if (installer_mode && child.exit_code ==
+            cyxwiz::runtime::kProductRemovalRequestedExitCode) {
+        auto handoff = cyxwiz::runtime::SchedulePendingProductRemoval(
+            executable_directory, error);
+        if (handoff.status != cyxwiz::runtime::
+                ProductRemovalHandoffStatus::Scheduled) {
+            return Fail(
+                runtime.runtime_root,
+                "cannot schedule queued product removal: " + error);
+        }
+        cyxwiz::runtime::AppendBootstrapDiagnostic(
+            runtime.runtime_root,
+            "product removal queued; detached finalizer is waiting for exit");
+        handoff.parent_lifetime.PreserveUntilProcessExit();
+        return 0;
+    }
     if (!installer_mode) {
         cyxwiz::runtime::ActiveRuntimeState launched_runtime;
         launched_runtime.runtime_set_id = runtime.runtime_set_id;
