@@ -61,32 +61,13 @@ std::filesystem::path Utf8Path(const std::string& value) {
     return std::filesystem::path(utf8);
 }
 
-const char* ScopeName(ProductInstallScope scope) {
-    return scope == ProductInstallScope::AllUsers
-        ? "all_users" : "current_user";
-}
-
-bool ParseScope(const Json& value, ProductInstallScope& scope) {
-    if (!value.is_string()) return false;
-    const auto text = value.get<std::string>();
-    if (text == "current_user") {
-        scope = ProductInstallScope::CurrentUser;
-        return true;
-    }
-    if (text == "all_users") {
-        scope = ProductInstallScope::AllUsers;
-        return true;
-    }
-    return false;
-}
-
 Json ReceiptDocument(const ProductInstallationReceipt& receipt) {
     return {
         {"schema_version", std::uint64_t{1}},
         {"kind", kReceiptKind},
         {"install_id", receipt.install_id},
         {"install_root", PathUtf8(receipt.install_root)},
-        {"scope", ScopeName(receipt.scope)},
+        {"scope", ProductInstallScopeName(receipt.scope)},
     };
 }
 
@@ -127,7 +108,9 @@ bool ReadReceiptFile(
         document["install_root"].get<std::string>());
     if (!IsInstallId(parsed.install_id) ||
         !IsNormalizedProductRoot(parsed.install_root) ||
-        !ParseScope(document["scope"], parsed.scope)) {
+        !document["scope"].is_string() ||
+        !ParseProductInstallScope(
+            document["scope"].get<std::string>(), parsed.scope)) {
         error = "The product installation receipt values are invalid";
         return false;
     }
@@ -162,6 +145,30 @@ bool GenerateInstallId(std::string& output, std::string& error) {
 }
 
 }  // namespace
+
+std::string_view ProductInstallScopeName(ProductInstallScope scope) {
+    switch (scope) {
+    case ProductInstallScope::CurrentUser:
+        return "current_user";
+    case ProductInstallScope::AllUsers:
+        return "all_users";
+    }
+    return {};
+}
+
+bool ParseProductInstallScope(
+    std::string_view value,
+    ProductInstallScope& scope) {
+    if (value == "current_user") {
+        scope = ProductInstallScope::CurrentUser;
+        return true;
+    }
+    if (value == "all_users") {
+        scope = ProductInstallScope::AllUsers;
+        return true;
+    }
+    return false;
+}
 
 std::filesystem::path ProductInstallationReceiptPath(
     const std::filesystem::path& install_root) {

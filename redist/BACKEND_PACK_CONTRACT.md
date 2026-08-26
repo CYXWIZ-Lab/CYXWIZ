@@ -91,6 +91,16 @@ all path, receipt, launcher, and runtime resolution and rejects any difference.
 Only a deferred finalizer may consume that typed authorization to quarantine a
 product root after the installer and stable bootstrapper have exited.
 
+The cross-process handoff is `.cyxwiz-removal-request.json` in the product root.
+It is a regular non-symlink file bounded to 64 KiB and atomically published only
+after fresh removal authorization succeeds. Schema 1 contains exactly the
+request kind, normalized install root, scope, receipt ID, and complete pinned
+runtime identity. Loading rejects unknown fields, malformed values, copied
+roots, and any request made stale by receipt, launcher, or runtime changes. The
+request is intent plus pinned state, not ownership evidence and not independent
+deletion authority. A fresh explicit confirmation may replace it; the receipt
+remains immutable across that operation.
+
 The graphical `cyxwiz-installer` component manager remains in the signed
 versioned base and is resolved by the stable bootstrapper (`.exe` on Windows).
 It owns Recommended, CPU-only, and Custom package consent and launches the

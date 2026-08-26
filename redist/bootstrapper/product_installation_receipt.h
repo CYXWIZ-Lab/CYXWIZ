@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 namespace cyxwiz::runtime {
 
@@ -9,6 +10,11 @@ enum class ProductInstallScope {
     CurrentUser,
     AllUsers,
 };
+
+std::string_view ProductInstallScopeName(ProductInstallScope scope);
+bool ParseProductInstallScope(
+    std::string_view value,
+    ProductInstallScope& scope);
 
 struct ProductInstallationReceipt {
     std::string install_id;

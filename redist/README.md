@@ -144,6 +144,15 @@ runtime set, generation, base, and optional-pack inventory to remain identical
 when revalidated. The later finalizer must consume this typed authorization;
 path strings supplied directly to a delete operation are not sufficient.
 
+Confirmed removal is handed across processes through the bounded hidden
+`.cyxwiz-removal-request.json` file in the product root. Queueing first captures
+fresh typed authorization, then atomically publishes an exact schema containing
+the install root, scope, receipt ID, runtime set, generation, base, and selected
+optional packs. The stable bootstrapper and detached finalizer load that same
+schema and repeat live authorization validation; copying the request to another
+root or changing the active runtime makes it stale. A new explicit confirmation
+may replace a corrupt or stale request, but it never replaces ownership evidence.
+
 The packaged desktop application also includes `cyxwiz-installer` (`.exe` on
 Windows), a standalone graphical component manager. Recommended, CPU-only,
 and Custom package selection live there; the Engine Backend Manager launches

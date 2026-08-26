@@ -8,6 +8,7 @@ add_library(cyxwiz-runtime-bootstrap STATIC
     backend_pack_state_service.cpp
     product_installation_receipt.cpp
     product_removal_authorization.cpp
+    product_removal_request.cpp
     runtime_layout.cpp
 )
 if(WIN32)
