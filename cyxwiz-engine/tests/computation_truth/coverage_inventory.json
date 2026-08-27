@@ -187,15 +187,15 @@
       "operation": "Zeros, Ones, Random, RandomSeeded and RangeN",
       "tier": 0,
       "owner": "cyxwiz-backend/include/cyxwiz/tensor.h",
-      "implementation": ["cyxwiz-backend/src/core/tensor.cpp"],
+      "implementation": ["cyxwiz-backend/src/core/tensor_factory.cpp"],
       "callers": ["parameter initialization", "optimizer state", "tests"],
-      "contract": "Shape/dtype are exact; RandomSeeded replays the declared CyxWiz stream for a fixed seed.",
-      "supported": "public Tensor dtypes as implemented",
-      "oracle": "engine deterministic replay; distribution checks against PyTorch concepts, not identical RNG streams",
-      "tests": ["cyxwiz-tests:test_tensor"],
-      "execution": "ArrayFire-first where supported",
-      "status": "partial",
-      "gaps": ["seed replay matrix", "distribution and device identity evidence"]
+      "contract": "Zeros, Ones and RangeN shape/dtype/value semantics match PyTorch; Random follows the declared CyxWiz dtype ranges and PyTorch uniform-distribution concepts; RandomSeeded exactly replays for a fixed seed, shape, dtype, backend and device without mutating global RNG state.",
+      "supported": "all Tensor dtypes and public ranks; scalar, zero-size and trailing-singleton shapes are exact; ranks 0-4 execute on ArrayFire and non-empty ranks above 4 use declared native compatibility",
+      "oracle": "PyTorch 2.10 exact factory semantics and uniform-distribution concepts plus CyxWiz deterministic replay and integer random extensions",
+      "tests": ["cyxwiz-tests:[tensor_factory]", "cyxwiz-tests:[tensor]", "test_computation_truth_tfidf_loss", "test_training_executor_arrow_parquet"],
+      "execution": "ArrayFire device-resident creation through rank 4 with zero compute host sync; empty outputs require no compute; declared native CPU compatibility fallback above rank 4 and pre-compute rejection in strict mode",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "TENSOR-LINALG-001",

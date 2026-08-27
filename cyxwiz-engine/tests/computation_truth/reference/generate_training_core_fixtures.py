@@ -1006,6 +1006,76 @@ def tensor_broadcast_matrix() -> dict[str, Any]:
     }
 
 
+def tensor_factory_matrix() -> dict[str, Any]:
+    dtypes = [
+        ("f32", torch.float32),
+        ("f64", torch.float64),
+        ("i32", torch.int32),
+        ("i64", torch.int64),
+        ("u8", torch.uint8),
+    ]
+    shapes = [
+        ("scalar", []),
+        ("rank1", [5]),
+        ("trailing_singleton", [2, 1]),
+        ("rank3", [1, 2, 3]),
+        ("rank4_singletons", [1, 2, 1, 3]),
+        ("zero_size", [2, 0, 3]),
+    ]
+    exact_cases: list[dict[str, Any]] = []
+    for dtype_name, dtype in dtypes:
+        for shape_name, shape in shapes:
+            count = math.prod(shape)
+            for operation, value in (
+                ("zeros", torch.zeros(shape, dtype=dtype)),
+                ("ones", torch.ones(shape, dtype=dtype)),
+                (
+                    "range_n",
+                    torch.arange(count, dtype=dtype).reshape(shape),
+                ),
+            ):
+                exact_cases.append({
+                    "name": f"{operation}_{shape_name}_{dtype_name}",
+                    "operation": operation,
+                    "dtype": str(dtype).removeprefix("torch."),
+                    "shape": shape,
+                    "expected": tensor_fixture(value),
+                })
+
+    torch.manual_seed(39001)
+    sample_count = 65536
+    samples = torch.rand(sample_count, dtype=torch.float32)
+    return {
+        "operation": "torch.zeros/ones/arange and uniform random concepts",
+        "exact_cases": exact_cases,
+        "random_contract": {
+            "sample_count": sample_count,
+            "floating_range": [0.0, 1.0],
+            "theoretical_mean": 0.5,
+            "theoretical_variance": 1.0 / 12.0,
+            "pytorch_observed": {
+                "mean": float(samples.mean().item()),
+                "variance": float(samples.var(unbiased=False).item()),
+            },
+            "tolerance": {"mean": 0.015, "variance": 0.01},
+            "cyxwiz_integer_extensions": {
+                "int32": [0, 100],
+                "int64": [0, 100],
+                "uint8": [0, 256],
+            },
+        },
+        "seeded_contract": {
+            "same_seed": 39039,
+            "different_seed": 39040,
+            "rule": (
+                "Exact replay is required for repeated construction with the "
+                "same seed, dtype, shape, active backend and device; PyTorch "
+                "and CyxWiz random streams are not required to be identical."
+            ),
+        },
+    }
+
+
 def dropout_semantics() -> dict[str, Any]:
     input_tensor = torch.tensor(
         [[1.0, -2.0, 3.5], [4.0, -5.0, 6.5]],
@@ -1852,6 +1922,7 @@ def generate_fixture() -> dict[str, Any]:
             "tensor_elementwise": tensor_elementwise_matrix(),
             "tensor_masks": tensor_mask_matrix(),
             "tensor_broadcast": tensor_broadcast_matrix(),
+            "tensor_factories": tensor_factory_matrix(),
             "tensor_indexing_f32": tensor_indexing_matrix(),
             "tensor_permute_f32": tensor_permute_matrix(),
             "tensor_reductions": tensor_reduction_matrix(),

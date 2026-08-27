@@ -70,6 +70,7 @@ endif()
 set(BACKEND_SOURCES
     src/core/engine.cpp
     src/core/tensor.cpp
+    src/core/tensor_factory.cpp
     src/core/tensor_utils.cpp
     src/core/tensor_shape.cpp
     src/core/tensor_reductions.cpp
