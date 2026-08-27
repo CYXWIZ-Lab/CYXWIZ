@@ -907,6 +907,105 @@ def tensor_mask_matrix() -> list[dict[str, Any]]:
     return cases
 
 
+def tensor_broadcast_input(
+    shape: list[int],
+    dtype: torch.dtype,
+    offset: int,
+) -> torch.Tensor:
+    count = math.prod(shape)
+    if dtype == torch.uint8:
+        values = [((index + offset) % 11) for index in range(count)]
+    else:
+        values = [((index + offset) % 11) - 5 for index in range(count)]
+    return torch.tensor(values, dtype=dtype).reshape(shape)
+
+
+def tensor_broadcast_matrix() -> dict[str, Any]:
+    shape_pairs = [
+        ("scalar_scalar", [], []),
+        ("scalar_zero_rank3", [], [2, 0, 3]),
+        ("leading_rank", [2, 3, 4], [3, 1]),
+        ("crossed_singletons", [5, 1], [1, 7]),
+        ("zero_singleton", [2, 0, 3], [1, 1, 3]),
+        ("rank5_valid", [1, 2, 1, 3, 1], [2, 1, 3, 1]),
+        ("incompatible", [2, 3], [4, 3]),
+        ("zero_conflict", [2, 0, 3], [2, 2, 3]),
+    ]
+    shape_cases: list[dict[str, Any]] = []
+    for name, left, right in shape_pairs:
+        try:
+            expected = list(torch.broadcast_shapes(left, right))
+            shape_cases.append({
+                "name": name,
+                "left": left,
+                "right": right,
+                "broadcastable": True,
+                "expected_shape": expected,
+            })
+        except RuntimeError:
+            shape_cases.append({
+                "name": name,
+                "left": left,
+                "right": right,
+                "broadcastable": False,
+            })
+
+    dtypes = [
+        ("f32", torch.float32),
+        ("f64", torch.float64),
+        ("i32", torch.int32),
+        ("i64", torch.int64),
+        ("u8", torch.uint8),
+    ]
+    patterns = [
+        ("scalar_to_rank4", [], [2, 1, 2, 3]),
+        ("rank1_to_rank3", [3], [2, 1, 3]),
+        ("rank2_cross", [2, 1], [2, 3]),
+        ("rank3_middle", [1, 2, 1], [3, 2, 4]),
+        ("rank4_multi_axis", [1, 2, 1, 3], [2, 2, 4, 3]),
+        ("zero_output", [1, 3], [2, 0, 3]),
+        ("identity", [2, 3], [2, 3]),
+        ("leading_singleton_only", [3], [1, 3]),
+    ]
+    materialization_cases: list[dict[str, Any]] = []
+    for dtype_name, dtype in dtypes:
+        for index, (name, input_shape, target_shape) in enumerate(patterns):
+            input_tensor = tensor_broadcast_input(input_shape, dtype, index)
+            expected = input_tensor.expand(target_shape)
+            materialization_cases.append({
+                "name": f"{name}_{dtype_name}",
+                "dtype": str(dtype).removeprefix("torch."),
+                "input": tensor_fixture(input_tensor),
+                "target_shape": target_shape,
+                "expected": tensor_fixture(expected),
+            })
+
+    invalid_pairs = [
+        ("rank_too_small", [2, 3], [3]),
+        ("incompatible_axis", [2, 1], [3, 2]),
+        ("zero_to_nonzero", [0, 3], [1, 3]),
+    ]
+    invalid_materializations: list[dict[str, Any]] = []
+    for name, input_shape, target_shape in invalid_pairs:
+        input_tensor = torch.empty(input_shape)
+        try:
+            input_tensor.expand(target_shape)
+        except RuntimeError:
+            invalid_materializations.append({
+                "name": name,
+                "input_shape": input_shape,
+                "target_shape": target_shape,
+            })
+        else:
+            raise AssertionError(f"invalid expand case unexpectedly succeeded: {name}")
+
+    return {
+        "shape_cases": shape_cases,
+        "materialization_cases": materialization_cases,
+        "invalid_materializations": invalid_materializations,
+    }
+
+
 def dropout_semantics() -> dict[str, Any]:
     input_tensor = torch.tensor(
         [[1.0, -2.0, 3.5], [4.0, -5.0, 6.5]],
@@ -1752,6 +1851,7 @@ def generate_fixture() -> dict[str, Any]:
             "tensor_concat_f32": tensor_concat_matrix(),
             "tensor_elementwise": tensor_elementwise_matrix(),
             "tensor_masks": tensor_mask_matrix(),
+            "tensor_broadcast": tensor_broadcast_matrix(),
             "tensor_indexing_f32": tensor_indexing_matrix(),
             "tensor_permute_f32": tensor_permute_matrix(),
             "tensor_reductions": tensor_reduction_matrix(),
