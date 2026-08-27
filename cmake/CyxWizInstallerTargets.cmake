@@ -422,6 +422,25 @@ install(RUNTIME_DEPENDENCY_SET cyxwiz-installer-runtime-dependencies
     LIBRARY DESTINATION .
     FRAMEWORK DESTINATION Frameworks
 )
+install(RUNTIME_DEPENDENCY_SET cyxwiz-setup-runtime-dependencies
+    PRE_EXCLUDE_REGEXES
+        "api-ms-win-.*"
+        "ext-ms-.*"
+        "azureattest.*"
+        "hvsifiletrust\\.dll"
+        "pdmutilities\\.dll"
+        "wpaxholder\\.dll"
+    POST_EXCLUDE_REGEXES
+        ".*[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\].*"
+        "^/lib/.*"
+        "^/lib64/.*"
+        "^/usr/lib/.*"
+        "^/System/Library/.*"
+    ${_cyxwiz_installer_runtime_directory_args}
+    RUNTIME DESTINATION . COMPONENT cyxwiz-setup
+    LIBRARY DESTINATION . COMPONENT cyxwiz-setup
+    FRAMEWORK DESTINATION Frameworks COMPONENT cyxwiz-setup
+)
 install(FILES "${CMAKE_SOURCE_DIR}/LICENSE" DESTINATION .)
 
 if(TARGET cyxwiz-engine)

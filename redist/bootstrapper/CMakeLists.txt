@@ -67,6 +67,8 @@ add_library(cyxwiz-backend-pack-service STATIC
     backend_pack_metadata_refresh.cpp
     backend_pack_metadata_verifier.cpp
     backend_pack_path.cpp
+    installer_bundle_verifier.cpp
+    installer_setup_service.cpp
 )
 target_include_directories(cyxwiz-backend-pack-service PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -114,6 +116,49 @@ if(NOT CYXWIZ_BUILD_INSTALLER_ONLY)
     install(TARGETS cyxwiz-runtime-bootstrapper RUNTIME DESTINATION .)
 endif()
 unset(_cyxwiz_runtime_bootstrapper_source)
+
+set(CYXWIZ_SETUP_BUNDLE_URL "" CACHE STRING
+    "Default HTTPS URL for the signed CyxWiz installer bundle descriptor")
+set(CYXWIZ_SETUP_VERSION "1.0.0" CACHE STRING
+    "Semantic version of the CyxWiz first-stage setup program")
+if(WIN32)
+    set(_cyxwiz_setup_platform "windows")
+    set(_cyxwiz_setup_launcher_source installer_setup_launcher_windows.cpp)
+elseif(APPLE)
+    set(_cyxwiz_setup_platform "macos")
+    set(_cyxwiz_setup_launcher_source installer_setup_launcher_posix.cpp)
+else()
+    set(_cyxwiz_setup_platform "linux")
+    set(_cyxwiz_setup_launcher_source installer_setup_launcher_posix.cpp)
+endif()
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _cyxwiz_setup_processor)
+if(_cyxwiz_setup_processor MATCHES "^(arm64|aarch64)$")
+    set(_cyxwiz_setup_architecture "arm64")
+else()
+    set(_cyxwiz_setup_architecture "x86_64")
+endif()
+add_executable(cyxwiz-setup
+    installer_setup_main.cpp
+    ${_cyxwiz_setup_launcher_source}
+)
+target_link_libraries(cyxwiz-setup PRIVATE cyxwiz-backend-pack-service)
+target_compile_definitions(cyxwiz-setup PRIVATE
+    CYXWIZ_SETUP_VERSION="${CYXWIZ_SETUP_VERSION}"
+    CYXWIZ_SETUP_PLATFORM="${_cyxwiz_setup_platform}"
+    CYXWIZ_SETUP_ARCHITECTURE="${_cyxwiz_setup_architecture}"
+    CYXWIZ_SETUP_BUNDLE_URL="${CYXWIZ_SETUP_BUNDLE_URL}"
+)
+set_target_properties(cyxwiz-setup PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+install(TARGETS cyxwiz-setup
+    RUNTIME_DEPENDENCY_SET cyxwiz-setup-runtime-dependencies
+    RUNTIME DESTINATION . COMPONENT cyxwiz-setup
+)
+install(FILES "${CMAKE_SOURCE_DIR}/LICENSE"
+    DESTINATION . COMPONENT cyxwiz-setup
+)
 
 # This executable is copied outside the installation before destructive
 # cleanup. Compile its small validation closure directly so Windows can use a
@@ -168,6 +213,8 @@ endif()
 
 if(CYXWIZ_BUILD_TESTS)
     enable_testing()
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    find_program(CYXWIZ_OPENSSL_EXECUTABLE openssl REQUIRED)
     add_executable(generate_installer_metadata_fixture
         generate_installer_metadata_fixture.cpp
     )
@@ -314,5 +361,21 @@ if(CYXWIZ_BUILD_TESTS)
     add_test(
         NAME backend_pack_lifecycle_service_contract
         COMMAND test_backend_pack_lifecycle_service
+    )
+
+    add_executable(test_installer_setup_child test_installer_setup_child.cpp)
+    set_target_properties(test_installer_setup_child PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME installer_setup_signed_bundle_contract
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/redist/tests/test_installer_setup.py"
+            --setup $<TARGET_FILE:cyxwiz-setup>
+            --child $<TARGET_FILE:test_installer_setup_child>
+            --platform "${_cyxwiz_setup_platform}"
+            --architecture "${_cyxwiz_setup_architecture}"
+            --openssl "${CYXWIZ_OPENSSL_EXECUTABLE}"
     )
 endif()

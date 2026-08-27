@@ -23,6 +23,12 @@ enum class BackendPackManifestKind {
     Base
 };
 
+enum class TrustedMetadataRole {
+    Catalog,
+    Pack,
+    Installer
+};
+
 struct BackendPackCatalogEntry {
     std::string pack_id;
     std::string manifest_url;
@@ -91,6 +97,7 @@ public:
         std::vector<unsigned char> public_key;
         bool catalog = false;
         bool pack = false;
+        bool installer = false;
         bool revoked = false;
     };
 
@@ -98,6 +105,12 @@ public:
         const std::filesystem::path& path,
         std::string& error);
     const Key* Find(const std::string& key_id) const;
+    bool VerifySignedDocument(
+        const std::filesystem::path& path,
+        const std::string& expected_kind,
+        TrustedMetadataRole role,
+        std::string& canonical_signed_body,
+        std::string& error) const;
 
 private:
     std::vector<Key> keys_;

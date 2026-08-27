@@ -280,7 +280,7 @@ bool ValidateEnvelope(
     const char* expected_kind,
     const BackendPackTrustStore& trust_store,
     const std::optional<std::string>& required_key_id,
-    bool catalog_role,
+    TrustedMetadataRole role,
     const Json*& signed_body,
     std::string& error) {
     if (!HasExactKeys(
@@ -314,8 +314,11 @@ bool ValidateEnvelope(
         }
         if (required_key_id && key_id != *required_key_id) continue;
         const auto* key = trust_store.Find(key_id);
-        if (!key || key->revoked ||
-            (catalog_role ? !key->catalog : !key->pack)) {
+        const bool authorized = key && !key->revoked &&
+            ((role == TrustedMetadataRole::Catalog && key->catalog) ||
+             (role == TrustedMetadataRole::Pack && key->pack) ||
+             (role == TrustedMetadataRole::Installer && key->installer));
+        if (!authorized) {
             continue;
         }
         verified = VerifyEd25519(key->public_key, canonical, value) || verified;
@@ -481,6 +484,7 @@ std::optional<BackendPackTrustStore> BackendPackTrustStore::Load(
             }
             if (role == "catalog") key.catalog = true;
             else if (role == "pack") key.pack = true;
+            else if (role == "installer") key.installer = true;
             else {
                 error = "Trust key contains an unsupported role";
                 return std::nullopt;
@@ -499,6 +503,30 @@ const BackendPackTrustStore::Key* BackendPackTrustStore::Find(
             return key.key_id == key_id;
         });
     return found == keys_.end() ? nullptr : &*found;
+}
+
+bool BackendPackTrustStore::VerifySignedDocument(
+    const std::filesystem::path& path,
+    const std::string& expected_kind,
+    TrustedMetadataRole role,
+    std::string& canonical_signed_body,
+    std::string& error) const {
+    canonical_signed_body.clear();
+    if (expected_kind.empty()) {
+        error = "Expected signed document kind is required";
+        return false;
+    }
+    Json document;
+    std::string bytes;
+    if (!ReadDocument(path, document, bytes, error)) return false;
+    const Json* signed_body = nullptr;
+    if (!ValidateEnvelope(
+            document, expected_kind.c_str(), *this, std::nullopt, role,
+            signed_body, error)) {
+        return false;
+    }
+    canonical_signed_body = signed_body->dump();
+    return true;
 }
 
 BackendPackMetadataVerifier::BackendPackMetadataVerifier(
@@ -527,7 +555,7 @@ bool BackendPackMetadataVerifier::VerifyCatalog(
     const Json* signed_body = nullptr;
     if (!ValidateEnvelope(
             document, "cyxwiz-backend-pack-catalog", trust_store_,
-            std::nullopt, true, signed_body, error)) {
+            std::nullopt, TrustedMetadataRole::Catalog, signed_body, error)) {
         return false;
     }
     if (!HasExactKeys(
@@ -611,7 +639,8 @@ bool BackendPackMetadataVerifier::VerifyManifest(
     const Json* signed_body = nullptr;
     if (!ValidateEnvelope(
             document, "cyxwiz-backend-pack-manifest", trust_store_,
-            catalog_entry.signing_key_id, false, signed_body, error)) {
+            catalog_entry.signing_key_id, TrustedMetadataRole::Pack,
+            signed_body, error)) {
         return false;
     }
     std::string pack_kind;

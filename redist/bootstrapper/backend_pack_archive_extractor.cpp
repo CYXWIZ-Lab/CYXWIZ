@@ -1,6 +1,7 @@
 #include "backend_pack_archive_extractor.h"
 #include "backend_pack_hash.h"
 #include "backend_pack_path.h"
+#include "installer_bundle_verifier.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -51,6 +52,48 @@ private:
 BackendPackArchiveExtractor::BackendPackArchiveExtractor(
     BackendPackExtractionObserver observer)
     : observer_(std::move(observer)) {}
+
+BackendPackExtractionResult BackendPackArchiveExtractor::ExtractInstallerBundle(
+    const std::filesystem::path& archive_path,
+    const VerifiedInstallerBundle& bundle,
+    const std::filesystem::path& destination,
+    std::uint64_t disk_budget_bytes) {
+    VerifiedBackendPackManifest manifest;
+    manifest.pack_id = bundle.bundle_id;
+    manifest.archive = bundle.archive;
+    manifest.components.reserve(bundle.components.size());
+    for (const auto& component : bundle.components) {
+        manifest.components.push_back(
+            {component.relative_path, component.size, component.sha256});
+    }
+    auto result = Extract(
+        archive_path, manifest, destination, disk_budget_bytes);
+    if (result.status != BackendPackExtractionStatus::Extracted) return result;
+#ifndef _WIN32
+    for (const auto& component : bundle.components) {
+        const auto path = destination /
+            BackendPackNativeRelativePath(component.relative_path);
+        std::error_code error;
+        const auto operation = component.executable
+            ? std::filesystem::perm_options::add
+            : std::filesystem::perm_options::remove;
+        std::filesystem::permissions(
+            path,
+            std::filesystem::perms::owner_exec |
+                std::filesystem::perms::group_exec |
+                std::filesystem::perms::others_exec,
+            operation, error);
+        if (error) {
+            std::error_code ignored;
+            std::filesystem::remove_all(destination, ignored);
+            return Finish(
+                BackendPackExtractionStatus::FilesystemFailure,
+                "Cannot apply signed installer executable permissions");
+        }
+    }
+#endif
+    return result;
+}
 
 BackendPackExtractionResult BackendPackArchiveExtractor::Extract(
     const std::filesystem::path& archive_path,

@@ -17,6 +17,7 @@ on:
       - "redist/scripts/sign_installer_bundle.py"
       - "redist/scripts/verify_installer_package.py"
       - "redist/tests/test_installer_bundle.py"
+      - "redist/tests/test_installer_setup.py"
       - "redist/tests/test_prepare_backend_pack_repository.py"
       - "redist/tests/test_verify_installer_package.py"
       - "vcpkg-installer.json"
@@ -38,6 +39,7 @@ on:
       - "redist/scripts/sign_installer_bundle.py"
       - "redist/scripts/verify_installer_package.py"
       - "redist/tests/test_installer_bundle.py"
+      - "redist/tests/test_installer_setup.py"
       - "redist/tests/test_prepare_backend_pack_repository.py"
       - "redist/tests/test_verify_installer_package.py"
       - "vcpkg-installer.json"
@@ -205,7 +207,9 @@ jobs:
         run: ctest --test-dir build --build-config Release --output-on-failure
 
       - name: Stage installer package
-        run: cmake --install build --config Release --prefix installer-stage
+        run: >-
+          cmake --install build --config Release --prefix installer-stage
+          --component Unspecified
 
       - name: Prove deterministic first-stage bundle contract
         run: >-
@@ -219,6 +223,18 @@ jobs:
           --minimum-setup-version 1.0.0
           --generated-utc 2026-08-27T00:00:00Z
           --expires-utc 2026-11-27T00:00:00Z
+
+      - name: Stage Windows first-stage setup
+        if: runner.os == 'Windows'
+        run: >-
+          cmake --install build --config Release --prefix setup-stage
+          --component cyxwiz-setup
+
+      - name: Stage Unix first-stage setup
+        if: runner.os != 'Windows'
+        run: >-
+          cmake --install build --config Release --prefix setup-stage
+          --component cyxwiz-setup
 
       - name: Add Windows package smoke contract
         if: runner.os == 'Windows'
@@ -278,6 +294,12 @@ jobs:
           path: installer-stage/
           if-no-files-found: error
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-setup-${{ matrix.artifact }}
+          path: setup-stage/
+          if-no-files-found: error
+
   package-smoke:
     name: ${{ matrix.name }} package smoke
     needs: build
@@ -307,6 +329,19 @@ jobs:
         with:
           name: cyxwiz-installer-${{ matrix.artifact }}
           path: installer-stage
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cyxwiz-setup-${{ matrix.artifact }}
+          path: setup-stage
+
+      - name: Smoke staged Windows setup
+        if: runner.os == 'Windows'
+        run: ./setup-stage/cyxwiz-setup.exe --help
+
+      - name: Smoke staged Unix setup
+        if: runner.os != 'Windows'
+        run: ./setup-stage/cyxwiz-setup --help
 
       - name: Run clean-machine evidence contract
         run: python -m unittest redist.tests.test_verify_installer_package
