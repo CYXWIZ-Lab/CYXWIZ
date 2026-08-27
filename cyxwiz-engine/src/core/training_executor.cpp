@@ -4,6 +4,7 @@
 #include "crash_run_recorder.h"
 #include "error_codes.h"
 #include "algorithms/arrayfire_backend_utils.h"
+#include "algorithms/arrayfire_host_materialization.h"
 #include <cyxwiz/debug_hooks.h>
 #include "execution_device_context.h"
 #include "execution_device_preferences.h"
@@ -42,25 +43,6 @@
 namespace cyxwiz {
 
 namespace {
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-void RecordMetricScalarReadback(const char* operation,
-                                const char* scalar_name,
-                                size_t bytes) {
-    ArrayFireHostSyncEvent sync;
-    sync.operation_name = "af::array::host";
-    sync.reason_code = "bounded_scalar_readback";
-    sync.attribution_category = ArrayFireHostSyncCategoryName(
-        ArrayFireHostSyncCategory::MetricScalarReadback);
-    sync.attribution_operation = operation;
-    sync.tensor_shape = {1};
-    sync.tensor_dtype = "float32";
-    sync.tensor_layout = "arrayfire_native";
-    sync.context = std::string("scalar=") + scalar_name;
-    sync.bytes = static_cast<uint64_t>(bytes);
-    NotifyArrayFireHostSync(std::move(sync));
-}
-#endif
 
 void AppendExecutionDeviceLifecycleEvent(
     const ExecutionDeviceContext& context, const std::string& run_id) {
@@ -486,16 +468,22 @@ void AddRegressionMetricsArrayFire(
 
     float absolute_error_sum = 0.0f;
     float squared_error_sum = 0.0f;
-    absolute_error.host(&absolute_error_sum);
-    RecordMetricScalarReadback(
+    MaterializeArrayFireToHost(
+        absolute_error,
+        &absolute_error_sum,
+        ArrayFireHostSyncCategory::MetricScalarReadback,
         "TrainingExecutor::RegressionAbsoluteError",
-        "absolute_error_sum",
-        sizeof(absolute_error_sum));
-    squared_error.host(&squared_error_sum);
-    RecordMetricScalarReadback(
+        "arrayfire_native",
+        "bounded_scalar_readback",
+        "scalar=absolute_error_sum");
+    MaterializeArrayFireToHost(
+        squared_error,
+        &squared_error_sum,
+        ArrayFireHostSyncCategory::MetricScalarReadback,
         "TrainingExecutor::RegressionSquaredError",
-        "squared_error_sum",
-        sizeof(squared_error_sum));
+        "arrayfire_native",
+        "bounded_scalar_readback",
+        "scalar=squared_error_sum");
 
     regression.absolute_error_sum +=
         static_cast<double>(absolute_error_sum);

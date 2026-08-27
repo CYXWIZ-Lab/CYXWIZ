@@ -1,5 +1,7 @@
 #include <cyxwiz/signal_processing.h>
 
+#include "arrayfire_host_materialization.h"
+
 #include <algorithm>
 #include <stdexcept>
 #include <vector>
@@ -43,7 +45,12 @@ ConvolutionResult SignalProcessing::Convolve1D(
 
         int output_size = static_cast<int>(conv_result.dims(0));
         result.output.resize(output_size);
-        conv_result.host(result.output.data());
+        MaterializeArrayFireToHost(
+            conv_result,
+            result.output.data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "SignalProcessing::Convolve1D",
+            "arrayfire_native");
 
         // Handle "valid" mode manually
         if (mode == "valid") {
@@ -147,7 +154,12 @@ Convolution2DResult SignalProcessing::Convolve2D(
         int out_cols = static_cast<int>(conv_result.dims(1));
 
         std::vector<double> out_flat(out_rows * out_cols);
-        af::transpose(conv_result).host(out_flat.data());
+        MaterializeArrayFireToHost(
+            af::transpose(conv_result),
+            out_flat.data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "SignalProcessing::Convolve2D",
+            "row_major_2d");
 
         result.output.resize(out_rows, std::vector<double>(out_cols));
         for (int i = 0; i < out_rows; i++) {

@@ -34,6 +34,8 @@ enum class ArrayFireHostSyncCategory {
     LayerCpuPath,
     OptimizerCpuPath,
     CheckpointOutput,
+    AlgorithmCpuPath,
+    OutputMaterialization,
 };
 
 struct ArrayFireHostSyncAttribution {

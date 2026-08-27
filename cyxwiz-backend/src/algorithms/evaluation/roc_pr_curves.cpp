@@ -7,6 +7,7 @@
 
 #include "cyxwiz/model_evaluation.h"
 #include "../arrayfire_backend_utils.h"
+#include "../arrayfire_host_materialization.h"
 
 #include <algorithm>
 #include <cmath>
@@ -130,9 +131,24 @@ ROCCurveData ModelEvaluation::ComputeROC(
 
                 // Convert to host
                 std::vector<double> cum_tp_host(n), cum_fp_host(n), scores_host(n);
-                cum_tp.host(cum_tp_host.data());
-                cum_fp.host(cum_fp_host.data());
-                sorted_scores.host(scores_host.data());
+                MaterializeArrayFireToHost(
+                    cum_tp,
+                    cum_tp_host.data(),
+                    ArrayFireHostSyncCategory::AlgorithmCpuPath,
+                    "ModelEvaluation::ROCCurve::CumulativeTruePositives",
+                    "arrayfire_native");
+                MaterializeArrayFireToHost(
+                    cum_fp,
+                    cum_fp_host.data(),
+                    ArrayFireHostSyncCategory::AlgorithmCpuPath,
+                    "ModelEvaluation::ROCCurve::CumulativeFalsePositives",
+                    "arrayfire_native");
+                MaterializeArrayFireToHost(
+                    sorted_scores,
+                    scores_host.data(),
+                    ArrayFireHostSyncCategory::OutputMaterialization,
+                    "ModelEvaluation::ROCCurve::SortedScores",
+                    "arrayfire_native");
 
                 // Build ROC curve with unique thresholds
                 result.fpr.reserve(n + 2);
@@ -340,9 +356,24 @@ PRCurveData ModelEvaluation::ComputePRCurve(
 
                 // Convert to host
                 std::vector<double> precision_host(n), recall_host(n), scores_host(n);
-                precision_arr.host(precision_host.data());
-                recall_arr.host(recall_host.data());
-                sorted_scores.host(scores_host.data());
+                MaterializeArrayFireToHost(
+                    precision_arr,
+                    precision_host.data(),
+                    ArrayFireHostSyncCategory::AlgorithmCpuPath,
+                    "ModelEvaluation::PrecisionRecallCurve::Precision",
+                    "arrayfire_native");
+                MaterializeArrayFireToHost(
+                    recall_arr,
+                    recall_host.data(),
+                    ArrayFireHostSyncCategory::AlgorithmCpuPath,
+                    "ModelEvaluation::PrecisionRecallCurve::Recall",
+                    "arrayfire_native");
+                MaterializeArrayFireToHost(
+                    sorted_scores,
+                    scores_host.data(),
+                    ArrayFireHostSyncCategory::OutputMaterialization,
+                    "ModelEvaluation::PrecisionRecallCurve::SortedScores",
+                    "arrayfire_native");
 
                 // Build PR curve with unique thresholds
                 result.precision.reserve(n + 1);

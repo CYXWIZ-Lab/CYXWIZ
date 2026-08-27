@@ -90,6 +90,7 @@ set(BACKEND_SOURCES
     src/core/cyxwiz_c.cpp
     src/algorithms/optimizer.cpp
     src/algorithms/arrayfire_backend_utils.cpp
+    src/algorithms/arrayfire_host_materialization.cpp
     src/algorithms/backend_placement_observation.cpp
     src/algorithms/optimizers/optimizer_utils.cpp
     src/algorithms/optimizers/sgd.cpp

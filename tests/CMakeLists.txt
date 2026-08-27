@@ -21,6 +21,7 @@ add_executable(cyxwiz-tests
     unit/test_c_api.cpp
     unit/test_activations.cpp
     unit/test_arrayfire_fallback_source_scan.cpp
+    unit/test_arrayfire_host_materialization.cpp
     unit/test_arrayfire_backend_utils.cpp
     unit/test_arrayfire_backend_smoke.cpp
     unit/test_loss.cpp

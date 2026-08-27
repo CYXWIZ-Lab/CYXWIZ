@@ -7,6 +7,7 @@
 
 #include "cyxwiz/clustering.h"
 #include "arrayfire_backend_utils.h"
+#include "arrayfire_host_materialization.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
@@ -106,7 +107,12 @@ HierarchicalResult Clustering::Hierarchical(
         // Transfer to CPU for agglomerative clustering
         std::vector<double> dist_flat(n * n);
         dist_matrix.eval();
-        dist_matrix.host(dist_flat.data());
+        MaterializeArrayFireToHost(
+            dist_matrix,
+            dist_flat.data(),
+            ArrayFireHostSyncCategory::AlgorithmCpuPath,
+            "Clustering::Hierarchical::DistanceMatrix",
+            "arrayfire_column_major");
 
         // Build distance matrix on CPU
         std::vector<std::vector<double>> cpu_dist(n, std::vector<double>(n));

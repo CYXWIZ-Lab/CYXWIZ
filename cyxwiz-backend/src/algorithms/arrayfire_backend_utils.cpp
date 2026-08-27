@@ -146,6 +146,10 @@ const char* ArrayFireHostSyncCategoryName(
             return "optimizer_cpu_path";
         case ArrayFireHostSyncCategory::CheckpointOutput:
             return "checkpoint_output";
+        case ArrayFireHostSyncCategory::AlgorithmCpuPath:
+            return "algorithm_cpu_path";
+        case ArrayFireHostSyncCategory::OutputMaterialization:
+            return "output_materialization";
         case ArrayFireHostSyncCategory::Unknown:
         default:
             return "unknown";

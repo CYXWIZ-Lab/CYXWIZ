@@ -5,6 +5,7 @@
 
 #include "cyxwiz/linear_algebra.h"
 #include "arrayfire_backend_utils.h"
+#include "arrayfire_host_materialization.h"
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <algorithm>
@@ -66,7 +67,12 @@ static std::vector<std::vector<double>> AfArrayToVector(const af::array& arr) {
     std::vector<double> flat(rows * cols);
     af::array materialized = arr;
     materialized.eval();
-    materialized.host(flat.data());
+    MaterializeArrayFireToHost(
+        materialized,
+        flat.data(),
+        ArrayFireHostSyncCategory::OutputMaterialization,
+        "LinearAlgebra::AfArrayToMatrix",
+        "arrayfire_column_major");
 
     std::vector<std::vector<double>> result(rows, std::vector<double>(cols));
     // ArrayFire uses column-major order
@@ -1204,7 +1210,12 @@ LUResult LinearAlgebra::LU(const std::vector<std::vector<double>>& A) {
             std::vector<int> perm(n);
             std::vector<float> Pdata(n * n);
             P.eval();
-            P.host(Pdata.data());
+            MaterializeArrayFireToHost(
+                P,
+                Pdata.data(),
+                ArrayFireHostSyncCategory::AlgorithmCpuPath,
+                "LinearAlgebra::LU::PermutationIndices",
+                "arrayfire_column_major");
             for (int i = 0; i < n; ++i) {
                 for (int j = 0; j < n; ++j) {
                     if (Pdata[j * n + i] > 0.5) {

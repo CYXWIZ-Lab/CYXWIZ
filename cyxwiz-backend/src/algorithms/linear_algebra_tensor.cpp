@@ -5,6 +5,7 @@
 
 #include "cyxwiz/linear_algebra.h"
 #include "arrayfire_backend_utils.h"
+#include "arrayfire_host_materialization.h"
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <cstdint>
@@ -43,7 +44,12 @@ static cyxwiz::Tensor AfArrayToTensorWithShape(const af::array& arr, const std::
     if (out.NumBytes() > 0) {
         af::array materialized = arr;
         materialized.eval();
-        materialized.host(out.Data());
+        MaterializeArrayFireToHost(
+            materialized,
+            out.Data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "LinearAlgebra::AfArrayToTensor",
+            "arrayfire_native");
     }
     return out;
 }

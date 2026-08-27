@@ -7,6 +7,7 @@
 
 #include "cyxwiz/data_transform.h"
 #include "arrayfire_backend_utils.h"
+#include "arrayfire_host_materialization.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <numeric>
@@ -95,7 +96,12 @@ ColumnStats DataTransform::ComputeColumnStats(const std::vector<double>& data) {
             af::array sorted = af::sort(gpu_data);
             sorted.eval();
             std::vector<double> sorted_cpu(data.size());
-            sorted.host(sorted_cpu.data());
+            MaterializeArrayFireToHost(
+                sorted,
+                sorted_cpu.data(),
+                ArrayFireHostSyncCategory::AlgorithmCpuPath,
+                "DataTransform::ComputeColumnStats::SortedPercentiles",
+                "arrayfire_native");
 
             stats.median = GetPercentile(sorted_cpu, 50.0);
             stats.q1 = GetPercentile(sorted_cpu, 25.0);
@@ -236,7 +242,12 @@ TransformResult DataTransform::NormalizeColumn(const std::vector<double>& data,
             transformed.eval();
 
             std::vector<double> transformed_cpu(data.size());
-            transformed.host(transformed_cpu.data());
+            MaterializeArrayFireToHost(
+                transformed,
+                transformed_cpu.data(),
+                ArrayFireHostSyncCategory::OutputMaterialization,
+                "DataTransform::NormalizeColumn",
+                "arrayfire_native");
 
             result.transformed_data.push_back(transformed_cpu);
             result.success = true;
@@ -338,7 +349,12 @@ TransformResult DataTransform::StandardizeColumn(const std::vector<double>& data
             transformed.eval();
 
             std::vector<double> transformed_cpu(data.size());
-            transformed.host(transformed_cpu.data());
+            MaterializeArrayFireToHost(
+                transformed,
+                transformed_cpu.data(),
+                ArrayFireHostSyncCategory::OutputMaterialization,
+                "DataTransform::StandardizeColumn",
+                "arrayfire_native");
 
             result.transformed_data.push_back(transformed_cpu);
             result.success = true;
@@ -448,7 +464,12 @@ TransformResult DataTransform::LogTransformColumn(const std::vector<double>& dat
             transformed.eval();
 
             std::vector<double> transformed_cpu(data.size());
-            transformed.host(transformed_cpu.data());
+            MaterializeArrayFireToHost(
+                transformed,
+                transformed_cpu.data(),
+                ArrayFireHostSyncCategory::OutputMaterialization,
+                "DataTransform::LogTransformColumn",
+                "arrayfire_native");
 
             result.transformed_data.push_back(transformed_cpu);
             result.success = true;
@@ -615,7 +636,12 @@ TransformResult DataTransform::BoxCoxColumn(const std::vector<double>& data,
             transformed.eval();
 
             std::vector<double> transformed_cpu(data.size());
-            transformed.host(transformed_cpu.data());
+            MaterializeArrayFireToHost(
+                transformed,
+                transformed_cpu.data(),
+                ArrayFireHostSyncCategory::OutputMaterialization,
+                "DataTransform::BoxCoxColumn",
+                "arrayfire_native");
 
             result.transformed_data.push_back(transformed_cpu);
             result.success = true;
@@ -802,7 +828,12 @@ TransformResult DataTransform::RobustScaleColumn(const std::vector<double>& data
             transformed.eval();
 
             std::vector<double> transformed_cpu(data.size());
-            transformed.host(transformed_cpu.data());
+            MaterializeArrayFireToHost(
+                transformed,
+                transformed_cpu.data(),
+                ArrayFireHostSyncCategory::OutputMaterialization,
+                "DataTransform::RobustScaleColumn",
+                "arrayfire_native");
 
             result.transformed_data.push_back(transformed_cpu);
             result.success = true;
@@ -883,7 +914,12 @@ TransformResult DataTransform::MaxAbsScaleColumn(const std::vector<double>& data
             transformed.eval();
 
             std::vector<double> transformed_cpu(data.size());
-            transformed.host(transformed_cpu.data());
+            MaterializeArrayFireToHost(
+                transformed,
+                transformed_cpu.data(),
+                ArrayFireHostSyncCategory::OutputMaterialization,
+                "DataTransform::MaxAbsScaleColumn",
+                "arrayfire_native");
 
             result.transformed_data.push_back(transformed_cpu);
             result.success = true;
@@ -1037,7 +1073,12 @@ TransformResult DataTransform::PowerTransform(const std::vector<std::vector<doub
                 transformed.eval();
 
                 std::vector<double> transformed_cpu(data[col].size());
-                transformed.host(transformed_cpu.data());
+                MaterializeArrayFireToHost(
+                    transformed,
+                    transformed_cpu.data(),
+                    ArrayFireHostSyncCategory::OutputMaterialization,
+                    "DataTransform::PowerTransform",
+                    "arrayfire_native");
 
                 result.transformed_data.push_back(transformed_cpu);
             }

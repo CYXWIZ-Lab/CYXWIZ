@@ -272,10 +272,10 @@
       "contract": "Every device-to-host materialization has category, operation, shape, dtype, layout, backend and byte count.",
       "supported": "instrumented Tensor host materialization",
       "oracle": "trace totals and boundary contract",
-      "tests": ["test_computation_truth_tfidf_loss", "test_training_executor_arrow_parquet", "test_debugger_contracts"],
-      "execution": "observability boundary",
-      "status": "partial",
-      "gaps": ["direct af::array::host audit", "trace group/run-total reconciliation matrix"]
+      "tests": ["cyxwiz-tests:[host_sync]", "cyxwiz-tests:[source_scan]", "test_computation_truth_tfidf_loss", "test_training_executor_arrow_parquet", "test_debugger_contracts"],
+      "execution": "Tensor and non-Tensor ArrayFire host materialization use attributed boundaries; repository source scan rejects unaudited direct host calls; trace groups reconcile exactly with run counts and bytes",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LAYER-LINEAR-001",
