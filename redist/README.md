@@ -71,6 +71,31 @@ the CPU base, an optional backend pack, catalog, trust store, or corresponding
 cached manifest is absent. The native CI fixture uses ephemeral keys and
 non-routable package URLs and is test evidence only, never release metadata.
 
+The optional first-stage setup boundary consumes a separate deterministic
+installer bundle; it never owns package selection or product lifecycle logic.
+`package_installer_bundle.py` accepts a fully staged installer and emits one
+bounded ZIP, an exact component inventory in a schema-1 descriptor, and the
+canonical detached signing input. The descriptor pins the CyxWiz and bundle
+versions, release channel, platform, architecture, minimum setup version,
+validity window, archive digest, and every extracted file digest. Links,
+case-folded path collisions, missing GUI/helper/bootstrap metadata, oversized
+payloads, in-stage output, mutation during packaging, and replacement of an
+existing versioned artifact fail closed. The archive and signing input publish
+before the unsigned descriptor, so interruption cannot publish an
+authoritative incomplete descriptor.
+
+Release signing is a separate explicit operation:
+
+```text
+python redist/scripts/package_installer_bundle.py <stage> <output> ...
+python redist/scripts/sign_installer_bundle.py <descriptor> \
+  --private-key <ed25519.pem> --key-id <trusted-installer-key>
+```
+
+Ordinary builds never receive the private key. The resulting signed contract
+is the input for the small setup verifier/acquirer/launcher; the consolidated
+`cyxwiz-installer` remains the only graphical installation experience.
+
 ### Native runtime bootstrapper
 
 The installed app-level `cyxwiz-runtime-bootstrapper` (`.exe` on Windows)

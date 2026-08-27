@@ -12,7 +12,11 @@ on:
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
       - "redist/scripts/prepare_backend_pack_repository.py"
+      - "redist/scripts/installer_bundle_contract.py"
+      - "redist/scripts/package_installer_bundle.py"
+      - "redist/scripts/sign_installer_bundle.py"
       - "redist/scripts/verify_installer_package.py"
+      - "redist/tests/test_installer_bundle.py"
       - "redist/tests/test_prepare_backend_pack_repository.py"
       - "redist/tests/test_verify_installer_package.py"
       - "vcpkg-installer.json"
@@ -29,7 +33,11 @@ on:
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
       - "redist/scripts/prepare_backend_pack_repository.py"
+      - "redist/scripts/installer_bundle_contract.py"
+      - "redist/scripts/package_installer_bundle.py"
+      - "redist/scripts/sign_installer_bundle.py"
       - "redist/scripts/verify_installer_package.py"
+      - "redist/tests/test_installer_bundle.py"
       - "redist/tests/test_prepare_backend_pack_repository.py"
       - "redist/tests/test_verify_installer_package.py"
       - "vcpkg-installer.json"
@@ -56,15 +64,23 @@ jobs:
           - name: Windows x64
             os: windows-latest
             artifact: windows-x64
+            platform: windows
+            architecture: x86_64
           - name: Ubuntu x64
             os: ubuntu-22.04
             artifact: ubuntu-x64
+            platform: linux
+            architecture: x86_64
           - name: macOS arm64
             os: macos-15
             artifact: macos-arm64
+            platform: macos
+            architecture: arm64
           - name: macOS Intel x64
             os: macos-15-intel
             artifact: macos-x64
+            platform: macos
+            architecture: x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -78,8 +94,11 @@ jobs:
           echo "${openssl_bin}" >> "${GITHUB_PATH}"
           "${openssl_bin}/openssl" version
 
-      - name: Run signed repository publication contract
-        run: python -B -m unittest redist.tests.test_prepare_backend_pack_repository
+      - name: Run release metadata contracts
+        run: >-
+          python -B -m unittest
+          redist.tests.test_prepare_backend_pack_repository
+          redist.tests.test_installer_bundle
 
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@v7
@@ -187,6 +206,19 @@ jobs:
 
       - name: Stage installer package
         run: cmake --install build --config Release --prefix installer-stage
+
+      - name: Prove deterministic first-stage bundle contract
+        run: >-
+          python -B redist/scripts/package_installer_bundle.py
+          installer-stage installer-bundle-contract
+          --bundle-version 1.0.0
+          --cyxwiz-release 0.2.0
+          --release-channel alpha
+          --platform ${{ matrix.platform }}
+          --architecture ${{ matrix.architecture }}
+          --minimum-setup-version 1.0.0
+          --generated-utc 2026-08-27T00:00:00Z
+          --expires-utc 2026-11-27T00:00:00Z
 
       - name: Add Windows package smoke contract
         if: runner.os == 'Windows'
