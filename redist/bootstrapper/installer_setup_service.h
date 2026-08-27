@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend_pack_acquisition.h"
+#include "backend_pack_metadata_verifier.h"
 
 #include <filesystem>
 #include <string>
@@ -18,7 +19,6 @@ enum class InstallerSetupStatus {
 
 struct InstallerSetupRequest {
     std::filesystem::path descriptor_path;
-    std::filesystem::path trust_store_path;
     std::filesystem::path cache_root;
     std::string current_utc;
     std::string setup_version;
@@ -35,6 +35,7 @@ struct InstallerSetupResult {
 
 InstallerSetupResult PrepareInstallerBundle(
     const InstallerSetupRequest& request,
+    const BackendPackTrustStore& trust_store,
     BackendPackArtifactSource& archive_source);
 
 const char* InstallerSetupStatusName(InstallerSetupStatus status);

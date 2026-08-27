@@ -431,6 +431,60 @@ bool IsAllowedBackend(const std::string& value) {
            value == "oneapi";
 }
 
+bool ParseTrustStore(
+    const Json& document,
+    std::vector<BackendPackTrustStore::Key>& keys,
+    std::string& error) {
+    if (!HasExactKeys(document, {"schema_version", "keys"}) ||
+        !document["schema_version"].is_number_unsigned() ||
+        document["schema_version"].get<std::uint64_t>() != 1 ||
+        !document["keys"].is_array() || document["keys"].empty()) {
+        error = "trusted-keys.json violates schema 1";
+        return false;
+    }
+    std::set<std::string> key_ids;
+    for (const auto& entry : document["keys"]) {
+        if (!HasExactKeys(
+                entry,
+                {"key_id", "algorithm", "public_key", "roles", "revoked"})) {
+            error = "Trust key entry contains unknown or missing fields";
+            return false;
+        }
+        BackendPackTrustStore::Key key;
+        std::string algorithm;
+        std::string public_key;
+        if (!ReadIdentifier(entry, "key_id", key.key_id, error) ||
+            !key_ids.insert(key.key_id).second ||
+            !ReadString(entry, "algorithm", algorithm, error) ||
+            algorithm != "ed25519" ||
+            !ReadString(entry, "public_key", public_key, error) ||
+            !DecodeBase64Url(public_key, 32, key.public_key) ||
+            !entry["roles"].is_array() || entry["roles"].empty() ||
+            !entry["revoked"].is_boolean()) {
+            error = "Trust key entry is invalid";
+            return false;
+        }
+        std::set<std::string> roles;
+        for (const auto& role : entry["roles"]) {
+            if (!role.is_string() ||
+                !roles.insert(role.get<std::string>()).second) {
+                error = "Trust key roles are invalid or duplicated";
+                return false;
+            }
+            if (role == "catalog") key.catalog = true;
+            else if (role == "pack") key.pack = true;
+            else if (role == "installer") key.installer = true;
+            else {
+                error = "Trust key contains an unsupported role";
+                return false;
+            }
+        }
+        key.revoked = entry["revoked"].get<bool>();
+        keys.push_back(std::move(key));
+    }
+    return true;
+}
+
 }  // namespace
 
 VerifiedBackendPackPayload VerifiedBackendPackManifest::BindExtractedDirectory(
@@ -444,55 +498,29 @@ std::optional<BackendPackTrustStore> BackendPackTrustStore::Load(
     std::string& error) {
     Json document;
     std::string bytes;
-    if (!ReadDocument(path, document, bytes, error) ||
-        !HasExactKeys(document, {"schema_version", "keys"}) ||
-        !document["schema_version"].is_number_unsigned() ||
-        document["schema_version"].get<std::uint64_t>() != 1 ||
-        !document["keys"].is_array() || document["keys"].empty()) {
-        error = "trusted-keys.json violates schema 1";
+    if (!ReadDocument(path, document, bytes, error)) return std::nullopt;
+    BackendPackTrustStore output;
+    if (!ParseTrustStore(document, output.keys_, error)) return std::nullopt;
+    return output;
+}
+
+std::optional<BackendPackTrustStore> BackendPackTrustStore::LoadJson(
+    std::string_view bytes,
+    std::string& error) {
+    if (bytes.empty() || bytes.size() > kMaximumMetadataBytes) {
+        error = "Embedded trust metadata is empty or exceeds 4 MiB";
+        return std::nullopt;
+    }
+    Json document;
+    try {
+        document = Json::parse(bytes);
+    } catch (const std::exception& exception) {
+        error = std::string("Embedded trust metadata is not valid JSON: ") +
+            exception.what();
         return std::nullopt;
     }
     BackendPackTrustStore output;
-    std::set<std::string> key_ids;
-    for (const auto& entry : document["keys"]) {
-        if (!HasExactKeys(
-                entry,
-                {"key_id", "algorithm", "public_key", "roles", "revoked"})) {
-            error = "Trust key entry contains unknown or missing fields";
-            return std::nullopt;
-        }
-        Key key;
-        std::string algorithm;
-        std::string public_key;
-        if (!ReadIdentifier(entry, "key_id", key.key_id, error) ||
-            !key_ids.insert(key.key_id).second ||
-            !ReadString(entry, "algorithm", algorithm, error) ||
-            algorithm != "ed25519" ||
-            !ReadString(entry, "public_key", public_key, error) ||
-            !DecodeBase64Url(public_key, 32, key.public_key) ||
-            !entry["roles"].is_array() || entry["roles"].empty() ||
-            !entry["revoked"].is_boolean()) {
-            error = "Trust key entry is invalid";
-            return std::nullopt;
-        }
-        std::set<std::string> roles;
-        for (const auto& role : entry["roles"]) {
-            if (!role.is_string() ||
-                !roles.insert(role.get<std::string>()).second) {
-                error = "Trust key roles are invalid or duplicated";
-                return std::nullopt;
-            }
-            if (role == "catalog") key.catalog = true;
-            else if (role == "pack") key.pack = true;
-            else if (role == "installer") key.installer = true;
-            else {
-                error = "Trust key contains an unsupported role";
-                return std::nullopt;
-            }
-        }
-        key.revoked = entry["revoked"].get<bool>();
-        output.keys_.push_back(std::move(key));
-    }
+    if (!ParseTrustStore(document, output.keys_, error)) return std::nullopt;
     return output;
 }
 

@@ -3,6 +3,7 @@
 #include "installer_bundle_verifier.h"
 #include "installer_setup_launcher.h"
 #include "installer_setup_service.h"
+#include "installer_setup_embedded_trust.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -10,6 +11,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -133,6 +135,25 @@ private:
     std::filesystem::path path_;
 };
 
+std::optional<cyxwiz::runtime::BackendPackTrustStore> LoadSetupTrust(
+    Options& options,
+    const std::filesystem::path& executable,
+    std::string& error) {
+    const auto embedded = cyxwiz::runtime::EmbeddedInstallerTrustJson();
+    if (!embedded.empty()) {
+        if (!options.trust_store_path.empty()) {
+            error = "This release embeds installer trust; --trust-store is disabled";
+            return std::nullopt;
+        }
+        return cyxwiz::runtime::BackendPackTrustStore::LoadJson(embedded, error);
+    }
+    if (options.trust_store_path.empty()) {
+        options.trust_store_path = executable.parent_path() / "trusted-keys.json";
+    }
+    return cyxwiz::runtime::BackendPackTrustStore::Load(
+        options.trust_store_path, error);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -146,8 +167,10 @@ int main(int argc, char** argv) {
     }
     const auto executable = std::filesystem::absolute(argv[0]);
     if (options.cache_root.empty()) options.cache_root = DefaultCacheRoot();
-    if (options.trust_store_path.empty()) {
-        options.trust_store_path = executable.parent_path() / "trusted-keys.json";
+    auto trust_store = LoadSetupTrust(options, executable, error);
+    if (!trust_store) {
+        std::cerr << "[ERROR] Cannot load installer trust: " << error << "\n";
+        return 4;
     }
     RemoveTemporaryDescriptor temporary_descriptor;
     if (options.descriptor_path.empty()) {
@@ -174,15 +197,8 @@ int main(int argc, char** argv) {
     std::unique_ptr<cyxwiz::runtime::BackendPackArtifactSource> archive_source;
     if (!options.descriptor_url.empty()) {
         std::string body;
-        auto trust = cyxwiz::runtime::BackendPackTrustStore::Load(
-            options.trust_store_path, error);
-        if (!trust) {
-            std::cerr << "[ERROR] Cannot load installer trust store: "
-                      << error << "\n";
-            return 4;
-        }
         cyxwiz::runtime::InstallerBundleVerifier verifier(
-            std::move(*trust), CYXWIZ_SETUP_VERSION,
+            *trust_store, CYXWIZ_SETUP_VERSION,
             CYXWIZ_SETUP_PLATFORM, CYXWIZ_SETUP_ARCHITECTURE);
         cyxwiz::runtime::VerifiedInstallerBundle bundle;
         if (!verifier.Verify(
@@ -203,15 +219,8 @@ int main(int argc, char** argv) {
             cyxwiz::runtime::HttpsBackendPackArtifactSource>(archive_url);
     } else {
         std::string body;
-        auto trust = cyxwiz::runtime::BackendPackTrustStore::Load(
-            options.trust_store_path, error);
-        if (!trust) {
-            std::cerr << "[ERROR] Cannot load installer trust store: "
-                      << error << "\n";
-            return 4;
-        }
         cyxwiz::runtime::InstallerBundleVerifier verifier(
-            std::move(*trust), CYXWIZ_SETUP_VERSION,
+            *trust_store, CYXWIZ_SETUP_VERSION,
             CYXWIZ_SETUP_PLATFORM, CYXWIZ_SETUP_ARCHITECTURE);
         cyxwiz::runtime::VerifiedInstallerBundle bundle;
         if (!verifier.Verify(
@@ -233,11 +242,11 @@ int main(int argc, char** argv) {
     }
 
     const cyxwiz::runtime::InstallerSetupRequest request{
-        options.descriptor_path, options.trust_store_path, options.cache_root,
-        CurrentUtc(), CYXWIZ_SETUP_VERSION, CYXWIZ_SETUP_PLATFORM,
+        options.descriptor_path, options.cache_root, CurrentUtc(),
+        CYXWIZ_SETUP_VERSION, CYXWIZ_SETUP_PLATFORM,
         CYXWIZ_SETUP_ARCHITECTURE};
     const auto result = cyxwiz::runtime::PrepareInstallerBundle(
-        request, *archive_source);
+        request, *trust_store, *archive_source);
     if (result.status != cyxwiz::runtime::InstallerSetupStatus::Ready) {
         std::cerr << "[ERROR] " << result.message << "\n";
         return 5;

@@ -89,25 +89,19 @@ bool VerifyCachedBundle(
 
 InstallerSetupResult PrepareInstallerBundle(
     const InstallerSetupRequest& request,
+    const BackendPackTrustStore& trust_store,
     BackendPackArtifactSource& archive_source) {
     if (!request.descriptor_path.is_absolute() ||
-        !request.trust_store_path.is_absolute() ||
         !request.cache_root.is_absolute() || request.current_utc.empty() ||
         request.setup_version.empty() || request.platform.empty() ||
         request.architecture.empty()) {
         return Finish(
             InstallerSetupStatus::InvalidRequest,
-            "Absolute descriptor, trust, cache paths and setup identity are required");
+            "Absolute descriptor and cache paths plus setup identity are required");
     }
     std::string error;
-    auto trust_store = BackendPackTrustStore::Load(request.trust_store_path, error);
-    if (!trust_store) {
-        return Finish(
-            InstallerSetupStatus::TrustFailure,
-            "Cannot load installer trust store: " + error);
-    }
     InstallerBundleVerifier verifier(
-        std::move(*trust_store), request.setup_version,
+        trust_store, request.setup_version,
         request.platform, request.architecture);
     VerifiedInstallerBundle bundle;
     if (!verifier.Verify(

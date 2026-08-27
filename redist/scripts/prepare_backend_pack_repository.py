@@ -94,6 +94,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         help="Direct non-redirecting HTTPS URL for the repository root",
     )
+    parser.add_argument(
+        "--hosted-layout",
+        choices=("nested", "flat"),
+        default="nested",
+        help=(
+            "Hosted asset layout: nested for a conventional HTTPS tree or "
+            "flat for GitHub Release assets"
+        ),
+    )
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--openssl", default="openssl")
     return parser.parse_args(argv)
@@ -309,6 +318,30 @@ def _validate_repository_packs(packs: Sequence[PackInput]) -> None:
         validate_runtime_composition(base.document, pack.document)
 
 
+def _validate_hosted_asset_names(
+    packs: Sequence[PackInput], catalog_id: str, hosted_layout: str
+) -> None:
+    prefix = "catalogs/manifests/" if hosted_layout == "nested" else ""
+    catalog_name = (
+        "catalogs/current.json"
+        if hosted_layout == "nested"
+        else f"cyxwiz-backend-catalog-{catalog_id}.json"
+    )
+    observed = {catalog_name.casefold(): catalog_name}
+    for pack in packs:
+        for name in (
+            f"{prefix}{pack.signed['pack_id']}.json",
+            f"{prefix}{pack.signed['archive']['file_name']}",
+        ):
+            folded = name.casefold()
+            previous = observed.get(folded)
+            if previous is not None:
+                raise RepositoryError(
+                    f"Hosted release assets collide: {previous} and {name}"
+                )
+            observed[folded] = name
+
+
 def _direct_https_base_url(value: str) -> str:
     if (
         len(value) > 4000
@@ -354,15 +387,18 @@ def _catalog_document(
     catalog_private_key: Path,
     trusted: Mapping[str, TrustedKey],
     openssl: str,
+    hosted_layout: str,
 ) -> dict[str, Any]:
     entries = []
     for pack in sorted(packs, key=lambda item: item.signed["pack_id"]):
         pack_id = pack.signed["pack_id"]
-        manifest_url = f"{base_url}/catalogs/manifests/{pack_id}.json"
-        archive_url = (
-            f"{base_url}/catalogs/manifests/"
-            f"{pack.signed['archive']['file_name']}"
+        hosted_prefix = (
+            f"{base_url}/catalogs/manifests"
+            if hosted_layout == "nested"
+            else base_url
         )
+        manifest_url = f"{hosted_prefix}/{pack_id}.json"
+        archive_url = f"{hosted_prefix}/{pack.signed['archive']['file_name']}"
         if len(manifest_url) > 4096 or len(archive_url) > 4096:
             raise RepositoryError(
                 f"Manifest or archive URL exceeds the runtime limit for {pack_id}"
@@ -418,6 +454,7 @@ def _publish_tree(
     trust_bytes: bytes,
     catalog: Mapping[str, Any],
     packs: Sequence[PackInput],
+    hosted_layout: str,
 ) -> None:
     output = output.resolve()
     if output.exists():
@@ -429,14 +466,25 @@ def _publish_tree(
     try:
         hosted = staging / "hosted"
         bootstrap = staging / "bootstrap"
-        hosted_manifests = hosted / "catalogs" / "manifests"
+        hosted_manifests = (
+            hosted / "catalogs" / "manifests"
+            if hosted_layout == "nested"
+            else hosted
+        )
         bootstrap_manifests = bootstrap / "catalogs" / "manifests"
         hosted_manifests.mkdir(parents=True)
         bootstrap_manifests.mkdir(parents=True)
         (bootstrap / "trust").mkdir(parents=True)
         (bootstrap / "trust" / "trusted-keys.json").write_bytes(trust_bytes)
         catalog_bytes = _json_bytes(catalog)
-        (hosted / "catalogs" / "current.json").write_bytes(catalog_bytes)
+        hosted_catalog = (
+            hosted / "catalogs" / "current.json"
+            if hosted_layout == "nested"
+            else hosted /
+                f"cyxwiz-backend-catalog-{catalog['signed']['catalog_id']}.json"
+        )
+        hosted_catalog.parent.mkdir(parents=True, exist_ok=True)
+        hosted_catalog.write_bytes(catalog_bytes)
         (bootstrap / "catalogs" / "current.json").write_bytes(catalog_bytes)
         for pack in packs:
             pack_id = pack.signed["pack_id"]
@@ -474,6 +522,9 @@ def prepare_repository(args: argparse.Namespace) -> str:
         for path in args.manifest
     ]
     _validate_repository_packs(packs)
+    _validate_hosted_asset_names(
+        packs, args.catalog_id, args.hosted_layout
+    )
     base_url = _direct_https_base_url(args.base_url)
     catalog = _catalog_document(
         packs,
@@ -486,8 +537,13 @@ def prepare_repository(args: argparse.Namespace) -> str:
         args.catalog_private_key,
         trusted,
         args.openssl,
+        args.hosted_layout,
     )
-    _publish_tree(args.output, trust_bytes, catalog, packs)
+    _publish_tree(
+        args.output, trust_bytes, catalog, packs, args.hosted_layout
+    )
+    if args.hosted_layout == "flat":
+        return f"{base_url}/cyxwiz-backend-catalog-{args.catalog_id}.json"
     return f"{base_url}/catalogs/current.json"
 
 

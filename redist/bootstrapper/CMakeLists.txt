@@ -121,6 +121,39 @@ set(CYXWIZ_SETUP_BUNDLE_URL "" CACHE STRING
     "Default HTTPS URL for the signed CyxWiz installer bundle descriptor")
 set(CYXWIZ_SETUP_VERSION "1.0.0" CACHE STRING
     "Semantic version of the CyxWiz first-stage setup program")
+set(CYXWIZ_SETUP_TRUST_STORE "" CACHE FILEPATH
+    "Installer-role public trust JSON embedded in official setup builds")
+set(CYXWIZ_SETUP_EMBEDDED_TRUST_JSON "")
+if(CYXWIZ_SETUP_TRUST_STORE)
+    get_filename_component(
+        _cyxwiz_setup_trust_store "${CYXWIZ_SETUP_TRUST_STORE}" ABSOLUTE)
+    if(NOT EXISTS "${_cyxwiz_setup_trust_store}" OR
+       IS_DIRECTORY "${_cyxwiz_setup_trust_store}")
+        message(FATAL_ERROR
+            "CYXWIZ_SETUP_TRUST_STORE is not a regular file: ${_cyxwiz_setup_trust_store}")
+    endif()
+    file(SIZE "${_cyxwiz_setup_trust_store}" _cyxwiz_setup_trust_size)
+    if(_cyxwiz_setup_trust_size EQUAL 0 OR
+       _cyxwiz_setup_trust_size GREATER 4194304)
+        message(FATAL_ERROR
+            "Embedded setup trust must contain 1-4194304 bytes")
+    endif()
+    file(READ "${_cyxwiz_setup_trust_store}"
+        CYXWIZ_SETUP_EMBEDDED_TRUST_JSON)
+    string(FIND "${CYXWIZ_SETUP_EMBEDDED_TRUST_JSON}"
+        ")CW_TRUST\"" _cyxwiz_setup_trust_delimiter)
+    if(NOT _cyxwiz_setup_trust_delimiter EQUAL -1)
+        message(FATAL_ERROR "Embedded setup trust contains the raw delimiter")
+    endif()
+endif()
+set(_cyxwiz_setup_generated_dir
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${_cyxwiz_setup_generated_dir}")
+configure_file(
+    installer_setup_embedded_trust.cpp.in
+    "${_cyxwiz_setup_generated_dir}/installer_setup_embedded_trust.cpp"
+    @ONLY
+)
 if(WIN32)
     set(_cyxwiz_setup_platform "windows")
     set(_cyxwiz_setup_launcher_source installer_setup_launcher_windows.cpp)
@@ -139,8 +172,10 @@ else()
 endif()
 add_executable(cyxwiz-setup
     installer_setup_main.cpp
+    "${_cyxwiz_setup_generated_dir}/installer_setup_embedded_trust.cpp"
     ${_cyxwiz_setup_launcher_source}
 )
+target_include_directories(cyxwiz-setup PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(cyxwiz-setup PRIVATE cyxwiz-backend-pack-service)
 target_compile_definitions(cyxwiz-setup PRIVATE
     CYXWIZ_SETUP_VERSION="${CYXWIZ_SETUP_VERSION}"
@@ -377,5 +412,34 @@ if(CYXWIZ_BUILD_TESTS)
             --platform "${_cyxwiz_setup_platform}"
             --architecture "${_cyxwiz_setup_architecture}"
             --openssl "${CYXWIZ_OPENSSL_EXECUTABLE}"
+    )
+
+    set(_cyxwiz_setup_saved_trust_json
+        "${CYXWIZ_SETUP_EMBEDDED_TRUST_JSON}")
+    file(READ
+        "${CMAKE_SOURCE_DIR}/redist/tests/fixtures/setup-trusted-keys.json"
+        CYXWIZ_SETUP_EMBEDDED_TRUST_JSON)
+    configure_file(
+        installer_setup_embedded_trust.cpp.in
+        "${_cyxwiz_setup_generated_dir}/test_installer_setup_embedded_trust.cpp"
+        @ONLY
+    )
+    set(CYXWIZ_SETUP_EMBEDDED_TRUST_JSON
+        "${_cyxwiz_setup_saved_trust_json}")
+    add_executable(test_installer_setup_embedded_trust
+        test_installer_setup_embedded_trust.cpp
+        "${_cyxwiz_setup_generated_dir}/test_installer_setup_embedded_trust.cpp"
+    )
+    target_include_directories(test_installer_setup_embedded_trust PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(test_installer_setup_embedded_trust PRIVATE
+        cyxwiz-backend-pack-service)
+    set_target_properties(test_installer_setup_embedded_trust PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME installer_setup_embedded_trust_contract
+        COMMAND test_installer_setup_embedded_trust
     )
 endif()

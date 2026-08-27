@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cyxwiz::runtime {
@@ -103,6 +104,9 @@ public:
 
     static std::optional<BackendPackTrustStore> Load(
         const std::filesystem::path& path,
+        std::string& error);
+    static std::optional<BackendPackTrustStore> LoadJson(
+        std::string_view bytes,
         std::string& error);
     const Key* Find(const std::string& key_id) const;
     bool VerifySignedDocument(
