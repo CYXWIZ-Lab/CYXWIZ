@@ -236,6 +236,21 @@ jobs:
           cmake --install build --config Release --prefix setup-stage
           --component cyxwiz-setup
 
+      - name: Package Windows first-stage setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force setup-package | Out-Null
+          Compress-Archive -Path setup-stage/* `
+            -DestinationPath setup-package/cyxwiz-setup-${{ matrix.artifact }}.zip
+
+      - name: Package Unix first-stage setup
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p setup-package
+          tar -C setup-stage -czf \
+            setup-package/cyxwiz-setup-${{ matrix.artifact }}.tar.gz .
+
       - name: Add Windows package smoke contract
         if: runner.os == 'Windows'
         shell: pwsh
@@ -297,7 +312,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: cyxwiz-setup-${{ matrix.artifact }}
-          path: setup-stage/
+          path: setup-package/
           if-no-files-found: error
 
   package-smoke:
@@ -333,7 +348,21 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: cyxwiz-setup-${{ matrix.artifact }}
-          path: setup-stage
+          path: setup-package
+
+      - name: Extract staged Windows setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          Expand-Archive setup-package/cyxwiz-setup-${{ matrix.artifact }}.zip
+          -DestinationPath setup-stage
+
+      - name: Extract staged Unix setup
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p setup-stage
+          tar -xzf setup-package/cyxwiz-setup-${{ matrix.artifact }}.tar.gz \
+            -C setup-stage
 
       - name: Smoke staged Windows setup
         if: runner.os == 'Windows'
