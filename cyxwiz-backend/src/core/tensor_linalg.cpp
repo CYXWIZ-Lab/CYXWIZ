@@ -1,8 +1,12 @@
 #include "cyxwiz/tensor.h"
 #include "tensor_backend_observation_utils.h"
+#include "tensor_math_utils.h"
+#include "tensor_utils.h"
 
 #include <cstdint>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -16,8 +20,8 @@ namespace {
 template <typename T>
 Tensor DotTyped(const Tensor& left, const Tensor& right) {
     const size_t count = left.NumElements();
-    const T* a = left.Data<T>();
-    const T* b = right.Data<T>();
+    const T* a = left.ReadData<T>();
+    const T* b = right.ReadData<T>();
     T total{};
     for (size_t i = 0; i < count; i++) {
         total = static_cast<T>(total + a[i] * b[i]);
@@ -30,10 +34,10 @@ Tensor RowWiseDotTyped(const Tensor& left, const Tensor& right) {
     const auto& shape = left.Shape();
     const size_t batch = shape[0];
     const size_t features = shape[1];
-    const T* a = left.Data<T>();
-    const T* b = right.Data<T>();
+    const T* a = left.ReadData<T>();
+    const T* b = right.ReadData<T>();
     Tensor result({batch, 1}, left.GetDataType());
-    T* out = result.Data<T>();
+    T* out = result.MutableData<T>();
 
     for (size_t row = 0; row < batch; row++) {
         T total{};
@@ -70,18 +74,54 @@ Tensor RowWiseDotPreservingType(const Tensor& left, const Tensor& right) {
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-bool SupportsArrayFireDot(DataType dtype) {
-    return dtype == DataType::Float32 || dtype == DataType::Float64;
+void RecordLinalgArrayFireFallback(
+    const char* operation_name,
+    const Tensor& left,
+    const Tensor& right,
+    const std::vector<size_t>& output_shape,
+    const std::string& attributes,
+    const char* error_message) {
+    const std::string message =
+        tensor_backend_observation::RecordArrayFireFallback(
+            operation_name,
+            tensor_backend_observation::DataTypeName(left.GetDataType()),
+            tensor_backend_observation::BuildTensorOpSignature(
+                {left.Shape(), right.Shape()},
+                output_shape,
+                left.GetDataType(),
+                attributes),
+            error_message);
+    spdlog::warn("{}", message);
 }
 
 Tensor DotArrayFire(const Tensor& left, const Tensor& right) {
-    af::array products = left.GetArray() * right.GetArray();
-    return Tensor(af::sum(products));
+    af::array output = af::sum(
+        left.GetSemanticArray() * right.GetSemanticArray());
+    output = output.as(
+        tensor_math_utils::ArrayFireType(left.GetDataType()));
+    output.eval();
+    return Tensor::FromSemanticArray(output, {1});
 }
 
 Tensor RowWiseDotArrayFire(const Tensor& left, const Tensor& right) {
     af::array products = left.GetArrayRowMajor2D() * right.GetArrayRowMajor2D();
-    return Tensor::FromArrayRowMajor2D(af::sum(products, 1));
+    af::array output = af::sum(products, 1).as(
+        tensor_math_utils::ArrayFireType(left.GetDataType()));
+    output.eval();
+    return Tensor::FromSemanticArray(output, {left.Shape()[0], 1});
+}
+
+Tensor BatchMatMulArrayFire(const Tensor& left,
+                            const Tensor& right,
+                            const std::vector<size_t>& output_shape) {
+    af::array left_matrices =
+        af::reorder(left.GetArrayRowMajor3D(), 1, 2, 0);
+    af::array right_matrices =
+        af::reorder(right.GetArrayRowMajor3D(), 1, 2, 0);
+    af::array output_matrices = af::matmul(left_matrices, right_matrices);
+    af::array output = af::reorder(output_matrices, 2, 0, 1);
+    output.eval();
+    return Tensor::FromSemanticArray(output, output_shape);
 }
 #endif
 
@@ -95,9 +135,9 @@ Tensor BatchMatMulTyped(const Tensor& left, const Tensor& right) {
     const size_t cols = b_shape[2];
 
     Tensor result({batch, rows, cols}, left.GetDataType());
-    const T* a = left.Data<T>();
-    const T* b = right.Data<T>();
-    T* out = result.Data<T>();
+    const T* a = left.ReadData<T>();
+    const T* b = right.ReadData<T>();
+    T* out = result.MutableData<T>();
 
     for (size_t batch_idx = 0; batch_idx < batch; batch_idx++) {
         const size_t a_batch_offset = batch_idx * rows * shared;
@@ -136,6 +176,22 @@ void RequireSameDType(const Tensor& left, const Tensor& right, const char* messa
     }
 }
 
+size_t ValidateLinalgOutputShape(const std::vector<size_t>& shape,
+                                 DataType dtype) {
+    const size_t count = tensor_utils::CheckedProduct(
+        shape,
+        0,
+        shape.size(),
+        "Tensor linalg: output shape element count overflow");
+    size_t bytes = 0;
+    if (!tensor_utils::SafeMultiply(
+            count, tensor_utils::ElementSize(dtype), bytes)) {
+        throw std::overflow_error(
+            "Tensor linalg: output shape byte count overflow");
+    }
+    return count;
+}
+
 } // namespace
 
 Tensor Tensor::Dot(const Tensor& other) const {
@@ -144,52 +200,50 @@ Tensor Tensor::Dot(const Tensor& other) const {
         if (shape_[0] != other.Shape()[0]) {
             throw std::runtime_error("Tensor::Dot: vector sizes must match");
         }
+        const std::vector<size_t> output_shape{1};
+        ValidateLinalgOutputShape(output_shape, dtype_);
+        if (NumElements() == 0) return Tensor::Zeros(output_shape, dtype_);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (NumElements() > 0 && SupportsArrayFireDot(dtype_)) {
-            try {
-                return DotArrayFire(*this, other);
-            } catch (const af::exception& e) {
-                spdlog::warn(
-                    "{}",
-                    tensor_backend_observation::RecordArrayFireFallback(
-                        "Tensor::Dot",
-                        tensor_backend_observation::DataTypeName(dtype_),
-                        tensor_backend_observation::BuildTensorOpSignature(
-                            {shape_, other.Shape()},
-                            {1},
-                            dtype_,
-                            "mode=vector"),
-                        e.what()));
-            }
+        try {
+            return DotArrayFire(*this, other);
+        } catch (const af::exception& error) {
+            RecordLinalgArrayFireFallback(
+                "Tensor::Dot",
+                *this,
+                other,
+                output_shape,
+                "mode=vector",
+                error.what());
         }
 #endif
         return DotPreservingType(*this, other);
     }
+
     if (shape_.size() == 2 && other.Shape().size() == 2) {
         if (shape_ != other.Shape()) {
             throw std::runtime_error("Tensor::Dot: 2D row-wise input shapes must match");
         }
+        const std::vector<size_t> output_shape{shape_[0], 1};
+        const size_t output_count =
+            ValidateLinalgOutputShape(output_shape, dtype_);
+        if (output_count == 0) return Tensor(output_shape, dtype_);
+        if (shape_[1] == 0) return Tensor::Zeros(output_shape, dtype_);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (NumElements() > 0 && SupportsArrayFireDot(dtype_)) {
-            try {
-                return RowWiseDotArrayFire(*this, other);
-            } catch (const af::exception& e) {
-                spdlog::warn(
-                    "{}",
-                    tensor_backend_observation::RecordArrayFireFallback(
-                        "Tensor::Dot",
-                        tensor_backend_observation::DataTypeName(dtype_),
-                        tensor_backend_observation::BuildTensorOpSignature(
-                            {shape_, other.Shape()},
-                            {shape_[0], 1},
-                            dtype_,
-                            "mode=rowwise"),
-                        e.what()));
-            }
+        try {
+            return RowWiseDotArrayFire(*this, other);
+        } catch (const af::exception& error) {
+            RecordLinalgArrayFireFallback(
+                "Tensor::Dot",
+                *this,
+                other,
+                output_shape,
+                "mode=rowwise",
+                error.what());
         }
 #endif
         return RowWiseDotPreservingType(*this, other);
     }
+
     throw std::runtime_error("Tensor::Dot: both tensors must be 1D or both 2D");
 }
 
@@ -204,6 +258,44 @@ Tensor Tensor::BatchMatMul(const Tensor& other) const {
     if (shape_[2] != other.Shape()[1]) {
         throw std::runtime_error("Tensor::BatchMatMul: inner dimensions must match");
     }
+
+    const std::vector<size_t> output_shape{
+        shape_[0], shape_[1], other.Shape()[2]};
+    const size_t output_count =
+        ValidateLinalgOutputShape(output_shape, dtype_);
+    if (output_count == 0) {
+        return Tensor(output_shape, dtype_);
+    }
+    if (shape_[2] == 0) {
+        return Tensor::Zeros(output_shape, dtype_);
+    }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (dtype_ != DataType::Float32 && dtype_ != DataType::Float64) {
+        RecordLinalgArrayFireFallback(
+            "Tensor::BatchMatMul",
+            *this,
+            other,
+            output_shape,
+            "mode=torch_bmm;batch_broadcast=false",
+            "unsupported dtype: ArrayFire BatchMatMul supports "
+            "floating-point data types only");
+        return BatchMatMulPreservingType(*this, other);
+    }
+
+    try {
+        return BatchMatMulArrayFire(*this, other, output_shape);
+    } catch (const af::exception& error) {
+        RecordLinalgArrayFireFallback(
+            "Tensor::BatchMatMul",
+            *this,
+            other,
+            output_shape,
+            "mode=torch_bmm;batch_broadcast=false",
+            error.what());
+    }
+#endif
+
     return BatchMatMulPreservingType(*this, other);
 }
 

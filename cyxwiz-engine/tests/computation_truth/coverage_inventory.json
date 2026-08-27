@@ -205,13 +205,13 @@
       "owner": "cyxwiz-backend/include/cyxwiz/tensor.h",
       "implementation": ["cyxwiz-backend/src/core/tensor_linalg.cpp"],
       "callers": ["Linear", "attention", "model families"],
-      "contract": "Logical matrix/batch axes, shapes, dtype and values match PyTorch matmul semantics for supported ranks.",
-      "supported": "implementation-defined rank-1/2 Dot and batched matmul domain",
-      "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_tensor", "test_computation_truth_transformer_primitives"],
-      "execution": "ArrayFire-first",
-      "status": "partial",
-      "gaps": ["complete rank/broadcast/error matrix", "strict residency evidence"]
+      "contract": "Vector Dot preserves the declared CyxWiz shape [1] while matching torch.dot values; rank-2 Dot is the declared row-wise (left * right).sum(dim=1, keepdim=True) extension; BatchMatMul matches torch.bmm rank-3 axes and rejects batch broadcasting. Shapes, dtypes, fractional floating values, integer values, zero-size identities and invalid inputs are exact.",
+      "supported": "all Tensor dtypes; rank-1/rank-2 same-shape Dot and equal-batch rank-3 BatchMatMul, including zero batch/rows/columns/shared dimensions",
+      "oracle": "PyTorch 2.10 plus explicit CyxWiz Dot output-shape and row-wise extensions",
+      "tests": ["cyxwiz-tests:[tensor_linalg]", "cyxwiz-tests:[tensor]", "test_computation_truth_transformer_primitives", "test_graph_executable_model", "test_training_executor_arrow_parquet"],
+      "execution": "Dot is ArrayFire device-resident for every Tensor dtype; Float32/Float64 BatchMatMul is ArrayFire device-resident; integer BatchMatMul records unsupported_dtype and uses declared native CPU compatibility only when fallback policy permits; empty/zero-shared identities require no fallback",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "EXEC-DEVICE-001",

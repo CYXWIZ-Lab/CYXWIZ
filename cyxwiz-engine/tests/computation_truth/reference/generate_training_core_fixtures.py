@@ -1076,6 +1076,103 @@ def tensor_factory_matrix() -> dict[str, Any]:
     }
 
 
+def tensor_linalg_input(
+    shape: list[int], dtype: torch.dtype, offset: int
+) -> torch.Tensor:
+    count = math.prod(shape)
+    base = torch.arange(count, dtype=torch.int64)
+    if dtype.is_floating_point:
+        values = (
+            base.remainder(7)
+            .sub(3)
+            .to(dtype)
+            .mul(0.25)
+            .add(offset * 0.125)
+        )
+    if dtype == torch.uint8:
+        values = (base.mul(3).add(offset).remainder(11)).to(dtype)
+    elif not dtype.is_floating_point:
+        values = base.remainder(7).sub(3).add(offset).to(dtype)
+    return values.reshape(shape)
+
+
+def tensor_linalg_matrix() -> dict[str, Any]:
+    dtypes = [
+        ("f32", torch.float32),
+        ("f64", torch.float64),
+        ("i32", torch.int32),
+        ("i64", torch.int64),
+        ("u8", torch.uint8),
+    ]
+    dot_shapes = [
+        ("vector", [7]),
+        ("rowwise", [3, 4]),
+        ("empty_vector", [0]),
+        ("empty_batch", [0, 4]),
+        ("zero_features", [3, 0]),
+    ]
+    dot_cases: list[dict[str, Any]] = []
+    for dtype_name, dtype in dtypes:
+        for index, (name, shape) in enumerate(dot_shapes):
+            left = tensor_linalg_input(shape, dtype, index)
+            right = tensor_linalg_input(shape, dtype, index + 1)
+            if len(shape) == 1:
+                expected = torch.dot(left, right).reshape(1)
+            else:
+                expected = (left * right).sum(dim=1, keepdim=True).to(dtype)
+            dot_cases.append({
+                "name": f"{name}_{dtype_name}",
+                "dtype": str(dtype).removeprefix("torch."),
+                "left": tensor_fixture(left),
+                "right": tensor_fixture(right),
+                "expected": tensor_fixture(expected),
+            })
+
+    batch_shapes = [
+        ("basic", [2, 2, 3], [2, 3, 2]),
+        ("singleton_matrix", [1, 1, 3], [1, 3, 1]),
+        ("zero_shared", [2, 2, 0], [2, 0, 4]),
+        ("zero_batch", [0, 2, 3], [0, 3, 4]),
+        ("zero_rows", [2, 0, 3], [2, 3, 4]),
+        ("zero_columns", [2, 3, 4], [2, 4, 0]),
+    ]
+    batch_matmul_cases: list[dict[str, Any]] = []
+    for dtype_name, dtype in dtypes:
+        for index, (name, left_shape, right_shape) in enumerate(batch_shapes):
+            left = tensor_linalg_input(left_shape, dtype, index)
+            right = tensor_linalg_input(right_shape, dtype, index + 2)
+            expected = torch.bmm(left, right)
+            batch_matmul_cases.append({
+                "name": f"{name}_{dtype_name}",
+                "dtype": str(dtype).removeprefix("torch."),
+                "left": tensor_fixture(left),
+                "right": tensor_fixture(right),
+                "expected": tensor_fixture(expected),
+            })
+
+    return {
+        "dot_cases": dot_cases,
+        "batch_matmul_cases": batch_matmul_cases,
+        "invalid_dot": [
+            {"name": "vector_size", "left_shape": [2], "right_shape": [3]},
+            {"name": "rank_mismatch", "left_shape": [2], "right_shape": [1, 2]},
+            {"name": "rowwise_shape", "left_shape": [2, 3], "right_shape": [2, 4]},
+            {"name": "scalar_rank", "left_shape": [], "right_shape": []},
+            {"name": "rank3", "left_shape": [1, 2, 3], "right_shape": [1, 2, 3]},
+        ],
+        "invalid_batch_matmul": [
+            {"name": "rank", "left_shape": [2, 3], "right_shape": [1, 3, 2]},
+            {"name": "batch", "left_shape": [1, 2, 3], "right_shape": [2, 3, 4]},
+            {"name": "inner", "left_shape": [2, 2, 3], "right_shape": [2, 4, 2]},
+        ],
+        "cyxwiz_extensions": {
+            "vector_dot_output_shape": [1],
+            "rowwise_dot": "(left * right).sum(dim=1, keepdim=True)",
+            "batch_matmul_reference": "torch.bmm; batch broadcasting is rejected",
+        },
+    }
+
+
 def dropout_semantics() -> dict[str, Any]:
     input_tensor = torch.tensor(
         [[1.0, -2.0, 3.5], [4.0, -5.0, 6.5]],
@@ -1923,6 +2020,7 @@ def generate_fixture() -> dict[str, Any]:
             "tensor_masks": tensor_mask_matrix(),
             "tensor_broadcast": tensor_broadcast_matrix(),
             "tensor_factories": tensor_factory_matrix(),
+            "tensor_linalg": tensor_linalg_matrix(),
             "tensor_indexing_f32": tensor_indexing_matrix(),
             "tensor_permute_f32": tensor_permute_matrix(),
             "tensor_reductions": tensor_reduction_matrix(),
