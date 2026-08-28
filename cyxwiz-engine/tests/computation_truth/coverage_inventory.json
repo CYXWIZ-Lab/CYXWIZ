@@ -360,18 +360,18 @@
     {
       "id": "ACT-SOFTMAX-001",
       "family": "activation",
-      "operation": "Softmax forward/backward by axis",
+      "operation": "SoftmaxActivation and production SoftmaxModule forward/backward by axis",
       "tier": 1,
-      "owner": "cyxwiz-backend/include/cyxwiz/activation.h",
-      "implementation": ["cyxwiz-backend/src/algorithms/activation.cpp"],
+      "owner": "cyxwiz-backend/include/cyxwiz/activation.h; cyxwiz-backend/include/cyxwiz/sequential.h",
+      "implementation": ["cyxwiz-backend/src/algorithms/activation.cpp", "cyxwiz-backend/src/algorithms/sequential/regularization_shape_modules.cpp"],
       "callers": ["classification", "attention", "generation"],
       "contract": "Stable normalization and Jacobian-vector product match PyTorch for the selected axis.",
       "supported": "Float32 public rank/axis domain",
-      "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_activations", "test_computation_truth_transformer_primitives"],
-      "execution": "ArrayFire-first where supported",
+      "oracle": "Generated PyTorch 2.10 forward/autograd fixtures",
+      "tests": ["cyxwiz-tests:test_activations", "test_computation_truth_tfidf_loss:softmax_forward_backward_f32", "test_computation_truth_transformer_primitives"],
+      "execution": "strict ArrayFire-resident CPU, CUDA and OpenCL routes; non-ArrayFire build has a native CPU implementation",
       "status": "partial",
-      "gaps": ["axis/rank/extreme matrix", "backward fixture", "residency"]
+      "gaps": ["non-ArrayFire-build native CPU qualification", "process-isolated oneAPI Softmax qualification"]
     },
     {
       "id": "ACT-PRELU-001",

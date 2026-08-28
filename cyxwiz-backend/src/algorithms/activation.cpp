@@ -190,9 +190,10 @@ Tensor CpuSoftmaxBackward(const Tensor& grad_output, const Tensor& input, int ax
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LayerCpuPath, "Softmax::Backward");
     ValidateFloat32ActivationBackward(grad_output, input, "Softmax");
-    Tensor softmax_out = cached_output.Shape() == input.Shape()
-                             ? cached_output
-                             : CpuSoftmaxForward(input, axis, nullptr);
+    // Backward receives the source input, so derive the Jacobian from that
+    // input rather than trusting a same-shaped cache from an earlier call.
+    (void)cached_output;
+    Tensor softmax_out = CpuSoftmaxForward(input, axis, nullptr);
 
     const std::vector<size_t>& shape = input.Shape();
     const int actual_axis = NormalizeActivationAxis(axis, static_cast<int>(shape.size()), "Softmax");
@@ -674,15 +675,16 @@ Tensor TanhActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 // ============================================================================
 
 Tensor SoftmaxActivation::Forward(const Tensor& input) {
+    ValidateFloat32UnaryActivation(input, "Softmax");
+    const int actual_axis = NormalizeActivationAxis(
+        axis_, static_cast<int>(input.Shape().size()), "Softmax");
+    if (input.NumElements() == 0) {
+        cached_output_ = input.Clone();
+        return cached_output_;
+    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = input.GetSemanticArray();
-
-        // Determine the axis for softmax (default is last dimension)
-        int actual_axis = axis_;
-        if (actual_axis < 0) {
-            actual_axis = static_cast<int>(x.numdims()) - 1;
-        }
 
         // For numerical stability, subtract max before exp
         af::array max_vals = af::max(x, actual_axis);
@@ -714,24 +716,29 @@ Tensor SoftmaxActivation::Forward(const Tensor& input) {
 }
 
 Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& input) {
+    ValidateFloat32ActivationBackward(grad_output, input, "Softmax");
+    const int actual_axis = NormalizeActivationAxis(
+        axis_, static_cast<int>(input.Shape().size()), "Softmax");
+    if (input.NumElements() == 0) {
+        return grad_output.Clone();
+    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = grad_output.GetSemanticArray();
-        af::array softmax_out = cached_output_.GetSemanticArray();
+        af::array x = input.GetSemanticArray();
 
-        int actual_axis = axis_;
-        if (actual_axis < 0) {
-            actual_axis = static_cast<int>(softmax_out.numdims()) - 1;
-        }
+        af::array max_vals = af::max(x, actual_axis);
+        af::dim4 tile_dims(1, 1, 1, 1);
+        tile_dims[actual_axis] = x.dims(actual_axis);
+        af::array exp_x = af::exp(x - af::tile(max_vals, tile_dims));
+        af::array softmax_out =
+            exp_x / af::tile(af::sum(exp_x, actual_axis), tile_dims);
 
         // Softmax backward: softmax * (grad - sum(grad * softmax))
         af::array grad_softmax = grad_out * softmax_out;
         grad_softmax.eval();
         af::array sum_grad_softmax = af::sum(grad_softmax, actual_axis);
         sum_grad_softmax.eval();
-
-        af::dim4 tile_dims(1, 1, 1, 1);
-        tile_dims[actual_axis] = softmax_out.dims(actual_axis);
 
         af::array dx = softmax_out * (grad_out - af::tile(sum_grad_softmax, tile_dims));
         dx.eval();

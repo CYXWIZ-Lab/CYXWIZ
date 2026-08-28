@@ -6,6 +6,7 @@
 #include <cyxwiz/activation.h>
 #include <cyxwiz/layers/linear.h>
 #include <cyxwiz/loss.h>
+#include <cyxwiz/sequential.h>
 #include <cyxwiz/optimizers/adaptive.h>
 #include <cyxwiz/optimizers/adam.h>
 #include <cyxwiz/optimizers/lamb.h>
@@ -810,6 +811,43 @@ void TestElementwiseActivationParity(const json& cases) {
     }
 }
 
+void TestSoftmaxParity(const json& cases) {
+    for (const auto& test_case : cases.at("softmax_forward_backward_f32")) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("operation", "") ==
+                  "torch.nn.functional.softmax" &&
+                  test_case.value("dtype", "") == "float32",
+              name + " Softmax fixture metadata mismatch");
+        const int axis = test_case.at("axis").get<int>();
+        const auto input = FloatTensorFromFixture(
+            test_case.at("input"), name + " Softmax input");
+        const auto grad_output = FloatTensorFromFixture(
+            test_case.at("grad_output"), name + " Softmax grad_output");
+        const auto tolerance = ReadTolerance(test_case);
+
+        cyxwiz::SoftmaxActivation activation(axis);
+        const auto activation_output = activation.Forward(input);
+        cyxwiz::SoftmaxActivation backward_activation(axis);
+        const auto activation_gradient =
+            backward_activation.Backward(grad_output, input);
+        CheckTensor(activation_output,
+                    test_case.at("expected").at("output"), tolerance,
+                    name + " SoftmaxActivation forward");
+        CheckTensor(activation_gradient,
+                    test_case.at("expected").at("grad_input"), tolerance,
+                    name + " SoftmaxActivation backward");
+
+        cyxwiz::SoftmaxModule module(axis);
+        const auto module_output = module.Forward(input);
+        const auto module_gradient = module.Backward(grad_output);
+        CheckTensor(module_output, test_case.at("expected").at("output"),
+                    tolerance, name + " SoftmaxModule forward");
+        CheckTensor(module_gradient,
+                    test_case.at("expected").at("grad_input"), tolerance,
+                    name + " SoftmaxModule backward");
+    }
+}
+
 void TestLinearMultiBatchUpdateParity(const json& cases) {
     const auto& test_case = cases.at("linear_multibatch_sgd_f32");
     Check(test_case.value("operation", "") ==
@@ -1498,6 +1536,7 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestCrossEntropyParity(cases);
         TestCrossEntropyMatrixParity(cases);
         TestElementwiseActivationParity(cases);
+        TestSoftmaxParity(cases);
         TestLinearForwardBackwardParity(cases);
         TestLinearMultiBatchUpdateParity(cases);
         TestOptimizerMultiStepParity(cases);
@@ -1576,6 +1615,7 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
             const cyxwiz::ScopedActiveExecutionDeviceContext active_run;
             const cyxwiz::ScopedExecutionDeviceContext bound_context(context);
             TestElementwiseActivationParity(cases);
+            TestSoftmaxParity(cases);
             TestLinearForwardBackwardParity(cases);
             TestLinearMultiBatchUpdateParity(cases);
             TestOptimizerMultiStepParity(cases);

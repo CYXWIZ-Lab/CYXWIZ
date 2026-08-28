@@ -165,6 +165,82 @@ def elementwise_activation_matrix() -> list[dict[str, Any]]:
     return cases
 
 
+def softmax_case(
+    name: str,
+    input_values: list[Any],
+    axis: int,
+    shape: list[int] | None = None,
+) -> dict[str, Any]:
+    input_tensor = torch.tensor(
+        input_values, dtype=torch.float32, requires_grad=True
+    )
+    if shape is not None:
+        input_tensor = input_tensor.reshape(shape).detach().requires_grad_(True)
+    grad_output = torch.linspace(
+        -1.75, 2.25, steps=input_tensor.numel(), dtype=torch.float32
+    ).reshape(input_tensor.shape)
+    output = functional.softmax(input_tensor, dim=axis)
+    (grad_input,) = torch.autograd.grad(
+        output, input_tensor, grad_outputs=grad_output
+    )
+    return {
+        "name": name,
+        "operation": "torch.nn.functional.softmax",
+        "dtype": "float32",
+        "axis": axis,
+        "tolerance": {"atol": 2.0e-5, "rtol": 2.0e-5},
+        "input": tensor_fixture(input_tensor),
+        "grad_output": tensor_fixture(grad_output),
+        "expected": {
+            "output": tensor_fixture(output),
+            "grad_input": tensor_fixture(grad_input),
+        },
+    }
+
+
+def softmax_matrix() -> list[dict[str, Any]]:
+    return [
+        softmax_case("rank1_last_extreme", [-100.0, 0.0, 100.0], -1),
+        softmax_case(
+            "rank2_axis0",
+            [[100.0, -100.0, 0.0], [99.0, -99.0, 1.0]],
+            0,
+        ),
+        softmax_case(
+            "rank2_last_extreme",
+            [[100.0, 101.0, 102.0], [-100.0, -101.0, -102.0]],
+            -1,
+        ),
+        softmax_case(
+            "rank3_axis1",
+            [
+                [[-3.0, 0.0, 3.0], [4.0, -4.0, 1.0]],
+                [[2.0, -2.0, 0.5], [-1.0, 5.0, -5.0]],
+            ],
+            1,
+        ),
+        softmax_case(
+            "rank3_last",
+            [
+                [[-3.0, 0.0, 3.0], [4.0, -4.0, 1.0]],
+                [[2.0, -2.0, 0.5], [-1.0, 5.0, -5.0]],
+            ],
+            -1,
+        ),
+        softmax_case(
+            "rank4_axis2",
+            [
+                -4.0, -3.0, -2.0, -1.0,
+                0.0, 1.0, 2.0, 3.0,
+                4.0, 5.0, 6.0, 7.0,
+            ],
+            2,
+            [1, 2, 3, 2],
+        ),
+        softmax_case("rank3_empty_axis", [], 1, [2, 0, 3]),
+    ]
+
+
 def linear_case(
     name: str,
     input_values: list[Any],
@@ -2605,6 +2681,7 @@ def generate_fixture() -> dict[str, Any]:
         "cases": {
             "elementwise_activation_forward_backward_f32":
                 elementwise_activation_matrix(),
+            "softmax_forward_backward_f32": softmax_matrix(),
             "dropout_semantics_f32": dropout_semantics(),
             "flatten_forward_backward_f32": flatten_matrix(),
             "tensor_concat_f32": tensor_concat_matrix(),

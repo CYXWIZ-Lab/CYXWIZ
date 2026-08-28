@@ -5,6 +5,7 @@
 #include <cyxwiz/activations/sigmoid.h>
 #include <cyxwiz/activations/tanh.h>
 #include <cyxwiz/memory_manager.h>
+#include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
 #include <cmath>
 #include <vector>
@@ -225,6 +226,32 @@ TEST_CASE("Factory softmax computes row-major backward values", "[activation]") 
     REQUIRE(grad_in[3] == Catch::Approx(out[3] * (grad_values[3] - dot1)));
     REQUIRE(grad_in[4] == Catch::Approx(out[4] * (grad_values[4] - dot1)));
     REQUIRE(grad_in[5] == Catch::Approx(out[5] * (grad_values[5] - dot1)));
+}
+
+TEST_CASE("Softmax validates axis dtype and module backward state", "[activation]") {
+    float values[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    cyxwiz::Tensor input({2, 3}, values, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor grad({2, 3}, values, cyxwiz::DataType::Float32);
+
+    cyxwiz::SoftmaxActivation invalid_positive_axis(2);
+    cyxwiz::SoftmaxActivation invalid_negative_axis(-3);
+    REQUIRE_THROWS(invalid_positive_axis.Forward(input));
+    REQUIRE_THROWS(invalid_negative_axis.Forward(input));
+
+    int32_t integer_values[] = {1, 2, 3, 4, 5, 6};
+    cyxwiz::Tensor integer_input(
+        {2, 3}, integer_values, cyxwiz::DataType::Int32);
+    cyxwiz::SoftmaxActivation activation(-1);
+    REQUIRE_THROWS(activation.Forward(integer_input));
+
+    cyxwiz::SoftmaxModule module(-1);
+    REQUIRE_THROWS(module.Backward(grad));
+    REQUIRE_THROWS(module.Forward(integer_input));
+
+    module.Forward(input);
+    cyxwiz::Tensor wrong_shape_grad({3, 2}, values,
+                                    cyxwiz::DataType::Float32);
+    REQUIRE_THROWS(module.Backward(wrong_shape_grad));
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
