@@ -1698,6 +1698,49 @@ def adamw_case() -> dict[str, Any]:
     }
 
 
+def sgd_momentum_multistep_case() -> dict[str, Any]:
+    hyperparameters = {
+        "learning_rate": 0.1,
+        "momentum": 0.9,
+    }
+    parameter = torch.nn.Parameter(
+        torch.tensor([1.0, -2.0, 0.5], dtype=torch.float32)
+    )
+    initial_parameter = parameter.detach().clone()
+    gradients = [
+        torch.tensor([0.25, -0.5, 0.125], dtype=torch.float32),
+        torch.tensor([-0.125, 0.25, 0.5], dtype=torch.float32),
+        torch.tensor([0.75, -0.25, -0.375], dtype=torch.float32),
+    ]
+    optimizer = torch.optim.SGD(
+        [parameter],
+        lr=hyperparameters["learning_rate"],
+        momentum=hyperparameters["momentum"],
+        foreach=False,
+        fused=False,
+    )
+    expected_steps = []
+    for step_count, gradient in enumerate(gradients, start=1):
+        parameter.grad = gradient.clone()
+        optimizer.step()
+        state = optimizer.state[parameter]
+        expected_steps.append({
+            "step_count": step_count,
+            "parameter": tensor_fixture(parameter),
+            "momentum_buffer": tensor_fixture(state["momentum_buffer"]),
+        })
+
+    return {
+        "operation": "torch.optim.SGD",
+        "dtype": "float32",
+        "hyperparameters": hyperparameters,
+        "tolerance": {"atol": 1.0e-6, "rtol": 1.0e-6},
+        "initial_parameter": tensor_fixture(initial_parameter),
+        "gradients": [tensor_fixture(gradient) for gradient in gradients],
+        "expected_steps": expected_steps,
+    }
+
+
 def weighted_sampler_case() -> dict[str, Any]:
     class_counts = [3072, 1024]
     labels = torch.repeat_interleave(
@@ -2029,6 +2072,7 @@ def generate_fixture() -> dict[str, Any]:
             "cross_entropy_index_mean_f32": cross_entropy_case(),
             "cross_entropy_matrix_f32": cross_entropy_matrix(),
             "adamw_step1_f32": adamw_case(),
+            "sgd_momentum_multistep_f32": sgd_momentum_multistep_case(),
             "gradient_accumulation_linear_ce_sgd_f32":
                 gradient_accumulation_matrix(),
             "weighted_sampler_inverse_frequency": weighted_sampler_case(),

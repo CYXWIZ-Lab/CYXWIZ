@@ -10,6 +10,7 @@
 namespace cyxwiz {
 
 enum class BackendFallbackReason {
+    BackendUnavailable,
     GpuBackendException,
     ArrayFireJitCompileFailure,
     CudaJitParamOverflow,

@@ -1,5 +1,6 @@
 #include "cyxwiz/optimizers/sgd.h"
 #include "cyxwiz/tensor.h"
+#include "../arrayfire_backend_utils.h"
 #include "optimizer_utils.h"
 
 #include <cmath>
@@ -33,6 +34,25 @@ SGDOptimizer::SGDOptimizer(double learning_rate, double momentum)
 
 void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
                         const std::map<std::string, Tensor>& gradients) {
+    constexpr const char* kOperation = "SGDOptimizer::Step";
+    for (const auto& [name, param] : parameters) {
+        const auto grad_it = gradients.find(name);
+        if (grad_it == gradients.end()) {
+            continue;
+        }
+        optimizer_detail::ValidateOptimizerStepTensors(
+            kOperation, name, param, grad_it->second);
+        const auto velocity = velocity_.find(name);
+        if (velocity != velocity_.end() &&
+            velocity->second.Shape() != param.Shape()) {
+            throw std::invalid_argument(
+                "SGD momentum state shape does not match parameter '" + name +
+                "'.");
+        }
+    }
+
+    const bool arrayfire_available =
+        optimizer_detail::OptimizerArrayFireAvailable();
     for (auto& param_pair : parameters) {
         const std::string& name = param_pair.first;
         Tensor& param = param_pair.second;
@@ -42,16 +62,27 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
         const Tensor& grad = grad_it->second;
         size_t num_elements = param.NumElements();
-        const auto velocity = velocity_.find(name);
-        if (velocity != velocity_.end() &&
-            velocity->second.Shape() != param.Shape()) {
-            throw std::invalid_argument(
-                "SGD momentum state shape does not match parameter '" + name +
-                "'.");
+
+        bool use_native_cpu = !arrayfire_available;
+        if (ShouldForceArrayFireBackendFallbackForTesting(kOperation)) {
+            optimizer_detail::LogOptimizerFallbackOnce(
+                kOperation,
+                name,
+                param,
+                BackendFallbackReason::GpuBackendException,
+                "forced ArrayFire backend fallback test hook");
+            use_native_cpu = true;
+        } else if (use_native_cpu) {
+            optimizer_detail::LogOptimizerFallbackOnce(
+                kOperation,
+                name,
+                param,
+                BackendFallbackReason::BackendUnavailable,
+                "ArrayFire backend unavailable");
         }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (optimizer_detail::OptimizerArrayFireAvailable() && param.GetDataType() == DataType::Float32) {
+        if (!use_native_cpu) {
             try {
                 af::array param_gpu = param.GetArray();
                 af::array grad_gpu = grad.GetArray();
@@ -82,33 +113,34 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
                 continue;
             } catch (const af::exception& e) {
                 optimizer_detail::LogOptimizerFallbackOnce(
-                    "SGDOptimizer::Step", name, param, e.what());
+                    kOperation, name, param, e.what());
             }
         }
 #endif
 
         // CPU fallback
-        if (param.GetDataType() == DataType::Float32) {
-            float* param_data = param.Data<float>();
-            const float* grad_data = grad.Data<float>();
-            if (momentum_ > 0.0) {
-                if (velocity_.find(name) == velocity_.end()) {
-                    velocity_[name] =
-                        Tensor::Zeros(param.Shape(), DataType::Float32);
-                }
-                float* velocity_data = velocity_.at(name).Data<float>();
-                for (size_t i = 0; i < num_elements; i++) {
-                    velocity_data[i] =
-                        static_cast<float>(momentum_) * velocity_data[i] +
-                        grad_data[i];
-                    param_data[i] -= static_cast<float>(learning_rate_) *
-                                     velocity_data[i];
-                }
-            } else {
-                for (size_t i = 0; i < num_elements; i++) {
-                    param_data[i] -= static_cast<float>(learning_rate_) *
-                                     grad_data[i];
-                }
+        const ScopedArrayFireHostSyncAttribution attribution(
+            ArrayFireHostSyncCategory::OptimizerCpuPath,
+            kOperation);
+        float* param_data = param.MutableData<float>();
+        const float* grad_data = grad.ReadData<float>();
+        if (momentum_ > 0.0) {
+            if (velocity_.find(name) == velocity_.end()) {
+                velocity_[name] =
+                    Tensor::Zeros(param.Shape(), DataType::Float32);
+            }
+            float* velocity_data = velocity_.at(name).MutableData<float>();
+            for (size_t i = 0; i < num_elements; i++) {
+                velocity_data[i] =
+                    static_cast<float>(momentum_) * velocity_data[i] +
+                    grad_data[i];
+                param_data[i] -= static_cast<float>(learning_rate_) *
+                                 velocity_data[i];
+            }
+        } else {
+            for (size_t i = 0; i < num_elements; i++) {
+                param_data[i] -= static_cast<float>(learning_rate_) *
+                                 grad_data[i];
             }
         }
     }

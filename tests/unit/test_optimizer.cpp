@@ -1,14 +1,82 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include "algorithms/arrayfire_backend_utils.h"
 #include <cyxwiz/memory_manager.h>
 #include <cyxwiz/optimizer.h>
 #include <cyxwiz/tensor.h>
+#include <cstdlib>
 #include <map>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #endif
+
+namespace {
+
+constexpr const char* kForceFallbackEnv =
+    "CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK";
+std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent>* g_optimizer_fallback_events =
+    nullptr;
+std::vector<cyxwiz::ArrayFireHostSyncEvent>* g_optimizer_host_sync_events =
+    nullptr;
+
+void CaptureOptimizerFallback(
+    const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
+    if (g_optimizer_fallback_events != nullptr) {
+        g_optimizer_fallback_events->push_back(event);
+    }
+}
+
+void CaptureOptimizerHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
+    if (g_optimizer_host_sync_events != nullptr) {
+        g_optimizer_host_sync_events->push_back(event);
+    }
+}
+
+void SetOptimizerTestEnv(const char* value) {
+#ifdef _WIN32
+    _putenv_s(kForceFallbackEnv, value);
+#else
+    setenv(kForceFallbackEnv, value, 1);
+#endif
+}
+
+void ClearOptimizerTestEnv() {
+#ifdef _WIN32
+    _putenv_s(kForceFallbackEnv, "");
+#else
+    unsetenv(kForceFallbackEnv);
+#endif
+}
+
+class ScopedOptimizerFallbackEnv {
+public:
+    explicit ScopedOptimizerFallbackEnv(const char* value) {
+        const char* previous = std::getenv(kForceFallbackEnv);
+        if (previous != nullptr) {
+            had_previous_ = true;
+            previous_ = previous;
+        }
+        SetOptimizerTestEnv(value);
+    }
+
+    ~ScopedOptimizerFallbackEnv() {
+        if (had_previous_) {
+            SetOptimizerTestEnv(previous_.c_str());
+        } else {
+            ClearOptimizerTestEnv();
+        }
+    }
+
+private:
+    bool had_previous_ = false;
+    std::string previous_;
+};
+
+} // namespace
 
 TEST_CASE("SGD optimizer creation", "[optimizer]") {
     auto opt = cyxwiz::CreateOptimizer(cyxwiz::OptimizerType::SGD, 0.01);
@@ -38,6 +106,123 @@ TEST_CASE("SGD optimizer updates parameters", "[optimizer]") {
     REQUIRE(updated[0] < 0.951f);
     REQUIRE(updated[1] > -1.901f);
     REQUIRE(updated[1] < -1.899f);
+}
+
+TEST_CASE("SGD validates the complete step before mutating parameters",
+          "[optimizer][truth]") {
+    const float parameter_values[] = {1.0f, -2.0f};
+    const float valid_gradient_values[] = {0.5f, -1.0f};
+    const float invalid_gradient_values[] = {0.25f};
+    std::map<std::string, cyxwiz::Tensor> params = {
+        {"a", cyxwiz::Tensor(
+                  {2}, parameter_values, cyxwiz::DataType::Float32)},
+        {"b", cyxwiz::Tensor(
+                  {2}, parameter_values, cyxwiz::DataType::Float32)},
+    };
+    const std::map<std::string, cyxwiz::Tensor> grads = {
+        {"a", cyxwiz::Tensor(
+                  {2}, valid_gradient_values, cyxwiz::DataType::Float32)},
+        {"b", cyxwiz::Tensor(
+                  {1}, invalid_gradient_values, cyxwiz::DataType::Float32)},
+    };
+
+    cyxwiz::SGDOptimizer optimizer(0.1, 0.9);
+    REQUIRE_THROWS_AS(optimizer.Step(params, grads), std::invalid_argument);
+    REQUIRE(optimizer.GetStepCount() == 0);
+    const float* unchanged = params.at("a").ReadData<float>();
+    REQUIRE(unchanged[0] == Catch::Approx(1.0f));
+    REQUIRE(unchanged[1] == Catch::Approx(-2.0f));
+}
+
+TEST_CASE("SGD strict fallback rejects before parameter state or step mutation",
+          "[optimizer][arrayfire][fallback][policy][truth]") {
+#ifdef NDEBUG
+    return;
+#else
+    const float parameter_values[] = {1.0f, -2.0f};
+    const float gradient_values[] = {0.5f, -1.0f};
+    std::map<std::string, cyxwiz::Tensor> params = {
+        {"weight", cyxwiz::Tensor(
+                       {2}, parameter_values, cyxwiz::DataType::Float32)},
+    };
+    const std::map<std::string, cyxwiz::Tensor> grads = {
+        {"weight", cyxwiz::Tensor(
+                       {2}, gradient_values, cyxwiz::DataType::Float32)},
+    };
+    cyxwiz::SGDOptimizer optimizer(0.1, 0.9);
+
+    {
+        const ScopedOptimizerFallbackEnv forced("SGDOptimizer::Step");
+        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
+            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+        REQUIRE_THROWS_AS(optimizer.Step(params, grads), std::runtime_error);
+    }
+
+    REQUIRE(optimizer.GetStepCount() == 0);
+    const float* unchanged = params.at("weight").ReadData<float>();
+    REQUIRE(unchanged[0] == Catch::Approx(1.0f));
+    REQUIRE(unchanged[1] == Catch::Approx(-2.0f));
+    cyxwiz::OptimizerState state;
+    std::string error;
+    REQUIRE(optimizer.ExportState(state, error));
+    REQUIRE(error.empty());
+    REQUIRE(state.tensors.empty());
+#endif
+}
+
+TEST_CASE("SGD allowed fallback records and attributes native CPU execution",
+          "[optimizer][arrayfire][fallback][host_sync][truth]") {
+#if !defined(CYXWIZ_HAS_ARRAYFIRE) || defined(NDEBUG)
+    return;
+#else
+    const float parameter_values[] = {1.0f, -2.0f};
+    const float gradient_values[] = {0.5f, -1.0f};
+    std::map<std::string, cyxwiz::Tensor> params = {
+        {"weight", cyxwiz::Tensor(
+                       af::array(2, parameter_values))},
+    };
+    const std::map<std::string, cyxwiz::Tensor> grads = {
+        {"weight", cyxwiz::Tensor(
+                       af::array(2, gradient_values))},
+    };
+    cyxwiz::SGDOptimizer optimizer(0.1, 0.9);
+    std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent> fallback_events;
+    std::vector<cyxwiz::ArrayFireHostSyncEvent> host_sync_events;
+    g_optimizer_fallback_events = &fallback_events;
+    g_optimizer_host_sync_events = &host_sync_events;
+    struct ResetEventCapture {
+        ~ResetEventCapture() {
+            g_optimizer_fallback_events = nullptr;
+            g_optimizer_host_sync_events = nullptr;
+        }
+    } reset_event_capture;
+
+    {
+        const ScopedOptimizerFallbackEnv forced("SGDOptimizer::Step");
+        const cyxwiz::ScopedArrayFireFallbackPolicy compatible(
+            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
+        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
+            &CaptureOptimizerFallback);
+        const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
+            &CaptureOptimizerHostSync);
+        optimizer.Step(params, grads);
+    }
+
+    REQUIRE(fallback_events.size() == 1);
+    REQUIRE(fallback_events.front().operation_name == "SGDOptimizer::Step");
+    REQUIRE(fallback_events.front().reason_code == "gpu_backend_exception");
+    REQUIRE_FALSE(fallback_events.front().fallback_forbidden);
+    REQUIRE_FALSE(host_sync_events.empty());
+    for (const auto& event : host_sync_events) {
+        REQUIRE(event.attribution_category == "optimizer_cpu_path");
+        REQUIRE(event.attribution_operation == "SGDOptimizer::Step");
+    }
+
+    REQUIRE(optimizer.GetStepCount() == 1);
+    const float* updated = params.at("weight").ReadData<float>();
+    REQUIRE(updated[0] == Catch::Approx(0.95f));
+    REQUIRE(updated[1] == Catch::Approx(-1.9f));
+#endif
 }
 
 TEST_CASE("Adam optimizer updates parameters", "[optimizer]") {

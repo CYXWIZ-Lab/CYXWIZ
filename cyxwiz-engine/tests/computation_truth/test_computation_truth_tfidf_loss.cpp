@@ -6,6 +6,7 @@
 #include <cyxwiz/layers/linear.h>
 #include <cyxwiz/loss.h>
 #include <cyxwiz/optimizers/adam.h>
+#include <cyxwiz/optimizers/sgd.h>
 #include <cyxwiz/tensor.h>
 
 #include "algorithms/arrayfire_backend_utils.h"
@@ -675,6 +676,63 @@ void TestAdamWOneStepParity(const json& cases) {
                 ReadTolerance(test_case), "AdamW first-step parameter");
 }
 
+void TestSGDMomentumMultiStepParity(const json& cases) {
+    const auto& test_case = cases.at("sgd_momentum_multistep_f32");
+    Check(test_case.value("operation", "") == "torch.optim.SGD",
+          "SGD fixture operation mismatch");
+    Check(test_case.value("dtype", "") == "float32",
+          "SGD fixture dtype mismatch");
+    const auto& hyperparameters = test_case.at("hyperparameters");
+    const double lr = hyperparameters.at("learning_rate").get<double>();
+    const double momentum = hyperparameters.at("momentum").get<double>();
+    const auto initial = ReadFloatValues(
+        test_case.at("initial_parameter"), "SGD initial parameter");
+    const auto parameter_shape = ReadShape(
+        test_case.at("initial_parameter"), "SGD initial parameter");
+    const auto& gradients = test_case.at("gradients");
+    const auto& expected_steps = test_case.at("expected_steps");
+    Check(gradients.size() == expected_steps.size(),
+          "SGD fixture gradient/step count mismatch");
+
+    std::map<std::string, cyxwiz::Tensor> parameters = {
+        {"weight", cyxwiz::Tensor(parameter_shape, initial.data(),
+                                  cyxwiz::DataType::Float32)},
+    };
+    cyxwiz::SGDOptimizer optimizer(lr, momentum);
+    for (size_t index = 0; index < gradients.size(); ++index) {
+        const auto gradient_values = ReadFloatValues(
+            gradients.at(index), "SGD gradient");
+        const std::map<std::string, cyxwiz::Tensor> step_gradients = {
+            {"weight", cyxwiz::Tensor(
+                           ReadShape(gradients.at(index), "SGD gradient"),
+                           gradient_values.data(), cyxwiz::DataType::Float32)},
+        };
+        optimizer.Step(parameters, step_gradients);
+
+        const auto& expected = expected_steps.at(index);
+        Check(optimizer.GetStepCount() ==
+                  expected.at("step_count").get<int>(),
+              "SGD PyTorch step-count parity");
+        CheckTensor(parameters.at("weight"), expected.at("parameter"),
+                    ReadTolerance(test_case),
+                    "SGD multi-step parameter");
+
+        cyxwiz::OptimizerState state;
+        std::string error;
+        Check(optimizer.ExportState(state, error),
+              "SGD state export failed: " + error);
+        Check(error.empty(), "SGD state export returned an error");
+        Check(state.step_count == optimizer.GetStepCount(),
+              "SGD exported step count mismatch");
+        Check(state.tensors.count("velocity/weight") == 1,
+              "SGD momentum state is missing velocity/weight");
+        CheckTensor(state.tensors.at("velocity/weight"),
+                    expected.at("momentum_buffer"),
+                    ReadTolerance(test_case),
+                    "SGD PyTorch momentum-buffer parity");
+    }
+}
+
 void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
     const bool initialized_here = !cyxwiz::IsInitialized();
     if (initialized_here) {
@@ -731,6 +789,7 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestCrossEntropyMatrixParity(cases);
         TestLinearForwardBackwardParity(cases);
         TestAdamWOneStepParity(cases);
+        TestSGDMomentumMultiStepParity(cases);
     }
     g_fallback_events = nullptr;
     g_host_sync_events = nullptr;
@@ -764,6 +823,6 @@ int main(int argc, char** argv) {
     TestBoundedTFIDFMaterialization();
     TestTFIDFNGramMaterialization();
     TestArrayFireCpuTrainingCoreTruth(cases);
-    std::cout << "Computation truth TF-IDF + CrossEntropy + Linear + AdamW checks passed\n";
+    std::cout << "Computation truth TF-IDF + CrossEntropy + Linear + optimizer checks passed\n";
     return 0;
 }

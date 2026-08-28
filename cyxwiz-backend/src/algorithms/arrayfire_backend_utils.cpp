@@ -178,6 +178,8 @@ void NotifyArrayFireHostSync(ArrayFireHostSyncEvent event) {
 
 const char* BackendFallbackReasonName(BackendFallbackReason reason) {
     switch (reason) {
+    case BackendFallbackReason::BackendUnavailable:
+        return "backend_unavailable";
     case BackendFallbackReason::CudaJitParamOverflow:
         return "cuda_jit_param_overflow";
     case BackendFallbackReason::ArrayFireJitCompileFailure:
@@ -218,6 +220,12 @@ BackendFallbackReason ClassifyArrayFireBackendFallbackReason(
         return BackendFallbackReason::BackendInternalError;
     }
     const std::string text = ToLowerAscii(message);
+    if (ContainsAny(text, {
+            "backend unavailable",
+            "backend is unavailable",
+            "no arrayfire backend"})) {
+        return BackendFallbackReason::BackendUnavailable;
+    }
     if (ContainsAny(text, {
             "out of memory",
             "cuda_error_memory_allocation",

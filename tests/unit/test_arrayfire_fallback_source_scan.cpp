@@ -68,7 +68,6 @@ const std::vector<LegacyTensorDataOwner>& LegacyTensorDataInventory() {
         {"cyxwiz-backend/src/algorithms/model_interpretability.cpp", 10, "compatibility_compute", "model interpretability"},
         {"cyxwiz-backend/src/algorithms/optimizers/adaptive_optimizers.cpp", 11, "compatibility_compute", "adaptive optimizers"},
         {"cyxwiz-backend/src/algorithms/optimizers/lamb.cpp", 4, "compatibility_compute", "LAMB optimizer"},
-        {"cyxwiz-backend/src/algorithms/optimizers/sgd.cpp", 3, "compatibility_compute", "SGD optimizer"},
         {"cyxwiz-backend/src/algorithms/sequential/feedforward_modules.cpp", 15, "compatibility_compute", "feed-forward modules"},
         {"cyxwiz-backend/src/algorithms/sequential/model_io.cpp", 2, "explicit_host_boundary", "model serialization"},
         {"cyxwiz-backend/src/algorithms/sequential/normalization_modules.cpp", 21, "compatibility_compute", "normalization modules"},

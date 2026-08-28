@@ -2632,6 +2632,131 @@
         }
       }
     ],
+    "sgd_momentum_multistep_f32": {
+      "dtype": "float32",
+      "expected_steps": [
+        {
+          "momentum_buffer": {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.25,
+              -0.5,
+              0.125
+            ]
+          },
+          "parameter": {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.9750000238418579,
+              -1.9500000476837158,
+              0.48750001192092896
+            ]
+          },
+          "step_count": 1
+        },
+        {
+          "momentum_buffer": {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.09999999403953552,
+              -0.19999998807907104,
+              0.612500011920929
+            ]
+          },
+          "parameter": {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.9650000333786011,
+              -1.9300000667572021,
+              0.42625001072883606
+            ]
+          },
+          "step_count": 2
+        },
+        {
+          "momentum_buffer": {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.8399999737739563,
+              -0.429999977350235,
+              0.17624998092651367
+            ]
+          },
+          "parameter": {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.8810000419616699,
+              -1.8870000839233398,
+              0.4086250066757202
+            ]
+          },
+          "step_count": 3
+        }
+      ],
+      "gradients": [
+        {
+          "shape": [
+            3
+          ],
+          "values": [
+            0.25,
+            -0.5,
+            0.125
+          ]
+        },
+        {
+          "shape": [
+            3
+          ],
+          "values": [
+            -0.125,
+            0.25,
+            0.5
+          ]
+        },
+        {
+          "shape": [
+            3
+          ],
+          "values": [
+            0.75,
+            -0.25,
+            -0.375
+          ]
+        }
+      ],
+      "hyperparameters": {
+        "learning_rate": 0.1,
+        "momentum": 0.9
+      },
+      "initial_parameter": {
+        "shape": [
+          3
+        ],
+        "values": [
+          1.0,
+          -2.0,
+          0.5
+        ]
+      },
+      "operation": "torch.optim.SGD",
+      "tolerance": {
+        "atol": 1e-06,
+        "rtol": 1e-06
+      }
+    },
     "tensor_broadcast": {
       "invalid_materializations": [
         {
