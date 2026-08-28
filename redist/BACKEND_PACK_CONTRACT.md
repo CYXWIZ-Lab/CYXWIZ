@@ -347,6 +347,9 @@ derived only from the decision's typed recommendation. Display-adapter vendor
 names, provider presence, and catalog availability alone never create a
 recommendation. Comparable benchmark evidence may promote a verified pack only
 when its signed `recommendation_targets` explicitly includes that backend.
+The graphical component list renders only bounded customer-facing status,
+reason, and remediation text derived from these typed fields. It never displays
+matrix IDs, internal ticket labels, raw counters, or physical fingerprints.
 
 ## Catalog
 
