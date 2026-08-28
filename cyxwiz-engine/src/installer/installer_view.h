@@ -34,6 +34,7 @@ struct InstallerViewState {
   std::array<char, 2048> install_path_text{};
   CyxWizInstallScope install_scope = CyxWizInstallScope::CurrentUser;
   bool install_location_dirty = false;
+  bool review_requested = false;
   std::string install_location_message;
   BackendPackInstallerPlan pending_plan;
   InstallerRemovalViewState removal;
