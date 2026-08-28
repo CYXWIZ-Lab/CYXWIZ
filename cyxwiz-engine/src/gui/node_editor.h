@@ -1316,6 +1316,8 @@ private:
     std::string GeneratePyCyxWizCode(const std::vector<int>& sorted_ids);
     std::optional<std::string> FindDenseActivationConfigurationError(
         const std::vector<int>& sorted_ids) const;
+    std::optional<std::string> FindUnsupportedSequentialLayerError(
+        const std::vector<int>& sorted_ids) const;
 
     // RL-specific code generation
     bool IsRLGraph(const std::vector<int>& sorted_ids) const;

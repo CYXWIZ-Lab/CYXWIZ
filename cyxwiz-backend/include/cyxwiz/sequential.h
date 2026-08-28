@@ -6,6 +6,8 @@
 #include "activation.h"
 #include "optimizer.h"
 #include "layers/linear.h"
+#include "layers/convolution.h"
+#include "layers/pooling.h"
 #include "layers/normalization.h"
 #include "layers/attention.h"
 #include "activations/relu.h"
@@ -168,6 +170,96 @@ protected:
     bool is_training_ = true;
     bool trainable_ = true;  // For transfer learning - frozen layers won't update
     Tensor input_cache_;  // Cached input for backward pass
+};
+
+/**
+ * @brief SequentialModel ownership adapter for the legacy Conv2D primitive.
+ *
+ * Preserves the existing `[H,W,C,N]` Tensor contract and convolution math.
+ * The node remains blocked in Studio until that primitive has an
+ * ArrayFire-first forward/backward implementation and the full Part F gates.
+ */
+class CYXWIZ_API Conv2DModule : public Module {
+public:
+    Conv2DModule(int in_channels, int out_channels, int kernel_size,
+                 int stride = 1, int padding = 0, bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<Conv2DLayer> layer_;
+    int in_channels_;
+    int out_channels_;
+    int kernel_size_;
+    int stride_;
+    int padding_;
+    bool use_bias_;
+};
+
+/**
+ * @brief Parameter-free SequentialModel adapter for MaxPool2DLayer.
+ *
+ * Studio remains blocked until the current ArrayFire/native fallback path has
+ * complete numerical, padding, residency, and strict-fallback evidence.
+ */
+class CYXWIZ_API MaxPool2DModule : public Module {
+public:
+    MaxPool2DModule(int pool_size, int stride = -1, int padding = 0);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<MaxPool2DLayer> layer_;
+    int pool_size_;
+    int stride_;
+    int padding_;
+};
+
+/**
+ * @brief Parameter-free SequentialModel adapter for AvgPool2DLayer.
+ *
+ * Studio remains blocked until the current ArrayFire/native fallback path has
+ * complete numerical, padding, residency, and strict-fallback evidence.
+ */
+class CYXWIZ_API AvgPool2DModule : public Module {
+public:
+    AvgPool2DModule(int pool_size, int stride = -1, int padding = 0);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<AvgPool2DLayer> layer_;
+    int pool_size_;
+    int stride_;
+    int padding_;
+};
+
+/**
+ * @brief Parameter-free SequentialModel adapter for GlobalAvgPool2DLayer.
+ *
+ * Studio remains blocked while the primitive is native CPU-only and lacks the
+ * complete Part F numerical, residency, and training evidence.
+ */
+class CYXWIZ_API GlobalAvgPool2DModule : public Module {
+public:
+    GlobalAvgPool2DModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<GlobalAvgPool2DLayer> layer_;
 };
 
 /**

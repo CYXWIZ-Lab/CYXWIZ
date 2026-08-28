@@ -47,7 +47,11 @@ void LogPoolingFallbackOnce(
 #endif
 
 MaxPool2DLayer::MaxPool2DLayer(int pool_size, int stride, int padding)
-    : pool_size_(pool_size), stride_(stride > 0 ? stride : pool_size), padding_(padding) {
+    : pool_size_(pool_size), stride_(stride == -1 ? pool_size : stride), padding_(padding) {
+    if (pool_size_ <= 0 || stride_ <= 0 || padding_ < 0) {
+        throw std::invalid_argument(
+            "MaxPool2D requires positive pool_size/stride and non-negative padding");
+    }
 }
 
 Tensor MaxPool2DLayer::Forward(const Tensor& input) {
@@ -110,8 +114,11 @@ Tensor MaxPool2DLayer::Forward(const Tensor& input) {
         output.eval();
         indices.eval();
 
-        max_indices_ = AfToTensor(indices);
-        return AfToTensor(output);
+        const std::vector<size_t> output_shape = {
+            static_cast<size_t>(out_h), static_cast<size_t>(out_w),
+            static_cast<size_t>(channels), static_cast<size_t>(batch_size)};
+        max_indices_ = AfToTensor(indices).Reshape(output_shape);
+        return AfToTensor(output).Reshape(output_shape);
     } catch (const af::exception& e) {
         LogPoolingFallbackOnce(
             "MaxPool2DLayer::Forward", e.what(), input, "input");
@@ -216,7 +223,7 @@ Tensor MaxPool2DLayer::Backward(const Tensor& grad_output) {
         }
 
         dx.eval();
-        return AfToTensor(dx);
+        return AfToTensor(dx).Reshape(cached_input_.Shape());
     } catch (const af::exception& e) {
         LogPoolingFallbackOnce(
             "MaxPool2DLayer::Backward", e.what(), grad_output, "grad_output");
@@ -276,7 +283,11 @@ Tensor MaxPool2DLayer::Backward(const Tensor& grad_output) {
 // ============================================================================
 
 AvgPool2DLayer::AvgPool2DLayer(int pool_size, int stride, int padding)
-    : pool_size_(pool_size), stride_(stride > 0 ? stride : pool_size), padding_(padding) {
+    : pool_size_(pool_size), stride_(stride == -1 ? pool_size : stride), padding_(padding) {
+    if (pool_size_ <= 0 || stride_ <= 0 || padding_ < 0) {
+        throw std::invalid_argument(
+            "AvgPool2D requires positive pool_size/stride and non-negative padding");
+    }
 }
 
 Tensor AvgPool2DLayer::Forward(const Tensor& input) {
@@ -326,7 +337,9 @@ Tensor AvgPool2DLayer::Forward(const Tensor& input) {
         }
         output.eval();
 
-        return AfToTensor(output);
+        return AfToTensor(output).Reshape({
+            static_cast<size_t>(out_h), static_cast<size_t>(out_w),
+            static_cast<size_t>(channels), static_cast<size_t>(batch_size)});
     } catch (const af::exception& e) {
         LogPoolingFallbackOnce(
             "AvgPool2DLayer::Forward", e.what(), input, "input");
@@ -421,7 +434,7 @@ Tensor AvgPool2DLayer::Backward(const Tensor& grad_output) {
         }
 
         dx.eval();
-        return AfToTensor(dx);
+        return AfToTensor(dx).Reshape(cached_input_.Shape());
     } catch (const af::exception& e) {
         LogPoolingFallbackOnce(
             "AvgPool2DLayer::Backward", e.what(), grad_output, "grad_output");

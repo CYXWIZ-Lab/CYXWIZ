@@ -2,6 +2,7 @@
 #include "activation_codegen_contract.h"
 #include "panels/script_editor.h"
 #include "../core/async_task_manager.h"
+#include "../core/pipeline_runtime_capabilities.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -101,7 +102,7 @@ std::string BlockedCodegenConfiguration(
         }
     }
     return std::string("# ") + framework +
-        " export is blocked by the Studio Dense/activation contract.\n"
+        " export is blocked by Studio contract validation.\n"
         "raise ValueError('" + escaped_error + "')\n";
 }
 
@@ -697,10 +698,28 @@ NodeEditor::FindDenseActivationConfigurationError(
     return std::nullopt;
 }
 
+std::optional<std::string>
+NodeEditor::FindUnsupportedSequentialLayerError(
+    const std::vector<int>& sorted_ids) const {
+    for (const int node_id : sorted_ids) {
+        const MLNode* node = FindNodeById(node_id);
+        if (!node) continue;
+        if (const char* reason =
+                cyxwiz::ResolvePipelineUnsupportedSequentialModelLayerReason(
+                    node->type)) {
+            return EffectiveNodeName(*node) + ": " + reason;
+        }
+    }
+    return std::nullopt;
+}
+
 std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) {
     // Check if this is an RL graph
     if (IsRLGraph(sorted_ids)) {
         return GenerateRLPyTorchCode(sorted_ids);
+    }
+    if (const auto error = FindUnsupportedSequentialLayerError(sorted_ids)) {
+        return BlockedCodegenConfiguration("PyTorch", *error);
     }
     if (const auto error = FindDenseActivationConfigurationError(sorted_ids)) {
         return BlockedCodegenConfiguration("PyTorch", *error);
@@ -957,6 +976,9 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
         code += GenerateRLPyTorchCode(sorted_ids);  // Fallback to SB3 code
         return code;
     }
+    if (const auto error = FindUnsupportedSequentialLayerError(sorted_ids)) {
+        return BlockedCodegenConfiguration("TensorFlow", *error);
+    }
     if (const auto error = FindDenseActivationConfigurationError(sorted_ids)) {
         return BlockedCodegenConfiguration("TensorFlow", *error);
     }
@@ -1101,6 +1123,9 @@ std::string NodeEditor::GenerateKerasCode(const std::vector<int>& sorted_ids) {
         code += GenerateRLPyTorchCode(sorted_ids);  // Fallback to SB3 code
         return code;
     }
+    if (const auto error = FindUnsupportedSequentialLayerError(sorted_ids)) {
+        return BlockedCodegenConfiguration("Keras", *error);
+    }
     if (const auto error = FindDenseActivationConfigurationError(sorted_ids)) {
         return BlockedCodegenConfiguration("Keras", *error);
     }
@@ -1188,6 +1213,9 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
     // Check if this is an RL graph
     if (IsRLGraph(sorted_ids)) {
         return GenerateRLPyCyxWizCode(sorted_ids);
+    }
+    if (const auto error = FindUnsupportedSequentialLayerError(sorted_ids)) {
+        return BlockedCodegenConfiguration("PyCyxWiz", *error);
     }
     if (const auto error = FindDenseActivationConfigurationError(sorted_ids)) {
         return BlockedCodegenConfiguration("PyCyxWiz", *error);
