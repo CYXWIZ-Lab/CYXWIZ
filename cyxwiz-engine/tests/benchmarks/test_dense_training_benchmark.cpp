@@ -252,14 +252,14 @@ cyxwiz::TrainingConfiguration MakeConfiguration(
     config.layers.push_back(std::move(dense_128));
     config.layers.push_back(MakeLayer(gui::NodeType::ReLU, 2, "ReLU128"));
     auto dropout_128 = MakeLayer(gui::NodeType::Dropout, 3, "Dropout128");
-    dropout_128.dropout_rate = 0.2f;
+    dropout_128.parameters["rate"] = "0.2";
     config.layers.push_back(std::move(dropout_128));
     auto dense_64 = MakeLayer(gui::NodeType::Dense, 4, "Dense64");
     dense_64.units = 64;
     config.layers.push_back(std::move(dense_64));
     config.layers.push_back(MakeLayer(gui::NodeType::ReLU, 5, "ReLU64"));
     auto dropout_64 = MakeLayer(gui::NodeType::Dropout, 6, "Dropout64");
-    dropout_64.dropout_rate = 0.2f;
+    dropout_64.parameters["rate"] = "0.2";
     config.layers.push_back(std::move(dropout_64));
     auto dense_1 = MakeLayer(gui::NodeType::Dense, 7, "Dense1");
     dense_1.units = 1;

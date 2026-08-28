@@ -25,11 +25,15 @@ struct LayerCapability {
 inline const char* LayerTypeName(gui::NodeType type) {
     switch (type) {
         case gui::NodeType::Dense: return "Dense";
+        case gui::NodeType::Conv1D: return "Conv1D";
         case gui::NodeType::Conv2D: return "Conv2D";
+        case gui::NodeType::Conv3D: return "Conv3D";
+        case gui::NodeType::DepthwiseConv2D: return "DepthwiseConv2D";
         case gui::NodeType::MaxPool2D: return "MaxPool2D";
         case gui::NodeType::AvgPool2D: return "AvgPool2D";
         case gui::NodeType::GlobalMaxPool: return "GlobalMaxPool";
         case gui::NodeType::GlobalAvgPool: return "GlobalAvgPool";
+        case gui::NodeType::AdaptiveAvgPool: return "AdaptiveAvgPool";
         case gui::NodeType::Flatten: return "Flatten";
         case gui::NodeType::Reshape: return "Reshape";
         case gui::NodeType::View: return "View";
@@ -58,6 +62,8 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::Dropout: return "Dropout";
         case gui::NodeType::BatchNorm: return "BatchNorm";
         case gui::NodeType::LayerNorm: return "LayerNorm";
+        case gui::NodeType::GroupNorm: return "GroupNorm";
+        case gui::NodeType::InstanceNorm: return "InstanceNorm";
         case gui::NodeType::MultiHeadAttention: return "MultiHeadAttention";
         case gui::NodeType::SelfAttention: return "SelfAttention";
         case gui::NodeType::CrossAttention: return "CrossAttention";
@@ -161,7 +167,8 @@ inline bool IsKnownCpuBackedModelLayer(gui::NodeType type) {
     return type == gui::NodeType::LayerNorm ||
            type == gui::NodeType::MultiHeadAttention ||
            type == gui::NodeType::TransformerEncoder ||
-           type == gui::NodeType::TransformerDecoder;
+           type == gui::NodeType::TransformerDecoder ||
+           type == gui::NodeType::PositionalEncoding;
 }
 
 inline LayerCapability ClassifyLayer(gui::NodeType type) {
@@ -399,14 +406,14 @@ inline BackendPlacementEntry BuildTimeDistributedSequenceWrapperPlacement(
     placement.status = BackendPlacementStatus::Unknown;
     placement.reason_code = BackendPlacementReason::TimeDistributedSequenceWrapper;
     placement.explanation =
-        "TimeDistributed is a recognized sequence wrapper that applies a dense "
-        "projection across time steps. Backend placement is intentionally "
-        "reported as unknown until the compiler can classify the wrapper and "
-        "its inner projection as one precise device contract.";
+        "TimeDistributed Dense is a concrete shared linear projection across "
+        "time steps, not a generic inner-layer wrapper. Placement remains "
+        "unknown because its rank-3 to rank-2 reshape boundary and inner "
+        "Linear execution are not yet proven as one device-resident contract.";
     placement.suggested_action =
         "No action needed for compile support. For performance-sensitive "
-        "sequence models, validate runtime placement and add a dedicated "
-        "TimeDistributed backend contract before relying on GPU residency.";
+        "sequence models, validate the reshape and Linear runtime placement "
+        "before relying on GPU residency.";
     return placement;
 }
 

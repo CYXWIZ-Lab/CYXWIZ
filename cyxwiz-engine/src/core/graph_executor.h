@@ -19,7 +19,7 @@
 
 #include <vector>
 #include <map>
-#include <set>
+#include <atomic>
 #include <variant>
 #include <functional>
 #include <mutex>
@@ -77,32 +77,42 @@ public:
 
     // Value access (thread-safe)
     NodeValue GetPinValue(int pin_id) const;
+    bool TryGetPinValue(int pin_id, NodeValue& value) const;
     void SetPinValue(int pin_id, NodeValue value);
+
+    // Publish a live Properties edit to the executor-owned graph snapshot.
+    bool SetNodeParameter(int node_id,
+                          const std::string& key,
+                          const std::string& value);
 
     // Errors
     bool HasError() const { return !error_.empty(); }
     std::string GetError() const { return error_; }
 
     // Sim time
-    float GetSimTime() const { return sim_time_; }
-
-    // Dirty flag: mark a pin as changed (for partial evaluation)
-    void MarkPinDirty(int pin_id);
+    float GetSimTime() const { return sim_time_.load(); }
 
 private:
     bool BuildExecutionOrder();
     bool EvaluateNode(const gui::MLNode& node, float dt);
     bool EvaluateSignalNode(const gui::MLNode& node, float dt);
     bool EvaluatePluginNode(const gui::MLNode& node, float dt);
+    bool ReadFloatParameter(const gui::MLNode& node,
+                            const char* key,
+                            float fallback,
+                            float& value,
+                            const char* legacy_key = nullptr);
+    std::string GetParameterValue(const gui::MLNode& node,
+                                  const char* key,
+                                  const char* legacy_key,
+                                  const std::string& fallback) const;
+    bool StoreScalarOutput(const gui::MLNode& node, float value);
 
     // Gather input pin values for a node by following links
     std::map<std::string, NodeValue> GatherInputs(const gui::MLNode& node) const;
 
     // Find node by ID
     const gui::MLNode* FindNode(int node_id) const;
-
-    // Internal recursive dirty marking with cycle detection
-    void MarkPinDirtyImpl(int pin_id, std::set<int>& visited_pins);
 
     // Graph data (copies)
     std::vector<gui::MLNode> nodes_;
@@ -115,12 +125,12 @@ private:
     mutable std::mutex values_mutex_;
     std::map<int, NodeValue> pin_values_;
 
-    // Dirty tracking for partial evaluation
-    std::set<int> dirty_nodes_;
-    bool full_eval_ = true;  // First tick always evaluates everything
+    // Live parameter overrides are separate from the immutable build snapshot.
+    mutable std::mutex parameters_mutex_;
+    std::map<std::pair<int, std::string>, std::string> parameter_overrides_;
 
     // Simulation state
-    float sim_time_ = 0.0f;
+    std::atomic<float> sim_time_{0.0f};
 
     // Plugin callback
     PluginEvalCallback plugin_eval_callback_;

@@ -75,6 +75,23 @@ Require both:
 Run source-contract scans for unclassified ArrayFire catches and ambiguous
 fallback wording.
 
+### Native-Owned Bounded Control
+
+Require:
+
+- capability and placement metadata declaring the native route before run;
+- numerical parity for the bounded scalar/control operation;
+- explicit input bound, update cadence, and host/CPU/UI consumer;
+- runtime evidence for effective native execution with no fallback event;
+- zero unnecessary ArrayFire upload, synchronization, and readback for the
+  declared path;
+- negative coverage proving vector, batch, Tensor, model, and device-consumed
+  variants take the ArrayFire route or a declared fallback;
+- placement-policy coverage when a run forbids mixed execution.
+
+Do not treat strict fallback acceptance as proof of ownership. Validate the
+operation's dataflow and consumers, not only its size or fallback count.
+
 ### Training Execution or Reporting Cadence
 
 Require:

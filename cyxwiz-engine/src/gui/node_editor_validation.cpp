@@ -6,6 +6,7 @@
 
 #include "node_editor.h"
 #include "node_editor_shape_inference.h"
+#include "../core/pipeline_runtime_capabilities.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include <spdlog/spdlog.h>
 #include <set>
@@ -55,6 +56,14 @@ bool NodeEditor::ValidateGraph(std::string& error_message) {
 
     // Check variadic pin requirements
     for (const auto& node : nodes_) {
+        if (const char* reason =
+                cyxwiz::ResolvePipelineUnsupportedSequentialModelLayerReason(
+                    node.type)) {
+            error_message = "Cannot generate code for blocked node '" +
+                node.name + "': " + reason;
+            return false;
+        }
+
         for (const auto& pin : node.inputs) {
             int conn_count = GetConnectionCount(pin.id);
 

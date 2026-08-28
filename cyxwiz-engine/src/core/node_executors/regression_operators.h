@@ -43,11 +43,13 @@ public:
 
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
+    bool IsCacheable() const override { return model_path_.empty(); }
 
 private:
     std::vector<std::string> feature_cols_;
     std::string target_col_;
     bool fit_intercept_ = true;
+    std::string model_path_;
     PipelineOperatorProgressCallback progress_callback_;
 };
 
@@ -81,11 +83,13 @@ public:
 
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
+    bool IsCacheable() const override { return model_path_.empty(); }
 
 private:
     std::string feature_col_;
     std::string target_col_;
     int degree_ = 2;
+    std::string model_path_;
     PipelineOperatorProgressCallback progress_callback_;
 };
 

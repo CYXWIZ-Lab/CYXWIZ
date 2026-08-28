@@ -4,7 +4,7 @@
 
 1. Runtime architecture
 2. Device and run authority
-3. Native CPU fallback
+3. Native ownership and CPU fallback
 4. Placement and runtime evidence
 5. Tensor ownership and residency
 6. ArrayFire JIT and materialization
@@ -48,18 +48,56 @@ survives later device switches.
 Keep requested and effective fields separate. Startup activation fallback may
 change the effective device, but it must not erase what the user requested.
 
-## 3. Native CPU Fallback
+## 3. Native Ownership and CPU Fallback
 
 ArrayFire CPU executes the same ArrayFire operation graph on CPU. It is not a
 native C++ compatibility fallback.
 
-Use this order:
+Use these distinct routes:
 
 ```text
-Tensor/Graph API
+Tensor/array compute
   -> selected ArrayFire backend
   -> explicit observed native C++ fallback only for a declared gap
+
+host scalar/control ingress
+  -> declared native-owned bounded operation
+  -> host/CPU/UI consumer at the same cadence
 ```
+
+A native-owned operation is not an ArrayFire fallback. Use that classification
+only when all of these facts are true before execution:
+
+1. the input is already host-owned and bounded to a scalar or similarly tiny
+   control value;
+2. the immediate consumer is host, native CPU, or UI code at the same bounded
+   cadence;
+3. no vector, batch, Tensor, model, or device-resident downstream consumer
+   needs the result;
+4. routing through ArrayFire would introduce a per-update upload, evaluation,
+   synchronization, and readback rather than preserve useful residency;
+5. capability and placement metadata declare the native route, operation,
+   reason, bound, cadence, and consumer.
+
+Report the effective native route in runtime evidence, but do not increment
+fallback counters or describe it as recovery from ArrayFire. Strict native
+fallback policy does not reject a correctly declared native-owned operation;
+a separate placement policy may reject mixed execution when the run contract
+requires it.
+
+For example, evaluating one host scalar with `std::sin` at 60 Hz for a native
+MuJoCo control input or UI signal scope can be native-owned. Generating a
+waveform vector or batch, applying sine to a Tensor, or feeding the result to a
+device-resident stage is ArrayFire-first and should use `af::sin`. Likewise,
+host-originated Arrow data does not make dense linear or polynomial fitting a
+native-control operation: model matrix math belongs on ArrayFire. An existing
+native fitting algorithm may remain only as a declared production exception
+or compatibility fallback until numerical and supported-domain parity exists.
+
+Do not establish an arbitrary element-count threshold as the ownership rule.
+Decide from residency, shape and batching, operation fusion, consumers, and
+transfer/synchronization cadence. Benchmark representative fixed workloads
+before claiming either route is faster.
 
 Keep an existing native path when it covers unsupported shape/dtype/algorithm
 semantics, a known reliable production exception, or focused diagnostics.
@@ -86,6 +124,7 @@ by preflight and GUI reporting. Distinguish:
 - fatal executability blockers;
 - strict-residency blockers;
 - executable ArrayFire stages;
+- declared native-owned bounded control stages;
 - declared native compatibility gaps;
 - bounded output and ingress boundaries.
 
@@ -165,8 +204,8 @@ Do not recompute or reread the same metric for logs, callbacks, and plots.
 
 Keep progress callbacks independent of fresh metric reads. Display selected,
 requested, and effective device truth accurately. Display native fallback,
-host synchronization, transfer categories, reporting cadence, and terminal
-residency verdict without conflating them.
+native-owned control execution, host synchronization, transfer categories,
+reporting cadence, and terminal residency verdict without conflating them.
 
 Run large dataset preparation, cache export, and model materialization outside
 the render thread. Name those tasks separately from Tensor host
@@ -205,6 +244,9 @@ explicitly and test old persisted inputs.
 ## 9. Prohibited Patterns
 
 - Silent native CPU execution after an ArrayFire exception.
+- Describing undeclared scalar CPU work as native-owned after it has executed.
+- Extending the native-control route to batch, Tensor, regression, or
+  device-consumed computation because the current input happens to be small.
 - Labeling ArrayFire CPU as native fallback.
 - Hard-coded backend/device labels in GUI or trace output.
 - First-call or process-lifetime backend capability caches.

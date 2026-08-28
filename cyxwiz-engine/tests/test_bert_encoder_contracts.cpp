@@ -240,6 +240,13 @@ void TestBertSequenceClassificationGraphContract() {
     Check(config.bert_encoder_graph.output_contract ==
               "Float32[batch,classes]",
           "BERT sequence graph should expose classifier output contract");
+    const auto* positional_placement = FindPlacement(config, 3);
+    Check(positional_placement != nullptr &&
+              positional_placement->status ==
+                  cyxwiz::BackendPlacementStatus::Cpu &&
+              positional_placement->reason_code ==
+                  cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked,
+          "BERT positional encoding should truthfully report native CPU placement");
     const auto* encoder_placement = FindPlacement(config, 4);
     Check(encoder_placement != nullptr,
           "BERT sequence graph should report TransformerEncoder placement");

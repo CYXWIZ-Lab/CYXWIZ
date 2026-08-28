@@ -1,5 +1,6 @@
 #include "node_metadata_registry.h"
 #include "pipeline_runtime_capabilities.h"
+#include "simulation_runtime_capabilities.h"
 #include "../gui/icons.h"
 #include <algorithm>
 #include <cctype>
@@ -425,6 +426,16 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                     false,
                     reason);
             }
+            if (support.mode ==
+                PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow) {
+                UpsertSupportAxis(
+                    metadata,
+                    "Training Role",
+                    PipelineTrainingSupportRoleName(
+                        PipelineTrainingSupportRole::TrainingWorkflow),
+                    false,
+                    reason);
+            }
             UpsertSupportAxis(
                 metadata,
                 "Compile",
@@ -437,11 +448,15 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
                 support.training_supported ? "supported" : "unsupported",
                 support.training_supported,
                 reason);
+            const bool workflow_unowned =
+                support.mode == PipelineTrainingBackendSupportMode::
+                                    UnsupportedTrainingWorkflow;
             UpsertSupportAxis(
                 metadata,
                 "Implementation Owner",
-                "training_backend",
-                true,
+                workflow_unowned ? "unowned_training_workflow"
+                                 : "training_backend",
+                !workflow_unowned,
                 reason);
 
             ApplySupportState(metadata, "blocked", false, reason);
@@ -454,6 +469,11 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
 
     for (const auto& capability :
          GetPipelineUnsupportedTrainingControlCapabilities()) {
+        apply_training_backend_status(capability.node_type);
+    }
+
+    for (const auto& capability :
+         GetPipelineUnsupportedTrainingWorkflowCapabilities()) {
         apply_training_backend_status(capability.node_type);
     }
 
@@ -654,6 +674,25 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
         NodeType::TreeModelPredictor,
         "classic_ml",
         "Table-path classical ML inference node for saved tree-family model artifacts.");
+    apply_workflow_lane_guidance(
+        NodeType::RegressionModelPredictor,
+        "classic_ml",
+        "Table-path inference node for fitted linear and polynomial regression artifacts.");
+
+    const std::string simulation_reason =
+        "GraphExecutor owns bounded scalar control evaluation for the live "
+        "simulation lane; PipelineExecutor and the training backend reject it.";
+    for (const auto& capability : kBuiltInSimulationRuntimeCapabilities) {
+        auto it = metadata_.find(capability.node_type);
+        if (it == metadata_.end()) continue;
+        apply_workflow_lane_guidance(
+            capability.node_type, "simulation", simulation_reason.c_str());
+        UpsertSupportAxis(it->second, "Simulation Runtime", "supported", true,
+                          simulation_reason);
+        UpsertSupportAxis(it->second, "Implementation Owner", "graph_executor",
+                          true, simulation_reason);
+        ApplySupportState(it->second, "real", true, simulation_reason);
+    }
 
     for (NodeType node_type : {
              NodeType::Dense,
@@ -986,10 +1025,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
     };
 
     const std::initializer_list<PreviewDefinition> previews = {
-        {NodeType::Conv1D, NodeCategory::Layers, "Conv1D", {"convolution", "1d", "sequence"}},
-        {NodeType::Conv3D, NodeCategory::Layers, "Conv3D", {"convolution", "3d", "volume"}},
-        {NodeType::DepthwiseConv2D, NodeCategory::Layers, "Depthwise Conv2D", {"convolution", "depthwise", "image"}},
-        {NodeType::AdaptiveAvgPool, NodeCategory::Pooling, "Adaptive Average Pool", {"pooling", "adaptive", "average"}},
         {NodeType::TransformerEncoder, NodeCategory::Attention, "Transformer Encoder", {"transformer", "attention", "encoder"}},
         {NodeType::TransformerDecoder, NodeCategory::Attention, "Transformer Decoder", {"transformer", "attention", "decoder"}},
         {NodeType::PositionalEncoding, NodeCategory::Attention, "Positional Encoding", {"transformer", "position", "encoding"}},
@@ -1614,61 +1649,85 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SVMClassifier, NodeCategory::Analytics, "SVM Classifier", ICON_FA_BORDER_ALL,
-        {"svm", "support", "vector"}, 0, false, "Support Vector Machine classifier",
-        "Finds optimal hyperplane for classification using kernel trick.", "",
-        {{"X", PinType::Dataset, true, "Features"}, {"y", PinType::Labels, true, "Labels"}},
-        {{"Model", PinType::Parameters, true, "Trained model"}, {"Predictions", PinType::Labels, true, "Predictions"}},
-        {{"kernel", "enum", "rbf", "Kernel function", {"linear", "rbf", "poly", "sigmoid"}, ""},
-         {"C", "float", "1.0", "Regularization", {}, ""},
-         {"gamma", "enum", "scale", "Kernel coefficient", {"scale", "auto"}, ""}},
+        {"svm", "support", "vector"}, 0, false,
+        "Blocked legacy SVM classifier preview",
+        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, or predictor is implemented.", "",
+        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
+         {"Labels", PinType::Labels, true, "Legacy label input"}},
+        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
+         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
+        {{"kernel", "enum", "rbf", "Legacy kernel selection retained for saved graphs", {"linear", "rbf", "poly", "sigmoid"}, "", "Kernel", "Compatibility"},
+         {"C", "float", "1.0", "Legacy regularization value retained for saved graphs", {}, "", "Regularization (C)", "Compatibility"},
+         {"gamma", "enum", "scale", "Legacy kernel coefficient retained for saved graphs", {"scale", "auto"}, "", "Gamma", "Compatibility"}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::KNNClassifier, NodeCategory::Analytics, "KNN Classifier", ICON_FA_USERS,
-        {"knn", "nearest", "neighbor"}, 0, false, "K-Nearest Neighbors classifier",
-        "Classifies based on majority vote of k nearest neighbors.", "",
-        {{"X", PinType::Dataset, true, "Features"}, {"y", PinType::Labels, true, "Labels"}},
-        {{"Model", PinType::Parameters, true, "Trained model"}, {"Predictions", PinType::Labels, true, "Predictions"}},
-        {{"n_neighbors", "int", "5", "Number of neighbors", {}, "1-100"},
-         {"weights", "enum", "uniform", "Weight function", {"uniform", "distance"}, ""},
-         {"metric", "enum", "euclidean", "Distance metric", {"euclidean", "manhattan", "cosine"}, ""}},
+        {"knn", "nearest", "neighbor"}, 0, false,
+        "Blocked legacy K-nearest-neighbors classifier preview",
+        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, or predictor is implemented.", "",
+        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
+         {"Labels", PinType::Labels, true, "Legacy label input"}},
+        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
+         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
+        {{"n_neighbors", "int", "5", "Legacy neighbor count retained for saved graphs", {}, "1-100", "Neighbors", "Compatibility"},
+         {"weights", "enum", "uniform", "Legacy neighbor weighting retained for saved graphs", {"uniform", "distance"}, "", "Weights", "Compatibility"},
+         {"metric", "enum", "euclidean", "Legacy distance metric retained for saved graphs", {"euclidean", "manhattan", "cosine"}, "", "Distance metric", "Compatibility"}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::NaiveBayesClassifier, NodeCategory::Analytics, "Naive Bayes", ICON_FA_PERCENT,
-        {"naive", "bayes", "classifier"}, 0, false, "Naive Bayes classifier",
-        "Probabilistic classifier. Not wired to a real graph executor yet.", "",
-        {{"X", PinType::Dataset, true, "Features"}, {"y", PinType::Labels, true, "Labels"}},
-        {{"Model", PinType::Parameters, true, "Trained model"}, {"Predictions", PinType::Labels, true, "Predictions"}},
-        {{"variant", "enum", "gaussian", "Bayes variant", {"gaussian", "multinomial", "bernoulli"}, ""}},
+        {"naive", "bayes", "classifier"}, 0, false,
+        "Blocked legacy Gaussian Naive Bayes preview",
+        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, or predictor is implemented.", "",
+        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
+         {"Labels", PinType::Labels, true, "Legacy label input"}},
+        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
+         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
+        {{"var_smoothing", "float", "1e-9", "Legacy Gaussian variance smoothing retained for saved graphs", {}, "", "Variance smoothing", "Compatibility"}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::LogisticRegressionNode, NodeCategory::Analytics, "Logistic Regression", ICON_FA_PERCENT,
-        {"logistic", "regression", "classifier"}, 0, false, "Logistic Regression classifier",
-        "Linear classifier with sigmoid activation. Outputs probabilities.", "",
-        {{"X", PinType::Dataset, true, "Features"}, {"y", PinType::Labels, true, "Labels"}},
-        {{"Model", PinType::Parameters, true, "Trained model"}, {"Predictions", PinType::Labels, true, "Predictions"}, {"Probabilities", PinType::Dataset, true, "Class probabilities"}},
-        {{"penalty", "enum", "l2", "Regularization", {"l1", "l2", "elasticnet", "none"}, ""},
-         {"C", "float", "1.0", "Inverse regularization strength", {}, ""}},
+        {"logistic", "regression", "classifier"}, 0, false,
+        "Blocked legacy logistic-regression classifier preview",
+        "Saved-graph compatibility contract only. No classifier executor, fitted model artifact, probability output, or predictor is implemented.", "",
+        {{"Train Data", PinType::Dataset, true, "Legacy feature-table input"},
+         {"Labels", PinType::Labels, true, "Legacy label input"}},
+        {{"Model", PinType::Parameters, true, "Reserved fitted-model output"},
+         {"Predictions", PinType::Labels, true, "Reserved prediction output"}},
+        {{"C", "float", "1.0", "Legacy inverse regularization value retained for saved graphs", {}, "", "Regularization (C)", "Compatibility"},
+         {"solver", "enum", "lbfgs", "Legacy solver selection retained for saved graphs", {"lbfgs"}, "", "Solver", "Compatibility"},
+         {"max_iter", "int", "100", "Legacy iteration limit retained for saved graphs", {}, "1-2147483647", "Maximum iterations", "Compatibility"}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     // Regression
     RegisterNode({NodeType::LinearRegressionNode, NodeCategory::Analytics, "Linear Regression", ICON_FA_CHART_LINE,
         {"linear", "regression"}, 0, false, "Linear Regression",
-        "Fits a linear model and appends prediction/residual columns.", "",
-        {{"Data", PinType::Dataset, true, "Input table"}},
-        {{"Fitted", PinType::Dataset, true, "Input table plus prediction/residual"}},
-        {{"feature_cols", "string", "", "Predictor columns", {}, ""},
-         {"target_col", "string", "", "Target column", {}, ""},
-         {"fit_intercept", "bool", "true", "Fit intercept", {}, ""}},
+        "Fits ordinary least squares from numeric table columns and appends Float32 prediction and residual columns.", "",
+        {{"Data", PinType::Dataset, true, "Table containing numeric predictor and target columns"}},
+        {{"Fitted", PinType::Dataset, true, "Input table plus Float32 prediction and residual columns"},
+         {"Model", PinType::Parameters, true, "Reusable fitted linear-regression artifact"}},
+        {{"feature_cols", "string", "", "Comma-separated numeric predictor columns", {}, "", "Predictor columns", "Columns", true, false},
+         {"target_col", "string", "", "Numeric response column", {}, "", "Target column", "Columns", true, false},
+         {"fit_intercept", "bool", "true", "Include a fitted intercept term", {}, "", "Fit intercept", "Fit Options", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PolynomialRegressionNode, NodeCategory::Analytics, "Polynomial Regression", ICON_FA_CHART_LINE,
         {"polynomial", "regression", "curve", "fit"}, 0, false, "Polynomial Regression",
-        "Fits a univariate polynomial model and appends prediction/residual columns.", "",
-        {{"Data", PinType::Dataset, true, "Input table"}},
-        {{"Fitted", PinType::Dataset, true, "Input table plus prediction/residual"}},
-        {{"feature_col", "string", "", "Single predictor column", {}, ""},
-         {"target_col", "string", "", "Target column", {}, ""},
-         {"degree", "int", "2", "Polynomial degree", {}, "1-10"}},
+        "Fits one numeric predictor as powers from degree one through the selected degree, then appends Float32 prediction and residual columns.", "",
+        {{"Data", PinType::Dataset, true, "Table containing one numeric predictor and a numeric target column"}},
+        {{"Fitted", PinType::Dataset, true, "Input table plus Float32 prediction and residual columns"},
+         {"Model", PinType::Parameters, true, "Reusable fitted polynomial-regression artifact"}},
+        {{"feature_col", "string", "", "Single numeric predictor column", {}, "", "Predictor column", "Columns", true, false},
+         {"target_col", "string", "", "Numeric response column", {}, "", "Target column", "Columns", true, false},
+         {"degree", "int", "2", "Highest polynomial power; requires at least degree plus two rows", {}, "1-2147483647", "Degree", "Fit Options", false, false}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::RegressionModelPredictor, NodeCategory::Analytics, "Regression Model Predictor", ICON_FA_FILE_IMPORT,
+        {"regression", "model", "predict", "inference", "artifact", "classic ml"}, 0, false, "Fitted regression inference",
+        "Applies a fitted Linear or Polynomial Regression model to compatible numeric table columns.", "",
+        {{"Data", PinType::Dataset, true, "Input table containing the artifact's predictor columns"},
+         {"Model", PinType::Parameters, true, "Fitted regression artifact from a regression node"}},
+        {{"Predictions", PinType::Dataset, true, "Input table plus a Float32 prediction column"}},
+        {{"prediction_col", "string", "prediction", "Name of the appended prediction column", {}, "", "Prediction column", "Output"}},
         NodeImplementationStatus::Implemented, 0});
 
     // Model Evaluation
@@ -1892,54 +1951,169 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           {"same", "valid"}, "", "Padding", "Convolution", true, false}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
+    RegisterNode({NodeType::Conv1D, NodeCategory::Layers, "Conv1D", ICON_FA_BORDER_ALL,
+        {"conv", "convolution", "1d", "sequence"}, 0, false,
+        "Blocked 1D convolution layer retained for graph compatibility",
+        "The backend contains a native Conv1D primitive, but GraphCompiler, "
+        "ModelBuilder, and SequentialModel do not own an executable Conv1D "
+        "path. Its Tensor layout, ArrayFire-first execution, fallback, and "
+        "training integration must be proven before this node is enabled.",
+        "",
+        {{"Input", PinType::Tensor, true,
+          "Legacy sequence feature-map input; no executable Engine layout contract exists yet."}},
+        {{"Output", PinType::Tensor, true,
+          "Convolved feature map; unavailable at runtime while this node is blocked."}},
+        {{"filters", "int", "32", "Legacy output-channel count", {}, "1-1048576",
+          "Output Channels", "Convolution", true, false},
+         {"kernel_size", "int", "3", "Legacy kernel width", {}, "1-1048576",
+          "Kernel Size", "Convolution", true, false},
+         {"stride", "int", "1", "Legacy convolution stride", {}, "1-1048576",
+          "Stride", "Convolution", true, false},
+         {"padding", "enum", "same", "Legacy padding policy preserved for saved graphs",
+          {"same", "valid"}, "", "Padding", "Convolution", true, false}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::Conv3D, NodeCategory::Layers, "Conv3D", ICON_FA_BORDER_ALL,
+        {"conv", "convolution", "3d", "volume"}, 0, false,
+        "Blocked 3D convolution design node retained for graph compatibility",
+        "No backend Conv3D layer, GraphCompiler extraction, ModelBuilder module, "
+        "or SequentialModel execution path currently owns this node.",
+        "",
+        {{"Input", PinType::Tensor, true,
+          "Legacy volume feature-map input; no executable Engine layout contract exists yet."}},
+        {{"Output", PinType::Tensor, true,
+          "Convolved volume; unavailable at runtime while this node is blocked."}},
+        {{"filters", "int", "32", "Legacy output-channel count", {}, "1-1048576",
+          "Output Channels", "Convolution", true, false},
+         {"kernel_size", "int", "3", "Legacy cubic-kernel size", {}, "1-1048576",
+          "Kernel Size", "Convolution", true, false},
+         {"stride", "int", "1", "Legacy convolution stride", {}, "1-1048576",
+          "Stride", "Convolution", true, false},
+         {"padding", "enum", "same", "Legacy padding policy preserved for saved graphs",
+          {"same", "valid"}, "", "Padding", "Convolution", true, false}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    RegisterNode({NodeType::DepthwiseConv2D, NodeCategory::Layers,
+        "Depthwise Conv2D", ICON_FA_BORDER_ALL,
+        {"conv", "convolution", "depthwise", "image"}, 0, false,
+        "Blocked depthwise convolution design node retained for graph compatibility",
+        "No backend depthwise layer, GraphCompiler extraction, ModelBuilder "
+        "module, or SequentialModel execution path currently owns this node.",
+        "",
+        {{"Input", PinType::Tensor, true,
+          "Legacy image feature-map input; no executable Engine layout contract exists yet."}},
+        {{"Output", PinType::Tensor, true,
+          "Depthwise feature map; unavailable at runtime while this node is blocked."}},
+        {{"filters", "int", "32", "Legacy output-channel count", {}, "1-1048576",
+          "Output Channels", "Convolution", true, false},
+         {"kernel_size", "int", "3", "Legacy square-kernel size", {}, "1-1048576",
+          "Kernel Size", "Convolution", true, false},
+         {"stride", "int", "1", "Legacy convolution stride", {}, "1-1048576",
+          "Stride", "Convolution", true, false},
+         {"padding", "enum", "same", "Legacy padding policy preserved for saved graphs",
+          {"same", "valid"}, "", "Padding", "Convolution", true, false},
+         {"depth_multiplier", "int", "1", "Legacy channel multiplier", {}, "1-1048576",
+          "Depth Multiplier", "Convolution", true, false}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
     RegisterNode({NodeType::LSTM, NodeCategory::Recurrent, "LSTM", ICON_FA_REPEAT,
-        {"lstm", "recurrent", "sequence"}, 0, false, "LSTM layer", "", "",
-        {{"Input", PinType::Tensor, true, "Input [N,T,F]"}},
-        {{"Output", PinType::Tensor, true, "Output"}, {"Hidden", PinType::Tensor, false, "Hidden"}},
-        {{"input_size", "int", "0", "Input size (auto)", {}, "Derived from the previous layer output."},
-         {"hidden_size", "int", "128", "Hidden size", {}, ""},
-         {"num_layers", "int", "1", "Stacked layers", {}, ""},
-         {"bidirectional", "bool", "false", "Bidirectional", {}, ""},
-         {"return_sequences", "bool", "false", "Return sequences", {}, ""},
-         {"dropout", "float", "0.0", "Dropout", {}, ""}},
+        {"lstm", "recurrent", "sequence"}, 0, false,
+        "Trainable long short-term memory sequence layer",
+        "Engine training supports unidirectional LSTM with dropout=0.0. "
+        "Bidirectional forward exists, but reverse-direction backward gradients "
+        "are not implemented, so bidirectional training fails closed.", "",
+        {{"Input", PinType::Tensor, true,
+          "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
+        {{"Output", PinType::Tensor, true,
+          "Full sequence [batch, sequence, hidden] when return_sequences=true; otherwise [batch, hidden]."},
+         {"Hidden", PinType::Tensor, false,
+          "Legacy compatibility pin only. Engine SequentialModel does not route a separate h_n output; leave disconnected."}},
+        {{"input_size", "int", "0", "Auto-derived input feature count", {}, "Derived from the previous layer output.",
+          "Input Size", "Recurrent", true, true},
+         {"hidden_size", "int", "256", "Hidden-state width", {}, "1-1048576",
+          "Hidden Size", "Recurrent", true, false},
+         {"num_layers", "int", "1", "Number of stacked recurrent layers", {}, "1-1048576",
+          "Layers", "Recurrent", true, false},
+         {"bidirectional", "bool", "false", "Two-direction intent; unavailable for Engine training", {}, "",
+          "Bidirectional", "Recurrent", true, false},
+         {"return_sequences", "bool", "false", "Return every timestep instead of the final timestep", {}, "",
+          "Return Sequences", "Output", true, false},
+         {"dropout", "float", "0.0", "Must remain 0.0; use an explicit Dropout node", {}, "0.0-0.0",
+          "Dropout", "Regularization", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GRU, NodeCategory::Recurrent, "GRU", ICON_FA_REPEAT,
-        {"gru", "recurrent", "sequence"}, 0, false, "GRU layer", "", "",
-        {{"Input", PinType::Tensor, true, "Input [N,T,F]"}},
-        {{"Output", PinType::Tensor, true, "Output"}, {"Hidden", PinType::Tensor, false, "Hidden"}},
-        {{"input_size", "int", "0", "Input size (auto)", {}, "Derived from the previous layer output."},
-         {"hidden_size", "int", "128", "Hidden size", {}, ""},
-         {"num_layers", "int", "1", "Stacked layers", {}, ""},
-         {"bidirectional", "bool", "false", "Bidirectional", {}, ""},
-         {"return_sequences", "bool", "false", "Return sequences", {}, ""},
-         {"dropout", "float", "0.0", "Dropout", {}, ""}},
+        {"gru", "recurrent", "sequence"}, 0, false,
+        "Trainable gated recurrent unit sequence layer",
+        "Engine training supports unidirectional and split-path bidirectional "
+        "GRU with dropout=0.0. Bidirectional GRU currently uses the declared "
+        "native CPU recurrent path.", "",
+        {{"Input", PinType::Tensor, true,
+          "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
+        {{"Output", PinType::Tensor, true,
+          "Full sequence [batch, sequence, hidden * directions] when return_sequences=true; otherwise [batch, hidden * directions]."},
+         {"Hidden", PinType::Tensor, false,
+          "Legacy compatibility pin only. Engine SequentialModel does not route a separate h_n output; leave disconnected."}},
+        {{"input_size", "int", "0", "Auto-derived input feature count", {}, "Derived from the previous layer output.",
+          "Input Size", "Recurrent", true, true},
+         {"hidden_size", "int", "256", "Hidden-state width", {}, "1-1048576",
+          "Hidden Size", "Recurrent", true, false},
+         {"num_layers", "int", "1", "Number of stacked recurrent layers", {}, "1-1048576",
+          "Layers", "Recurrent", true, false},
+         {"bidirectional", "bool", "false", "Run explicit forward and reverse GRU branches", {}, "",
+          "Bidirectional", "Recurrent", true, false},
+         {"return_sequences", "bool", "false", "Return every timestep instead of the final timestep", {}, "",
+          "Return Sequences", "Output", true, false},
+         {"dropout", "float", "0.0", "Must remain 0.0; use an explicit Dropout node", {}, "0.0-0.0",
+          "Dropout", "Regularization", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::RNN, NodeCategory::Recurrent, "RNN", ICON_FA_REPEAT,
-        {"rnn", "recurrent", "sequence"}, 0, false, "Simple RNN layer", "", "",
-        {{"Input", PinType::Tensor, true, "Input [N,T,F]"}},
-        {{"Output", PinType::Tensor, true, "Output"}, {"Hidden", PinType::Tensor, false, "Hidden"}},
-        {{"input_size", "int", "0", "Input size (auto)", {}, "Derived from the previous layer output."},
-         {"hidden_size", "int", "128", "Hidden size", {}, ""},
-         {"num_layers", "int", "1", "Stacked layers", {}, ""},
-         {"return_sequences", "bool", "false", "Return sequences", {}, ""},
-         {"nonlinearity", "string", "tanh", "Nonlinearity", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        {"rnn", "recurrent", "sequence"}, 0, false,
+        "Blocked simple-RNN compatibility node",
+        "Studio has no RNN backend layer, Python binding, ModelBuilder module, "
+        "or training owner. It must not be approximated with a GRU.", "",
+        {{"Input", PinType::Tensor, true, "Legacy sequence input [batch, sequence, features]."}},
+        {{"Output", PinType::Tensor, true, "Legacy recurrent output; unavailable while blocked."},
+         {"Hidden", PinType::Tensor, false, "Optional legacy hidden state; unavailable while blocked."}},
+        {{"input_size", "int", "0", "Legacy auto-derived feature count", {}, "Derived from the previous layer output.",
+          "Input Size", "Recurrent", true, true},
+         {"hidden_size", "int", "256", "Legacy hidden-state width", {}, "1-1048576",
+          "Hidden Size", "Recurrent", true, false},
+         {"num_layers", "int", "1", "Legacy stacked-layer count", {}, "1-1048576",
+          "Layers", "Recurrent", true, false},
+         {"bidirectional", "bool", "false", "Legacy bidirectional intent", {}, "",
+          "Bidirectional", "Recurrent", true, false},
+         {"return_sequences", "bool", "false", "Legacy full-sequence output intent", {}, "",
+          "Return Sequences", "Output", true, false},
+         {"dropout", "float", "0.0", "Legacy inter-layer dropout", {}, "0.0-1.0",
+          "Dropout", "Regularization", true, false},
+         {"nonlinearity", "string", "tanh", "Legacy activation intent from registry-era graphs", {}, "",
+          "Nonlinearity", "Recurrent", true, false}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::Bidirectional, NodeCategory::Recurrent, "Bidirectional", ICON_FA_REPEAT,
-        {"bidirectional", "wrapper", "sequence"}, 0, false, "Bidirectional wrapper", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
-        {{"merge_mode", "string", "concat", "Merge mode", {}, ""}},
-        NodeImplementationStatus::Template, 0});
+        {"bidirectional", "wrapper", "sequence"}, 0, false,
+        "Blocked standalone bidirectional-wrapper compatibility node",
+        "The bidirectional setting belongs to concrete LSTM/GRU nodes and must "
+        "follow their own verified execution limits. No standalone wrapper binds "
+        "an inner recurrent layer in GraphCompiler, ModelBuilder, or SequentialModel.", "",
+        {{"Input", PinType::Tensor, true, "Legacy sequence input."}},
+        {{"Output", PinType::Tensor, true, "Legacy merged directional output; unavailable while blocked."}},
+        {{"merge_mode", "string", "concat", "Historical merge-mode text", {}, "",
+          "Merge Mode", "Wrapper", true, false}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::TimeDistributed, NodeCategory::Recurrent, "TimeDistributed Dense", ICON_FA_REPEAT,
         {"time", "distributed", "sequence", "token", "ner", "token classifier"}, 0, false,
-        "Apply one Dense token-classifier projection to every timestep", "", "",
-        {{"Input", PinType::Tensor, true, "Sequence features [N,T,F]"}},
-        {{"Output", PinType::Tensor, true, "Token logits [N,T,units]"}},
-        {{"units", "int", "128", "Per-token output classes", {}, ""}},
+        "Apply one shared Dense token-classifier projection independently to every timestep",
+        "This is a specific bias-enabled Dense sequence head, not a generic wrapper. "
+        "It reshapes [batch, sequence, features] to token rows, uses the existing "
+        "trainable LinearModule, and restores the sequence shape.", "",
+        {{"Input", PinType::Tensor, true, "Float32 sequence features [batch, sequence, features]."}},
+        {{"Output", PinType::Tensor, true, "Float32 token outputs [batch, sequence, units]."}},
+        {{"units", "int", "128", "Shared Dense output width for every timestep", {},
+          "1-2147483647", "Per-timestep Output Units", "Projection", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Dropout, NodeCategory::Regularization, "Dropout", ICON_FA_SHUFFLE,
@@ -1954,10 +2128,12 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::BatchNorm, NodeCategory::Normalization, "BatchNorm", ICON_FA_SCALE_BALANCED,
         {"batchnorm", "normalization"}, 0, false,
-        "Normalize features with batch statistics and running estimates", "", "",
-        {{"Input", PinType::Tensor, true, "Feature activations to normalize."}},
-        {{"Output", PinType::Tensor, true, "Normalized tensor with the same shape."}},
-        {{"eps", "float", "1e-5", "Numerical stability term", {}, "0.0-1.0",
+        "Normalize rank-2 features with batch statistics and running estimates",
+        "The Engine BatchNorm node is BatchNorm1D for Float32 [batch, features] input. "
+        "Training updates running mean and variance; evaluation reuses those estimates.", "",
+        {{"Input", PinType::Tensor, true, "Float32 feature activations [batch, features]."}},
+        {{"Output", PinType::Tensor, true, "Normalized Float32 [batch, features]."}},
+        {{"eps", "float", "1e-5", "Positive numerical stability term", {}, "0.000000001-3.402823e38",
           "Epsilon", "Normalization", true, false},
          {"momentum", "float", "0.1", "Running-statistics update momentum", {}, "0.0-1.0",
           "Momentum", "Normalization", true, false}},
@@ -1971,25 +2147,46 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"normalized_shape", "string", "",
           "Comma-separated trailing dimensions; empty uses the current feature width", {}, "",
           "Normalized Shape", "Normalization", false, false},
-         {"eps", "float", "1e-5", "Numerical stability term", {}, "0.0-1.0",
+         {"eps", "float", "1e-5", "Positive numerical stability term", {}, "0.000000001-3.402823e38",
           "Epsilon", "Normalization", true, false},
          {"elementwise_affine", "bool", "true", "Learn per-element scale and bias", {}, "",
           "Elementwise Affine", "Normalization", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GroupNorm, NodeCategory::Normalization, "GroupNorm", ICON_FA_SCALE_BALANCED,
-        {"groupnorm", "normalization"}, 0, false, "Group normalization", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Normalized"}},
-        {{"num_groups", "int", "32", "Groups", {}, ""},
-         {"eps", "float", "1e-5", "Epsilon", {}, ""}},
+        {"groupnorm", "normalization", "small batch", "channels"}, 0, false,
+        "Normalize channels in groups for each sample (blocked Engine layer)",
+        "The saved-graph contract matches the native GroupNormLayer constructor, but Studio has no "
+        "ModelBuilder/SequentialModel owner and the backend path is not ArrayFire-first. Input must "
+        "eventually be Float32 [H,W,C,N], with num_channels equal to C and divisible by num_groups.", "",
+        {{"Input", PinType::Tensor, true, "Spatial activations [H,W,C,N]."}},
+        {{"Output", PinType::Tensor, true,
+          "Same-shape normalized activations; unavailable while the Engine layer is blocked."}},
+        {{"num_groups", "int", "32", "Number of channel groups; must divide num_channels", {},
+          "1-1048576", "Groups", "Normalization", true, false},
+         {"num_channels", "int", "256", "Expected input channel count C", {},
+          "1-1048576", "Channels", "Normalization", true, false},
+         {"eps", "float", "1e-5", "Positive numerical-stability term", {},
+          "0.000000001-1.0", "Epsilon", "Normalization", true, true},
+         {"affine", "bool", "true", "Learn one scale and bias per channel", {}, "",
+          "Affine", "Normalization", false, true}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::InstanceNorm, NodeCategory::Normalization, "InstanceNorm", ICON_FA_SCALE_BALANCED,
-        {"instancenorm", "normalization"}, 0, false, "Instance normalization", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Normalized"}},
-        {{"eps", "float", "1e-5", "Epsilon", {}, ""}},
+        {"instancenorm", "instance normalization", "style transfer", "channels"}, 0, false,
+        "Normalize each channel independently per sample (blocked Engine layer)",
+        "The saved-graph contract matches the native InstanceNorm2DLayer constructor, but Studio has "
+        "no ModelBuilder/SequentialModel owner and the backend path is not ArrayFire-first. Input must "
+        "eventually be Float32 [H,W,C,N], with num_features equal to C.", "",
+        {{"Input", PinType::Tensor, true, "Spatial activations [H,W,C,N]."}},
+        {{"Output", PinType::Tensor, true,
+          "Same-shape normalized activations; unavailable while the Engine layer is blocked."}},
+        {{"num_features", "int", "64", "Expected input channel count C", {},
+          "1-1048576", "Channels", "Normalization", true, false},
+         {"eps", "float", "1e-5", "Positive numerical-stability term", {},
+          "0.000000001-1.0", "Epsilon", "Normalization", true, true},
+         {"affine", "bool", "false", "Learn one scale and bias per channel", {}, "",
+          "Affine", "Normalization", false, true}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::MultiHeadAttention, NodeCategory::Attention, "Multi-Head Attention", ICON_FA_BULLSEYE,
@@ -2012,7 +2209,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"embed_dim", "int", "512", "Expected input feature width", {}, "1-65536",
           "Embedding Dimension", "Attention", true, false},
          {"num_heads", "int", "8",
-          "Number of attention heads; non-divisible widths fall back to one head", {}, "1-4096",
+          "Number of attention heads; embed_dim must divide evenly", {}, "1-4096",
           "Attention Heads", "Attention", true, false},
          {"dropout", "float", "0.0", "Attention dropout probability", {}, "0.0-0.999",
           "Dropout", "Regularization", false, false},
@@ -2022,110 +2219,238 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::TransformerEncoder, NodeCategory::Attention, "Transformer Encoder", ICON_FA_BULLSEYE,
         {"transformer", "attention", "encoder"}, 0, false,
-        "Decoder/encoder-style self-attention block for sequence tensors", "", "",
-        {{"Input", PinType::Tensor, true, "Sequence tensor [batch, tokens, d_model]"}},
-        {{"Output", PinType::Tensor, true, "Encoded sequence"}},
-        {{"d_model", "int", "512", "Model width", {}, ""},
-         {"num_heads", "int", "8", "Attention heads", {}, ""},
-         {"dim_feedforward", "int", "2048", "Feed-forward width", {}, ""},
-         {"dropout", "float", "0.1", "Dropout", {}, ""},
-         {"norm_first", "bool", "false", "Pre-norm ordering", {}, ""}},
+        "One trainable transformer encoder block for sequence tensors",
+        "Connect Float32 [batch, sequence, d_model]. This node constructs one "
+        "self-attention/feed-forward block; stack nodes to create multiple layers.", "",
+        {{"Input", PinType::Tensor, true, "Float32 sequence [batch, sequence, d_model]."}},
+        {{"Output", PinType::Tensor, true, "Same-shape encoded Float32 sequence."}},
+        {{"d_model", "int", "512", "Required input/output feature width", {}, "1-65536",
+          "Model Width", "Transformer", true, false},
+         {"num_heads", "int", "8", "Attention heads; d_model must divide evenly", {}, "1-4096",
+          "Attention Heads", "Transformer", true, false},
+         {"dim_feedforward", "int", "2048", "Inner feed-forward feature width", {}, "1-1048576",
+          "Feed-forward Width", "Transformer", true, false},
+         {"dropout", "float", "0.1", "Training dropout probability", {}, "0.0-0.999",
+          "Dropout", "Regularization", false, false},
+         {"norm_first", "bool", "false", "Apply normalization before each sublayer", {}, "",
+          "Pre-Norm", "Transformer", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TransformerDecoder, NodeCategory::Attention, "Transformer Decoder", ICON_FA_BULLSEYE,
         {"transformer", "attention", "decoder", "causal"}, 0, false,
-        "Decoder-only causal self-attention block. Connected Memory input is intentionally blocked until seq2seq is implemented.", "", "",
-        {{"Input", PinType::Tensor, true, "Target sequence tensor [batch, tokens, d_model]"},
-         {"Memory", PinType::Tensor, false, "Optional; connected seq2seq memory is blocked by the compiler"}},
-        {{"Output", PinType::Tensor, true, "Decoded sequence"}},
-        {{"d_model", "int", "512", "Model width", {}, ""},
-         {"num_heads", "int", "8", "Attention heads", {}, ""},
-         {"dim_feedforward", "int", "2048", "Feed-forward width", {}, ""},
-         {"dropout", "float", "0.1", "Dropout", {}, ""},
-         {"norm_first", "bool", "false", "Pre-norm ordering", {}, ""}},
+        "One decoder-only causal transformer block",
+        "Connect Float32 [batch, sequence, d_model]. Stack nodes for depth. "
+        "Connected Memory remains fail-closed until seq2seq cross-attention has a graph owner.", "",
+        {{"Input", PinType::Tensor, true, "Target Float32 sequence [batch, sequence, d_model]."},
+         {"Memory", PinType::Tensor, false, "Reserved optional encoder memory; a connected pin is rejected."}},
+        {{"Output", PinType::Tensor, true, "Same-shape decoded Float32 sequence."}},
+        {{"d_model", "int", "512", "Required input/output feature width", {}, "1-65536",
+          "Model Width", "Transformer", true, false},
+         {"num_heads", "int", "8", "Attention heads; d_model must divide evenly", {}, "1-4096",
+          "Attention Heads", "Transformer", true, false},
+         {"dim_feedforward", "int", "2048", "Inner feed-forward feature width", {}, "1-1048576",
+          "Feed-forward Width", "Transformer", true, false},
+         {"dropout", "float", "0.1", "Training dropout probability", {}, "0.0-0.999",
+          "Dropout", "Regularization", false, false},
+         {"norm_first", "bool", "false", "Apply normalization before each sublayer", {}, "",
+          "Pre-Norm", "Transformer", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PositionalEncoding, NodeCategory::Attention, "Positional Encoding", ICON_FA_BULLSEYE,
         {"transformer", "position", "encoding", "sequence"}, 0, false,
-        "Sinusoidal positional encoding for token/sequence tensors", "", "",
-        {{"Input", PinType::Tensor, true, "Sequence tensor [batch, tokens, d_model]"}},
-        {{"Output", PinType::Tensor, true, "Position-aware sequence"}},
-        {{"d_model", "int", "512", "Model width", {}, ""},
-         {"max_sequence_length", "int", "512", "Maximum sequence length", {}, ""}},
+        "Deterministic sinusoidal encoding for sequence positions",
+        "Adds fixed sine/cosine values to Float32 [batch, sequence, d_model]. "
+        "The current module is native CPU-backed and has no trainable parameters.", "",
+        {{"Input", PinType::Tensor, true, "Float32 sequence [batch, sequence, d_model]."}},
+        {{"Output", PinType::Tensor, true, "Same-shape position-aware Float32 sequence."}},
+        {{"d_model", "int", "512", "Required input/output feature width", {}, "1-65536",
+          "Model Width", "Position", true, false},
+         {"max_sequence_length", "int", "5000", "Largest accepted sequence length", {}, "1-1048576",
+          "Maximum Sequence Length", "Position", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SelfAttention, NodeCategory::Attention, "Self Attention", ICON_FA_BULLSEYE,
-        {"attention", "self_attention", "transformer"}, 0, false, "Self attention", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
-        {{"embed_dim", "int", "512", "Dim", {}, ""},
-         {"num_heads", "int", "8", "Heads", {}, ""}},
+        {"attention", "self_attention", "transformer"}, 0, false,
+        "Blocked self-attention compatibility node",
+        "Saved graphs retain explicit Query, Key, Value, and Mask pins, but "
+        "Studio has no distinct SelfAttention GraphCompiler/ModelBuilder owner. "
+        "Use Multi-Head Attention for the supported unary self-attention path.", "",
+        {{"Query", PinType::Tensor, true, "Legacy query tensor [batch, query length, embed_dim]."},
+         {"Key", PinType::Tensor, true, "Legacy key tensor [batch, key/value length, embed_dim]."},
+         {"Value", PinType::Tensor, true, "Legacy value tensor [batch, key/value length, embed_dim]."},
+         {"Mask", PinType::Tensor, false, "Optional legacy attention mask."}},
+        {{"Output", PinType::Tensor, true, "Legacy attention result; unavailable while blocked."},
+         {"Attn Weights", PinType::Tensor, false, "Optional legacy per-head weights; unavailable while blocked."}},
+        {{"embed_dim", "int", "512", "Legacy embedding width", {}, "1-1048576",
+          "Embedding Dimension", "Attention", true, false},
+         {"num_heads", "int", "8", "Legacy attention-head count", {}, "1-1048576",
+          "Heads", "Attention", true, false},
+         {"dropout", "float", "0.0", "Legacy attention-weight dropout", {}, "0.0-1.0",
+          "Dropout", "Attention", true, false},
+         {"batch_first", "bool", "true", "Legacy batch-first layout flag", {}, "",
+          "Batch First", "Layout", true, false}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::CrossAttention, NodeCategory::Attention, "Cross Attention", ICON_FA_BULLSEYE,
-        {"attention", "cross_attention", "transformer"}, 0, false, "Cross attention", "", "",
-        {{"Query", PinType::Tensor, true, "Query"}, {"Context", PinType::Tensor, true, "Context"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
-        {{"embed_dim", "int", "512", "Dim", {}, ""},
-         {"num_heads", "int", "8", "Heads", {}, ""}},
+        {"attention", "cross_attention", "transformer"}, 0, false,
+        "Blocked cross-attention compatibility node",
+        "Saved graphs retain explicit Query, Key, Value, and Mask pins, but "
+        "Studio has no multi-input CrossAttention GraphCompiler/ModelBuilder owner.", "",
+        {{"Query", PinType::Tensor, true, "Legacy query tensor [batch, query length, embed_dim]."},
+         {"Key", PinType::Tensor, true, "Legacy context key tensor [batch, key/value length, embed_dim]."},
+         {"Value", PinType::Tensor, true, "Legacy context value tensor [batch, key/value length, embed_dim]."},
+         {"Mask", PinType::Tensor, false, "Optional legacy cross-attention mask."}},
+        {{"Output", PinType::Tensor, true, "Legacy attention result; unavailable while blocked."},
+         {"Attn Weights", PinType::Tensor, false, "Optional legacy per-head weights; unavailable while blocked."}},
+        {{"embed_dim", "int", "512", "Legacy embedding width", {}, "1-1048576",
+          "Embedding Dimension", "Attention", true, false},
+         {"num_heads", "int", "8", "Legacy attention-head count", {}, "1-1048576",
+          "Heads", "Attention", true, false},
+         {"dropout", "float", "0.0", "Legacy attention-weight dropout", {}, "0.0-1.0",
+          "Dropout", "Attention", true, false},
+         {"batch_first", "bool", "true", "Legacy batch-first layout flag", {}, "",
+          "Batch First", "Layout", true, false}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::LinearAttention, NodeCategory::Attention, "Linear Attention", ICON_FA_BULLSEYE,
-        {"attention", "linear_attention", "performer"}, 0, false, "Linear attention", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
-        {{"embed_dim", "int", "512", "Dim", {}, ""},
-         {"num_heads", "int", "8", "Heads", {}, ""}},
+        {"attention", "linear_attention", "performer"}, 0, false,
+        "Blocked linear-attention compatibility node",
+        "Saved graphs retain the historical linear-attention sketch, but no "
+        "backend primitive or Studio training owner implements its advertised semantics.", "",
+        {{"Query", PinType::Tensor, true, "Legacy query tensor."},
+         {"Key", PinType::Tensor, true, "Legacy key tensor."},
+         {"Value", PinType::Tensor, true, "Legacy value tensor."},
+         {"Mask", PinType::Tensor, false, "Optional legacy attention mask."}},
+        {{"Output", PinType::Tensor, true, "Legacy linear-attention result; unavailable while blocked."}},
+        {{"embed_dim", "int", "512", "Legacy embedding width", {}, "1-1048576",
+          "Embedding Dimension", "Attention", true, false},
+         {"num_heads", "int", "8", "Legacy attention-head count", {}, "1-1048576",
+          "Heads", "Attention", true, false},
+         {"feature_map", "enum", "elu", "Legacy kernel feature-map sketch",
+          {"elu", "relu", "favor+"}, "", "Feature Map", "Approximation", true, false},
+         {"eps", "float", "1e-6", "Legacy numerical-stability epsilon", {}, "0.0-1.0",
+          "Epsilon", "Approximation", true, false},
+         {"causal", "bool", "false", "Legacy causal-attention flag", {}, "",
+          "Causal", "Attention", true, false}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::MaxPool2D, NodeCategory::Pooling, "MaxPool2D", ICON_FA_COMPRESS,
-        {"maxpool", "pooling"}, 0, false, "Max pooling", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Pooled"}},
-        {{"kernel_size", "int", "2", "Kernel", {}, ""}},
+        {"maxpool", "pooling"}, 0, false,
+        "Blocked 2D max-pooling layer retained for graph compatibility",
+        "A backend pooling primitive exists, but GraphCompiler, ModelBuilder, "
+        "and SequentialModel do not construct it for Studio training.", "",
+        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
+        {{"Output", PinType::Tensor, true,
+          "Pooled feature map; unavailable at runtime while this node is blocked."}},
+        {{"pool_size", "int", "2", "Legacy square pooling-window size", {}, "1-1048576",
+          "Pool Size", "Pooling", true, false},
+         {"stride", "int", "2", "Legacy spatial pooling stride", {}, "1-1048576",
+          "Stride", "Pooling", true, false}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::AvgPool2D, NodeCategory::Pooling, "AvgPool2D", ICON_FA_COMPRESS,
-        {"avgpool", "average", "pooling"}, 0, false, "Average pooling", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Pooled"}},
-        {{"kernel_size", "int", "2", "Kernel", {}, ""}},
+        {"avgpool", "average", "pooling"}, 0, false,
+        "Blocked 2D average-pooling layer retained for graph compatibility",
+        "A backend pooling primitive exists, but GraphCompiler, ModelBuilder, "
+        "and SequentialModel do not construct it for Studio training.", "",
+        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
+        {{"Output", PinType::Tensor, true,
+          "Pooled feature map; unavailable at runtime while this node is blocked."}},
+        {{"pool_size", "int", "2", "Legacy square pooling-window size", {}, "1-1048576",
+          "Pool Size", "Pooling", true, false},
+         {"stride", "int", "2", "Legacy spatial pooling stride", {}, "1-1048576",
+          "Stride", "Pooling", true, false}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::GlobalMaxPool, NodeCategory::Pooling, "Global Max Pool", ICON_FA_COMPRESS,
-        {"global", "max", "pooling"}, 0, false, "Global max pooling", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Pooled"}},
+        {"global", "max", "pooling"}, 0, false,
+        "Blocked global max-pooling design node retained for graph compatibility",
+        "No backend global-max layer or ModelBuilder/SequentialModel execution "
+        "path currently owns this node.", "",
+        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
+        {{"Output", PinType::Tensor, true,
+          "Channel summary; unavailable at runtime while this node is blocked."}},
         {}, NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::GlobalAvgPool, NodeCategory::Pooling, "Global Avg Pool", ICON_FA_COMPRESS,
-        {"global", "average", "pooling"}, 0, false, "Global average pooling", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Pooled"}},
+        {"global", "average", "pooling"}, 0, false,
+        "Blocked global average-pooling layer retained for graph compatibility",
+        "A native backend primitive exists, but GraphCompiler, ModelBuilder, "
+        "and SequentialModel do not construct it for Studio training.", "",
+        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
+        {{"Output", PinType::Tensor, true,
+          "Channel average; unavailable at runtime while this node is blocked."}},
         {}, NodeImplementationStatus::Template, 0, "Blocked"});
 
+    RegisterNode({NodeType::AdaptiveAvgPool, NodeCategory::Pooling,
+        "Adaptive Average Pool", ICON_FA_COMPRESS,
+        {"pooling", "adaptive", "average"}, 0, false,
+        "Blocked adaptive average-pooling design node retained for graph compatibility",
+        "No backend adaptive-pooling layer, GraphCompiler extraction, "
+        "ModelBuilder module, or SequentialModel execution path currently owns this node.",
+        "",
+        {{"Input", PinType::Tensor, true, "Legacy image feature-map input."}},
+        {{"Output", PinType::Tensor, true,
+          "Adaptively pooled feature map; unavailable at runtime while this node is blocked."}},
+        {{"output_size", "int", "1", "Legacy square output size", {}, "1-1048576",
+          "Output Size", "Pooling", true, false}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
     RegisterNode({NodeType::ConvTranspose2D, NodeCategory::Upsampling, "ConvTranspose2D", ICON_FA_EXPAND,
-        {"convtranspose", "transposed", "convolution", "upsample"}, 0, false, "Transposed convolution", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Upsampled"}},
-        {{"filters", "int", "32", "Filters", {}, ""},
-         {"kernel_size", "int", "3", "Kernel", {}, ""},
-         {"stride", "int", "2", "Stride", {}, ""}},
+        {"convtranspose", "transposed", "convolution", "upsample"}, 0, false,
+        "Blocked transposed-convolution layer retained for graph compatibility",
+        "A native backend primitive exists, but GraphCompiler, ModelBuilder, "
+        "and SequentialModel do not construct an executable Studio layer. "
+        "ArrayFire-first forward/backward and training ownership remain unproven.",
+        "",
+        {{"Input", PinType::Tensor, true,
+          "Legacy image feature-map input; no executable Engine layout contract exists yet."}},
+        {{"Output", PinType::Tensor, true,
+          "Upsampled feature map; unavailable at runtime while this node is blocked."}},
+        {{"in_channels", "int", "64", "Legacy input-channel count", {}, "1-1048576",
+          "Input Channels", "Transposed Convolution", true, false},
+         {"out_channels", "int", "32", "Legacy output-channel count", {}, "1-1048576",
+          "Output Channels", "Transposed Convolution", true, false},
+         {"kernel_size", "int", "3", "Legacy square-kernel size", {}, "1-1048576",
+          "Kernel Size", "Transposed Convolution", true, false},
+         {"stride", "int", "2", "Legacy spatial stride", {}, "1-1048576",
+          "Stride", "Transposed Convolution", true, false},
+         {"padding", "int", "1", "Legacy symmetric input padding", {}, "0-1048576",
+          "Padding", "Transposed Convolution", true, false},
+         {"output_padding", "int", "1", "Legacy output-shape adjustment", {}, "0-1048576",
+          "Output Padding", "Transposed Convolution", true, false}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::Upsample, NodeCategory::Upsampling, "Upsample", ICON_FA_EXPAND,
-        {"upsample", "resize", "interpolate"}, 0, false, "Tensor upsampling", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Upsampled"}},
-        {{"scale_factor", "int", "2", "Scale factor", {}, ""},
-         {"mode", "enum", "nearest", "Interpolation mode", {"nearest", "bilinear"}, ""}},
+        {"upsample", "resize", "interpolate"}, 0, false,
+        "Blocked spatial upsampling layer retained for graph compatibility",
+        "A native nearest/bilinear backend primitive exists, but GraphCompiler, "
+        "ModelBuilder, and SequentialModel do not construct it for Studio training. "
+        "The numeric mode field is retained only for saved-graph compatibility.",
+        "",
+        {{"Input", PinType::Tensor, true,
+          "Legacy image feature-map input; no executable Engine layout contract exists yet."}},
+        {{"Output", PinType::Tensor, true,
+          "Upsampled feature map; unavailable at runtime while this node is blocked."}},
+        {{"scale_factor", "int", "2", "Legacy positive spatial scale", {}, "1-1048576",
+          "Scale Factor", "Upsampling", true, false},
+         {"mode", "enum", "0", "Legacy interpolation code: 0=nearest, 1=bilinear",
+          {"0", "1"}, "", "Interpolation Mode", "Upsampling", true, false}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::PixelShuffle, NodeCategory::Upsampling, "Pixel Shuffle", ICON_FA_EXPAND,
-        {"pixel", "shuffle", "subpixel", "upsample"}, 0, false, "Pixel shuffle upsampling", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Upsampled"}},
-        {{"scale_factor", "int", "2", "Scale factor", {}, ""}},
+        {"pixel", "shuffle", "subpixel", "upsample"}, 0, false,
+        "Blocked depth-to-space layer retained for graph compatibility",
+        "A native backend primitive exists, but GraphCompiler, ModelBuilder, "
+        "and SequentialModel do not construct it for Studio training. Input "
+        "channel divisibility and ArrayFire-first execution remain unowned.",
+        "",
+        {{"Input", PinType::Tensor, true,
+          "Legacy image feature map whose channels must be divisible by upscale_factor squared."}},
+        {{"Output", PinType::Tensor, true,
+          "Depth-to-space result; unavailable at runtime while this node is blocked."}},
+        {{"upscale_factor", "int", "2", "Legacy positive spatial upscale factor", {}, "1-1048576",
+          "Upscale Factor", "Upsampling", true, false}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::Flatten, NodeCategory::ShapeOps, "Flatten", ICON_FA_ARROWS_LEFT_RIGHT,
@@ -2356,10 +2681,31 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Embedding, NodeCategory::Layers, "Embedding", ICON_FA_CUBES,
-        {"embedding", "lookup"}, 0, false, "Embedding layer", "", "",
-        {{"Indices", PinType::Labels, true, "Token indices"}},
-        {{"Embeddings", PinType::Tensor, true, "Vectors"}},
-        {{"num_embeddings", "int", "10000", "Vocab size", {}, ""}, {"embedding_dim", "int", "256", "Dim", {}, ""}},
+        {"embedding", "lookup", "token", "vocabulary", "pretrained"}, 0, false,
+        "Look up trainable dense vectors for exact integer token IDs",
+        "Accepts rank-1 or rank-2 token IDs and produces one Float32 vector per "
+        "token. The table participates in optimizer updates unless a loaded "
+        "pretrained matrix is frozen. Padding produces zeros and receives no gradient.", "",
+        {{"Indices", PinType::Tensor, true,
+          "Exact integer token IDs [sequence] or [batch, sequence]; Float32, Int32, and Int64 ingress are accepted."}},
+        {{"Embeddings", PinType::Tensor, true,
+          "Float32 vectors [sequence, embedding_dim] or [batch, sequence, embedding_dim]."}},
+        {{"num_embeddings", "int", "10000", "Number of token rows in the lookup table", {},
+          "2-2147483647", "Vocabulary Size", "Shape", true, false},
+         {"embedding_dim", "int", "256", "Features in each learned token vector", {},
+          "1-2147483647", "Embedding Dimension", "Shape", true, false},
+         {"padding_idx", "int", "-1", "Token row forced to zero and excluded from gradients; -1 disables padding", {},
+          "", "Padding Index", "Lookup", false, false},
+         {"max_norm", "float", "0", "Maximum L2 norm applied before lookup; 0 disables clipping", {},
+          "0-3.402823e38", "Maximum Norm", "Lookup", false, true},
+         {"freeze", "bool", "false", "Do not update a loaded pretrained table", {},
+          "", "Freeze Loaded Weights", "Weights", false, false},
+         {"weights_file", "file", "", "Optional whitespace-delimited Float32 matrix with num_embeddings rows and embedding_dim columns", {},
+          "", "Pretrained Weights", "Weights", false, false},
+         {"init_mode", "enum", "normal", "Starter-matrix mode used only by Build, Save, and Use in the configuration dialog", {"normal", "uniform", "one_hot"},
+          "", "Starter Initialization", "Starter Matrix", false, true},
+         {"output_weights_file", "file", "", "Destination used only when the dialog builds a starter matrix", {},
+          "", "Starter Matrix Output", "Starter Matrix", false, true}},
         NodeImplementationStatus::Implemented, 0});
 }
 
@@ -2635,72 +2981,105 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::StepLR, NodeCategory::Training, "Step LR", ICON_FA_GRADUATION_CAP,
-        {"step", "scheduler"}, 0, false, "Step learning-rate scheduler", "", "",
-        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
-        {{"Optimizer", PinType::Optimizer, true, "Scheduled"}},
-        {{"step_size", "int", "10", "Step size", {}, ""},
-         {"gamma", "float", "0.1", "Decay factor", {}, ""}},
+        {"step", "scheduler"}, 0, false,
+        "Blocked legacy step learning-rate scheduler preview",
+        "Saved-graph compatibility contract only. A backend scheduler primitive exists, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint it.", "",
+        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
+        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
+        {{"step_size", "int", "10", "Legacy epoch interval retained for saved graphs", {}, "", "Step size", "Compatibility"},
+         {"gamma", "float", "0.1", "Legacy multiplicative decay retained for saved graphs", {}, "", "Gamma", "Compatibility"}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::CosineAnnealing, NodeCategory::Training, "Cosine LR", ICON_FA_WAVE_SINE,
-        {"cosine", "scheduler"}, 0, false, "Cosine LR scheduler", "", "",
-        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
-        {{"Optimizer", PinType::Optimizer, true, "Scheduled"}},
-        {{"T_max", "int", "100", "Max iterations", {}, ""}},
+        {"cosine", "scheduler"}, 0, false,
+        "Blocked legacy cosine-annealing scheduler preview",
+        "Saved-graph compatibility contract only. A backend scheduler primitive exists, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint it.", "",
+        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
+        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
+        {{"T_max", "int", "100", "Legacy annealing period retained for saved graphs", {}, "", "T max", "Compatibility"},
+         {"eta_min", "float", "0.0", "Legacy minimum learning rate retained for saved graphs", {}, "", "Minimum learning rate", "Compatibility"}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::ReduceOnPlateau, NodeCategory::Training, "Reduce LR", ICON_FA_GRADUATION_CAP,
-        {"plateau", "scheduler"}, 0, false, "Reduce learning rate on plateau", "", "",
-        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
-        {{"Optimizer", PinType::Optimizer, true, "Scheduled"}},
-        {{"patience", "int", "10", "Patience", {}, ""},
-         {"factor", "float", "0.1", "Reduction factor", {}, ""}},
+        {"plateau", "scheduler"}, 0, false,
+        "Blocked legacy reduce-on-plateau scheduler preview",
+        "Saved-graph compatibility contract only. A backend scheduler primitive exists, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint it.", "",
+        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
+        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
+        {{"mode", "enum", "min", "Legacy monitored-metric direction retained for saved graphs", {"min", "max"}, "", "Mode", "Compatibility"},
+         {"factor", "float", "0.1", "Legacy multiplicative reduction retained for saved graphs", {}, "", "Factor", "Compatibility"},
+         {"patience", "int", "10", "Legacy plateau patience retained for saved graphs", {}, "", "Patience", "Compatibility"}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::ExponentialLR, NodeCategory::Training, "Exponential LR", ICON_FA_GRADUATION_CAP,
-        {"exponential", "scheduler"}, 0, false, "Exponential learning-rate scheduler", "", "",
-        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
-        {{"Optimizer", PinType::Optimizer, true, "Scheduled"}},
-        {{"gamma", "float", "0.95", "Decay factor", {}, ""}},
+        {"exponential", "scheduler"}, 0, false,
+        "Blocked legacy exponential learning-rate scheduler preview",
+        "Saved-graph compatibility contract only. A backend scheduler primitive exists, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint it.", "",
+        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
+        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
+        {{"gamma", "float", "0.95", "Legacy multiplicative decay retained for saved graphs", {}, "", "Gamma", "Compatibility"}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::WarmupScheduler, NodeCategory::Training, "Warmup LR", ICON_FA_GRADUATION_CAP,
-        {"warmup", "scheduler"}, 0, false, "Warmup learning-rate scheduler", "", "",
-        {{"Optimizer", PinType::Optimizer, true, "Optimizer"}},
-        {{"Optimizer", PinType::Optimizer, true, "Scheduled"}},
-        {{"warmup_steps", "int", "1000", "Warmup steps", {}, ""}},
+        {"warmup", "scheduler"}, 0, false,
+        "Blocked legacy warmup learning-rate scheduler preview",
+        "Saved-graph compatibility contract only. Backend warmup primitives exist, but the Engine graph and training lifecycle do not construct, step, restore, or checkpoint one for this node.", "",
+        {{"Optimizer", PinType::Optimizer, true, "Legacy optimizer-state input"}},
+        {{"Scheduled", PinType::Optimizer, true, "Reserved scheduled-optimizer output"}},
+        {{"warmup_steps", "int", "1000", "Legacy warmup duration retained for saved graphs", {}, "", "Warmup steps", "Compatibility"},
+         {"warmup_ratio", "float", "0.1", "Legacy starting-rate ratio retained for saved graphs", {}, "", "Warmup ratio", "Compatibility"}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::L1Regularization, NodeCategory::Regularization, "L1 Regularization", ICON_FA_GRADUATION_CAP,
-        {"l1", "regularization"}, 0, false, "L1 regularization", "", "",
-        {{"Loss", PinType::Loss, true, "Loss"}},
-        {{"Loss", PinType::Loss, true, "Regularized loss"}},
-        {{"lambda", "float", "0.0001", "Penalty strength", {}, ""}},
+        {"l1", "regularization"}, 0, false,
+        "Blocked legacy L1 penalty preview",
+        "Saved-graph compatibility contract only. No Engine owner reads model parameters, computes a differentiable L1 penalty, and adds it to the selected training loss.", "",
+        {{"Parameters", PinType::Parameters, true, "Legacy model-parameters input"}},
+        {{"Penalty", PinType::Loss, true, "Reserved scalar penalty output"}},
+        {{"lambda", "float", "0.01", "Legacy penalty coefficient retained for saved graphs", {}, "", "Lambda", "Compatibility"}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::L2Regularization, NodeCategory::Regularization, "L2 Regularization", ICON_FA_GRADUATION_CAP,
-        {"l2", "regularization"}, 0, false, "L2 regularization", "", "",
-        {{"Loss", PinType::Loss, true, "Loss"}},
-        {{"Loss", PinType::Loss, true, "Regularized loss"}},
-        {{"lambda", "float", "0.0001", "Penalty strength", {}, ""}},
+        {"l2", "regularization"}, 0, false,
+        "Blocked legacy L2 penalty preview",
+        "Saved-graph compatibility contract only. No Engine owner reads model parameters, computes a differentiable L2 penalty, and adds it to the selected training loss. AdamW weight decay is a separate optimizer behavior.", "",
+        {{"Parameters", PinType::Parameters, true, "Legacy model-parameters input"}},
+        {{"Penalty", PinType::Loss, true, "Reserved scalar penalty output"}},
+        {{"lambda", "float", "0.01", "Legacy penalty coefficient retained for saved graphs", {}, "", "Lambda", "Compatibility"}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::ElasticNet, NodeCategory::Regularization, "Elastic Net", ICON_FA_GRADUATION_CAP,
-        {"elasticnet", "regularization"}, 0, false, "Elastic-net regularization", "", "",
-        {{"Loss", PinType::Loss, true, "Loss"}},
-        {{"Loss", PinType::Loss, true, "Regularized loss"}},
-        {{"l1_lambda", "float", "0.0001", "L1 penalty", {}, ""},
-         {"l2_lambda", "float", "0.0001", "L2 penalty", {}, ""}},
+        {"elasticnet", "regularization"}, 0, false,
+        "Blocked legacy Elastic Net penalty preview",
+        "Saved-graph compatibility contract only. No Engine owner reads model parameters, combines differentiable L1/L2 penalties, and adds the result to the selected training loss.", "",
+        {{"Parameters", PinType::Parameters, true, "Legacy model-parameters input"}},
+        {{"Penalty", PinType::Loss, true, "Reserved scalar penalty output"}},
+        {{"lambda", "float", "0.01", "Legacy overall penalty coefficient retained for saved graphs", {}, "", "Lambda", "Compatibility"},
+         {"l1_ratio", "float", "0.5", "Legacy L1 share retained for saved graphs", {}, "", "L1 ratio", "Compatibility"}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::Output, NodeCategory::Training, "Output", ICON_FA_ARROW_RIGHT,
-        {"output", "final"}, 0, false, "Model output", "", "",
-        {{"Input", PinType::Tensor, true, "Final output"}}, {},
-        {}, NodeImplementationStatus::Implemented, 0});
+        {"output", "final", "predictions", "classes"}, 0, false,
+        "Declare the model or training workflow output",
+        "Acts as an identity marker: place it after the optimizer as the "
+        "terminal training node, or between the final model tensor and a loss "
+        "when an explicit prediction relay is useful. It does not add a layer. "
+        "The class count validates classification output width; the preceding "
+        "model layer still owns the actual projection.",
+        "",
+        {{"Input", PinType::Tensor, true,
+          "Final model tensor or terminal optimizer state."}},
+        {{"Predictions", PinType::Tensor, false,
+          "Optional identity relay for the final model tensor."}},
+        {{"num_classes", "int", "10",
+          "Expected classification output width", {}, "1-1048576",
+          "Classes", "Output", false, false}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::PairDatasetBuilder, NodeCategory::Training, "Pair Dataset Builder", ICON_FA_CODE_BRANCH,
         {"metric", "learning", "pair", "siamese"}, 0, false,
-        "Declare aligned pair samples for metric-learning training", "", "",
+        "Blocked metric-learning pair-batch contract",
+        "Preserves pair-column and label-convention settings for saved graphs. A production owner must materialize those columns as device-ready paired tensors before this node can execute.", "",
         {{"Rows", PinType::Dataset, true, "Source rows with sample A/B columns and labels"}},
         {{"Pair Batch", PinType::Dataset, true, "Typed PairBatch payload"}},
         {{"sample_a_column", "string", "", "First sample column", {}, ""},
@@ -2712,7 +3091,8 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
 
     RegisterNode({NodeType::TripletDatasetBuilder, NodeCategory::Training, "Triplet Dataset Builder", ICON_FA_CODE_BRANCH,
         {"metric", "learning", "triplet", "siamese"}, 0, false,
-        "Declare anchor/positive/negative samples for metric-learning training", "", "",
+        "Blocked metric-learning triplet-batch contract",
+        "Preserves anchor, positive, and negative column settings for saved graphs. A production owner must materialize those columns as device-ready triplet tensors before this node can execute.", "",
         {{"Rows", PinType::Dataset, true, "Source rows with triplet sample columns"}},
         {{"Triplet Batch", PinType::Dataset, true, "Typed TripletBatch payload"}},
         {{"anchor_column", "string", "", "Anchor sample column", {}, ""},
@@ -2722,7 +3102,8 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
 
     RegisterNode({NodeType::SharedEncoder, NodeCategory::Training, "Shared Encoder", ICON_FA_SHARE_NODES,
         {"metric", "learning", "shared", "encoder", "siamese"}, 0, false,
-        "Declare one encoder parameter set referenced by metric-learning branches", "", "",
+        "Blocked metric-learning shared-encoder contract",
+        "Declares one encoder identity for saved metric-learning graphs. Visual graph ownership, stateful branch snapshots, and device-resident gradient accumulation are not implemented.", "",
         {{"Encoder", PinType::Tensor, true, "Encoder layer chain"}},
         {{"Shared Encoder", PinType::Parameters, true, "Shared encoder reference"}},
         {{"encoder_id", "string", "shared_encoder", "Shared encoder id", {}, ""}},
@@ -2730,7 +3111,8 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
 
     RegisterNode({NodeType::SiameseBranch, NodeCategory::Training, "Siamese Branch", ICON_FA_CODE_BRANCH,
         {"metric", "learning", "branch", "siamese"}, 0, false,
-        "Reference a shared encoder for one metric-learning branch", "", "",
+        "Blocked metric-learning encoder-branch contract",
+        "Preserves a branch role and shared-encoder reference for saved graphs. The visual runtime does not yet route branch tensors through shared parameters.", "",
         {{"Input", PinType::Tensor, true, "Branch input"},
          {"Shared Encoder", PinType::Parameters, true, "Shared encoder reference"}},
         {{"Embedding", PinType::Tensor, true, "Branch embedding"}},
@@ -2739,7 +3121,8 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
 
     RegisterNode({NodeType::ContrastiveLoss, NodeCategory::Training, "Contrastive Loss", ICON_FA_SCALE_BALANCED,
         {"metric", "learning", "contrastive", "loss"}, 0, false,
-        "Metric-learning pair loss using 0=similar and 1=dissimilar labels", "", "",
+        "Blocked metric-learning contrastive-loss contract",
+        "Uses the saved-graph convention 0=similar and 1=dissimilar. A backend primitive exists, but the visual training path does not route paired embeddings and labels through it.", "",
         {{"Embedding A", PinType::Tensor, true, "First embedding"},
          {"Embedding B", PinType::Tensor, true, "Second embedding"},
          {"Labels", PinType::Labels, true, "Pair labels"}},
@@ -2749,7 +3132,8 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
 
     RegisterNode({NodeType::CosineEmbeddingLoss, NodeCategory::Training, "Cosine Embedding Loss", ICON_FA_SCALE_BALANCED,
         {"metric", "learning", "cosine", "loss"}, 0, false,
-        "Metric-learning pair loss using 1=similar and -1=dissimilar labels", "", "",
+        "Blocked metric-learning cosine-loss contract",
+        "Uses the saved-graph convention 1=similar and -1=dissimilar. A backend primitive exists, but the visual training path does not route paired embeddings and labels through it.", "",
         {{"Embedding A", PinType::Tensor, true, "First embedding"},
          {"Embedding B", PinType::Tensor, true, "Second embedding"},
          {"Labels", PinType::Labels, true, "Pair labels"}},
@@ -2759,7 +3143,8 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
 
     RegisterNode({NodeType::TripletLoss, NodeCategory::Training, "Triplet Loss", ICON_FA_SCALE_BALANCED,
         {"metric", "learning", "triplet", "loss"}, 0, false,
-        "Metric-learning triplet loss over anchor/positive/negative embeddings", "", "",
+        "Blocked metric-learning triplet-loss contract",
+        "Preserves the margin for anchor, positive, and negative embeddings. A backend primitive exists, but the visual training path does not own the triplet/shared-encoder update.", "",
         {{"Anchor", PinType::Tensor, true, "Anchor embedding"},
          {"Positive", PinType::Tensor, true, "Positive embedding"},
          {"Negative", PinType::Tensor, true, "Negative embedding"}},
@@ -2769,7 +3154,8 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
 
     RegisterNode({NodeType::PairMetrics, NodeCategory::Training, "Pair Metrics", ICON_FA_CHART_LINE,
         {"metric", "learning", "pair", "metrics"}, 0, false,
-        "Compute distance-threshold metrics for metric-learning pairs", "", "",
+        "Blocked metric-learning pair-metrics contract",
+        "Preserves the distance threshold for saved graphs. The visual runtime does not yet compute and report pair metrics from routed embedding batches.", "",
         {{"Embedding A", PinType::Tensor, true, "First embedding"},
          {"Embedding B", PinType::Tensor, true, "Second embedding"},
          {"Labels", PinType::Labels, true, "Pair labels"}},
@@ -2779,7 +3165,8 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
 
     RegisterNode({NodeType::RetrievalMetrics, NodeCategory::Training, "Retrieval Metrics", ICON_FA_CHART_LINE,
         {"metric", "learning", "retrieval", "metrics"}, 0, false,
-        "Compute recall@k, MRR, and nearest-neighbor agreement for embeddings", "", "",
+        "Blocked metric-learning retrieval-metrics contract",
+        "Preserves the retrieval cutoff for recall@k, MRR, and nearest-neighbor agreement. The visual runtime does not yet own metric computation and reporting.", "",
         {{"Embeddings", PinType::Tensor, true, "Embedding matrix"},
          {"Class IDs", PinType::Labels, true, "Class ids"}},
         {{"Metrics", PinType::Dataset, true, "Retrieval metric rows"}},
@@ -2788,7 +3175,8 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
 
     RegisterNode({NodeType::EmbeddingOutput, NodeCategory::Training, "Embedding Output", ICON_FA_CUBE,
         {"metric", "learning", "embedding", "output"}, 0, false,
-        "Declare embedding extraction output for metric-learning inference", "", "",
+        "Blocked metric-learning embedding-output contract",
+        "Preserves embedding-output metadata settings for saved graphs. Response packaging exists for inference endpoints, but visual graph/runtime routing is not implemented.", "",
         {{"Embeddings", PinType::Tensor, true, "Embedding matrix"}},
         {{"Embedding Records", PinType::Dataset, true, "Embedding output records"}},
         {{"include_metadata", "bool", "true", "Include sample/class metadata", {}, ""}},
@@ -2796,7 +3184,8 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
 
     RegisterNode({NodeType::PairScoreOutput, NodeCategory::Training, "Pair Score Output", ICON_FA_CHART_LINE,
         {"metric", "learning", "pair", "score", "output"}, 0, false,
-        "Declare pair distance/similarity output for metric-learning inference", "", "",
+        "Blocked metric-learning pair-score output contract",
+        "Preserves distance or similarity scoring mode for saved graphs. Response packaging exists for inference endpoints, but visual graph/runtime routing is not implemented.", "",
         {{"Embedding A", PinType::Tensor, true, "First embedding"},
          {"Embedding B", PinType::Tensor, true, "Second embedding"}},
         {{"Pair Scores", PinType::Dataset, true, "Pair score records"}},
@@ -3243,34 +3632,103 @@ void NodeMetadataRegistry::InitializeKNIMENodes() {
 // =============================================================================
 void NodeMetadataRegistry::InitializeUtilityNodes() {
     RegisterNode({NodeType::Lambda, NodeCategory::Utility, "Lambda", ICON_FA_CODE,
-        {"lambda", "custom", "function"}, 0, false, "Custom function", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
-        {{"expression", "string", "x", "Python expression", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        {"lambda", "custom", "function"}, 0, false,
+        "Blocked custom tensor function retained for saved-graph compatibility",
+        "No expression evaluator, model layer, PipelineExecutor operator, or "
+        "sandboxed execution owner is registered for this node.", "",
+        {{"Input", PinType::Tensor, true, "Input tensor"}},
+        {{"Output", PinType::Tensor, true, "Uncomputed tensor output"}},
+        {{"function", "string", "lambda x: x",
+          "Historical function text; not executed while the node is blocked", {}, ""}},
+        NodeImplementationStatus::Template, 0});
 
     RegisterNode({NodeType::Identity, NodeCategory::Utility, "Identity", ICON_FA_EQUALS,
-        {"identity", "passthrough"}, 0, false, "Pass through unchanged", "", "",
-        {{"Input", PinType::Tensor, true, "Input"}},
-        {{"Output", PinType::Tensor, true, "Output"}},
+        {"identity", "passthrough", "table"}, 0, false,
+        "Pass an Arrow table through unchanged",
+        "PipelineOperatorFactory owns this Data Studio table operation. The output "
+        "retains the input table's rows, columns, schema, and values.", "",
+        {{"Table", PinType::Dataset, true, "Input Arrow table"}},
+        {{"Table", PinType::Dataset, true, "The same Arrow table, unchanged"}},
         {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Constant, NodeCategory::Utility, "Constant", ICON_FA_HASHTAG,
-        {"constant", "value"}, 0, false, "Output constant", "", "",
-        {}, {{"Value", PinType::Tensor, true, "Value"}},
-        {{"value", "float", "1.0", "Value", {}, ""}},
+        {"constant", "value", "simulation", "scalar"}, 0, false,
+        "Emit a fixed scalar value on every simulation tick",
+        "GraphExecutor owns this bounded scalar source. It is not a trainable "
+        "parameter or a PipelineExecutor Tensor source.", "",
+        {}, {{"Value", PinType::Tensor, true, "Scalar simulation value"}},
+        {{"value", "float", "1.0", "Finite scalar output", {}, "",
+          "Value", "Signal"}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::SignalSlider, NodeCategory::Signal, "Slider", ICON_FA_SLIDERS,
-        {"slider", "control", "input"}, 0, false, "Interactive slider", "", "",
-        {}, {{"Value", PinType::Tensor, true, "Value"}},
-        {{"min", "float", "0.0", "Min", {}, ""}, {"max", "float", "1.0", "Max", {}, ""}},
+    RegisterNode({NodeType::Parameter, NodeCategory::Utility, "Parameter", ICON_FA_CIRCLE_DOT,
+        {"parameter", "constant", "trainable"}, 0, false,
+        "Blocked standalone trainable parameter retained for saved-graph compatibility",
+        "No model-registration, initialization, gradient, optimizer, checkpoint, or "
+        "graph execution owner is registered for a standalone Parameter node.", "",
+        {}, {{"Parameter", PinType::Tensor, true, "Unregistered parameter tensor"}},
+        {{"shape", "string", "256", "Historical parameter shape", {}, ""},
+         {"init", "enum", "xavier", "Historical initialization policy",
+          {"xavier", "zeros", "ones", "normal", "uniform"}, ""},
+         {"requires_grad", "bool", "true", "Historical gradient intent", {}, ""}},
+        NodeImplementationStatus::Template, 0});
+
+    RegisterNode({NodeType::SignalSlider, NodeCategory::Signal, "Signal Slider", ICON_FA_SLIDERS,
+        {"slider", "control", "input", "simulation", "scalar"}, 0, false,
+        "Interactively emit one scalar value during simulation",
+        "Properties publishes live value changes to GraphExecutor. The value "
+        "must remain inside the configured finite range.", "",
+        {}, {{"Value", PinType::Tensor, true, "Scalar simulation value"}},
+        {{"value", "float", "0.0", "Current scalar output", {}, "",
+          "Value", "Signal"},
+         {"min", "float", "-1.0", "Minimum selectable value", {}, "",
+          "Minimum", "Range"},
+         {"max", "float", "1.0", "Maximum selectable value", {}, "",
+          "Maximum", "Range"}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::SignalScope, NodeCategory::Signal, "Scope", ICON_FA_CHART_LINE,
-        {"scope", "plot", "monitor"}, 0, false, "Signal visualizer", "", "",
-        {{"Signal", PinType::Tensor, true, "Signal"}}, {},
-        {{"buffer_size", "int", "1000", "Buffer size", {}, ""}},
+    RegisterNode({NodeType::SineWave, NodeCategory::Signal, "Sine Wave", ICON_FA_WAVE_SQUARE,
+        {"signal", "sine", "wave", "simulation"}, 0, false,
+        "Emit amplitude * sin(2*pi*frequency*time + phase) + offset",
+        "GraphExecutor evaluates this finite scalar source using simulation "
+        "time in seconds and phase in radians.", "",
+        {}, {{"Signal", PinType::Tensor, true, "Scalar sine-wave sample"}},
+        {{"amplitude", "float", "1.0", "Wave amplitude", {}, "", "Amplitude", "Wave"},
+         {"frequency", "float", "1.0", "Frequency in hertz", {}, "", "Frequency (Hz)", "Wave"},
+         {"phase", "float", "0.0", "Phase in radians", {}, "", "Phase (rad)", "Wave"},
+         {"offset", "float", "0.0", "Constant output offset", {}, "", "Offset", "Wave"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::StepSignal, NodeCategory::Signal, "Step Signal", ICON_FA_ARROW_RIGHT,
+        {"signal", "step", "simulation"}, 0, false,
+        "Switch from an initial scalar to a final scalar at the step time",
+        "GraphExecutor evaluates the initial value before step_time seconds and "
+        "the final value at and after that time.", "",
+        {}, {{"Signal", PinType::Tensor, true, "Scalar step-signal sample"}},
+        {{"step_time", "float", "1.0", "Transition time in seconds", {}, ">= 0", "Step time (s)", "Step"},
+         {"initial_value", "float", "0.0", "Value before the transition", {}, "", "Initial value", "Step"},
+         {"final_value", "float", "1.0", "Value at and after the transition", {}, "", "Final value", "Step"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::RampSignal, NodeCategory::Signal, "Ramp Signal", ICON_FA_ARROW_TREND_UP,
+        {"signal", "ramp", "simulation"}, 0, false,
+        "Linearly interpolate between two scalar values over a duration",
+        "GraphExecutor starts at start_value when simulation time is zero, "
+        "reaches end_value at duration seconds, and then holds it.", "",
+        {}, {{"Signal", PinType::Tensor, true, "Scalar ramp-signal sample"}},
+        {{"start_value", "float", "0.0", "Value at time zero", {}, "", "Start value", "Ramp"},
+         {"end_value", "float", "1.0", "Value at the end of the ramp", {}, "", "End value", "Ramp"},
+         {"duration", "float", "5.0", "Positive ramp duration in seconds", {}, "> 0", "Duration (s)", "Ramp"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::SignalScope, NodeCategory::Signal, "Signal Scope", ICON_FA_CHART_LINE,
+        {"scope", "plot", "monitor", "simulation", "scalar"}, 0, false,
+        "Plot one connected scalar signal from the live simulation",
+        "Properties reads the connected input value and simulation timestamp "
+        "from GraphExecutor. It does not synthesize preview data.", "",
+        {{"Signal", PinType::Tensor, true, "Connected scalar simulation signal"}}, {},
+        {{"window_size", "int", "500", "Maximum retained samples", {}, "10-100000", "Window size", "Display"},
+         {"auto_scale", "bool", "true", "Automatically fit the value axis", {}, "", "Auto scale", "Display"}},
         NodeImplementationStatus::Implemented, 0});
 
     // ===== Signal Processing Nodes (Phase 4) =====

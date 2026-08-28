@@ -577,6 +577,12 @@ int main() {
     Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::LayerNorm).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
           "LayerNorm capability kind should be CpuBackedModelLayer");
+    Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::Dropout).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
+          "Dropout capability kind should remain ArrayFireTensor");
+    Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::BatchNorm).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
+          "BatchNorm capability kind should remain ArrayFireTensor");
     Check(!cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
               gui::NodeType::MultiHeadAttention),
           "MultiHeadAttention should not be classified as direct ArrayFire tensor-capable");
@@ -607,6 +613,16 @@ int main() {
               gui::NodeType::TransformerDecoder).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
           "TransformerDecoder capability kind should be CpuBackedModelLayer");
+    Check(!cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
+              gui::NodeType::PositionalEncoding),
+          "PositionalEncoding should not be classified as direct ArrayFire tensor-capable");
+    Check(cyxwiz::backend_placement::IsKnownCpuBackedModelLayer(
+              gui::NodeType::PositionalEncoding),
+          "PositionalEncoding should be classified as a known CPU-backed model layer");
+    Check(cyxwiz::backend_placement::ClassifyLayer(
+              gui::NodeType::PositionalEncoding).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
+          "PositionalEncoding capability kind should be CpuBackedModelLayer");
     Check(cyxwiz::backend_placement::ClassifyLayer(
               gui::NodeType::TimeDistributed).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::TimeDistributedSequenceWrapper,

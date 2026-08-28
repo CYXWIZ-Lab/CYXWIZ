@@ -315,9 +315,11 @@ struct RegressionResult {
     double adjusted_r_squared = 0.0;
     double f_statistic = 0.0;
     double f_p_value = 1.0;
-    double mse = 0.0;  // Mean Squared Error
-    double rmse = 0.0; // Root Mean Squared Error
+    double mse = 0.0;  // Mean prediction squared error: SSE / n
+    double rmse = 0.0; // Root mean prediction squared error
     double mae = 0.0;  // Mean Absolute Error
+    double residual_variance = 0.0; // Unbiased error variance: SSE / df_resid
+    double residual_standard_error = 0.0; // sqrt(residual_variance)
     std::vector<double> residuals;
     std::vector<double> predicted;
     size_t n = 0;      // Sample size

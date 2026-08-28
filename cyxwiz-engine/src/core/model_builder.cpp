@@ -1,6 +1,10 @@
 #include "model_builder.h"
 #include "error_codes.h"
 #include "graph_executable_model.h"
+#include "normalization_regularization_configuration_policy.h"
+#include "recurrent_configuration_policy.h"
+#include "sequence_projection_configuration_policy.h"
+#include "transformer_configuration_policy.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cctype>
@@ -342,6 +346,39 @@ bool BuildSequential(
         const auto& layer_cfg = config.layers[i];
         const size_t module_count_before = model.Size();
 
+        if (const auto reason =
+                ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+                    layer_cfg.type, layer_cfg.parameters)) {
+            throw std::runtime_error(
+                "unsupported layer configuration at index " +
+                std::to_string(i) + ": " + *reason);
+        }
+        if (const auto reason =
+                ResolveInvalidSequenceProjectionConfigurationReason(
+                    layer_cfg.type, layer_cfg.parameters)) {
+            throw std::runtime_error(
+                "invalid layer configuration at index " +
+                std::to_string(i) + ": " + *reason);
+        }
+        NormalizationRegularizationConfiguration
+            normalization_regularization_configuration;
+        if (const auto reason =
+                ResolveNormalizationRegularizationConfiguration(
+                    layer_cfg.type, layer_cfg.parameters,
+                    normalization_regularization_configuration)) {
+            throw std::runtime_error(
+                "invalid layer configuration at index " +
+                std::to_string(i) + ": " + *reason);
+        }
+        TransformerConfiguration transformer_configuration;
+        if (const auto reason = ResolveTransformerConfiguration(
+                layer_cfg.type, layer_cfg.parameters,
+                transformer_configuration)) {
+            throw std::runtime_error(
+                "invalid layer configuration at index " +
+                std::to_string(i) + ": " + *reason);
+        }
+
         switch (layer_cfg.type) {
             case gui::NodeType::Dense: {
                 size_t out_features = layer_cfg.units > 0 ? layer_cfg.units : 64;
@@ -617,27 +654,24 @@ bool BuildSequential(
             case gui::NodeType::TransformerEncoder: {
                 const size_t d_model = current_input_size > 0
                     ? current_input_size
-                    : ParseSizeParam(layer_cfg, "d_model", 64);
-                size_t num_heads = ParseSizeParam(layer_cfg, "num_heads",
-                                                  ParseSizeParam(layer_cfg, "nhead", 1));
-                size_t dim_feedforward = ParseSizeParam(
-                    layer_cfg, "dim_feedforward",
-                    ParseSizeParam(layer_cfg, "ff_dim", d_model * 4));
-                float dropout = ParseFloatParam(layer_cfg, "dropout",
-                                                ParseFloatParam(layer_cfg, "dropout_rate", 0.1f));
-                bool norm_first = ParseBoolParam(layer_cfg, "norm_first", false);
-
-                const size_t requested_d_model =
-                    ParseSizeParam(layer_cfg, "d_model", d_model);
-                if (requested_d_model != d_model) {
-                    spdlog::warn("  [{}] TransformerEncoder d_model={} does "
-                                 "not match incoming feature size {}; using {}",
-                                 i, requested_d_model, d_model, d_model);
+                    : transformer_configuration.model_width;
+                if (transformer_configuration.model_width != d_model) {
+                    throw std::runtime_error(
+                        "TransformerEncoder d_model does not match incoming "
+                        "feature width");
+                }
+                if (d_model % transformer_configuration.num_heads != 0) {
+                    throw std::runtime_error(
+                        "TransformerEncoder incoming feature width must be "
+                        "divisible by num_heads");
                 }
 
-                model.Add<TransformerEncoderModule>(d_model, num_heads,
-                                                    dim_feedforward, dropout,
-                                                    norm_first);
+                model.Add<TransformerEncoderModule>(
+                    d_model,
+                    transformer_configuration.num_heads,
+                    transformer_configuration.feedforward_width,
+                    transformer_configuration.dropout,
+                    transformer_configuration.norm_first);
 
                 bool next_is_transformer = false;
                 if (i + 1 < config.layers.size()) {
@@ -652,7 +686,9 @@ bool BuildSequential(
                 const size_t downstream_features = current_sequence_length * d_model;
                 spdlog::info("  [{}] TransformerEncoder(d_model={}, heads={}, "
                              "ff={}, dropout={}) - output [batch, {}, {}]",
-                             i, d_model, num_heads, dim_feedforward, dropout,
+                             i, d_model, transformer_configuration.num_heads,
+                             transformer_configuration.feedforward_width,
+                             transformer_configuration.dropout,
                              current_sequence_length, d_model);
                 current_input_size = next_is_transformer
                     ? d_model
@@ -663,25 +699,23 @@ bool BuildSequential(
             case gui::NodeType::MultiHeadAttention: {
                 const size_t embed_dim = current_input_size > 0
                     ? current_input_size
-                    : ParseSizeParam(layer_cfg, "embed_dim",
-                                     ParseSizeParam(layer_cfg, "d_model", 64));
-                size_t num_heads = ParseSizeParam(layer_cfg, "num_heads",
-                                                  ParseSizeParam(layer_cfg, "heads", 1));
-                float dropout = ParseFloatParam(layer_cfg, "dropout",
-                                                ParseFloatParam(layer_cfg, "dropout_rate", 0.0f));
-                const bool use_bias = ParseBoolParam(layer_cfg, "use_bias", true);
-
-                const size_t requested_embed_dim =
-                    ParseSizeParam(layer_cfg, "embed_dim",
-                                   ParseSizeParam(layer_cfg, "d_model", embed_dim));
-                if (requested_embed_dim != embed_dim) {
-                    spdlog::warn("  [{}] MultiHeadAttention embed_dim={} does "
-                                 "not match incoming feature size {}; using {}",
-                                 i, requested_embed_dim, embed_dim, embed_dim);
+                    : transformer_configuration.model_width;
+                if (transformer_configuration.model_width != embed_dim) {
+                    throw std::runtime_error(
+                        "MultiHeadAttention embed_dim does not match incoming "
+                        "feature width");
+                }
+                if (embed_dim % transformer_configuration.num_heads != 0) {
+                    throw std::runtime_error(
+                        "MultiHeadAttention incoming feature width must be "
+                        "divisible by num_heads");
                 }
 
-                model.Add<MultiHeadAttentionModule>(embed_dim, num_heads,
-                                                    dropout, use_bias);
+                model.Add<MultiHeadAttentionModule>(
+                    embed_dim,
+                    transformer_configuration.num_heads,
+                    transformer_configuration.dropout,
+                    transformer_configuration.use_bias);
 
                 bool next_is_sequence_layer = false;
                 if (i + 1 < config.layers.size()) {
@@ -697,7 +731,8 @@ bool BuildSequential(
                     current_sequence_length * embed_dim;
                 spdlog::info("  [{}] MultiHeadAttention(embed_dim={}, heads={}, "
                              "dropout={}) - self-attention output [batch, {}, {}]",
-                             i, embed_dim, num_heads, dropout,
+                             i, embed_dim, transformer_configuration.num_heads,
+                             transformer_configuration.dropout,
                              current_sequence_length, embed_dim);
                 current_input_size = next_is_sequence_layer
                     ? embed_dim
@@ -708,15 +743,19 @@ bool BuildSequential(
             case gui::NodeType::PositionalEncoding: {
                 const size_t d_model = current_input_size > 0
                     ? current_input_size
-                    : ParseSizeParam(layer_cfg, "d_model", 64);
-                const size_t max_sequence_length = ParseSizeParam(
-                    layer_cfg, "max_sequence_length",
-                    ParseSizeParam(layer_cfg, "max_length", current_sequence_length));
+                    : transformer_configuration.model_width;
+                if (transformer_configuration.model_width != d_model) {
+                    throw std::runtime_error(
+                        "PositionalEncoding d_model does not match incoming "
+                        "feature width");
+                }
 
-                model.Add<PositionalEncodingModule>(d_model, max_sequence_length);
+                model.Add<PositionalEncodingModule>(
+                    d_model, transformer_configuration.max_sequence_length);
                 spdlog::info("  [{}] PositionalEncoding(d_model={}, max_len={}) - output "
                              "[batch, {}, {}]",
-                             i, d_model, max_sequence_length,
+                             i, d_model,
+                             transformer_configuration.max_sequence_length,
                              current_sequence_length, d_model);
                 current_input_size = d_model;
                 break;
@@ -725,27 +764,24 @@ bool BuildSequential(
             case gui::NodeType::TransformerDecoder: {
                 const size_t d_model = current_input_size > 0
                     ? current_input_size
-                    : ParseSizeParam(layer_cfg, "d_model", 64);
-                size_t num_heads = ParseSizeParam(layer_cfg, "num_heads",
-                                                  ParseSizeParam(layer_cfg, "nhead", 1));
-                size_t dim_feedforward = ParseSizeParam(
-                    layer_cfg, "dim_feedforward",
-                    ParseSizeParam(layer_cfg, "ff_dim", d_model * 4));
-                float dropout = ParseFloatParam(layer_cfg, "dropout",
-                                                ParseFloatParam(layer_cfg, "dropout_rate", 0.1f));
-                bool norm_first = ParseBoolParam(layer_cfg, "norm_first", false);
-
-                const size_t requested_d_model =
-                    ParseSizeParam(layer_cfg, "d_model", d_model);
-                if (requested_d_model != d_model) {
-                    spdlog::warn("  [{}] TransformerDecoder d_model={} does "
-                                 "not match incoming feature size {}; using {}",
-                                 i, requested_d_model, d_model, d_model);
+                    : transformer_configuration.model_width;
+                if (transformer_configuration.model_width != d_model) {
+                    throw std::runtime_error(
+                        "TransformerDecoder d_model does not match incoming "
+                        "feature width");
+                }
+                if (d_model % transformer_configuration.num_heads != 0) {
+                    throw std::runtime_error(
+                        "TransformerDecoder incoming feature width must be "
+                        "divisible by num_heads");
                 }
 
-                model.Add<TransformerDecoderModule>(d_model, num_heads,
-                                                    dim_feedforward, dropout,
-                                                    norm_first);
+                model.Add<TransformerDecoderModule>(
+                    d_model,
+                    transformer_configuration.num_heads,
+                    transformer_configuration.feedforward_width,
+                    transformer_configuration.dropout,
+                    transformer_configuration.norm_first);
 
                 bool next_is_transformer = false;
                 if (i + 1 < config.layers.size()) {
@@ -760,7 +796,9 @@ bool BuildSequential(
                 const size_t downstream_features = current_sequence_length * d_model;
                 spdlog::info("  [{}] TransformerDecoder(d_model={}, heads={}, "
                              "ff={}, dropout={}) - output [batch, {}, {}]",
-                             i, d_model, num_heads, dim_feedforward, dropout,
+                             i, d_model, transformer_configuration.num_heads,
+                             transformer_configuration.feedforward_width,
+                             transformer_configuration.dropout,
                              current_sequence_length, d_model);
                 current_input_size = next_is_transformer
                     ? d_model
@@ -845,9 +883,11 @@ bool BuildSequential(
             }
 
             case gui::NodeType::Dropout: {
-                float p = layer_cfg.dropout_rate > 0 ? layer_cfg.dropout_rate : 0.5f;
-                model.Add<DropoutModule>(p);
-                spdlog::info("  [{}] Dropout(p={})", i, p);
+                model.Add<DropoutModule>(
+                    normalization_regularization_configuration.dropout_rate);
+                spdlog::info(
+                    "  [{}] Dropout(p={})", i,
+                    normalization_regularization_configuration.dropout_rate);
                 break;
             }
 
@@ -1028,39 +1068,38 @@ bool BuildSequential(
             }
 
             case gui::NodeType::BatchNorm: {
-                // BatchNorm uses current feature size (output of previous Dense layer)
-                float eps = layer_cfg.eps > 0 ? layer_cfg.eps : 1e-5f;
-                float momentum = layer_cfg.momentum > 0 ? layer_cfg.momentum : 0.1f;
-                model.Add<BatchNormModule>(current_input_size, eps, momentum);
-                spdlog::info("  [{}] BatchNorm({})", i, current_input_size);
+                model.Add<BatchNormModule>(
+                    current_input_size,
+                    normalization_regularization_configuration.epsilon,
+                    normalization_regularization_configuration.momentum);
+                spdlog::info(
+                    "  [{}] BatchNorm(features={}, eps={}, momentum={})", i,
+                    current_input_size,
+                    normalization_regularization_configuration.epsilon,
+                    normalization_regularization_configuration.momentum);
                 break;
             }
 
             case gui::NodeType::LayerNorm: {
                 std::vector<int> normalized_shape =
-                    ParseIntListParam(layer_cfg, "normalized_shape");
-                if (normalized_shape.empty()) {
+                    normalization_regularization_configuration.normalized_shape;
+                if (normalization_regularization_configuration
+                        .automatic_normalized_shape) {
                     normalized_shape.push_back(
                         static_cast<int>(current_input_size > 0
                                              ? current_input_size
                                              : 1));
                 }
-                for (int& dim : normalized_shape) {
-                    if (dim <= 0) {
-                        dim = static_cast<int>(current_input_size > 0
-                                                   ? current_input_size
-                                                   : 1);
-                    }
-                }
-                const float eps = ParseFloatParam(
-                    layer_cfg, "epsilon", ParseFloatParam(layer_cfg, "eps", 1e-5f));
-                const bool elementwise_affine =
-                    ParseBoolParam(layer_cfg, "elementwise_affine", true);
                 model.Add<LayerNormModule>(
-                    normalized_shape, eps, elementwise_affine);
+                    normalized_shape,
+                    normalization_regularization_configuration.epsilon,
+                    normalization_regularization_configuration
+                        .elementwise_affine);
                 spdlog::info("  [{}] LayerNorm(normalized_shape={}, eps={}, affine={})",
-                             i, normalized_shape.front(), eps,
-                             elementwise_affine);
+                             i, normalized_shape.front(),
+                             normalization_regularization_configuration.epsilon,
+                             normalization_regularization_configuration
+                                 .elementwise_affine);
                 bool next_is_sequence_layer = false;
                 if (i + 1 < config.layers.size()) {
                     next_is_sequence_layer =

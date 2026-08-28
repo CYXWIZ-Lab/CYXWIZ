@@ -1,4 +1,6 @@
 #include "properties_truth.h"
+#include "../core/normalization_regularization_configuration_policy.h"
+#include "../core/transformer_configuration_policy.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1372,20 +1374,48 @@ bool IsShapeOpNode(NodeType type) {
 }
 
 void AddCoreLayerTruth(NodeTruthReport& report, const MLNode& node) {
+    const auto add_executable_configuration = [&]() {
+        PropertyTruth configuration;
+        configuration.label = "Executable configuration";
+        configuration.canonical_key = "normalization_regularization_contract";
+        configuration.source_key = "shared compiler/runtime policy";
+        configuration.owner = TruthOwner::Compiler;
+        configuration.quick_editable = false;
+        if (const auto error =
+                cyxwiz::ResolveInvalidNormalizationRegularizationConfigurationReason(
+                    node.type, node.parameters)) {
+            configuration.effective_value = "rejected";
+            configuration.message = *error;
+            AddStatus(configuration, TruthStatus::Unsupported);
+        } else {
+            configuration.effective_value = "validated exact construction";
+            AddStatus(configuration, TruthStatus::OK);
+        }
+        report.properties.push_back(std::move(configuration));
+    };
+
     if (node.type == NodeType::Dense ||
         node.type == NodeType::TimeDistributed) {
-        auto units = ResolveIntProperty(
-            node,
-            node.type == NodeType::Dense ? "Output units"
-                                         : "Per-timestep output units",
-            "units",
-            node.type == NodeType::Dense ? "64" : "128",
-            TruthOwner::Compiler,
-            true,
-            false,
-            node.type == NodeType::Dense
-                ? "GraphCompiler and ModelBuilder use units as the linear output width."
-                : "GraphCompiler uses units as the per-timestep classifier width.");
+        auto units = node.type == NodeType::TimeDistributed
+            ? ResolveAliasedIntProperty(
+                  node,
+                  "Per-timestep output units",
+                  "units",
+                  {"out_features"},
+                  "128",
+                  TruthOwner::Compiler,
+                  true,
+                  false,
+                  "GraphCompiler and ModelBuilder use this as the shared Dense output width at every timestep.")
+            : ResolveIntProperty(
+                  node,
+                  "Output units",
+                  "units",
+                  "64",
+                  TruthOwner::Compiler,
+                  true,
+                  false,
+                  "GraphCompiler and ModelBuilder use units as the linear output width.");
         RequirePositiveInt(units, "units");
         report.properties.push_back(std::move(units));
 
@@ -1419,6 +1449,7 @@ void AddCoreLayerTruth(NodeTruthReport& report, const MLNode& node) {
             "Dropout preserves tensor shape and randomly zeros activations during training.");
         RequireFloatInRange(rate, "rate", 0.0, 1.0, true, false);
         report.properties.push_back(std::move(rate));
+        add_executable_configuration();
         return;
     }
 
@@ -1444,22 +1475,26 @@ void AddCoreLayerTruth(NodeTruthReport& report, const MLNode& node) {
             TruthOwner::Compiler,
             true,
             false);
-        RequireFloatAtLeast(momentum, "momentum", 0.0, false);
+        RequireFloatInRange(momentum, "momentum", 0.0, 1.0, true, true);
         report.properties.push_back(std::move(momentum));
+        add_executable_configuration();
         return;
     }
 
     if (node.type == NodeType::LayerNorm) {
-        auto normalized_shape = ResolveIntProperty(
+        auto normalized_shape = ResolveStringProperty(
             node,
             "Normalized shape",
             "normalized_shape",
-            "128",
+            "",
             TruthOwner::Compiler,
             true,
             false,
-            "When absent, ModelBuilder falls back to current input width.");
-        RequirePositiveInt(normalized_shape, "normalized_shape");
+            false,
+            "Empty uses the incoming feature width; otherwise enter positive trailing dimensions separated by commas.");
+        if (normalized_shape.effective_value.empty()) {
+            normalized_shape.effective_value = "automatic current feature width";
+        }
         report.properties.push_back(std::move(normalized_shape));
 
         auto eps = ResolveAliasedFloatProperty(
@@ -1474,6 +1509,16 @@ void AddCoreLayerTruth(NodeTruthReport& report, const MLNode& node) {
             "ModelBuilder accepts legacy epsilon and canonical eps.");
         RequireFloatAtLeast(eps, "eps", 0.0, false);
         report.properties.push_back(std::move(eps));
+        report.properties.push_back(ResolveBoolProperty(
+            node,
+            "Elementwise affine",
+            "elementwise_affine",
+            true,
+            TruthOwner::Runtime,
+            true,
+            false,
+            "When false, LayerNorm has no trainable scale or bias."));
+        add_executable_configuration();
         return;
     }
 
@@ -1555,6 +1600,214 @@ void AddCoreLayerTruth(NodeTruthReport& report, const MLNode& node) {
             false);
         report.properties.push_back(std::move(dim));
     }
+}
+
+void AddEmbeddingTruth(NodeTruthReport& report, const MLNode& node) {
+    auto vocabulary_size = ResolveIntProperty(
+        node, "Vocabulary size", "num_embeddings", "10000",
+        TruthOwner::Runtime, false, true,
+        "ModelBuilder uses this as the trainable lookup-table row count.");
+    RequirePositiveInt(vocabulary_size, "num_embeddings");
+    if (ParsePositiveInt(&vocabulary_size.effective_value) == 1) {
+        vocabulary_size.statuses.clear();
+        AddStatus(vocabulary_size, TruthStatus::Missing);
+        vocabulary_size.message = "num_embeddings must be >= 2.";
+    }
+    const int vocabulary_count =
+        ParsePositiveInt(&vocabulary_size.effective_value);
+    report.properties.push_back(std::move(vocabulary_size));
+
+    auto embedding_dim = ResolveIntProperty(
+        node, "Embedding dimension", "embedding_dim", "256",
+        TruthOwner::Runtime, false, true,
+        "ModelBuilder uses this as the Float32 feature width for each token.");
+    RequirePositiveInt(embedding_dim, "embedding_dim");
+    report.properties.push_back(std::move(embedding_dim));
+
+    auto padding = ResolveIntProperty(
+        node, "Padding index", "padding_idx", "-1",
+        TruthOwner::Runtime, false, true,
+        "-1 disables padding; a configured token row emits zeros and receives no gradient.");
+    char* padding_end = nullptr;
+    const long padding_value =
+        std::strtol(padding.effective_value.c_str(), &padding_end, 10);
+    if (padding_end == padding.effective_value.c_str() ||
+        *padding_end != '\0' || padding_value < -1 ||
+        (vocabulary_count > 0 && padding_value >= vocabulary_count)) {
+        padding.statuses.clear();
+        AddStatus(padding, TruthStatus::Missing);
+        AddStatus(padding, TruthStatus::RequiresDialog);
+        padding.message =
+            "padding_idx must be -1 or smaller than num_embeddings.";
+    }
+    report.properties.push_back(std::move(padding));
+
+    auto max_norm = ResolveFloatProperty(
+        node, "Maximum vector norm", "max_norm", "0",
+        TruthOwner::Runtime, false, true,
+        "0 disables clipping; positive values cap each row's L2 norm before lookup.");
+    double max_norm_value = 0.0;
+    if (ParseDoubleValue(max_norm.effective_value, max_norm_value) &&
+        max_norm_value < 0.0) {
+        max_norm.statuses.clear();
+        AddStatus(max_norm, TruthStatus::Missing);
+        AddStatus(max_norm, TruthStatus::RequiresDialog);
+        max_norm.message = "max_norm must be >= 0.";
+    }
+    report.properties.push_back(std::move(max_norm));
+
+    report.properties.push_back(ResolveBoolProperty(
+        node, "Freeze loaded weights", "freeze", false,
+        TruthOwner::Runtime, false, true,
+        "When true, a loaded pretrained table is excluded from optimizer updates."));
+
+    report.properties.push_back(ResolveAliasedStringPropertyWithDefault(
+        node,
+        "Pretrained weights file",
+        "weights_file",
+        {"embedding_weights_file"},
+        "",
+        TruthOwner::Runtime,
+        false,
+        true,
+        false,
+        "Empty uses the backend's trainable random-normal initialization. The legacy alias remains readable."));
+
+    auto init_mode = ResolveStringProperty(
+        node, "Starter matrix initialization", "init_mode", "normal",
+        TruthOwner::UI, false, true, false,
+        "Used only by Build, Save, and Use in the Embedding dialog; it does not change runtime initialization without a weights file.");
+    if (init_mode.effective_value != "normal" &&
+        init_mode.effective_value != "uniform" &&
+        init_mode.effective_value != "one_hot") {
+        init_mode.statuses.clear();
+        AddStatus(init_mode, TruthStatus::Missing);
+        AddStatus(init_mode, TruthStatus::RequiresDialog);
+        init_mode.message = "init_mode must be normal, uniform, or one_hot.";
+    } else {
+        AddStatus(init_mode, TruthStatus::CompilerOnly);
+    }
+    report.properties.push_back(std::move(init_mode));
+
+}
+
+void AddTransformerTruth(NodeTruthReport& report, const MLNode& node) {
+    const bool is_attention = node.type == NodeType::MultiHeadAttention;
+    const bool is_positional = node.type == NodeType::PositionalEncoding;
+
+    auto model_width = ResolveAliasedIntProperty(
+        node,
+        "Model width",
+        is_attention ? "embed_dim" : "d_model",
+        is_attention ? std::vector<std::string>{"d_model"}
+                     : std::vector<std::string>{"embed_dim"},
+        "512",
+        TruthOwner::Compiler,
+        true,
+        false,
+        "The configured width must match the incoming feature dimension.");
+    RequirePositiveInt(model_width, is_attention ? "embed_dim" : "d_model");
+    report.properties.push_back(std::move(model_width));
+
+    if (is_positional) {
+        auto maximum_length = ResolveAliasedIntProperty(
+            node,
+            "Maximum sequence length",
+            "max_sequence_length",
+            {"max_len", "max_length", "max_seq_len"},
+            "5000",
+            TruthOwner::Runtime,
+            true,
+            false,
+            "Sequences longer than this bound fail closed.");
+        RequirePositiveInt(maximum_length, "max_sequence_length");
+        report.properties.push_back(std::move(maximum_length));
+    } else {
+        auto heads = ResolveAliasedIntProperty(
+            node,
+            "Attention heads",
+            "num_heads",
+            is_attention ? std::vector<std::string>{"heads"}
+                         : std::vector<std::string>{"nhead"},
+            "8",
+            TruthOwner::Compiler,
+            true,
+            false,
+            "Model width must divide evenly by this value.");
+        RequirePositiveInt(heads, "num_heads");
+        report.properties.push_back(std::move(heads));
+
+        auto dropout = ResolveAliasedFloatProperty(
+            node,
+            "Dropout",
+            "dropout",
+            {"dropout_rate"},
+            is_attention ? "0.0" : "0.1",
+            TruthOwner::Runtime,
+            true,
+            false);
+        RequireFloatInRange(dropout, "dropout", 0.0, 1.0, true, false);
+        report.properties.push_back(std::move(dropout));
+
+        if (is_attention) {
+            report.properties.push_back(ResolveBoolProperty(
+                node, "Projection bias", "use_bias", true,
+                TruthOwner::Runtime, true, false));
+        } else {
+            auto feedforward = ResolveAliasedIntProperty(
+                node,
+                "Feedforward width",
+                "dim_feedforward",
+                {"ff_dim", "d_ff"},
+                "2048",
+                TruthOwner::Runtime,
+                true,
+                false);
+            RequirePositiveInt(feedforward, "dim_feedforward");
+            report.properties.push_back(std::move(feedforward));
+            report.properties.push_back(ResolveBoolProperty(
+                node, "Normalize first", "norm_first", false,
+                TruthOwner::Runtime, true, false));
+
+            if (const std::string* layers = FindParameter(node, "num_layers")) {
+                auto layer_count = ResolveIntProperty(
+                    node,
+                    "Legacy layer count",
+                    "num_layers",
+                    "1",
+                    TruthOwner::Compiler,
+                    false,
+                    false,
+                    "One node owns exactly one block; stack nodes for depth.");
+                layer_count.statuses.clear();
+                if (*layers == "1") {
+                    AddStatus(layer_count, TruthStatus::CompilerOnly);
+                } else {
+                    AddStatus(layer_count, TruthStatus::Unsupported);
+                }
+                report.properties.push_back(std::move(layer_count));
+            }
+        }
+    }
+
+    PropertyTruth configuration;
+    configuration.label = "Executable configuration";
+    configuration.canonical_key = "transformer_contract";
+    configuration.source_key = "shared compiler/runtime policy";
+    configuration.owner = TruthOwner::Compiler;
+    configuration.quick_editable = false;
+    if (const auto error = cyxwiz::ResolveInvalidTransformerConfigurationReason(
+            node.type, node.parameters)) {
+        configuration.effective_value = "rejected";
+        configuration.message = *error;
+        AddStatus(configuration, TruthStatus::Unsupported);
+    } else {
+        configuration.effective_value = is_positional
+            ? "one deterministic CPU-backed encoding"
+            : "one CPU-backed attention block";
+        AddStatus(configuration, TruthStatus::OK);
+    }
+    report.properties.push_back(std::move(configuration));
 }
 
 void AddSequenceVocabularyTruth(NodeTruthReport& report, const MLNode& node) {
@@ -2425,7 +2678,12 @@ const std::vector<NodeType>& SpecializedTruthCoverageNodeTypes() {
         NodeType::ROCCurveNode,
         NodeType::PRCurveNode,
         NodeType::Dense,
+        NodeType::Embedding,
         NodeType::TimeDistributed,
+        NodeType::MultiHeadAttention,
+        NodeType::TransformerEncoder,
+        NodeType::TransformerDecoder,
+        NodeType::PositionalEncoding,
         NodeType::Dropout,
         NodeType::BatchNorm,
         NodeType::LayerNorm,
@@ -2599,6 +2857,27 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
         AddCoreLayerTruth(report, node);
     }
 
+    if (node.type == NodeType::Embedding) {
+        AddEmbeddingTruth(report, node);
+        if (const auto* placement_fact =
+                FindBackendPlacementFact(node, context)) {
+            report.properties.push_back(
+                BuildBackendPlacementTruth(*placement_fact));
+        }
+    }
+
+    if (node.type == NodeType::MultiHeadAttention ||
+        node.type == NodeType::TransformerEncoder ||
+        node.type == NodeType::TransformerDecoder ||
+        node.type == NodeType::PositionalEncoding) {
+        AddTransformerTruth(report, node);
+        if (const auto* placement_fact =
+                FindBackendPlacementFact(node, context)) {
+            report.properties.push_back(
+                BuildBackendPlacementTruth(*placement_fact));
+        }
+    }
+
     if (node.type == NodeType::DataLoader) {
         if (FindParameter(node, "pin_memory")) {
             auto pin_memory = ResolveBoolProperty(
@@ -2669,7 +2948,7 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
             node,
             "Hidden size",
             "hidden_size",
-            "128",
+            "256",
             TruthOwner::Compiler,
             true,
             false,
@@ -2691,6 +2970,49 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
         }
         report.properties.push_back(std::move(hidden_size));
 
+        auto num_layers = ResolveIntProperty(
+            node,
+            "Recurrent layers",
+            "num_layers",
+            "1",
+            TruthOwner::Runtime,
+            true,
+            false,
+            "The Engine constructs this many stacked recurrent layers.");
+        if (ParsePositiveInt(&num_layers.effective_value) <= 0) {
+            num_layers.statuses.clear();
+            AddStatus(num_layers, TruthStatus::Missing);
+            num_layers.message = "num_layers must be >= 1.";
+        }
+        report.properties.push_back(std::move(num_layers));
+
+        auto bidirectional = ResolveBoolProperty(
+            node,
+            "Bidirectional",
+            "bidirectional",
+            false,
+            TruthOwner::Runtime,
+            true,
+            false,
+            node.type == NodeType::LSTM
+                ? "Engine LSTM training currently supports only one direction."
+                : "GRU uses explicit forward and reverse branches when enabled.");
+        if (node.type == NodeType::LSTM &&
+            bidirectional.effective_value == "true") {
+            bidirectional.statuses.clear();
+            AddStatus(bidirectional, TruthStatus::Unsupported);
+            bidirectional.message =
+                "Reverse-direction LSTM backward gradients are not implemented; "
+                "Engine training fails closed for bidirectional=true.";
+        } else if (node.type == NodeType::GRU &&
+                   bidirectional.effective_value == "true") {
+            AddStatus(bidirectional, TruthStatus::RuntimeOnly);
+            bidirectional.message =
+                "Engine training uses the split forward/reverse GRU "
+                "path; current placement is native CPU.";
+        }
+        report.properties.push_back(std::move(bidirectional));
+
         auto return_sequences = ResolveBoolProperty(
             node,
             "Sequence output",
@@ -2701,6 +3023,57 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
             false,
             "When true, downstream nodes receive one vector per sequence step.");
         report.properties.push_back(std::move(return_sequences));
+
+        auto dropout = ResolveFloatProperty(
+            node,
+            "Recurrent dropout",
+            "dropout",
+            "0.0",
+            TruthOwner::Runtime,
+            true,
+            false,
+            "Engine recurrent modules currently require dropout=0.0; use an "
+            "explicit Dropout node for executable regularization.");
+        double parsed_dropout = 0.0;
+        if (ParseDoubleValue(dropout.effective_value, parsed_dropout) &&
+            parsed_dropout != 0.0) {
+            dropout.statuses.clear();
+            AddStatus(dropout, TruthStatus::Unsupported);
+            dropout.message =
+                "This value is not wired into the Engine recurrent module. "
+                "Set dropout=0.0 and add an explicit Dropout node.";
+        }
+        report.properties.push_back(std::move(dropout));
+
+        PropertyTruth hidden_output;
+        hidden_output.label = "Hidden state output";
+        hidden_output.canonical_key = "hidden_output";
+        hidden_output.source_key = "legacy pin";
+        hidden_output.effective_value = "not routed";
+        hidden_output.owner = TruthOwner::Runtime;
+        hidden_output.quick_editable = false;
+        bool hidden_connected = false;
+        if (context.links) {
+            for (const auto& pin : node.outputs) {
+                if (pin.name != "Hidden") continue;
+                hidden_connected = std::any_of(
+                    context.links->begin(), context.links->end(),
+                    [&](const NodeLink& link) {
+                        return link.from_node == node.id &&
+                               link.from_pin == pin.id;
+                    });
+                if (hidden_connected) break;
+            }
+        }
+        AddStatus(hidden_output,
+                  hidden_connected ? TruthStatus::Unsupported
+                                   : TruthStatus::CompilerOnly);
+        hidden_output.message = hidden_connected
+            ? "The connected legacy Hidden pin has no separate Engine output. "
+              "Disconnect it and use Output."
+            : "Compatibility pin retained for saved graphs; Engine "
+              "SequentialModel exposes only Output.";
+        report.properties.push_back(std::move(hidden_output));
 
         if (const auto* placement_fact = FindBackendPlacementFact(node, context)) {
             report.properties.push_back(BuildBackendPlacementTruth(*placement_fact));

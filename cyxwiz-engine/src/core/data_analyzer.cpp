@@ -1562,13 +1562,17 @@ RegressionResult DataAnalyzer::LinearRegression(const std::vector<double>& x,
 
     result.r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : 0.0;
     result.adjusted_r_squared = 1.0 - (1.0 - result.r_squared) * (n - 1) / (n - 2);
-    result.mse = ss_res / (n - 2);
+    result.mse = ss_res / n;
     result.rmse = std::sqrt(result.mse);
     result.mae = mae / n;
+    result.residual_variance = ss_res / result.df_resid;
+    result.residual_standard_error = std::sqrt(result.residual_variance);
 
     // Standard errors
-    double se_b1 = std::sqrt(result.mse / ss_xx);
-    double se_b0 = std::sqrt(result.mse * (1.0 / n + mean_x * mean_x / ss_xx));
+    double se_b1 = std::sqrt(result.residual_variance / ss_xx);
+    double se_b0 = std::sqrt(
+        result.residual_variance *
+        (1.0 / n + mean_x * mean_x / ss_xx));
 
     result.std_errors = {se_b0, se_b1};
 
@@ -1581,7 +1585,9 @@ RegressionResult DataAnalyzer::LinearRegression(const std::vector<double>& x,
 
     // F-statistic
     double ss_reg = ss_tot - ss_res;
-    result.f_statistic = result.mse > 0 ? (ss_reg / 1) / result.mse : 0;
+    result.f_statistic = result.residual_variance > 0
+        ? (ss_reg / 1) / result.residual_variance
+        : 0;
     result.f_p_value = 1.0 - FCDF(result.f_statistic, 1, n - 2);
 
     return result;
@@ -1729,9 +1735,11 @@ RegressionResult DataAnalyzer::MultipleLinearRegression(const std::vector<std::v
 
     result.r_squared = ss_tot > 0 ? 1.0 - ss_res / ss_tot : 0.0;
     result.adjusted_r_squared = 1.0 - (1.0 - result.r_squared) * (n - 1) / (n - p);
-    result.mse = ss_res / (n - p);
+    result.mse = ss_res / n;
     result.rmse = std::sqrt(result.mse);
     result.mae = mae / n;
+    result.residual_variance = ss_res / result.df_resid;
+    result.residual_standard_error = std::sqrt(result.residual_variance);
 
     // Compute (X'X)^-1 for standard errors
     // We already have the result of Gauss-Jordan, extract diagonal
@@ -1783,7 +1791,8 @@ RegressionResult DataAnalyzer::MultipleLinearRegression(const std::vector<std::v
     result.p_values.resize(p);
 
     for (size_t i = 0; i < p; i++) {
-        result.std_errors[i] = std::sqrt(result.mse * XtX_inv[i][i]);
+        result.std_errors[i] =
+            std::sqrt(result.residual_variance * XtX_inv[i][i]);
         if (result.std_errors[i] > 0) {
             result.t_values[i] = result.coefficients[i] / result.std_errors[i];
             result.p_values[i] = 2.0 * (1.0 - StudentTCDF(std::abs(result.t_values[i]), n - p));
@@ -1793,7 +1802,9 @@ RegressionResult DataAnalyzer::MultipleLinearRegression(const std::vector<std::v
     // F-statistic
     double ss_reg = ss_tot - ss_res;
     double ms_reg = ss_reg / (p - 1);
-    result.f_statistic = result.mse > 0 ? ms_reg / result.mse : 0;
+    result.f_statistic = result.residual_variance > 0
+        ? ms_reg / result.residual_variance
+        : 0;
     result.f_p_value = 1.0 - FCDF(result.f_statistic, p - 1, n - p);
 
     return result;

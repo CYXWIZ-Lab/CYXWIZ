@@ -1,6 +1,6 @@
 ---
 name: lean-software-guardrails
-description: Apply lean, modular software engineering guardrails when planning, implementing, reviewing, refactoring, optimizing, or debugging code. Use for architecture and code changes involving file growth, weak decomposition, C++ safety and performance, HTML/CSS/JavaScript/TypeScript or web frameworks, dependencies, maintainability, extensibility, testing, or avoidable complexity.
+description: Apply lean, modular engineering guardrails when architecture, source growth, dependency cost, ownership boundaries, C++ safety or performance, web correctness, or maintainability are material concerns. Use for substantial software changes, large-file refactoring, new abstractions or dependencies, and performance-sensitive C++ or web work.
 ---
 
 # Lean Software Guardrails
@@ -51,9 +51,9 @@ Read the references that match the task:
 
 ## Mandatory Guardrails
 
-- Do not add substantial code to a large file without first explaining why
-  the responsibility belongs there and why extraction would make the design
-  worse.
+- Before adding substantial code to a large or mixed-responsibility file,
+  state its current responsibility and choose explicitly whether to extend,
+  extract, refactor the boundary first, or reject unnecessary behavior.
 - Treat file and function size as investigation signals, not automatic quality
   verdicts. Generated code, declarative tables, and cohesive algorithms may be
   legitimately large.

@@ -1,8 +1,11 @@
 #include "core/arrow_dataset.h"
+#include "core/data_analyzer.h"
 #include "core/data_registry.h"
 #include "core/pipeline_executor.h"
 #include "core/pipeline_materializer.h"
 #include "core/node_executors/preprocessing_operators.h"
+#include "core/node_executors/regression_model_artifact.h"
+#include "core/node_executors/regression_model_predictor_operator.h"
 #include "core/node_executors/regression_operators.h"
 #include "core/node_executors/differencing_operator.h"
 #include "core/node_executors/log_transform_operator.h"
@@ -10,6 +13,7 @@
 #include "core/node_executors/time_series_split_operator.h"
 
 #include <arrow/api.h>
+#include <nlohmann/json.hpp>
 
 #include <cmath>
 #include <cstdlib>
@@ -488,6 +492,150 @@ void TestRegressionMemoryPreflight() {
           "blocked LinearRegression should expose blocked status");
 }
 
+std::shared_ptr<arrow::Table> MakeNoisyRegressionTable() {
+    auto schema = arrow::schema({
+        arrow::field("x", arrow::float64()),
+        arrow::field("y", arrow::float64()),
+    });
+    return arrow::Table::Make(schema, {
+        FinishDoubleArray({1.0, 2.0, 3.0, 4.0, 5.0}),
+        FinishDoubleArray({2.0, 4.0, 5.0, 9.0, 10.0}),
+    });
+}
+
+void TestRegressionMetricDefinitions() {
+    const std::vector<double> x = {1.0, 2.0, 3.0, 4.0, 5.0};
+    const std::vector<double> y = {2.0, 4.0, 5.0, 9.0, 10.0};
+    const auto result = cyxwiz::DataAnalyzer::LinearRegression(x, y);
+    Check(result.residuals.size() == x.size(),
+          "LinearRegression should produce one residual per observation");
+    double sse = 0.0;
+    for (double residual : result.residuals) {
+        sse += residual * residual;
+    }
+    const double expected_mse = sse / static_cast<double>(result.n);
+    const double expected_residual_variance =
+        sse / static_cast<double>(result.df_resid);
+    Check(std::abs(result.mse - expected_mse) < 1e-12 &&
+              std::abs(result.rmse - std::sqrt(expected_mse)) < 1e-12,
+          "MSE/RMSE should use mean prediction error SSE/n");
+    Check(std::abs(result.residual_variance -
+                   expected_residual_variance) < 1e-12 &&
+              std::abs(result.residual_standard_error -
+                       std::sqrt(expected_residual_variance)) < 1e-12,
+          "residual variance/error should retain SSE/df_resid statistics");
+    Check(result.residual_variance > result.mse,
+          "non-perfect fixture should distinguish residual variance from MSE");
+
+    std::vector<std::vector<double>> design;
+    design.reserve(x.size());
+    for (double value : x) {
+        design.push_back({1.0, value});
+    }
+    const auto multiple = cyxwiz::DataAnalyzer::MultipleLinearRegression(
+        design, y, {"intercept", "x"});
+    Check(std::abs(multiple.mse - result.mse) < 1e-12 &&
+              std::abs(multiple.residual_variance -
+                       result.residual_variance) < 1e-12,
+          "simple and multiple regression paths should share metric semantics");
+}
+
+void TestRegressionFittedModelArtifact() {
+    const auto artifact_path = std::filesystem::temp_directory_path() /
+        "cyxwiz_linear_regression_model_test.cyxregression.json";
+    const auto legacy_artifact_path = std::filesystem::temp_directory_path() /
+        "cyxwiz_linear_regression_model_legacy.cyxregression.json";
+    std::filesystem::remove(artifact_path);
+    std::filesystem::remove(legacy_artifact_path);
+
+    cyxwiz::LinearRegressionOperator fit;
+    std::string error;
+    Check(fit.Configure({
+        {"feature_cols", "x"},
+        {"target_col", "y"},
+        {"fit_intercept", "true"},
+        {"model_path", artifact_path.string()},
+    }, error), error);
+    const auto fitted = fit.Apply(MakeNoisyRegressionTable());
+    Check(fitted.ok(), fitted.status().ToString());
+    Check(std::filesystem::is_regular_file(artifact_path),
+          "LinearRegression should produce its fitted Model artifact");
+
+    cyxwiz::RegressionModelArtifact artifact;
+    Check(cyxwiz::LoadRegressionModelArtifact(
+              artifact_path.string(), artifact, &error), error);
+    Check(artifact.type == cyxwiz::RegressionModelType::Linear &&
+              artifact.feature_names == std::vector<std::string>{"x"} &&
+              artifact.target_name == "y" &&
+              artifact.coefficients.size() == 2,
+          "fitted artifact should preserve regression type, schema, and coefficients");
+
+    cyxwiz::RegressionModelPredictorOperator predict;
+    Check(predict.Configure({
+        {"model_path", artifact_path.string()},
+        {"prediction_col", "scored_y"},
+    }, error), error);
+    const auto predicted = predict.Apply(MakeNoisyRegressionTable());
+    Check(predicted.ok(), predicted.status().ToString());
+    const auto scored = predicted.ValueOrDie();
+    const auto fitted_table = fitted.ValueOrDie();
+    Check(std::abs(ReadNumericValue(scored, "scored_y", 0) -
+                   ReadNumericValue(fitted_table, "prediction", 0)) < 1e-6 &&
+              std::abs(ReadNumericValue(scored, "scored_y", 4) -
+                       ReadNumericValue(fitted_table, "prediction", 4)) < 1e-6,
+          "predictor should reproduce the fitted linear equation");
+    double artifact_sse = 0.0;
+    for (int64_t row = 0; row < fitted_table->num_rows(); ++row) {
+        const double residual = ReadNumericValue(fitted_table, "residual", row);
+        artifact_sse += residual * residual;
+    }
+    Check(std::abs(artifact.mse - artifact_sse / 5.0) < 1e-5 &&
+              artifact.residual_variance > artifact.mse,
+          "artifact should persist distinct prediction and residual metrics");
+
+    const auto missing_feature = arrow::Table::Make(
+        arrow::schema({arrow::field("z", arrow::float64())}),
+        {FinishDoubleArray({1.0, 2.0})});
+    const auto rejected = predict.Apply(missing_feature);
+    Check(!rejected.ok() && rejected.status().IsKeyError(),
+          "predictor should fail closed when an artifact feature is missing");
+
+    {
+        const nlohmann::json legacy = {
+            {"format", "cyxwiz_regression_model"},
+            {"version", 1},
+            {"model_type", "LinearRegression"},
+            {"model", {
+                {"feature_names", {"x"}},
+                {"target_name", "y"},
+                {"fit_intercept", true},
+                {"degree", 1},
+                {"coefficients", {1.0, 2.0}},
+                {"sample_count", 5},
+                {"metrics", {
+                    {"r_squared", 0.5},
+                    {"adjusted_r_squared", 0.3},
+                    {"mse", 4.0},
+                    {"rmse", 2.0},
+                    {"mae", 1.0},
+                }},
+            }},
+        };
+        std::ofstream output(legacy_artifact_path);
+        output << legacy.dump(2);
+    }
+    cyxwiz::RegressionModelArtifact migrated;
+    Check(cyxwiz::LoadRegressionModelArtifact(
+              legacy_artifact_path.string(), migrated, &error), error);
+    Check(std::abs(migrated.residual_variance - 4.0) < 1e-12 &&
+              std::abs(migrated.residual_standard_error - 2.0) < 1e-12 &&
+              std::abs(migrated.mse - 2.4) < 1e-12 &&
+              std::abs(migrated.rmse - std::sqrt(2.4)) < 1e-12,
+          "legacy version-1 artifacts should migrate old SSE/df labels safely");
+    std::filesystem::remove(artifact_path);
+    std::filesystem::remove(legacy_artifact_path);
+}
+
 void TestRemainingRowTransformMemoryPreflight() {
     const auto numeric_input = MakePreprocessingTable();
     const auto text_input = arrow::Table::Make(
@@ -779,6 +927,8 @@ int main() {
     TestMaterializerPreflightStopsBeforeApply();
     TestStandardScalerExcludesMultipleTargetColumns();
     TestRegressionMemoryPreflight();
+    TestRegressionMetricDefinitions();
+    TestRegressionFittedModelArtifact();
     TestRemainingRowTransformMemoryPreflight();
     TestMaterializerStructuredFailures();
 

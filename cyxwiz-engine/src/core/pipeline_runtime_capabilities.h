@@ -1,6 +1,10 @@
 #pragma once
 
 #include "../gui/node_editor.h"
+#include "normalization_regularization_configuration_policy.h"
+#include "recurrent_configuration_policy.h"
+#include "sequence_projection_configuration_policy.h"
+#include "transformer_configuration_policy.h"
 
 #include <cstdint>
 #include <map>
@@ -97,6 +101,7 @@ enum class PipelineTrainingSupportRole {
     Loss,
     Optimizer,
     TrainingControl,
+    TrainingWorkflow,
 };
 
 struct PipelineSupportedTrainingRoleCapability {
@@ -109,6 +114,7 @@ enum class PipelineTrainingBackendSupportMode {
     Allowed,
     UnsupportedSequentialModelLayer,
     UnsupportedTrainingControl,
+    UnsupportedTrainingWorkflow,
 };
 
 struct PipelineTrainingBackendSupport {
@@ -229,6 +235,9 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities();
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedTrainingControlCapabilities();
 
+const std::vector<PipelineUnsupportedTrainingNodeCapability>&
+GetPipelineUnsupportedTrainingWorkflowCapabilities();
+
 const std::vector<PipelineSupportedTrainingNodeCapability>&
 GetPipelineSupportedTrainingBackendCapabilities();
 
@@ -316,9 +325,13 @@ const char* ResolvePipelineUnsupportedSequentialModelLayerReason(gui::NodeType n
 
 const char* ResolvePipelineUnsupportedTrainingControlReason(gui::NodeType node_type);
 
+const char* ResolvePipelineUnsupportedTrainingWorkflowReason(gui::NodeType node_type);
+
 bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type);
 
 bool IsPipelineUnsupportedTrainingControlNode(gui::NodeType node_type);
+
+bool IsPipelineUnsupportedTrainingWorkflowNode(gui::NodeType node_type);
 
 bool IsPipelineSupportedTrainingBackendNode(gui::NodeType node_type);
 

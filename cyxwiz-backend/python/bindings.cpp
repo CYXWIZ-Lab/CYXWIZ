@@ -1021,6 +1021,14 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("set_parameters", &cyxwiz::PixelShuffleLayer::SetParameters, py::arg("params"))
         .def_property_readonly("upscale_factor", &cyxwiz::PixelShuffleLayer::GetUpscaleFactor);
 
+    // Register Reduction before any loss constructor uses it as a pybind
+    // default argument; otherwise the entire extension fails during import.
+    py::enum_<cyxwiz::Reduction>(m, "Reduction")
+        .value("None", cyxwiz::Reduction::None)
+        .value("Mean", cyxwiz::Reduction::Mean)
+        .value("Sum", cyxwiz::Reduction::Sum)
+        .export_values();
+
     // Base Loss class (abstract - for type hierarchy)
     py::class_<cyxwiz::Loss>(m, "Loss")
         .def("forward", &cyxwiz::Loss::Forward,
@@ -2204,6 +2212,14 @@ PYBIND11_MODULE(pycyxwiz, m) {
     // MishModule
     py::class_<cyxwiz::MishModule, cyxwiz::Module>(m, "MishModule")
         .def(py::init<>(), "Create a Mish module");
+
+    // Deterministic sinusoidal positional encoding used by Studio Transformer graphs.
+    py::class_<cyxwiz::PositionalEncodingModule, cyxwiz::Module>(
+        m, "PositionalEncoding")
+        .def(py::init<size_t, size_t>(),
+             py::arg("d_model"),
+             py::arg("max_sequence_length") = 5000,
+             "Create a CPU-backed sinusoidal positional encoding module");
 
     // SequentialModel - the main model class
     py::class_<cyxwiz::SequentialModel>(m, "Sequential",

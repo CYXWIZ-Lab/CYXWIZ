@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <random>
+#include <stdexcept>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -107,9 +108,9 @@ Tensor SoftmaxModule::Backward(const Tensor& grad_output) {
 // ============================================================================
 
 DropoutModule::DropoutModule(float p) : p_(p) {
-    if (p < 0.0f || p > 1.0f) {
-        spdlog::warn("DropoutModule: p={} out of range [0,1], clamping", p);
-        p_ = std::clamp(p, 0.0f, 1.0f);
+    if (!std::isfinite(p_) || p_ < 0.0f || p_ >= 1.0f) {
+        throw std::invalid_argument(
+            "DropoutModule: p must be a finite probability in [0, 1)");
     }
 }
 

@@ -527,7 +527,9 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Independent of batch size, good for small batch training.",
         {
             {"num_groups", "Number of groups to divide channels into"},
-            {"num_channels", "Total number of channels"}
+            {"num_channels", "Total number of input channels"},
+            {"eps", "Positive numerical stability constant"},
+            {"affine", "Learn one scale and bias per channel"}
         },
         {
             "Use when batch size is too small for BatchNorm",
@@ -542,7 +544,9 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Popular in style transfer and image generation.",
         "Equivalent to GroupNorm with num_groups = num_channels.",
         {
-            {"num_features", "Number of channels"}
+            {"num_features", "Number of input channels"},
+            {"eps", "Positive numerical stability constant"},
+            {"affine", "Learn one scale and bias per channel"}
         },
         {
             "Standard for style transfer networks",
@@ -584,18 +588,21 @@ void NodeDocumentationManager::InitializeDocumentation() {
     docs_[NodeType::LSTM] = {
         "LSTM",
         "Long Short-Term Memory network for sequence modeling. Uses gates to "
-        "control information flow, solving the vanishing gradient problem.",
-        "Input: (batch, sequence_length, features). Can return all timesteps or just last.",
+        "control information flow. Engine training currently supports the "
+        "unidirectional configuration with dropout=0.0.",
+        "Input: [batch, sequence_length, features]. Output can retain all "
+        "timesteps or select the final timestep.",
         {
-            {"input_size", "Input feature size per timestep"},
+            {"input_size", "Read-only input feature size derived from upstream"},
             {"hidden_size", "Number of hidden units"},
             {"num_layers", "Number of stacked LSTM layers"},
-            {"bidirectional", "Process sequence in both directions"},
-            {"dropout", "Dropout between LSTM layers"}
+            {"bidirectional", "Must remain false for Engine training; reverse backward is incomplete"},
+            {"return_sequences", "Return all timesteps instead of only the final timestep"},
+            {"dropout", "Must remain 0.0; use a separate Dropout node"}
         },
         {
-            "Standard choice for sequence tasks",
-            "Use bidirectional for classification, unidirectional for generation"
+            "Use the Output pin; the legacy Hidden pin is not routed separately",
+            "Compile fails closed for bidirectional training or nonzero recurrent dropout"
         },
         "Recurrent"
     };
@@ -603,80 +610,90 @@ void NodeDocumentationManager::InitializeDocumentation() {
     docs_[NodeType::GRU] = {
         "GRU",
         "Gated Recurrent Unit - simplified LSTM with fewer parameters. "
-        "Often performs similarly with less computation.",
-        "Faster than LSTM, good when data is limited.",
+        "Engine training supports unidirectional and split-path bidirectional "
+        "execution with dropout=0.0.",
+        "Input: [batch, sequence_length, features]. Output can retain all "
+        "timesteps or select the final timestep.",
         {
-            {"input_size", "Input feature size per timestep"},
+            {"input_size", "Read-only input feature size derived from upstream"},
             {"hidden_size", "Number of hidden units"},
             {"num_layers", "Number of stacked GRU layers"},
-            {"bidirectional", "Process both directions"},
-            {"dropout", "Dropout between GRU layers"}
+            {"bidirectional", "Run explicit forward and reverse GRU branches"},
+            {"return_sequences", "Return all timesteps instead of only the final timestep"},
+            {"dropout", "Must remain 0.0; use a separate Dropout node"}
         },
         {
-            "Try GRU first - simpler and often sufficient",
-            "Switch to LSTM if GRU underperforms"
+            "Bidirectional GRU currently uses the native CPU recurrent path",
+            "Use the Output pin; the legacy Hidden pin is not routed separately"
         },
         "Recurrent"
     };
 
     docs_[NodeType::RNN] = {
         "Simple RNN",
-        "Basic recurrent layer with simple hidden state update. "
-        "Suffers from vanishing gradients for long sequences.",
-        "Use LSTM/GRU for better long-term memory.",
+        "Blocked compatibility node preserving a historical simple-RNN design.",
+        "No simple-RNN backend layer, Python binding, ModelBuilder module, or "
+        "Studio training owner exists. The Engine must not substitute a GRU.",
         {
             {"input_size", "Input feature size per timestep"},
             {"hidden_size", "Number of hidden units"},
             {"num_layers", "Number of stacked layers"},
-            {"activation", "Activation function (default: tanh)"}
+            {"bidirectional", "Historical two-direction intent"},
+            {"return_sequences", "Historical full-sequence output intent"},
+            {"dropout", "Historical inter-layer dropout"},
+            {"nonlinearity", "Historical activation intent"}
         },
         {
-            "Only for very short sequences or educational purposes",
-            "LSTM/GRU are almost always better"
+            "This node can be inspected in saved graphs but cannot compile or train",
+            "Use LSTM or GRU when an executable recurrent layer is required"
         },
         "Recurrent"
     };
 
     docs_[NodeType::Bidirectional] = {
         "Bidirectional Wrapper",
-        "Wraps an RNN layer to process the sequence in both directions. "
-        "Doubles the output features (forward + backward).",
-        "Use for tasks where future context helps (classification).",
+        "Blocked standalone-wrapper compatibility node.",
+        "No inner-layer binding or standalone wrapper owner exists in the visual "
+        "compiler/model path. Bidirectional limits must be validated on a concrete recurrent node.",
         {
-            {"merge_mode", "How to combine forward/backward outputs"}
+            {"merge_mode", "Historical directional merge-mode text"}
         },
         {
-            "Output is concatenated forward and backward states",
-            "Not suitable for autoregressive generation"
+            "This node can be inspected in saved graphs but cannot compile or train",
+            "Configure directionality on a concrete recurrent node only within its verified limits"
         },
         "Recurrent"
     };
 
     docs_[NodeType::Embedding] = {
         "Embedding",
-        "Learns dense vector representations for discrete tokens (words, IDs). "
-        "Maps indices to trainable vectors.",
-        "Input: integer indices. Output: (batch, sequence, embedding_dim).",
+        "Looks up trainable dense vectors for exact integer token IDs.",
+        "Input is [sequence] or [batch, sequence]. Output appends embedding_dim. "
+        "A configured padding row produces zeros and receives no gradient.",
         {
             {"num_embeddings", "Vocabulary size (number of unique tokens)"},
-            {"embedding_dim", "Dimension of the dense vectors"}
+            {"embedding_dim", "Dimension of each dense token vector"},
+            {"padding_idx", "Padding token id, or -1 to disable padding"},
+            {"max_norm", "Optional per-row L2 norm cap; 0 disables clipping"},
+            {"weights_file", "Optional pretrained Float32 text matrix"},
+            {"freeze", "Keep loaded pretrained weights fixed during training"}
         },
         {
-            "Use pre-trained embeddings (GloVe, Word2Vec) for better results",
-            "embedding_dim 128-512 is typical"
+            "Vocabulary size must match the tokenizer's emitted token-id range",
+            "Use the configuration dialog to inspect or build a matrix file"
         },
         "Recurrent"
     };
 
     docs_[NodeType::TimeDistributed] = {
-        "TimeDistributed",
-        "Applies a layer to every temporal slice of an input. "
-        "Useful for applying Dense to sequence outputs.",
-        "Applies one Dense projection at each timestep.",
+        "TimeDistributed Dense",
+        "Applies one shared bias-enabled Dense projection to every timestep.",
+        "Input [batch, sequence, features] becomes [batch, sequence, units]. "
+        "This node is a specific Dense sequence head, not a generic layer wrapper.",
         {{"units", "Per-timestep output features/classes"}},
         {
-            "Use to apply Dense to each LSTM output",
-            "Preserves sequence structure"
+            "Use after a sequence-producing recurrent or transformer layer",
+            "All timesteps share the same weights and bias"
         },
         "Recurrent"
     };
@@ -684,13 +701,14 @@ void NodeDocumentationManager::InitializeDocumentation() {
     // ===== Attention Layers =====
     docs_[NodeType::MultiHeadAttention] = {
         "Multi-Head Attention",
-        "Core building block of Transformers. Computes attention with multiple parallel heads, "
-        "allowing the model to attend to different representation subspaces.",
-        "Takes Query, Key, Value inputs. Key and Value are often the same.",
+        "One CPU-backed unary self-attention block with multiple parallel heads.",
+        "Current Studio execution uses Input as Query, Key, and Value. The legacy "
+        "Key, Value, and Mask pins are reserved and fail closed when connected.",
         {
             {"embed_dim", "Total dimension of the model"},
             {"num_heads", "Number of parallel attention heads"},
-            {"dropout", "Dropout on attention weights"}
+            {"dropout", "Dropout on attention weights"},
+            {"use_bias", "Whether attention projections use bias"}
         },
         {
             "embed_dim must be divisible by num_heads",
@@ -701,104 +719,113 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::SelfAttention] = {
         "Self-Attention",
-        "Attention where Query, Key, and Value all come from the same sequence. "
-        "Each position attends to all positions in the input.",
-        "Building block for encoders. Q=K=V=input.",
+        "Blocked compatibility node preserving the historical explicit Query, Key, "
+        "Value, Mask, Output, and Attn Weights graph contract.",
+        "No distinct Studio compiler/model owner exists. Use Multi-Head Attention "
+        "for the supported unary self-attention path.",
         {
             {"embed_dim", "Embedding dimension"},
-            {"num_heads", "Number of attention heads"}
+            {"num_heads", "Number of attention heads"},
+            {"dropout", "Attention-weight dropout"},
+            {"batch_first", "Whether the legacy tensor layout is batch-first"}
         },
         {
-            "Add positional encoding for position awareness",
-            "Use causal mask for autoregressive models"
+            "This node can be inspected in saved graphs but cannot compile or train",
+            "Do not treat the optional Attn Weights pin as a produced runtime value"
         },
         "Attention"
     };
 
     docs_[NodeType::CrossAttention] = {
         "Cross-Attention",
-        "Attention where Query comes from one sequence and Key/Value from another. "
-        "Used in encoder-decoder architectures.",
-        "Query from decoder, Key/Value from encoder output.",
+        "Blocked compatibility node preserving explicit Query, Key, Value, Mask, "
+        "Output, and Attn Weights pins.",
+        "The backend attention primitive supports Q/K/V computation, but Studio has "
+        "no graph-level multi-input execution and gradient owner for this node.",
         {
             {"embed_dim", "Embedding dimension"},
-            {"num_heads", "Number of attention heads"}
+            {"num_heads", "Number of attention heads"},
+            {"dropout", "Attention-weight dropout"},
+            {"batch_first", "Whether the legacy tensor layout is batch-first"}
         },
         {
-            "Essential for seq2seq with attention",
-            "Used in decoder layers of Transformers"
+            "This node can be inspected in saved graphs but cannot compile or train",
+            "Key and Value remain separate compatibility inputs, not a Context alias"
         },
         "Attention"
     };
 
     docs_[NodeType::LinearAttention] = {
         "Linear Attention",
-        "O(n) complexity attention using kernel approximations. "
-        "Scales to very long sequences unlike quadratic attention.",
-        "Trade-off: faster but may lose some attention precision.",
+        "Blocked compatibility node for a historical kernel-attention design.",
+        "No backend primitive or Studio compiler/model owner currently implements "
+        "the advertised linear-attention semantics.",
         {
             {"embed_dim", "Embedding dimension"},
-            {"num_heads", "Number of attention heads"}
+            {"num_heads", "Number of attention heads"},
+            {"feature_map", "Historical kernel feature-map selection"},
+            {"eps", "Historical numerical-stability epsilon"},
+            {"causal", "Historical causal-attention intent"}
         },
         {
-            "Use for sequences longer than 2048 tokens",
-            "Good for efficient inference"
+            "This node can be inspected in saved graphs but cannot compile or train",
+            "Code export must not replace it with ordinary quadratic attention"
         },
         "Attention"
     };
 
     docs_[NodeType::TransformerEncoder] = {
         "Transformer Encoder",
-        "Stack of encoder layers with self-attention and feedforward networks. "
-        "Used for encoding sequences (BERT-style models).",
-        "Each layer: Self-Attention -> Add&Norm -> FFN -> Add&Norm.",
+        "One CPU-backed encoder block with self-attention and a feedforward network.",
+        "Stack multiple nodes to create a deeper encoder. One node does not expand "
+        "a num_layers setting internally.",
         {
-            {"num_layers", "Number of encoder layers"},
             {"d_model", "Model dimension"},
             {"num_heads", "Number of attention heads"},
-            {"d_ff", "Feedforward hidden dimension"}
+            {"dim_feedforward", "Feedforward hidden dimension"},
+            {"dropout", "Dropout probability"},
+            {"norm_first", "Apply normalization before attention and feedforward"}
         },
         {
-            "6 layers is standard, 12 for BERT-base",
-            "d_ff is typically 4x d_model"
+            "d_model must divide evenly by num_heads",
+            "dim_feedforward is commonly 4x d_model"
         },
         "Attention"
     };
 
     docs_[NodeType::TransformerDecoder] = {
         "Transformer Decoder",
-        "Stack of decoder layers with causal self-attention and feedforward "
-        "networks. Current Studio execution supports tested decoder-only "
-        "language-model stacks.",
-        "Uses a causal mask to prevent attending to future tokens. "
-        "Cross-attention Memory input and generation loops require a future "
-        "seq2seq/generation contract.",
+        "One CPU-backed decoder-only block with causal self-attention and a "
+        "feedforward network.",
+        "Stack multiple nodes for depth. The Memory pin is reserved and fails "
+        "closed when connected because cross-attention is not yet owned by the "
+        "Studio runtime.",
         {
-            {"num_layers", "Number of decoder layers"},
             {"d_model", "Model dimension"},
             {"num_heads", "Number of attention heads"},
-            {"d_ff", "Feedforward hidden dimension"}
+            {"dim_feedforward", "Feedforward hidden dimension"},
+            {"dropout", "Dropout probability"},
+            {"norm_first", "Apply normalization before attention and feedforward"}
         },
         {
-            "Supported now: decoder-only causal self-attention",
-            "Not first-class yet: encoder-decoder cross-attention Memory path",
-            "Not first-class yet: autoregressive generation loop"
+            "d_model must divide evenly by num_heads",
+            "Autoregressive generation loops remain a separate future contract"
         },
         "Attention"
     };
 
     docs_[NodeType::PositionalEncoding] = {
         "Positional Encoding",
-        "Adds position information to embeddings using sinusoidal functions. "
-        "Essential because attention is position-invariant.",
-        "Add to embeddings before first attention layer.",
+        "Adds deterministic sinusoidal position information to rank-3 embeddings.",
+        "This node is CPU-backed, has no trainable parameters, and preserves the "
+        "input shape. Add it before the first attention block.",
         {
-            {"max_len", "Maximum sequence length"},
-            {"d_model", "Model dimension"}
+            {"d_model", "Model dimension"},
+            {"max_sequence_length", "Maximum supported sequence length"}
         },
         {
-            "Learnable positional embeddings are an alternative",
-            "Critical for Transformer performance"
+            "The input feature width must match d_model",
+            "This implementation does not apply dropout"
         },
         "Attention"
     };

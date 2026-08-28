@@ -2,6 +2,7 @@
 #include "../profiler_trace.h"
 #include "dense_feature_memory_preflight.h"
 #include "feature_matrix_utils.h"
+#include "regression_model_artifact.h"
 #include "ts_column_utils.h"
 
 #include "../data_analyzer.h"
@@ -129,6 +130,7 @@ bool LinearRegressionOperator::Configure(
     feature_cols_.clear();
     target_col_.clear();
     fit_intercept_ = true;
+    model_path_.clear();
 
     auto fc = params.find("feature_cols");
     if (fc == params.end() || fc->second.empty()) {
@@ -160,6 +162,10 @@ bool LinearRegressionOperator::Configure(
                     "'false' (got '" + fi->second + "')";
             return false;
         }
+    }
+    const auto model_path = params.find("model_path");
+    if (model_path != params.end()) {
+        model_path_ = model_path->second;
     }
     return true;
 }
@@ -268,6 +274,33 @@ LinearRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                  n, p, fit_intercept_,
                  result.r_squared, result.adjusted_r_squared, result.rmse);
 
+    if (!model_path_.empty()) {
+        RegressionModelArtifact artifact;
+        artifact.type = RegressionModelType::Linear;
+        artifact.feature_names = feature_cols_;
+        artifact.target_name = target_col_;
+        artifact.fit_intercept = fit_intercept_;
+        artifact.degree = 1;
+        artifact.coefficients = result.coefficients;
+        artifact.sample_count = result.n;
+        artifact.r_squared = result.r_squared;
+        artifact.adjusted_r_squared = result.adjusted_r_squared;
+        artifact.mse = result.mse;
+        artifact.rmse = result.rmse;
+        artifact.mae = result.mae;
+        artifact.residual_variance = result.residual_variance;
+        artifact.residual_standard_error = result.residual_standard_error;
+        std::string artifact_error;
+        if (!SaveRegressionModelArtifact(
+                artifact, model_path_, &artifact_error)) {
+            return arrow::Status::IOError(
+                "LinearRegression: failed to save fitted model artifact: " +
+                artifact_error);
+        }
+        spdlog::info("LinearRegression: saved fitted model artifact '{}'",
+                     model_path_);
+    }
+
     return AppendPredictionResidual(
         input, result.predicted, result.residuals, GetCancellationQuery());
 }
@@ -283,6 +316,7 @@ bool PolynomialRegressionOperator::Configure(
     feature_col_.clear();
     target_col_.clear();
     degree_ = 2;
+    model_path_.clear();
 
     auto fc = params.find("feature_col");
     if (fc == params.end() || fc->second.empty()) {
@@ -310,6 +344,10 @@ bool PolynomialRegressionOperator::Configure(
         error = "PolynomialRegression: degree must be >= 1 (got " +
                 std::to_string(degree_) + ")";
         return false;
+    }
+    const auto model_path = params.find("model_path");
+    if (model_path != params.end()) {
+        model_path_ = model_path->second;
     }
     return true;
 }
@@ -384,6 +422,33 @@ PolynomialRegressionOperator::Apply(const std::shared_ptr<arrow::Table>& input) 
                  "adj_R^2={:.4f}, RMSE={:.4f}",
                  x.size(), degree_,
                  result.r_squared, result.adjusted_r_squared, result.rmse);
+
+    if (!model_path_.empty()) {
+        RegressionModelArtifact artifact;
+        artifact.type = RegressionModelType::Polynomial;
+        artifact.feature_names = {feature_col_};
+        artifact.target_name = target_col_;
+        artifact.fit_intercept = true;
+        artifact.degree = degree_;
+        artifact.coefficients = result.coefficients;
+        artifact.sample_count = result.n;
+        artifact.r_squared = result.r_squared;
+        artifact.adjusted_r_squared = result.adjusted_r_squared;
+        artifact.mse = result.mse;
+        artifact.rmse = result.rmse;
+        artifact.mae = result.mae;
+        artifact.residual_variance = result.residual_variance;
+        artifact.residual_standard_error = result.residual_standard_error;
+        std::string artifact_error;
+        if (!SaveRegressionModelArtifact(
+                artifact, model_path_, &artifact_error)) {
+            return arrow::Status::IOError(
+                "PolynomialRegression: failed to save fitted model artifact: " +
+                artifact_error);
+        }
+        spdlog::info("PolynomialRegression: saved fitted model artifact '{}'",
+                     model_path_);
+    }
 
     return AppendPredictionResidual(
         input, result.predicted, result.residuals, GetCancellationQuery());

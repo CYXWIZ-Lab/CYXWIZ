@@ -1,62 +1,16 @@
 #include "tree_model_artifact.h"
+#include "model_artifact_json_io.h"
 
-#include <nlohmann/json.hpp>
-
-#include <filesystem>
-#include <fstream>
 #include <stdexcept>
 
 namespace cyxwiz {
 
 namespace {
 
-using json = nlohmann::json;
-
-void SetError(std::string* error, const std::string& message) {
-    if (error) {
-        *error = message;
-    }
-}
-
-bool WriteJsonFile(const std::string& path,
-                   const json& document,
-                   std::string* error) {
-    try {
-        const std::filesystem::path out_path(path);
-        if (out_path.empty()) {
-            SetError(error, "model artifact path is empty");
-            return false;
-        }
-        if (out_path.has_parent_path()) {
-            std::filesystem::create_directories(out_path.parent_path());
-        }
-        std::ofstream out(out_path, std::ios::binary);
-        if (!out) {
-            SetError(error, "failed to open model artifact for writing: " + path);
-            return false;
-        }
-        out << document.dump(2);
-        return true;
-    } catch (const std::exception& ex) {
-        SetError(error, ex.what());
-        return false;
-    }
-}
-
-bool ReadJsonFile(const std::string& path, json& document, std::string* error) {
-    try {
-        std::ifstream in(path, std::ios::binary);
-        if (!in) {
-            SetError(error, "failed to open model artifact for reading: " + path);
-            return false;
-        }
-        document = json::parse(in);
-        return true;
-    } catch (const std::exception& ex) {
-        SetError(error, ex.what());
-        return false;
-    }
-}
+using json = artifact_json::Json;
+using artifact_json::ReadJsonFile;
+using artifact_json::SetError;
+using artifact_json::WriteJsonFile;
 
 json DecisionTreeNodeToJson(const DecisionTreeNode& node) {
     return {
@@ -153,59 +107,23 @@ GradientBoostingRegressionTree RegressionTreeFromJson(const json& value) {
 }
 
 json ArtifactEnvelope(const std::string& model_type, const json& model_json) {
-    return {
-        {"format", "cyxwiz_tree_model"},
-        {"version", 1},
-        {"model_type", model_type},
-        {"model", model_json},
-    };
+    return artifact_json::MakeEnvelope(
+        "cyxwiz_tree_model", model_type, model_json);
 }
 
 bool ValidateEnvelope(const json& document,
                       const std::string& model_type,
                       std::string* error) {
-    if (document.value("format", "") != "cyxwiz_tree_model") {
-        SetError(error, "model artifact format is not cyxwiz_tree_model");
-        return false;
-    }
-    if (document.value("model_type", "") != model_type) {
-        SetError(error, "model artifact type mismatch; expected " + model_type);
-        return false;
-    }
-    if (!document.contains("model")) {
-        SetError(error, "model artifact is missing model payload");
-        return false;
-    }
-    return true;
+    return artifact_json::ValidateEnvelope(
+        document, "cyxwiz_tree_model", model_type, error);
 }
 
 } // namespace
 
 std::string ReadTreeModelArtifactType(const std::string& path,
                                       std::string* error) {
-    try {
-        json document;
-        if (!ReadJsonFile(path, document, error)) {
-            return {};
-        }
-        if (document.value("format", "") != "cyxwiz_tree_model") {
-            SetError(error, "model artifact format is not cyxwiz_tree_model");
-            return {};
-        }
-        const std::string model_type = document.value("model_type", "");
-        if (model_type.empty()) {
-            SetError(error, "model artifact is missing model_type");
-            return {};
-        }
-        if (!document.contains("model")) {
-            SetError(error, "model artifact is missing model payload");
-            return {};
-        }
-        return model_type;
-    } catch (const std::exception& ex) {
-        SetError(error, ex.what());
-        return {};
-    }
+    return artifact_json::ReadArtifactType(
+        path, "cyxwiz_tree_model", error);
 }
 
 bool SaveDecisionTreeModelArtifact(const DecisionTreeModel& model,

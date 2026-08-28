@@ -277,7 +277,9 @@ std::vector<size_t> InferOutputShape(
 
         case NodeType::Output: {
             int classes = 10;
-            if (params.count("classes")) {
+            if (params.count("num_classes")) {
+                classes = std::stoi(params.at("num_classes"));
+            } else if (params.count("classes")) {
                 classes = std::stoi(params.at("classes"));
             }
             output_shape = {static_cast<size_t>(classes)};

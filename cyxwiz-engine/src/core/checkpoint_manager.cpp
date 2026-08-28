@@ -6,6 +6,7 @@
 #include <chrono>
 #include <iomanip>
 #include <algorithm>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -553,6 +554,24 @@ bool CheckpointManager::LoadModelParameters(const fs::path& dir, SequentialModel
         // Validate the complete checkpoint before mutating the destination
         // model. A failed load must leave the previously active model intact.
         const auto expected = model.GetParameters();
+        std::vector<std::string> migrated_batch_norm_state;
+        const auto is_legacy_batch_norm_state = [](const std::string& name) {
+            const auto has_suffix = [&](const char* suffix) {
+                const size_t suffix_size = std::char_traits<char>::length(suffix);
+                return name.size() >= suffix_size &&
+                       name.compare(name.size() - suffix_size,
+                                    suffix_size,
+                                    suffix) == 0;
+            };
+            return has_suffix(".running_mean") || has_suffix(".running_var");
+        };
+        for (const auto& [name, expected_tensor] : expected) {
+            if (params.find(name) == params.end() &&
+                is_legacy_batch_norm_state(name)) {
+                params.emplace(name, expected_tensor);
+                migrated_batch_norm_state.push_back(name);
+            }
+        }
         if (expected.size() != params.size()) {
             last_error_ = "Checkpoint parameter count (" +
                           std::to_string(params.size()) +
@@ -577,6 +596,14 @@ bool CheckpointManager::LoadModelParameters(const fs::path& dir, SequentialModel
                               name + "'.";
                 return false;
             }
+        }
+
+        if (!migrated_batch_norm_state.empty()) {
+            spdlog::warn(
+                "CheckpointManager: Loaded legacy BatchNorm checkpoint without "
+                "{} running-stat tensor(s); initialized them from the active "
+                "model defaults",
+                migrated_batch_norm_state.size());
         }
 
         // Set parameters only after compatibility has passed for every tensor.

@@ -1395,7 +1395,7 @@ void EmbeddingDialog::Apply() {
     node_->parameters["max_norm"] = std::to_string(max_norm_);
     node_->parameters["freeze"] = freeze_ ? "true" : "false";
     node_->parameters["weights_file"] = weights_file_;
-    node_->parameters["embedding_weights_file"] = weights_file_;
+    node_->parameters.erase("embedding_weights_file");
     node_->parameters["output_weights_file"] = output_file_;
     switch (init_mode_) {
         case 1: node_->parameters["init_mode"] = "uniform"; break;

@@ -2,6 +2,7 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -18,6 +19,19 @@ BatchNormModule::BatchNormModule(size_t num_features, float eps, float momentum)
     , eps_(eps)
     , momentum_(momentum)
 {
+    if (num_features_ == 0) {
+        throw std::invalid_argument(
+            "BatchNormModule: num_features must be positive");
+    }
+    if (!std::isfinite(eps_) || eps_ <= 0.0f) {
+        throw std::invalid_argument(
+            "BatchNormModule: eps must be a finite number > 0");
+    }
+    if (!std::isfinite(momentum_) || momentum_ < 0.0f || momentum_ > 1.0f) {
+        throw std::invalid_argument(
+            "BatchNormModule: momentum must be a finite number in [0, 1]");
+    }
+
     // Initialize gamma (scale) to 1, beta (shift) to 0
     gamma_ = Tensor({num_features}, DataType::Float32);
     beta_ = Tensor({num_features}, DataType::Float32);
@@ -48,11 +62,21 @@ BatchNormModule::BatchNormModule(size_t num_features, float eps, float momentum)
 }
 
 Tensor BatchNormModule::Forward(const Tensor& input) {
-    input_cache_ = input.Clone();
-
     const auto& shape = input.Shape();
-    size_t batch_size = shape[0];
-    size_t features = shape.size() > 1 ? shape[1] : shape[0];
+    if (input.GetDataType() != DataType::Float32 || shape.size() != 2 ||
+        shape[0] == 0 || shape[1] != num_features_ ||
+        shape[0] > (std::numeric_limits<unsigned>::max)() ||
+        shape[1] > (std::numeric_limits<unsigned>::max)()) {
+        throw std::invalid_argument(
+            "BatchNormModule: input must be non-empty Float32 [batch, num_features]");
+    }
+    input_cache_ = input.Clone();
+    const size_t batch_size = shape[0];
+    const size_t features = shape[1];
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const unsigned af_batch_size = static_cast<unsigned>(batch_size);
+    const unsigned af_features = static_cast<unsigned>(features);
+#endif
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     af::array x = input.GetArray();
@@ -60,8 +84,8 @@ Tensor BatchNormModule::Forward(const Tensor& input) {
     // ArrayFire sees it as [batch, features] with dims(0)=batch, dims(1)=features
 
     // gamma/beta are [features], we need them as [1, features] for broadcasting
-    af::array gamma = af::moddims(gamma_.GetArray(), 1, features);
-    af::array beta = af::moddims(beta_.GetArray(), 1, features);
+    af::array gamma = af::moddims(gamma_.GetArray(), 1, af_features);
+    af::array beta = af::moddims(beta_.GetArray(), 1, af_features);
 
     if (is_training_) {
         // Compute mean and variance per feature (across batch = dim 0)
@@ -69,8 +93,8 @@ Tensor BatchNormModule::Forward(const Tensor& input) {
         af::array var = af::var(x, AF_VARIANCE_POPULATION, 0);  // [1, features]
 
         // Update running statistics
-        af::array rm = af::moddims(running_mean_.GetArray(), 1, features);
-        af::array rv = af::moddims(running_var_.GetArray(), 1, features);
+        af::array rm = af::moddims(running_mean_.GetArray(), 1, af_features);
+        af::array rv = af::moddims(running_var_.GetArray(), 1, af_features);
         rm = (1.0f - momentum_) * rm + momentum_ * mean;
         rv = (1.0f - momentum_) * rv + momentum_ * var;
         running_mean_ = Tensor(af::flat(rm));
@@ -79,13 +103,13 @@ Tensor BatchNormModule::Forward(const Tensor& input) {
         // Normalize: (x - mean) / sqrt(var + eps)
         af::array std_inv = 1.0f / af::sqrt(var + eps_);
         // Tile mean and std_inv to [batch, features]
-        af::array mean_tiled = af::tile(mean, batch_size, 1);
-        af::array std_inv_tiled = af::tile(std_inv, batch_size, 1);
+        af::array mean_tiled = af::tile(mean, af_batch_size, 1);
+        af::array std_inv_tiled = af::tile(std_inv, af_batch_size, 1);
         af::array x_norm = (x - mean_tiled) * std_inv_tiled;
 
         // Scale and shift: gamma * x_norm + beta
-        af::array gamma_tiled = af::tile(gamma, batch_size, 1);
-        af::array beta_tiled = af::tile(beta, batch_size, 1);
+        af::array gamma_tiled = af::tile(gamma, af_batch_size, 1);
+        af::array beta_tiled = af::tile(beta, af_batch_size, 1);
         af::array out = gamma_tiled * x_norm + beta_tiled;
 
         // Cache for backward
@@ -96,16 +120,16 @@ Tensor BatchNormModule::Forward(const Tensor& input) {
         return Tensor(out);
     } else {
         // Inference mode: use running statistics
-        af::array rm = af::moddims(running_mean_.GetArray(), 1, features);
-        af::array rv = af::moddims(running_var_.GetArray(), 1, features);
+        af::array rm = af::moddims(running_mean_.GetArray(), 1, af_features);
+        af::array rv = af::moddims(running_var_.GetArray(), 1, af_features);
         af::array std_inv = 1.0f / af::sqrt(rv + eps_);
 
-        af::array rm_tiled = af::tile(rm, batch_size, 1);
-        af::array std_inv_tiled = af::tile(std_inv, batch_size, 1);
+        af::array rm_tiled = af::tile(rm, af_batch_size, 1);
+        af::array std_inv_tiled = af::tile(std_inv, af_batch_size, 1);
         af::array x_norm = (x - rm_tiled) * std_inv_tiled;
 
-        af::array gamma_tiled = af::tile(gamma, batch_size, 1);
-        af::array beta_tiled = af::tile(beta, batch_size, 1);
+        af::array gamma_tiled = af::tile(gamma, af_batch_size, 1);
+        af::array beta_tiled = af::tile(beta, af_batch_size, 1);
         af::array out = gamma_tiled * x_norm + beta_tiled;
 
         return Tensor(out);
@@ -184,8 +208,23 @@ Tensor BatchNormModule::Forward(const Tensor& input) {
 
 Tensor BatchNormModule::Backward(const Tensor& grad_output) {
     const auto& shape = grad_output.Shape();
-    size_t batch_size = shape[0];
-    size_t features = shape.size() > 1 ? shape[1] : shape[0];
+    if (!is_training_ || input_cache_.Shape().size() != 2 ||
+        grad_output.GetDataType() != DataType::Float32 ||
+        shape != input_cache_.Shape() || shape[1] != num_features_) {
+        throw std::invalid_argument(
+            "BatchNormModule: backward requires a matching training-mode forward pass");
+    }
+    const size_t batch_size = shape[0];
+    const size_t features = shape[1];
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (batch_size > (std::numeric_limits<unsigned>::max)() ||
+        features > (std::numeric_limits<unsigned>::max)()) {
+        throw std::invalid_argument(
+            "BatchNormModule: gradient dimensions exceed ArrayFire bounds");
+    }
+    const unsigned af_batch_size = static_cast<unsigned>(batch_size);
+    const unsigned af_features = static_cast<unsigned>(features);
+#endif
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     af::array grad = grad_output.GetArray();
@@ -195,8 +234,8 @@ Tensor BatchNormModule::Backward(const Tensor& grad_output) {
     af::array x_norm = normalized_.GetArray();
 
     // gamma is [features], reshape to [1, features] for broadcasting
-    af::array gamma = af::moddims(gamma_.GetArray(), 1, features);
-    af::array std_inv = af::moddims(std_inv_.GetArray(), 1, features);
+    af::array gamma = af::moddims(gamma_.GetArray(), 1, af_features);
+    af::array std_inv = af::moddims(std_inv_.GetArray(), 1, af_features);
 
     // Gradient w.r.t gamma and beta (sum along batch dimension = dim 0)
     af::array d_gamma = af::sum(grad * x_norm, 0);  // [1, features]
@@ -209,13 +248,13 @@ Tensor BatchNormModule::Backward(const Tensor& grad_output) {
     // d_x = (1/N) * std_inv * (N * d_y * gamma - sum(d_y * gamma) - x_norm * sum(d_y * gamma * x_norm))
     float N = static_cast<float>(batch_size);
 
-    af::array gamma_tiled = af::tile(gamma, batch_size, 1);  // [batch, features]
+    af::array gamma_tiled = af::tile(gamma, af_batch_size, 1);  // [batch, features]
     af::array d_x_norm = grad * gamma_tiled;
 
-    af::array sum_d_x_norm = af::tile(af::sum(d_x_norm, 0), batch_size, 1);  // [batch, features]
-    af::array sum_d_x_norm_x_norm = af::tile(af::sum(d_x_norm * x_norm, 0), batch_size, 1);  // [batch, features]
+    af::array sum_d_x_norm = af::tile(af::sum(d_x_norm, 0), af_batch_size, 1);  // [batch, features]
+    af::array sum_d_x_norm_x_norm = af::tile(af::sum(d_x_norm * x_norm, 0), af_batch_size, 1);  // [batch, features]
 
-    af::array std_inv_tiled = af::tile(std_inv, batch_size, 1);  // [batch, features]
+    af::array std_inv_tiled = af::tile(std_inv, af_batch_size, 1);  // [batch, features]
     af::array d_x = (1.0f / N) * std_inv_tiled *
                     (N * d_x_norm - sum_d_x_norm - x_norm * sum_d_x_norm_x_norm);
 
@@ -271,7 +310,9 @@ Tensor BatchNormModule::Backward(const Tensor& grad_output) {
 std::map<std::string, Tensor> BatchNormModule::GetParameters() {
     return {
         {"gamma", gamma_},
-        {"beta", beta_}
+        {"beta", beta_},
+        {"running_mean", running_mean_},
+        {"running_var", running_var_}
     };
 }
 

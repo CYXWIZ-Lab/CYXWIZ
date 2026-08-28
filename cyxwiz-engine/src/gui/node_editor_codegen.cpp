@@ -10,6 +10,7 @@
 #include <map>
 #include <queue>
 #include <functional>
+#include <initializer_list>
 #include <vector>
 
 namespace gui {
@@ -61,6 +62,18 @@ std::string GetParamOrDefault(const MLNode& node, const std::string& key, const 
         return fallback;
     }
     return TrimCopy(it->second);
+}
+
+std::string GetParamOrAliases(const MLNode& node,
+                              std::initializer_list<const char*> keys,
+                              const std::string& fallback) {
+    for (const char* key : keys) {
+        const auto it = node.parameters.find(key);
+        if (it != node.parameters.end() && !TrimCopy(it->second).empty()) {
+            return TrimCopy(it->second);
+        }
+    }
+    return fallback;
 }
 
 std::string PythonBoolLiteral(const std::string& value) {
@@ -665,6 +678,28 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
     code += "import torch.optim as optim\n";
     code += "import numpy as np\n\n";
 
+    code += "class PositionalEncoding(nn.Module):\n";
+    code += "    def __init__(self, d_model, max_len=5000):\n";
+    code += "        super().__init__()\n";
+    code += "        position = torch.arange(max_len, dtype=torch.float32).unsqueeze(1)\n";
+    code += "        div_term = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float32) * (-np.log(10000.0) / d_model))\n";
+    code += "        encoding = torch.zeros(1, max_len, d_model)\n";
+    code += "        encoding[0, :, 0::2] = torch.sin(position * div_term)\n";
+    code += "        encoding[0, :, 1::2] = torch.cos(position * div_term[:encoding[0, :, 1::2].shape[-1]])\n";
+    code += "        self.register_buffer('encoding', encoding)\n\n";
+    code += "    def forward(self, x):\n";
+    code += "        if x.size(1) > self.encoding.size(1):\n";
+    code += "            raise ValueError('sequence length exceeds max_sequence_length')\n";
+    code += "        return x + self.encoding[:, :x.size(1), :]\n\n";
+
+    code += "class CausalTransformerDecoderBlock(nn.Module):\n";
+    code += "    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1, norm_first=False):\n";
+    code += "        super().__init__()\n";
+    code += "        self.block = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout, batch_first=True, norm_first=norm_first)\n\n";
+    code += "    def forward(self, x):\n";
+    code += "        causal_mask = torch.triu(torch.ones(x.size(1), x.size(1), device=x.device, dtype=torch.bool), diagonal=1)\n";
+    code += "        return self.block(x, src_mask=causal_mask)\n\n";
+
     // Model class
     code += "class GeneratedModel(nn.Module):\n";
     code += "    def __init__(self):\n";
@@ -725,7 +760,9 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
                 break;
 
             case NodeType::Dropout:
-                code += "        x = F.dropout(x, p=0.5, training=self.training)\n";
+                code += "        x = F.dropout(x, p=" +
+                        GetParamOrDefault(*node, "rate", "0.5") +
+                        ", training=self.training)\n";
                 break;
 
             case NodeType::Flatten:
@@ -743,7 +780,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
                 break;
 
             case NodeType::TransformerDecoder:
-                code += "        x = self.layer" + std::to_string(layer_idx++) + "(x, memory)  # memory from encoder\n";
+                code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
                 break;
 
             case NodeType::PositionalEncoding:
@@ -756,7 +793,6 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
                 break;
 
             case NodeType::GRU:
-            case NodeType::RNN:
                 code += "        x, h_n = self.layer" + std::to_string(layer_idx++) + "(x)\n";
                 break;
 
@@ -793,10 +829,6 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
             // ===== Attention =====
             case NodeType::MultiHeadAttention:
                 code += "        x, _ = self.layer" + std::to_string(layer_idx++) + "(x, x, x)  # self-attention\n";
-                break;
-
-            case NodeType::LinearAttention:
-                code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
                 break;
 
             // ===== Signal / Control Nodes =====
@@ -851,7 +883,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
                 if (it != node->parameters.end() && !it->second.empty()) end = it->second;
                 it = node->parameters.find("duration");
                 if (it != node->parameters.end() && !it->second.empty()) dur = it->second;
-                code += "        signal_" + std::to_string(node->id) + " = np.clip(" + start + " + (" + end + " - " + start + ") * t / " + dur + ", " + start + ", " + end + ")\n";
+                code += "        signal_" + std::to_string(node->id) + " = " + start + " + np.clip(t / " + dur + ", 0.0, 1.0) * (" + end + " - " + start + ")\n";
                 break;
             }
             case NodeType::SignalScope:
@@ -908,6 +940,26 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
         code += "# See: https://www.tensorflow.org/agents\n\n";
         code += GenerateRLPyTorchCode(sorted_ids);  // Fallback to SB3 code
         return code;
+    }
+
+    for (int node_id : sorted_ids) {
+        const MLNode* node = FindNodeById(node_id);
+        if (node && (node->type == NodeType::TransformerEncoder ||
+                     node->type == NodeType::TransformerDecoder ||
+                     node->type == NodeType::PositionalEncoding)) {
+            return "# TensorFlow export is blocked for the current CyxWiz "
+                   "Transformer/PositionalEncoding runtime contract.\n"
+                   "raise NotImplementedError('Use PyTorch or PyCyxWiz export "
+                   "for this graph; TensorFlow parity is not yet proven.')\n";
+        }
+        if (node && node->type == NodeType::LayerNorm &&
+            !GetParamOrDefault(*node, "normalized_shape", "").empty()) {
+            return "# TensorFlow export is blocked for explicit Studio "
+                   "LayerNorm normalized_shape.\n"
+                   "raise NotImplementedError('TensorFlow LayerNormalization "
+                   "selects axes but does not preserve the configured Studio "
+                   "shape-size contract.')\n";
+        }
     }
 
     std::string code;
@@ -978,7 +1030,16 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
                 break;
 
             case NodeType::Dropout:
-                code += "        x = tf.keras.layers.Dropout(0.5)(x, training=training)\n";
+                code += "        x = tf.keras.layers.Dropout(" +
+                        GetParamOrDefault(*node, "rate", "0.5") +
+                        ")(x, training=training)\n";
+                break;
+
+            case NodeType::BatchNorm:
+            case NodeType::LayerNorm:
+                code += "        x = self.layer" +
+                        std::to_string(layer_idx++) +
+                        "(x, training=training)\n";
                 break;
 
             case NodeType::Flatten:
@@ -1026,6 +1087,26 @@ std::string NodeEditor::GenerateKerasCode(const std::vector<int>& sorted_ids) {
         code += "# Please select PyTorch framework for RL code generation.\n\n";
         code += GenerateRLPyTorchCode(sorted_ids);  // Fallback to SB3 code
         return code;
+    }
+
+    for (int node_id : sorted_ids) {
+        const MLNode* node = FindNodeById(node_id);
+        if (node && (node->type == NodeType::TransformerEncoder ||
+                     node->type == NodeType::TransformerDecoder ||
+                     node->type == NodeType::PositionalEncoding)) {
+            return "# Keras export is blocked for the current CyxWiz "
+                   "Transformer/PositionalEncoding runtime contract.\n"
+                   "raise NotImplementedError('Use PyTorch or PyCyxWiz export "
+                   "for this graph; Keras parity is not yet proven.')\n";
+        }
+        if (node && node->type == NodeType::LayerNorm &&
+            !GetParamOrDefault(*node, "normalized_shape", "").empty()) {
+            return "# Keras export is blocked for explicit Studio LayerNorm "
+                   "normalized_shape.\n"
+                   "raise NotImplementedError('Keras LayerNormalization "
+                   "selects axes but does not preserve the configured Studio "
+                   "shape-size contract.')\n";
+        }
     }
 
     std::string code;
@@ -1090,6 +1171,24 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
     // Check if this is an RL graph
     if (IsRLGraph(sorted_ids)) {
         return GenerateRLPyCyxWizCode(sorted_ids);
+    }
+
+    for (int node_id : sorted_ids) {
+        const MLNode* node = FindNodeById(node_id);
+        if (node && node->type == NodeType::BatchNorm) {
+            return "# PyCyxWiz export is blocked for Studio BatchNorm1D.\n"
+                   "raise NotImplementedError('The current cx.BatchNorm binding "
+                   "is spatial BatchNorm2D; use Engine, PyTorch, or TensorFlow "
+                   "until a BatchNorm1D module binding owns this contract.')\n";
+        }
+        if (node && node->type == NodeType::LayerNorm &&
+            GetParamOrDefault(*node, "normalized_shape", "").empty()) {
+            return "# PyCyxWiz export is blocked for automatic Studio "
+                   "LayerNorm shape.\n"
+                   "raise NotImplementedError('Set normalized_shape explicitly "
+                   "or use Engine/PyTorch; PyCyxWiz has no lazy LayerNorm "
+                   "constructor.')\n";
+        }
     }
 
     std::string code;
@@ -1237,7 +1336,9 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
                 break;
 
             case NodeType::Dropout:
-                code += "        " + out + " = cx.dropout(" + input_expr(*node, 0) + ", p=0.5)\n";
+                code += "        " + out + " = cx.dropout(" +
+                        input_expr(*node, 0) + ", p=" +
+                        GetParamOrDefault(*node, "rate", "0.5") + ")\n";
                 record_output(out);
                 break;
 
@@ -1448,6 +1549,19 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
                 break;
             }
 
+            case NodeType::MultiHeadAttention:
+            case NodeType::TransformerEncoder:
+            case NodeType::TransformerDecoder:
+            case NodeType::PositionalEncoding:
+            case NodeType::LayerNorm:
+            case NodeType::Embedding: {
+                code += "        " + out + " = self.layer" +
+                        std::to_string(layer_idx++) + ".forward(" +
+                        input_expr(*node, 0) + ")\n";
+                record_output(out);
+                break;
+            }
+
             case NodeType::Output:
             case NodeType::SequenceTagOutput:
                 last_expr = input_expr(*node, 0);
@@ -1518,51 +1632,47 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             break;
 
         case NodeType::BatchNorm:
-            code = "nn.BatchNorm2d(num_features=AUTO)";
+            code = "nn.LazyBatchNorm1d(eps=" +
+                   GetParamOrAliases(node, {"eps", "epsilon"}, "1e-5") +
+                   ", momentum=" +
+                   GetParamOrDefault(node, "momentum", "0.1") + ")";
             break;
 
         case NodeType::Dropout: {
-            code = "nn.Dropout(p=0.5)";
-            break;
-        }
-
-        case NodeType::LinearAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            std::string feature_map = "elu";
-            std::string eps = "1e-6";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            it = node.parameters.find("feature_map");
-            if (it != node.parameters.end()) feature_map = it->second;
-            it = node.parameters.find("eps");
-            if (it != node.parameters.end()) eps = it->second;
-            // Linear attention with O(n) complexity (Performer-style)
-            // Requires: pip install performer-pytorch or custom implementation
-            code = "LinearAttention(dim=" + embed_dim + ", heads=" + num_heads +
-                   ", dim_head=" + embed_dim + "//" + num_heads +
-                   ", feature_map='" + feature_map + "', eps=" + eps + ")";
+            // The generated forward uses functional dropout so training mode
+            // and the exact Studio rate remain explicit without consuming a
+            // layer index.
+            code = "";
             break;
         }
 
         case NodeType::MultiHeadAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            code = "nn.MultiheadAttention(embed_dim=" + embed_dim + ", num_heads=" + num_heads + ")";
+            const std::string embed_dim = GetParamOrAliases(
+                node, {"embed_dim", "d_model"}, "512");
+            const std::string num_heads = GetParamOrAliases(
+                node, {"num_heads", "heads"}, "8");
+            const std::string dropout = GetParamOrAliases(
+                node, {"dropout", "dropout_rate"}, "0.0");
+            const std::string use_bias = PythonBoolLiteral(
+                GetParamOrDefault(node, "use_bias", "true"));
+            code = "nn.MultiheadAttention(embed_dim=" + embed_dim +
+                   ", num_heads=" + num_heads + ", dropout=" + dropout +
+                   ", bias=" + use_bias + ", batch_first=True)";
             break;
         }
 
         case NodeType::LayerNorm: {
-            std::string normalized_shape = "512";
-            auto it = node.parameters.find("normalized_shape");
-            if (it != node.parameters.end()) normalized_shape = it->second;
-            code = "nn.LayerNorm(" + normalized_shape + ")";
+            const std::string normalized_shape =
+                GetParamOrDefault(node, "normalized_shape", "AUTO");
+            const std::string shape_literal = normalized_shape == "AUTO"
+                ? "AUTO"
+                : CsvToPythonListLiteral(normalized_shape, normalized_shape);
+            code = "nn.LayerNorm(normalized_shape=" + shape_literal +
+                   ", eps=" +
+                   GetParamOrAliases(node, {"eps", "epsilon"}, "1e-5") +
+                   ", elementwise_affine=" + PythonBoolLiteral(
+                       GetParamOrDefault(node, "elementwise_affine", "true")) +
+                   ")";
             break;
         }
 
@@ -1603,48 +1713,44 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
 
         // ===== Transformer Layers =====
         case NodeType::TransformerEncoder: {
-            std::string d_model = "512";
-            std::string nhead = "8";
-            std::string dim_feedforward = "2048";
-            std::string dropout = "0.1";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) d_model = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) nhead = it->second;
-            it = node.parameters.find("ff_dim");
-            if (it != node.parameters.end()) dim_feedforward = it->second;
-            it = node.parameters.find("dropout");
-            if (it != node.parameters.end()) dropout = it->second;
+            const std::string d_model = GetParamOrAliases(
+                node, {"d_model", "embed_dim"}, "512");
+            const std::string nhead = GetParamOrAliases(
+                node, {"num_heads", "nhead"}, "8");
+            const std::string dim_feedforward = GetParamOrAliases(
+                node, {"dim_feedforward", "ff_dim", "d_ff"}, "2048");
+            const std::string dropout = GetParamOrAliases(
+                node, {"dropout", "dropout_rate"}, "0.1");
+            const std::string norm_first = PythonBoolLiteral(
+                GetParamOrDefault(node, "norm_first", "false"));
             code = "nn.TransformerEncoderLayer(d_model=" + d_model + ", nhead=" + nhead +
-                   ", dim_feedforward=" + dim_feedforward + ", dropout=" + dropout + ", batch_first=True)";
+                   ", dim_feedforward=" + dim_feedforward + ", dropout=" + dropout +
+                   ", batch_first=True, norm_first=" + norm_first + ")";
             break;
         }
 
         case NodeType::TransformerDecoder: {
-            std::string d_model = "512";
-            std::string nhead = "8";
-            std::string dim_feedforward = "2048";
-            std::string dropout = "0.1";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) d_model = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) nhead = it->second;
-            it = node.parameters.find("ff_dim");
-            if (it != node.parameters.end()) dim_feedforward = it->second;
-            it = node.parameters.find("dropout");
-            if (it != node.parameters.end()) dropout = it->second;
-            code = "nn.TransformerDecoderLayer(d_model=" + d_model + ", nhead=" + nhead +
-                   ", dim_feedforward=" + dim_feedforward + ", dropout=" + dropout + ", batch_first=True)";
+            const std::string d_model = GetParamOrAliases(
+                node, {"d_model", "embed_dim"}, "512");
+            const std::string nhead = GetParamOrAliases(
+                node, {"num_heads", "nhead"}, "8");
+            const std::string dim_feedforward = GetParamOrAliases(
+                node, {"dim_feedforward", "ff_dim", "d_ff"}, "2048");
+            const std::string dropout = GetParamOrAliases(
+                node, {"dropout", "dropout_rate"}, "0.1");
+            const std::string norm_first = PythonBoolLiteral(
+                GetParamOrDefault(node, "norm_first", "false"));
+            code = "CausalTransformerDecoderBlock(d_model=" + d_model + ", nhead=" + nhead +
+                   ", dim_feedforward=" + dim_feedforward + ", dropout=" + dropout +
+                   ", norm_first=" + norm_first + ")";
             break;
         }
 
         case NodeType::PositionalEncoding: {
-            std::string d_model = "512";
-            std::string max_len = "5000";
-            auto it = node.parameters.find("d_model");
-            if (it != node.parameters.end()) d_model = it->second;
-            it = node.parameters.find("max_len");
-            if (it != node.parameters.end()) max_len = it->second;
+            const std::string d_model = GetParamOrAliases(
+                node, {"d_model", "embed_dim"}, "512");
+            const std::string max_len = GetParamOrAliases(
+                node, {"max_sequence_length", "max_len", "max_length", "max_seq_len"}, "5000");
             code = "PositionalEncoding(d_model=" + d_model + ", max_len=" + max_len + ")";
             break;
         }
@@ -1712,24 +1818,6 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             break;
         }
 
-        case NodeType::RNN: {
-            std::string input_size = "512";
-            std::string hidden_size = "256";
-            std::string num_layers = "1";
-            std::string nonlinearity = "tanh";
-            auto it = node.parameters.find("input_size");
-            if (it != node.parameters.end()) input_size = it->second;
-            it = node.parameters.find("hidden_size");
-            if (it != node.parameters.end()) hidden_size = it->second;
-            it = node.parameters.find("num_layers");
-            if (it != node.parameters.end()) num_layers = it->second;
-            it = node.parameters.find("nonlinearity");
-            if (it != node.parameters.end()) nonlinearity = it->second;
-            code = "nn.RNN(input_size=" + input_size + ", hidden_size=" + hidden_size +
-                   ", num_layers=" + num_layers + ", nonlinearity='" + nonlinearity + "', batch_first=True)";
-            break;
-        }
-
         case NodeType::PluginCustom: {
             auto it = node.parameters.find("plugin_qualified_name");
             if (it != node.parameters.end())
@@ -1769,45 +1857,39 @@ std::string NodeEditor::NodeTypeToTensorFlowLayer(const MLNode& node, int /*laye
             break;
 
         case NodeType::BatchNorm:
-            code = "layers.BatchNormalization()";
+            code = "layers.BatchNormalization(epsilon=" +
+                   GetParamOrAliases(node, {"eps", "epsilon"}, "1e-5") +
+                   ", momentum=(1.0 - " +
+                   GetParamOrDefault(node, "momentum", "0.1") + "))";
             break;
 
         case NodeType::Dropout:
-            code = "layers.Dropout(0.5)";
+            // Generated call uses the configured functional layer directly.
+            code = "";
             break;
-
-        case NodeType::LinearAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            // TensorFlow doesn't have native linear attention - use MultiHeadAttention or custom layer
-            // Comment indicates O(n) linear attention should be used
-            code = "# LinearAttention (O(n)) - requires tensorflow-addons or custom impl\n"
-                   "        layers.MultiHeadAttention(key_dim=" + embed_dim + "//" + num_heads +
-                   ", num_heads=" + num_heads + ")  # Replace with linear attention";
-            break;
-        }
 
         case NodeType::MultiHeadAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
+            const std::string embed_dim = GetParamOrAliases(
+                node, {"embed_dim", "d_model"}, "512");
+            const std::string num_heads = GetParamOrAliases(
+                node, {"num_heads", "heads"}, "8");
+            const std::string dropout = GetParamOrAliases(
+                node, {"dropout", "dropout_rate"}, "0.0");
+            const std::string use_bias = PythonBoolLiteral(
+                GetParamOrDefault(node, "use_bias", "true"));
             code = "layers.MultiHeadAttention(key_dim=" + embed_dim + "//" + num_heads +
-                   ", num_heads=" + num_heads + ")";
+                   ", num_heads=" + num_heads + ", dropout=" + dropout +
+                   ", use_bias=" + use_bias + ")";
             break;
         }
 
         case NodeType::LayerNorm: {
-            std::string normalized_shape = "512";
-            auto it = node.parameters.find("normalized_shape");
-            if (it != node.parameters.end()) normalized_shape = it->second;
-            code = "layers.LayerNormalization()";
+            code = "layers.LayerNormalization(epsilon=" +
+                   GetParamOrAliases(node, {"eps", "epsilon"}, "1e-5") +
+                   ", center=" + PythonBoolLiteral(GetParamOrDefault(
+                       node, "elementwise_affine", "true")) +
+                   ", scale=" + PythonBoolLiteral(GetParamOrDefault(
+                       node, "elementwise_affine", "true")) + ")";
             break;
         }
 
@@ -1873,11 +1955,15 @@ std::string NodeEditor::NodeTypeToKerasLayer(const MLNode& node) {
             break;
 
         case NodeType::Dropout:
-            code = "layers.Dropout(0.5)";
+            code = "layers.Dropout(" +
+                   GetParamOrDefault(node, "rate", "0.5") + ")";
             break;
 
         case NodeType::BatchNorm:
-            code = "layers.BatchNormalization()";
+            code = "layers.BatchNormalization(epsilon=" +
+                   GetParamOrAliases(node, {"eps", "epsilon"}, "1e-5") +
+                   ", momentum=(1.0 - " +
+                   GetParamOrDefault(node, "momentum", "0.1") + "))";
             break;
 
         case NodeType::ReLU:
@@ -1910,35 +1996,29 @@ std::string NodeEditor::NodeTypeToKerasLayer(const MLNode& node) {
             code = "# SequenceTagOutput marker";
             break;
 
-        case NodeType::LinearAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            // Keras uses same MultiHeadAttention as TensorFlow
-            code = "# LinearAttention (O(n)) - requires custom implementation\n"
-                   "        layers.MultiHeadAttention(key_dim=" + embed_dim + "//" + num_heads +
-                   ", num_heads=" + num_heads + ")  # Replace with linear attention";
-            break;
-        }
-
         case NodeType::MultiHeadAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
+            const std::string embed_dim = GetParamOrAliases(
+                node, {"embed_dim", "d_model"}, "512");
+            const std::string num_heads = GetParamOrAliases(
+                node, {"num_heads", "heads"}, "8");
+            const std::string dropout = GetParamOrAliases(
+                node, {"dropout", "dropout_rate"}, "0.0");
+            const std::string use_bias = PythonBoolLiteral(
+                GetParamOrDefault(node, "use_bias", "true"));
             code = "layers.MultiHeadAttention(key_dim=" + embed_dim + "//" + num_heads +
-                   ", num_heads=" + num_heads + ")";
+                   ", num_heads=" + num_heads + ", dropout=" + dropout +
+                   ", use_bias=" + use_bias + ")";
             break;
         }
 
-        case NodeType::LayerNorm:
-            code = "layers.LayerNormalization()";
+        case NodeType::LayerNorm: {
+            const std::string affine = PythonBoolLiteral(
+                GetParamOrDefault(node, "elementwise_affine", "true"));
+            code = "layers.LayerNormalization(epsilon=" +
+                   GetParamOrAliases(node, {"eps", "epsilon"}, "1e-5") +
+                   ", center=" + affine + ", scale=" + affine + ")";
             break;
+        }
 
         case NodeType::Embedding: {
             std::string num_embeddings = "10000";
@@ -1998,99 +2078,111 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
             break;
 
         case NodeType::Dropout:
-            code = "cx.Dropout(p=0.5)";
+            // Generated forward uses cx.dropout with the exact Studio rate.
+            code = "";
             break;
 
         // ===== Attention & Transformer Layers =====
-        case NodeType::LinearAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            code = "cx.LinearAttention(dim=" + embed_dim + ", heads=" + num_heads + ")";
-            break;
-        }
-
         case NodeType::MultiHeadAttention: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            code = "cx.MultiHeadAttention(embed_dim=" + embed_dim + ", num_heads=" + num_heads + ")";
-            break;
-        }
-
-        case NodeType::SelfAttention: {
-            std::string embed_dim = "512";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            code = "cx.SelfAttention(embed_dim=" + embed_dim + ")";
-            break;
-        }
-
-        case NodeType::CrossAttention: {
-            std::string embed_dim = "512";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            code = "cx.CrossAttention(embed_dim=" + embed_dim + ")";
+            const std::string embed_dim = GetParamOrAliases(
+                node, {"embed_dim", "d_model"}, "512");
+            const std::string num_heads = GetParamOrAliases(
+                node, {"num_heads", "heads"}, "8");
+            const std::string dropout = GetParamOrAliases(
+                node, {"dropout", "dropout_rate"}, "0.0");
+            const std::string use_bias = PythonBoolLiteral(
+                GetParamOrDefault(node, "use_bias", "true"));
+            code = "cx.MultiHeadAttention(embed_dim=" + embed_dim +
+                   ", num_heads=" + num_heads + ", dropout=" + dropout +
+                   ", use_bias=" + use_bias + ")";
             break;
         }
 
         case NodeType::TransformerEncoder: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            std::string ff_dim = "2048";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            it = node.parameters.find("ff_dim");
-            if (it != node.parameters.end()) ff_dim = it->second;
-            code = "cx.TransformerEncoder(d_model=" + embed_dim + ", nhead=" + num_heads + ", dim_feedforward=" + ff_dim + ")";
+            const std::string d_model = GetParamOrAliases(
+                node, {"d_model", "embed_dim"}, "512");
+            const std::string num_heads = GetParamOrAliases(
+                node, {"num_heads", "nhead"}, "8");
+            const std::string ff_dim = GetParamOrAliases(
+                node, {"dim_feedforward", "ff_dim", "d_ff"}, "2048");
+            const std::string dropout = GetParamOrAliases(
+                node, {"dropout", "dropout_rate"}, "0.1");
+            const std::string norm_first = PythonBoolLiteral(
+                GetParamOrDefault(node, "norm_first", "false"));
+            code = "cx.TransformerEncoderLayer(d_model=" + d_model +
+                   ", nhead=" + num_heads + ", dim_feedforward=" + ff_dim +
+                   ", dropout=" + dropout + ", norm_first=" + norm_first + ")";
             break;
         }
 
         case NodeType::TransformerDecoder: {
-            std::string embed_dim = "512";
-            std::string num_heads = "8";
-            std::string ff_dim = "2048";
-            auto it = node.parameters.find("embed_dim");
-            if (it != node.parameters.end()) embed_dim = it->second;
-            it = node.parameters.find("num_heads");
-            if (it != node.parameters.end()) num_heads = it->second;
-            it = node.parameters.find("ff_dim");
-            if (it != node.parameters.end()) ff_dim = it->second;
-            code = "cx.TransformerDecoder(d_model=" + embed_dim + ", nhead=" + num_heads + ", dim_feedforward=" + ff_dim + ")";
+            const std::string d_model = GetParamOrAliases(
+                node, {"d_model", "embed_dim"}, "512");
+            const std::string num_heads = GetParamOrAliases(
+                node, {"num_heads", "nhead"}, "8");
+            const std::string ff_dim = GetParamOrAliases(
+                node, {"dim_feedforward", "ff_dim", "d_ff"}, "2048");
+            const std::string dropout = GetParamOrAliases(
+                node, {"dropout", "dropout_rate"}, "0.1");
+            const std::string norm_first = PythonBoolLiteral(
+                GetParamOrDefault(node, "norm_first", "false"));
+            code = "cx.TransformerDecoderLayer(d_model=" + d_model +
+                   ", nhead=" + num_heads + ", dim_feedforward=" + ff_dim +
+                   ", dropout=" + dropout + ", norm_first=" + norm_first + ")";
             break;
         }
 
         // ===== Normalization Layers =====
         case NodeType::LayerNorm: {
-            std::string normalized_shape = "512";
-            auto it = node.parameters.find("normalized_shape");
-            if (it != node.parameters.end()) normalized_shape = it->second;
-            code = "cx.LayerNorm(normalized_shape=" + normalized_shape + ")";
+            const std::string normalized_shape =
+                GetParamOrDefault(node, "normalized_shape", "AUTO");
+            const std::string shape_literal = normalized_shape == "AUTO"
+                ? "[AUTO]"
+                : CsvToPythonListLiteral(normalized_shape, normalized_shape);
+            code = "cx.LayerNorm(normalized_shape=" + shape_literal +
+                   ", eps=" +
+                   GetParamOrAliases(node, {"eps", "epsilon"}, "1e-5") +
+                   ", elementwise_affine=" + PythonBoolLiteral(
+                       GetParamOrDefault(node, "elementwise_affine", "true")) +
+                   ")";
             break;
         }
 
         case NodeType::GroupNorm: {
             std::string num_groups = "32";
             std::string num_channels = "256";
+            std::string eps = "1e-5";
+            std::string affine = "true";
             auto it = node.parameters.find("num_groups");
             if (it != node.parameters.end()) num_groups = it->second;
             it = node.parameters.find("num_channels");
             if (it != node.parameters.end()) num_channels = it->second;
-            code = "cx.GroupNorm(num_groups=" + num_groups + ", num_channels=" + num_channels + ")";
+            it = node.parameters.find("eps");
+            if (it != node.parameters.end()) eps = it->second;
+            it = node.parameters.find("affine");
+            if (it != node.parameters.end()) affine = it->second;
+            code = "cx.GroupNorm(num_groups=" + num_groups +
+                   ", num_channels=" + num_channels +
+                   ", eps=" + eps + ", affine=" +
+                   (affine == "true" ? "True" : "False") + ")";
             break;
         }
 
-        case NodeType::InstanceNorm:
-            code = "cx.InstanceNorm()";
+        case NodeType::InstanceNorm: {
+            std::string num_features = "64";
+            std::string eps = "1e-5";
+            std::string affine = "false";
+            auto it = node.parameters.find("num_features");
+            if (it != node.parameters.end()) num_features = it->second;
+            it = node.parameters.find("eps");
+            if (it != node.parameters.end()) eps = it->second;
+            it = node.parameters.find("affine");
+            if (it != node.parameters.end()) affine = it->second;
+            code = "cx.InstanceNorm2D(num_features=" + num_features +
+                   ", eps=" + eps + ", affine=" +
+                   (affine == "true" ? "True" : "False") + ")";
             break;
+        }
 
         // ===== Embedding Layer =====
         case NodeType::Embedding: {
@@ -2105,13 +2197,12 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
         }
 
         case NodeType::PositionalEncoding: {
-            std::string max_len = "5000";
-            std::string d_model = "512";
-            auto it = node.parameters.find("max_len");
-            if (it != node.parameters.end()) max_len = it->second;
-            it = node.parameters.find("d_model");
-            if (it != node.parameters.end()) d_model = it->second;
-            code = "cx.PositionalEncoding(d_model=" + d_model + ", max_len=" + max_len + ")";
+            const std::string d_model = GetParamOrAliases(
+                node, {"d_model", "embed_dim"}, "512");
+            const std::string max_len = GetParamOrAliases(
+                node, {"max_sequence_length", "max_len", "max_length", "max_seq_len"}, "5000");
+            code = "cx.PositionalEncoding(d_model=" + d_model +
+                   ", max_sequence_length=" + max_len + ")";
             break;
         }
 
