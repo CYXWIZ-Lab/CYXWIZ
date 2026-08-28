@@ -24,8 +24,9 @@ public:
 
 class CYXWIZ_API SmoothL1Loss : public Loss {
 public:
-    explicit SmoothL1Loss(float delta = 1.0f, Reduction reduction = Reduction::Mean)
-        : Loss(reduction), delta_(delta) {}
+    explicit SmoothL1Loss(
+        float delta = 1.0f,
+        Reduction reduction = Reduction::Mean);
 
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
     Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
@@ -37,6 +38,20 @@ private:
     float delta_;
 };
 
-using HuberLoss = SmoothL1Loss;
+class CYXWIZ_API HuberLoss : public Loss {
+public:
+    explicit HuberLoss(
+        float delta = 1.0f,
+        Reduction reduction = Reduction::Mean);
+
+    Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
+    Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
+    std::string GetName() const override { return "Huber"; }
+
+    float GetDelta() const { return delta_; }
+
+private:
+    float delta_;
+};
 
 } // namespace cyxwiz

@@ -144,6 +144,8 @@ const char* ArrayFireHostSyncCategoryName(
             return "layer_cpu_path";
         case ArrayFireHostSyncCategory::OptimizerCpuPath:
             return "optimizer_cpu_path";
+        case ArrayFireHostSyncCategory::LossCpuPath:
+            return "loss_cpu_path";
         case ArrayFireHostSyncCategory::CheckpointOutput:
             return "checkpoint_output";
         case ArrayFireHostSyncCategory::AlgorithmCpuPath:

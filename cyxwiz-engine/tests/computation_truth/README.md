@@ -27,6 +27,7 @@ Initial target cases:
 - TF-IDF bounded materialization values and shape.
 - Dense forward parity.
 - CrossEntropy loss parity.
+- Regression-loss forward/gradient parity across reductions and thresholds.
 - Multi-step Adam, AdamW, and PyTorch-scheduled NAdam parity.
 - Learning-rate scheduler sequence and boundary parity.
 - Training lifecycle: configured epochs vs completed/stopped/cancelled reason.
@@ -44,6 +45,10 @@ The broad tracking ticket is:
 - Verifies bounded output width: `max_features` columns plus optional `y`.
 - Verifies deterministic TF-IDF values against a hand reference.
 - Verifies deterministic label encoding.
+- Verifies MSE, L1, SmoothL1, and Huber forward values and prediction gradients
+  against generated PyTorch fixtures across `none`/`mean`/`sum`. The matrix
+  distinguishes SmoothL1 `beta` from Huber `delta`, covers exact threshold
+  edges, and proves SmoothL1 `beta=0` is L1 rather than a division-by-zero path.
 - Verifies `CrossEntropyLoss` against generated PyTorch `cross_entropy`
   fixtures for class-last rank-1/2/3 logits, index and soft targets,
   `none`/`sum`/`mean`, class weights, ignored targets, label smoothing,
@@ -70,10 +75,14 @@ The broad tracking ticket is:
   runs the fixture-backed core checks with native CPU fallback forbidden.
 - Rejects native fallback attempts and undeclared host synchronization; only
   bounded, attributed test-output readbacks are allowed.
+- Proves regression losses and every supported CrossEntropy rank use strict
+  ArrayFire CPU paths with no hidden native CPU computation. Forced regression
+  fallback is separately tested for exact rejection/compatibility policy,
+  reason code, numerical parity, and `loss_cpu_path` host-sync attribution.
 - Proves every supported CrossEntropy rank uses the same strict ArrayFire CPU
   path; rank-3 is reshaped on device and is not a hidden native CPU variant.
 
-The Linear, CrossEntropy, Adam-family, SGD, adaptive-optimizer, LAMB, and weighted-sampler expectations come from the checked-in
+The Linear, regression-loss, CrossEntropy, Adam-family, SGD, adaptive-optimizer, LAMB, and weighted-sampler expectations come from the checked-in
 `fixtures/training_core_pytorch.json` fixture. Regenerate it with:
 
 ```powershell

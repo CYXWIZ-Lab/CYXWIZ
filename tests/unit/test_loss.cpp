@@ -1,5 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include "algorithms/arrayfire_backend_utils.h"
 #include <cyxwiz/device.h>
 #include <cyxwiz/loss.h>
 #include <cyxwiz/tensor.h>
@@ -7,7 +8,168 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cmath>
+#include <functional>
+#include <limits>
+#include <memory>
+#include <stdexcept>
+#include <string>
 #include <vector>
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#endif
+
+namespace {
+
+constexpr const char* kForceFallbackEnv =
+    "CYXWIZ_TEST_FORCE_ARRAYFIRE_FALLBACK";
+std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent>* g_loss_fallback_events =
+    nullptr;
+std::vector<cyxwiz::ArrayFireHostSyncEvent>* g_loss_host_sync_events = nullptr;
+
+void CaptureLossFallback(
+    const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
+    if (g_loss_fallback_events != nullptr) {
+        g_loss_fallback_events->push_back(event);
+    }
+}
+
+void CaptureLossHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
+    if (g_loss_host_sync_events != nullptr) {
+        g_loss_host_sync_events->push_back(event);
+    }
+}
+
+void SetLossFallbackEnv(const char* value) {
+#ifdef _WIN32
+    _putenv_s(kForceFallbackEnv, value);
+#else
+    setenv(kForceFallbackEnv, value, 1);
+#endif
+}
+
+class ScopedLossFallbackEnv {
+public:
+    explicit ScopedLossFallbackEnv(const char* value) {
+        const char* previous = std::getenv(kForceFallbackEnv);
+        if (previous != nullptr) {
+            had_previous_ = true;
+            previous_ = previous;
+        }
+        SetLossFallbackEnv(value);
+    }
+
+    ~ScopedLossFallbackEnv() {
+        if (had_previous_) {
+            SetLossFallbackEnv(previous_.c_str());
+        } else {
+            SetLossFallbackEnv("");
+        }
+    }
+
+private:
+    bool had_previous_ = false;
+    std::string previous_;
+};
+
+class ScopedLossEventCapture {
+public:
+    ScopedLossEventCapture(
+        std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent>& fallback_events,
+        std::vector<cyxwiz::ArrayFireHostSyncEvent>& host_sync_events) {
+        g_loss_fallback_events = &fallback_events;
+        g_loss_host_sync_events = &host_sync_events;
+    }
+
+    ~ScopedLossEventCapture() {
+        g_loss_fallback_events = nullptr;
+        g_loss_host_sync_events = nullptr;
+    }
+};
+
+#if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
+using LossFactory = std::function<std::unique_ptr<cyxwiz::Loss>()>;
+
+void RequireRegressionLossFallbackContract(
+    const LossFactory& factory,
+    const std::string& operation_name,
+    bool forward) {
+    const float prediction_values[] = {-2.5f, -0.5f, 0.0f, 0.75f, 3.0f, 1.0f};
+    const float target_values[] = {0.0f, -1.0f, 0.0f, 0.25f, 0.0f, -2.0f};
+    const auto make_predictions = [&]() {
+        return cyxwiz::Tensor(af::array(2, 3, prediction_values));
+    };
+    const auto make_targets = [&]() {
+        return cyxwiz::Tensor(af::array(2, 3, target_values));
+    };
+    const auto invoke = [forward](cyxwiz::Loss& loss,
+                                  const cyxwiz::Tensor& predictions,
+                                  const cyxwiz::Tensor& targets) {
+        return forward ? loss.Forward(predictions, targets)
+                       : loss.Backward(predictions, targets);
+    };
+
+    std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent> strict_fallback_events;
+    std::vector<cyxwiz::ArrayFireHostSyncEvent> strict_host_sync_events;
+    {
+        const ScopedLossEventCapture capture(
+            strict_fallback_events, strict_host_sync_events);
+        const ScopedLossFallbackEnv forced(operation_name.c_str());
+        const cyxwiz::ScopedArrayFireFallbackPolicy strict(
+            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
+            &CaptureLossFallback);
+        const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
+            &CaptureLossHostSync);
+        auto loss = factory();
+        const auto predictions = make_predictions();
+        const auto targets = make_targets();
+        REQUIRE_THROWS_AS(invoke(*loss, predictions, targets), std::runtime_error);
+    }
+    REQUIRE(strict_fallback_events.size() == 1);
+    REQUIRE(strict_fallback_events.front().fallback_forbidden);
+    REQUIRE(strict_host_sync_events.empty());
+
+    auto arrayfire_loss = factory();
+    const auto arrayfire_result = invoke(
+        *arrayfire_loss, make_predictions(), make_targets());
+
+    std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent> fallback_events;
+    std::vector<cyxwiz::ArrayFireHostSyncEvent> host_sync_events;
+    cyxwiz::Tensor native_result;
+    {
+        const ScopedLossEventCapture capture(fallback_events, host_sync_events);
+        const ScopedLossFallbackEnv forced(operation_name.c_str());
+        const cyxwiz::ScopedArrayFireFallbackPolicy compatible(
+            cyxwiz::ArrayFireFallbackPolicy::AllowNativeCpuFallback);
+        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
+            &CaptureLossFallback);
+        const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
+            &CaptureLossHostSync);
+        auto loss = factory();
+        native_result = invoke(*loss, make_predictions(), make_targets());
+    }
+
+    REQUIRE(fallback_events.size() == 1);
+    REQUIRE(fallback_events.front().operation_name == operation_name);
+    REQUIRE(fallback_events.front().reason_code == "gpu_backend_exception");
+    REQUIRE_FALSE(fallback_events.front().fallback_forbidden);
+    REQUIRE_FALSE(host_sync_events.empty());
+    for (const auto& event : host_sync_events) {
+        REQUIRE(event.attribution_category == "loss_cpu_path");
+        REQUIRE(event.attribution_operation == operation_name);
+    }
+
+    REQUIRE(native_result.Shape() == arrayfire_result.Shape());
+    const float* expected = arrayfire_result.ReadData<float>();
+    const float* actual = native_result.ReadData<float>();
+    for (size_t index = 0; index < native_result.NumElements(); ++index) {
+        REQUIRE(actual[index] == Catch::Approx(expected[index]).margin(1.0e-6f));
+    }
+}
+#endif
+
+} // namespace
 
 TEST_CASE("Core losses compute CPU forward reductions", "[loss]") {
     float pred_values[] = {1.0f, 3.0f, -2.0f};
@@ -61,11 +223,11 @@ TEST_CASE("Core losses compute CPU backward values", "[loss]") {
 
     auto mse = cyxwiz::CreateLoss(cyxwiz::LossType::MSE, cyxwiz::Reduction::Mean);
     auto l1 = cyxwiz::CreateLoss(cyxwiz::LossType::L1, cyxwiz::Reduction::Mean);
-    auto smooth_l1 = cyxwiz::CreateLoss(cyxwiz::LossType::Huber, cyxwiz::Reduction::Mean, 2.0f);
+    auto huber = cyxwiz::CreateLoss(cyxwiz::LossType::Huber, cyxwiz::Reduction::Mean, 2.0f);
 
     cyxwiz::Tensor mse_grad = mse->Backward(predictions, targets);
     cyxwiz::Tensor l1_grad = l1->Backward(predictions, targets);
-    cyxwiz::Tensor smooth_l1_grad = smooth_l1->Backward(predictions, targets);
+    cyxwiz::Tensor huber_grad = huber->Backward(predictions, targets);
 
     REQUIRE(mse_grad.Data<float>()[0] == Catch::Approx(2.0f / 3.0f));
     REQUIRE(mse_grad.Data<float>()[1] == Catch::Approx(4.0f / 3.0f));
@@ -75,10 +237,80 @@ TEST_CASE("Core losses compute CPU backward values", "[loss]") {
     REQUIRE(l1_grad.Data<float>()[1] == Catch::Approx(1.0f / 3.0f));
     REQUIRE(l1_grad.Data<float>()[2] == Catch::Approx(-1.0f / 3.0f));
 
-    REQUIRE(smooth_l1_grad.Data<float>()[0] == Catch::Approx(1.0f / 6.0f));
-    REQUIRE(smooth_l1_grad.Data<float>()[1] == Catch::Approx(1.0f / 3.0f));
-    REQUIRE(smooth_l1_grad.Data<float>()[2] == Catch::Approx(-1.0f / 3.0f));
+    REQUIRE(huber_grad.Data<float>()[0] == Catch::Approx(1.0f / 3.0f));
+    REQUIRE(huber_grad.Data<float>()[1] == Catch::Approx(2.0f / 3.0f));
+    REQUIRE(huber_grad.Data<float>()[2] == Catch::Approx(-2.0f / 3.0f));
 }
+
+TEST_CASE("Regression loss parameters follow PyTorch domains", "[loss][regression]") {
+    REQUIRE_NOTHROW(cyxwiz::SmoothL1Loss(0.0f, cyxwiz::Reduction::Mean));
+    REQUIRE_THROWS_AS(
+        cyxwiz::SmoothL1Loss(-0.1f, cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::SmoothL1Loss(
+            std::numeric_limits<float>::infinity(), cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::HuberLoss(0.0f, cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::HuberLoss(-1.0f, cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::HuberLoss(
+            std::numeric_limits<float>::quiet_NaN(), cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+}
+
+TEST_CASE("SmoothL1 beta zero is exactly L1", "[loss][regression]") {
+    const float prediction_values[] = {-2.0f, 0.0f, 3.0f};
+    const float target_values[] = {-1.0f, 0.0f, 1.0f};
+    const cyxwiz::Tensor predictions(
+        {3}, prediction_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor targets(
+        {3}, target_values, cyxwiz::DataType::Float32);
+    cyxwiz::SmoothL1Loss smooth(0.0f, cyxwiz::Reduction::None);
+    cyxwiz::L1Loss l1(cyxwiz::Reduction::None);
+    const auto smooth_forward = smooth.Forward(predictions, targets);
+    const auto l1_forward = l1.Forward(predictions, targets);
+    const auto smooth_backward = smooth.Backward(predictions, targets);
+    const auto l1_backward = l1.Backward(predictions, targets);
+    for (size_t index = 0; index < predictions.NumElements(); ++index) {
+        REQUIRE(smooth_forward.ReadData<float>()[index] ==
+                Catch::Approx(l1_forward.ReadData<float>()[index]));
+        REQUIRE(smooth_backward.ReadData<float>()[index] ==
+                Catch::Approx(l1_backward.ReadData<float>()[index]));
+    }
+}
+
+#if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
+TEST_CASE("Regression losses declare strict and compatible fallback truth",
+          "[loss][regression][arrayfire][fallback]") {
+    const std::vector<std::pair<LossFactory, std::string>> losses = {
+        {[] { return std::make_unique<cyxwiz::MSELoss>(cyxwiz::Reduction::None); },
+         "MSELoss"},
+        {[] { return std::make_unique<cyxwiz::L1Loss>(cyxwiz::Reduction::None); },
+         "L1Loss"},
+        {[] { return std::make_unique<cyxwiz::SmoothL1Loss>(
+                   0.5f, cyxwiz::Reduction::None); },
+         "SmoothL1Loss"},
+        {[] { return std::make_unique<cyxwiz::HuberLoss>(
+                   2.0f, cyxwiz::Reduction::None); },
+         "HuberLoss"},
+    };
+    for (const auto& [factory, name] : losses) {
+        DYNAMIC_SECTION(name << " forward") {
+            RequireRegressionLossFallbackContract(
+                factory, name + "::Forward", true);
+        }
+        DYNAMIC_SECTION(name << " backward") {
+            RequireRegressionLossFallbackContract(
+                factory, name + "::Backward", false);
+        }
+    }
+}
+#endif
 
 TEST_CASE("Binary losses compute forward reductions", "[loss]") {
     float probability_values[] = {0.8f, 0.2f};

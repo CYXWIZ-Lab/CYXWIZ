@@ -512,6 +512,76 @@ cyxwiz::Reduction ParseReduction(const std::string& reduction) {
     return cyxwiz::Reduction::Sum;
 }
 
+void TestRegressionLossParity(const json& cases) {
+    const auto& matrix = cases.at("regression_loss_matrix_f32");
+    Check(matrix.is_array() && !matrix.empty(),
+          "regression loss matrix fixture must be non-empty");
+    for (const auto& test_case : matrix) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("dtype", "") == "float32",
+              name + " dtype mismatch");
+        const auto prediction_values = ReadFloatValues(
+            test_case.at("predictions"), name + " predictions");
+        const auto target_values = ReadFloatValues(
+            test_case.at("targets"), name + " targets");
+        cyxwiz::Tensor predictions(
+            ReadShape(test_case.at("predictions"), name + " predictions"),
+            prediction_values.data(), cyxwiz::DataType::Float32);
+        cyxwiz::Tensor targets(
+            ReadShape(test_case.at("targets"), name + " targets"),
+            target_values.data(), cyxwiz::DataType::Float32);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        predictions = cyxwiz::Tensor::FromSemanticArray(
+            predictions.GetSemanticArray(), predictions.Shape());
+        targets = cyxwiz::Tensor::FromSemanticArray(
+            targets.GetSemanticArray(), targets.Shape());
+#endif
+
+        const auto reduction = ParseReduction(
+            test_case.at("reduction").get<std::string>());
+        const float parameter = test_case.at("parameter").get<float>();
+        const std::string loss_type =
+            test_case.at("loss_type").get<std::string>();
+        std::unique_ptr<cyxwiz::Loss> loss;
+        std::string expected_operation;
+        if (loss_type == "mse") {
+            loss = std::make_unique<cyxwiz::MSELoss>(reduction);
+            expected_operation = "torch.nn.functional.mse_loss";
+        } else if (loss_type == "l1") {
+            loss = std::make_unique<cyxwiz::L1Loss>(reduction);
+            expected_operation = "torch.nn.functional.l1_loss";
+        } else if (loss_type == "smooth_l1") {
+            loss = std::make_unique<cyxwiz::SmoothL1Loss>(parameter, reduction);
+            expected_operation = "torch.nn.functional.smooth_l1_loss";
+        } else {
+            Check(loss_type == "huber", name + " loss type mismatch");
+            loss = std::make_unique<cyxwiz::HuberLoss>(parameter, reduction);
+            expected_operation = "torch.nn.functional.huber_loss";
+        }
+        Check(test_case.value("operation", "") == expected_operation,
+              name + " operation mismatch");
+
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto actual_loss = loss->Forward(predictions, targets);
+        const auto actual_gradient = loss->Backward(predictions, targets);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              name + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              name + " materialized a tensor during compute");
+
+        CheckTensor(actual_loss, test_case.at("expected").at("loss"),
+                    ReadTolerance(test_case), name + " forward");
+        CheckTensor(actual_gradient,
+                    test_case.at("expected").at("prediction_gradient"),
+                    ReadTolerance(test_case), name + " backward");
+    }
+}
+
 void TestCrossEntropyMatrixParity(const json& cases) {
     const auto& matrix = cases.at("cross_entropy_matrix_f32");
     Check(matrix.is_array() && !matrix.empty(),
@@ -1259,6 +1329,7 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         Check(cyxwiz::IsArrayFireNativeCpuFallbackForbidden(),
               "training-core truth test must forbid native CPU fallback");
 
+        TestRegressionLossParity(cases);
         TestCrossEntropyParity(cases);
         TestCrossEntropyMatrixParity(cases);
         TestLinearForwardBackwardParity(cases);
@@ -1299,6 +1370,6 @@ int main(int argc, char** argv) {
     TestBoundedTFIDFMaterialization();
     TestTFIDFNGramMaterialization();
     TestArrayFireCpuTrainingCoreTruth(cases);
-    std::cout << "Computation truth TF-IDF + CrossEntropy + Linear + optimizer checks passed\n";
+    std::cout << "Computation truth TF-IDF + regression/CrossEntropy + Linear + optimizer checks passed\n";
     return 0;
 }

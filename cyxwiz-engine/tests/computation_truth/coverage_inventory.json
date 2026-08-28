@@ -392,18 +392,18 @@
     {
       "id": "LOSS-REG-001",
       "family": "loss",
-      "operation": "MSE, L1 and SmoothL1 forward/backward across reductions",
+      "operation": "MSE, L1, SmoothL1 and Huber forward/backward across reductions",
       "tier": 1,
       "owner": "cyxwiz-backend/include/cyxwiz/losses/regression.h",
       "implementation": ["cyxwiz-backend/src/algorithms/losses/regression_losses.cpp"],
-      "callers": ["TrainingExecutor regression objectives"],
-      "contract": "Elementwise loss, reduction denominator and input gradient match PyTorch.",
-      "supported": "Float32 equal-shape predictions/targets; None/Mean/Sum",
+      "callers": ["CreateLoss", "TrainingExecutor regression objectives (MSE/L1/SmoothL1)", "Huber graph routing deferred until concurrent node integration is reviewed"],
+      "contract": "Elementwise loss, reduction denominator, threshold semantics and prediction gradient match PyTorch; SmoothL1 beta and Huber delta remain distinct.",
+      "supported": "Float32 equal-shape predictions/targets; None/Mean/Sum; SmoothL1 finite beta >= 0; Huber finite delta > 0",
       "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_loss", "test_training_executor_arrow_parquet"],
-      "execution": "ArrayFire-first where implemented",
+      "tests": ["test_computation_truth_tfidf_loss:regression_loss_matrix_f32", "cyxwiz-tests:[loss][regression][fallback]", "test_training_executor_arrow_parquet"],
+      "execution": "strict device-resident ArrayFire CPU parity with no native fallback; declared native CPU compatibility fallback with exact reason and loss_cpu_path host-sync attribution",
       "status": "partial",
-      "gaps": ["fixture provenance", "all reductions", "extremes", "strict residency"]
+      "gaps": ["explicit CUDA/OpenCL/oneAPI PyTorch numerical matrix", "Huber node-to-TrainingExecutor routing after concurrent node integration"]
     },
     {
       "id": "LOSS-CE-001",

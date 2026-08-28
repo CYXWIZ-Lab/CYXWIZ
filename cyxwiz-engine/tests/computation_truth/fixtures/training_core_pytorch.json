@@ -3711,6 +3711,800 @@
         "warmup_type": "none"
       }
     ],
+    "regression_loss_matrix_f32": [
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              9.0,
+              4.0,
+              0.25,
+              0.0,
+              0.25,
+              4.0
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -6.0,
+              -4.0,
+              -1.0,
+              0.0,
+              1.0,
+              4.0
+            ]
+          }
+        },
+        "loss_type": "mse",
+        "name": "mse_none",
+        "operation": "torch.nn.functional.mse_loss",
+        "parameter": 0.0,
+        "predictions": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -2.0,
+            -0.5,
+            0.0,
+            0.5,
+            2.0
+          ]
+        },
+        "reduction": "none",
+        "targets": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              2.9166667461395264
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -1.0,
+              -0.6666666865348816,
+              -0.1666666716337204,
+              0.0,
+              0.1666666716337204,
+              0.6666666865348816
+            ]
+          }
+        },
+        "loss_type": "mse",
+        "name": "mse_mean",
+        "operation": "torch.nn.functional.mse_loss",
+        "parameter": 0.0,
+        "predictions": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -2.0,
+            -0.5,
+            0.0,
+            0.5,
+            2.0
+          ]
+        },
+        "reduction": "mean",
+        "targets": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              17.5
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -6.0,
+              -4.0,
+              -1.0,
+              0.0,
+              1.0,
+              4.0
+            ]
+          }
+        },
+        "loss_type": "mse",
+        "name": "mse_sum",
+        "operation": "torch.nn.functional.mse_loss",
+        "parameter": 0.0,
+        "predictions": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -2.0,
+            -0.5,
+            0.0,
+            0.5,
+            2.0
+          ]
+        },
+        "reduction": "sum",
+        "targets": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              3.0,
+              2.0,
+              0.5,
+              0.0,
+              0.5,
+              2.0
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -1.0,
+              -1.0,
+              -1.0,
+              0.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        "loss_type": "l1",
+        "name": "l1_none",
+        "operation": "torch.nn.functional.l1_loss",
+        "parameter": 0.0,
+        "predictions": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -2.0,
+            -0.5,
+            0.0,
+            0.5,
+            2.0
+          ]
+        },
+        "reduction": "none",
+        "targets": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              1.3333333730697632
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -0.1666666716337204,
+              -0.1666666716337204,
+              -0.1666666716337204,
+              0.0,
+              0.1666666716337204,
+              0.1666666716337204
+            ]
+          }
+        },
+        "loss_type": "l1",
+        "name": "l1_mean",
+        "operation": "torch.nn.functional.l1_loss",
+        "parameter": 0.0,
+        "predictions": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -2.0,
+            -0.5,
+            0.0,
+            0.5,
+            2.0
+          ]
+        },
+        "reduction": "mean",
+        "targets": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              8.0
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -1.0,
+              -1.0,
+              -1.0,
+              0.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        "loss_type": "l1",
+        "name": "l1_sum",
+        "operation": "torch.nn.functional.l1_loss",
+        "parameter": 0.0,
+        "predictions": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -2.0,
+            -0.5,
+            0.0,
+            0.5,
+            2.0
+          ]
+        },
+        "reduction": "sum",
+        "targets": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              3.0,
+              2.0,
+              0.5,
+              0.0,
+              0.5,
+              2.0
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -1.0,
+              -1.0,
+              -1.0,
+              0.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        "loss_type": "smooth_l1",
+        "name": "smooth_l1_beta_zero_none",
+        "operation": "torch.nn.functional.smooth_l1_loss",
+        "parameter": 0.0,
+        "predictions": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -2.0,
+            -0.5,
+            0.0,
+            0.5,
+            2.0
+          ]
+        },
+        "reduction": "none",
+        "targets": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              1.125
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -0.1666666716337204,
+              -0.1666666716337204,
+              -0.1666666716337204,
+              0.0,
+              0.1666666716337204,
+              0.1666666716337204
+            ]
+          }
+        },
+        "loss_type": "smooth_l1",
+        "name": "smooth_l1_beta_half_mean",
+        "operation": "torch.nn.functional.smooth_l1_loss",
+        "parameter": 0.5,
+        "predictions": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -2.0,
+            -0.5,
+            0.0,
+            0.5,
+            2.0
+          ]
+        },
+        "reduction": "mean",
+        "targets": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              4.125
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -1.0,
+              -1.0,
+              -0.25,
+              0.0,
+              0.25,
+              1.0
+            ]
+          }
+        },
+        "loss_type": "smooth_l1",
+        "name": "smooth_l1_beta_two_sum",
+        "operation": "torch.nn.functional.smooth_l1_loss",
+        "parameter": 2.0,
+        "predictions": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -2.0,
+            -0.5,
+            0.0,
+            0.5,
+            2.0
+          ]
+        },
+        "reduction": "sum",
+        "targets": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              1.375,
+              0.875,
+              0.125,
+              0.0,
+              0.125,
+              0.875
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -0.5,
+              -0.5,
+              -0.5,
+              0.0,
+              0.5,
+              0.5
+            ]
+          }
+        },
+        "loss_type": "huber",
+        "name": "huber_delta_half_none",
+        "operation": "torch.nn.functional.huber_loss",
+        "parameter": 0.5,
+        "predictions": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -2.0,
+            -0.5,
+            0.0,
+            0.5,
+            2.0
+          ]
+        },
+        "reduction": "none",
+        "targets": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              0.9583333134651184
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -0.1666666716337204,
+              -0.1666666716337204,
+              -0.0833333358168602,
+              0.0,
+              0.0833333358168602,
+              0.1666666716337204
+            ]
+          }
+        },
+        "loss_type": "huber",
+        "name": "huber_delta_one_mean",
+        "operation": "torch.nn.functional.huber_loss",
+        "parameter": 1.0,
+        "predictions": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -2.0,
+            -0.5,
+            0.0,
+            0.5,
+            2.0
+          ]
+        },
+        "reduction": "mean",
+        "targets": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              8.25
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -2.0,
+              -2.0,
+              -0.5,
+              0.0,
+              0.5,
+              2.0
+            ]
+          }
+        },
+        "loss_type": "huber",
+        "name": "huber_delta_two_sum",
+        "operation": "torch.nn.functional.huber_loss",
+        "parameter": 2.0,
+        "predictions": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            -2.0,
+            -0.5,
+            0.0,
+            0.5,
+            2.0
+          ]
+        },
+        "reduction": "sum",
+        "targets": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      }
+    ],
     "scheduler_lr_sequences": [
       {
         "base_learning_rate": 0.1,

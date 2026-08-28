@@ -67,8 +67,8 @@ Tensor ApplyClassReduction(const std::vector<float>& per_sample,
 Tensor CpuMSEForward(const Tensor& predictions, const Tensor& targets, Reduction reduction) {
     ValidateFloat32Pair(predictions, targets, "MSE");
     const size_t count = predictions.NumElements();
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     std::vector<float> losses(count);
     for (size_t i = 0; i < count; ++i) {
         const float diff = pred[i] - target[i];
@@ -84,9 +84,9 @@ Tensor CpuMSEBackward(const Tensor& predictions, const Tensor& targets, Reductio
     const float scale = reduction == Reduction::Mean && count > 0
                             ? 2.0f / static_cast<float>(count)
                             : 2.0f;
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
-    float* out = grad.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
+    float* out = grad.MutableData<float>();
     for (size_t i = 0; i < count; ++i) {
         out[i] = (pred[i] - target[i]) * scale;
     }
@@ -96,8 +96,8 @@ Tensor CpuMSEBackward(const Tensor& predictions, const Tensor& targets, Reductio
 Tensor CpuL1Forward(const Tensor& predictions, const Tensor& targets, Reduction reduction) {
     ValidateFloat32Pair(predictions, targets, "L1");
     const size_t count = predictions.NumElements();
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     std::vector<float> losses(count);
     for (size_t i = 0; i < count; ++i) {
         losses[i] = std::fabs(pred[i] - target[i]);
@@ -110,9 +110,9 @@ Tensor CpuL1Backward(const Tensor& predictions, const Tensor& targets, Reduction
     Tensor grad(predictions.Shape(), DataType::Float32);
     const size_t count = predictions.NumElements();
     const float scale = reduction == Reduction::Mean && count > 0 ? 1.0f / static_cast<float>(count) : 1.0f;
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
-    float* out = grad.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
+    float* out = grad.MutableData<float>();
     for (size_t i = 0; i < count; ++i) {
         const float diff = pred[i] - target[i];
         out[i] = (diff > 0.0f ? 1.0f : (diff < 0.0f ? -1.0f : 0.0f)) * scale;
@@ -126,8 +126,8 @@ Tensor CpuSmoothL1Forward(const Tensor& predictions,
                           Reduction reduction) {
     ValidateFloat32Pair(predictions, targets, "SmoothL1");
     const size_t count = predictions.NumElements();
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     std::vector<float> losses(count);
     for (size_t i = 0; i < count; ++i) {
         const float diff = pred[i] - target[i];
@@ -145,14 +145,59 @@ Tensor CpuSmoothL1Backward(const Tensor& predictions,
     Tensor grad(predictions.Shape(), DataType::Float32);
     const size_t count = predictions.NumElements();
     const float scale = reduction == Reduction::Mean && count > 0 ? 1.0f / static_cast<float>(count) : 1.0f;
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
-    float* out = grad.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
+    float* out = grad.MutableData<float>();
     for (size_t i = 0; i < count; ++i) {
         const float diff = pred[i] - target[i];
         const float abs_diff = std::fabs(diff);
         const float base_grad = abs_diff < delta ? diff / delta
                               : (diff > 0.0f ? 1.0f : (diff < 0.0f ? -1.0f : 0.0f));
+        out[i] = base_grad * scale;
+    }
+    return grad;
+}
+
+Tensor CpuHuberForward(const Tensor& predictions,
+                       const Tensor& targets,
+                       float delta,
+                       Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, "Huber");
+    const size_t count = predictions.NumElements();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
+    std::vector<float> losses(count);
+    for (size_t i = 0; i < count; ++i) {
+        const float diff = pred[i] - target[i];
+        const float abs_diff = std::fabs(diff);
+        losses[i] = abs_diff < delta
+                        ? 0.5f * diff * diff
+                        : delta * (abs_diff - 0.5f * delta);
+    }
+    return ApplyCpuReduction(predictions.Shape(), losses, reduction);
+}
+
+Tensor CpuHuberBackward(const Tensor& predictions,
+                        const Tensor& targets,
+                        float delta,
+                        Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, "Huber");
+    Tensor grad(predictions.Shape(), DataType::Float32);
+    const size_t count = predictions.NumElements();
+    const float scale = reduction == Reduction::Mean && count > 0
+                            ? 1.0f / static_cast<float>(count)
+                            : 1.0f;
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
+    float* out = grad.MutableData<float>();
+    for (size_t i = 0; i < count; ++i) {
+        const float diff = pred[i] - target[i];
+        const float abs_diff = std::fabs(diff);
+        const float base_grad = abs_diff < delta
+                                    ? diff
+                                    : (diff > 0.0f ? delta
+                                                   : (diff < 0.0f ? -delta
+                                                                  : 0.0f));
         out[i] = base_grad * scale;
     }
     return grad;
@@ -278,8 +323,6 @@ Tensor CpuKLDivBackward(const Tensor& predictions,
     return grad;
 }
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-
 const char* ReductionName(Reduction reduction) {
     switch (reduction) {
         case Reduction::None:
@@ -293,6 +336,7 @@ const char* ReductionName(Reduction reduction) {
     }
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
 af::array TensorToAf(const Tensor& t) {
     return t.GetSemanticArray();
 }
@@ -317,6 +361,36 @@ Tensor AfToTensor(const af::array& arr) {
 Tensor AfToTensor(const af::array& arr,
                   const std::vector<size_t>& semantic_shape) {
     return Tensor::FromSemanticArray(arr, semantic_shape);
+}
+#endif
+
+bool PrepareLossNativeCpuFallback(
+    const char* operation_name,
+    const Tensor& predictions,
+    const Tensor& targets,
+    Reduction reduction) {
+    ValidateFloat32Pair(predictions, targets, operation_name);
+    if (ShouldForceArrayFireBackendFallbackForTesting(operation_name)) {
+        LogArrayFireLossFallbackOnce(
+            operation_name,
+            BackendFallbackReason::GpuBackendException,
+            "forced ArrayFire backend fallback test hook",
+            predictions,
+            targets,
+            reduction);
+        return true;
+    }
+    if (!IsCurrentArrayFireBackendAvailable()) {
+        LogArrayFireLossFallbackOnce(
+            operation_name,
+            BackendFallbackReason::BackendUnavailable,
+            "ArrayFire backend unavailable",
+            predictions,
+            targets,
+            reduction);
+        return true;
+    }
+    return false;
 }
 
 void LogArrayFireLossFallbackOnce(
@@ -366,8 +440,22 @@ void LogArrayFireLossFallbackOnce(
     const Tensor& predictions,
     const Tensor& targets,
     Reduction reduction) {
-    const BackendFallbackReason reason =
-        ClassifyArrayFireBackendFallbackReason(error_message);
+    LogArrayFireLossFallbackOnce(
+        operation_name,
+        ClassifyArrayFireBackendFallbackReason(error_message),
+        error_message,
+        predictions,
+        targets,
+        reduction);
+}
+
+void LogArrayFireLossFallbackOnce(
+    const char* operation_name,
+    BackendFallbackReason reason,
+    const char* error_message,
+    const Tensor& predictions,
+    const Tensor& targets,
+    Reduction reduction) {
     const std::string context =
         BuildArrayFireBackendFallbackContext(
             BuildTensorShapeContext("predictions", predictions.Shape()) +
@@ -404,6 +492,7 @@ void LogArrayFireLossFallbackOnce(
     }
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
 af::array ApplyReduction(const af::array& loss, Reduction reduction) {
     switch (reduction) {
         case Reduction::None:

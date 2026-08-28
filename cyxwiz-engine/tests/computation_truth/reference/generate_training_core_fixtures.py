@@ -29,6 +29,66 @@ def tensor_fixture(tensor: torch.Tensor) -> dict[str, Any]:
     }
 
 
+def regression_loss_matrix() -> list[dict[str, Any]]:
+    definitions = [
+        ("mse_none", "mse", "none", 0.0),
+        ("mse_mean", "mse", "mean", 0.0),
+        ("mse_sum", "mse", "sum", 0.0),
+        ("l1_none", "l1", "none", 0.0),
+        ("l1_mean", "l1", "mean", 0.0),
+        ("l1_sum", "l1", "sum", 0.0),
+        ("smooth_l1_beta_zero_none", "smooth_l1", "none", 0.0),
+        ("smooth_l1_beta_half_mean", "smooth_l1", "mean", 0.5),
+        ("smooth_l1_beta_two_sum", "smooth_l1", "sum", 2.0),
+        ("huber_delta_half_none", "huber", "none", 0.5),
+        ("huber_delta_one_mean", "huber", "mean", 1.0),
+        ("huber_delta_two_sum", "huber", "sum", 2.0),
+    ]
+    prediction_values = [[-3.0, -2.0, -0.5], [0.0, 0.5, 2.0]]
+    target_values = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+    cases: list[dict[str, Any]] = []
+    for name, loss_type, reduction, parameter in definitions:
+        predictions = torch.tensor(
+            prediction_values, dtype=torch.float32, requires_grad=True
+        )
+        targets = torch.tensor(target_values, dtype=torch.float32)
+        if loss_type == "mse":
+            loss = functional.mse_loss(predictions, targets, reduction=reduction)
+            operation = "torch.nn.functional.mse_loss"
+        elif loss_type == "l1":
+            loss = functional.l1_loss(predictions, targets, reduction=reduction)
+            operation = "torch.nn.functional.l1_loss"
+        elif loss_type == "smooth_l1":
+            loss = functional.smooth_l1_loss(
+                predictions, targets, reduction=reduction, beta=parameter
+            )
+            operation = "torch.nn.functional.smooth_l1_loss"
+        else:
+            loss = functional.huber_loss(
+                predictions, targets, reduction=reduction, delta=parameter
+            )
+            operation = "torch.nn.functional.huber_loss"
+        (loss.sum() if reduction == "none" else loss).backward()
+        cases.append({
+            "name": name,
+            "operation": operation,
+            "loss_type": loss_type,
+            "dtype": "float32",
+            "reduction": reduction,
+            "parameter": parameter,
+            "tolerance": {"atol": 1.0e-6, "rtol": 1.0e-6},
+            "predictions": tensor_fixture(predictions),
+            "targets": tensor_fixture(targets),
+            "expected": {
+                "loss": tensor_fixture(
+                    loss.reshape(1) if loss.ndim == 0 else loss
+                ),
+                "prediction_gradient": tensor_fixture(predictions.grad),
+            },
+        })
+    return cases
+
+
 def linear_case() -> dict[str, Any]:
     input_tensor = torch.tensor(
         [[1.0, 2.0, -1.0], [0.0, -3.0, 4.0]],
@@ -2388,6 +2448,7 @@ def generate_fixture() -> dict[str, Any]:
             "linear_basic_f32": linear_case(),
             "cross_entropy_index_mean_f32": cross_entropy_case(),
             "cross_entropy_matrix_f32": cross_entropy_matrix(),
+            "regression_loss_matrix_f32": regression_loss_matrix(),
             "adam_family_multistep_f32": adam_family_multistep_cases(),
             "sgd_momentum_multistep_f32": sgd_momentum_multistep_case(),
             "adaptive_optimizer_multistep_f32":
