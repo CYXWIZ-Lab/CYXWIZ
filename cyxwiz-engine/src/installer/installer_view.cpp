@@ -482,7 +482,7 @@ void RenderSummary(InstallerViewState &state,
   if (ImGui::Button(ICON_FA_DOWNLOAD " Review & install",
                     ImVec2(-1.0f, 38.0f))) {
     state.pending_plan = plan;
-    ImGui::OpenPopup("Review installation");
+    state.review_requested = true;
   }
   ImGui::EndDisabled();
   if (maintenance && RenderInstallerRemovalControl(
@@ -610,6 +610,10 @@ InstallerViewAction RenderInstallerView(
                 operation_message, operation_progress, action);
   ImGui::EndChild();
 
+  if (state.review_requested) {
+    ImGui::OpenPopup("Review installation");
+    state.review_requested = false;
+  }
   RenderReviewPopup(state, install_location, operation_running, action);
   ImGui::End();
   return action;
