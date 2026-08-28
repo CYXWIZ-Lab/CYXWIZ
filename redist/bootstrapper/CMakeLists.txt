@@ -58,6 +58,7 @@ target_link_libraries(cyxwiz-backend-pack-maintenance PUBLIC
 add_library(cyxwiz-backend-pack-service STATIC
     backend_pack_acquisition.cpp
     backend_pack_archive_extractor.cpp
+    backend_pack_compatibility.cpp
     base_stable_tool_publisher.cpp
     backend_pack_hash.cpp
     backend_pack_https_source.cpp
@@ -261,6 +262,21 @@ if(CYXWIZ_BUILD_TESTS)
     set_target_properties(generate_installer_metadata_fixture PROPERTIES
         CXX_STANDARD 20
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+
+    add_executable(test_backend_pack_compatibility
+        test_backend_pack_compatibility.cpp
+    )
+    target_link_libraries(test_backend_pack_compatibility PRIVATE
+        cyxwiz-backend-pack-service
+    )
+    set_target_properties(test_backend_pack_compatibility PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME backend_pack_compatibility_contract
+        COMMAND test_backend_pack_compatibility
     )
 
     if(WIN32)
