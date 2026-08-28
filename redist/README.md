@@ -433,6 +433,23 @@ keys outside the repository, build trees, output directories, and application
 packages. Use the same `--runtime-set-id` and matching `--base-pack-id` when
 preparing companion artifacts.
 
+New base and optional-pack artifacts are deliberately emitted with
+`support_status=diagnostic`. After qualification and release review, prepare a
+new supported candidate without mutating the diagnostic authority, then sign
+that candidate through the same explicit signing step:
+
+```batch
+py -3 redist\scripts\prepare_pack_support_promotion.py ^
+  redist\output\diagnostic\cyxwiz-base-0.2.0-1-win64.zip.manifest.json ^
+  --output redist\output\supported\cyxwiz-base-0.2.0-1-win64.zip.manifest.json
+```
+
+The promotion tool accepts only a well-formed signed diagnostic manifest whose
+canonical `.signed.json` still matches. It changes only `support_status`,
+clears the old signature, writes new outputs without replacement, and requires
+the release signer to authorize the promoted result. Copy or link the unchanged
+archive beside the promoted manifest before repository assembly.
+
 After every selected base/backend manifest is signed and its archive remains
 beside it, assemble the exact hosted and installer-bootstrap repository:
 
