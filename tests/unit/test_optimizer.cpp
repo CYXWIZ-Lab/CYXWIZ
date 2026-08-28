@@ -96,22 +96,22 @@ public:
 using OptimizerFactory =
     std::function<std::unique_ptr<cyxwiz::Optimizer>()>;
 
-std::map<std::string, cyxwiz::Tensor> MakeAdaptiveParameters() {
+std::map<std::string, cyxwiz::Tensor> MakeStatefulOptimizerParameters() {
     const float values[] = {1.0f, -2.0f, 0.5f};
     return {{"weight", cyxwiz::Tensor(af::array(3, values))}};
 }
 
-std::map<std::string, cyxwiz::Tensor> MakeAdaptiveGradients() {
+std::map<std::string, cyxwiz::Tensor> MakeStatefulOptimizerGradients() {
     const float values[] = {0.25f, -0.5f, 0.125f};
     return {{"weight", cyxwiz::Tensor(af::array(3, values))}};
 }
 
-void RequireAdaptiveFallbackContract(
+void RequireOptimizerFallbackContract(
     const OptimizerFactory& factory,
     const std::string& operation_name,
     const std::vector<std::string>& state_names) {
-    auto strict_parameters = MakeAdaptiveParameters();
-    const auto gradients = MakeAdaptiveGradients();
+    auto strict_parameters = MakeStatefulOptimizerParameters();
+    const auto gradients = MakeStatefulOptimizerGradients();
     auto strict_optimizer = factory();
     {
         const ScopedOptimizerFallbackEnv forced(operation_name.c_str());
@@ -128,7 +128,7 @@ void RequireAdaptiveFallbackContract(
     REQUIRE(error.empty());
     REQUIRE(strict_state.tensors.empty());
 
-    auto arrayfire_parameters = MakeAdaptiveParameters();
+    auto arrayfire_parameters = MakeStatefulOptimizerParameters();
     auto arrayfire_optimizer = factory();
     {
         const cyxwiz::ScopedArrayFireFallbackPolicy strict(
@@ -136,7 +136,7 @@ void RequireAdaptiveFallbackContract(
         arrayfire_optimizer->Step(arrayfire_parameters, gradients);
     }
 
-    auto native_parameters = MakeAdaptiveParameters();
+    auto native_parameters = MakeStatefulOptimizerParameters();
     auto native_optimizer = factory();
     std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent> fallback_events;
     std::vector<cyxwiz::ArrayFireHostSyncEvent> host_sync_events;
@@ -392,7 +392,7 @@ TEST_CASE("Adaptive optimizers declare strict and compatible fallback",
     return;
 #else
     SECTION("RMSprop") {
-        RequireAdaptiveFallbackContract(
+        RequireOptimizerFallbackContract(
             []() {
                 return std::make_unique<cyxwiz::RMSpropOptimizer>(
                     0.01, 0.9, 1.0e-8, 0.5);
@@ -401,7 +401,7 @@ TEST_CASE("Adaptive optimizers declare strict and compatible fallback",
             {"square_average/weight", "momentum_buffer/weight"});
     }
     SECTION("AdaGrad") {
-        RequireAdaptiveFallbackContract(
+        RequireOptimizerFallbackContract(
             []() {
                 return std::make_unique<cyxwiz::AdaGradOptimizer>(
                     0.1, 1.0e-10);
@@ -410,7 +410,7 @@ TEST_CASE("Adaptive optimizers declare strict and compatible fallback",
             {"sum/weight"});
     }
     SECTION("Adadelta") {
-        RequireAdaptiveFallbackContract(
+        RequireOptimizerFallbackContract(
             []() {
                 auto optimizer =
                     std::make_unique<cyxwiz::AdadeltaOptimizer>(0.9, 1.0e-6);
@@ -446,6 +446,99 @@ TEST_CASE("Adaptive optimizer state import is transactional",
     auto invalid_state = valid_state;
     invalid_state.step_count = 99;
     invalid_state.tensors.erase("momentum_buffer/weight");
+    REQUIRE_FALSE(target.ImportState(invalid_state, error));
+    REQUIRE(error.find("incomplete") != std::string::npos);
+
+    cyxwiz::OptimizerState preserved_state;
+    REQUIRE(target.ExportState(preserved_state, error));
+    REQUIRE(preserved_state.step_count == valid_state.step_count);
+    REQUIRE(preserved_state.tensors.size() == valid_state.tensors.size());
+}
+
+TEST_CASE("LAMB rejects invalid hyperparameters", "[optimizer][truth]") {
+    REQUIRE_THROWS_AS(
+        cyxwiz::LAMBOptimizer(-0.001), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::LAMBOptimizer(0.001, 1.0), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::LAMBOptimizer(0.001, 0.9, 1.0), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::LAMBOptimizer(0.001, 0.9, 0.999, 0.0),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::LAMBOptimizer(0.001, 0.9, 0.999, 1.0e-6, -0.01),
+        std::invalid_argument);
+}
+
+TEST_CASE("LAMB preflights the complete step before mutation",
+          "[optimizer][truth]") {
+    const float parameter_values[] = {1.0f, -2.0f};
+    const float valid_gradient_values[] = {0.5f, -1.0f};
+    const float invalid_gradient_values[] = {0.25f};
+    std::map<std::string, cyxwiz::Tensor> parameters = {
+        {"a", cyxwiz::Tensor(
+                  {2}, parameter_values, cyxwiz::DataType::Float32)},
+        {"b", cyxwiz::Tensor(
+                  {2}, parameter_values, cyxwiz::DataType::Float32)},
+    };
+    const std::map<std::string, cyxwiz::Tensor> gradients = {
+        {"a", cyxwiz::Tensor(
+                  {2}, valid_gradient_values, cyxwiz::DataType::Float32)},
+        {"b", cyxwiz::Tensor(
+                  {1}, invalid_gradient_values, cyxwiz::DataType::Float32)},
+    };
+
+    cyxwiz::LAMBOptimizer optimizer;
+    REQUIRE_THROWS_AS(
+        optimizer.Step(parameters, gradients), std::invalid_argument);
+    REQUIRE(optimizer.GetStepCount() == 0);
+    const float* unchanged = parameters.at("a").ReadData<float>();
+    REQUIRE(unchanged[0] == Catch::Approx(1.0f));
+    REQUIRE(unchanged[1] == Catch::Approx(-2.0f));
+    cyxwiz::OptimizerState state;
+    std::string error;
+    REQUIRE(optimizer.ExportState(state, error));
+    REQUIRE(state.tensors.empty());
+}
+
+TEST_CASE("LAMB declares strict and compatible fallback",
+          "[optimizer][arrayfire][fallback][policy][host_sync][truth]") {
+#if !defined(CYXWIZ_HAS_ARRAYFIRE) || defined(NDEBUG)
+    return;
+#else
+    RequireOptimizerFallbackContract(
+        []() {
+            return std::make_unique<cyxwiz::LAMBOptimizer>(
+                0.01, 0.9, 0.999, 1.0e-6, 0.02);
+        },
+        "LAMBOptimizer::Step",
+        {"first_moment/weight", "second_moment/weight"});
+#endif
+}
+
+TEST_CASE("LAMB state import is transactional",
+          "[optimizer][checkpoint][truth]") {
+    const float parameter_values[] = {1.0f, -2.0f};
+    const float gradient_values[] = {0.5f, -1.0f};
+    std::map<std::string, cyxwiz::Tensor> parameters = {
+        {"weight", cyxwiz::Tensor(
+                       {2}, parameter_values, cyxwiz::DataType::Float32)},
+    };
+    const std::map<std::string, cyxwiz::Tensor> gradients = {
+        {"weight", cyxwiz::Tensor(
+                       {2}, gradient_values, cyxwiz::DataType::Float32)},
+    };
+    cyxwiz::LAMBOptimizer source(0.01, 0.9, 0.999, 1.0e-6, 0.02);
+    source.Step(parameters, gradients);
+    cyxwiz::OptimizerState valid_state;
+    std::string error;
+    REQUIRE(source.ExportState(valid_state, error));
+
+    cyxwiz::LAMBOptimizer target(0.01, 0.9, 0.999, 1.0e-6, 0.02);
+    REQUIRE(target.ImportState(valid_state, error));
+    auto invalid_state = valid_state;
+    invalid_state.step_count = 99;
+    invalid_state.tensors.erase("second_moment/weight");
     REQUIRE_FALSE(target.ImportState(invalid_state, error));
     REQUIRE(error.find("incomplete") != std::string::npos);
 

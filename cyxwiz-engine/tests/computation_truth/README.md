@@ -61,6 +61,9 @@ The broad tracking ticket is:
 - Verifies RMSprop, AdaGrad, and Adadelta parameter and accumulator state across
   three steps, `zero_grad` preservation, and exact resume from exported state
   against generated PyTorch fixtures.
+- Verifies LAMB parameters, moments, bias correction, weight decay, trust-ratio
+  zero-norm edges, `zero_grad` preservation, and exact resume across three steps
+  against an independent PyTorch tensor-equation fixture.
 - Activates ArrayFire CPU exactly, binds an immutable execution context, and
   runs the fixture-backed core checks with native CPU fallback forbidden.
 - Rejects native fallback attempts and undeclared host synchronization; only
@@ -68,7 +71,7 @@ The broad tracking ticket is:
 - Proves every supported CrossEntropy rank uses the same strict ArrayFire CPU
   path; rank-3 is reshaped on device and is not a hidden native CPU variant.
 
-The Linear, CrossEntropy, AdamW, SGD, adaptive-optimizer, and weighted-sampler expectations come from the checked-in
+The Linear, CrossEntropy, AdamW, SGD, adaptive-optimizer, LAMB, and weighted-sampler expectations come from the checked-in
 `fixtures/training_core_pytorch.json` fixture. Regenerate it with:
 
 ```powershell

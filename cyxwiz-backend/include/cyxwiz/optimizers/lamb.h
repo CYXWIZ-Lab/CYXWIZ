@@ -20,6 +20,8 @@ public:
               const std::map<std::string, Tensor>& gradients) override;
 
     void ZeroGrad() override;
+    bool ExportState(OptimizerState& state, std::string& error) const override;
+    bool ImportState(const OptimizerState& state, std::string& error) override;
 
     double GetBeta1() const { return beta1_; }
     double GetBeta2() const { return beta2_; }

@@ -7,6 +7,7 @@
 #include <cyxwiz/loss.h>
 #include <cyxwiz/optimizers/adaptive.h>
 #include <cyxwiz/optimizers/adam.h>
+#include <cyxwiz/optimizers/lamb.h>
 #include <cyxwiz/optimizers/sgd.h>
 #include <cyxwiz/tensor.h>
 
@@ -890,6 +891,149 @@ void TestAdaptiveOptimizerMultiStepParity(const json& cases) {
          {"accumulated_delta/weight", "acc_delta"}});
 }
 
+void TestLambMultiStepParity(const json& cases) {
+    const auto& test_case = cases.at("lamb_multistep_f32");
+    Check(test_case.value("operation", "") ==
+              "independent PyTorch tensor LAMB equation",
+          "LAMB fixture operation mismatch");
+    Check(test_case.value("dtype", "") == "float32",
+          "LAMB fixture dtype mismatch");
+    Check(test_case.value("zero_grad_contract", "") ==
+              "clears gradients without resetting optimizer state",
+          "LAMB zero_grad fixture contract mismatch");
+    const auto& hyper = test_case.at("hyperparameters");
+    const auto tolerance = ReadTolerance(test_case);
+    const auto make_optimizer = [&hyper]() {
+        return std::make_unique<cyxwiz::LAMBOptimizer>(
+            hyper.at("learning_rate").get<double>(),
+            hyper.at("beta1").get<double>(),
+            hyper.at("beta2").get<double>(),
+            hyper.at("epsilon").get<double>(),
+            hyper.at("weight_decay").get<double>());
+    };
+
+    const auto initial = ReadFloatValues(
+        test_case.at("initial_parameter"), "LAMB initial parameter");
+    const auto shape = ReadShape(
+        test_case.at("initial_parameter"), "LAMB initial parameter");
+    std::map<std::string, cyxwiz::Tensor> parameters = {
+        {"weight", cyxwiz::Tensor(
+                       shape, initial.data(), cyxwiz::DataType::Float32)},
+    };
+    auto optimizer = make_optimizer();
+    const auto& gradients = test_case.at("gradients");
+    const auto& expected_steps = test_case.at("expected_steps");
+    Check(gradients.size() == expected_steps.size(),
+          "LAMB fixture gradient/step count mismatch");
+    cyxwiz::OptimizerState checkpoint;
+    std::map<std::string, cyxwiz::Tensor> checkpoint_parameters;
+
+    for (size_t index = 0; index < gradients.size(); ++index) {
+        const auto values = ReadFloatValues(
+            gradients.at(index), "LAMB gradient");
+        const std::map<std::string, cyxwiz::Tensor> step_gradients = {
+            {"weight", cyxwiz::Tensor(
+                           ReadShape(gradients.at(index), "LAMB gradient"),
+                           values.data(), cyxwiz::DataType::Float32)},
+        };
+        optimizer->ZeroGrad();
+        optimizer->Step(parameters, step_gradients);
+        const auto& expected = expected_steps.at(index);
+        Check(optimizer->GetStepCount() ==
+                  expected.at("step_count").get<int>(),
+              "LAMB step-count parity");
+        CheckTensor(parameters.at("weight"), expected.at("parameter"),
+                    tolerance, "LAMB multi-step parameter");
+
+        cyxwiz::OptimizerState state;
+        std::string error;
+        Check(optimizer->ExportState(state, error),
+              "LAMB state export failed: " + error);
+        CheckTensor(state.tensors.at("first_moment/weight"),
+                    expected.at("first_moment"), tolerance,
+                    "LAMB first-moment parity");
+        CheckTensor(state.tensors.at("second_moment/weight"),
+                    expected.at("second_moment"), tolerance,
+                    "LAMB second-moment parity");
+        if (index + 2 == gradients.size()) {
+            checkpoint = state;
+            checkpoint_parameters = parameters;
+        }
+    }
+
+    auto resumed = make_optimizer();
+    resumed->SetLearningRate(0.123);
+    std::string error;
+    Check(resumed->ImportState(checkpoint, error),
+          "LAMB state import failed: " + error);
+    Check(resumed->GetLearningRate() == checkpoint.learning_rate,
+          "LAMB state import did not restore learning rate");
+    const size_t final_index = gradients.size() - 1;
+    const auto final_values = ReadFloatValues(
+        gradients.at(final_index), "LAMB resumed gradient");
+    const std::map<std::string, cyxwiz::Tensor> final_gradients = {
+        {"weight", cyxwiz::Tensor(
+                       ReadShape(gradients.at(final_index),
+                                 "LAMB resumed gradient"),
+                       final_values.data(), cyxwiz::DataType::Float32)},
+    };
+    resumed->ZeroGrad();
+    resumed->Step(checkpoint_parameters, final_gradients);
+    CheckTensor(checkpoint_parameters.at("weight"),
+                expected_steps.at(final_index).at("parameter"),
+                tolerance, "LAMB resumed parameter");
+    cyxwiz::OptimizerState resumed_state;
+    Check(resumed->ExportState(resumed_state, error),
+          "LAMB resumed state export failed: " + error);
+    CheckTensor(resumed_state.tensors.at("first_moment/weight"),
+                expected_steps.at(final_index).at("first_moment"),
+                tolerance, "LAMB resumed first moment");
+    CheckTensor(resumed_state.tensors.at("second_moment/weight"),
+                expected_steps.at(final_index).at("second_moment"),
+                tolerance, "LAMB resumed second moment");
+
+    for (const auto& [edge_name, edge] :
+         test_case.at("zero_norm_edges").items()) {
+        Check(edge.at("expected_trust_ratio").get<double>() == 1.0,
+              "LAMB " + edge_name + " fixture trust-ratio edge mismatch");
+        const auto edge_initial = ReadFloatValues(
+            edge.at("initial_parameter"), "LAMB " + edge_name + " initial");
+        const auto edge_gradient = ReadFloatValues(
+            edge.at("gradient"), "LAMB " + edge_name + " gradient");
+        const auto edge_shape = ReadShape(
+            edge.at("initial_parameter"), "LAMB " + edge_name + " initial");
+        std::map<std::string, cyxwiz::Tensor> edge_parameters = {
+            {"weight", cyxwiz::Tensor(
+                           edge_shape, edge_initial.data(),
+                           cyxwiz::DataType::Float32)},
+        };
+        const std::map<std::string, cyxwiz::Tensor> edge_gradients = {
+            {"weight", cyxwiz::Tensor(
+                           edge_shape, edge_gradient.data(),
+                           cyxwiz::DataType::Float32)},
+        };
+        cyxwiz::LAMBOptimizer edge_optimizer(
+            hyper.at("learning_rate").get<double>(),
+            hyper.at("beta1").get<double>(),
+            hyper.at("beta2").get<double>(),
+            hyper.at("epsilon").get<double>(),
+            edge.at("weight_decay").get<double>());
+        edge_optimizer.Step(edge_parameters, edge_gradients);
+        CheckTensor(edge_parameters.at("weight"),
+                    edge.at("expected_parameter"), tolerance,
+                    "LAMB " + edge_name + " parameter");
+        cyxwiz::OptimizerState edge_state;
+        Check(edge_optimizer.ExportState(edge_state, error),
+              "LAMB " + edge_name + " state export failed: " + error);
+        CheckTensor(edge_state.tensors.at("first_moment/weight"),
+                    edge.at("expected_first_moment"), tolerance,
+                    "LAMB " + edge_name + " first moment");
+        CheckTensor(edge_state.tensors.at("second_moment/weight"),
+                    edge.at("expected_second_moment"), tolerance,
+                    "LAMB " + edge_name + " second moment");
+    }
+}
+
 void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
     const bool initialized_here = !cyxwiz::IsInitialized();
     if (initialized_here) {
@@ -948,6 +1092,7 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestAdamWOneStepParity(cases);
         TestSGDMomentumMultiStepParity(cases);
         TestAdaptiveOptimizerMultiStepParity(cases);
+        TestLambMultiStepParity(cases);
     }
     g_fallback_events = nullptr;
     g_host_sync_events = nullptr;

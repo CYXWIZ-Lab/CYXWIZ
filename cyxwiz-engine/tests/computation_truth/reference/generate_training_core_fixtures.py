@@ -1838,6 +1838,120 @@ def adaptive_optimizer_multistep_cases() -> dict[str, Any]:
     }
 
 
+def lamb_multistep_case() -> dict[str, Any]:
+    hyperparameters = {
+        "learning_rate": 0.01,
+        "beta1": 0.9,
+        "beta2": 0.999,
+        "epsilon": 1.0e-6,
+        "weight_decay": 0.02,
+    }
+
+    def run_step(
+        parameter: torch.Tensor,
+        gradient: torch.Tensor,
+        first_moment: torch.Tensor,
+        second_moment: torch.Tensor,
+        step_count: int,
+        weight_decay: float,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
+        beta1 = hyperparameters["beta1"]
+        beta2 = hyperparameters["beta2"]
+        first_moment = beta1 * first_moment + (1.0 - beta1) * gradient
+        second_moment = (
+            beta2 * second_moment + (1.0 - beta2) * gradient * gradient
+        )
+        bias_correction1 = 1.0 - beta1 ** step_count
+        bias_correction2 = 1.0 - beta2 ** step_count
+        update = (first_moment / bias_correction1) / (
+            torch.sqrt(second_moment / bias_correction2)
+            + hyperparameters["epsilon"]
+        )
+        if weight_decay > 0.0:
+            update = update + weight_decay * parameter
+        weight_norm = torch.linalg.vector_norm(parameter)
+        update_norm = torch.linalg.vector_norm(update)
+        trust_ratio = torch.tensor(1.0, dtype=torch.float32)
+        if weight_norm.item() > 0.0 and update_norm.item() > 0.0:
+            trust_ratio = weight_norm / update_norm
+        parameter = (
+            parameter
+            - hyperparameters["learning_rate"] * trust_ratio * update
+        )
+        return parameter, first_moment, second_moment, trust_ratio.item()
+
+    parameter = torch.tensor([1.0, -2.0, 0.5], dtype=torch.float32)
+    initial_parameter = parameter.clone()
+    first_moment = torch.zeros_like(parameter)
+    second_moment = torch.zeros_like(parameter)
+    gradients = [
+        torch.tensor([0.25, -0.5, 0.125], dtype=torch.float32),
+        torch.tensor([-0.125, 0.25, 0.5], dtype=torch.float32),
+        torch.tensor([0.75, -0.25, -0.375], dtype=torch.float32),
+    ]
+    expected_steps = []
+    for step_count, gradient in enumerate(gradients, start=1):
+        parameter, first_moment, second_moment, trust_ratio = run_step(
+            parameter,
+            gradient,
+            first_moment,
+            second_moment,
+            step_count,
+            hyperparameters["weight_decay"],
+        )
+        expected_steps.append({
+            "step_count": step_count,
+            "parameter": tensor_fixture(parameter),
+            "first_moment": tensor_fixture(first_moment),
+            "second_moment": tensor_fixture(second_moment),
+            "trust_ratio": trust_ratio,
+        })
+
+    edge_cases = {}
+    for name, edge_parameter, edge_gradient in [
+        (
+            "zero_weight_norm",
+            torch.zeros(3, dtype=torch.float32),
+            torch.tensor([0.5, -0.25, 0.125], dtype=torch.float32),
+        ),
+        (
+            "zero_update_norm",
+            torch.tensor([1.0, -2.0, 0.5], dtype=torch.float32),
+            torch.zeros(3, dtype=torch.float32),
+        ),
+    ]:
+        edge_initial = edge_parameter.clone()
+        edge_parameter, edge_first, edge_second, trust_ratio = run_step(
+            edge_parameter,
+            edge_gradient,
+            torch.zeros_like(edge_parameter),
+            torch.zeros_like(edge_parameter),
+            1,
+            0.0,
+        )
+        edge_cases[name] = {
+            "initial_parameter": tensor_fixture(edge_initial),
+            "gradient": tensor_fixture(edge_gradient),
+            "expected_parameter": tensor_fixture(edge_parameter),
+            "expected_first_moment": tensor_fixture(edge_first),
+            "expected_second_moment": tensor_fixture(edge_second),
+            "expected_trust_ratio": trust_ratio,
+            "weight_decay": 0.0,
+        }
+
+    return {
+        "operation": "independent PyTorch tensor LAMB equation",
+        "dtype": "float32",
+        "hyperparameters": hyperparameters,
+        "tolerance": {"atol": 2.0e-6, "rtol": 2.0e-6},
+        "initial_parameter": tensor_fixture(initial_parameter),
+        "gradients": [tensor_fixture(gradient) for gradient in gradients],
+        "expected_steps": expected_steps,
+        "zero_grad_contract": "clears gradients without resetting optimizer state",
+        "zero_norm_edges": edge_cases,
+    }
+
+
 def weighted_sampler_case() -> dict[str, Any]:
     class_counts = [3072, 1024]
     labels = torch.repeat_interleave(
@@ -2172,6 +2286,7 @@ def generate_fixture() -> dict[str, Any]:
             "sgd_momentum_multistep_f32": sgd_momentum_multistep_case(),
             "adaptive_optimizer_multistep_f32":
                 adaptive_optimizer_multistep_cases(),
+            "lamb_multistep_f32": lamb_multistep_case(),
             "gradient_accumulation_linear_ce_sgd_f32":
                 gradient_accumulation_matrix(),
             "weighted_sampler_inverse_frequency": weighted_sampler_case(),

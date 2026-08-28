@@ -35,7 +35,7 @@
       "tests": ["cyxwiz-tests:[tensor]", "cyxwiz-tests:[tensor_host_access]", "cyxwiz-tests:[source_scan]", "test_training_executor_arrow_parquet"],
       "execution": "exact source inventory distinguishes compatibility compute from explicit host, transport and selected-native-backend ownership",
       "status": "partial",
-      "gaps": ["48 reviewed legacy Data-access files remain: 32 compatibility-compute owners and 16 explicit host, transport or selected-native-backend owners"]
+      "gaps": ["47 reviewed legacy Data-access files remain: 31 compatibility-compute owners and 16 explicit host, transport or selected-native-backend owners"]
     },
     {
       "id": "TENSOR-LAYOUT-001",
@@ -259,7 +259,7 @@
       "tests": ["cyxwiz-tests:[fallback]", "cyxwiz-tests:[policy]", "cyxwiz-tests:[source_scan]", "cyxwiz-tests:[tensor_host_access]", "test_computation_truth_tfidf_loss", "test_training_executor_arrow_parquet"],
       "execution": "observed compatibility boundary plus exact reviewed legacy-access ownership inventory",
       "status": "partial",
-      "gaps": ["migrate or explicitly guard the 32 inventoried compatibility-compute files that still use legacy Tensor Data access"]
+      "gaps": ["migrate or explicitly guard the 31 inventoried compatibility-compute files that still use legacy Tensor Data access"]
     },
     {
       "id": "EXEC-SYNC-001",
@@ -560,10 +560,10 @@
       "contract": "Moments, bias correction, weight decay, norms, trust ratio and update count match an independent reference.",
       "supported": "Float32 named parameter maps",
       "oracle": "independent PyTorch tensor reference equation",
-      "tests": ["cyxwiz-tests:test_optimizer"],
-      "execution": "audit needed",
+      "tests": ["cyxwiz-tests:[optimizer]", "cyxwiz-tests:[fallback]", "cyxwiz-tests:[checkpoint]", "test_computation_truth_tfidf_loss"],
+      "execution": "ArrayFire-first; strict ArrayFire CPU proves three-step parameters, moments, trust-ratio edges and resume; native CPU compatibility is explicitly observed and attributed",
       "status": "partial",
-      "gaps": ["multi-step fixture", "zero-norm edges", "state serialization", "fallback/residency"]
+      "gaps": ["accelerator matrix"]
     },
     {
       "id": "SCHED-LR-001",
