@@ -369,7 +369,7 @@ class AlphaReleaseAssemblerTests(unittest.TestCase):
         arguments.asset_base_url = "http://packages.example.test/cyxwiz/alpha"
         with self.assertRaisesRegex(
             assembler.AlphaReleaseError,
-            "direct HTTPS",
+            "use HTTPS",
         ):
             assembler.assemble(arguments)
         self.assertFalse((self.root / "release").exists())

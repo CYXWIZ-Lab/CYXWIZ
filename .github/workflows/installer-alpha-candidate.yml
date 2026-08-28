@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       asset_base_url:
-        description: Direct non-redirecting HTTPS root reserved for these assets
+        description: Direct HTTPS or canonical GitHub Release root for assets
         required: true
         type: string
       cyxwiz_release:

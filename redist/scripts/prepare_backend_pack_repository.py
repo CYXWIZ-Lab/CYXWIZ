@@ -9,6 +9,7 @@ import binascii
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,8 @@ from sign_pack_manifest import sign_with_openssl  # noqa: E402
 
 MAX_METADATA_BYTES = 16 * 1024 * 1024
 ED25519_PUBLIC_KEY_DER_PREFIX = bytes.fromhex("302a300506032b6570032100")
+GITHUB_SEGMENT = re.compile(r"[A-Za-z0-9_.-]+")
+GITHUB_RELEASE_TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
 class RepositoryError(RuntimeError):
@@ -92,7 +95,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--base-url",
         required=True,
-        help="Direct non-redirecting HTTPS URL for the repository root",
+        help=(
+            "Direct HTTPS repository root or canonical immutable GitHub "
+            "Release asset root"
+        ),
     )
     parser.add_argument(
         "--hosted-layout",
@@ -361,7 +367,7 @@ def _validate_hosted_asset_names(
             observed[folded] = name
 
 
-def direct_https_base_url(value: str) -> str:
+def validated_https_base_url(value: str) -> str:
     if (
         len(value) > 4000
         or any(
@@ -389,9 +395,24 @@ def direct_https_base_url(value: str) -> str:
         or parsed.fragment
     ):
         raise RepositoryError(
-            "Repository base URL must be direct HTTPS without credentials, "
+            "Repository base URL must use HTTPS without credentials, "
             "query, or fragment"
         )
+    if parsed.hostname == "github.com":
+        segments = parsed.path.removeprefix("/").split("/")
+        if (
+            parsed.netloc != "github.com"
+            or len(segments) != 5
+            or GITHUB_SEGMENT.fullmatch(segments[0]) is None
+            or GITHUB_SEGMENT.fullmatch(segments[1]) is None
+            or segments[2:4] != ["releases", "download"]
+            or GITHUB_RELEASE_TAG.fullmatch(segments[4]) is None
+            or segments[4].lower() == "latest"
+        ):
+            raise RepositoryError(
+                "GitHub repository base URL must be a canonical immutable "
+                "release path"
+            )
     return value.rstrip("/")
 
 
@@ -544,7 +565,7 @@ def prepare_repository(args: argparse.Namespace) -> str:
     _validate_hosted_asset_names(
         packs, args.catalog_id, args.hosted_layout
     )
-    base_url = direct_https_base_url(args.base_url)
+    base_url = validated_https_base_url(args.base_url)
     catalog = _catalog_document(
         packs,
         base_url,

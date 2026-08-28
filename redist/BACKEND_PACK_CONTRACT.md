@@ -228,15 +228,25 @@ URL with the manifest's signed `archive.file_name`; credentials, queries,
 fragments, directory-valued manifest URLs, and nested archive names are
 rejected. Offline media places that same archive file beside its copied signed
 manifest. This deterministic rule is the only implicit artifact-source
-mapping and introduces no unsigned mirror or redirect authority.
+mapping and introduces no unsigned mirror authority. Redirect authority is
+code-owned and limited to the one canonical GitHub Release case below; signed
+metadata cannot expand it.
 
 Online and offline artifacts enter one acquisition transaction. The service
 writes only to a sibling `.part` file, resumes from its retained byte length,
 requires the signed final byte size and SHA-256, flushes the completed file,
 and atomically publishes it without replacing an existing destination. HTTPS
-requests reject credentials and fragments, disable redirects, use bounded
-timeouts, and require exact `Content-Length` plus exact `Content-Range` for a
-resume. A changed remote object is rejected by the final signed hash.
+requests reject credentials and fragments, disable automatic redirects, use
+bounded timeouts, and require exact `Content-Length` plus exact
+`Content-Range` for a resume. A canonical immutable
+`https://github.com/OWNER/REPOSITORY/releases/download/TAG/ASSET` request may
+manually follow one `302` only to
+`https://release-assets.githubusercontent.com/github-production-release-asset/...`.
+The destination query is request-local and is never persisted or logged.
+Every other redirect, status, source shape, destination authority, and second
+hop fails before body consumption. The destination request forwards no origin
+credentials or cookies and replays only the exact Range header when resuming.
+A changed remote object is rejected by the final signed hash.
 
 ZIP extraction accepts only regular, non-link entries whose canonical UTF-8
 paths, sizes, and case-folded uniqueness exactly match the signed component
@@ -340,7 +350,8 @@ WinHTTP uses the operating system's automatic proxy configuration. On Linux
 and macOS, schema 1 uses direct certificate-verified HTTPS and has no explicit
 proxy-credential input; proxy-only deployments must use the offline workflow.
 Proxy URLs and credentials are never catalog or manifest fields and must not
-be copied into support output. Redirects remain disabled on every platform.
+be copied into support output. Automatic redirects remain disabled on every
+platform; only the code-owned one-hop GitHub Release policy above is eligible.
 Failure to reach the network leaves the verified local catalog and installed
 runtime inspectable and does not downgrade to unsigned metadata.
 
@@ -351,8 +362,9 @@ manifest digest, manifest signature, client version, platform, and
 architecture before publication. Verified manifests are atomically published
 first and the catalog last under the selected runtime root, never beside the
 installer executable; any source, verification, or publication failure leaves
-the previous verified catalog authoritative. The catalog endpoint must be a
-direct, non-redirecting HTTPS URL. Production builds configure it with
+the previous verified catalog authoritative. The catalog endpoint must be
+direct HTTPS or an exact immutable canonical GitHub Release asset URL accepted
+by the one-hop policy. Production builds configure it with
 `CYXWIZ_INSTALLER_CATALOG_URL`; local integration runs may override it with
 `--catalog-url`.
 

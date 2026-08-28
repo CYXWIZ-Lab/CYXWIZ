@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import shutil
 import sys
 import tempfile
@@ -24,6 +23,7 @@ import package_installer_bundle as installer_packager  # noqa: E402
 import prepare_backend_pack_repository as pack_repository  # noqa: E402
 from backend_pack_contract import validate_pack_manifest  # noqa: E402
 from prepare_installer_release_configuration import (  # noqa: E402
+    REPOSITORY,
     ReleaseConfigurationError,
     VERSION,
     versioned_asset_base_url,
@@ -62,7 +62,6 @@ TARGET_BY_KEY = {target.key: target for target in TARGETS}
 TARGET_BY_PACK = {
     (target.pack_platform, target.architecture): target for target in TARGETS
 }
-REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
 
 class AlphaReleaseError(RuntimeError):
@@ -92,7 +91,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--asset-base-url",
         required=True,
-        help="Direct non-redirecting HTTPS root containing release assets",
+        help=(
+            "Direct HTTPS root or canonical immutable GitHub Release root "
+            "containing release assets"
+        ),
     )
     parser.add_argument("--cyxwiz-release", required=True)
     parser.add_argument("--bundle-version", required=True)
@@ -139,7 +141,7 @@ def _validate_release_identity(args: argparse.Namespace) -> None:
         raise AlphaReleaseError("repository must be exact owner/name")
     try:
         args.asset_base_url = versioned_asset_base_url(
-            args.asset_base_url, args.release_tag
+            args.asset_base_url, args.release_tag, args.repository
         )
     except ReleaseConfigurationError as error:
         raise AlphaReleaseError(str(error)) from error

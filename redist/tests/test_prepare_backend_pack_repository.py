@@ -368,7 +368,31 @@ class BackendPackRepositoryTests(unittest.TestCase):
         args.base_url = "https://user@example.test/repository?token=secret"
 
         with self.assertRaisesRegex(
-            repository.RepositoryError, "direct HTTPS"
+            repository.RepositoryError, "use HTTPS"
+        ):
+            repository.prepare_repository(args)
+
+    def test_accepts_canonical_github_release_repository_url(self) -> None:
+        base = self._manifest("base-v1", "cpu", None)
+        args = self._args([base])
+        args.base_url = (
+            "https://github.com/CYXWIZ-Lab/CYXWIZ/releases/download/"
+            "v0.2.0-alpha.1"
+        )
+        catalog_url = repository.prepare_repository(args)
+        self.assertEqual(
+            args.base_url + "/catalogs/current.json",
+            catalog_url,
+        )
+
+    def test_rejects_mutable_github_release_repository_url(self) -> None:
+        base = self._manifest("base-v1", "cpu", None)
+        args = self._args([base])
+        args.base_url = (
+            "https://github.com/CYXWIZ-Lab/CYXWIZ/releases/download/latest"
+        )
+        with self.assertRaisesRegex(
+            repository.RepositoryError, "canonical immutable"
         ):
             repository.prepare_repository(args)
 

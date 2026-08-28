@@ -57,6 +57,7 @@ class InstallerReleaseConfigurationTests(unittest.TestCase):
                 "--asset-base-url",
                 "https://packages.example.test/cyxwiz/v0.2.0-alpha.1",
                 "--release-tag", "v0.2.0-alpha.1",
+                "--repository", "CYXWIZ-Lab/CYXWIZ",
                 "--cyxwiz-release", "0.2.0",
                 "--bundle-version", "1.0.0",
                 "--platform", "macos",
@@ -115,7 +116,7 @@ class InstallerReleaseConfigurationTests(unittest.TestCase):
         arguments.asset_base_url = "https://user@example.test/assets?token=secret"
         with self.assertRaisesRegex(
             release_configuration.ReleaseConfigurationError,
-            "direct HTTPS",
+            "use HTTPS",
         ):
             release_configuration.prepare(arguments)
 
@@ -126,6 +127,47 @@ class InstallerReleaseConfigurationTests(unittest.TestCase):
         with self.assertRaisesRegex(
             release_configuration.ReleaseConfigurationError,
             "exact immutable release tag",
+        ):
+            release_configuration.prepare(arguments)
+
+    def test_accepts_canonical_github_release_asset_base(self) -> None:
+        self.write_trust(trust_document("installer"))
+        arguments = self.args()
+        arguments.asset_base_url = (
+            "https://github.com/CYXWIZ-Lab/CYXWIZ/releases/download/"
+            "v0.2.0-alpha.1"
+        )
+        result = release_configuration.prepare(arguments)
+        self.assertEqual(
+            "https://github.com/CYXWIZ-Lab/CYXWIZ/releases/download/"
+            "v0.2.0-alpha.1/"
+            "cyxwiz-installer-0.2.0-1.0.0-macos-x86_64.descriptor.json",
+            result["descriptor_url"],
+        )
+
+    def test_rejects_noncanonical_github_release_asset_base(self) -> None:
+        self.write_trust(trust_document("installer"))
+        arguments = self.args()
+        arguments.asset_base_url = (
+            "https://github.com/CYXWIZ-Lab/CYXWIZ/releases/latest/"
+            "v0.2.0-alpha.1"
+        )
+        with self.assertRaisesRegex(
+            release_configuration.ReleaseConfigurationError,
+            "canonical immutable release path",
+        ):
+            release_configuration.prepare(arguments)
+
+    def test_rejects_github_repository_identity_mismatch(self) -> None:
+        self.write_trust(trust_document("installer"))
+        arguments = self.args()
+        arguments.asset_base_url = (
+            "https://github.com/another/repository/releases/download/"
+            "v0.2.0-alpha.1"
+        )
+        with self.assertRaisesRegex(
+            release_configuration.ReleaseConfigurationError,
+            "does not match",
         ):
             release_configuration.prepare(arguments)
 

@@ -1,4 +1,5 @@
 #include "backend_pack_acquisition.h"
+#include "github_release_redirect_policy.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -90,6 +91,122 @@ std::string WinHttpError(const char* action) {
            std::to_string(::GetLastError());
 }
 
+std::string NarrowUtf16(const std::wstring& value) {
+    if (value.empty()) return {};
+    const int size = ::WideCharToMultiByte(
+        CP_UTF8, WC_ERR_INVALID_CHARS, value.data(),
+        static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+    if (size <= 0) return {};
+    std::string output(static_cast<std::size_t>(size), '\0');
+    if (::WideCharToMultiByte(
+            CP_UTF8, WC_ERR_INVALID_CHARS, value.data(),
+            static_cast<int>(value.size()), output.data(), size, nullptr,
+            nullptr) != size) {
+        return {};
+    }
+    return output;
+}
+
+bool OpenWinHttpGet(
+    HINTERNET session,
+    const std::string& url_text,
+    std::uint64_t offset,
+    const BackendPackArtifactCancelCheck& cancelled,
+    InternetHandle& connection,
+    InternetHandle& request,
+    DWORD& status,
+    std::string& error) {
+    const auto url = WidenUtf8(url_text);
+    if (url.empty()) {
+        error = "HTTPS artifact URL is not valid UTF-8";
+        return false;
+    }
+    URL_COMPONENTS components{};
+    components.dwStructSize = sizeof(components);
+    components.dwSchemeLength = static_cast<DWORD>(-1);
+    components.dwHostNameLength = static_cast<DWORD>(-1);
+    components.dwUrlPathLength = static_cast<DWORD>(-1);
+    components.dwExtraInfoLength = static_cast<DWORD>(-1);
+    components.dwUserNameLength = static_cast<DWORD>(-1);
+    components.dwPasswordLength = static_cast<DWORD>(-1);
+    if (!::WinHttpCrackUrl(
+            url.data(), static_cast<DWORD>(url.size()), 0, &components) ||
+        components.nScheme != INTERNET_SCHEME_HTTPS ||
+        components.dwHostNameLength == 0 || components.dwUserNameLength != 0 ||
+        components.dwPasswordLength != 0) {
+        error = "HTTPS artifact URL cannot be parsed safely";
+        return false;
+    }
+    const std::wstring host(
+        components.lpszHostName, components.dwHostNameLength);
+    std::wstring request_path = components.dwUrlPathLength == 0
+        ? L"/"
+        : std::wstring(components.lpszUrlPath, components.dwUrlPathLength);
+    if (components.dwExtraInfoLength > 0) {
+        request_path.append(
+            components.lpszExtraInfo, components.dwExtraInfoLength);
+    }
+
+    connection.reset(::WinHttpConnect(
+        session, host.c_str(), components.nPort, 0));
+    if (!connection) {
+        error = WinHttpError("Cannot connect to artifact host");
+        return false;
+    }
+    request.reset(::WinHttpOpenRequest(
+        connection.get(), L"GET", request_path.c_str(), nullptr,
+        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
+    if (!request) {
+        error = WinHttpError("Cannot create HTTPS artifact request");
+        return false;
+    }
+    DWORD redirect_policy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+    if (!::WinHttpSetOption(
+            request.get(), WINHTTP_OPTION_REDIRECT_POLICY,
+            &redirect_policy, sizeof(redirect_policy))) {
+        error = WinHttpError("Cannot disable automatic HTTPS redirects");
+        return false;
+    }
+    DWORD disabled_features = WINHTTP_DISABLE_COOKIES;
+    if (!::WinHttpSetOption(
+            request.get(), WINHTTP_OPTION_DISABLE_FEATURE,
+            &disabled_features, sizeof(disabled_features))) {
+        error = WinHttpError("Cannot disable HTTPS request cookies");
+        return false;
+    }
+    if (offset > 0) {
+        const std::wstring range =
+            L"Range: bytes=" + std::to_wstring(offset) + L"-\r\n";
+        if (!::WinHttpAddRequestHeaders(
+                request.get(), range.c_str(), static_cast<DWORD>(-1),
+                WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE)) {
+            error = WinHttpError("Cannot add HTTPS resume range");
+            return false;
+        }
+    }
+    if (cancelled()) {
+        error = "Artifact acquisition cancelled";
+        return false;
+    }
+    if (!::WinHttpSendRequest(
+            request.get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+            WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+        !::WinHttpReceiveResponse(request.get(), nullptr)) {
+        error = WinHttpError("HTTPS artifact request failed");
+        return false;
+    }
+    DWORD status_bytes = sizeof(status);
+    if (!::WinHttpQueryHeaders(
+            request.get(),
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_bytes,
+            WINHTTP_NO_HEADER_INDEX)) {
+        error = WinHttpError("Cannot read HTTPS response status");
+        return false;
+    }
+    return true;
+}
+
 #endif
 
 #ifndef _WIN32
@@ -114,11 +231,13 @@ bool ParseUnsigned(
 
 bool SplitHttpsUrl(
     const std::string& url,
+    bool allow_query,
     std::string& origin,
     std::string& path) {
     constexpr std::string_view scheme = "https://";
     if (!url.starts_with(scheme) || url.size() > 4096 ||
-        url.find_first_of("?#\\\r\n") != std::string::npos) {
+        url.find_first_of("#\\\r\n") != std::string::npos ||
+        (!allow_query && url.find('?') != std::string::npos)) {
         return false;
     }
     const auto path_start = url.find('/', scheme.size());
@@ -183,37 +302,6 @@ bool HttpsBackendPackArtifactSource::Transfer(
         error = "HTTPS artifact source request is invalid";
         return false;
     }
-    const auto url = WidenUtf8(url_);
-    if (url.empty()) {
-        error = "HTTPS artifact URL is not valid UTF-8";
-        return false;
-    }
-    URL_COMPONENTS components{};
-    components.dwStructSize = sizeof(components);
-    components.dwSchemeLength = static_cast<DWORD>(-1);
-    components.dwHostNameLength = static_cast<DWORD>(-1);
-    components.dwUrlPathLength = static_cast<DWORD>(-1);
-    components.dwExtraInfoLength = static_cast<DWORD>(-1);
-    components.dwUserNameLength = static_cast<DWORD>(-1);
-    components.dwPasswordLength = static_cast<DWORD>(-1);
-    if (!::WinHttpCrackUrl(
-            url.data(), static_cast<DWORD>(url.size()), 0, &components) ||
-        components.nScheme != INTERNET_SCHEME_HTTPS ||
-        components.dwHostNameLength == 0 || components.dwUserNameLength != 0 ||
-        components.dwPasswordLength != 0) {
-        error = "HTTPS artifact URL cannot be parsed safely";
-        return false;
-    }
-    const std::wstring host(
-        components.lpszHostName, components.dwHostNameLength);
-    std::wstring request_path = components.dwUrlPathLength == 0
-        ? L"/"
-        : std::wstring(components.lpszUrlPath, components.dwUrlPathLength);
-    if (components.dwExtraInfoLength > 0) {
-        request_path.append(
-            components.lpszExtraInfo, components.dwExtraInfoLength);
-    }
-
     InternetHandle session(::WinHttpOpen(
         L"CyxWiz Backend Pack Service/1.0",
         WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
@@ -228,55 +316,37 @@ bool HttpsBackendPackArtifactSource::Transfer(
         error = WinHttpError("Cannot configure HTTPS acquisition timeout");
         return false;
     }
-    InternetHandle connection(::WinHttpConnect(
-        session.get(), host.c_str(), components.nPort, 0));
-    if (!connection) {
-        error = WinHttpError("Cannot connect to artifact host");
-        return false;
-    }
-    InternetHandle request(::WinHttpOpenRequest(
-        connection.get(), L"GET", request_path.c_str(), nullptr,
-        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
-    if (!request) {
-        error = WinHttpError("Cannot create HTTPS artifact request");
-        return false;
-    }
-    DWORD redirect_policy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
-    if (!::WinHttpSetOption(
-            request.get(), WINHTTP_OPTION_REDIRECT_POLICY,
-            &redirect_policy, sizeof(redirect_policy))) {
-        error = WinHttpError("Cannot disable HTTPS redirects");
-        return false;
-    }
-    if (offset > 0) {
-        const std::wstring range =
-            L"Range: bytes=" + std::to_wstring(offset) + L"-\r\n";
-        if (!::WinHttpAddRequestHeaders(
-                request.get(), range.c_str(), static_cast<DWORD>(-1),
-                WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE)) {
-            error = WinHttpError("Cannot add HTTPS resume range");
+    InternetHandle connection;
+    InternetHandle request;
+    DWORD status = 0;
+    std::string request_url = url_;
+    for (unsigned int attempt = 0; attempt < 2; ++attempt) {
+        if (!OpenWinHttpGet(
+                session.get(), request_url, offset, cancelled, connection,
+                request, status, error)) {
+            return false;
+        }
+        if (status != 302U) break;
+        if (attempt != 0) {
+            error = "HTTPS artifact redirect exceeded the one-hop limit";
+            return false;
+        }
+        std::wstring location_text;
+        if (!QueryHeader(
+                request.get(), WINHTTP_QUERY_LOCATION, location_text)) {
+            error = "GitHub release redirect is missing its destination";
+            return false;
+        }
+        const auto location = NarrowUtf16(location_text);
+        if (location.empty() || !AuthorizeGithubReleaseAssetRedirect(
+                url_, status, location, request_url, error)) {
+            if (error.empty()) {
+                error = "GitHub release redirect destination is invalid";
+            }
             return false;
         }
     }
-    if (cancelled()) {
-        error = "Artifact acquisition cancelled";
-        return false;
-    }
-    if (!::WinHttpSendRequest(
-            request.get(), WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-            WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
-        !::WinHttpReceiveResponse(request.get(), nullptr)) {
-        error = WinHttpError("HTTPS artifact request failed");
-        return false;
-    }
-    DWORD status = 0;
-    DWORD status_bytes = sizeof(status);
-    if (!::WinHttpQueryHeaders(
-            request.get(),
-            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-            WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_bytes,
-            WINHTTP_NO_HEADER_INDEX) ||
-        status != (offset == 0 ? 200U : 206U)) {
+    if (status != (offset == 0 ? 200U : 206U)) {
         error = "HTTPS artifact server did not honor the exact transfer request";
         return false;
     }
@@ -344,112 +414,141 @@ bool HttpsBackendPackArtifactSource::Transfer(
         error = "HTTPS artifact source request is invalid";
         return false;
     }
-    std::string origin;
-    std::string path;
-    if (!SplitHttpsUrl(url_, origin, path)) {
-        error = "HTTPS artifact URL cannot be parsed safely";
-        return false;
-    }
-
-    httplib::Client client(origin);
-    if (!client.is_valid()) {
-        error = "Cannot initialize the HTTPS artifact client";
-        return false;
-    }
-    client.enable_server_certificate_verification(true);
-    client.set_follow_location(false);
-    client.set_decompress(false);
-    client.set_connection_timeout(timeout_);
-    client.set_read_timeout(timeout_);
-    client.set_write_timeout(timeout_);
-
-    httplib::Headers headers;
-    headers.emplace("Accept-Encoding", "identity");
-    if (offset > 0) {
-        headers.emplace(
-            "Range", "bytes=" + std::to_string(offset) + "-");
-    }
     std::uint64_t transferred = offset;
-    std::uint64_t response_content_length = 0;
-    bool headers_accepted = false;
-    std::string response_error;
-    if (cancelled()) {
-        error = "Artifact acquisition cancelled";
-        return false;
-    }
-    const auto result = client.Get(
-        path, headers,
-        [&](const httplib::Response& response) {
-            if (response.status != (offset == 0 ? 200 : 206)) {
-                response_error =
-                    "HTTPS artifact server did not honor the exact transfer request";
-                return false;
-            }
-            if (!response.has_header("Content-Length") ||
-                !ParseUnsigned(
-                    response.get_header_value("Content-Length"),
-                    response_content_length) ||
-                response_content_length == 0 ||
-                (exact_size &&
-                 response_content_length != expected_size - offset) ||
-                (!exact_size && response_content_length > expected_size)) {
-                response_error = exact_size
-                    ? "HTTPS Content-Length differs from signed artifact metadata"
-                    : "HTTPS document exceeds its byte bound";
-                return false;
-            }
-            if (offset > 0) {
-                const std::string expected_range =
-                    "bytes " + std::to_string(offset) + "-" +
-                    std::to_string(expected_size - 1) + "/" +
-                    std::to_string(expected_size);
-                if (!response.has_header("Content-Range") ||
-                    response.get_header_value("Content-Range") !=
-                        expected_range) {
-                    response_error =
-                        "HTTPS Content-Range does not match the resume request";
+    std::string request_url = url_;
+    for (unsigned int attempt = 0; attempt < 2; ++attempt) {
+        std::string origin;
+        std::string path;
+        if (!SplitHttpsUrl(request_url, attempt != 0, origin, path)) {
+            error = "HTTPS artifact URL cannot be parsed safely";
+            return false;
+        }
+
+        httplib::Client client(origin);
+        if (!client.is_valid()) {
+            error = "Cannot initialize the HTTPS artifact client";
+            return false;
+        }
+        client.enable_server_certificate_verification(true);
+        client.set_follow_location(false);
+        client.set_decompress(false);
+        client.set_connection_timeout(timeout_);
+        client.set_read_timeout(timeout_);
+        client.set_write_timeout(timeout_);
+
+        httplib::Headers headers;
+        headers.emplace("Accept-Encoding", "identity");
+        if (offset > 0) {
+            headers.emplace(
+                "Range", "bytes=" + std::to_string(offset) + "-");
+        }
+        std::uint64_t response_content_length = 0;
+        bool headers_accepted = false;
+        std::string redirect_location;
+        std::string response_error;
+        if (cancelled()) {
+            error = "Artifact acquisition cancelled";
+            return false;
+        }
+        const auto result = client.Get(
+            path, headers,
+            [&](const httplib::Response& response) {
+                if (response.status == 302) {
+                    if (!response.has_header("Location") ||
+                        response.get_header_value("Location").empty()) {
+                        response_error =
+                            "GitHub release redirect is missing its destination";
+                    } else {
+                        redirect_location =
+                            response.get_header_value("Location");
+                    }
                     return false;
                 }
-            }
-            headers_accepted = true;
-            if (cancelled()) {
-                response_error = "Artifact acquisition cancelled";
-                return false;
-            }
-            return true;
-        },
-        [&](const char* data, std::size_t size) {
-            if (cancelled()) {
-                response_error = "Artifact acquisition cancelled";
-                return false;
-            }
-            if (size > expected_size - transferred ||
-                !consume(data, size, response_error)) {
-                if (response_error.empty()) {
-                    response_error = "HTTPS artifact exceeded signed size";
+                if (response.status != (offset == 0 ? 200 : 206)) {
+                    response_error =
+                        "HTTPS artifact server did not honor the exact "
+                        "transfer request";
+                    return false;
                 }
+                if (!response.has_header("Content-Length") ||
+                    !ParseUnsigned(
+                        response.get_header_value("Content-Length"),
+                        response_content_length) ||
+                    response_content_length == 0 ||
+                    (exact_size && response_content_length !=
+                        expected_size - offset) ||
+                    (!exact_size && response_content_length > expected_size)) {
+                    response_error = exact_size
+                        ? "HTTPS Content-Length differs from signed artifact metadata"
+                        : "HTTPS document exceeds its byte bound";
+                    return false;
+                }
+                if (offset > 0) {
+                    const std::string expected_range =
+                        "bytes " + std::to_string(offset) + "-" +
+                        std::to_string(expected_size - 1) + "/" +
+                        std::to_string(expected_size);
+                    if (!response.has_header("Content-Range") ||
+                        response.get_header_value("Content-Range") !=
+                            expected_range) {
+                        response_error =
+                            "HTTPS Content-Range does not match the resume request";
+                        return false;
+                    }
+                }
+                headers_accepted = true;
+                if (cancelled()) {
+                    response_error = "Artifact acquisition cancelled";
+                    return false;
+                }
+                return true;
+            },
+            [&](const char* data, std::size_t size) {
+                if (cancelled()) {
+                    response_error = "Artifact acquisition cancelled";
+                    return false;
+                }
+                if (size > expected_size - transferred ||
+                    !consume(data, size, response_error)) {
+                    if (response_error.empty()) {
+                        response_error = "HTTPS artifact exceeded signed size";
+                    }
+                    return false;
+                }
+                transferred += size;
+                return true;
+            });
+        if (!redirect_location.empty()) {
+            if (attempt != 0) {
+                error = "HTTPS artifact redirect exceeded the one-hop limit";
                 return false;
             }
-            transferred += size;
-            return true;
-        });
-    if (!result || !headers_accepted) {
-        error = response_error.empty()
-            ? "HTTPS artifact request failed: " +
-                  httplib::to_string(result.error())
-            : std::move(response_error);
-        return false;
+            if (!AuthorizeGithubReleaseAssetRedirect(
+                    url_, 302U, redirect_location, request_url, error)) {
+                return false;
+            }
+            continue;
+        }
+        if (!result || !headers_accepted) {
+            error = response_error.empty()
+                ? "HTTPS artifact request failed: " +
+                      httplib::to_string(result.error())
+                : std::move(response_error);
+            return false;
+        }
+        if ((exact_size && transferred != expected_size) ||
+            (!exact_size &&
+             transferred - offset != response_content_length)) {
+            error = exact_size
+                ? "HTTPS artifact response ended before its signed size"
+                : "HTTPS document response length is inconsistent";
+            return false;
+        }
+        if (received_size) *received_size = transferred - offset;
+        return true;
     }
-    if ((exact_size && transferred != expected_size) ||
-        (!exact_size &&
-         transferred - offset != response_content_length)) {
-        error = exact_size
-            ? "HTTPS artifact response ended before its signed size"
-            : "HTTPS document response length is inconsistent";
-        return false;
-    }
-    if (received_size) *received_size = transferred - offset;
-    return true;
+    error = "HTTPS artifact redirect did not reach a final response";
+    return false;
 #endif
 }
 

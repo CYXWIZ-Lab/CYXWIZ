@@ -14,7 +14,7 @@ on:
         default: ""
         type: string
       asset_base_url:
-        description: Direct non-redirecting HTTPS root used by setup URLs
+        description: Direct HTTPS or canonical GitHub Release root for setup URLs
         required: false
         default: ""
         type: string
@@ -159,6 +159,7 @@ jobs:
           RELEASE_TRUST_B64: ${{ secrets.CYXWIZ_INSTALLER_TRUST_STORE_B64 }}
           RELEASE_ASSET_BASE_URL: ${{ inputs.asset_base_url }}
           RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
           RELEASE_CYXWIZ_VERSION: ${{ inputs.cyxwiz_release }}
           RELEASE_BUNDLE_VERSION: ${{ inputs.bundle_version }}
         run: |
@@ -178,6 +179,7 @@ jobs:
             --trust-store $inputTrust `
             --asset-base-url $env:RELEASE_ASSET_BASE_URL `
             --release-tag $env:RELEASE_TAG `
+            --repository $env:RELEASE_REPOSITORY `
             --cyxwiz-release $env:RELEASE_CYXWIZ_VERSION `
             --bundle-version $env:RELEASE_BUNDLE_VERSION `
             --platform '${{ matrix.platform }}' `

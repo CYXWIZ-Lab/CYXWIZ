@@ -21,11 +21,12 @@ if str(SCRIPT_DIR) not in sys.path:
 from backend_pack_contract import validate_trust_root  # noqa: E402
 from prepare_backend_pack_repository import (  # noqa: E402
     RepositoryError,
-    direct_https_base_url,
+    validated_https_base_url,
 )
 
 
 MAX_TRUST_BYTES = 4 * 1024 * 1024
+REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 RELEASE_TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?")
 TARGETS = {
@@ -46,9 +47,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--asset-base-url",
         required=True,
-        help="Direct non-redirecting HTTPS root containing release assets",
+        help=(
+            "Direct HTTPS root or canonical immutable GitHub Release root "
+            "containing release assets"
+        ),
     )
     parser.add_argument("--release-tag", required=True)
+    parser.add_argument("--repository", required=True)
     parser.add_argument("--cyxwiz-release", required=True)
     parser.add_argument("--bundle-version", required=True)
     parser.add_argument("--platform", required=True)
@@ -84,23 +89,37 @@ def _read_trust(path: Path) -> tuple[bytes, dict[str, Any]]:
     return content, document
 
 
-def versioned_asset_base_url(value: str, release_tag: str) -> str:
+def versioned_asset_base_url(
+    value: str,
+    release_tag: str,
+    repository: str,
+) -> str:
+    if REPOSITORY.fullmatch(repository) is None:
+        raise ReleaseConfigurationError("repository must be exact owner/name")
     if RELEASE_TAG.fullmatch(release_tag) is None:
         raise ReleaseConfigurationError("release tag is not a safe asset tag")
     try:
-        base_url = direct_https_base_url(value)
+        base_url = validated_https_base_url(value)
     except RepositoryError as error:
         raise ReleaseConfigurationError(str(error)) from error
-    if urlsplit(base_url).path.rsplit("/", 1)[-1] != release_tag:
+    parsed = urlsplit(base_url)
+    if parsed.path.rsplit("/", 1)[-1] != release_tag:
         raise ReleaseConfigurationError(
             "asset base URL must end with the exact immutable release tag"
         )
+    if parsed.hostname == "github.com":
+        segments = parsed.path.removeprefix("/").split("/")
+        url_repository = "/".join(segments[:2])
+        if url_repository.casefold() != repository.casefold():
+            raise ReleaseConfigurationError(
+                "GitHub asset base repository does not match the release repository"
+            )
     return base_url
 
 
 def _validate_identity(args: argparse.Namespace) -> None:
     args.asset_base_url = versioned_asset_base_url(
-        args.asset_base_url, args.release_tag
+        args.asset_base_url, args.release_tag, args.repository
     )
     for label, value in (
         ("CyxWiz release", args.cyxwiz_release),

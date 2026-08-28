@@ -102,8 +102,9 @@ the repository variable `CYXWIZ_ALPHA_CANDIDATE_ENABLED=true`, and the
 repository secret `CYXWIZ_INSTALLER_TRUST_STORE_B64`. That secret contains
 only the base64-encoded public `trusted-keys.json`; private signing keys are
 not inputs to this workflow. The dispatch also requires an immutable release
-tag and the exact non-redirecting HTTPS asset base whose final path segment
-matches that tag. It builds Windows
+tag and an exact HTTPS asset base whose final path segment matches that tag.
+The base may be a direct host or the canonical GitHub Release path
+`https://github.com/OWNER/REPOSITORY/releases/download/TAG`. It builds Windows
 x64, Linux x64, macOS Intel, and macOS Apple Silicon setup packages with the
 public trust root embedded and derives each descriptor URL from that base.
 Release-configured setup and clean installer-stage artifacts use the
@@ -147,12 +148,14 @@ stages.
 
 The `--asset-base-url` argument is part of the signed release identity. It must
 be the exact versioned HTTPS directory where every file from `assets/` will be
-served without a redirect, credentials, query, or fragment. Standard GitHub
-Release download endpoints redirect to a separate asset service, while the
-current runtime deliberately disables redirects. They are therefore not a
-compatible production asset base yet. Supporting them requires a separate,
-bounded redirect-authority policy in both native HTTPS adapters; do not work
-around this by weakening verification or signing the redirect destination.
+served, without credentials, query, or fragment. Automatic redirects remain
+disabled. A canonical immutable GitHub Release asset may manually follow one
+`302` to exactly `release-assets.githubusercontent.com` under GitHub's release
+asset namespace. All other sources remain non-redirecting, and a second hop,
+mutable `latest` URL, unexpected authority, downgrade, or malformed Location
+fails before body consumption. The short-lived destination query is never
+persisted or logged; signed size, hash, range, timeout, and cancellation checks
+remain authoritative.
 
 ### Native runtime bootstrapper
 
@@ -313,9 +316,10 @@ accelerator. Release publication still requires the clean-machine matrix for
 each shipped OS.
 
 Configure `CYXWIZ_INSTALLER_CATALOG_URL` at CMake configure time with the
-direct HTTPS URL of the production signed catalog. Leaving it empty keeps the
-packaged verified catalog available and makes online Refresh report that no
-source is configured. Local integration runs can supply
+direct HTTPS URL or canonical immutable GitHub Release URL of the production
+signed catalog. Leaving it empty keeps the packaged verified catalog available
+and makes online Refresh report that no source is configured. Local integration
+runs can supply
 `--catalog-url <https-url>` without changing the package. Refresh downloads
 bounded catalog and manifest documents off the render thread, verifies the
 complete snapshot with the packaged trust store, and publishes the catalog
@@ -435,8 +439,8 @@ app-bundled public trust root. Inputs with multiple valid pack signatures
 require an explicit `--pack-key-id` so key rotation cannot change catalog
 authority implicitly.
 
-Publish only `alpha-repository/hosted/` at the exact non-redirecting HTTPS base
-URL. Configure the installer with
+Publish only `alpha-repository/hosted/` at the configured direct HTTPS or
+canonical immutable GitHub Release base URL. Configure the installer with
 `CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR=.../alpha-repository/bootstrap` and
 `CYXWIZ_INSTALLER_CATALOG_URL=https://packages.example.com/cyxwiz/alpha/catalogs/current.json`.
 The bootstrap tree intentionally excludes the large pack archives. The

@@ -61,6 +61,7 @@ add_library(cyxwiz-backend-pack-service STATIC
     base_stable_tool_publisher.cpp
     backend_pack_hash.cpp
     backend_pack_https_source.cpp
+    github_release_redirect_policy.cpp
     backend_pack_installer.cpp
     backend_pack_lifecycle_service.cpp
     backend_pack_metadata_cache.cpp
@@ -352,6 +353,22 @@ if(CYXWIZ_BUILD_TESTS)
     add_test(
         NAME backend_pack_delivery_contract
         COMMAND test_backend_pack_delivery
+    )
+
+    add_executable(test_github_release_redirect_policy
+        test_github_release_redirect_policy.cpp
+        github_release_redirect_policy.cpp
+    )
+    target_include_directories(test_github_release_redirect_policy PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    set_target_properties(test_github_release_redirect_policy PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME github_release_redirect_policy_contract
+        COMMAND test_github_release_redirect_policy
     )
 
     add_executable(test_backend_pack_maintenance
