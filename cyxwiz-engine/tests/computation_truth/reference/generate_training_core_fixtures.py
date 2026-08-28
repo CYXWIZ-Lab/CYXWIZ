@@ -1655,47 +1655,153 @@ def cross_entropy_matrix() -> list[dict[str, Any]]:
     return cases
 
 
-def adamw_case() -> dict[str, Any]:
-    hyperparameters = {
-        "learning_rate": 0.01,
-        "beta1": 0.9,
-        "beta2": 0.999,
-        "epsilon": 1.0e-8,
-        "weight_decay": 0.1,
-    }
-    parameter = torch.nn.Parameter(
-        torch.tensor([1.0, -2.0, 0.5], dtype=torch.float32)
-    )
-    gradient = torch.tensor([0.25, -0.5, 0.125], dtype=torch.float32)
-    initial_parameter = parameter.detach().clone()
-    optimizer = torch.optim.AdamW(
-        [parameter],
-        lr=hyperparameters["learning_rate"],
-        betas=(hyperparameters["beta1"], hyperparameters["beta2"]),
-        eps=hyperparameters["epsilon"],
-        weight_decay=hyperparameters["weight_decay"],
-        foreach=False,
-        fused=False,
-    )
-    parameter.grad = gradient.clone()
-    optimizer.step()
-    state = optimizer.state[parameter]
+def adam_family_multistep_cases() -> dict[str, Any]:
+    gradients = [
+        torch.tensor([0.25, -0.5, 0.125], dtype=torch.float32),
+        torch.tensor([-0.125, 0.25, 0.5], dtype=torch.float32),
+        torch.tensor([0.75, -0.25, -0.375], dtype=torch.float32),
+    ]
 
-    return {
-        "operation": "torch.optim.AdamW",
-        "dtype": "float32",
-        "step_count": 1,
-        "hyperparameters": hyperparameters,
-        "tolerance": {"atol": 1.0e-5, "rtol": 1.0e-5},
-        "initial_parameter": tensor_fixture(initial_parameter),
-        "gradient": tensor_fixture(gradient),
-        "expected": {
-            "parameter": tensor_fixture(parameter),
+    def make_optimizer(
+        optimizer_name: str,
+        parameters: list[torch.nn.Parameter],
+        hyperparameters: dict[str, float],
+    ) -> torch.optim.Optimizer:
+        common = {
+            "lr": hyperparameters["learning_rate"],
+            "betas": (hyperparameters["beta1"], hyperparameters["beta2"]),
+            "eps": hyperparameters["epsilon"],
+            "foreach": False,
+        }
+        if optimizer_name == "adam":
+            return torch.optim.Adam(
+                parameters, weight_decay=0.0, fused=False, **common
+            )
+        if optimizer_name == "adamw":
+            return torch.optim.AdamW(
+                parameters,
+                weight_decay=hyperparameters["weight_decay"],
+                fused=False,
+                **common,
+            )
+        if optimizer_name == "nadam":
+            return torch.optim.NAdam(
+                parameters,
+                weight_decay=0.0,
+                momentum_decay=hyperparameters["momentum_decay"],
+                decoupled_weight_decay=False,
+                capturable=False,
+                differentiable=False,
+                **common,
+            )
+        raise ValueError(f"unsupported Adam-family optimizer: {optimizer_name}")
+
+    def state_fixture(
+        optimizer: torch.optim.Optimizer,
+        parameter: torch.nn.Parameter,
+        include_mu_product: bool,
+    ) -> dict[str, Any]:
+        state = optimizer.state[parameter]
+        result = {
             "exp_avg": tensor_fixture(state["exp_avg"]),
             "exp_avg_sq": tensor_fixture(state["exp_avg_sq"]),
             "step": int(state["step"].item()),
+        }
+        if include_mu_product:
+            result["mu_product"] = float(state["mu_product"].item())
+        return result
+
+    configurations = {
+        "adam": {
+            "learning_rate": 0.01,
+            "beta1": 0.9,
+            "beta2": 0.999,
+            "epsilon": 1.0e-8,
+        },
+        "adamw": {
+            "learning_rate": 0.01,
+            "beta1": 0.9,
+            "beta2": 0.999,
+            "epsilon": 1.0e-8,
+            "weight_decay": 0.1,
+        },
+        "nadam": {
+            "learning_rate": 0.01,
+            "beta1": 0.9,
+            "beta2": 0.999,
+            "epsilon": 1.0e-8,
+            "momentum_decay": 0.004,
         },
     }
+    cases = {}
+    for optimizer_name, hyperparameters in configurations.items():
+        parameter = torch.nn.Parameter(
+            torch.tensor([1.0, -2.0, 0.5], dtype=torch.float32)
+        )
+        initial_parameter = parameter.detach().clone()
+        optimizer = make_optimizer(
+            optimizer_name, [parameter], hyperparameters
+        )
+        expected_steps = []
+        for gradient in gradients:
+            optimizer.zero_grad(set_to_none=True)
+            parameter.grad = gradient.clone()
+            optimizer.step()
+            expected_steps.append({
+                "parameter": tensor_fixture(parameter),
+                "state": state_fixture(
+                    optimizer, parameter, optimizer_name == "nadam"
+                ),
+            })
+
+        sparse_a = torch.nn.Parameter(
+            torch.tensor([1.0, -2.0, 0.5], dtype=torch.float32)
+        )
+        sparse_b = torch.nn.Parameter(
+            torch.tensor([-0.75, 0.25, 1.5], dtype=torch.float32)
+        )
+        sparse_initial_b = sparse_b.detach().clone()
+        sparse_optimizer = make_optimizer(
+            optimizer_name, [sparse_a, sparse_b], hyperparameters
+        )
+        sparse_optimizer.zero_grad(set_to_none=True)
+        sparse_a.grad = gradients[0].clone()
+        sparse_optimizer.step()
+        b_after_missing_gradient = sparse_b.detach().clone()
+        sparse_optimizer.zero_grad(set_to_none=True)
+        sparse_a.grad = gradients[1].clone()
+        sparse_b.grad = gradients[2].clone()
+        sparse_optimizer.step()
+
+        cases[optimizer_name] = {
+            "operation": f"torch.optim.{optimizer.__class__.__name__}",
+            "dtype": "float32",
+            "hyperparameters": hyperparameters,
+            "tolerance": {"atol": 2.0e-6, "rtol": 2.0e-6},
+            "initial_parameter": tensor_fixture(initial_parameter),
+            "gradients": [tensor_fixture(gradient) for gradient in gradients],
+            "expected_steps": expected_steps,
+            "zero_grad_contract":
+                "clears gradients without resetting optimizer state",
+            "missing_gradient_case": {
+                "initial_b": tensor_fixture(sparse_initial_b),
+                "b_after_missing_gradient":
+                    tensor_fixture(b_after_missing_gradient),
+                "final_a": tensor_fixture(sparse_a),
+                "final_b": tensor_fixture(sparse_b),
+                "state_a": state_fixture(
+                    sparse_optimizer,
+                    sparse_a,
+                    optimizer_name == "nadam",
+                ),
+                "state_b": state_fixture(
+                    sparse_optimizer,
+                    sparse_b,
+                    optimizer_name == "nadam",
+                ),
+            },
+        }
+    return cases
 
 
 def sgd_momentum_multistep_case() -> dict[str, Any]:
@@ -2282,7 +2388,7 @@ def generate_fixture() -> dict[str, Any]:
             "linear_basic_f32": linear_case(),
             "cross_entropy_index_mean_f32": cross_entropy_case(),
             "cross_entropy_matrix_f32": cross_entropy_matrix(),
-            "adamw_step1_f32": adamw_case(),
+            "adam_family_multistep_f32": adam_family_multistep_cases(),
             "sgd_momentum_multistep_f32": sgd_momentum_multistep_case(),
             "adaptive_optimizer_multistep_f32":
                 adaptive_optimizer_multistep_cases(),

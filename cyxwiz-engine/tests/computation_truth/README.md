@@ -27,7 +27,7 @@ Initial target cases:
 - TF-IDF bounded materialization values and shape.
 - Dense forward parity.
 - CrossEntropy loss parity.
-- One-step Adam/AdamW parity.
+- Multi-step Adam, AdamW, and PyTorch-scheduled NAdam parity.
 - Learning-rate scheduler sequence and boundary parity.
 - Training lifecycle: configured epochs vs completed/stopped/cancelled reason.
 
@@ -54,8 +54,10 @@ The broad tracking ticket is:
   - gradient with respect to input
   - summed weight gradients, matching PyTorch autograd
   - summed bias gradients, matching PyTorch autograd
-- Verifies `AdamWOptimizer` first-step parameter update with decoupled weight
-  decay against a generated PyTorch AdamW fixture.
+- Verifies Adam, AdamW, and NAdam parameters, moments, per-parameter update
+  counts, missing-gradient behavior, `zero_grad` preservation, and exact resume
+  across three steps against generated PyTorch fixtures. AdamW includes
+  decoupled decay; NAdam includes PyTorch's momentum schedule and product state.
 - Verifies `SGDOptimizer` parameter updates and persistent momentum-buffer
   state across three steps against a generated PyTorch SGD fixture.
 - Verifies RMSprop, AdaGrad, and Adadelta parameter and accumulator state across
@@ -71,7 +73,7 @@ The broad tracking ticket is:
 - Proves every supported CrossEntropy rank uses the same strict ArrayFire CPU
   path; rank-3 is reshaped on device and is not a hidden native CPU variant.
 
-The Linear, CrossEntropy, AdamW, SGD, adaptive-optimizer, LAMB, and weighted-sampler expectations come from the checked-in
+The Linear, CrossEntropy, Adam-family, SGD, adaptive-optimizer, LAMB, and weighted-sampler expectations come from the checked-in
 `fixtures/training_core_pytorch.json` fixture. Regenerate it with:
 
 ```powershell

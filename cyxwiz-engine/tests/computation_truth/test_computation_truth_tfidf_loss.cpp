@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -640,42 +641,214 @@ void TestLinearForwardBackwardParity(const json& cases) {
                 "Linear backward grad_bias");
 }
 
-void TestAdamWOneStepParity(const json& cases) {
-    const auto& test_case = cases.at("adamw_step1_f32");
-    Check(test_case.value("operation", "") == "torch.optim.AdamW",
-          "AdamW fixture operation mismatch");
+void CheckAdamFamilyState(
+    const cyxwiz::OptimizerState& state,
+    const std::string& parameter_name,
+    const json& expected,
+    const Tolerance& tolerance,
+    const std::string& label,
+    bool expect_mu_product) {
+    CheckTensor(state.tensors.at("first_moment/" + parameter_name),
+                expected.at("exp_avg"), tolerance,
+                label + " first moment");
+    CheckTensor(state.tensors.at("second_moment/" + parameter_name),
+                expected.at("exp_avg_sq"), tolerance,
+                label + " second moment");
+    const auto& step_tensor =
+        state.tensors.at("parameter_step/" + parameter_name);
+    Check(step_tensor.GetDataType() == cyxwiz::DataType::Int32,
+          label + " parameter-step dtype");
+    Check(step_tensor.NumElements() == 1,
+          label + " parameter-step scalar shape");
+    Check(step_tensor.ReadData<int32_t>()[0] == expected.at("step").get<int>(),
+          label + " per-parameter step parity");
+    if (expect_mu_product) {
+        const auto& mu_tensor =
+            state.tensors.at("mu_product/" + parameter_name);
+        Check(mu_tensor.GetDataType() == cyxwiz::DataType::Float32,
+              label + " mu-product dtype");
+        Check(std::abs(mu_tensor.ReadData<float>()[0] -
+                       expected.at("mu_product").get<float>()) <= 2.0e-6f,
+              label + " mu-product parity");
+    }
+}
+
+template <typename OptimizerFactory>
+void TestAdamFamilyCase(
+    const json& test_case,
+    const std::string& label,
+    bool expect_mu_product,
+    OptimizerFactory&& factory) {
     Check(test_case.value("dtype", "") == "float32",
-          "AdamW fixture dtype mismatch");
-    const auto& hyperparameters = test_case.at("hyperparameters");
-    const double lr = hyperparameters.at("learning_rate").get<double>();
-    const double beta1 = hyperparameters.at("beta1").get<double>();
-    const double beta2 = hyperparameters.at("beta2").get<double>();
-    const double eps = hyperparameters.at("epsilon").get<double>();
-    const double weight_decay = hyperparameters.at("weight_decay").get<double>();
+          label + " fixture dtype mismatch");
+    Check(test_case.value("zero_grad_contract", "") ==
+              "clears gradients without resetting optimizer state",
+          label + " zero_grad fixture contract mismatch");
     const auto initial = ReadFloatValues(
-        test_case.at("initial_parameter"), "AdamW initial parameter");
-    const auto grad_values =
-        ReadFloatValues(test_case.at("gradient"), "AdamW gradient");
-    const auto parameter_shape = ReadShape(
-        test_case.at("initial_parameter"), "AdamW initial parameter");
-
+        test_case.at("initial_parameter"), label + " initial parameter");
+    const auto shape = ReadShape(
+        test_case.at("initial_parameter"), label + " initial parameter");
+    const auto tolerance = ReadTolerance(test_case);
     std::map<std::string, cyxwiz::Tensor> parameters = {
-        {"weight", cyxwiz::Tensor(parameter_shape, initial.data(),
-                                  cyxwiz::DataType::Float32)},
-    };
-    std::map<std::string, cyxwiz::Tensor> gradients = {
         {"weight", cyxwiz::Tensor(
-             ReadShape(test_case.at("gradient"), "AdamW gradient"),
-             grad_values.data(), cyxwiz::DataType::Float32)},
+                       shape, initial.data(), cyxwiz::DataType::Float32)},
     };
+    auto optimizer = factory();
+    const auto& gradients = test_case.at("gradients");
+    const auto& expected_steps = test_case.at("expected_steps");
+    Check(gradients.size() == expected_steps.size(),
+          label + " fixture gradient/step count mismatch");
+    cyxwiz::OptimizerState checkpoint;
+    std::map<std::string, cyxwiz::Tensor> checkpoint_parameters;
 
-    cyxwiz::AdamWOptimizer optimizer(lr, beta1, beta2, eps, weight_decay);
-    optimizer.Step(parameters, gradients);
-    Check(optimizer.GetStepCount() == test_case.at("step_count").get<int>(),
-          "AdamW PyTorch step-count parity");
-    CheckTensor(parameters.at("weight"),
-                test_case.at("expected").at("parameter"),
-                ReadTolerance(test_case), "AdamW first-step parameter");
+    for (size_t index = 0; index < gradients.size(); ++index) {
+        const auto values = ReadFloatValues(
+            gradients.at(index), label + " gradient");
+        const std::map<std::string, cyxwiz::Tensor> step_gradients = {
+            {"weight", cyxwiz::Tensor(
+                           ReadShape(gradients.at(index), label + " gradient"),
+                           values.data(), cyxwiz::DataType::Float32)},
+        };
+        optimizer->ZeroGrad();
+        optimizer->Step(parameters, step_gradients);
+        const auto& expected = expected_steps.at(index);
+        CheckTensor(parameters.at("weight"), expected.at("parameter"),
+                    tolerance, label + " multi-step parameter");
+        cyxwiz::OptimizerState state;
+        std::string error;
+        Check(optimizer->ExportState(state, error),
+              label + " state export failed: " + error);
+        Check(state.step_count == static_cast<int>(index + 1),
+              label + " global update-count parity");
+        CheckAdamFamilyState(state, "weight", expected.at("state"),
+                             tolerance, label, expect_mu_product);
+        if (index + 2 == gradients.size()) {
+            checkpoint = state;
+            checkpoint_parameters = parameters;
+        }
+    }
+
+    auto resumed = factory();
+    resumed->SetLearningRate(0.123);
+    std::string error;
+    Check(resumed->ImportState(checkpoint, error),
+          label + " state import failed: " + error);
+    Check(resumed->GetLearningRate() == checkpoint.learning_rate,
+          label + " state import did not restore learning rate");
+    const size_t final_index = gradients.size() - 1;
+    const auto final_values = ReadFloatValues(
+        gradients.at(final_index), label + " resumed gradient");
+    const std::map<std::string, cyxwiz::Tensor> final_gradients = {
+        {"weight", cyxwiz::Tensor(
+                       ReadShape(gradients.at(final_index),
+                                 label + " resumed gradient"),
+                       final_values.data(), cyxwiz::DataType::Float32)},
+    };
+    resumed->ZeroGrad();
+    resumed->Step(checkpoint_parameters, final_gradients);
+    CheckTensor(checkpoint_parameters.at("weight"),
+                expected_steps.at(final_index).at("parameter"),
+                tolerance, label + " resumed parameter");
+    cyxwiz::OptimizerState resumed_state;
+    Check(resumed->ExportState(resumed_state, error),
+          label + " resumed state export failed: " + error);
+    CheckAdamFamilyState(
+        resumed_state, "weight",
+        expected_steps.at(final_index).at("state"), tolerance,
+        label + " resumed", expect_mu_product);
+
+    const auto& sparse = test_case.at("missing_gradient_case");
+    const auto initial_b = ReadFloatValues(
+        sparse.at("initial_b"), label + " sparse initial b");
+    std::map<std::string, cyxwiz::Tensor> sparse_parameters = {
+        {"a", cyxwiz::Tensor(
+                  shape, initial.data(), cyxwiz::DataType::Float32)},
+        {"b", cyxwiz::Tensor(
+                  shape, initial_b.data(), cyxwiz::DataType::Float32)},
+    };
+    auto sparse_optimizer = factory();
+    const auto first_gradient = ReadFloatValues(
+        gradients.at(0), label + " sparse first gradient");
+    sparse_optimizer->Step(
+        sparse_parameters,
+        {{"a", cyxwiz::Tensor(
+                   shape, first_gradient.data(), cyxwiz::DataType::Float32)}});
+    CheckTensor(sparse_parameters.at("b"),
+                sparse.at("b_after_missing_gradient"), tolerance,
+                label + " missing-gradient parameter preservation");
+
+    const auto second_gradient = ReadFloatValues(
+        gradients.at(1), label + " sparse second gradient");
+    const auto third_gradient = ReadFloatValues(
+        gradients.at(2), label + " sparse third gradient");
+    sparse_optimizer->ZeroGrad();
+    sparse_optimizer->Step(
+        sparse_parameters,
+        {{"a", cyxwiz::Tensor(
+                   shape, second_gradient.data(), cyxwiz::DataType::Float32)},
+         {"b", cyxwiz::Tensor(
+                   shape, third_gradient.data(), cyxwiz::DataType::Float32)}});
+    CheckTensor(sparse_parameters.at("a"), sparse.at("final_a"),
+                tolerance, label + " sparse parameter a");
+    CheckTensor(sparse_parameters.at("b"), sparse.at("final_b"),
+                tolerance, label + " sparse parameter b");
+    cyxwiz::OptimizerState sparse_state;
+    Check(sparse_optimizer->ExportState(sparse_state, error),
+          label + " sparse state export failed: " + error);
+    CheckAdamFamilyState(sparse_state, "a", sparse.at("state_a"),
+                         tolerance, label + " sparse a", expect_mu_product);
+    CheckAdamFamilyState(sparse_state, "b", sparse.at("state_b"),
+                         tolerance, label + " sparse b", expect_mu_product);
+}
+
+void TestAdamFamilyMultiStepParity(const json& cases) {
+    const auto& family = cases.at("adam_family_multistep_f32");
+
+    const auto& adam = family.at("adam");
+    Check(adam.value("operation", "") == "torch.optim.Adam",
+          "Adam fixture operation mismatch");
+    const auto& adam_hyper = adam.at("hyperparameters");
+    TestAdamFamilyCase(
+        adam, "Adam", false,
+        [&adam_hyper]() {
+            return std::make_unique<cyxwiz::AdamOptimizer>(
+                adam_hyper.at("learning_rate").get<double>(),
+                adam_hyper.at("beta1").get<double>(),
+                adam_hyper.at("beta2").get<double>(),
+                adam_hyper.at("epsilon").get<double>());
+        });
+
+    const auto& adamw = family.at("adamw");
+    Check(adamw.value("operation", "") == "torch.optim.AdamW",
+          "AdamW fixture operation mismatch");
+    const auto& adamw_hyper = adamw.at("hyperparameters");
+    TestAdamFamilyCase(
+        adamw, "AdamW", false,
+        [&adamw_hyper]() {
+            return std::make_unique<cyxwiz::AdamWOptimizer>(
+                adamw_hyper.at("learning_rate").get<double>(),
+                adamw_hyper.at("beta1").get<double>(),
+                adamw_hyper.at("beta2").get<double>(),
+                adamw_hyper.at("epsilon").get<double>(),
+                adamw_hyper.at("weight_decay").get<double>());
+        });
+
+    const auto& nadam = family.at("nadam");
+    Check(nadam.value("operation", "") == "torch.optim.NAdam",
+          "NAdam fixture operation mismatch");
+    Check(nadam.at("hyperparameters").at("momentum_decay").get<double>() ==
+              0.004,
+          "NAdam fixture momentum-decay contract mismatch");
+    const auto& nadam_hyper = nadam.at("hyperparameters");
+    TestAdamFamilyCase(
+        nadam, "NAdam", true,
+        [&nadam_hyper]() {
+            return std::make_unique<cyxwiz::NAdamOptimizer>(
+                nadam_hyper.at("learning_rate").get<double>(),
+                nadam_hyper.at("beta1").get<double>(),
+                nadam_hyper.at("beta2").get<double>(),
+                nadam_hyper.at("epsilon").get<double>());
+        });
 }
 
 void TestSGDMomentumMultiStepParity(const json& cases) {
@@ -1089,7 +1262,7 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestCrossEntropyParity(cases);
         TestCrossEntropyMatrixParity(cases);
         TestLinearForwardBackwardParity(cases);
-        TestAdamWOneStepParity(cases);
+        TestAdamFamilyMultiStepParity(cases);
         TestSGDMomentumMultiStepParity(cases);
         TestAdaptiveOptimizerMultiStepParity(cases);
         TestLambMultiStepParity(cases);

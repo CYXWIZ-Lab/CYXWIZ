@@ -548,6 +548,170 @@ TEST_CASE("LAMB state import is transactional",
     REQUIRE(preserved_state.tensors.size() == valid_state.tensors.size());
 }
 
+TEST_CASE("Adam-family optimizers reject invalid hyperparameters",
+          "[optimizer][truth]") {
+    REQUIRE_THROWS_AS(cyxwiz::AdamOptimizer(-0.001), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::AdamOptimizer(0.001, 1.0), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::AdamOptimizer(0.001, 0.9, 1.0), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::AdamOptimizer(0.001, 0.9, 0.999, 0.0),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::AdamWOptimizer(0.001, 0.9, 0.999, 1.0e-8, -0.01),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(cyxwiz::NAdamOptimizer(-0.002), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::NAdamOptimizer(0.002, 1.0), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::NAdamOptimizer(0.002, 0.9, 1.0), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::NAdamOptimizer(0.002, 0.9, 0.999, 0.0),
+        std::invalid_argument);
+}
+
+TEST_CASE("Adam family preflights the complete step before mutation",
+          "[optimizer][truth]") {
+    const float parameter_values[] = {1.0f, -2.0f};
+    const float valid_gradient_values[] = {0.5f, -1.0f};
+    const float invalid_gradient_values[] = {0.25f};
+    const auto make_parameters = [&]() {
+        return std::map<std::string, cyxwiz::Tensor>{
+            {"a", cyxwiz::Tensor(
+                      {2}, parameter_values, cyxwiz::DataType::Float32)},
+            {"b", cyxwiz::Tensor(
+                      {2}, parameter_values, cyxwiz::DataType::Float32)},
+        };
+    };
+    const std::map<std::string, cyxwiz::Tensor> gradients = {
+        {"a", cyxwiz::Tensor(
+                  {2}, valid_gradient_values, cyxwiz::DataType::Float32)},
+        {"b", cyxwiz::Tensor(
+                  {1}, invalid_gradient_values, cyxwiz::DataType::Float32)},
+    };
+
+    SECTION("AdamW rejects before decoupled weight decay") {
+        auto parameters = make_parameters();
+        cyxwiz::AdamWOptimizer optimizer(0.01, 0.9, 0.999, 1.0e-8, 0.1);
+        REQUIRE_THROWS_AS(
+            optimizer.Step(parameters, gradients), std::invalid_argument);
+        REQUIRE(optimizer.GetStepCount() == 0);
+        const float* unchanged = parameters.at("a").ReadData<float>();
+        REQUIRE(unchanged[0] == Catch::Approx(1.0f));
+        REQUIRE(unchanged[1] == Catch::Approx(-2.0f));
+        cyxwiz::OptimizerState state;
+        std::string error;
+        REQUIRE(optimizer.ExportState(state, error));
+        REQUIRE(state.tensors.empty());
+    }
+
+    SECTION("NAdam rejects before moment or schedule mutation") {
+        auto parameters = make_parameters();
+        cyxwiz::NAdamOptimizer optimizer;
+        REQUIRE_THROWS_AS(
+            optimizer.Step(parameters, gradients), std::invalid_argument);
+        REQUIRE(optimizer.GetStepCount() == 0);
+        const float* unchanged = parameters.at("a").ReadData<float>();
+        REQUIRE(unchanged[0] == Catch::Approx(1.0f));
+        REQUIRE(unchanged[1] == Catch::Approx(-2.0f));
+        cyxwiz::OptimizerState state;
+        std::string error;
+        REQUIRE(optimizer.ExportState(state, error));
+        REQUIRE(state.tensors.empty());
+    }
+}
+
+TEST_CASE("Adam family declares strict and compatible fallback",
+          "[optimizer][arrayfire][fallback][policy][host_sync][truth]") {
+#if !defined(CYXWIZ_HAS_ARRAYFIRE) || defined(NDEBUG)
+    return;
+#else
+    SECTION("Adam") {
+        RequireOptimizerFallbackContract(
+            []() {
+                return std::make_unique<cyxwiz::AdamOptimizer>(
+                    0.01, 0.9, 0.999, 1.0e-8);
+            },
+            "AdamOptimizer::Step",
+            {"first_moment/weight", "second_moment/weight"});
+    }
+    SECTION("AdamW") {
+        RequireOptimizerFallbackContract(
+            []() {
+                return std::make_unique<cyxwiz::AdamWOptimizer>(
+                    0.01, 0.9, 0.999, 1.0e-8, 0.1);
+            },
+            "AdamWOptimizer::Step",
+            {"first_moment/weight", "second_moment/weight"});
+    }
+    SECTION("NAdam") {
+        RequireOptimizerFallbackContract(
+            []() {
+                return std::make_unique<cyxwiz::NAdamOptimizer>(
+                    0.01, 0.9, 0.999, 1.0e-8);
+            },
+            "NAdamOptimizer::Step",
+            {"first_moment/weight", "second_moment/weight"});
+    }
+#endif
+}
+
+TEST_CASE("AdamW and NAdam state imports are transactional",
+          "[optimizer][checkpoint][truth]") {
+    const float parameter_values[] = {1.0f, -2.0f};
+    const float gradient_values[] = {0.5f, -1.0f};
+    const auto make_parameters = [&]() {
+        return std::map<std::string, cyxwiz::Tensor>{
+            {"weight", cyxwiz::Tensor(
+                           {2}, parameter_values,
+                           cyxwiz::DataType::Float32)},
+        };
+    };
+    const std::map<std::string, cyxwiz::Tensor> gradients = {
+        {"weight", cyxwiz::Tensor(
+                       {2}, gradient_values, cyxwiz::DataType::Float32)},
+    };
+
+    SECTION("AdamW") {
+        auto parameters = make_parameters();
+        cyxwiz::AdamWOptimizer source(0.01, 0.9, 0.999, 1.0e-8, 0.1);
+        source.Step(parameters, gradients);
+        cyxwiz::OptimizerState valid_state;
+        std::string error;
+        REQUIRE(source.ExportState(valid_state, error));
+        REQUIRE(valid_state.optimizer_type == "AdamW");
+        cyxwiz::AdamWOptimizer target(0.01, 0.9, 0.999, 1.0e-8, 0.1);
+        REQUIRE(target.ImportState(valid_state, error));
+        auto invalid_state = valid_state;
+        invalid_state.step_count = 99;
+        invalid_state.tensors.erase("second_moment/weight");
+        REQUIRE_FALSE(target.ImportState(invalid_state, error));
+        cyxwiz::OptimizerState preserved;
+        REQUIRE(target.ExportState(preserved, error));
+        REQUIRE(preserved.step_count == valid_state.step_count);
+    }
+
+    SECTION("NAdam") {
+        auto parameters = make_parameters();
+        cyxwiz::NAdamOptimizer source(0.01, 0.9, 0.999, 1.0e-8);
+        source.Step(parameters, gradients);
+        cyxwiz::OptimizerState valid_state;
+        std::string error;
+        REQUIRE(source.ExportState(valid_state, error));
+        REQUIRE(valid_state.optimizer_type == "NAdam");
+        cyxwiz::NAdamOptimizer target(0.01, 0.9, 0.999, 1.0e-8);
+        REQUIRE(target.ImportState(valid_state, error));
+        auto invalid_state = valid_state;
+        invalid_state.step_count = 99;
+        invalid_state.tensors.erase("mu_product/weight");
+        REQUIRE_FALSE(target.ImportState(invalid_state, error));
+        cyxwiz::OptimizerState preserved;
+        REQUIRE(target.ExportState(preserved, error));
+        REQUIRE(preserved.step_count == valid_state.step_count);
+    }
+}
+
 TEST_CASE("Adam optimizer updates parameters", "[optimizer]") {
     float param_data[] = {1.0f, -2.0f};
     float grad_data[] = {0.5f, -1.0f};
@@ -589,6 +753,7 @@ TEST_CASE("Adam optimizer state resumes the exact next step", "[optimizer][check
     REQUIRE(state.step_count == 1);
     REQUIRE(state.tensors.count("first_moment/w") == 1);
     REQUIRE(state.tensors.count("second_moment/w") == 1);
+    REQUIRE(state.tensors.count("parameter_step/w") == 1);
 
     auto resumed_params = original_params;
     cyxwiz::AdamOptimizer resumed(0.001, 0.9, 0.999, 1e-8);
@@ -596,13 +761,24 @@ TEST_CASE("Adam optimizer state resumes the exact next step", "[optimizer][check
     REQUIRE(error.empty());
     REQUIRE(resumed.GetStepCount() == 1);
 
+    auto legacy_state = state;
+    legacy_state.tensors.erase("parameter_step/w");
+    auto legacy_params = original_params;
+    cyxwiz::AdamOptimizer legacy_resumed(0.001, 0.9, 0.999, 1e-8);
+    REQUIRE(legacy_resumed.ImportState(legacy_state, error));
+    REQUIRE(error.empty());
+
     original.Step(original_params, grads);
     resumed.Step(resumed_params, grads);
+    legacy_resumed.Step(legacy_params, grads);
 
     const float* expected = original_params.at("w").Data<float>();
     const float* actual = resumed_params.at("w").Data<float>();
     REQUIRE(actual[0] == Catch::Approx(expected[0]).margin(1e-7f));
     REQUIRE(actual[1] == Catch::Approx(expected[1]).margin(1e-7f));
+    const float* legacy_actual = legacy_params.at("w").Data<float>();
+    REQUIRE(legacy_actual[0] == Catch::Approx(expected[0]).margin(1e-7f));
+    REQUIRE(legacy_actual[1] == Catch::Approx(expected[1]).margin(1e-7f));
     REQUIRE(resumed.GetStepCount() == original.GetStepCount());
 
     auto incomplete = state;

@@ -512,10 +512,10 @@
       "contract": "Moments, bias correction, epsilon placement, update count and continuation match PyTorch.",
       "supported": "Float32 named parameter maps",
       "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_optimizer"],
-      "execution": "ArrayFire-first where supported",
+      "tests": ["cyxwiz-tests:[optimizer]", "cyxwiz-tests:[fallback]", "cyxwiz-tests:[checkpoint]", "test_computation_truth_tfidf_loss", "test_debug_executor"],
+      "execution": "ArrayFire-first; strict ArrayFire CPU proves multi-step parameters, moments, per-parameter steps, NAdam momentum schedule and exact resume; native CPU compatibility is explicitly observed and attributed",
       "status": "partial",
-      "gaps": ["first/multi-step PyTorch fixture", "NAdam state serialization", "strict residency"]
+      "gaps": ["accelerator matrix"]
     },
     {
       "id": "OPT-ADAMW-001",
@@ -527,11 +527,11 @@
       "callers": ["TrainingExecutor", "checkpointing"],
       "contract": "Decoupled weight decay occurs before Adam update; moments, bias correction, epsilon and update count match PyTorch.",
       "supported": "Float32 named parameter maps",
-      "oracle": "PyTorch fixture adamw_step1_f32",
-      "tests": ["test_computation_truth_tfidf_loss", "cyxwiz-tests:test_optimizer"],
-      "execution": "first-step parameter update proven strict on ArrayFire CPU",
+      "oracle": "PyTorch fixture adam_family_multistep_f32",
+      "tests": ["test_computation_truth_tfidf_loss", "cyxwiz-tests:[optimizer]", "cyxwiz-tests:[fallback]", "cyxwiz-tests:[checkpoint]", "test_debug_executor"],
+      "execution": "ArrayFire-first; strict ArrayFire CPU proves decoupled decay, multi-step moments, missing-gradient behavior and exact resume; native CPU compatibility is explicitly observed and attributed",
       "status": "partial",
-      "gaps": ["moment-state assertions", "multi-step", "exact state export/import currently unimplemented", "accelerator matrix"]
+      "gaps": ["accelerator matrix"]
     },
     {
       "id": "OPT-ADAPTIVE-001",
