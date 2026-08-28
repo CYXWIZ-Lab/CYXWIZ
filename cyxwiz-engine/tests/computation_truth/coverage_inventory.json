@@ -285,13 +285,13 @@
       "owner": "cyxwiz-backend/include/cyxwiz/layers/linear.h",
       "implementation": ["cyxwiz-backend/src/algorithms/layers/linear.cpp"],
       "callers": ["Dense", "SequentialModel", "graph models"],
-      "contract": "Forward is input @ weight^T + bias; input gradient is unreduced; parameter gradients are mean-reduced over batch.",
+      "contract": "Forward is input @ weight^T + bias; input and parameter gradients match PyTorch autograd, including sum-over-batch weight/bias gradients.",
       "supported": "rank-1/rank-2 Float32, optional bias",
       "oracle": "PyTorch fixture with explicit CyxWiz parameter-gradient reduction",
       "tests": ["test_computation_truth_tfidf_loss", "cyxwiz-tests:test_linear_layer"],
-      "execution": "ArrayFire-first; strict AF CPU path proven",
+      "execution": "ArrayFire-first; strict ArrayFire CPU and every selectable installed CUDA/OpenCL route prove biased/unbiased rank-1/rank-2 forward/backward and two-step multi-batch SGD updates with exact route identity, no native fallback and bounded attributed verification readback",
       "status": "partial",
-      "gaps": ["bias=false", "rank-1", "multi-batch update", "installed accelerator matrix"]
+      "gaps": ["process-isolated oneAPI Linear qualification; known-bad oneAPI device 0 must remain quarantined"]
     },
     {
       "id": "LAYER-DENSE-001",

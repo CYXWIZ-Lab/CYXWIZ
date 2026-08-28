@@ -129,6 +129,13 @@ std::vector<float> ReadFloatValues(const json& tensor_fixture,
     return tensor_fixture.at("values").get<std::vector<float>>();
 }
 
+cyxwiz::Tensor FloatTensorFromFixture(const json& tensor_fixture,
+                                      const std::string& context) {
+    const auto values = ReadFloatValues(tensor_fixture, context);
+    return cyxwiz::Tensor(ReadShape(tensor_fixture, context), values.data(),
+                          cyxwiz::DataType::Float32);
+}
+
 std::vector<int64_t> ReadInt64Values(const json& tensor_fixture,
                                      const std::string& context) {
     ReadShape(tensor_fixture, context);
@@ -663,52 +670,120 @@ void TestCrossEntropyMatrixParity(const json& cases) {
 }
 
 void TestLinearForwardBackwardParity(const json& cases) {
-    const auto& test_case = cases.at("linear_basic_f32");
-    Check(test_case.value("operation", "") == "torch.nn.functional.linear",
-          "Linear fixture operation mismatch");
-    Check(test_case.value("dtype", "") == "float32",
-          "Linear fixture dtype mismatch");
+    for (const auto& test_case :
+         cases.at("linear_forward_backward_f32")) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("operation", "") ==
+                  "torch.nn.functional.linear",
+              name + " Linear fixture operation mismatch");
+        Check(test_case.value("dtype", "") == "float32",
+              name + " Linear fixture dtype mismatch");
+        Check(test_case.value("parameter_gradient_reduction", "") ==
+                  "sum_over_batch",
+              name + " Linear fixture gradient reduction mismatch");
+        const bool use_bias = test_case.at("use_bias").get<bool>();
+        const auto weight_shape =
+            ReadShape(test_case.at("weight"), name + " Linear weight");
+        Check(weight_shape.size() == 2,
+              name + " Linear weight fixture must be rank 2");
+        const auto tolerance = ReadTolerance(test_case);
+
+        cyxwiz::LinearLayer linear(
+            weight_shape[1], weight_shape[0], use_bias);
+        std::map<std::string, cyxwiz::Tensor> parameters = {
+            {"weight", FloatTensorFromFixture(
+                           test_case.at("weight"),
+                           name + " Linear weight")},
+        };
+        if (use_bias) {
+            parameters.emplace(
+                "bias", FloatTensorFromFixture(
+                            test_case.at("bias"),
+                            name + " Linear bias"));
+        }
+        linear.SetParameters(parameters);
+
+        const auto output = linear.Forward(FloatTensorFromFixture(
+            test_case.at("input"), name + " Linear input"));
+        CheckTensor(output, test_case.at("expected").at("output"), tolerance,
+                    name + " Linear forward output");
+        const auto grad_input = linear.Backward(FloatTensorFromFixture(
+            test_case.at("grad_output"), name + " Linear grad_output"));
+        CheckTensor(grad_input,
+                    test_case.at("expected").at("grad_input"), tolerance,
+                    name + " Linear backward grad_input");
+
+        const auto gradients = linear.GetGradients();
+        CheckTensor(gradients.at("weight"),
+                    test_case.at("expected").at("grad_weight"), tolerance,
+                    name + " Linear backward grad_weight");
+        Check(gradients.count("bias") == (use_bias ? 1U : 0U),
+              name + " Linear bias-gradient ownership mismatch");
+        if (use_bias) {
+            CheckTensor(gradients.at("bias"),
+                        test_case.at("expected").at("grad_bias"), tolerance,
+                        name + " Linear backward grad_bias");
+        }
+    }
+}
+
+void TestLinearMultiBatchUpdateParity(const json& cases) {
+    const auto& test_case = cases.at("linear_multibatch_sgd_f32");
+    Check(test_case.value("operation", "") ==
+              "torch.nn.Linear + torch.optim.SGD",
+          "Linear multi-batch fixture operation mismatch");
     Check(test_case.value("parameter_gradient_reduction", "") ==
               "sum_over_batch",
-          "Linear fixture gradient reduction mismatch");
-    const auto input_values = ReadFloatValues(test_case.at("input"), "Linear input");
-    const auto weight_values = ReadFloatValues(test_case.at("weight"), "Linear weight");
-    const auto bias_values = ReadFloatValues(test_case.at("bias"), "Linear bias");
-    const auto grad_output_values =
-        ReadFloatValues(test_case.at("grad_output"), "Linear grad_output");
-    const auto weight_shape = ReadShape(test_case.at("weight"), "Linear weight");
-    Check(weight_shape.size() == 2, "Linear weight fixture must be rank 2");
+          "Linear multi-batch gradient reduction mismatch");
     const auto tolerance = ReadTolerance(test_case);
-
+    const auto weight_shape = ReadShape(
+        test_case.at("initial").at("weight"),
+        "Linear multi-batch initial weight");
     cyxwiz::LinearLayer linear(weight_shape[1], weight_shape[0], true);
-    cyxwiz::Tensor weight(weight_shape, weight_values.data(),
-                          cyxwiz::DataType::Float32);
-    cyxwiz::Tensor bias(ReadShape(test_case.at("bias"), "Linear bias"),
-                        bias_values.data(), cyxwiz::DataType::Float32);
-    linear.SetParameters({{"weight", weight}, {"bias", bias}});
+    linear.SetParameters({
+        {"weight", FloatTensorFromFixture(
+                       test_case.at("initial").at("weight"),
+                       "Linear multi-batch initial weight")},
+        {"bias", FloatTensorFromFixture(
+                     test_case.at("initial").at("bias"),
+                     "Linear multi-batch initial bias")},
+    });
+    cyxwiz::SGDOptimizer optimizer(
+        test_case.at("learning_rate").get<double>());
 
-    cyxwiz::Tensor input(ReadShape(test_case.at("input"), "Linear input"),
-                         input_values.data(),
-                         cyxwiz::DataType::Float32);
-    cyxwiz::Tensor output = linear.Forward(input);
-    CheckTensor(output, test_case.at("expected").at("output"), tolerance,
-                "Linear forward output");
+    size_t step_index = 0;
+    for (const auto& step : test_case.at("steps")) {
+        const std::string label =
+            "Linear multi-batch step " + std::to_string(step_index + 1);
+        const auto output = linear.Forward(FloatTensorFromFixture(
+            step.at("input"), label + " input"));
+        CheckTensor(output, step.at("expected").at("output"), tolerance,
+                    label + " output");
+        const auto grad_input = linear.Backward(FloatTensorFromFixture(
+            step.at("grad_output"), label + " grad_output"));
+        CheckTensor(grad_input, step.at("expected").at("grad_input"),
+                    tolerance, label + " grad_input");
+        const auto gradients = linear.GetGradients();
+        CheckTensor(gradients.at("weight"),
+                    step.at("expected").at("grad_weight"), tolerance,
+                    label + " grad_weight");
+        CheckTensor(gradients.at("bias"),
+                    step.at("expected").at("grad_bias"), tolerance,
+                    label + " grad_bias");
 
-    cyxwiz::Tensor grad_output(
-        ReadShape(test_case.at("grad_output"), "Linear grad_output"),
-        grad_output_values.data(),
-                               cyxwiz::DataType::Float32);
-    cyxwiz::Tensor grad_input = linear.Backward(grad_output);
-    CheckTensor(grad_input, test_case.at("expected").at("grad_input"),
-                tolerance, "Linear backward grad_input");
-
-    const auto grads = linear.GetGradients();
-    CheckTensor(grads.at("weight"),
-                test_case.at("expected").at("grad_weight"), tolerance,
-                "Linear backward grad_weight");
-    CheckTensor(grads.at("bias"),
-                test_case.at("expected").at("grad_bias"), tolerance,
-                "Linear backward grad_bias");
+        auto parameters = linear.GetParameters();
+        optimizer.Step(parameters, gradients);
+        linear.SetParameters(parameters);
+        CheckTensor(parameters.at("weight"),
+                    step.at("expected").at("updated_weight"), tolerance,
+                    label + " updated weight");
+        CheckTensor(parameters.at("bias"),
+                    step.at("expected").at("updated_bias"), tolerance,
+                    label + " updated bias");
+        ++step_index;
+        Check(optimizer.GetStepCount() == static_cast<int>(step_index),
+              label + " optimizer step count mismatch");
+    }
 }
 
 void CheckAdamFamilyState(
@@ -1340,6 +1415,7 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestCrossEntropyParity(cases);
         TestCrossEntropyMatrixParity(cases);
         TestLinearForwardBackwardParity(cases);
+        TestLinearMultiBatchUpdateParity(cases);
         TestOptimizerMultiStepParity(cases);
     }
     g_fallback_events = nullptr;
@@ -1363,7 +1439,7 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
     }
 }
 
-void TestInstalledAcceleratorOptimizerTruth(const json& cases) {
+void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
     const bool initialized_here = !cyxwiz::IsInitialized();
     if (initialized_here) {
         Check(cyxwiz::Initialize(), "CyxWiz backend initialization failed");
@@ -1382,12 +1458,12 @@ void TestInstalledAcceleratorOptimizerTruth(const json& cases) {
         const std::string route = device.name + " device=" +
             std::to_string(device.device_id);
         Check(activation.success,
-              "accelerator optimizer activation failed for " + route +
+              "accelerator training-core activation failed for " + route +
                   ": " + activation.message);
         Check(activation.execution_validated &&
                   activation.effective_type == device.type &&
                   activation.effective_device_id == device.device_id,
-              "accelerator optimizer activation changed exact route for " +
+              "accelerator training-core activation changed exact route for " +
                   route);
 
         const std::string backend = cyxwiz::CurrentArrayFireBackendName();
@@ -1399,7 +1475,7 @@ void TestInstalledAcceleratorOptimizerTruth(const json& cases) {
                   context.requested_device_id == device.device_id &&
                   context.effective_device_id == device.device_id &&
                   !context.selection_fallback_applied,
-              "accelerator optimizer context lost exact route identity for " +
+              "accelerator training-core context lost exact route identity for " +
                   route);
 
         std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent> fallback_events;
@@ -1415,21 +1491,23 @@ void TestInstalledAcceleratorOptimizerTruth(const json& cases) {
                 &RecordHostSyncEvent);
             const cyxwiz::ScopedActiveExecutionDeviceContext active_run;
             const cyxwiz::ScopedExecutionDeviceContext bound_context(context);
+            TestLinearForwardBackwardParity(cases);
+            TestLinearMultiBatchUpdateParity(cases);
             TestOptimizerMultiStepParity(cases);
         }
         g_fallback_events = nullptr;
         g_host_sync_events = nullptr;
 
         Check(fallback_events.empty(),
-              "accelerator optimizer path attempted native CPU fallback for " +
+              "accelerator training-core path attempted native CPU fallback for " +
                   route);
         for (const auto& event : host_sync_events) {
             Check(event.selected_backend == backend,
-                  "accelerator optimizer readback lost backend identity for " +
+                  "accelerator training-core readback lost backend identity for " +
                       route);
             Check(event.attribution_category == "debug_sample_dump" &&
                       event.bytes <= 4096,
-                  "accelerator optimizer performed an undeclared host sync for " +
+                  "accelerator training-core performed an undeclared host sync for " +
                       route + ": " + event.attribution_category +
                       " operation=" + event.operation_name);
         }
@@ -1437,12 +1515,12 @@ void TestInstalledAcceleratorOptimizerTruth(const json& cases) {
     }
 
     if (exercised_routes == 0) {
-        std::cout << "SKIP: no selectable CUDA/OpenCL optimizer route\n";
+        std::cout << "SKIP: no selectable CUDA/OpenCL training-core route\n";
     }
     const auto cpu_restore =
         cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
     Check(cpu_restore.success,
-          "failed to restore ArrayFire CPU after optimizer route matrix");
+          "failed to restore ArrayFire CPU after training-core route matrix");
     if (initialized_here) {
         cyxwiz::Shutdown();
     }
@@ -1459,7 +1537,7 @@ int main(int argc, char** argv) {
     TestBoundedTFIDFMaterialization();
     TestTFIDFNGramMaterialization();
     TestArrayFireCpuTrainingCoreTruth(cases);
-    TestInstalledAcceleratorOptimizerTruth(cases);
+    TestInstalledAcceleratorTrainingCoreTruth(cases);
     std::cout << "Computation truth TF-IDF + regression/CrossEntropy + Linear + optimizer checks passed\n";
     return 0;
 }

@@ -79,6 +79,12 @@ The broad tracking ticket is:
   and permits only bounded attributed verification readbacks. oneAPI optimizer
   evidence remains a process-isolated qualification gap; known-bad oneAPI
   device 0 is never selected by this in-process matrix.
+- Proves Linear forward/backward for biased and unbiased rank-1/rank-2 inputs,
+  PyTorch sum-over-batch parameter gradients, and two sequential variable-size
+  batch updates through SGD. The complete Linear matrix runs on strict
+  ArrayFire CPU and every selectable installed CUDA/OpenCL route with exact
+  identity, no native fallback, and only bounded attributed verification
+  readback. oneAPI Linear evidence remains process-isolated and quarantined.
 - Rejects native fallback attempts and undeclared host synchronization; only
   bounded, attributed test-output readbacks are allowed.
 - Proves regression losses and every supported CrossEntropy rank use strict

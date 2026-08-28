@@ -89,46 +89,140 @@ def regression_loss_matrix() -> list[dict[str, Any]]:
     return cases
 
 
-def linear_case() -> dict[str, Any]:
+def linear_case(
+    name: str,
+    input_values: list[Any],
+    grad_output_values: list[Any],
+    use_bias: bool,
+) -> dict[str, Any]:
     input_tensor = torch.tensor(
-        [[1.0, 2.0, -1.0], [0.0, -3.0, 4.0]],
-        dtype=torch.float32,
-        requires_grad=True,
+        input_values, dtype=torch.float32, requires_grad=True
     )
     weight = torch.tensor(
         [[0.5, -1.0, 2.0], [-0.25, 0.75, 1.5]],
         dtype=torch.float32,
         requires_grad=True,
     )
-    bias = torch.tensor(
-        [0.1, -0.2], dtype=torch.float32, requires_grad=True
+    bias = (
+        torch.tensor([0.1, -0.2], dtype=torch.float32, requires_grad=True)
+        if use_bias
+        else None
     )
-    grad_output = torch.tensor(
-        [[1.0, -0.5], [0.25, 2.0]], dtype=torch.float32
-    )
+    grad_output = torch.tensor(grad_output_values, dtype=torch.float32)
 
     output = functional.linear(input_tensor, weight, bias)
-    grad_input, grad_weight, grad_bias = torch.autograd.grad(
-        output,
-        (input_tensor, weight, bias),
-        grad_outputs=grad_output,
+    differentiable = (input_tensor, weight, bias) if use_bias else (
+        input_tensor,
+        weight,
     )
+    gradients = torch.autograd.grad(
+        output, differentiable, grad_outputs=grad_output
+    )
+    grad_input, grad_weight = gradients[:2]
 
-    return {
+    expected = {
+        "output": tensor_fixture(output),
+        "grad_input": tensor_fixture(grad_input),
+        "grad_weight": tensor_fixture(grad_weight),
+    }
+    if use_bias:
+        expected["grad_bias"] = tensor_fixture(gradients[2])
+
+    result = {
+        "name": name,
         "operation": "torch.nn.functional.linear",
         "dtype": "float32",
+        "use_bias": use_bias,
         "parameter_gradient_reduction": "sum_over_batch",
         "tolerance": {"atol": 1.0e-5, "rtol": 1.0e-5},
         "input": tensor_fixture(input_tensor),
         "weight": tensor_fixture(weight),
-        "bias": tensor_fixture(bias),
         "grad_output": tensor_fixture(grad_output),
-        "expected": {
-            "output": tensor_fixture(output),
-            "grad_input": tensor_fixture(grad_input),
-            "grad_weight": tensor_fixture(grad_weight),
-            "grad_bias": tensor_fixture(grad_bias),
-        },
+        "expected": expected,
+    }
+    if use_bias:
+        result["bias"] = tensor_fixture(bias)
+    return result
+
+
+def linear_matrix() -> list[dict[str, Any]]:
+    return [
+        linear_case(
+            "rank2_biased",
+            [[1.0, 2.0, -1.0], [0.0, -3.0, 4.0]],
+            [[1.0, -0.5], [0.25, 2.0]],
+            True,
+        ),
+        linear_case(
+            "rank1_no_bias",
+            [1.5, -2.0, 0.25],
+            [-0.75, 1.25],
+            False,
+        ),
+        linear_case(
+            "rank2_no_bias_three_samples",
+            [[1.0, 0.0, -1.0], [2.0, 3.0, 0.5], [-2.0, 1.0, 4.0]],
+            [[0.5, -1.0], [1.5, 0.25], [-0.75, 2.0]],
+            False,
+        ),
+    ]
+
+
+def linear_multibatch_sgd_case() -> dict[str, Any]:
+    model = torch.nn.Linear(3, 2, bias=True)
+    with torch.no_grad():
+        model.weight.copy_(torch.tensor(
+            [[0.5, -1.0, 2.0], [-0.25, 0.75, 1.5]],
+            dtype=torch.float32,
+        ))
+        model.bias.copy_(torch.tensor([0.1, -0.2], dtype=torch.float32))
+    initial = {
+        "weight": tensor_fixture(model.weight),
+        "bias": tensor_fixture(model.bias),
+    }
+    learning_rate = 0.05
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    definitions = [
+        (
+            [[1.0, 2.0, -1.0], [0.0, -3.0, 4.0]],
+            [[1.0, -0.5], [0.25, 2.0]],
+        ),
+        (
+            [[-1.0, 0.5, 2.0], [3.0, -2.0, 1.0], [0.25, 1.5, -0.5]],
+            [[-0.25, 1.0], [0.75, -1.5], [2.0, 0.5]],
+        ),
+    ]
+    steps = []
+    for input_values, grad_output_values in definitions:
+        input_tensor = torch.tensor(
+            input_values, dtype=torch.float32, requires_grad=True
+        )
+        grad_output = torch.tensor(grad_output_values, dtype=torch.float32)
+        optimizer.zero_grad(set_to_none=True)
+        output = model(input_tensor)
+        output.backward(grad_output)
+        step = {
+            "input": tensor_fixture(input_tensor),
+            "grad_output": tensor_fixture(grad_output),
+            "expected": {
+                "output": tensor_fixture(output),
+                "grad_input": tensor_fixture(input_tensor.grad),
+                "grad_weight": tensor_fixture(model.weight.grad),
+                "grad_bias": tensor_fixture(model.bias.grad),
+            },
+        }
+        optimizer.step()
+        step["expected"]["updated_weight"] = tensor_fixture(model.weight)
+        step["expected"]["updated_bias"] = tensor_fixture(model.bias)
+        steps.append(step)
+    return {
+        "operation": "torch.nn.Linear + torch.optim.SGD",
+        "dtype": "float32",
+        "parameter_gradient_reduction": "sum_over_batch",
+        "learning_rate": learning_rate,
+        "initial": initial,
+        "steps": steps,
+        "tolerance": {"atol": 1.0e-5, "rtol": 1.0e-5},
     }
 
 
@@ -2445,7 +2539,8 @@ def generate_fixture() -> dict[str, Any]:
             "tensor_permute_f32": tensor_permute_matrix(),
             "tensor_reductions": tensor_reduction_matrix(),
             "tensor_shape_semantics_f32": tensor_shape_semantics(),
-            "linear_basic_f32": linear_case(),
+            "linear_forward_backward_f32": linear_matrix(),
+            "linear_multibatch_sgd_f32": linear_multibatch_sgd_case(),
             "cross_entropy_index_mean_f32": cross_entropy_case(),
             "cross_entropy_matrix_f32": cross_entropy_matrix(),
             "regression_loss_matrix_f32": regression_loss_matrix(),
