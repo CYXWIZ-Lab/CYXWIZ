@@ -96,6 +96,20 @@ Ordinary builds never receive the private key. The resulting signed contract
 is the input for the small setup verifier/acquirer/launcher; the consolidated
 `cyxwiz-installer` remains the only graphical installation experience.
 
+The manually dispatched `Installer Alpha Candidate` workflow is the bounded
+pre-publication build. It requires the protected `cyxwiz-alpha` environment,
+the repository variable `CYXWIZ_ALPHA_CANDIDATE_ENABLED=true`, and the
+repository secret `CYXWIZ_INSTALLER_TRUST_STORE_B64`. That secret contains
+only the base64-encoded public `trusted-keys.json`; private signing keys are
+not inputs to this workflow. For the requested immutable tag it builds Windows
+x64, Linux x64, macOS Intel, and macOS Apple Silicon setup packages with the
+public trust root embedded and the exact future GitHub Release descriptor URL
+compiled in. Release-configured setup and clean installer-stage artifacts use
+the `cyxwiz-release-*` artifact prefix. The workflow deliberately does not
+create a tag or GitHub Release. Publication remains blocked until the signed
+base/optional-pack matrix, signed installer descriptors, final bootstrap
+metadata, and platform code signatures have passed their own release gate.
+
 ### Native runtime bootstrapper
 
 The installed app-level `cyxwiz-runtime-bootstrapper` (`.exe` on Windows)

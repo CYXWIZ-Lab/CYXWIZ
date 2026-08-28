@@ -185,10 +185,12 @@ Hardware drivers and vendor providers remain host prerequisites.
 `trusted-keys.json` is an app-bundled schema-1 document with exactly
 `schema_version` and `keys`. Each key entry contains exactly `key_id`,
 `algorithm=ed25519`, the 32-byte raw public key as 43-character unpadded
-base64url, one or both unique roles (`catalog`, `pack`), and a boolean
-`revoked`. Key IDs are unique, private keys are never present, and unknown
-fields or roles fail closed. Application updates may revoke a bundled key;
-catalog policy independently blocks or revokes individual packs.
+base64url, one or more unique roles (`catalog`, `pack`, `installer`), and a
+boolean `revoked`. The installer role authorizes only the first-stage setup
+descriptor; it does not authorize a catalog or backend-pack manifest. Key IDs
+are unique, private keys are never present, and unknown fields or roles fail
+closed. Application updates may revoke a bundled key; catalog policy
+independently blocks or revokes individual packs.
 
 ## Signed Envelope
 

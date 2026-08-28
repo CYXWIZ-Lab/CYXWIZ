@@ -2,8 +2,51 @@ name: Installer Native Build
 
 on:
   workflow_dispatch:
+    inputs:
+      release_mode:
+        description: Build setup artifacts with production public trust
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        description: Immutable GitHub Release tag used by setup URLs
+        required: false
+        default: ""
+        type: string
+      cyxwiz_release:
+        description: CyxWiz release version
+        required: false
+        default: "0.2.0"
+        type: string
+      bundle_version:
+        description: Installer bundle version
+        required: false
+        default: "1.0.0"
+        type: string
+  workflow_call:
+    inputs:
+      release_mode:
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        required: false
+        default: ""
+        type: string
+      cyxwiz_release:
+        required: false
+        default: "0.2.0"
+        type: string
+      bundle_version:
+        required: false
+        default: "1.0.0"
+        type: string
+    secrets:
+      CYXWIZ_INSTALLER_TRUST_STORE_B64:
+        required: false
   pull_request:
     paths:
+      - ".github/workflows/installer-alpha-candidate.yml"
       - ".github/workflows/installer-native.yml"
       - "CMakeLists.txt"
       - "cmake/CyxWizInstallerTargets.cmake"
@@ -11,12 +54,16 @@ on:
       - "cyxwiz-backend/**"
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
+      - "redist/scripts/backend_pack_contract.py"
       - "redist/scripts/prepare_backend_pack_repository.py"
       - "redist/scripts/installer_bundle_contract.py"
       - "redist/scripts/package_installer_bundle.py"
+      - "redist/scripts/prepare_installer_release_configuration.py"
       - "redist/scripts/sign_installer_bundle.py"
       - "redist/scripts/verify_installer_package.py"
       - "redist/tests/test_installer_bundle.py"
+      - "redist/tests/test_backend_pack_contract.py"
+      - "redist/tests/test_prepare_installer_release_configuration.py"
       - "redist/tests/test_installer_setup.py"
       - "redist/tests/test_prepare_backend_pack_repository.py"
       - "redist/tests/test_verify_installer_package.py"
@@ -26,6 +73,7 @@ on:
       - main
       - Nodes_Implementation
     paths:
+      - ".github/workflows/installer-alpha-candidate.yml"
       - ".github/workflows/installer-native.yml"
       - "CMakeLists.txt"
       - "cmake/CyxWizInstallerTargets.cmake"
@@ -33,12 +81,16 @@ on:
       - "cyxwiz-backend/**"
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
+      - "redist/scripts/backend_pack_contract.py"
       - "redist/scripts/prepare_backend_pack_repository.py"
       - "redist/scripts/installer_bundle_contract.py"
       - "redist/scripts/package_installer_bundle.py"
+      - "redist/scripts/prepare_installer_release_configuration.py"
       - "redist/scripts/sign_installer_bundle.py"
       - "redist/scripts/verify_installer_package.py"
       - "redist/tests/test_installer_bundle.py"
+      - "redist/tests/test_backend_pack_contract.py"
+      - "redist/tests/test_prepare_installer_release_configuration.py"
       - "redist/tests/test_installer_setup.py"
       - "redist/tests/test_prepare_backend_pack_repository.py"
       - "redist/tests/test_verify_installer_package.py"
@@ -87,6 +139,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Prepare production setup configuration
+        if: inputs.release_mode == true
+        shell: pwsh
+        env:
+          RELEASE_TRUST_B64: ${{ secrets.CYXWIZ_INSTALLER_TRUST_STORE_B64 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RELEASE_TRUST_B64)) {
+            throw 'CYXWIZ_INSTALLER_TRUST_STORE_B64 is required in release mode'
+          }
+          $inputTrust = Join-Path $env:RUNNER_TEMP 'cyxwiz-release-trust-input.json'
+          $embeddedTrust = Join-Path $env:RUNNER_TEMP 'cyxwiz-release-trust.json'
+          $configuration = Join-Path $env:RUNNER_TEMP 'cyxwiz-release-setup.json'
+          try {
+            $trustBytes = [Convert]::FromBase64String($env:RELEASE_TRUST_B64)
+          } catch {
+            throw 'CYXWIZ_INSTALLER_TRUST_STORE_B64 is not valid base64'
+          }
+          [IO.File]::WriteAllBytes($inputTrust, $trustBytes)
+          python -B redist/scripts/prepare_installer_release_configuration.py `
+            --trust-store $inputTrust `
+            --repository '${{ github.repository }}' `
+            --release-tag '${{ inputs.release_tag }}' `
+            --cyxwiz-release '${{ inputs.cyxwiz_release }}' `
+            --bundle-version '${{ inputs.bundle_version }}' `
+            --platform '${{ matrix.platform }}' `
+            --architecture '${{ matrix.architecture }}' `
+            --trust-output $embeddedTrust `
+            --configuration-output $configuration
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $releaseConfiguration = Get-Content -Raw $configuration |
+            ConvertFrom-Json
+          "CYXWIZ_RELEASE_TRUST_STORE=$embeddedTrust" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
+          "CYXWIZ_RELEASE_DESCRIPTOR_URL=$($releaseConfiguration.descriptor_url)" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Select OpenSSL 3 signing tool on macOS
         if: runner.os == 'macOS'
         shell: bash
@@ -100,6 +188,7 @@ jobs:
         run: >-
           python -B -m unittest
           redist.tests.test_prepare_backend_pack_repository
+          redist.tests.test_prepare_installer_release_configuration
           redist.tests.test_installer_bundle
 
       - name: Export GitHub Actions cache environment variables
@@ -157,7 +246,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake -S . -B build `
+          $releaseArguments = @()
+          if ($env:CYXWIZ_RELEASE_TRUST_STORE) {
+            $releaseArguments += "-DCYXWIZ_SETUP_TRUST_STORE=$env:CYXWIZ_RELEASE_TRUST_STORE"
+            $releaseArguments += "-DCYXWIZ_SETUP_BUNDLE_URL=$env:CYXWIZ_RELEASE_DESCRIPTOR_URL"
+          }
+          cmake -S . -B build @releaseArguments `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DCYXWIZ_BUILD_INSTALLER_ONLY=ON `
             -DCYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR="$PWD/build/installer-bootstrap-metadata" `
@@ -166,7 +260,15 @@ jobs:
       - name: Configure Ubuntu Release
         if: runner.os == 'Linux'
         run: |
+          release_arguments=()
+          if [[ -n "${CYXWIZ_RELEASE_TRUST_STORE:-}" ]]; then
+            release_arguments+=(
+              "-DCYXWIZ_SETUP_TRUST_STORE=${CYXWIZ_RELEASE_TRUST_STORE}"
+              "-DCYXWIZ_SETUP_BUNDLE_URL=${CYXWIZ_RELEASE_DESCRIPTOR_URL}"
+            )
+          fi
           cmake -S . -B build -G Ninja \
+            "${release_arguments[@]}" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DCYXWIZ_BUILD_INSTALLER_ONLY=ON \
@@ -176,7 +278,15 @@ jobs:
       - name: Configure macOS Release
         if: runner.os == 'macOS'
         run: |
+          release_arguments=()
+          if [[ -n "${CYXWIZ_RELEASE_TRUST_STORE:-}" ]]; then
+            release_arguments+=(
+              "-DCYXWIZ_SETUP_TRUST_STORE=${CYXWIZ_RELEASE_TRUST_STORE}"
+              "-DCYXWIZ_SETUP_BUNDLE_URL=${CYXWIZ_RELEASE_DESCRIPTOR_URL}"
+            )
+          fi
           cmake -S . -B build -G Ninja \
+            "${release_arguments[@]}" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DCYXWIZ_BUILD_INSTALLER_ONLY=ON \
@@ -204,7 +314,33 @@ jobs:
           build/installer-bootstrap-metadata
 
       - name: Run native installer contracts
+        if: inputs.release_mode != true
         run: ctest --test-dir build --build-config Release --output-on-failure
+
+      - name: Run release-compatible native installer contracts
+        if: inputs.release_mode == true
+        run: >-
+          ctest --test-dir build --build-config Release --output-on-failure
+          --exclude-regex '^installer_setup_signed_bundle_contract$'
+
+      - name: Prove embedded setup trust cannot be replaced
+        if: inputs.release_mode == true
+        shell: pwsh
+        run: |
+          if ('${{ runner.os }}' -eq 'Windows') {
+            $setup = 'build/bin/Release/cyxwiz-setup.exe'
+          } else {
+            $setup = 'build/bin/cyxwiz-setup'
+          }
+          $output = & $setup `
+            --trust-store $env:CYXWIZ_RELEASE_TRUST_STORE `
+            --descriptor missing-descriptor.json 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 4) {
+            throw "embedded-trust rejection returned $LASTEXITCODE`: $output"
+          }
+          if ($output -notmatch '--trust-store is disabled') {
+            throw "embedded-trust rejection was not explicit: $output"
+          }
 
       - name: Stage installer package
         run: >-
@@ -250,6 +386,22 @@ jobs:
           mkdir -p setup-package
           tar -C setup-stage -czf \
             setup-package/cyxwiz-setup-${{ matrix.artifact }}.tar.gz .
+
+      - name: Upload clean release installer stage
+        if: inputs.release_mode == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-release-installer-stage-${{ matrix.artifact }}
+          path: installer-stage/
+          if-no-files-found: error
+
+      - name: Upload release-configured setup
+        if: inputs.release_mode == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-release-setup-${{ matrix.artifact }}
+          path: setup-package/
+          if-no-files-found: error
 
       - name: Add Windows package smoke contract
         if: runner.os == 'Windows'
