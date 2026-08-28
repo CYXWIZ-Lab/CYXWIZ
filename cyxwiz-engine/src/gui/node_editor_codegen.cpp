@@ -1,4 +1,5 @@
 #include "node_editor.h"
+#include "activation_codegen_contract.h"
 #include "panels/script_editor.h"
 #include "../core/async_task_manager.h"
 #include "../plugin/registries/plugin_node_registry.h"
@@ -82,6 +83,26 @@ std::string PythonBoolLiteral(const std::string& value) {
         return static_cast<char>(std::tolower(c));
     });
     return (lower == "true" || lower == "1" || lower == "yes") ? "True" : "False";
+}
+
+std::string BlockedCodegenConfiguration(
+    const char* framework,
+    const std::string& error) {
+    std::string escaped_error;
+    escaped_error.reserve(error.size());
+    for (const char character : error) {
+        switch (character) {
+            case '\\': escaped_error += "\\\\"; break;
+            case '\'': escaped_error += "\\\'"; break;
+            case '\n': escaped_error += "\\n"; break;
+            case '\r': escaped_error += "\\r"; break;
+            case '\t': escaped_error += "\\t"; break;
+            default: escaped_error += character; break;
+        }
+    }
+    return std::string("# ") + framework +
+        " export is blocked by the Studio Dense/activation contract.\n"
+        "raise ValueError('" + escaped_error + "')\n";
 }
 
 } // namespace
@@ -661,10 +682,28 @@ std::string NodeEditor::GenerateRLPyTorchCode(const std::vector<int>& sorted_ids
     return code;
 }
 
+std::optional<std::string>
+NodeEditor::FindDenseActivationConfigurationError(
+    const std::vector<int>& sorted_ids) const {
+    for (const int node_id : sorted_ids) {
+        const MLNode* node = FindNodeById(node_id);
+        if (!node) continue;
+        if (const auto error =
+                cyxwiz::ResolveInvalidDenseActivationConfigurationReason(
+                    node->type, node->parameters)) {
+            return EffectiveNodeName(*node) + ": " + *error;
+        }
+    }
+    return std::nullopt;
+}
+
 std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) {
     // Check if this is an RL graph
     if (IsRLGraph(sorted_ids)) {
         return GenerateRLPyTorchCode(sorted_ids);
+    }
+    if (const auto error = FindDenseActivationConfigurationError(sorted_ids)) {
+        return BlockedCodegenConfiguration("PyTorch", *error);
     }
 
     std::string code;
@@ -734,6 +773,16 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
+        const auto activation = BuildActivationCodegen(
+            ActivationCodegenTarget::PyTorch,
+            node->type,
+            node->parameters,
+            "x");
+        if (activation.handled) {
+            code += "        x = " + activation.expression + "\n";
+            continue;
+        }
+
         switch (node->type) {
             case NodeType::DatasetInput:
                 code += "        # Dataset input layer (x is already the input)\n";
@@ -741,22 +790,6 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
 
             case NodeType::Dense:
                 code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
-                break;
-
-            case NodeType::ReLU:
-                code += "        x = F.relu(x)\n";
-                break;
-
-            case NodeType::Sigmoid:
-                code += "        x = torch.sigmoid(x)\n";
-                break;
-
-            case NodeType::Tanh:
-                code += "        x = torch.tanh(x)\n";
-                break;
-
-            case NodeType::Softmax:
-                code += "        x = F.softmax(x, dim=1)\n";
                 break;
 
             case NodeType::Dropout:
@@ -794,23 +827,6 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
 
             case NodeType::GRU:
                 code += "        x, h_n = self.layer" + std::to_string(layer_idx++) + "(x)\n";
-                break;
-
-            // ===== Additional Activations =====
-            case NodeType::GELU:
-                code += "        x = F.gelu(x)\n";
-                break;
-
-            case NodeType::LeakyReLU:
-                code += "        x = F.leaky_relu(x, 0.01)\n";
-                break;
-
-            case NodeType::Swish:
-                code += "        x = F.silu(x)\n";
-                break;
-
-            case NodeType::Mish:
-                code += "        x = F.mish(x)\n";
                 break;
 
             // ===== Normalization Layers =====
@@ -941,6 +957,9 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
         code += GenerateRLPyTorchCode(sorted_ids);  // Fallback to SB3 code
         return code;
     }
+    if (const auto error = FindDenseActivationConfigurationError(sorted_ids)) {
+        return BlockedCodegenConfiguration("TensorFlow", *error);
+    }
 
     for (int node_id : sorted_ids) {
         const MLNode* node = FindNodeById(node_id);
@@ -1004,6 +1023,16 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
+        const auto activation = BuildActivationCodegen(
+            ActivationCodegenTarget::TensorFlow,
+            node->type,
+            node->parameters,
+            "x");
+        if (activation.handled) {
+            code += "        x = " + activation.expression + "\n";
+            continue;
+        }
+
         switch (node->type) {
             case NodeType::DatasetInput:
                 code += "        # Dataset input layer (x is already the input)\n";
@@ -1011,22 +1040,6 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
 
             case NodeType::Dense:
                 code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
-                break;
-
-            case NodeType::ReLU:
-                code += "        x = tf.nn.relu(x)\n";
-                break;
-
-            case NodeType::Sigmoid:
-                code += "        x = tf.nn.sigmoid(x)\n";
-                break;
-
-            case NodeType::Tanh:
-                code += "        x = tf.nn.tanh(x)\n";
-                break;
-
-            case NodeType::Softmax:
-                code += "        x = tf.nn.softmax(x)\n";
                 break;
 
             case NodeType::Dropout:
@@ -1088,6 +1101,9 @@ std::string NodeEditor::GenerateKerasCode(const std::vector<int>& sorted_ids) {
         code += GenerateRLPyTorchCode(sorted_ids);  // Fallback to SB3 code
         return code;
     }
+    if (const auto error = FindDenseActivationConfigurationError(sorted_ids)) {
+        return BlockedCodegenConfiguration("Keras", *error);
+    }
 
     for (int node_id : sorted_ids) {
         const MLNode* node = FindNodeById(node_id);
@@ -1114,6 +1130,7 @@ std::string NodeEditor::GenerateKerasCode(const std::vector<int>& sorted_ids) {
     // Header
     code += "# Auto-generated Keras model from CyxWiz Node Editor\n";
     code += "# Generated at: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
+    code += "import tensorflow as tf\n";
     code += "from tensorflow import keras\n";
     code += "from tensorflow.keras import layers\n\n";
 
@@ -1171,6 +1188,9 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
     // Check if this is an RL graph
     if (IsRLGraph(sorted_ids)) {
         return GenerateRLPyCyxWizCode(sorted_ids);
+    }
+    if (const auto error = FindDenseActivationConfigurationError(sorted_ids)) {
+        return BlockedCodegenConfiguration("PyCyxWiz", *error);
     }
 
     for (int node_id : sorted_ids) {
@@ -1304,6 +1324,17 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
             last_expr = expr;
         };
 
+        const auto activation = BuildActivationCodegen(
+            ActivationCodegenTarget::PyCyxWiz,
+            node->type,
+            node->parameters,
+            input_expr(*node, 0));
+        if (activation.handled) {
+            code += "        " + out + " = " + activation.expression + "\n";
+            record_output(out);
+            continue;
+        }
+
         switch (node->type) {
             case NodeType::DatasetInput:
                 code += "        " + out + " = x\n";
@@ -1312,26 +1343,6 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
 
             case NodeType::Dense:
                 code += "        " + out + " = self.layer" + std::to_string(layer_idx++) + ".forward(" + input_expr(*node, 0) + ")\n";
-                record_output(out);
-                break;
-
-            case NodeType::ReLU:
-                code += "        " + out + " = cx.relu(" + input_expr(*node, 0) + ")\n";
-                record_output(out);
-                break;
-
-            case NodeType::Sigmoid:
-                code += "        " + out + " = cx.sigmoid(" + input_expr(*node, 0) + ")\n";
-                record_output(out);
-                break;
-
-            case NodeType::Tanh:
-                code += "        " + out + " = cx.tanh(" + input_expr(*node, 0) + ")\n";
-                record_output(out);
-                break;
-
-            case NodeType::Softmax:
-                code += "        " + out + " = cx.softmax(" + input_expr(*node, 0) + ")\n";
                 record_output(out);
                 break;
 
@@ -1611,9 +1622,16 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
 std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
     std::string code;
 
+    if (BuildActivationCodegen(
+            ActivationCodegenTarget::PyTorch,
+            node.type,
+            node.parameters).handled) {
+        return code;
+    }
+
     switch (node.type) {
         case NodeType::Dense: {
-            std::string units = "128";
+            std::string units = "64";
             auto it = node.parameters.find("units");
             if (it != node.parameters.end()) {
                 units = it->second;
@@ -1686,30 +1704,6 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             code = "nn.Embedding(num_embeddings=" + num_embeddings + ", embedding_dim=" + embedding_dim + ")";
             break;
         }
-
-        case NodeType::GELU:
-            code = "nn.GELU()";
-            break;
-
-        case NodeType::ReLU:
-            code = "nn.ReLU()";
-            break;
-
-        case NodeType::LeakyReLU: {
-            std::string negative_slope = "0.01";
-            auto it = node.parameters.find("negative_slope");
-            if (it != node.parameters.end()) negative_slope = it->second;
-            code = "nn.LeakyReLU(negative_slope=" + negative_slope + ")";
-            break;
-        }
-
-        case NodeType::Swish:
-            code = "nn.SiLU()";
-            break;
-
-        case NodeType::Mish:
-            code = "nn.Mish()";
-            break;
 
         // ===== Transformer Layers =====
         case NodeType::TransformerEncoder: {
@@ -1837,9 +1831,16 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
 std::string NodeEditor::NodeTypeToTensorFlowLayer(const MLNode& node, int /*layer_idx*/) {
     std::string code;
 
+    if (BuildActivationCodegen(
+            ActivationCodegenTarget::TensorFlow,
+            node.type,
+            node.parameters).handled) {
+        return code;
+    }
+
     switch (node.type) {
         case NodeType::Dense: {
-            std::string units = "128";
+            std::string units = "64";
             auto it = node.parameters.find("units");
             if (it != node.parameters.end()) {
                 units = it->second;
@@ -1904,14 +1905,6 @@ std::string NodeEditor::NodeTypeToTensorFlowLayer(const MLNode& node, int /*laye
             break;
         }
 
-        case NodeType::GELU:
-            code = "layers.Activation('gelu')";
-            break;
-
-        case NodeType::ReLU:
-            code = "layers.ReLU()";
-            break;
-
         case NodeType::PluginCustom: {
             auto it = node.parameters.find("plugin_qualified_name");
             if (it != node.parameters.end())
@@ -1931,9 +1924,17 @@ std::string NodeEditor::NodeTypeToTensorFlowLayer(const MLNode& node, int /*laye
 std::string NodeEditor::NodeTypeToKerasLayer(const MLNode& node) {
     std::string code;
 
+    const auto activation = BuildActivationCodegen(
+        ActivationCodegenTarget::Keras,
+        node.type,
+        node.parameters);
+    if (activation.handled) {
+        return activation.expression;
+    }
+
     switch (node.type) {
         case NodeType::Dense: {
-            std::string units = "128";
+            std::string units = "64";
             auto it = node.parameters.find("units");
             if (it != node.parameters.end()) {
                 units = it->second;
@@ -1964,22 +1965,6 @@ std::string NodeEditor::NodeTypeToKerasLayer(const MLNode& node) {
                    GetParamOrAliases(node, {"eps", "epsilon"}, "1e-5") +
                    ", momentum=(1.0 - " +
                    GetParamOrDefault(node, "momentum", "0.1") + "))";
-            break;
-
-        case NodeType::ReLU:
-            code = "layers.ReLU()";
-            break;
-
-        case NodeType::Sigmoid:
-            code = "layers.Activation('sigmoid')";
-            break;
-
-        case NodeType::Tanh:
-            code = "layers.Activation('tanh')";
-            break;
-
-        case NodeType::Softmax:
-            code = "layers.Activation('softmax')";
             break;
 
         case NodeType::Output: {
@@ -2031,10 +2016,6 @@ std::string NodeEditor::NodeTypeToKerasLayer(const MLNode& node) {
             break;
         }
 
-        case NodeType::GELU:
-            code = "layers.Activation('gelu')";
-            break;
-
         case NodeType::PluginCustom: {
             auto it = node.parameters.find("plugin_qualified_name");
             if (it != node.parameters.end())
@@ -2053,9 +2034,16 @@ std::string NodeEditor::NodeTypeToKerasLayer(const MLNode& node) {
 std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
     std::string code;
 
+    if (BuildActivationCodegen(
+            ActivationCodegenTarget::PyCyxWiz,
+            node.type,
+            node.parameters).handled) {
+        return code;
+    }
+
     switch (node.type) {
         case NodeType::Dense: {
-            std::string units = "128";
+            std::string units = "64";
             auto it = node.parameters.find("units");
             if (it != node.parameters.end()) {
                 units = it->second;
@@ -2203,47 +2191,6 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
                 node, {"max_sequence_length", "max_len", "max_length", "max_seq_len"}, "5000");
             code = "cx.PositionalEncoding(d_model=" + d_model +
                    ", max_sequence_length=" + max_len + ")";
-            break;
-        }
-
-        // ===== Activation Functions =====
-        case NodeType::ReLU:
-            code = "cx.ReLU()";
-            break;
-
-        case NodeType::GELU:
-            code = "cx.GELU()";
-            break;
-
-        case NodeType::LeakyReLU: {
-            std::string negative_slope = "0.01";
-            auto it = node.parameters.find("negative_slope");
-            if (it != node.parameters.end()) negative_slope = it->second;
-            code = "cx.LeakyReLU(negative_slope=" + negative_slope + ")";
-            break;
-        }
-
-        case NodeType::Swish:
-            code = "cx.Swish()";
-            break;
-
-        case NodeType::Mish:
-            code = "cx.Mish()";
-            break;
-
-        case NodeType::Sigmoid:
-            code = "cx.Sigmoid()";
-            break;
-
-        case NodeType::Tanh:
-            code = "cx.Tanh()";
-            break;
-
-        case NodeType::Softmax: {
-            std::string dim = "-1";
-            auto it = node.parameters.find("dim");
-            if (it != node.parameters.end()) dim = it->second;
-            code = "cx.Softmax(dim=" + dim + ")";
             break;
         }
 

@@ -1,4 +1,5 @@
 #include "properties_truth.h"
+#include "../core/dense_activation_configuration_policy.h"
 #include "../core/normalization_regularization_configuration_policy.h"
 #include "../core/transformer_configuration_policy.h"
 
@@ -1356,12 +1357,7 @@ PropertyTruth ResolveAliasedFloatProperty(const MLNode& node,
 }
 
 bool IsActivationNode(NodeType type) {
-    return type == NodeType::ReLU ||
-           type == NodeType::Sigmoid ||
-           type == NodeType::Softmax ||
-           type == NodeType::GELU ||
-           type == NodeType::Tanh ||
-           type == NodeType::LeakyReLU;
+    return cyxwiz::IsExecutableActivationNode(type);
 }
 
 bool IsShapeOpNode(NodeType type) {
@@ -1544,7 +1540,38 @@ void AddCoreLayerTruth(NodeTruthReport& report, const MLNode& node) {
                 false);
             RequireFloatAtLeast(slope, "negative_slope", 0.0, true);
             report.properties.push_back(std::move(slope));
+        } else if (node.type == NodeType::ELU) {
+            auto alpha = ResolveFloatProperty(
+                node,
+                "Negative saturation scale",
+                "alpha",
+                "1.0",
+                TruthOwner::Compiler,
+                true,
+                false,
+                "GraphCompiler and ModelBuilder use this exact positive ELU alpha.");
+            RequireFloatAtLeast(alpha, "alpha", 0.0, false);
+            report.properties.push_back(std::move(alpha));
         }
+
+        PropertyTruth configuration;
+        configuration.label = "Executable configuration";
+        configuration.canonical_key = "dense_activation_contract";
+        configuration.source_key = "shared compiler/runtime policy";
+        configuration.owner = TruthOwner::Compiler;
+        configuration.quick_editable = false;
+        if (const auto error =
+                cyxwiz::ResolveInvalidDenseActivationConfigurationReason(
+                    node.type, node.parameters)) {
+            configuration.effective_value = "rejected";
+            configuration.message = *error;
+            AddStatus(configuration, TruthStatus::Unsupported);
+        } else {
+            configuration.effective_value =
+                "validated shape-preserving activation";
+            AddStatus(configuration, TruthStatus::OK);
+        }
+        report.properties.push_back(std::move(configuration));
         return;
     }
 
@@ -2693,6 +2720,9 @@ const std::vector<NodeType>& SpecializedTruthCoverageNodeTypes() {
         NodeType::GELU,
         NodeType::Tanh,
         NodeType::LeakyReLU,
+        NodeType::ELU,
+        NodeType::Swish,
+        NodeType::Mish,
         NodeType::Flatten,
         NodeType::Reshape,
         NodeType::View,

@@ -2748,14 +2748,14 @@ void NodeMetadataRegistry::InitializeActivationNodes() {
         {"leaky", "relu"}, 0, false, "Leaky ReLU", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Activated"}},
-        {{"negative_slope", "float", "0.01", "Slope", {}, ""}},
+        {{"negative_slope", "float", "0.01", "Non-negative slope for negative inputs", {}, "0-3.402823e38"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ELU, NodeCategory::Activation, "ELU", ICON_FA_BOLT,
         {"elu", "activation"}, 0, false, "Exponential linear unit", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Activated"}},
-        {{"alpha", "float", "1.0", "Negative saturation scale", {}, ""}},
+        {{"alpha", "float", "1.0", "Positive negative-saturation scale", {}, ">0"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Swish, NodeCategory::Activation, "Swish", ICON_FA_BOLT,

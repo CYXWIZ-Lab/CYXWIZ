@@ -322,6 +322,66 @@ void TestBuildSequentialTabular() {
     spdlog::info("  OK: model has {} modules", built.model->Size());
 }
 
+void TestDenseActivationConfigurationContract() {
+    spdlog::info("--- TestDenseActivationConfigurationContract ---");
+
+    auto config = MakeTabularConfig();
+    config.layers.resize(1);
+    config.layers[0].parameters["units"] = "0";
+    auto built = BuildSequentialFromConfig(config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("Dense units") !=
+                       std::string::npos,
+               "ModelBuilder must reject an invalid persisted Dense width");
+
+    config = MakeTabularConfig();
+    config.layers.resize(1);
+    config.layers[0].units = -1;
+    built = BuildSequentialFromConfig(config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("Dense units") !=
+                       std::string::npos,
+               "ModelBuilder must reject an invalid direct Dense width");
+
+    config = MakeTabularConfig();
+    config.layers.clear();
+    CompiledLayer leaky;
+    leaky.type = gui::NodeType::LeakyReLU;
+    leaky.parameters["negative_slope"] = "0";
+    config.layers.push_back(leaky);
+    built = BuildSequentialFromConfig(config);
+    ExpectTrue(built.ok() && built.model->Size() == 1,
+               "LeakyReLU negative_slope=0 must remain an exact valid value");
+    ExpectTrue(built.model->GetModule(0)->GetName().find("0.000000") !=
+                   std::string::npos,
+               "LeakyReLU constructor must receive the exact zero slope");
+
+    config.layers[0].parameters["negative_slope"] = "nan";
+    built = BuildSequentialFromConfig(config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("finite number") !=
+                       std::string::npos,
+               "LeakyReLU must reject non-finite persisted slopes");
+
+    config.layers[0].type = gui::NodeType::ELU;
+    config.layers[0].parameters.clear();
+    config.layers[0].parameters["alpha"] = "0.25";
+    built = BuildSequentialFromConfig(config);
+    ExpectTrue(built.ok() &&
+                   built.model->GetModule(0)->GetName().find("0.250000") !=
+                       std::string::npos,
+               "ELU constructor must receive the exact persisted alpha");
+
+    config.layers[0].parameters["alpha"] = "0";
+    built = BuildSequentialFromConfig(config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("ELU alpha") !=
+                       std::string::npos,
+               "ELU must reject a non-positive persisted alpha");
+
+    spdlog::info("  OK: Dense and parameterized activation construction is exact and fail-closed");
+}
+
 TrainingConfiguration MakeBatchNormConfig() {
     TrainingConfiguration config;
     config.input_size = 2;
@@ -2339,6 +2399,7 @@ int main() {
             std::getenv("CYXWIZ_RUN_SLOW_DEBUG_TESTS") != nullptr;
 
         TestBuildSequentialTabular();
+        TestDenseActivationConfigurationContract();
         TestRecurrentConfigurationFailClosed();
         TestTransformerConfigurationFailClosed();
         TestBuildSequentialLayerNorm();

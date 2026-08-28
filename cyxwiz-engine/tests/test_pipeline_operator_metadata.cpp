@@ -1,5 +1,6 @@
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_metadata_registry.h"
+#include "../src/gui/activation_codegen_contract.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/core/simulation_runtime_capabilities.h"
 #include "../src/gui/data_studio/pipeline_canvas.h"
@@ -3280,6 +3281,68 @@ void CheckOptimizerFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
           "Adagrad should not advertise unsupported learning-rate decay");
 }
 
+void CheckDenseActivationCodegenContract() {
+    const gui::NodeType activations[] = {
+        gui::NodeType::ReLU,
+        gui::NodeType::LeakyReLU,
+        gui::NodeType::ELU,
+        gui::NodeType::GELU,
+        gui::NodeType::Swish,
+        gui::NodeType::Mish,
+        gui::NodeType::Sigmoid,
+        gui::NodeType::Tanh,
+        gui::NodeType::Softmax,
+    };
+    for (const auto type : activations) {
+        for (const auto target : {
+                 gui::ActivationCodegenTarget::PyTorch,
+                 gui::ActivationCodegenTarget::TensorFlow,
+                 gui::ActivationCodegenTarget::Keras,
+                 gui::ActivationCodegenTarget::PyCyxWiz}) {
+            const auto generated = gui::BuildActivationCodegen(
+                target, type, {}, "input_value");
+            Check(generated.handled && !generated.error &&
+                      !generated.expression.empty(),
+                  "every executable activation should have one codegen contract");
+            Check(target == gui::ActivationCodegenTarget::Keras ||
+                      generated.expression.find("self.layer") ==
+                          std::string::npos,
+                  "functional activation export must not consume a stateful layer slot");
+        }
+    }
+
+    const std::map<std::string, std::string> leaky_parameters = {
+        {"negative_slope", "0.2"},
+    };
+    const auto leaky = gui::BuildActivationCodegen(
+        gui::ActivationCodegenTarget::PyTorch,
+        gui::NodeType::LeakyReLU,
+        leaky_parameters);
+    Check(leaky.expression.find("negative_slope=0.2") != std::string::npos,
+          "PyTorch activation export should preserve LeakyReLU slope");
+
+    const std::map<std::string, std::string> elu_parameters = {
+        {"alpha", "0.25"},
+    };
+    const auto elu = gui::BuildActivationCodegen(
+        gui::ActivationCodegenTarget::PyCyxWiz,
+        gui::NodeType::ELU,
+        elu_parameters);
+    Check(elu.expression.find("cx.elu") != std::string::npos &&
+              elu.expression.find("alpha=0.25") != std::string::npos,
+          "PyCyxWiz activation export should include ELU and preserve alpha");
+
+    cyxwiz::DenseActivationConfiguration configuration;
+    Check(cyxwiz::ResolveDenseActivationConfiguration(
+              gui::NodeType::Dense, {{"units", "7"}}, configuration) ==
+              std::nullopt && configuration.dense_units == 7,
+          "shared Dense policy should resolve the persisted output width");
+    Check(cyxwiz::ResolveDenseActivationConfiguration(
+              gui::NodeType::Dense, {{"units", "0"}}, configuration)
+              .has_value(),
+          "shared Dense policy should reject zero output width");
+}
+
 } // namespace
 
 int main() {
@@ -3325,6 +3388,7 @@ int main() {
     CheckTensorFanInFamilyContract(metadata);
     CheckLossFamilyContract(metadata);
     CheckOptimizerFamilyContract(metadata);
+    CheckDenseActivationCodegenContract();
 
     {
         const auto* data_input = metadata.GetMetadata(gui::NodeType::DataInput);
@@ -5131,6 +5195,9 @@ int main() {
         gui::NodeType::Softmax,
         gui::NodeType::GELU,
         gui::NodeType::LeakyReLU,
+        gui::NodeType::ELU,
+        gui::NodeType::Swish,
+        gui::NodeType::Mish,
         gui::NodeType::MSELoss,
         gui::NodeType::CrossEntropyLoss,
         gui::NodeType::BCELoss,
@@ -5263,6 +5330,9 @@ int main() {
         gui::NodeType::Softmax,
         gui::NodeType::GELU,
         gui::NodeType::LeakyReLU,
+        gui::NodeType::ELU,
+        gui::NodeType::Swish,
+        gui::NodeType::Mish,
         gui::NodeType::MSELoss,
         gui::NodeType::CrossEntropyLoss,
         gui::NodeType::BCELoss,
@@ -5555,6 +5625,15 @@ int main() {
         gui::NodeType::LSTM,
         gui::NodeType::GRU,
         gui::NodeType::Embedding,
+        gui::NodeType::ReLU,
+        gui::NodeType::LeakyReLU,
+        gui::NodeType::ELU,
+        gui::NodeType::GELU,
+        gui::NodeType::Swish,
+        gui::NodeType::Mish,
+        gui::NodeType::Sigmoid,
+        gui::NodeType::Tanh,
+        gui::NodeType::Softmax,
     };
     for (auto type : supported_model_nodes) {
         const auto* meta = metadata.GetMetadata(type);
@@ -5621,6 +5700,11 @@ int main() {
         {gui::NodeType::Sigmoid, "activation"},
         {gui::NodeType::Tanh, "activation"},
         {gui::NodeType::Softmax, "activation"},
+        {gui::NodeType::LeakyReLU, "activation"},
+        {gui::NodeType::ELU, "activation"},
+        {gui::NodeType::GELU, "activation"},
+        {gui::NodeType::Swish, "activation"},
+        {gui::NodeType::Mish, "activation"},
         {gui::NodeType::MSELoss, "loss"},
         {gui::NodeType::CrossEntropyLoss, "loss"},
         {gui::NodeType::BCELoss, "loss"},

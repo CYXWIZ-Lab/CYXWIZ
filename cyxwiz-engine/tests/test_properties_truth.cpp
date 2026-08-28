@@ -144,7 +144,7 @@ int main() {
 
     {
         const auto& covered = gui::properties_truth::SpecializedTruthCoverageNodeTypes();
-        Check(covered.size() == 73,
+        Check(covered.size() == 76,
               "tofix48 baseline should record each specialized truth-covered node");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::DataInput),
               "DataInput should be in specialized truth coverage");
@@ -184,6 +184,10 @@ int main() {
               "Adam should be in specialized truth coverage");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Dense),
               "Dense should be in specialized truth coverage");
+        Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::ELU) &&
+                  gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Swish) &&
+                  gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Mish),
+              "all executable activation variants should have specialized truth coverage");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::BatchNorm),
               "BatchNorm should be in specialized truth coverage");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Reshape),
@@ -1125,6 +1129,30 @@ int main() {
         Check(shape_effect->effective_value.find("preserves") !=
                   std::string::npos,
               "Activation shape truth should explain shape preservation");
+    }
+
+    {
+        auto elu = MakeNode(3, gui::NodeType::ELU, "ELU");
+        elu.parameters["alpha"] = "0";
+        const auto invalid = gui::properties_truth::ResolveNodeTruth(elu);
+        const auto* alpha = FindProperty(invalid, "alpha");
+        const auto* configuration =
+            FindProperty(invalid, "dense_activation_contract");
+        Check(alpha != nullptr &&
+                  HasStatus(*alpha, gui::properties_truth::TruthStatus::Missing),
+              "ELU should display its invalid alpha instead of omitting the property");
+        Check(configuration != nullptr &&
+                  HasStatus(*configuration,
+                            gui::properties_truth::TruthStatus::Unsupported),
+              "ELU should display the shared compiler/runtime rejection");
+
+        auto swish = MakeNode(4, gui::NodeType::Swish, "Swish");
+        const auto swish_report =
+            gui::properties_truth::ResolveNodeTruth(swish);
+        Check(FindProperty(swish_report, "shape_effect") != nullptr &&
+                  FindProperty(swish_report,
+                               "dense_activation_contract") != nullptr,
+              "Swish should display shape and executable configuration truth");
     }
 
     {

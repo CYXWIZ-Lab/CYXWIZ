@@ -1,4 +1,5 @@
 #include "model_builder.h"
+#include "dense_activation_configuration_policy.h"
 #include "error_codes.h"
 #include "graph_executable_model.h"
 #include "normalization_regularization_configuration_policy.h"
@@ -346,6 +347,16 @@ bool BuildSequential(
         const auto& layer_cfg = config.layers[i];
         const size_t module_count_before = model.Size();
 
+        DenseActivationConfiguration dense_activation_configuration;
+        if (const auto reason = ResolveDenseActivationConfiguration(
+                layer_cfg.type, layer_cfg.parameters,
+                dense_activation_configuration, layer_cfg.units,
+                layer_cfg.negative_slope, layer_cfg.alpha)) {
+            throw std::runtime_error(
+                "invalid layer configuration at index " +
+                std::to_string(i) + ": " + *reason);
+        }
+
         if (const auto reason =
                 ResolvePipelineUnsupportedSequentialModelConfigurationReason(
                     layer_cfg.type, layer_cfg.parameters)) {
@@ -381,7 +392,8 @@ bool BuildSequential(
 
         switch (layer_cfg.type) {
             case gui::NodeType::Dense: {
-                size_t out_features = layer_cfg.units > 0 ? layer_cfg.units : 64;
+                const size_t out_features =
+                    dense_activation_configuration.dense_units;
                 model.Add<LinearModule>(current_input_size, out_features, true);
                 spdlog::info("  [{}] Linear({} -> {})", i, current_input_size, out_features);
                 current_input_size = out_features;
@@ -845,14 +857,15 @@ bool BuildSequential(
             }
 
             case gui::NodeType::LeakyReLU: {
-                float slope = layer_cfg.negative_slope > 0 ? layer_cfg.negative_slope : 0.01f;
+                const float slope =
+                    dense_activation_configuration.negative_slope;
                 model.Add<LeakyReLUModule>(slope);
                 spdlog::info("  [{}] LeakyReLU(slope={})", i, slope);
                 break;
             }
 
             case gui::NodeType::ELU: {
-                float alpha = layer_cfg.alpha > 0 ? layer_cfg.alpha : 1.0f;
+                const float alpha = dense_activation_configuration.elu_alpha;
                 model.Add<ELUModule>(alpha);
                 spdlog::info("  [{}] ELU(alpha={})", i, alpha);
                 break;

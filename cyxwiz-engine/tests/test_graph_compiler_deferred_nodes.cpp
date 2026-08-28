@@ -407,6 +407,61 @@ int main() {
     Check(config.is_valid && config.layers.front().name == "Classifier Head",
           "compiler should preserve custom Dense names");
 
+    auto invalid_dense = stale_generated_dense;
+    invalid_dense.parameters["units"] = "not-a-number";
+    config = compiler.Compile({data, invalid_dense, loss, optimizer},
+                              links,
+                              true);
+    Check(!config.is_valid &&
+              HasIssueCode(config,
+                           cyxwiz::errors::Compiler::InvalidParameter),
+          "malformed Dense units should fail closed with an invalid-parameter code");
+
+    auto leaky_relu = Node(
+        8,
+        gui::NodeType::LeakyReLU,
+        "Leaky ReLU",
+        {Pin(801, gui::PinType::Tensor, "Input", true)},
+        {Pin(802, gui::PinType::Tensor, "Output", false)});
+    leaky_relu.parameters["negative_slope"] = "0";
+    const std::vector<gui::NodeLink> activation_links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 8, 801),
+        Link(3, 8, 802, 4, 401),
+        Link(4, 1, 102, 4, 402),
+        Link(5, 4, 403, 5, 501),
+    };
+    config = compiler.Compile(
+        {data, dense, leaky_relu, loss, optimizer},
+        activation_links,
+        true);
+    Check(config.is_valid && config.layers.size() == 2 &&
+              config.layers[1].negative_slope == 0.0f,
+          "compiler should preserve an explicit zero LeakyReLU slope");
+
+    leaky_relu.parameters["negative_slope"] = "nan";
+    config = compiler.Compile(
+        {data, dense, leaky_relu, loss, optimizer},
+        activation_links,
+        true);
+    Check(!config.is_valid &&
+              HasIssueCode(config,
+                           cyxwiz::errors::Compiler::InvalidParameter),
+          "non-finite LeakyReLU slope should fail closed at compile time");
+
+    auto elu = leaky_relu;
+    elu.type = gui::NodeType::ELU;
+    elu.name = "ELU";
+    elu.parameters.clear();
+    elu.parameters["alpha"] = "0";
+    config = compiler.Compile({data, dense, elu, loss, optimizer},
+                              activation_links,
+                              true);
+    Check(!config.is_valid &&
+              HasIssueCode(config,
+                           cyxwiz::errors::Compiler::InvalidParameter),
+          "non-positive ELU alpha should fail closed at compile time");
+
     gui::RefreshGeneratedNodeName(stale_generated_dense);
     Check(stale_generated_dense.name == "Dense (512)",
           "property edits should refresh generated Dense names");

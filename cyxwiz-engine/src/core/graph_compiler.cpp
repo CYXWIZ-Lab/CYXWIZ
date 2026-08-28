@@ -3,6 +3,7 @@
 #include "backend_placement_capabilities.h"
 #include "execution_placement_plan.h"
 #include "data_registry.h"
+#include "dense_activation_configuration_policy.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
 #include "label_column_resolver.h"
@@ -4367,6 +4368,12 @@ TrainingConfiguration GraphCompiler::Compile(
         // Handle model layers and activations
         if (IsModelLayer(node->type) || IsActivation(node->type)) {
             if (const auto reason =
+                    ResolveInvalidDenseActivationConfigurationReason(
+                        node->type, node->parameters)) {
+                AddIssue(config, IssueLevel::Error, *reason, node->id,
+                         node->name, errors::Compiler::InvalidParameter);
+            }
+            if (const auto reason =
                     ResolveInvalidSequenceProjectionConfigurationReason(
                         node->type, node->parameters)) {
                 AddIssue(config, IssueLevel::Error, *reason, node->id,
@@ -5325,20 +5332,7 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
 }
 
 bool GraphCompiler::IsActivation(gui::NodeType type) const {
-    switch (type) {
-        case gui::NodeType::ReLU:
-        case gui::NodeType::LeakyReLU:
-        case gui::NodeType::ELU:
-        case gui::NodeType::GELU:
-        case gui::NodeType::Swish:
-        case gui::NodeType::Mish:
-        case gui::NodeType::Sigmoid:
-        case gui::NodeType::Tanh:
-        case gui::NodeType::Softmax:
-            return true;
-        default:
-            return false;
-    }
+    return IsExecutableActivationNode(type);
 }
 
 // ---------------------------------------------------------------------------
@@ -5654,10 +5648,14 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
 
     // Extract specific parameters
     switch (node.type) {
-        case gui::NodeType::Dense:
-            if (node.parameters.count("units"))
-                layer.units = std::stoi(node.parameters.at("units"));
+        case gui::NodeType::Dense: {
+            DenseActivationConfiguration configuration;
+            if (!ResolveDenseActivationConfiguration(
+                    node.type, node.parameters, configuration)) {
+                layer.units = static_cast<int>(configuration.dense_units);
+            }
             break;
+        }
 
         case gui::NodeType::TimeDistributed:
             layer.units = static_cast<int>(ParseSizeParam(
@@ -5701,15 +5699,23 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
             // Dropout/BatchNorm values into defaults.
             break;
 
-        case gui::NodeType::LeakyReLU:
-            if (node.parameters.count("negative_slope"))
-                layer.negative_slope = std::stof(node.parameters.at("negative_slope"));
+        case gui::NodeType::LeakyReLU: {
+            DenseActivationConfiguration configuration;
+            if (!ResolveDenseActivationConfiguration(
+                    node.type, node.parameters, configuration)) {
+                layer.negative_slope = configuration.negative_slope;
+            }
             break;
+        }
 
-        case gui::NodeType::ELU:
-            if (node.parameters.count("alpha"))
-                layer.alpha = std::stof(node.parameters.at("alpha"));
+        case gui::NodeType::ELU: {
+            DenseActivationConfiguration configuration;
+            if (!ResolveDenseActivationConfiguration(
+                    node.type, node.parameters, configuration)) {
+                layer.alpha = configuration.elu_alpha;
+            }
             break;
+        }
 
         case gui::NodeType::ConvTranspose2D:
             if (node.parameters.count("in_channels"))

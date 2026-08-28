@@ -1,6 +1,7 @@
 #pragma once
 
 #include "graph_compiler.h"
+#include "dense_activation_configuration_policy.h"
 #include "pipeline_runtime_capabilities.h"
 #include "cyxwiz/backend_placement_observation.h"
 
@@ -244,14 +245,7 @@ inline size_t PlacementSizeParam(const CompiledLayer& layer,
 }
 
 inline bool IsActivationPlacementLayer(gui::NodeType type) {
-    switch (type) {
-        case gui::NodeType::ReLU:
-        case gui::NodeType::Sigmoid:
-        case gui::NodeType::Tanh:
-            return true;
-        default:
-            return false;
-    }
+    return IsExecutableActivationNode(type);
 }
 
 inline std::string BuildArrayFireTensorPlacementShapeSignature(
