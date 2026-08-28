@@ -119,8 +119,9 @@ class BackendPackRepositoryTests(unittest.TestCase):
         private_key: Path | None = None,
         signing_key_id: str = "pack-2026",
         runtime_set_id: str = "runtime-310",
+        archive_name: str | None = None,
     ) -> Path:
-        archive_name = f"{pack_id}.zip"
+        archive_name = archive_name or f"{pack_id}.zip"
         archive = self.inputs / archive_name
         archive.write_bytes((pack_id + "-archive").encode("ascii"))
         archive_bytes = archive.read_bytes()
@@ -256,6 +257,40 @@ class BackendPackRepositoryTests(unittest.TestCase):
         self.assertTrue((bootstrap / "catalogs" / "manifests" / "base-v1.json").is_file())
         self.assertFalse((bootstrap / "catalogs" / "manifests" / "base-v1.zip").exists())
 
+    def test_flat_release_asset_layout_keeps_manifests_and_archives_adjacent(self) -> None:
+        base = self._manifest("base-v1", "cpu", None)
+        opencl = self._manifest("opencl-v1", "opencl", "base-v1")
+        output = self.root / "flat-repository"
+        args = self._args([opencl, base], output)
+        args.hosted_layout = "flat"
+
+        catalog_url = repository.prepare_repository(args)
+
+        self.assertEqual(
+            "https://packages.example.test/cyxwiz/alpha/"
+            "cyxwiz-backend-catalog-alpha-2026-08.json",
+            catalog_url,
+        )
+        hosted = output / "hosted"
+        catalog_path = hosted / "cyxwiz-backend-catalog-alpha-2026-08.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        urls = {
+            entry["pack_id"]: entry["manifest_url"]
+            for entry in catalog["signed"]["packs"]
+        }
+        self.assertEqual(
+            "https://packages.example.test/cyxwiz/alpha/base-v1.json",
+            urls["base-v1"],
+        )
+        self.assertTrue((hosted / "base-v1.json").is_file())
+        self.assertTrue((hosted / "base-v1.zip").is_file())
+        self.assertTrue((hosted / "opencl-v1.json").is_file())
+        self.assertTrue((hosted / "opencl-v1.zip").is_file())
+        self.assertFalse((hosted / "catalogs").exists())
+        self.assertTrue(
+            (output / "bootstrap" / "catalogs" / "current.json").is_file()
+        )
+
     def test_rejects_archive_tampering_without_publishing_output(self) -> None:
         base = self._manifest("base-v1", "cpu", None)
         (self.inputs / "base-v1.zip").write_bytes(b"tampered")
@@ -267,6 +302,31 @@ class BackendPackRepositoryTests(unittest.TestCase):
             repository.prepare_repository(self._args([base], output))
 
         self.assertFalse(output.exists())
+
+    def test_rejects_hosted_asset_name_collisions_before_publication(self) -> None:
+        colliding_archive = self._manifest(
+            "base-v1", "cpu", None, archive_name="base-v1.json"
+        )
+        nested_output = self.root / "nested-collision"
+        with self.assertRaisesRegex(
+            repository.RepositoryError, "Hosted release assets collide"
+        ):
+            repository.prepare_repository(
+                self._args([colliding_archive], nested_output)
+            )
+        self.assertFalse(nested_output.exists())
+
+        catalog_collision = self._manifest(
+            "cyxwiz-backend-catalog-alpha-2026-08", "cpu", None
+        )
+        flat_output = self.root / "flat-collision"
+        args = self._args([catalog_collision], flat_output)
+        args.hosted_layout = "flat"
+        with self.assertRaisesRegex(
+            repository.RepositoryError, "Hosted release assets collide"
+        ):
+            repository.prepare_repository(args)
+        self.assertFalse(flat_output.exists())
 
     def test_rejects_optional_pack_without_its_exact_base(self) -> None:
         opencl = self._manifest("opencl-v1", "opencl", "base-v1")
@@ -308,7 +368,31 @@ class BackendPackRepositoryTests(unittest.TestCase):
         args.base_url = "https://user@example.test/repository?token=secret"
 
         with self.assertRaisesRegex(
-            repository.RepositoryError, "direct HTTPS"
+            repository.RepositoryError, "use HTTPS"
+        ):
+            repository.prepare_repository(args)
+
+    def test_accepts_canonical_github_release_repository_url(self) -> None:
+        base = self._manifest("base-v1", "cpu", None)
+        args = self._args([base])
+        args.base_url = (
+            "https://github.com/CYXWIZ-Lab/CYXWIZ/releases/download/"
+            "v0.2.0-alpha.1"
+        )
+        catalog_url = repository.prepare_repository(args)
+        self.assertEqual(
+            args.base_url + "/catalogs/current.json",
+            catalog_url,
+        )
+
+    def test_rejects_mutable_github_release_repository_url(self) -> None:
+        base = self._manifest("base-v1", "cpu", None)
+        args = self._args([base])
+        args.base_url = (
+            "https://github.com/CYXWIZ-Lab/CYXWIZ/releases/download/latest"
+        )
+        with self.assertRaisesRegex(
+            repository.RepositoryError, "canonical immutable"
         ):
             repository.prepare_repository(args)
 

@@ -1,13 +1,13 @@
 ---
 name: cyxwiz-backend-engineering
-description: Apply CyxWiz backend computation guardrails when designing, implementing, optimizing, debugging, or reviewing Tensor operations, ArrayFire code, layers, losses, optimizers, metrics, training execution, device selection, placement, fallback, tracing, materialization, or performance changes in cyxwiz-backend and cyxwiz-engine. Enforce ArrayFire-first execution, explicit native C++ CPU fallback, device residency, numerical correctness, lean structure, measured optimization, and required tests before commit.
+description: Apply CyxWiz backend computation guardrails when designing, implementing, optimizing, debugging, or reviewing Tensor operations, ArrayFire code, layers, losses, optimizers, metrics, training execution, device selection, placement, fallback, tracing, materialization, or performance changes in cyxwiz-backend and cyxwiz-engine. Enforce ArrayFire-first Tensor execution, declared bounded native-control ownership, explicit native C++ CPU fallback, device residency, numerical correctness, measured optimization, and required tests before commit.
 ---
 
 # CyxWiz Backend Engineering
 
 Preserve correctness, execution truth, residency, and performance, in that
-order. Make the selected ArrayFire backend do supported computation; never
-recover speed by hiding native CPU work.
+order. Make the selected ArrayFire backend do supported Tensor and array
+computation; never recover speed by hiding native CPU work.
 
 Read [execution-contract.md](references/execution-contract.md) before changing
 device selection, Tensor ownership/layout, host access, fallback, placement,
@@ -20,7 +20,15 @@ or preparing a commit.
 - Treat the GUI Engine as ArrayFire-dependent. Keep backend-only native builds
   clearly reduced development/test configurations.
 - Treat ArrayFire CPU as an ArrayFire backend, not native C++ CPU fallback.
-- Try the selected ArrayFire backend first for every supported operation.
+- Try the selected ArrayFire backend first for every supported Tensor, array,
+  batch, reduction, model, or device-consumed operation.
+- Permit a native-owned bounded scalar/control operation only when it begins on
+  the host, is consumed by host/CPU/UI code at the same cadence, has no
+  device-resident downstream consumer, and an ArrayFire route would add a
+  host-device round trip. Declare and report that route before execution; it is
+  not a fallback.
+- Never extend the native-control exception to vectors, batches, Tensor math,
+  model fitting, or outputs that feed device computation.
 - Keep native C++ CPU paths for declared compatibility gaps, known production
   exceptions, and focused debugging. Never enter them silently.
 - Bind one immutable `ExecutionDeviceContext` before model construction and
@@ -51,9 +59,9 @@ trace path before editing. Identify requested/effective device, supported
 shapes and dtypes, Tensor layout transitions, host reads, device evaluations,
 exception handlers, and CPU branches.
 
-Classify each boundary as device compute, host ingress, bounded output, debug,
-or native fallback. Reproduce defects with a focused fixture. Capture a
-Release baseline before performance changes.
+Classify each boundary as device compute, host ingress, native-owned bounded
+control, bounded output, debug, or native fallback. Reproduce defects with a
+focused fixture. Capture a Release baseline before performance changes.
 
 Check allocation ownership, shape-product overflow, thread/global-device
 assumptions, stochastic seeds, serialization compatibility, and logging volume
@@ -62,8 +70,10 @@ when the change touches those concerns.
 ### 2. Define the Contract
 
 State the successful ArrayFire path and unsupported boundary. Decide what
-strict mode must do before native compute can begin. Name legitimate host
-outputs and their cadence. Specify numerical and trace assertions, not only an
+strict mode must do before fallback compute can begin. Name legitimate host
+outputs and their cadence. For native-owned control work, state why the value
+is host-owned, its bound and cadence, its consumer, and why no device-resident
+continuation exists. Specify numerical and trace assertions, not only an
 expected log line.
 
 Do not remove a native path merely because ArrayFire is required at startup.
@@ -101,6 +111,12 @@ or correctness reason.
 Route unavoidable native work through shared fallback policy and recording.
 Include operation, reason, selected device, shape, target `native_cpu`, and
 policy. Make strict mode fail before native compute.
+
+Do not record a declared native-owned bounded control operation as fallback.
+Report its effective native route and ownership reason separately. Read the
+decision criteria and examples in
+[execution-contract.md](references/execution-contract.md) before choosing this
+route; data size alone is not sufficient.
 
 ### 5. Keep Reporting Off the Hot Path
 

@@ -107,7 +107,12 @@ Tensor SoftmaxModule::Backward(const Tensor& grad_output) {
 // DropoutModule Implementation (ArrayFire)
 // ============================================================================
 
-DropoutModule::DropoutModule(float p) : p_(p), layer_(p) {}
+DropoutModule::DropoutModule(float p) : p_(p), layer_(p) {
+    if (!std::isfinite(p_) || p_ < 0.0f || p_ > 1.0f) {
+        throw std::invalid_argument(
+            "DropoutModule: p must be a finite probability in [0, 1]");
+    }
+}
 
 Tensor DropoutModule::Forward(const Tensor& input) {
     return layer_.Forward(input);

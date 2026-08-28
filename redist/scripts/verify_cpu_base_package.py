@@ -117,6 +117,10 @@ def install(archive: Path, manifest: dict[str, Any], install_root: Path) -> Path
     if not bootstrapper.is_file():
         raise CpuBaseSmokeError("CPU base is missing its runtime bootstrapper")
     shutil.copy2(bootstrapper, install_root / bootstrapper.name)
+    finalizer = base / "cyxwiz-product-removal-finalizer.exe"
+    if not finalizer.is_file():
+        raise CpuBaseSmokeError("CPU base is missing its product-removal finalizer")
+    shutil.copy2(finalizer, install_root / finalizer.name)
     state = {
         "schema_version": 1,
         "runtime_set_id": signed["runtime_set_id"],

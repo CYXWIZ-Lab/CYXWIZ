@@ -339,7 +339,6 @@ void Properties::RenderNodeProperties(MLNode& node) {
         properties_node_editors::RenderNodePropertiesContext{
             node_editor_,
             scope_buffers_,
-            scope_demo_time_,
             [this]() { InvalidateShapes(); }
         });
 }

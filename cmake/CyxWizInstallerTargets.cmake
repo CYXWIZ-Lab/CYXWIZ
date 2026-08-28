@@ -8,14 +8,6 @@ set(_cyxwiz_installer_backend_dir "${CMAKE_SOURCE_DIR}/cyxwiz-backend")
 set(CYXWIZ_INSTALLER_CATALOG_URL "" CACHE STRING
     "Default HTTPS URL for the signed CyxWiz backend-pack catalog")
 
-if(WIN32)
-    set(_cyxwiz_product_registration_platform_source
-        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/product_registration_windows.cpp")
-else()
-    set(_cyxwiz_product_registration_platform_source
-        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/product_registration_posix.cpp")
-endif()
-
 # Installer-only builds consume the backend's public device data types without
 # building the backend library that normally generates its export header.
 set(_cyxwiz_installer_generated_include "")
@@ -52,8 +44,6 @@ add_executable(cyxwiz-backend-pack-installer
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_qualification_adapter.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_service.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_snapshot.cpp"
-    "${CMAKE_SOURCE_DIR}/redist/bootstrapper/product_registration.cpp"
-    "${_cyxwiz_product_registration_platform_source}"
 )
 target_include_directories(cyxwiz-backend-pack-installer PRIVATE
     "${_cyxwiz_installer_engine_dir}/src"
@@ -118,10 +108,28 @@ if(CYXWIZ_BUILD_TESTS)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
 
+    add_executable(test_installer_product_removal
+        "${_cyxwiz_installer_engine_dir}/tests/test_installer_product_removal.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
+    )
+    target_include_directories(test_installer_product_removal PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper"
+    )
+    target_link_libraries(test_installer_product_removal PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_installer_product_removal PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME installer_product_removal_contract
+        COMMAND test_installer_product_removal
+    )
+
     add_executable(test_product_registration
         "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_registration.cpp"
-        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/product_registration.cpp"
-        "${_cyxwiz_product_registration_platform_source}"
     )
     target_include_directories(test_product_registration PRIVATE
         "${CMAKE_SOURCE_DIR}/redist/bootstrapper"
@@ -172,6 +180,113 @@ if(CYXWIZ_BUILD_TESTS)
         NAME product_removal_authorization_contract
         COMMAND test_product_removal_authorization
     )
+
+    add_executable(test_product_removal_request
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_removal_request.cpp"
+    )
+    target_link_libraries(test_product_removal_request PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_product_removal_request PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME product_removal_request_contract
+        COMMAND test_product_removal_request
+    )
+
+    add_executable(test_product_removal_quarantine
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_removal_quarantine.cpp"
+    )
+    target_link_libraries(test_product_removal_quarantine PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_product_removal_quarantine PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME product_removal_quarantine_contract
+        COMMAND test_product_removal_quarantine
+    )
+
+    add_executable(test_product_removal_finalizer
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_removal_finalizer.cpp"
+    )
+    target_link_libraries(test_product_removal_finalizer PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_product_removal_finalizer PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_dependencies(test_product_removal_finalizer
+        cyxwiz-product-removal-finalizer
+    )
+    add_test(
+        NAME product_removal_finalizer_contract
+        COMMAND test_product_removal_finalizer
+    )
+
+    add_executable(test_product_removal_finalizer_child
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_removal_finalizer_child.cpp"
+    )
+    target_link_libraries(test_product_removal_finalizer_child PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_product_removal_finalizer_child PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+
+    add_executable(test_product_removal_handoff
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_removal_handoff.cpp"
+    )
+    target_link_libraries(test_product_removal_handoff PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_product_removal_handoff PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_dependencies(test_product_removal_handoff
+        test_product_removal_finalizer_child
+    )
+    add_test(
+        NAME product_removal_handoff_contract
+        COMMAND test_product_removal_handoff
+    )
+
+    add_executable(test_product_removal_cleanup
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_removal_cleanup.cpp"
+    )
+    target_link_libraries(test_product_removal_cleanup PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_product_removal_cleanup PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME product_removal_cleanup_contract
+        COMMAND test_product_removal_cleanup
+    )
+
+    add_executable(test_product_removal_transaction
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper/test_product_removal_transaction.cpp"
+    )
+    target_link_libraries(test_product_removal_transaction PRIVATE
+        cyxwiz-runtime-bootstrap
+    )
+    set_target_properties(test_product_removal_transaction PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME product_removal_transaction_contract
+        COMMAND test_product_removal_transaction
+    )
 endif()
 
 find_package(OpenGL REQUIRED)
@@ -181,6 +296,8 @@ set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_theme.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_view.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_operation.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_removal_view.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_catalog_adapter.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/installer_verification_summary.cpp"
@@ -306,6 +423,25 @@ install(RUNTIME_DEPENDENCY_SET cyxwiz-installer-runtime-dependencies
     RUNTIME DESTINATION .
     LIBRARY DESTINATION .
     FRAMEWORK DESTINATION Frameworks
+)
+install(RUNTIME_DEPENDENCY_SET cyxwiz-setup-runtime-dependencies
+    PRE_EXCLUDE_REGEXES
+        "api-ms-win-.*"
+        "ext-ms-.*"
+        "azureattest.*"
+        "hvsifiletrust\\.dll"
+        "pdmutilities\\.dll"
+        "wpaxholder\\.dll"
+    POST_EXCLUDE_REGEXES
+        ".*[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\].*"
+        "^/lib/.*"
+        "^/lib64/.*"
+        "^/usr/lib/.*"
+        "^/System/Library/.*"
+    ${_cyxwiz_installer_runtime_directory_args}
+    RUNTIME DESTINATION . COMPONENT cyxwiz-setup
+    LIBRARY DESTINATION . COMPONENT cyxwiz-setup
+    FRAMEWORK DESTINATION Frameworks COMPONENT cyxwiz-setup
 )
 install(FILES "${CMAKE_SOURCE_DIR}/LICENSE" DESTINATION .)
 

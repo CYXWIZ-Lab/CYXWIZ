@@ -33,8 +33,10 @@ int main(int argc, char** argv) {
         return 11;
     }
     if (argc == 1) return 0;
-    if (argc == 3 && std::string(argv[1]) == "--runtime-root" &&
-        std::filesystem::path(argv[2]) == std::filesystem::path(runtime_root)) {
+    if ((argc == 3 || argc == 4) &&
+        std::string(argv[1]) == "--runtime-root" &&
+        std::filesystem::path(argv[2]) == std::filesystem::path(runtime_root) &&
+        (argc == 3 || std::string(argv[3]) == "--product-removal-host")) {
         return 0;
     }
     return 12;

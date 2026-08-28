@@ -9,6 +9,7 @@
 #include "pca_operator.h"
 #include "preprocessing_operators.h"
 #include "random_forest_operator.h"
+#include "regression_model_predictor_operator.h"
 #include "regression_operators.h"
 #include "sentiment_analyzer_operator.h"
 #include "signal_processing_operators.h"
@@ -115,6 +116,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::PolynomialRegressionNode, []() {
         return std::make_unique<PolynomialRegressionOperator>();
+    });
+    RegisterCreator(gui::NodeType::RegressionModelPredictor, []() {
+        return std::make_unique<RegressionModelPredictorOperator>();
     });
     RegisterCreator(gui::NodeType::DecisionTreeClassifier, []() {
         return std::make_unique<DecisionTreeClassifierOperator>();

@@ -212,10 +212,21 @@ class BackendPackContractTests(unittest.TestCase):
     def test_trust_root_passes(self) -> None:
         contract.validate_trust_root(trust_root())
 
+    def test_trust_root_accepts_separate_installer_authority(self) -> None:
+        document = trust_root()
+        document["keys"][0]["roles"] = ["installer"]
+        contract.validate_trust_root(document)
+
     def test_trust_root_rejects_duplicate_roles(self) -> None:
         document = trust_root()
         document["keys"][0]["roles"] = ["pack", "pack"]
         with self.assertRaisesRegex(contract.ContractError, "must be unique"):
+            contract.validate_trust_root(document)
+
+    def test_trust_root_rejects_unknown_role(self) -> None:
+        document = trust_root()
+        document["keys"][0]["roles"] = ["publisher"]
+        with self.assertRaisesRegex(contract.ContractError, "unsupported role"):
             contract.validate_trust_root(document)
 
     def test_trust_root_rejects_unknown_fields(self) -> None:

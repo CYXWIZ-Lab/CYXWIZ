@@ -974,6 +974,9 @@ int main(int argc, char** argv) {
     const fs::path automatic_state_root =
         fs::temp_directory_path() /
         "cyxwiz_automatic_preprocessing_artifacts";
+    const fs::path regression_artifact_root =
+        fs::temp_directory_path() /
+        "cyxwiz_automatic_regression_artifacts";
     const fs::path duplicates_csv_path =
         fs::temp_directory_path() / "cyxwiz_pipeline_executor_duplicates.csv";
     const fs::path json_payload_csv_path =
@@ -1013,6 +1016,7 @@ int main(int argc, char** argv) {
     fs::remove(fill_state_path);
     fs::remove(scaler_state_path);
     fs::remove_all(automatic_state_root);
+    fs::remove_all(regression_artifact_root);
     fs::remove(duplicates_csv_path);
     fs::remove(json_payload_csv_path);
     fs::remove(roc_csv_path);
@@ -1146,6 +1150,25 @@ int main(int argc, char** argv) {
     Check(projected_data_input->GetNumColumns() == 1 &&
               projected_data_input->GetSchema()->field(0)->name() == "x",
           "PipelineExecutor DataInput must honor the canonical selected_columns projection");
+
+    const std::string identity_pipeline_json =
+        R"({"nodes":[)"
+        R"({"id":9910,"type":"DataInput","name":"IdentityInput","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9911,"type":"Identity","name":"Identity","parameters":{}})"
+        R"(],"links":[{"start_node":9910,"end_node":9911}]})";
+
+    cyxwiz::PipelineExecutor identity_executor;
+    Check(identity_executor.ExecutePipeline(identity_pipeline_json),
+          "PipelineExecutor should route Identity through PipelineOperatorFactory: " +
+              identity_executor.GetLastError());
+    auto identity_input = registry.GetArrowDataset("ds_datainput_9910");
+    auto identity_output = registry.GetArrowDataset("ds_operator_Identity_9911");
+    Check(identity_input != nullptr && identity_output != nullptr,
+          "Identity input and output datasets should remain registered");
+    Check(identity_input->GetArrowTable() == identity_output->GetArrowTable(),
+          "Identity should preserve the exact Arrow table without copying");
 
     const std::string pipeline_json =
         R"({"nodes":[)"
@@ -1732,6 +1755,7 @@ int main(int argc, char** argv) {
         {"Average", false},
         {"Constant", false},
         {"Lambda", false},
+        {"Parameter", false},
         {"Reshape", false},
         {"View", false},
         {"Permute", false},
@@ -1760,6 +1784,9 @@ int main(int argc, char** argv) {
         {"TensorLogicalMask", false},
         {"Embedding", false},
         {"SignalSlider", false},
+        {"SineWave", false},
+        {"StepSignal", false},
+        {"RampSignal", false},
         {"SignalScope", false},
         {"QualityAnalyzer", false},
         {"TableSplitter", false},
@@ -2276,6 +2303,49 @@ int main(int argc, char** argv) {
               std::string::npos,
           "LinearRegression fit_intercept validation should be specific: " +
               bad_linear_regression_intercept_executor.GetLastError());
+
+    const std::string regression_model_e2e_json =
+        R"({"nodes":[)"
+        R"({"id":9201,"type":"DataInput","name":"Regression Data","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":9202,"type":"LinearRegressionNode","name":"Fit Linear","parameters":{)"
+        R"("feature_cols":"x","target_col":"y","fit_intercept":"true"}},)"
+        R"({"id":9203,"type":"RegressionModelPredictor","name":"Score Linear","parameters":{)"
+        R"("prediction_col":"scored_y"}})"
+        R"(],"links":[)"
+        R"({"start_node":9201,"end_node":9202,"start_pin_index":0,"end_pin_index":0},)"
+        R"({"start_node":9202,"end_node":9203,"start_pin_index":0,"end_pin_index":0},)"
+        R"({"start_node":9202,"end_node":9203,"start_pin_index":1,"end_pin_index":1})"
+        R"(]})";
+
+    cyxwiz::PipelineExecutor regression_model_e2e_executor;
+    regression_model_e2e_executor.SetArtifactRoot(
+        regression_artifact_root.string());
+    Check(regression_model_e2e_executor.ExecutePipeline(
+              regression_model_e2e_json),
+          "fitted regression Model output should route into prediction: " +
+              regression_model_e2e_executor.GetLastError());
+    auto regression_predictions =
+        registry.GetArrowDataset("ds_operator_RegressionModelPredictor_9203");
+    Check(regression_predictions != nullptr,
+          "regression predictor should register its scored Arrow table");
+    Check(std::abs(ReadNumericValue(
+                       regression_predictions->GetArrowTable(),
+                       "scored_y", 2) - 30.0) < 1e-4,
+          "E2E fitted model should score using the learned equation");
+    size_t regression_artifact_count = 0;
+    if (fs::exists(regression_artifact_root)) {
+        for (const auto& entry :
+             fs::recursive_directory_iterator(regression_artifact_root)) {
+            if (entry.is_regular_file() &&
+                entry.path().extension() == ".json") {
+                ++regression_artifact_count;
+            }
+        }
+    }
+    Check(regression_artifact_count == 1,
+          "regression fit should create one project-owned Model artifact");
 
     const std::string bad_linear_regression_feature_type_json =
         R"({"nodes":[)"
@@ -7102,6 +7172,9 @@ int main(int argc, char** argv) {
     registry.UnloadDataset("ds_datainput_160");
     registry.UnloadDataset("ds_datainput_222");
     registry.UnloadDataset("ds_operator_TreeModelPredictor_223");
+    registry.UnloadDataset("ds_datainput_9201");
+    registry.UnloadDataset("ds_operator_LinearRegressionNode_9202");
+    registry.UnloadDataset("ds_operator_RegressionModelPredictor_9203");
     registry.UnloadDataset("ds_datainput_71");
     registry.UnloadDataset("ds_binning_72");
     registry.UnloadDataset("ds_datainput_197");
@@ -7163,6 +7236,7 @@ int main(int argc, char** argv) {
     fs::remove(fill_state_path);
     fs::remove(scaler_state_path);
     fs::remove_all(automatic_state_root);
+    fs::remove_all(regression_artifact_root);
     fs::remove(sequence_vocab_csv_path);
 
     cyxwiz::AsyncTaskManager::Instance().Shutdown();

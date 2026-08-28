@@ -270,6 +270,17 @@ int main() {
     WriteJson(catalog_path, Catalog(catalog_key, Sha256(manifest_bytes)));
 
     std::string error;
+    const auto trust_json = TrustRoot(catalog_key, pack_key).dump();
+    auto memory_trust = BackendPackTrustStore::LoadJson(trust_json, error);
+    if (!Expect(
+            memory_trust.has_value() &&
+                memory_trust->Find("catalog-2026") != nullptr,
+            error.c_str()) ||
+        !Expect(
+            !BackendPackTrustStore::LoadJson("", error).has_value(),
+            "empty in-memory trust was accepted")) {
+        return 1;
+    }
     auto trust = BackendPackTrustStore::Load(trust_path, error);
     if (!Expect(trust.has_value(), error.c_str())) return 1;
     BackendPackMetadataVerifier verifier(

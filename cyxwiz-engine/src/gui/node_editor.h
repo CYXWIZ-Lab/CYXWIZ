@@ -5,6 +5,7 @@
 #include <map>
 #include <unordered_map>
 #include <memory>
+#include <optional>
 #include <functional>
 #include <atomic>
 #include <cstdint>
@@ -590,6 +591,10 @@ enum class NodeType {
     SeasonalNaive,      // Repeat the latest seasonal cycle over future horizons
     TimeSeriesSegment,  // Validate timestamps and assign gap-safe segment IDs
 
+    // ===== Appended Classical Regression Inference Node =====
+    // Appended to preserve existing serialized numeric NodeType ids.
+    RegressionModelPredictor, // Apply a fitted linear/polynomial artifact
+
     // Special sentinel value
     Unknown
 };
@@ -943,6 +948,14 @@ public:
     int GetSelectedNodeId() const { return selected_node_id_; }
     const std::string& GetCurrentFilePath() const { return current_file_path_; }
     std::string GetNodeTypeDisplayName(NodeType type) const { return GetNodeTypeName(type); }
+
+    // Thread-safe scalar simulation bridge used by Properties.
+    bool IsGraphSimulationRunning() const { return is_simulating_.load(); }
+    bool TryGetSimulationScalar(int pin_id, float& value) const;
+    float GetSimulationTime() const;
+    bool SetSimulationNodeParameter(int node_id,
+                                    const std::string& key,
+                                    const std::string& value);
 
     // Training callback - set by MainWindow to trigger training from node graph
     using TrainCallback = std::function<void(const std::vector<MLNode>&, const std::vector<NodeLink>&)>;
@@ -1301,6 +1314,10 @@ private:
     std::string GenerateTensorFlowCode(const std::vector<int>& sorted_ids);
     std::string GenerateKerasCode(const std::vector<int>& sorted_ids);
     std::string GeneratePyCyxWizCode(const std::vector<int>& sorted_ids);
+    std::optional<std::string> FindDenseActivationConfigurationError(
+        const std::vector<int>& sorted_ids) const;
+    std::optional<std::string> FindUnsupportedSequentialLayerError(
+        const std::vector<int>& sorted_ids) const;
 
     // RL-specific code generation
     bool IsRLGraph(const std::vector<int>& sorted_ids) const;

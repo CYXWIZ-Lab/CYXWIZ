@@ -1,6 +1,8 @@
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_metadata_registry.h"
+#include "../src/gui/activation_codegen_contract.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
+#include "../src/core/simulation_runtime_capabilities.h"
 #include "../src/gui/data_studio/pipeline_canvas.h"
 #include "../src/gui/data_studio/node_registry.h"
 #include "../src/gui/node_import_guardrails.h"
@@ -8,6 +10,7 @@
 #include "../src/gui/properties_truth.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <map>
@@ -949,6 +952,235 @@ void CheckStandardScalerReferenceContract(
                      true, "StandardScaler");
 }
 
+void CheckTransformerFamilyReferenceContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    for (const auto type : {gui::NodeType::TransformerEncoder,
+                            gui::NodeType::TransformerDecoder}) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr && meta->IsImplemented(),
+              "Transformer block metadata should be executable: " + TypeId(type));
+        Check(ParameterMatches(meta, "d_model", "int", "512") &&
+                  ParameterMatches(meta, "num_heads", "int", "8") &&
+                  ParameterMatches(meta, "dim_feedforward", "int", "2048") &&
+                  ParameterMatches(meta, "dropout", "float", "0.1") &&
+                  ParameterMatches(meta, "norm_first", "bool", "false"),
+              "Transformer block metadata should expose the five consumed fields: " +
+                  TypeId(type));
+        Check(!HasParameter(meta, "num_layers") &&
+                  !HasParameter(meta, "nhead") &&
+                  !HasParameter(meta, "ff_dim") &&
+                  !HasParameter(meta, "d_ff"),
+              "Transformer block metadata must not expose compatibility aliases: " +
+                  TypeId(type));
+    }
+
+    const auto* positional =
+        metadata.GetMetadata(gui::NodeType::PositionalEncoding);
+    Check(positional != nullptr && positional->IsImplemented(),
+          "PositionalEncoding metadata should be executable");
+    Check(ParameterMatches(positional, "d_model", "int", "512") &&
+              ParameterMatches(positional, "max_sequence_length", "int", "5000") &&
+              positional->parameters.size() == 2,
+          "PositionalEncoding should expose only its two consumed fields");
+    Check(!HasParameter(positional, "max_len") &&
+              !HasParameter(positional, "dropout"),
+          "PositionalEncoding must not expose legacy or ignored fields");
+
+    using Parameters = std::map<std::string, std::string>;
+    cyxwiz::TransformerConfiguration resolved;
+    Check(!cyxwiz::ResolveTransformerConfiguration(
+              gui::NodeType::TransformerEncoder,
+              Parameters{{"d_model", "8"}, {"embed_dim", "8"},
+                         {"num_heads", "2"}, {"nhead", "2"},
+                         {"dim_feedforward", "32"}, {"ff_dim", "32"},
+                         {"d_ff", "32"}, {"dropout_rate", "0.25"},
+                         {"norm_first", "1"}, {"num_layers", "1"}},
+              resolved),
+          "equal-valued legacy transformer aliases should remain readable");
+    Check(resolved.model_width == 8 && resolved.num_heads == 2 &&
+              resolved.feedforward_width == 32 &&
+              std::abs(resolved.dropout - 0.25f) < 1e-6f &&
+              resolved.norm_first,
+          "the shared transformer policy must resolve every accepted alias into construction values");
+    Check(cyxwiz::ResolveInvalidTransformerConfigurationReason(
+              gui::NodeType::TransformerEncoder,
+              Parameters{{"d_model", "8"}, {"nhead", "3"}}).has_value(),
+          "non-divisible head configurations must fail closed");
+    Check(cyxwiz::ResolveInvalidTransformerConfigurationReason(
+              gui::NodeType::TransformerEncoder,
+              Parameters{{"d_model", "8"}, {"num_layers", "6"}}).has_value(),
+          "a transformer node must not pretend to expand num_layers");
+    Check(cyxwiz::ResolveInvalidTransformerConfigurationReason(
+              gui::NodeType::MultiHeadAttention,
+              Parameters{{"embed_dim", "8"}, {"d_model", "12"}}).has_value(),
+          "conflicting attention width aliases must fail closed");
+    Check(!cyxwiz::ResolveInvalidTransformerConfigurationReason(
+              gui::NodeType::PositionalEncoding,
+              Parameters{{"d_model", "8"}, {"max_len", "32"},
+                         {"max_length", "32"}}),
+          "equal-valued positional-length aliases should remain readable");
+    Check(cyxwiz::ResolveInvalidTransformerConfigurationReason(
+              gui::NodeType::PositionalEncoding,
+              Parameters{{"max_len", "32"}, {"max_length", "64"}}).has_value(),
+          "conflicting positional-length aliases must fail closed");
+}
+
+void CheckUtilityNodeFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const auto* identity = metadata.GetMetadata(gui::NodeType::Identity);
+    Check(identity != nullptr &&
+              identity->status == cyxwiz::NodeImplementationStatus::Implemented,
+          "Identity should remain implemented by its table operator");
+    Check(identity->inputs.size() == 1 && identity->outputs.size() == 1 &&
+              HasInputType(identity, "Table", gui::PinType::Dataset) &&
+              HasOutputType(identity, "Table", gui::PinType::Dataset),
+          "Identity should expose its real Arrow-table passthrough pins");
+    Check(identity->parameters.empty(),
+          "Identity should not expose parameters its operator does not consume");
+    Check(!identity->help_text.empty() && cyxwiz::CanAddNodeToGraph(*identity),
+          "Identity should describe and allow its operator-backed table path");
+    const auto identity_runtime =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::Identity);
+    Check(identity_runtime.mode ==
+              cyxwiz::PipelineRuntimeSupportMode::OperatorBacked &&
+              identity_runtime.implementation_owner ==
+                  cyxwiz::PipelineRuntimeImplementationOwner::PipelineOperatorFactory,
+          "Identity runtime truth should resolve to PipelineOperatorFactory");
+    CheckSupportAxis(identity, "Implementation Owner",
+                     "pipeline_operator_factory", true, "Identity");
+    CheckSupportAxis(identity, "Workflow Lane",
+                     "data_studio_analytics", true, "Identity");
+    Check(cyxwiz::PipelineOperatorFactory::Instance().Create(
+              gui::NodeType::Identity) != nullptr,
+          "Identity should have a registered pipeline operator");
+
+    const auto check_blocked =
+        [&](gui::NodeType type,
+            const char* legacy_name,
+            std::size_t input_count,
+            std::size_t output_count) {
+            const auto* meta = metadata.GetMetadata(type);
+            Check(meta != nullptr &&
+                      meta->status == cyxwiz::NodeImplementationStatus::Template &&
+                      meta->badge == "Blocked" &&
+                      !cyxwiz::CanAddNodeToGraph(*meta),
+                  std::string(legacy_name) +
+                      " should remain a blocked compatibility contract");
+            Check(meta->inputs.size() == input_count &&
+                      meta->outputs.size() == output_count &&
+                      !meta->help_text.empty(),
+                  std::string(legacy_name) +
+                      " should preserve pins and explain its missing owner");
+            const auto runtime = cyxwiz::ResolvePipelineRuntimeSupport(type);
+            Check(runtime.mode == cyxwiz::PipelineRuntimeSupportMode::FailClosed &&
+                      runtime.implementation_owner ==
+                          cyxwiz::PipelineRuntimeImplementationOwner::None,
+                  std::string(legacy_name) +
+                      " should resolve to an unowned fail-closed runtime");
+            CheckSupportAxis(meta, "Runtime", "fail_closed", false, legacy_name);
+            CheckSupportAxis(meta, "Implementation Owner", "none", false,
+                             legacy_name);
+            CheckSupportAxis(meta, "Support State", "blocked", false,
+                             legacy_name);
+            Check(cyxwiz::PipelineOperatorFactory::Instance().Create(type) == nullptr,
+                  std::string(legacy_name) +
+                      " must not gain a fictional pipeline operator");
+        };
+
+    check_blocked(gui::NodeType::Lambda, "Lambda", 1, 1);
+    const auto* lambda = metadata.GetMetadata(gui::NodeType::Lambda);
+    Check(lambda != nullptr && lambda->parameters.size() == 1 &&
+              ParameterMatches(lambda, "function", "string", "lambda x: x"),
+          "Lambda should preserve its historical function field only");
+
+    check_blocked(gui::NodeType::Parameter, "Parameter", 0, 1);
+    const auto* parameter = metadata.GetMetadata(gui::NodeType::Parameter);
+    Check(parameter != nullptr && parameter->parameters.size() == 3 &&
+              HasOutputType(parameter, "Parameter", gui::PinType::Tensor) &&
+              ParameterMatches(parameter, "shape", "string", "256") &&
+              ParameterMatches(parameter, "init", "enum", "xavier") &&
+              ParameterMatches(parameter, "requires_grad", "bool", "true"),
+          "Parameter should preserve its historical blocked saved-graph contract");
+}
+
+void CheckSimulationNodeFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    for (const auto& capability :
+         cyxwiz::kBuiltInSimulationRuntimeCapabilities) {
+        const auto* meta = metadata.GetMetadata(capability.node_type);
+        Check(meta != nullptr &&
+                  meta->status ==
+                      cyxwiz::NodeImplementationStatus::Implemented &&
+                  cyxwiz::CanAddNodeToGraph(*meta),
+              std::string(capability.runtime_name) +
+                  " should be addable in the simulation lane");
+        Check(!meta->help_text.empty(),
+              std::string(capability.runtime_name) +
+                  " should explain its GraphExecutor contract");
+        CheckSupportAxis(meta, "Workflow Lane", "simulation", true,
+                         capability.runtime_name);
+        CheckSupportAxis(meta, "Simulation Runtime", "supported", true,
+                         capability.runtime_name);
+        CheckSupportAxis(meta, "Implementation Owner", "graph_executor", true,
+                         capability.runtime_name);
+        CheckSupportAxis(meta, "Support State", "real", true,
+                         capability.runtime_name);
+        const auto pipeline =
+            cyxwiz::ResolvePipelineRuntimeSupport(capability.node_type);
+        Check(pipeline.mode == cyxwiz::PipelineRuntimeSupportMode::FailClosed &&
+                  !pipeline.pipeline_executor_supported,
+              std::string(capability.runtime_name) +
+                  " should remain rejected by PipelineExecutor");
+    }
+
+    const auto* constant = metadata.GetMetadata(gui::NodeType::Constant);
+    Check(constant && constant->inputs.empty() &&
+              HasOutputType(constant, "Value", gui::PinType::Tensor) &&
+              constant->parameters.size() == 1 &&
+              ParameterMatches(constant, "value", "float", "1.0"),
+          "Constant should expose only its scalar simulation value");
+
+    const auto* slider = metadata.GetMetadata(gui::NodeType::SignalSlider);
+    Check(slider && slider->inputs.empty() &&
+              HasOutputType(slider, "Value", gui::PinType::Tensor) &&
+              slider->parameters.size() == 3 &&
+              ParameterMatches(slider, "value", "float", "0.0") &&
+              ParameterMatches(slider, "min", "float", "-1.0") &&
+              ParameterMatches(slider, "max", "float", "1.0"),
+          "SignalSlider metadata should match live executor keys and defaults");
+
+    const auto* sine = metadata.GetMetadata(gui::NodeType::SineWave);
+    Check(sine && HasOutputType(sine, "Signal", gui::PinType::Tensor) &&
+              sine->parameters.size() == 4 &&
+              ParameterMatches(sine, "amplitude", "float", "1.0") &&
+              ParameterMatches(sine, "frequency", "float", "1.0") &&
+              ParameterMatches(sine, "phase", "float", "0.0") &&
+              ParameterMatches(sine, "offset", "float", "0.0"),
+          "SineWave metadata should match its complete equation");
+
+    const auto* step = metadata.GetMetadata(gui::NodeType::StepSignal);
+    Check(step && step->parameters.size() == 3 &&
+              ParameterMatches(step, "step_time", "float", "1.0") &&
+              ParameterMatches(step, "initial_value", "float", "0.0") &&
+              ParameterMatches(step, "final_value", "float", "1.0"),
+          "StepSignal metadata should match GraphExecutor parameter keys");
+
+    const auto* ramp = metadata.GetMetadata(gui::NodeType::RampSignal);
+    Check(ramp && ramp->parameters.size() == 3 &&
+              ParameterMatches(ramp, "start_value", "float", "0.0") &&
+              ParameterMatches(ramp, "end_value", "float", "1.0") &&
+              ParameterMatches(ramp, "duration", "float", "5.0"),
+          "RampSignal metadata should use duration semantics");
+
+    const auto* scope = metadata.GetMetadata(gui::NodeType::SignalScope);
+    Check(scope && scope->inputs.size() == 1 && scope->outputs.empty() &&
+              HasInputType(scope, "Signal", gui::PinType::Tensor) &&
+              scope->parameters.size() == 2 &&
+              ParameterMatches(scope, "window_size", "int", "500") &&
+              ParameterMatches(scope, "auto_scale", "bool", "true"),
+          "SignalScope metadata should describe one live scalar input and its display controls");
+}
+
 void CheckDataInputDialogReferenceContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const auto* meta = metadata.GetMetadata(gui::NodeType::DataInput);
@@ -998,6 +1230,391 @@ void CheckConv2DBlockedReferenceContract(
     CheckSupportAxis(meta, "Compile", "unsupported", false, "Conv2D");
     CheckSupportAxisReasonContains(
         meta, "Support State", "not supported", "Conv2D");
+}
+
+void CheckConvolutionPoolingBlockedFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const std::initializer_list<gui::NodeType> family = {
+        gui::NodeType::Conv1D,
+        gui::NodeType::Conv2D,
+        gui::NodeType::Conv3D,
+        gui::NodeType::DepthwiseConv2D,
+        gui::NodeType::MaxPool2D,
+        gui::NodeType::AvgPool2D,
+        gui::NodeType::GlobalMaxPool,
+        gui::NodeType::GlobalAvgPool,
+        gui::NodeType::AdaptiveAvgPool,
+    };
+    for (const auto type : family) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr,
+              "convolution/pooling metadata should exist: " + TypeId(type));
+        Check(meta->status == cyxwiz::NodeImplementationStatus::Template &&
+                  meta->badge == "Blocked" &&
+                  !cyxwiz::CanAddNodeToGraph(*meta),
+              "unowned convolution/pooling node must remain blocked: " +
+                  TypeId(type));
+        Check(meta->inputs.size() == 1 && meta->outputs.size() == 1 &&
+                  HasInputType(meta, "Input", gui::PinType::Tensor) &&
+                  HasOutputType(meta, "Output", gui::PinType::Tensor),
+              "blocked convolution/pooling pins should remain inspectable: " +
+                  TypeId(type));
+        CheckSupportAxis(meta, "Training Backend",
+                         "unsupported_sequential_model_layer", false,
+                         TypeId(type));
+        CheckSupportAxis(meta, "Compile", "unsupported", false, TypeId(type));
+        CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
+    }
+
+    for (const auto type : {gui::NodeType::Conv1D,
+                            gui::NodeType::Conv3D}) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta->parameters.size() == 4 &&
+                  ParameterMatches(meta, "filters", "int", "32") &&
+                  ParameterMatches(meta, "kernel_size", "int", "3") &&
+                  ParameterMatches(meta, "stride", "int", "1") &&
+                  ParameterMatches(meta, "padding", "enum", "same") &&
+                  !HasParameter(meta, "activation"),
+              "blocked convolution contract should preserve only real saved fields: " +
+                  TypeId(type));
+    }
+
+    const auto* depthwise =
+        metadata.GetMetadata(gui::NodeType::DepthwiseConv2D);
+    Check(depthwise->parameters.size() == 5 &&
+              ParameterMatches(depthwise, "filters", "int", "32") &&
+              ParameterMatches(depthwise, "kernel_size", "int", "3") &&
+              ParameterMatches(depthwise, "stride", "int", "1") &&
+              ParameterMatches(depthwise, "padding", "enum", "same") &&
+              ParameterMatches(depthwise, "depth_multiplier", "int", "1") &&
+              !HasParameter(depthwise, "activation"),
+          "DepthwiseConv2D should preserve its compatibility fields without a fictional activation");
+
+    for (const auto type : {gui::NodeType::MaxPool2D,
+                            gui::NodeType::AvgPool2D}) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta->parameters.size() == 2 &&
+                  ParameterMatches(meta, "pool_size", "int", "2") &&
+                  ParameterMatches(meta, "stride", "int", "2") &&
+                  !HasParameter(meta, "kernel_size"),
+              "pooling metadata must use the saved pool_size/stride contract: " +
+                  TypeId(type));
+    }
+
+    Check(metadata.GetMetadata(gui::NodeType::GlobalMaxPool)->parameters.empty() &&
+              metadata.GetMetadata(gui::NodeType::GlobalAvgPool)->parameters.empty(),
+          "global pooling compatibility contracts should have no parameters");
+    const auto* adaptive = metadata.GetMetadata(gui::NodeType::AdaptiveAvgPool);
+    Check(adaptive->parameters.size() == 1 &&
+              ParameterMatches(adaptive, "output_size", "int", "1"),
+          "AdaptiveAvgPool should preserve its output_size compatibility field");
+}
+
+void CheckBlockedUpsamplingFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    for (const auto type : {gui::NodeType::ConvTranspose2D,
+                            gui::NodeType::Upsample,
+                            gui::NodeType::PixelShuffle}) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr,
+              "upsampling metadata should exist: " + TypeId(type));
+        Check(meta->category == gui::NodeCategory::Upsampling &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Template &&
+                  meta->badge == "Blocked" &&
+                  !cyxwiz::CanAddNodeToGraph(*meta),
+              "unowned upsampling node must remain blocked: " + TypeId(type));
+        Check(meta->inputs.size() == 1 && meta->outputs.size() == 1 &&
+                  HasInputType(meta, "Input", gui::PinType::Tensor) &&
+                  HasOutputType(meta, "Output", gui::PinType::Tensor),
+              "blocked upsampling pins should remain inspectable: " +
+                  TypeId(type));
+        CheckSupportAxis(meta, "Training Backend",
+                         "unsupported_sequential_model_layer", false,
+                         TypeId(type));
+        CheckSupportAxis(meta, "Compile", "unsupported", false, TypeId(type));
+        CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
+    }
+
+    const auto* transpose =
+        metadata.GetMetadata(gui::NodeType::ConvTranspose2D);
+    Check(transpose->parameters.size() == 6 &&
+              ParameterMatches(transpose, "in_channels", "int", "64") &&
+              ParameterMatches(transpose, "out_channels", "int", "32") &&
+              ParameterMatches(transpose, "kernel_size", "int", "3") &&
+              ParameterMatches(transpose, "stride", "int", "2") &&
+              ParameterMatches(transpose, "padding", "int", "1") &&
+              ParameterMatches(transpose, "output_padding", "int", "1") &&
+              !HasParameter(transpose, "filters"),
+          "ConvTranspose2D metadata must preserve its six saved fields");
+
+    const auto* upsample = metadata.GetMetadata(gui::NodeType::Upsample);
+    Check(upsample->parameters.size() == 2 &&
+              ParameterMatches(upsample, "scale_factor", "int", "2") &&
+              ParameterMatches(upsample, "mode", "enum", "0") &&
+              FindParameter(upsample, "mode")->enum_values ==
+                  std::vector<std::string>({"0", "1"}),
+          "Upsample metadata must preserve numeric mode compatibility");
+
+    const auto* pixel_shuffle =
+        metadata.GetMetadata(gui::NodeType::PixelShuffle);
+    Check(pixel_shuffle->parameters.size() == 1 &&
+              ParameterMatches(pixel_shuffle, "upscale_factor", "int", "2") &&
+              !HasParameter(pixel_shuffle, "scale_factor"),
+          "PixelShuffle metadata must use its saved upscale_factor field");
+}
+
+void CheckBlockedNormalizationFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    for (const auto type : {gui::NodeType::GroupNorm,
+                            gui::NodeType::InstanceNorm}) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr,
+              "normalization metadata should exist: " + TypeId(type));
+        Check(meta->category == gui::NodeCategory::Normalization &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Template &&
+                  meta->badge == "Blocked" &&
+                  !cyxwiz::CanAddNodeToGraph(*meta),
+              "unowned normalization node must remain blocked: " +
+                  TypeId(type));
+        Check(meta->inputs.size() == 1 && meta->outputs.size() == 1 &&
+                  HasInputType(meta, "Input", gui::PinType::Tensor) &&
+                  HasOutputType(meta, "Output", gui::PinType::Tensor),
+              "blocked normalization pins should remain inspectable: " +
+                  TypeId(type));
+        CheckSupportAxis(meta, "Training Backend",
+                         "unsupported_sequential_model_layer", false,
+                         TypeId(type));
+        CheckSupportAxis(meta, "Compile", "unsupported", false, TypeId(type));
+        CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
+    }
+
+    const auto* group = metadata.GetMetadata(gui::NodeType::GroupNorm);
+    Check(group->parameters.size() == 4 &&
+              ParameterMatches(group, "num_groups", "int", "32") &&
+              ParameterMatches(group, "num_channels", "int", "256") &&
+              ParameterMatches(group, "eps", "float", "1e-5") &&
+              ParameterMatches(group, "affine", "bool", "true") &&
+              !HasParameter(group, "epsilon"),
+          "GroupNorm metadata must match its backend constructor and canonical fields");
+
+    const auto* instance = metadata.GetMetadata(gui::NodeType::InstanceNorm);
+    Check(instance->parameters.size() == 3 &&
+              ParameterMatches(instance, "num_features", "int", "64") &&
+              ParameterMatches(instance, "eps", "float", "1e-5") &&
+              ParameterMatches(instance, "affine", "bool", "false") &&
+              !HasParameter(instance, "epsilon"),
+          "InstanceNorm metadata must match its backend constructor and canonical fields");
+
+    std::map<std::string, std::string> saved_group_parameters = {
+        {"num_groups", "8"},
+        {"num_channels", "64"},
+        {"epsilon", "0.0001"},
+    };
+    cyxwiz::CanonicalizePipelineParameterAliases(
+        gui::NodeType::GroupNorm, saved_group_parameters);
+    Check(saved_group_parameters.find("epsilon") ==
+                  saved_group_parameters.end() &&
+              saved_group_parameters["eps"] == "0.0001",
+          "saved GroupNorm epsilon should migrate to canonical eps");
+
+    std::map<std::string, std::string> saved_instance_parameters = {
+        {"num_features", "32"},
+        {"eps", "0.0002"},
+        {"epsilon", "0.5"},
+    };
+    cyxwiz::CanonicalizePipelineParameterAliases(
+        gui::NodeType::InstanceNorm, saved_instance_parameters);
+    Check(saved_instance_parameters.find("epsilon") ==
+                  saved_instance_parameters.end() &&
+              saved_instance_parameters["eps"] == "0.0002",
+          "canonical InstanceNorm eps should win when both saved keys exist");
+}
+
+void CheckBlockedAttentionFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const std::vector<gui::NodeType> types = {
+        gui::NodeType::SelfAttention,
+        gui::NodeType::CrossAttention,
+        gui::NodeType::LinearAttention,
+    };
+
+    for (const auto type : types) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr,
+              "attention metadata should exist: " + TypeId(type));
+        Check(meta->category == gui::NodeCategory::Attention &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Template &&
+                  meta->badge == "Blocked" &&
+                  !cyxwiz::CanAddNodeToGraph(*meta),
+              "unowned attention node must remain blocked: " + TypeId(type));
+        CheckSupportAxis(meta, "Training Backend",
+                         "unsupported_sequential_model_layer", false,
+                         TypeId(type));
+        CheckSupportAxis(meta, "Compile", "unsupported", false, TypeId(type));
+        CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
+    }
+
+    for (const auto type : {gui::NodeType::SelfAttention,
+                            gui::NodeType::CrossAttention}) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta->inputs.size() == 4 &&
+                  meta->inputs[0].name == "Query" && meta->inputs[0].required &&
+                  meta->inputs[1].name == "Key" && meta->inputs[1].required &&
+                  meta->inputs[2].name == "Value" && meta->inputs[2].required &&
+                  meta->inputs[3].name == "Mask" && !meta->inputs[3].required &&
+                  !HasInputType(meta, "Context", gui::PinType::Tensor),
+              "saved self/cross-attention input pin order must remain compatible: " +
+                  TypeId(type));
+        Check(meta->outputs.size() == 2 &&
+                  meta->outputs[0].name == "Output" &&
+                  meta->outputs[0].required &&
+                  meta->outputs[1].name == "Attn Weights" &&
+                  !meta->outputs[1].required,
+              "saved self/cross-attention output pin order must remain compatible: " +
+                  TypeId(type));
+        Check(meta->parameters.size() == 4 &&
+                  ParameterMatches(meta, "embed_dim", "int", "512") &&
+                  ParameterMatches(meta, "num_heads", "int", "8") &&
+                  ParameterMatches(meta, "dropout", "float", "0.0") &&
+                  ParameterMatches(meta, "batch_first", "bool", "true"),
+              "saved self/cross-attention parameters must remain compatible: " +
+                  TypeId(type));
+    }
+
+    const auto* linear = metadata.GetMetadata(gui::NodeType::LinearAttention);
+    Check(linear->inputs.size() == 4 &&
+              linear->inputs[0].name == "Query" && linear->inputs[0].required &&
+              linear->inputs[1].name == "Key" && linear->inputs[1].required &&
+              linear->inputs[2].name == "Value" && linear->inputs[2].required &&
+              linear->inputs[3].name == "Mask" && !linear->inputs[3].required &&
+              linear->outputs.size() == 1 &&
+              linear->outputs[0].name == "Output" &&
+              linear->outputs[0].required,
+          "saved linear-attention pin order must remain compatible");
+    Check(linear->parameters.size() == 5 &&
+              ParameterMatches(linear, "embed_dim", "int", "512") &&
+              ParameterMatches(linear, "num_heads", "int", "8") &&
+              ParameterMatches(linear, "feature_map", "enum", "elu") &&
+              HasEnumValue(linear, "feature_map", "elu") &&
+              HasEnumValue(linear, "feature_map", "relu") &&
+              HasEnumValue(linear, "feature_map", "favor+") &&
+              ParameterMatches(linear, "eps", "float", "1e-6") &&
+              ParameterMatches(linear, "causal", "bool", "false"),
+          "saved linear-attention parameters must remain compatible");
+}
+
+void CheckBlockedRecurrentCompatibilityContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    for (const auto type : {gui::NodeType::RNN,
+                            gui::NodeType::Bidirectional}) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr,
+              "recurrent compatibility metadata should exist: " + TypeId(type));
+        Check(meta->category == gui::NodeCategory::Recurrent &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Template &&
+                  meta->badge == "Blocked" &&
+                  !cyxwiz::CanAddNodeToGraph(*meta),
+              "unowned recurrent compatibility node must remain blocked: " +
+                  TypeId(type));
+        Check(meta->inputs.size() == 1 && meta->outputs.size() >= 1 &&
+                  meta->inputs[0].name == "Input" &&
+                  meta->inputs[0].required &&
+                  meta->outputs[0].name == "Output" &&
+                  meta->outputs[0].required,
+              "recurrent compatibility pins must remain inspectable: " +
+                  TypeId(type));
+        CheckSupportAxis(meta, "Training Backend",
+                         "unsupported_sequential_model_layer", false,
+                         TypeId(type));
+        CheckSupportAxis(meta, "Compile", "unsupported", false, TypeId(type));
+        CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
+    }
+
+    const auto* rnn = metadata.GetMetadata(gui::NodeType::RNN);
+    Check(rnn->outputs.size() == 2 &&
+              rnn->outputs[1].name == "Hidden" &&
+              !rnn->outputs[1].required,
+          "RNN must preserve its optional Hidden output pin");
+    Check(rnn->parameters.size() == 7 &&
+              ParameterMatches(rnn, "input_size", "int", "0") &&
+              ParameterMatches(rnn, "hidden_size", "int", "256") &&
+              ParameterMatches(rnn, "num_layers", "int", "1") &&
+              ParameterMatches(rnn, "bidirectional", "bool", "false") &&
+              ParameterMatches(rnn, "return_sequences", "bool", "false") &&
+              ParameterMatches(rnn, "dropout", "float", "0.0") &&
+              ParameterMatches(rnn, "nonlinearity", "string", "tanh") &&
+              !HasParameter(rnn, "activation"),
+          "RNN metadata must preserve known saved fields without inventing execution");
+
+    const auto* bidirectional =
+        metadata.GetMetadata(gui::NodeType::Bidirectional);
+    Check(bidirectional->outputs.size() == 1 &&
+              bidirectional->parameters.size() == 1 &&
+              ParameterMatches(bidirectional, "merge_mode", "string", "concat"),
+          "Bidirectional metadata must preserve its standalone wrapper sketch");
+}
+
+void CheckImplementedRecurrentConfigurationContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    for (const auto type : {gui::NodeType::LSTM, gui::NodeType::GRU}) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Implemented &&
+                  cyxwiz::CanAddNodeToGraph(*meta),
+              "implemented recurrent node should remain addable: " + TypeId(type));
+        Check(meta->inputs.size() == 1 && meta->inputs[0].name == "Input" &&
+                  meta->inputs[0].required && meta->outputs.size() == 2 &&
+                  meta->outputs[0].name == "Output" && meta->outputs[0].required &&
+                  meta->outputs[1].name == "Hidden" && !meta->outputs[1].required,
+              "recurrent pins must preserve saved order and optional Hidden compatibility: " +
+                  TypeId(type));
+        Check(meta->parameters.size() == 6 &&
+                  ParameterMatches(meta, "input_size", "int", "0") &&
+                  ParameterMatches(meta, "hidden_size", "int", "256") &&
+                  ParameterMatches(meta, "num_layers", "int", "1") &&
+                  ParameterMatches(meta, "bidirectional", "bool", "false") &&
+                  ParameterMatches(meta, "return_sequences", "bool", "false") &&
+                  ParameterMatches(meta, "dropout", "float", "0.0"),
+              "recurrent metadata must preserve constructor defaults: " + TypeId(type));
+        Check(meta->outputs[1].description.find("does not route") !=
+                  std::string::npos,
+              "legacy Hidden output must disclose missing Engine routing: " +
+                  TypeId(type));
+    }
+
+    const std::map<std::string, std::string> supported = {
+        {"bidirectional", "false"},
+        {"dropout", "0.0"},
+    };
+    Check(!cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+               gui::NodeType::LSTM, supported),
+          "unidirectional LSTM with zero dropout should remain supported");
+    Check(!cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+               gui::NodeType::GRU, supported),
+          "unidirectional GRU with zero dropout should remain supported");
+
+    auto bidirectional = supported;
+    bidirectional["bidirectional"] = "true";
+    const auto lstm_bidirectional =
+        cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+            gui::NodeType::LSTM, bidirectional);
+    Check(lstm_bidirectional &&
+              lstm_bidirectional->find("reverse-direction backward") !=
+                  std::string::npos,
+          "bidirectional LSTM should expose its exact backward gap");
+    Check(!cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+               gui::NodeType::GRU, bidirectional),
+          "split-path bidirectional GRU should remain supported");
+
+    auto recurrent_dropout = supported;
+    recurrent_dropout["dropout"] = "0.2";
+    for (const auto type : {gui::NodeType::LSTM, gui::NodeType::GRU}) {
+        const auto reason =
+            cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+                type, recurrent_dropout);
+        Check(reason && reason->find("not wired") != std::string::npos,
+              "nonzero recurrent dropout must fail closed: " + TypeId(type));
+    }
 }
 
 void CheckDataValidatorReferenceContract(
@@ -1657,6 +2274,305 @@ void CheckPcaContract(cyxwiz::NodeMetadataRegistry& metadata) {
           "PCA metadata defaults should configure its operator: " + error);
 }
 
+void CheckClassicalRegressionFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const std::vector<gui::NodeType> types = {
+        gui::NodeType::LinearRegressionNode,
+        gui::NodeType::PolynomialRegressionNode,
+    };
+
+    for (const auto type : types) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr &&
+                  meta->category == gui::NodeCategory::Analytics &&
+                  meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+              "regression node should have implemented Analytics metadata: " +
+                  TypeId(type));
+        Check(meta->inputs.size() == 1 &&
+                  HasInputType(meta, "Data", gui::PinType::Dataset) &&
+                  meta->outputs.size() == 2 &&
+                  HasOutputType(meta, "Fitted", gui::PinType::Dataset) &&
+                  HasOutputType(meta, "Model", gui::PinType::Parameters),
+              "regression fit should expose table and fitted Model outputs: " +
+                  TypeId(type));
+        Check(FindParameter(meta, "target_col") != nullptr &&
+                  FindParameter(meta, "target_col")->required,
+              "regression node should require its target column: " +
+                  TypeId(type));
+
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(type);
+        CheckRuntimeOwnerContract(
+            support,
+            cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+            cyxwiz::PipelineRuntimeImplementationOwner::PipelineOperatorFactory,
+            "regression node " + TypeId(type));
+
+        auto op = cyxwiz::PipelineOperatorFactory::Instance().Create(type);
+        Check(op != nullptr,
+              "regression metadata should have a pipeline operator: " +
+                  TypeId(type));
+        std::map<std::string, std::string> params;
+        for (const auto& parameter : meta->parameters) {
+            params.emplace(parameter.name, parameter.default_value);
+        }
+        params[type == gui::NodeType::LinearRegressionNode
+                   ? "feature_cols"
+                   : "feature_col"] = "x";
+        params["target_col"] = "y";
+        std::string error;
+        Check(op->Configure(params, error),
+              "regression metadata contract should configure its operator: " +
+                  TypeId(type) + ": " + error);
+    }
+
+    const auto* linear =
+        metadata.GetMetadata(gui::NodeType::LinearRegressionNode);
+    const auto* polynomial =
+        metadata.GetMetadata(gui::NodeType::PolynomialRegressionNode);
+    Check(linear->parameters.size() == 3 &&
+              FindParameter(linear, "feature_cols") != nullptr &&
+              FindParameter(linear, "feature_cols")->required &&
+              ParameterMatches(linear, "fit_intercept", "bool", "true") &&
+              FindParameter(linear, "fit_intercept")->group == "Fit Options",
+          "LinearRegression metadata should match every consumed operator field");
+    Check(polynomial->parameters.size() == 3 &&
+              FindParameter(polynomial, "feature_col") != nullptr &&
+              FindParameter(polynomial, "feature_col")->required &&
+              ParameterMatches(polynomial, "degree", "int", "2") &&
+              FindParameter(polynomial, "degree")->validation ==
+                  "1-2147483647" &&
+              FindParameter(polynomial, "degree")->group == "Fit Options",
+          "PolynomialRegression metadata should match its unbounded positive degree contract");
+
+    const auto* predictor =
+        metadata.GetMetadata(gui::NodeType::RegressionModelPredictor);
+    Check(predictor != nullptr && predictor->inputs.size() == 2 &&
+              HasInputType(predictor, "Data", gui::PinType::Dataset) &&
+              HasInputType(predictor, "Model", gui::PinType::Parameters) &&
+              HasOutputType(predictor, "Predictions", gui::PinType::Dataset) &&
+              ParameterMatches(predictor, "prediction_col", "string", "prediction"),
+          "RegressionModelPredictor should consume Data plus the fitted Model artifact");
+    const auto predictor_support = cyxwiz::ResolvePipelineRuntimeSupport(
+        gui::NodeType::RegressionModelPredictor);
+    CheckRuntimeOwnerContract(
+        predictor_support,
+        cyxwiz::PipelineRuntimeSupportMode::OperatorBacked,
+        cyxwiz::PipelineRuntimeImplementationOwner::PipelineOperatorFactory,
+        "RegressionModelPredictor");
+    Check(predictor_support.required_input_count == 2,
+          "RegressionModelPredictor should require Data and Model links");
+
+    const auto* svm = metadata.GetMetadata(gui::NodeType::SVMRegressor);
+    Check(svm != nullptr && svm->IsTemplate() &&
+              cyxwiz::ResolvePipelineRuntimeSupport(
+                  gui::NodeType::SVMRegressor).mode ==
+                  cyxwiz::PipelineRuntimeSupportMode::FailClosed &&
+              cyxwiz::PipelineOperatorFactory::Instance().Create(
+                  gui::NodeType::SVMRegressor) == nullptr,
+          "SVMRegressor should remain blocked without a runtime owner");
+}
+
+void CheckBlockedClassifierFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const std::vector<gui::NodeType> types = {
+        gui::NodeType::SVMClassifier,
+        gui::NodeType::KNNClassifier,
+        gui::NodeType::NaiveBayesClassifier,
+        gui::NodeType::LogisticRegressionNode,
+    };
+
+    for (const auto type : types) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr && meta->IsTemplate() &&
+                  meta->badge == "Blocked" &&
+                  !cyxwiz::CanAddNodeToGraph(*meta),
+              "unimplemented classifier should remain blocked: " +
+                  TypeId(type));
+        Check(meta->inputs.size() == 2 &&
+                  HasInputType(meta, "Train Data", gui::PinType::Dataset) &&
+                  HasInputType(meta, "Labels", gui::PinType::Labels) &&
+                  meta->outputs.size() == 2 &&
+                  HasOutputType(meta, "Model", gui::PinType::Parameters) &&
+                  HasOutputType(meta, "Predictions", gui::PinType::Labels),
+              "blocked classifier should preserve its saved-graph pin contract: " +
+                  TypeId(type));
+        Check(meta->brief_description.find("Blocked") != std::string::npos &&
+                  meta->help_text.find("No classifier executor") !=
+                      std::string::npos,
+              "blocked classifier help should state missing runtime ownership: " +
+                  TypeId(type));
+        Check(cyxwiz::ResolvePipelineRuntimeSupport(type).mode ==
+                  cyxwiz::PipelineRuntimeSupportMode::FailClosed &&
+                  cyxwiz::PipelineOperatorFactory::Instance().Create(type) ==
+                      nullptr,
+              "blocked classifier should fail closed without an operator: " +
+                  TypeId(type));
+    }
+
+    const auto* svm = metadata.GetMetadata(gui::NodeType::SVMClassifier);
+    const auto* knn = metadata.GetMetadata(gui::NodeType::KNNClassifier);
+    const auto* naive_bayes =
+        metadata.GetMetadata(gui::NodeType::NaiveBayesClassifier);
+    const auto* logistic =
+        metadata.GetMetadata(gui::NodeType::LogisticRegressionNode);
+    Check(svm->parameters.size() == 3 &&
+              ParameterMatches(svm, "kernel", "enum", "rbf") &&
+              ParameterMatches(svm, "C", "float", "1.0") &&
+              ParameterMatches(svm, "gamma", "enum", "scale"),
+          "SVM preview should preserve its legacy saved parameters");
+    Check(knn->parameters.size() == 3 &&
+              ParameterMatches(knn, "n_neighbors", "int", "5") &&
+              ParameterMatches(knn, "weights", "enum", "uniform") &&
+              ParameterMatches(knn, "metric", "enum", "euclidean"),
+          "KNN preview should preserve its legacy saved parameters");
+    Check(naive_bayes->parameters.size() == 1 &&
+              ParameterMatches(naive_bayes, "var_smoothing", "float", "1e-9") &&
+              !HasParameter(naive_bayes, "variant"),
+          "Naive Bayes preview should not advertise an unseeded variant");
+    Check(logistic->parameters.size() == 3 &&
+              ParameterMatches(logistic, "C", "float", "1.0") &&
+              ParameterMatches(logistic, "solver", "enum", "lbfgs") &&
+              ParameterMatches(logistic, "max_iter", "int", "100") &&
+              !HasParameter(logistic, "penalty") &&
+              !HasOutputType(logistic, "Probabilities", gui::PinType::Dataset),
+          "Logistic preview should not advertise uncreated parameters or outputs");
+}
+
+void CheckBlockedSchedulerFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const std::vector<gui::NodeType> types = {
+        gui::NodeType::StepLR,
+        gui::NodeType::CosineAnnealing,
+        gui::NodeType::ReduceOnPlateau,
+        gui::NodeType::ExponentialLR,
+        gui::NodeType::WarmupScheduler,
+    };
+
+    for (const auto type : types) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr && meta->IsTemplate() &&
+                  meta->badge == "Blocked" &&
+                  !cyxwiz::CanAddNodeToGraph(*meta),
+              "unintegrated scheduler should remain blocked: " +
+                  TypeId(type));
+        Check(meta->inputs.size() == 1 &&
+                  HasInputType(meta, "Optimizer", gui::PinType::Optimizer) &&
+                  meta->outputs.size() == 1 &&
+                  HasOutputType(meta, "Scheduled", gui::PinType::Optimizer),
+              "blocked scheduler should preserve its saved-graph pin contract: " +
+                  TypeId(type));
+        Check(meta->brief_description.find("Blocked") != std::string::npos &&
+                  meta->help_text.find("do not construct, step, restore, or checkpoint") !=
+                      std::string::npos,
+              "blocked scheduler help should state its missing lifecycle owner: " +
+                  TypeId(type));
+
+        const auto support =
+            cyxwiz::ResolvePipelineTrainingBackendSupport(type);
+        Check(support.mode ==
+                  cyxwiz::PipelineTrainingBackendSupportMode::
+                      UnsupportedTrainingControl &&
+                  !support.compile_supported && !support.training_supported,
+              "blocked scheduler should fail closed at compile and training: " +
+                  TypeId(type));
+        Check(cyxwiz::PipelineOperatorFactory::Instance().Create(type) == nullptr,
+              "blocked scheduler should not claim a PipelineExecutor owner: " +
+                  TypeId(type));
+    }
+
+    const auto* step = metadata.GetMetadata(gui::NodeType::StepLR);
+    const auto* cosine =
+        metadata.GetMetadata(gui::NodeType::CosineAnnealing);
+    const auto* plateau =
+        metadata.GetMetadata(gui::NodeType::ReduceOnPlateau);
+    const auto* exponential =
+        metadata.GetMetadata(gui::NodeType::ExponentialLR);
+    const auto* warmup =
+        metadata.GetMetadata(gui::NodeType::WarmupScheduler);
+    Check(step->parameters.size() == 2 &&
+              ParameterMatches(step, "step_size", "int", "10") &&
+              ParameterMatches(step, "gamma", "float", "0.1"),
+          "StepLR preview should preserve its legacy saved parameters");
+    Check(cosine->parameters.size() == 2 &&
+              ParameterMatches(cosine, "T_max", "int", "100") &&
+              ParameterMatches(cosine, "eta_min", "float", "0.0"),
+          "CosineAnnealing preview should preserve its legacy saved parameters");
+    Check(plateau->parameters.size() == 3 &&
+              ParameterMatches(plateau, "mode", "enum", "min") &&
+              HasEnumValue(plateau, "mode", "max") &&
+              ParameterMatches(plateau, "factor", "float", "0.1") &&
+              ParameterMatches(plateau, "patience", "int", "10"),
+          "ReduceOnPlateau preview should preserve its legacy saved parameters");
+    Check(exponential->parameters.size() == 1 &&
+              ParameterMatches(exponential, "gamma", "float", "0.95"),
+          "ExponentialLR preview should preserve its legacy saved parameters");
+    Check(warmup->parameters.size() == 2 &&
+              ParameterMatches(warmup, "warmup_steps", "int", "1000") &&
+              ParameterMatches(warmup, "warmup_ratio", "float", "0.1"),
+          "Warmup preview should preserve its legacy saved parameters");
+}
+
+void CheckBlockedRegularizationFamilyContract(
+    cyxwiz::NodeMetadataRegistry& metadata) {
+    const std::vector<gui::NodeType> types = {
+        gui::NodeType::L1Regularization,
+        gui::NodeType::L2Regularization,
+        gui::NodeType::ElasticNet,
+    };
+
+    for (const auto type : types) {
+        const auto* meta = metadata.GetMetadata(type);
+        Check(meta != nullptr && meta->IsTemplate() &&
+                  meta->badge == "Blocked" &&
+                  !cyxwiz::CanAddNodeToGraph(*meta),
+              "unintegrated regularization node should remain blocked: " +
+                  TypeId(type));
+        Check(meta->inputs.size() == 1 &&
+                  HasInputType(meta, "Parameters", gui::PinType::Parameters) &&
+                  meta->outputs.size() == 1 &&
+                  HasOutputType(meta, "Penalty", gui::PinType::Loss),
+              "blocked regularization node should preserve its saved-graph pin contract: " +
+                  TypeId(type));
+        Check(meta->brief_description.find("Blocked") != std::string::npos &&
+                  meta->help_text.find("No Engine owner") != std::string::npos &&
+                  meta->help_text.find("selected training loss") !=
+                      std::string::npos,
+              "blocked regularization help should state its missing loss owner: " +
+                  TypeId(type));
+
+        const auto support =
+            cyxwiz::ResolvePipelineTrainingBackendSupport(type);
+        Check(support.mode ==
+                  cyxwiz::PipelineTrainingBackendSupportMode::
+                      UnsupportedTrainingControl &&
+                  !support.compile_supported && !support.training_supported,
+              "blocked regularization node should fail closed at compile and training: " +
+                  TypeId(type));
+        Check(cyxwiz::PipelineOperatorFactory::Instance().Create(type) == nullptr,
+              "blocked regularization node should not claim a PipelineExecutor owner: " +
+                  TypeId(type));
+    }
+
+    const auto* l1 = metadata.GetMetadata(gui::NodeType::L1Regularization);
+    const auto* l2 = metadata.GetMetadata(gui::NodeType::L2Regularization);
+    const auto* elastic = metadata.GetMetadata(gui::NodeType::ElasticNet);
+    Check(l1->parameters.size() == 1 &&
+              ParameterMatches(l1, "lambda", "float", "0.01"),
+          "L1 preview should preserve its legacy saved parameter");
+    Check(l2->parameters.size() == 1 &&
+              ParameterMatches(l2, "lambda", "float", "0.01") &&
+              l2->help_text.find("AdamW weight decay is a separate") !=
+                  std::string::npos,
+          "L2 preview should preserve its legacy parameter and distinguish AdamW");
+    Check(elastic->parameters.size() == 2 &&
+              ParameterMatches(elastic, "lambda", "float", "0.01") &&
+              ParameterMatches(elastic, "l1_ratio", "float", "0.5") &&
+              !HasParameter(elastic, "l1_lambda") &&
+              !HasParameter(elastic, "l2_lambda") &&
+              !HasParameter(elastic, "alpha"),
+          "Elastic Net preview should preserve only its created legacy parameters");
+}
+
 void CheckClassicalTreeFamilyContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
     const std::vector<gui::NodeType> training_types = {
@@ -1776,6 +2692,9 @@ void CheckStaticCreationAdapter(cyxwiz::NodeMetadataRegistry& metadata) {
     for (const auto type : {
              gui::NodeType::Dense,
              gui::NodeType::MultiHeadAttention,
+             gui::NodeType::TransformerEncoder,
+             gui::NodeType::TransformerDecoder,
+             gui::NodeType::PositionalEncoding,
              gui::NodeType::StandardScaler,
              gui::NodeType::MinMaxScaler,
              gui::NodeType::RobustScaler,
@@ -1812,12 +2731,52 @@ void CheckStaticCreationAdapter(cyxwiz::NodeMetadataRegistry& metadata) {
              gui::NodeType::HierarchicalCluster,
              gui::NodeType::GMMCluster,
              gui::NodeType::PCANode,
+             gui::NodeType::LinearRegressionNode,
+             gui::NodeType::PolynomialRegressionNode,
              gui::NodeType::DecisionTreeClassifier,
              gui::NodeType::RandomForestClassifier,
              gui::NodeType::GradientBoostingClassifier,
              gui::NodeType::TreeModelPredictor,
+             gui::NodeType::RegressionModelPredictor,
+             gui::NodeType::SVMClassifier,
+             gui::NodeType::KNNClassifier,
+             gui::NodeType::NaiveBayesClassifier,
+             gui::NodeType::LogisticRegressionNode,
+             gui::NodeType::StepLR,
+             gui::NodeType::CosineAnnealing,
+             gui::NodeType::ReduceOnPlateau,
+             gui::NodeType::ExponentialLR,
+             gui::NodeType::WarmupScheduler,
+             gui::NodeType::L1Regularization,
+             gui::NodeType::L2Regularization,
+             gui::NodeType::ElasticNet,
+             gui::NodeType::PairDatasetBuilder,
+             gui::NodeType::TripletDatasetBuilder,
+             gui::NodeType::SharedEncoder,
+             gui::NodeType::SiameseBranch,
+             gui::NodeType::ContrastiveLoss,
+             gui::NodeType::CosineEmbeddingLoss,
+             gui::NodeType::TripletLoss,
+             gui::NodeType::PairMetrics,
+             gui::NodeType::RetrievalMetrics,
+             gui::NodeType::EmbeddingOutput,
+             gui::NodeType::PairScoreOutput,
+              gui::NodeType::Lambda,
+              gui::NodeType::Identity,
+              gui::NodeType::Parameter,
              gui::NodeType::DataInput,
+             gui::NodeType::Conv1D,
              gui::NodeType::Conv2D,
+             gui::NodeType::Conv3D,
+             gui::NodeType::DepthwiseConv2D,
+             gui::NodeType::MaxPool2D,
+             gui::NodeType::AvgPool2D,
+             gui::NodeType::GlobalMaxPool,
+             gui::NodeType::GlobalAvgPool,
+             gui::NodeType::AdaptiveAvgPool,
+             gui::NodeType::ConvTranspose2D,
+             gui::NodeType::Upsample,
+             gui::NodeType::PixelShuffle,
              gui::NodeType::ReLU,
              gui::NodeType::Sigmoid,
              gui::NodeType::Tanh,
@@ -1832,6 +2791,15 @@ void CheckStaticCreationAdapter(cyxwiz::NodeMetadataRegistry& metadata) {
              gui::NodeType::LayerNorm,
              gui::NodeType::GroupNorm,
              gui::NodeType::InstanceNorm,
+             gui::NodeType::SelfAttention,
+             gui::NodeType::CrossAttention,
+             gui::NodeType::LinearAttention,
+             gui::NodeType::RNN,
+             gui::NodeType::Bidirectional,
+             gui::NodeType::LSTM,
+             gui::NodeType::GRU,
+             gui::NodeType::Embedding,
+             gui::NodeType::TimeDistributed,
              gui::NodeType::Flatten,
              gui::NodeType::Reshape,
              gui::NodeType::View,
@@ -1877,6 +2845,7 @@ void CheckStaticCreationAdapter(cyxwiz::NodeMetadataRegistry& metadata) {
              gui::NodeType::RMSprop,
              gui::NodeType::Adagrad,
              gui::NodeType::NAdam,
+             gui::NodeType::Output,
          }) {
         const auto* meta = metadata.GetMetadata(type);
         Check(meta != nullptr,
@@ -1995,6 +2964,17 @@ void CheckPreprocessingScalerEncoderFamilyContract(
 }
 
 void CheckCoreLayerFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
+    const auto* output = metadata.GetMetadata(gui::NodeType::Output);
+    Check(output != nullptr && output->inputs.size() == 1 &&
+              output->outputs.size() == 1 &&
+              HasInputType(output, "Input", gui::PinType::Tensor) &&
+              HasOutputType(output, "Predictions", gui::PinType::Tensor) &&
+              !output->outputs.front().required,
+          "Output should preserve its terminal input and optional identity relay");
+    Check(ParameterMatches(output, "num_classes", "int", "10") &&
+              !HasParameter(output, "classes"),
+          "Output metadata should own canonical num_classes without seeding its legacy alias");
+
     const auto* softmax = metadata.GetMetadata(gui::NodeType::Softmax);
     Check(softmax != nullptr && !HasParameter(softmax, "dim"),
           "Softmax must not expose a dimension ignored by SoftmaxModule");
@@ -2011,6 +2991,37 @@ void CheckCoreLayerFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
               ParameterMatches(layer_norm, "eps", "float", "1e-5") &&
               ParameterMatches(layer_norm, "elementwise_affine", "bool", "true"),
           "LayerNorm metadata should match ModelBuilder's automatic shape contract");
+
+    cyxwiz::NormalizationRegularizationConfiguration resolved;
+    Check(!cyxwiz::ResolveNormalizationRegularizationConfiguration(
+               gui::NodeType::Dropout, {{"rate", "0"}}, resolved) &&
+              resolved.dropout_rate == 0.0f,
+          "Dropout policy should preserve an explicit zero rate");
+    Check(!cyxwiz::ResolveNormalizationRegularizationConfiguration(
+               gui::NodeType::BatchNorm,
+               {{"eps", "0.001"}, {"epsilon", "1e-3"},
+                {"momentum", "0"}},
+               resolved) &&
+              std::fabs(resolved.epsilon - 0.001f) < 1e-8f &&
+              resolved.momentum == 0.0f,
+          "BatchNorm policy should accept equal epsilon aliases and preserve zero momentum");
+    Check(cyxwiz::ResolveInvalidNormalizationRegularizationConfigurationReason(
+              gui::NodeType::BatchNorm,
+              {{"eps", "1e-5"}, {"epsilon", "1e-4"}}).has_value(),
+          "BatchNorm policy should reject conflicting epsilon aliases");
+    Check(!cyxwiz::ResolveNormalizationRegularizationConfiguration(
+               gui::NodeType::LayerNorm,
+               {{"normalized_shape", "4, 8"},
+                {"elementwise_affine", "false"}},
+               resolved) &&
+              !resolved.automatic_normalized_shape &&
+              resolved.normalized_shape == std::vector<int>({4, 8}) &&
+              !resolved.elementwise_affine,
+          "LayerNorm policy should resolve exact trailing dimensions and affine state");
+    Check(cyxwiz::ResolveInvalidNormalizationRegularizationConfigurationReason(
+              gui::NodeType::LayerNorm,
+              {{"normalized_shape", "4,-1"}}).has_value(),
+          "LayerNorm policy should reject non-positive explicit dimensions");
 }
 
 void CheckShapeOperationFamilyContract(
@@ -2278,6 +3289,68 @@ void CheckOptimizerFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
           "Adagrad should not advertise unsupported learning-rate decay");
 }
 
+void CheckDenseActivationCodegenContract() {
+    const gui::NodeType activations[] = {
+        gui::NodeType::ReLU,
+        gui::NodeType::LeakyReLU,
+        gui::NodeType::ELU,
+        gui::NodeType::GELU,
+        gui::NodeType::Swish,
+        gui::NodeType::Mish,
+        gui::NodeType::Sigmoid,
+        gui::NodeType::Tanh,
+        gui::NodeType::Softmax,
+    };
+    for (const auto type : activations) {
+        for (const auto target : {
+                 gui::ActivationCodegenTarget::PyTorch,
+                 gui::ActivationCodegenTarget::TensorFlow,
+                 gui::ActivationCodegenTarget::Keras,
+                 gui::ActivationCodegenTarget::PyCyxWiz}) {
+            const auto generated = gui::BuildActivationCodegen(
+                target, type, {}, "input_value");
+            Check(generated.handled && !generated.error &&
+                      !generated.expression.empty(),
+                  "every executable activation should have one codegen contract");
+            Check(target == gui::ActivationCodegenTarget::Keras ||
+                      generated.expression.find("self.layer") ==
+                          std::string::npos,
+                  "functional activation export must not consume a stateful layer slot");
+        }
+    }
+
+    const std::map<std::string, std::string> leaky_parameters = {
+        {"negative_slope", "0.2"},
+    };
+    const auto leaky = gui::BuildActivationCodegen(
+        gui::ActivationCodegenTarget::PyTorch,
+        gui::NodeType::LeakyReLU,
+        leaky_parameters);
+    Check(leaky.expression.find("negative_slope=0.2") != std::string::npos,
+          "PyTorch activation export should preserve LeakyReLU slope");
+
+    const std::map<std::string, std::string> elu_parameters = {
+        {"alpha", "0.25"},
+    };
+    const auto elu = gui::BuildActivationCodegen(
+        gui::ActivationCodegenTarget::PyCyxWiz,
+        gui::NodeType::ELU,
+        elu_parameters);
+    Check(elu.expression.find("cx.elu") != std::string::npos &&
+              elu.expression.find("alpha=0.25") != std::string::npos,
+          "PyCyxWiz activation export should include ELU and preserve alpha");
+
+    cyxwiz::DenseActivationConfiguration configuration;
+    Check(cyxwiz::ResolveDenseActivationConfiguration(
+              gui::NodeType::Dense, {{"units", "7"}}, configuration) ==
+              std::nullopt && configuration.dense_units == 7,
+          "shared Dense policy should resolve the persisted output width");
+    Check(cyxwiz::ResolveDenseActivationConfiguration(
+              gui::NodeType::Dense, {{"units", "0"}}, configuration)
+              .has_value(),
+          "shared Dense policy should reject zero output width");
+}
+
 } // namespace
 
 int main() {
@@ -2286,10 +3359,19 @@ int main() {
 
     CheckPropertyTruthInventory(metadata);
     CheckMultiHeadAttentionReferenceContract(metadata);
+    CheckTransformerFamilyReferenceContract(metadata);
     CheckDenseReferenceContract(metadata);
     CheckStandardScalerReferenceContract(metadata);
+    CheckUtilityNodeFamilyContract(metadata);
+    CheckSimulationNodeFamilyContract(metadata);
     CheckDataInputDialogReferenceContract(metadata);
     CheckConv2DBlockedReferenceContract(metadata);
+    CheckConvolutionPoolingBlockedFamilyContract(metadata);
+    CheckBlockedUpsamplingFamilyContract(metadata);
+    CheckBlockedNormalizationFamilyContract(metadata);
+    CheckBlockedAttentionFamilyContract(metadata);
+    CheckBlockedRecurrentCompatibilityContract(metadata);
+    CheckImplementedRecurrentConfigurationContract(metadata);
     CheckDataValidatorReferenceContract(metadata);
     CheckDataValidatorOutputMigrationGuard();
     CheckTabularAnalyticsFamilyContract(metadata);
@@ -2300,6 +3382,10 @@ int main() {
     CheckTabularTransformFamilyContract(metadata);
     CheckClusteringFamilyContract(metadata);
     CheckPcaContract(metadata);
+    CheckClassicalRegressionFamilyContract(metadata);
+    CheckBlockedClassifierFamilyContract(metadata);
+    CheckBlockedSchedulerFamilyContract(metadata);
+    CheckBlockedRegularizationFamilyContract(metadata);
     CheckClassicalTreeFamilyContract(metadata);
     CheckClassicalTreeMigrationGuard();
     CheckStaticCreationAdapter(metadata);
@@ -2310,6 +3396,7 @@ int main() {
     CheckTensorFanInFamilyContract(metadata);
     CheckLossFamilyContract(metadata);
     CheckOptimizerFamilyContract(metadata);
+    CheckDenseActivationCodegenContract();
 
     {
         const auto* data_input = metadata.GetMetadata(gui::NodeType::DataInput);
@@ -2484,6 +3571,9 @@ int main() {
             Check(meta->badge == "Blocked",
                   "metric-learning metadata should show blocked badge: " +
                       node_case.name);
+            Check(!cyxwiz::CanAddNodeToGraph(*meta),
+                  "metric-learning node should remain unavailable: " +
+                      node_case.name);
             Check(meta->category == gui::NodeCategory::Training,
                   "metric-learning metadata should live under Training: " +
                       node_case.name);
@@ -2496,7 +3586,49 @@ int main() {
                       ContainsString(meta->keywords, "metric"),
                   "metric-learning metadata should describe metric-learning: " +
                       node_case.name);
+            Check(!meta->help_text.empty(),
+                  "metric-learning metadata should explain its bounded contract: " +
+                      node_case.name);
+            const auto support =
+                cyxwiz::ResolvePipelineTrainingBackendSupport(node_case.type);
+            Check(support.mode ==
+                      cyxwiz::PipelineTrainingBackendSupportMode::
+                          UnsupportedTrainingWorkflow &&
+                      !support.compile_supported && !support.training_supported,
+                  "metric-learning node should fail closed as a training workflow: " +
+                      node_case.name);
+            Check(cyxwiz::IsPipelineUnsupportedTrainingWorkflowNode(
+                      node_case.type),
+                  "metric-learning workflow capability should resolve: " +
+                      node_case.name);
+            Check(cyxwiz::PipelineOperatorFactory::Instance().Create(
+                      node_case.type) == nullptr,
+                  "metric-learning node should not claim a PipelineExecutor owner: " +
+                      node_case.name);
         }
+
+        Check(ParameterMatches(
+                  metadata.GetMetadata(gui::NodeType::PairDatasetBuilder),
+                  "label_convention", "enum", "contrastive_zero_similar"),
+              "PairDatasetBuilder should preserve its label convention");
+        Check(ParameterMatches(
+                  metadata.GetMetadata(gui::NodeType::SharedEncoder),
+                  "encoder_id", "string", "shared_encoder"),
+              "SharedEncoder should preserve its legacy identity");
+        Check(ParameterMatches(
+                  metadata.GetMetadata(gui::NodeType::ContrastiveLoss),
+                  "margin", "float", "1.0") &&
+                  ParameterMatches(
+                      metadata.GetMetadata(gui::NodeType::CosineEmbeddingLoss),
+                      "margin", "float", "0.0") &&
+                  ParameterMatches(
+                      metadata.GetMetadata(gui::NodeType::TripletLoss),
+                      "margin", "float", "1.0"),
+              "metric-learning losses should preserve their distinct margins");
+        Check(ParameterMatches(
+                  metadata.GetMetadata(gui::NodeType::PairScoreOutput),
+                  "score_mode", "enum", "distance"),
+              "PairScoreOutput should preserve its scoring mode");
 
         Check(HasOutputType(metadata.GetMetadata(gui::NodeType::EmbeddingOutput),
                             "Embedding Records", gui::PinType::Dataset),
@@ -2696,6 +3828,36 @@ int main() {
                       TypeId(capability.node_type));
         }
 
+        std::set<int> unsupported_training_workflow_types;
+        for (const auto& capability :
+             cyxwiz::GetPipelineUnsupportedTrainingWorkflowCapabilities()) {
+            const int key = static_cast<int>(capability.node_type);
+            Check(unsupported_training_workflow_types.insert(key).second,
+                  "duplicate unsupported training workflow capability: " +
+                      TypeId(capability.node_type));
+            Check(capability.reason != nullptr &&
+                      std::string(capability.reason).size() > 16,
+                  "unsupported training workflow reason is too weak: " +
+                      TypeId(capability.node_type));
+            Check(cyxwiz::IsPipelineUnsupportedTrainingWorkflowNode(
+                      capability.node_type),
+                  "unsupported training workflow capability does not resolve: " +
+                      TypeId(capability.node_type));
+            const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(
+                capability.node_type);
+            Check(support.mode ==
+                      cyxwiz::PipelineTrainingBackendSupportMode::
+                          UnsupportedTrainingWorkflow,
+                  "unsupported training workflow should resolve through unified support: " +
+                      TypeId(capability.node_type));
+            Check(!support.compile_supported && !support.training_supported,
+                  "unsupported training workflow should block compile/training: " +
+                      TypeId(capability.node_type));
+            Check(support.reason == capability.reason,
+                  "unsupported training workflow reason should be shared: " +
+                      TypeId(capability.node_type));
+        }
+
         std::set<int> supported_training_types;
         for (const auto& capability :
              cyxwiz::GetPipelineSupportedTrainingBackendCapabilities()) {
@@ -2714,6 +3876,8 @@ int main() {
             Check(!cyxwiz::IsPipelineUnsupportedSequentialModelLayer(
                       capability.node_type) &&
                       !cyxwiz::IsPipelineUnsupportedTrainingControlNode(
+                          capability.node_type) &&
+                      !cyxwiz::IsPipelineUnsupportedTrainingWorkflowNode(
                           capability.node_type),
                   "supported training backend should not overlap unsupported lists: " +
                       TypeId(capability.node_type));
@@ -4039,6 +5203,9 @@ int main() {
         gui::NodeType::Softmax,
         gui::NodeType::GELU,
         gui::NodeType::LeakyReLU,
+        gui::NodeType::ELU,
+        gui::NodeType::Swish,
+        gui::NodeType::Mish,
         gui::NodeType::MSELoss,
         gui::NodeType::CrossEntropyLoss,
         gui::NodeType::BCELoss,
@@ -4085,6 +5252,9 @@ int main() {
         gui::NodeType::TensorIndexSelect,
         gui::NodeType::TensorLogicalMask,
         gui::NodeType::SignalSlider,
+        gui::NodeType::SineWave,
+        gui::NodeType::StepSignal,
+        gui::NodeType::RampSignal,
         gui::NodeType::SignalScope,
         gui::NodeType::QualityAnalyzer,
         gui::NodeType::TableSplitter,
@@ -4168,6 +5338,9 @@ int main() {
         gui::NodeType::Softmax,
         gui::NodeType::GELU,
         gui::NodeType::LeakyReLU,
+        gui::NodeType::ELU,
+        gui::NodeType::Swish,
+        gui::NodeType::Mish,
         gui::NodeType::MSELoss,
         gui::NodeType::CrossEntropyLoss,
         gui::NodeType::BCELoss,
@@ -4214,6 +5387,9 @@ int main() {
         gui::NodeType::TensorIndexSelect,
         gui::NodeType::TensorLogicalMask,
         gui::NodeType::SignalSlider,
+        gui::NodeType::SineWave,
+        gui::NodeType::StepSignal,
+        gui::NodeType::RampSignal,
         gui::NodeType::SignalScope,
     };
     for (const auto type : training_contract_fail_closed_cases) {
@@ -4245,6 +5421,11 @@ int main() {
                   UnsupportedTrainingControl)) ==
               "unsupported_training_control",
           "training backend support mode name for unsupported control is stable");
+    Check(std::string(cyxwiz::PipelineTrainingBackendSupportModeName(
+              cyxwiz::PipelineTrainingBackendSupportMode::
+                  UnsupportedTrainingWorkflow)) ==
+              "unsupported_training_workflow",
+          "training backend support mode name for unsupported workflow is stable");
 
     for (const auto& capability : cyxwiz::GetPipelineSourceRuntimeCapabilities()) {
         Check(cyxwiz::IsPipelineSourceRuntimeNode(capability.legacy_type_name),
@@ -4452,6 +5633,15 @@ int main() {
         gui::NodeType::LSTM,
         gui::NodeType::GRU,
         gui::NodeType::Embedding,
+        gui::NodeType::ReLU,
+        gui::NodeType::LeakyReLU,
+        gui::NodeType::ELU,
+        gui::NodeType::GELU,
+        gui::NodeType::Swish,
+        gui::NodeType::Mish,
+        gui::NodeType::Sigmoid,
+        gui::NodeType::Tanh,
+        gui::NodeType::Softmax,
     };
     for (auto type : supported_model_nodes) {
         const auto* meta = metadata.GetMetadata(type);
@@ -4518,6 +5708,11 @@ int main() {
         {gui::NodeType::Sigmoid, "activation"},
         {gui::NodeType::Tanh, "activation"},
         {gui::NodeType::Softmax, "activation"},
+        {gui::NodeType::LeakyReLU, "activation"},
+        {gui::NodeType::ELU, "activation"},
+        {gui::NodeType::GELU, "activation"},
+        {gui::NodeType::Swish, "activation"},
+        {gui::NodeType::Mish, "activation"},
         {gui::NodeType::MSELoss, "loss"},
         {gui::NodeType::CrossEntropyLoss, "loss"},
         {gui::NodeType::BCELoss, "loss"},
@@ -4848,6 +6043,56 @@ int main() {
           "TimeDistributed metadata should explain the token classifier role");
     Check(HasOutputType(time_distributed_meta, "Output", gui::PinType::Tensor),
           "TimeDistributed metadata should expose tensor logits output");
+    Check(time_distributed_meta->inputs.size() == 1 &&
+              time_distributed_meta->inputs[0].required &&
+              time_distributed_meta->parameters.size() == 1 &&
+              ParameterMatches(time_distributed_meta, "units", "int", "128") &&
+              time_distributed_meta->help_text.find("not a generic wrapper") !=
+                  std::string::npos,
+          "TimeDistributed should expose only its concrete Dense sequence-head contract");
+
+    const auto* embedding_meta =
+        metadata.GetMetadata(gui::NodeType::Embedding);
+    Check(embedding_meta != nullptr &&
+              embedding_meta->status ==
+                  cyxwiz::NodeImplementationStatus::Implemented &&
+              embedding_meta->inputs.size() == 1 &&
+              embedding_meta->inputs[0].name == "Indices" &&
+              embedding_meta->inputs[0].type == gui::PinType::Tensor &&
+              embedding_meta->outputs.size() == 1 &&
+              embedding_meta->outputs[0].name == "Embeddings",
+          "Embedding metadata should expose the executable rank-aware Tensor pins");
+    Check(embedding_meta->parameters.size() == 8 &&
+              ParameterMatches(embedding_meta, "num_embeddings", "int", "10000") &&
+              ParameterMatches(embedding_meta, "embedding_dim", "int", "256") &&
+              ParameterMatches(embedding_meta, "padding_idx", "int", "-1") &&
+              ParameterMatches(embedding_meta, "max_norm", "float", "0") &&
+              ParameterMatches(embedding_meta, "freeze", "bool", "false") &&
+              ParameterMatches(embedding_meta, "weights_file", "file", "") &&
+              ParameterMatches(embedding_meta, "init_mode", "enum", "normal") &&
+              ParameterMatches(embedding_meta, "output_weights_file", "file", "") &&
+              !HasParameter(embedding_meta, "embedding_weights_file"),
+          "Embedding metadata should centralize runtime and dialog fields without persisting its legacy alias");
+
+    const std::map<std::string, std::string> valid_embedding = {
+        {"num_embeddings", "100"},
+        {"embedding_dim", "16"},
+        {"padding_idx", "0"},
+        {"max_norm", "0"},
+    };
+    Check(!cyxwiz::ResolveInvalidSequenceProjectionConfigurationReason(
+               gui::NodeType::Embedding, valid_embedding),
+          "valid Embedding configuration should pass the shared policy");
+    auto invalid_padding = valid_embedding;
+    invalid_padding["padding_idx"] = "100";
+    Check(cyxwiz::ResolveInvalidSequenceProjectionConfigurationReason(
+              gui::NodeType::Embedding, invalid_padding).has_value(),
+          "Embedding padding outside the vocabulary should fail closed");
+    const std::map<std::string, std::string> conflicting_head = {
+        {"units", "4"}, {"out_features", "5"}};
+    Check(cyxwiz::ResolveInvalidSequenceProjectionConfigurationReason(
+              gui::NodeType::TimeDistributed, conflicting_head).has_value(),
+          "conflicting TimeDistributed width aliases should fail closed");
 
     const auto* bar_chart_meta = metadata.GetMetadata(gui::NodeType::BarChart);
     Check(bar_chart_meta != nullptr, "BarChart metadata should exist");
@@ -5057,6 +6302,52 @@ int main() {
                       std::string::npos,
               "unsupported training control " + TypeId(capability.node_type) +
                   " should expose reason on structured support axis");
+    }
+
+    for (const auto& capability :
+         cyxwiz::GetPipelineUnsupportedTrainingWorkflowCapabilities()) {
+        const auto* meta = metadata.GetMetadata(capability.node_type);
+        Check(meta != nullptr,
+              "missing unsupported training workflow metadata for type " +
+                  TypeId(capability.node_type));
+        Check(meta->status == cyxwiz::NodeImplementationStatus::Template &&
+                  meta->badge == "Blocked",
+              "unsupported training workflow should remain blocked: " +
+                  TypeId(capability.node_type));
+        CheckSupportAxis(
+            meta,
+            "Training Backend",
+            cyxwiz::PipelineTrainingBackendSupportModeName(
+                cyxwiz::PipelineTrainingBackendSupportMode::
+                    UnsupportedTrainingWorkflow),
+            false,
+            TypeId(capability.node_type));
+        CheckSupportAxis(
+            meta,
+            "Training Role",
+            cyxwiz::PipelineTrainingSupportRoleName(
+                cyxwiz::PipelineTrainingSupportRole::TrainingWorkflow),
+            false,
+            TypeId(capability.node_type));
+        CheckSupportAxis(meta, "Compile", "unsupported", false,
+                         TypeId(capability.node_type));
+        CheckSupportAxis(meta, "Training", "unsupported", false,
+                         TypeId(capability.node_type));
+        CheckSupportAxis(meta, "Implementation Owner",
+                         "unowned_training_workflow", false,
+                         TypeId(capability.node_type));
+        CheckSupportAxis(meta, "Support State", "blocked", false,
+                         TypeId(capability.node_type));
+        Check(!cyxwiz::CanAddNodeToGraph(*meta) &&
+                  !FrontendSupportBlockReasonFromAxes(meta).empty(),
+              "frontend should fail closed with a structured workflow reason: " +
+                  TypeId(capability.node_type));
+        const auto* training_axis = FindSupportAxis(meta, "Training Backend");
+        Check(training_axis != nullptr && capability.reason != nullptr &&
+                  training_axis->reason.find(capability.reason) !=
+                      std::string::npos,
+              "unsupported training workflow should expose the canonical reason: " +
+                  TypeId(capability.node_type));
     }
 
     const auto* compare = metadata.GetMetadata(gui::NodeType::TensorCompare);

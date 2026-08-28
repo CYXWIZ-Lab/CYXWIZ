@@ -255,7 +255,10 @@ public:
         const std::string engine(CurrentEngineExecutableName());
         const std::string launcher(
             CurrentRuntimeBootstrapperExecutableName());
-        if (!WriteZip(archive, {engine, launcher, "LICENSE"})) {
+        const std::string finalizer(
+            CurrentProductRemovalFinalizerExecutableName());
+        if (!WriteZip(
+                archive, {engine, launcher, finalizer, "LICENSE"})) {
             throw std::runtime_error("Cannot create base archive");
         }
         const auto archive_size = std::filesystem::file_size(archive);
@@ -288,6 +291,9 @@ public:
                 {"sha256", kZeroByteSha256}, {"source", "cyxwiz"},
                 {"executable", true}}, {
                 {"path", launcher}, {"size", std::uint64_t{1}},
+                {"sha256", kZeroByteSha256}, {"source", "cyxwiz"},
+                {"executable", true}}, {
+                {"path", finalizer}, {"size", std::uint64_t{1}},
                 {"sha256", kZeroByteSha256}, {"source", "cyxwiz"},
                 {"executable", true}}, {
                 {"path", "LICENSE"}, {"size", std::uint64_t{1}},
@@ -528,11 +534,18 @@ int main() {
                 std::filesystem::is_regular_file(
                     fixture.root /
                     std::string(CurrentRuntimeBootstrapperExecutableName())) &&
+                std::filesystem::is_regular_file(
+                    fixture.root /
+                    std::string(CurrentProductRemovalFinalizerExecutableName())) &&
                 Fixture::ReadByte(
                     fixture.root /
                     std::string(CurrentRuntimeBootstrapperExecutableName())) ==
+                    '\0' &&
+                Fixture::ReadByte(
+                    fixture.root /
+                    std::string(CurrentProductRemovalFinalizerExecutableName())) ==
                     '\0',
-            "fresh base delivery must verify, stage, publish its launcher, qualify, and initialize generation 1");
+            "fresh base delivery must verify, stage, publish stable tools, qualify, and initialize generation 1");
     }
     {
         Fixture fixture;

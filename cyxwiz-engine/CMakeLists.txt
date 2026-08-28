@@ -233,6 +233,8 @@ set(ENGINE_SOURCES
     src/core/node_executors/tree_model_predictor_operator.cpp # Tool-to-Node Band 1
     src/core/node_executors/signal_processing_operators.cpp  # Tool-to-Node Band 1
     src/core/node_executors/regression_operators.cpp         # Tool-to-Node Band 1
+    src/core/node_executors/regression_model_artifact.cpp
+    src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp      # Tool-to-Node Band 1
     src/core/node_executors/time_series_analysis_operators.cpp  # Phase 5 Band 1
     # Plugin system (loader/manager only; SDK sources in cyxwiz-plugin-sdk)
@@ -644,6 +646,9 @@ set(ENGINE_HEADERS
     src/core/node_executors/tree_model_predictor_operator.h
     src/core/node_executors/signal_processing_operators.h
     src/core/node_executors/regression_operators.h
+    src/core/node_executors/model_artifact_json_io.h
+    src/core/node_executors/regression_model_artifact.h
+    src/core/node_executors/regression_model_predictor_operator.h
     src/core/node_executors/preprocessing_operators.h
     src/core/node_executors/time_series_analysis_operators.h
     src/core/node_executors/feature_matrix_utils.h
@@ -2016,6 +2021,8 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
+    src/core/node_executors/regression_model_artifact.cpp
+    src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
@@ -2047,6 +2054,32 @@ if(WIN32)
 endif()
 
 set_target_properties(test_pipeline_operator_metadata PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Built-in scalar simulation runtime contract =====
+add_executable(test_graph_executor_simulation
+    tests/test_graph_executor_simulation.cpp
+    src/core/graph_executor.cpp
+)
+
+target_include_directories(test_graph_executor_simulation PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_graph_executor_simulation PRIVATE
+    imgui::imgui
+    spdlog::spdlog
+)
+
+if(WIN32)
+    target_compile_definitions(test_graph_executor_simulation PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_graph_executor_simulation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
@@ -2096,6 +2129,8 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
+    src/core/node_executors/regression_model_artifact.cpp
+    src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
@@ -2178,6 +2213,8 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
+    src/core/node_executors/regression_model_artifact.cpp
+    src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
@@ -2260,6 +2297,8 @@ add_executable(test_data_convert_pipeline_input
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
+    src/core/node_executors/regression_model_artifact.cpp
+    src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
@@ -2786,6 +2825,8 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
+    src/core/node_executors/regression_model_artifact.cpp
+    src/core/node_executors/regression_model_predictor_operator.cpp
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp

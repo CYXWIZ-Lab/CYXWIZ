@@ -2,6 +2,7 @@
 
 #include "backend_pack_installer_platform.h"
 #include "installer_operation.h"
+#include "installer_removal_view.h"
 #include "installer_theme.h"
 
 #include <array>
@@ -16,6 +17,7 @@ enum class InstallerViewActionKind {
   RefreshCatalog,
   UseInstallLocation,
   ApplyPlan,
+  RemoveProduct,
   Close
 };
 
@@ -34,12 +36,14 @@ struct InstallerViewState {
   bool install_location_dirty = false;
   std::string install_location_message;
   BackendPackInstallerPlan pending_plan;
+  InstallerRemovalViewState removal;
   int page = 0;
 };
 
 InstallerViewAction RenderInstallerView(
     InstallerViewState &state, const InstallerCatalogState &catalog,
     const CyxWizInstallLocation &install_location,
+    const InstallerProductRemovalState &product_removal,
     const std::string &platform_name, bool operation_running,
     const std::string &operation_message,
     const InstallerPlanExecutionProgress &operation_progress,

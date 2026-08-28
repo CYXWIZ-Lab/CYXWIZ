@@ -2,6 +2,7 @@
 #include "layer_arrayfire_utils.h"
 #include "../arrayfire_backend_utils.h"
 
+#include <cmath>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -34,8 +35,9 @@ static void HandleDropoutArrayFireFallback(
 #endif
 
 DropoutLayer::DropoutLayer(float p) : p_(p) {
-    if (p < 0.0f || p > 1.0f) {
-        throw std::invalid_argument("Dropout probability must be in [0, 1]");
+    if (!std::isfinite(p) || p < 0.0f || p > 1.0f) {
+        throw std::invalid_argument(
+            "Dropout probability must be finite and in [0, 1]");
     }
 }
 

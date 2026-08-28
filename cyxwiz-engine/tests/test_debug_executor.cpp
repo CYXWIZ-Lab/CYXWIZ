@@ -221,7 +221,7 @@ TrainingConfiguration MakeSentimentConfig(size_t num_layers = 1) {
 
     CompiledLayer drop;
     drop.type = gui::NodeType::Dropout;
-    drop.dropout_rate = 0.35f;
+    drop.parameters["rate"] = "0.35";
     cfg.layers.push_back(drop);
 
     CompiledLayer dense2;
@@ -284,6 +284,24 @@ void TestBuildSequentialTabular() {
                  "module provenance node id");
     }
 
+    auto marker_cfg = MakeTabularConfig();
+    CompiledLayer output_marker;
+    output_marker.type = gui::NodeType::Output;
+    output_marker.node_id = 104;
+    output_marker.name = "Output";
+    output_marker.input_shape = {4};
+    output_marker.output_shape = {4};
+    marker_cfg.layers.push_back(output_marker);
+    auto marker_built = BuildSequentialFromConfig(marker_cfg);
+    ExpectTrue(marker_built.ok(),
+               "Output marker should not prevent model construction");
+    ExpectEq(marker_built.model->Size(), 3,
+             "Output marker must not add another projection");
+    ExpectEq(marker_built.module_provenance.size(), 4,
+             "Output marker should retain provenance without a module");
+    ExpectTrue(!marker_built.module_provenance.back().created(),
+               "Output marker provenance should not own a module");
+
     auto skipped_cfg = MakeTabularConfig();
     CompiledLayer unsupported;
     unsupported.type = gui::NodeType::Conv2D;
@@ -304,6 +322,165 @@ void TestBuildSequentialTabular() {
     ExpectEq(skipped.module_provenance[1].compiled_layer_index, 1,
              "compiled index should not be inferred from module index");
     spdlog::info("  OK: model has {} modules", built.model->Size());
+}
+
+void TestDenseActivationConfigurationContract() {
+    spdlog::info("--- TestDenseActivationConfigurationContract ---");
+
+    auto config = MakeTabularConfig();
+    config.layers.resize(1);
+    config.layers[0].parameters["units"] = "0";
+    auto built = BuildSequentialFromConfig(config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("Dense units") !=
+                       std::string::npos,
+               "ModelBuilder must reject an invalid persisted Dense width");
+
+    config = MakeTabularConfig();
+    config.layers.resize(1);
+    config.layers[0].units = -1;
+    built = BuildSequentialFromConfig(config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("Dense units") !=
+                       std::string::npos,
+               "ModelBuilder must reject an invalid direct Dense width");
+
+    config = MakeTabularConfig();
+    config.layers.clear();
+    CompiledLayer leaky;
+    leaky.type = gui::NodeType::LeakyReLU;
+    leaky.parameters["negative_slope"] = "0";
+    config.layers.push_back(leaky);
+    built = BuildSequentialFromConfig(config);
+    ExpectTrue(built.ok() && built.model->Size() == 1,
+               "LeakyReLU negative_slope=0 must remain an exact valid value");
+    ExpectTrue(built.model->GetModule(0)->GetName().find("0.000000") !=
+                   std::string::npos,
+               "LeakyReLU constructor must receive the exact zero slope");
+
+    config.layers[0].parameters["negative_slope"] = "nan";
+    built = BuildSequentialFromConfig(config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("finite number") !=
+                       std::string::npos,
+               "LeakyReLU must reject non-finite persisted slopes");
+
+    config.layers[0].type = gui::NodeType::ELU;
+    config.layers[0].parameters.clear();
+    config.layers[0].parameters["alpha"] = "0.25";
+    built = BuildSequentialFromConfig(config);
+    ExpectTrue(built.ok() &&
+                   built.model->GetModule(0)->GetName().find("0.250000") !=
+                       std::string::npos,
+               "ELU constructor must receive the exact persisted alpha");
+
+    config.layers[0].parameters["alpha"] = "0";
+    built = BuildSequentialFromConfig(config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("ELU alpha") !=
+                       std::string::npos,
+               "ELU must reject a non-positive persisted alpha");
+
+    spdlog::info("  OK: Dense and parameterized activation construction is exact and fail-closed");
+}
+
+TrainingConfiguration MakeBatchNormConfig() {
+    TrainingConfiguration config;
+    config.input_size = 2;
+    config.output_size = 2;
+    CompiledLayer norm;
+    norm.type = gui::NodeType::BatchNorm;
+    norm.parameters = {{"eps", "0.001"}, {"momentum", "0.1"}};
+    config.layers.push_back(norm);
+    return config;
+}
+
+void TestRecurrentConfigurationFailClosed() {
+    spdlog::info("--- TestRecurrentConfigurationFailClosed ---");
+    auto cfg = MakeTabularConfig();
+    CompiledLayer recurrent;
+    recurrent.type = gui::NodeType::LSTM;
+    recurrent.node_id = 801;
+    recurrent.name = "Unsupported BiLSTM";
+    recurrent.parameters = {
+        {"hidden_size", "8"},
+        {"num_layers", "1"},
+        {"bidirectional", "true"},
+        {"return_sequences", "false"},
+        {"dropout", "0.0"},
+    };
+    cfg.layers = {recurrent};
+
+    auto built = BuildSequentialFromConfig(cfg);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("reverse-direction backward") !=
+                       std::string::npos,
+               "ModelBuilder must reject bidirectional LSTM if compiler validation is bypassed");
+
+    recurrent.type = gui::NodeType::GRU;
+    recurrent.name = "Unsupported GRU Dropout";
+    recurrent.parameters["bidirectional"] = "false";
+    recurrent.parameters["dropout"] = "0.25";
+    cfg.layers = {recurrent};
+    built = BuildSequentialFromConfig(cfg);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("not wired") != std::string::npos,
+               "ModelBuilder must reject ignored recurrent dropout if compiler validation is bypassed");
+}
+
+void TestTransformerConfigurationFailClosed() {
+    spdlog::info("--- TestTransformerConfigurationFailClosed ---");
+
+    auto config = MakeMultiHeadAttentionConfig();
+    config.layers[0].parameters["d_model"] = "8";
+    auto built = BuildSequentialFromConfig(config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("conflicts") != std::string::npos,
+               "ModelBuilder must reject conflicting attention width aliases");
+
+    config = MakeMultiHeadAttentionConfig();
+    config.layers[0].parameters["num_heads"] = "3";
+    built = BuildSequentialFromConfig(config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("divisible") != std::string::npos,
+               "ModelBuilder must reject non-divisible attention heads");
+
+    config = MakeTransformerTextConfig();
+    config.layers.resize(2);
+    config.layers[1].parameters["num_layers"] = "6";
+    built = BuildSequentialFromConfig(config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("exactly one block") !=
+                       std::string::npos,
+               "ModelBuilder must reject fictional internal transformer depth");
+
+    config = MakeTransformerTextConfig();
+    config.layers.resize(2);
+    config.layers[1].parameters["d_model"] = "16";
+    built = BuildSequentialFromConfig(config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("incoming feature width") !=
+                       std::string::npos,
+               "ModelBuilder must reject transformer width drift");
+
+    TrainingConfiguration positional;
+    positional.input_size = 4;
+    positional.output_size = 4;
+    CompiledLayer encoding;
+    encoding.type = gui::NodeType::PositionalEncoding;
+    encoding.parameters = {{"d_model", "4"},
+                           {"max_len", "32"},
+                           {"max_length", "32"}};
+    positional.layers = {encoding};
+    built = BuildSequentialFromConfig(positional);
+    ExpectTrue(built.ok() && built.model->Size() == 1,
+               "equal-valued positional aliases should remain executable");
+
+    positional.layers[0].parameters["max_length"] = "64";
+    built = BuildSequentialFromConfig(positional);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("conflicts") != std::string::npos,
+               "ModelBuilder must reject conflicting positional aliases");
 }
 
 void TestBuildSequentialLayerNorm() {
@@ -338,6 +515,105 @@ void TestBuildSequentialLayerNorm() {
     ExpectTrue(grads.count("layer0.beta") == 1,
                "LayerNorm beta gradient is exposed");
     spdlog::info("  OK: LayerNorm builds, runs, and exposes gradients");
+}
+
+void TestNormalizationRegularizationConfigurationContract() {
+    spdlog::info("--- TestNormalizationRegularizationConfigurationContract ---");
+
+    TrainingConfiguration dropout_config;
+    dropout_config.input_size = 2;
+    dropout_config.output_size = 2;
+    CompiledLayer dropout;
+    dropout.type = gui::NodeType::Dropout;
+    dropout.parameters["rate"] = "0";
+    dropout_config.layers.push_back(dropout);
+    auto built = BuildSequentialFromConfig(dropout_config);
+    ExpectTrue(built.ok() && built.model->Size() == 1,
+               "Dropout rate=0 should build as an exact executable value");
+    const float values[] = {1.0f, -2.0f, 3.0f, -4.0f};
+    Tensor input({2, 2}, values, DataType::Float32);
+    Tensor output = built.model->Forward(input);
+    const float* output_data = output.ReadData<float>();
+    for (size_t i = 0; i < 4; ++i) {
+        ExpectNear(output_data[i], values[i], 1e-7f,
+                   "Dropout rate=0 should preserve training input");
+    }
+
+    dropout_config.layers[0].parameters["rate"] = "1";
+    built = BuildSequentialFromConfig(dropout_config);
+    ExpectTrue(built.ok() && built.model->Size() == 1,
+               "Dropout rate=1 should build as the PyTorch all-zero boundary");
+    output = built.model->Forward(input);
+    output_data = output.ReadData<float>();
+    for (size_t i = 0; i < 4; ++i) {
+        ExpectNear(output_data[i], 0.0f, 0.0f,
+                   "Dropout rate=1 should zero every training activation");
+    }
+
+    TrainingConfiguration batch_norm_config;
+    batch_norm_config.input_size = 2;
+    batch_norm_config.output_size = 2;
+    CompiledLayer batch_norm;
+    batch_norm.type = gui::NodeType::BatchNorm;
+    batch_norm.parameters = {{"eps", "0.001"}, {"momentum", "0"}};
+    batch_norm_config.layers.push_back(batch_norm);
+    built = BuildSequentialFromConfig(batch_norm_config);
+    ExpectTrue(built.ok() && built.model->Size() == 1,
+               "BatchNorm momentum=0 should build as an exact executable value");
+    (void)built.model->Forward(input);
+    built.model->SetTraining(false);
+    output = built.model->Forward(input);
+    output_data = output.ReadData<float>();
+    const float expected_scale = 1.0f / std::sqrt(1.001f);
+    for (size_t i = 0; i < 4; ++i) {
+        ExpectNear(output_data[i], values[i] * expected_scale, 1e-5f,
+                   "BatchNorm momentum=0 should retain initial running statistics");
+    }
+
+    const auto state = built.model->GetParameters();
+    ExpectTrue(state.count("layer0.running_mean") == 1 &&
+                   state.count("layer0.running_var") == 1,
+               "BatchNorm running statistics should participate in model state persistence");
+
+    batch_norm_config.layers[0].parameters["epsilon"] = "0.01";
+    built = BuildSequentialFromConfig(batch_norm_config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("conflicts") != std::string::npos,
+               "BatchNorm conflicting epsilon aliases should fail closed");
+
+    TrainingConfiguration layer_norm_config = MakeLayerNormConfig();
+    layer_norm_config.layers[0].parameters["eps"] = "1e-5";
+    built = BuildSequentialFromConfig(layer_norm_config);
+    ExpectTrue(built.ok(),
+               "LayerNorm equal canonical and legacy epsilon values should remain executable");
+    layer_norm_config.layers[0].parameters["normalized_shape"] = "4,-1";
+    built = BuildSequentialFromConfig(layer_norm_config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("normalized_shape") != std::string::npos,
+               "LayerNorm invalid trailing dimensions should fail closed");
+
+    bool direct_dropout_accepted = true;
+    try {
+        DropoutModule boundary(1.0f);
+        (void)boundary;
+    } catch (...) {
+        direct_dropout_accepted = false;
+    }
+    ExpectTrue(direct_dropout_accepted,
+               "direct DropoutModule construction should preserve PyTorch p=1");
+
+    bool direct_batch_norm_rejected = false;
+    try {
+        BatchNormModule invalid(2, 0.0f, 0.1f);
+        (void)invalid;
+    } catch (const std::invalid_argument&) {
+        direct_batch_norm_rejected = true;
+    }
+    ExpectTrue(direct_batch_norm_rejected,
+               "direct BatchNormModule construction should reject eps=0");
+
+    spdlog::info(
+        "  OK: normalization/regularization exact values and invalid states are enforced");
 }
 
 void TestBuildSequentialMultiHeadAttention() {
@@ -603,6 +879,98 @@ void TestCheckpointTensorSerializationCompatibility() {
     std::filesystem::remove_all(root);
     spdlog::info(
         "  OK: checkpoint tensor dtype matrix and corruption guards");
+}
+
+void TestBatchNormCheckpointRoundTrip() {
+    spdlog::info("--- TestBatchNormCheckpointRoundTrip ---");
+    auto source = BuildSequentialFromConfig(MakeBatchNormConfig());
+    auto target = BuildSequentialFromConfig(MakeBatchNormConfig());
+    ExpectTrue(source.ok() && target.ok(),
+               "BatchNorm checkpoint fixture models should build");
+
+    const float gamma[] = {0.5f, 1.5f};
+    const float beta[] = {0.1f, -0.2f};
+    const float running_mean[] = {2.0f, -3.0f};
+    const float running_var[] = {4.0f, 9.0f};
+    auto state = source.model->GetParameters();
+    state["layer0.gamma"] = Tensor({2}, gamma, DataType::Float32);
+    state["layer0.beta"] = Tensor({2}, beta, DataType::Float32);
+    state["layer0.running_mean"] =
+        Tensor({2}, running_mean, DataType::Float32);
+    state["layer0.running_var"] = Tensor({2}, running_var, DataType::Float32);
+    source.model->SetParameters(state);
+
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "cyxwiz_batchnorm_checkpoint_test";
+    std::filesystem::remove_all(root);
+    CheckpointManager manager(root.string());
+    TrainingMetrics metrics;
+    metrics.current_epoch = 4;
+    const std::string saved =
+        manager.SaveCheckpoint(*source.model, nullptr, metrics, "batchnorm");
+    ExpectTrue(!saved.empty(), "BatchNorm checkpoint should save");
+    const auto loaded =
+        manager.LoadCheckpoint(*target.model, nullptr, "batchnorm");
+    ExpectTrue(loaded.has_value(), "BatchNorm checkpoint should load");
+
+    const auto restored = target.model->GetParameters();
+    for (const auto& name : {"layer0.gamma", "layer0.beta",
+                             "layer0.running_mean", "layer0.running_var"}) {
+        const std::string presence_message =
+            std::string("restored BatchNorm state should include ") + name;
+        ExpectTrue(restored.count(name) == 1,
+                   presence_message.c_str());
+        const float* expected = state.at(name).ReadData<float>();
+        const float* actual = restored.at(name).ReadData<float>();
+        for (size_t i = 0; i < 2; ++i) {
+            const std::string value_message =
+                std::string("BatchNorm checkpoint round-trip for ") + name;
+            ExpectNear(actual[i], expected[i], 1e-6f,
+                       value_message.c_str());
+        }
+    }
+
+    auto legacy_target = BuildSequentialFromConfig(MakeBatchNormConfig());
+    ExpectTrue(legacy_target.ok(),
+               "legacy BatchNorm checkpoint target should build");
+    const auto manifest_path =
+        root / "batchnorm" / "model" / "manifest.json";
+    {
+        std::ifstream input_stream(manifest_path);
+        nlohmann::json manifest;
+        input_stream >> manifest;
+        for (auto it = manifest.begin(); it != manifest.end();) {
+            const std::string parameter_name = it.value().get<std::string>();
+            if (parameter_name.find(".running_mean") != std::string::npos ||
+                parameter_name.find(".running_var") != std::string::npos) {
+                it = manifest.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        std::ofstream output_stream(manifest_path, std::ios::trunc);
+        output_stream << manifest.dump(2);
+    }
+    const auto legacy_loaded =
+        manager.LoadCheckpoint(*legacy_target.model, nullptr, "batchnorm");
+    ExpectTrue(legacy_loaded.has_value(),
+               "legacy BatchNorm checkpoint without running statistics should load");
+    const auto legacy_state = legacy_target.model->GetParameters();
+    const float* legacy_mean =
+        legacy_state.at("layer0.running_mean").ReadData<float>();
+    const float* legacy_var =
+        legacy_state.at("layer0.running_var").ReadData<float>();
+    for (size_t i = 0; i < 2; ++i) {
+        ExpectNear(legacy_mean[i], 0.0f, 1e-6f,
+                   "legacy BatchNorm checkpoint should initialize running mean");
+        ExpectNear(legacy_var[i], 1.0f, 1e-6f,
+                   "legacy BatchNorm checkpoint should initialize running variance");
+    }
+
+    std::filesystem::remove_all(root);
+    spdlog::info(
+        "  OK: BatchNorm state round-trips and legacy checkpoints migrate");
 }
 
 void TestCheckpointRejectsIncompatibleModelWithoutMutation() {
@@ -1258,6 +1626,49 @@ void TestBuildSequentialTextEmbeddingWeights() {
     auto params = built.model->GetParameters();
     ExpectTrue(params.count("layer0.weight") == 0,
                "frozen pretrained embedding should not expose trainable layer0.weight");
+}
+
+void TestSequenceProjectionConfigurationFailClosed() {
+    spdlog::info("--- TestSequenceProjectionConfigurationFailClosed ---");
+
+    auto embedding = MakeTextConfig();
+    embedding.layers[0].parameters["padding_idx"] = "500";
+    auto built = BuildSequentialFromConfig(embedding);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("padding_idx") != std::string::npos,
+               "Embedding padding outside the vocabulary should fail model construction");
+
+    embedding = MakeTextConfig();
+    embedding.layers[0].parameters["max_norm"] = "-0.5";
+    built = BuildSequentialFromConfig(embedding);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("max_norm") != std::string::npos,
+               "Embedding negative max_norm should fail model construction");
+
+    embedding = MakeTextConfig();
+    embedding.layers[0].parameters["weights_file"] = "canonical.bin";
+    embedding.layers[0].parameters["embedding_weights_file"] = "legacy.bin";
+    built = BuildSequentialFromConfig(embedding);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("conflict") != std::string::npos,
+               "Embedding conflicting weights aliases should fail before file loading");
+
+    TrainingConfiguration head_config;
+    head_config.input_size = 3;
+    head_config.output_size = 2;
+    head_config.loss_type = gui::NodeType::MSELoss;
+    head_config.optimizer_type = gui::NodeType::Adam;
+    CompiledLayer head;
+    head.type = gui::NodeType::TimeDistributed;
+    head.parameters["units"] = "4";
+    head.parameters["out_features"] = "5";
+    head_config.layers.push_back(head);
+    built = BuildSequentialFromConfig(head_config);
+    ExpectTrue(!built.ok() &&
+                   built.error_message.find("conflict") != std::string::npos,
+               "TimeDistributed conflicting width aliases should fail model construction");
+
+    spdlog::info("  OK: sequence projection configuration rejects invalid and conflicting values");
 }
 
 void TestCrossEntropyIgnoreIndexFromLossParams() {
@@ -1986,12 +2397,6 @@ void TestDebugExecutorTextGraph() {
     // 3 config layers = Embedding, Flatten, Dense. Gradients cover:
     //   layer0.weight (Embedding),
     //   layer2.weight, layer2.bias (Dense).
-    // EmbeddingLayer::GetParameters still exposes a legacy "grad_weight"
-    // alongside "weight" (see cyxwiz-backend/src/algorithms/layer.cpp —
-    // the partial cleanup only reached GetGradients). That leftover
-    // param has no matching grad, so it lands in params_missing_grad.
-    // DebugExecutor is reporting reality here; when the backend cleanup
-    // finishes, this count will drop to 0 and we can tighten the test.
     ExpectEq(res.params_with_grad, 3, "text params_with_grad");
     ExpectEq(res.params_missing_grad, 0, "text params_missing_grad");
     spdlog::info("  OK: text graph end-to-end, params_with_grad={}",
@@ -2288,10 +2693,15 @@ int main(int argc, char** argv) {
             std::getenv("CYXWIZ_RUN_SLOW_DEBUG_TESTS") != nullptr;
 
         TestBuildSequentialTabular();
+        TestDenseActivationConfigurationContract();
+        TestRecurrentConfigurationFailClosed();
+        TestTransformerConfigurationFailClosed();
         TestBuildSequentialLayerNorm();
+        TestNormalizationRegularizationConfigurationContract();
         TestBuildSequentialMultiHeadAttention();
         TestLayerNormCheckpointRoundTrip();
         TestCheckpointTensorSerializationCompatibility();
+        TestBatchNormCheckpointRoundTrip();
         TestCheckpointRejectsIncompatibleModelWithoutMutation();
         TestCheckpointFormatCapabilitiesFailClosed();
         TestCheckpointManifestV2AtomicContract();
@@ -2301,6 +2711,7 @@ int main(int argc, char** argv) {
         TestSyntheticBatchText();
         TestMseLossLabelsAreFloat();
         TestBuildSequentialTextEmbeddingWeights();
+        TestSequenceProjectionConfigurationFailClosed();
         TestCrossEntropyIgnoreIndexFromLossParams();
         TestWeightedLossConfigParams();
         TestCrossEntropyTokenShapeIgnoreIndex();

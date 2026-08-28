@@ -11,6 +11,7 @@
 #include "../core/async_task_manager.h"
 #include "../core/project_manager.h"
 #include "../core/graph_executor.h"
+#include "../core/simulation_runtime_capabilities.h"
 #include "../core/rl_training_executor.h"
 #include "../core/pipeline_executor.h"  // Unified Canvas Phase 2
 #include "../core/pipeline_execution_task.h"
@@ -2227,7 +2228,10 @@ void NodeEditor::RenderNodes() {
                 break;
             }
             case NodeType::Output: {
-                auto it = node.parameters.find("classes");
+                auto it = node.parameters.find("num_classes");
+                if (it == node.parameters.end()) {
+                    it = node.parameters.find("classes");
+                }
                 if (it != node.parameters.end() && !it->second.empty()) {
                     ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Classes: %s", it->second.c_str());
                 }
@@ -4508,12 +4512,7 @@ void NodeEditor::UngroupSelectedNodes() {
 
 bool NodeEditor::HasSimulationNodes() const {
     for (const auto& node : nodes_) {
-        if (node.type == NodeType::SignalSlider ||
-            node.type == NodeType::SineWave ||
-            node.type == NodeType::StepSignal ||
-            node.type == NodeType::RampSignal ||
-            node.type == NodeType::SignalScope ||
-            node.type == NodeType::Constant) {
+        if (cyxwiz::IsBuiltInSimulationRuntimeNode(node.type)) {
             return true;
         }
         // Check for MuJoCo Plant or other simulation plugin nodes
@@ -4528,8 +4527,35 @@ bool NodeEditor::HasSimulationNodes() const {
     return false;
 }
 
+bool NodeEditor::TryGetSimulationScalar(int pin_id, float& value) const {
+    if (!graph_executor_) return false;
+    cyxwiz::NodeValue node_value;
+    if (!graph_executor_->TryGetPinValue(pin_id, node_value)) return false;
+    const auto* scalar = std::get_if<float>(&node_value);
+    if (!scalar) return false;
+    value = *scalar;
+    return true;
+}
+
+float NodeEditor::GetSimulationTime() const {
+    return graph_executor_ ? graph_executor_->GetSimTime() : 0.0f;
+}
+
+bool NodeEditor::SetSimulationNodeParameter(int node_id,
+                                            const std::string& key,
+                                            const std::string& value) {
+    return graph_executor_ &&
+           graph_executor_->SetNodeParameter(node_id, key, value);
+}
+
 void NodeEditor::OnRunSimulation() {
     if (is_simulating_) return;
+
+    // A previous failed simulation may have ended its worker before the UI
+    // observed the terminal state. Reclaim it before assigning a new thread.
+    if (sim_thread_.joinable()) {
+        sim_thread_.join();
+    }
 
     spdlog::info("NodeEditor: Starting graph simulation");
 
@@ -4622,7 +4648,7 @@ void NodeEditor::OnRunSimulation() {
 }
 
 void NodeEditor::OnStopSimulation() {
-    if (!is_simulating_) return;
+    if (!is_simulating_ && !sim_thread_.joinable()) return;
 
     spdlog::info("NodeEditor: Stopping graph simulation");
     sim_stop_requested_ = true;
@@ -4925,9 +4951,30 @@ bool NodeEditor::ExecuteDataPipeline() {
     // preserve them directly instead of deriving duplicate per-node edges.
     pipeline_json["links"] = nlohmann::json::array();
     for (const auto& link : links_) {
+        const MLNode* from_node = FindNodeById(link.from_node);
+        const MLNode* to_node = FindNodeById(link.to_node);
+        if (!from_node || !to_node) {
+            spdlog::error("Pipeline link {} references a missing node", link.id);
+            return false;
+        }
+        const auto from_pin = std::find_if(
+            from_node->outputs.begin(), from_node->outputs.end(),
+            [&link](const NodePin& pin) { return pin.id == link.from_pin; });
+        const auto to_pin = std::find_if(
+            to_node->inputs.begin(), to_node->inputs.end(),
+            [&link](const NodePin& pin) { return pin.id == link.to_pin; });
+        if (from_pin == from_node->outputs.end() ||
+            to_pin == to_node->inputs.end()) {
+            spdlog::error("Pipeline link {} references a missing pin", link.id);
+            return false;
+        }
         pipeline_json["links"].push_back({
             {"start_node", link.from_node},
-            {"end_node", link.to_node}
+            {"end_node", link.to_node},
+            {"start_pin_index", static_cast<int>(
+                std::distance(from_node->outputs.begin(), from_pin))},
+            {"end_pin_index", static_cast<int>(
+                std::distance(to_node->inputs.begin(), to_pin))}
         });
     }
 
@@ -4992,6 +5039,7 @@ std::string NodeEditor::GetNodeTypeName(NodeType type) const {
         case NodeType::RandomForestClassifier: return "RandomForestClassifier";
         case NodeType::GradientBoostingClassifier: return "GradientBoostingClassifier";
         case NodeType::TreeModelPredictor: return "TreeModelPredictor";
+        case NodeType::RegressionModelPredictor: return "RegressionModelPredictor";
         // KNIME-style table manipulation nodes
         case NodeType::ExcelFile: return "ExcelInput";
         case NodeType::ExportExcel: return "ExportExcel";

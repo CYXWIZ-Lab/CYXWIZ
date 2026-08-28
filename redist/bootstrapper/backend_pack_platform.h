@@ -58,6 +58,14 @@ constexpr std::string_view CurrentRuntimeBootstrapperExecutableName() {
 #endif
 }
 
+constexpr std::string_view CurrentProductRemovalFinalizerExecutableName() {
+#ifdef _WIN32
+    return "cyxwiz-product-removal-finalizer.exe";
+#else
+    return "cyxwiz-product-removal-finalizer";
+#endif
+}
+
 constexpr std::string_view CurrentInstallerManagerExecutableName() {
 #ifdef _WIN32
     return "cyxwiz-installer.exe";

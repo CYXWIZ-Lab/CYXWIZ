@@ -4,6 +4,8 @@
 #include "../arrayfire_backend_utils.h"
 
 #include <cmath>
+#include <cstring>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -20,6 +22,44 @@
 namespace cyxwiz {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
+namespace {
+
+af::array TokenRowsToSemanticOutput(const af::array& token_rows,
+                                    bool is_batched,
+                                    size_t batch_size,
+                                    size_t sequence_length,
+                                    size_t embedding_dim) {
+    if (!is_batched) {
+        return token_rows;
+    }
+    af::array row_major_linear = af::flat(af::transpose(token_rows));
+    af::array reversed = af::moddims(
+        row_major_linear,
+        af::dim4(CheckedIntDim(embedding_dim, "embedding dimension"),
+                 CheckedIntDim(sequence_length, "embedding sequence length"),
+                 CheckedIntDim(batch_size, "embedding batch size")));
+    return af::reorder(reversed, 2, 1, 0);
+}
+
+af::array SemanticGradientToTokenRows(const af::array& gradient,
+                                      bool is_batched,
+                                      size_t batch_size,
+                                      size_t sequence_length,
+                                      size_t embedding_dim) {
+    if (!is_batched) {
+        return gradient;
+    }
+    af::array row_major_linear = af::flat(af::reorder(gradient, 2, 1, 0));
+    af::array reversed = af::moddims(
+        row_major_linear,
+        af::dim4(CheckedIntDim(embedding_dim, "embedding gradient dimension"),
+                 CheckedIntDim(batch_size * sequence_length,
+                               "embedding gradient token count")));
+    return af::transpose(reversed);
+}
+
+} // namespace
+
 static std::string BuildEmbeddingContext(const Tensor& tensor) {
     return BuildArrayFireBackendFallbackContext(
         BuildTensorShapeContext("input", tensor.Shape()));
@@ -59,40 +99,29 @@ static void LogEmbeddingFallbackOnce(
     }
 }
 
-static void LogEmbeddingBackendWarningOnce(
-    const char* operation_name,
-    const Tensor& tensor,
-    const char* error_message)
-{
-    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
-    const std::string context = BuildEmbeddingContext(tensor);
-    if (!ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
-        return;
-    }
-
-    std::string message = std::string("ArrayFire ") +
-        (operation_name ? operation_name : "embedding operation") +
-        " failed (reason=" + BackendFallbackReasonName(reason) +
-        "); continuing without the ArrayFire normalization step.";
-    if (!context.empty()) {
-        message += " Context: ";
-        message += context;
-        message += ".";
-    }
-    if (reason != BackendFallbackReason::CudaJitParamOverflow &&
-        error_message != nullptr &&
-        error_message[0] != '\0') {
-        message += " Error: ";
-        message += error_message;
-    }
-    spdlog::warn("{}", message);
-}
 #endif
 
 EmbeddingLayer::EmbeddingLayer(int num_embeddings, int embedding_dim,
                                int padding_idx, float max_norm)
     : num_embeddings_(num_embeddings), embedding_dim_(embedding_dim),
       padding_idx_(padding_idx), max_norm_(max_norm) {
+
+    if (num_embeddings_ < 2) {
+        throw std::invalid_argument(
+            "EmbeddingLayer: num_embeddings must be >= 2");
+    }
+    if (embedding_dim_ < 1) {
+        throw std::invalid_argument(
+            "EmbeddingLayer: embedding_dim must be >= 1");
+    }
+    if (padding_idx_ < -1 || padding_idx_ >= num_embeddings_) {
+        throw std::invalid_argument(
+            "EmbeddingLayer: padding_idx must be -1 or a valid token id");
+    }
+    if (!std::isfinite(max_norm_) || max_norm_ < 0.0f) {
+        throw std::invalid_argument(
+            "EmbeddingLayer: max_norm must be finite and >= 0");
+    }
 
     InitializeWeights();
 }
@@ -102,15 +131,13 @@ void EmbeddingLayer::InitializeWeights() {
     // Initialize with normal distribution N(0, 1)
     af::array w = af::randn(af::dim4(num_embeddings_, embedding_dim_), af::dtype::f32);
     w.eval();
-    weight_ = AfToTensor(w);
-
-    // Zero out padding index if specified
     if (padding_idx_ >= 0 && padding_idx_ < num_embeddings_) {
-        float* data = static_cast<float*>(weight_.Data());
-        for (int i = 0; i < embedding_dim_; i++) {
-            data[padding_idx_ * embedding_dim_ + i] = 0.0f;
-        }
+        w(padding_idx_, af::span) = 0.0f;
+        w.eval();
     }
+    weight_ = Tensor::FromSemanticArray(
+        w, {static_cast<size_t>(num_embeddings_),
+            static_cast<size_t>(embedding_dim_)});
 #else
     weight_ = Tensor::Random({static_cast<size_t>(num_embeddings_),
                                static_cast<size_t>(embedding_dim_)});
@@ -125,7 +152,7 @@ void EmbeddingLayer::NormalizeEmbeddings() {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array w = TensorToAf(weight_);
+        af::array w = weight_.GetSemanticArray();
 
         // Compute L2 norm for each embedding
         af::array norms = af::sqrt(af::sum(w * w, 1));
@@ -139,59 +166,92 @@ void EmbeddingLayer::NormalizeEmbeddings() {
         w = w * af::tile(scale, 1, embedding_dim_);
         w.eval();
 
-        weight_ = AfToTensor(w);
+        weight_ = Tensor::FromSemanticArray(
+            w, {static_cast<size_t>(num_embeddings_),
+                static_cast<size_t>(embedding_dim_)});
+        return;
     } catch (const af::exception& e) {
-        LogEmbeddingBackendWarningOnce(
+        LogEmbeddingFallbackOnce(
             "EmbeddingLayer::NormalizeEmbeddings",
             weight_,
+            static_cast<size_t>(num_embeddings_),
+            static_cast<size_t>(embedding_dim_),
             e.what());
     }
 #endif
+
+    float* weights = weight_.MutableData<float>();
+    for (int row = 0; row < num_embeddings_; ++row) {
+        double squared_norm = 0.0;
+        for (int col = 0; col < embedding_dim_; ++col) {
+            const double value = weights[row * embedding_dim_ + col];
+            squared_norm += value * value;
+        }
+        const double norm = std::sqrt(squared_norm);
+        if (norm > static_cast<double>(max_norm_)) {
+            const float scale = static_cast<float>(max_norm_ / norm);
+            for (int col = 0; col < embedding_dim_; ++col) {
+                weights[row * embedding_dim_ + col] *= scale;
+            }
+        }
+    }
 }
 
 Tensor EmbeddingLayer::Forward(const Tensor& input) {
+    const auto& shape = input.Shape();
+    if (input.GetDataType() != DataType::Int32) {
+        throw std::invalid_argument(
+            "EmbeddingLayer::Forward: input token ids must be Int32");
+    }
+    if (shape.size() != 1 && shape.size() != 2) {
+        throw std::invalid_argument(
+            "EmbeddingLayer::Forward: input must be [sequence] or [batch, sequence]");
+    }
+    const size_t batch_size = shape.size() == 2 ? shape[0] : 1;
+    const size_t sequence_length = shape.size() == 2 ? shape[1] : shape[0];
+    if (batch_size == 0 || sequence_length == 0 ||
+        batch_size > std::numeric_limits<size_t>::max() / sequence_length) {
+        throw std::invalid_argument(
+            "EmbeddingLayer::Forward: input dimensions must be nonzero and bounded");
+    }
+    const size_t total_indices = batch_size * sequence_length;
+
     // Cache indices for backward pass
     cached_indices_ = input.Clone();
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    // ArrayFire path is only used for the unbatched case (shape.size()==1).
-    // Batched input deliberately falls through to the CPU fallback below
-    // because AF's column-major scatter gives the wrong data layout for
-    // the next layer. The previous version did `try { throw } catch` per
-    // batch which spammed warnings 600+ times per epoch and burned CPU
-    // on the exception throw — this gate avoids both.
-    if (input.Shape().size() != 2) try {
-        // Apply max_norm if specified (single-sample path only)
+    try {
         if (max_norm_ > 0.0f) {
             NormalizeEmbeddings();
         }
 
-        const auto& shape = input.Shape();
-        dim_t seq_len = shape[0];
-        dim_t total_indices = seq_len;
-
-        // Get indices as int32
-        const int32_t* indices_ptr = input.Data<int32_t>();
-
-        // Get weight matrix
-        af::array w = TensorToAf(weight_);  // [num_embeddings, embedding_dim]
-
-        // Vectorized gather: for each index, get the corresponding row
-        af::array output_flat = af::constant(0.0f, af::dim4(total_indices, embedding_dim_));
-        for (dim_t i = 0; i < total_indices; i++) {
+        // Token ids are host ingress for the current batcher contract. The
+        // lookup table, gathered vectors, and gradients remain on ArrayFire.
+        const int32_t* indices_ptr = input.ReadData<int32_t>();
+        af::array w = weight_.GetSemanticArray();
+        af::array output_flat = af::constant(
+            0.0f,
+            af::dim4(CheckedIntDim(total_indices, "embedding token count"),
+                     embedding_dim_));
+        for (size_t i = 0; i < total_indices; ++i) {
             int32_t idx = indices_ptr[i];
-            if (idx >= 0 && idx < num_embeddings_) {
-                output_flat(CheckedIntDim(static_cast<size_t>(i), "embedding index"), af::span) =
+            if (idx >= 0 && idx < num_embeddings_ && idx != padding_idx_) {
+                output_flat(CheckedIntDim(i, "embedding index"), af::span) =
                     w(idx, af::span);
             }
-            // If idx == padding_idx or out of bounds, leave as zero
         }
         output_flat.eval();
 
-        // Reshape to [seq_len, embedding_dim]
-        af::array output = af::moddims(output_flat, af::dim4(seq_len, embedding_dim_));
+        af::array output = TokenRowsToSemanticOutput(
+            output_flat, shape.size() == 2, batch_size, sequence_length,
+            static_cast<size_t>(embedding_dim_));
         output.eval();
-        return AfToTensor(output);
+        const std::vector<size_t> output_shape = shape.size() == 2
+            ? std::vector<size_t>{batch_size, sequence_length,
+                                  static_cast<size_t>(embedding_dim_)}
+            : std::vector<size_t>{sequence_length,
+                                  static_cast<size_t>(embedding_dim_)};
+        return Tensor::FromSemanticArray(output, output_shape);
     } catch (const af::exception& e) {
         LogEmbeddingFallbackOnce(
             "EmbeddingLayer::Forward",
@@ -203,26 +263,20 @@ Tensor EmbeddingLayer::Forward(const Tensor& input) {
 #endif
 
     // CPU fallback
-    const auto& shape = input.Shape();
-    bool is_batched = shape.size() == 2;
-
-    size_t batch_size = is_batched ? shape[0] : 1;
-    size_t seq_len = is_batched ? shape[1] : shape[0];
-
     std::vector<size_t> out_shape;
-    if (is_batched) {
-        out_shape = {batch_size, seq_len, static_cast<size_t>(embedding_dim_)};
+    if (shape.size() == 2) {
+        out_shape = {batch_size, sequence_length,
+                     static_cast<size_t>(embedding_dim_)};
     } else {
-        out_shape = {seq_len, static_cast<size_t>(embedding_dim_)};
+        out_shape = {sequence_length, static_cast<size_t>(embedding_dim_)};
     }
 
     Tensor output(out_shape, DataType::Float32);
-    float* out_data = static_cast<float*>(output.Data());
-    const float* weight_data = weight_.Data<float>();
-    const int32_t* indices = input.Data<int32_t>();
+    float* out_data = output.MutableData<float>();
+    const float* weight_data = weight_.ReadData<float>();
+    const int32_t* indices = input.ReadData<int32_t>();
 
-    size_t total = batch_size * seq_len;
-    for (size_t i = 0; i < total; i++) {
+    for (size_t i = 0; i < total_indices; ++i) {
         int32_t idx = indices[i];
         if (idx >= 0 && idx < num_embeddings_ && idx != padding_idx_) {
             std::memcpy(out_data + i * embedding_dim_,
@@ -243,37 +297,50 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    // Same gating as Forward: batched input goes to the CPU fallback
-    // because AF's column-major moddims silently scrambles the row
-    // ordering of [batch, seq_len, embed_dim] gradient tensors. Caught
-    // when wiring text training — the AF backward returned valid-shaped
-    // but content-wrong gradients, leading to slow / unstable learning.
-    if (cached_indices_.Shape().size() != 2) try {
+    try {
         const auto& shape = cached_indices_.Shape();
-        dim_t seq_len = shape[0];
-        dim_t total_indices = seq_len;
+        if (shape.size() != 1 && shape.size() != 2) {
+            throw std::runtime_error(
+                "EmbeddingLayer::Backward called before a valid Forward");
+        }
+        const size_t batch_size = shape.size() == 2 ? shape[0] : 1;
+        const size_t sequence_length = shape.size() == 2 ? shape[1] : shape[0];
+        const size_t total_indices = batch_size * sequence_length;
+        const std::vector<size_t> expected_grad_shape = shape.size() == 2
+            ? std::vector<size_t>{batch_size, sequence_length,
+                                  static_cast<size_t>(embedding_dim_)}
+            : std::vector<size_t>{sequence_length,
+                                  static_cast<size_t>(embedding_dim_)};
+        if (grad_output.GetDataType() != DataType::Float32 ||
+            grad_output.Shape() != expected_grad_shape) {
+            throw std::invalid_argument(
+                "EmbeddingLayer::Backward: grad_output shape or dtype mismatch");
+        }
 
-        const int32_t* indices_ptr = cached_indices_.Data<int32_t>();
+        const int32_t* indices_ptr = cached_indices_.ReadData<int32_t>();
 
         // Initialize gradient accumulator
         af::array dw = af::constant(0.0f, af::dim4(num_embeddings_, embedding_dim_));
 
-        // Get flattened gradient output
-        af::array grad = TensorToAf(grad_output);
-        grad = af::moddims(grad, af::dim4(total_indices, embedding_dim_));
+        af::array grad = SemanticGradientToTokenRows(
+            grad_output.GetSemanticArray(), shape.size() == 2, batch_size,
+            sequence_length,
+            static_cast<size_t>(embedding_dim_));
         grad.eval();
 
         // Scatter-add gradients to the weight matrix
-        for (dim_t i = 0; i < total_indices; i++) {
+        for (size_t i = 0; i < total_indices; ++i) {
             int32_t idx = indices_ptr[i];
             if (idx >= 0 && idx < num_embeddings_ && idx != padding_idx_) {
-                dw(idx, af::span) += grad(CheckedIntDim(static_cast<size_t>(i), "embedding grad index"),
+                dw(idx, af::span) += grad(CheckedIntDim(i, "embedding grad index"),
                                           af::span);
             }
         }
         dw.eval();
 
-        grad_weight_ = AfToTensor(dw);
+        grad_weight_ = Tensor::FromSemanticArray(
+            dw, {static_cast<size_t>(num_embeddings_),
+                 static_cast<size_t>(embedding_dim_)});
 
         // Return empty tensor (no gradient w.r.t. integer indices)
         return Tensor();
@@ -289,18 +356,30 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
 
     // CPU fallback
     const auto& shape = cached_indices_.Shape();
-    bool is_batched = shape.size() == 2;
-
-    size_t batch_size = is_batched ? shape[0] : 1;
-    size_t seq_len = is_batched ? shape[1] : shape[0];
-    size_t total = batch_size * seq_len;
+    if (shape.size() != 1 && shape.size() != 2) {
+        throw std::runtime_error(
+            "EmbeddingLayer::Backward called before a valid Forward");
+    }
+    const size_t batch_size = shape.size() == 2 ? shape[0] : 1;
+    const size_t sequence_length = shape.size() == 2 ? shape[1] : shape[0];
+    const size_t total = batch_size * sequence_length;
+    const std::vector<size_t> expected_grad_shape = shape.size() == 2
+        ? std::vector<size_t>{batch_size, sequence_length,
+                              static_cast<size_t>(embedding_dim_)}
+        : std::vector<size_t>{sequence_length,
+                              static_cast<size_t>(embedding_dim_)};
+    if (grad_output.GetDataType() != DataType::Float32 ||
+        grad_output.Shape() != expected_grad_shape) {
+        throw std::invalid_argument(
+            "EmbeddingLayer::Backward: grad_output shape or dtype mismatch");
+    }
 
     // Zero out gradient
     grad_weight_ = Tensor::Zeros({static_cast<size_t>(num_embeddings_),
                                    static_cast<size_t>(embedding_dim_)});
-    float* dw = static_cast<float*>(grad_weight_.Data());
-    const float* grad_data = grad_output.Data<float>();
-    const int32_t* indices = cached_indices_.Data<int32_t>();
+    float* dw = grad_weight_.MutableData<float>();
+    const float* grad_data = grad_output.ReadData<float>();
+    const int32_t* indices = cached_indices_.ReadData<int32_t>();
 
     // Scatter-add gradients
     for (size_t i = 0; i < total; i++) {
@@ -321,8 +400,10 @@ Tensor EmbeddingLayer::GetEmbedding(int index) const {
     }
 
     Tensor result({static_cast<size_t>(embedding_dim_)}, DataType::Float32);
-    const float* src = weight_.Data<float>() + index * embedding_dim_;
-    std::memcpy(result.Data(), src, embedding_dim_ * sizeof(float));
+    const float* src =
+        weight_.ReadData<float>() + index * embedding_dim_;
+    std::memcpy(result.MutableData<float>(), src,
+                embedding_dim_ * sizeof(float));
     return result;
 }
 
@@ -330,20 +411,25 @@ void EmbeddingLayer::SetEmbedding(int index, const Tensor& embedding) {
     if (index < 0 || index >= num_embeddings_) {
         throw std::out_of_range("Embedding index out of range");
     }
-    if (embedding.NumElements() != static_cast<size_t>(embedding_dim_)) {
+    if (embedding.GetDataType() != DataType::Float32 ||
+        embedding.NumElements() != static_cast<size_t>(embedding_dim_)) {
         throw std::invalid_argument("Embedding dimension mismatch");
     }
 
-    float* dst = static_cast<float*>(weight_.Data()) + index * embedding_dim_;
-    std::memcpy(dst, embedding.Data<float>(), embedding_dim_ * sizeof(float));
+    float* dst =
+        weight_.MutableData<float>() + index * embedding_dim_;
+    std::memcpy(dst, embedding.ReadData<float>(),
+                embedding_dim_ * sizeof(float));
 }
 
 void EmbeddingLayer::LoadPretrainedWeights(const Tensor& weights, bool freeze) {
     const auto& shape = weights.Shape();
-    if (shape.size() != 2 ||
+    if (weights.GetDataType() != DataType::Float32 || shape.size() != 2 ||
         shape[0] != static_cast<size_t>(num_embeddings_) ||
         shape[1] != static_cast<size_t>(embedding_dim_)) {
-        throw std::invalid_argument("Weight shape mismatch");
+        throw std::invalid_argument(
+            "Embedding pretrained weights must be a Float32 matrix with "
+            "shape [num_embeddings, embedding_dim]");
     }
 
     weight_ = weights.Clone();
@@ -351,7 +437,7 @@ void EmbeddingLayer::LoadPretrainedWeights(const Tensor& weights, bool freeze) {
 
     // Ensure padding index is zero
     if (padding_idx_ >= 0 && padding_idx_ < num_embeddings_) {
-        float* data = static_cast<float*>(weight_.Data());
+        float* data = weight_.MutableData<float>();
         for (int i = 0; i < embedding_dim_; i++) {
             data[padding_idx_ * embedding_dim_ + i] = 0.0f;
         }
@@ -375,7 +461,7 @@ std::map<std::string, Tensor> EmbeddingLayer::GetGradients() {
 
 void EmbeddingLayer::SetParameters(const std::map<std::string, Tensor>& params) {
     if (params.count("weight")) {
-        weight_ = params.at("weight");
+        LoadPretrainedWeights(params.at("weight"), frozen_);
     }
 }
 

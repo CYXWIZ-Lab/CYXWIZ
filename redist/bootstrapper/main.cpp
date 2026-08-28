@@ -1,6 +1,8 @@
 #include "runtime_layout.h"
 #include "backend_pack_maintenance_request.h"
 #include "backend_pack_platform.h"
+#include "product_removal_handoff.h"
+#include "product_removal_protocol.h"
 
 #include <filesystem>
 #include <iostream>
@@ -236,6 +238,7 @@ int wmain(int argc, wchar_t** argv) {
     if (installer_mode) {
         command_line += L" --runtime-root ";
         command_line += QuoteArgument(runtime.runtime_root.native());
+        command_line += L" --product-removal-host";
     }
     for (int index = first_forwarded_argument; index < argc; ++index) {
         command_line.push_back(L' ');
@@ -275,6 +278,23 @@ int wmain(int argc, wchar_t** argv) {
                 std::to_string(::GetLastError()));
     }
     ::CloseHandle(process.hProcess);
+    if (wait_result == WAIT_OBJECT_0 && installer_mode &&
+        exit_code == static_cast<DWORD>(
+            cyxwiz::runtime::kProductRemovalRequestedExitCode)) {
+        auto handoff = cyxwiz::runtime::SchedulePendingProductRemoval(
+            executable_directory, error);
+        if (handoff.status != cyxwiz::runtime::
+                ProductRemovalHandoffStatus::Scheduled) {
+            return Fail(
+                runtime.runtime_root,
+                "cannot schedule queued product removal: " + error);
+        }
+        cyxwiz::runtime::AppendBootstrapDiagnostic(
+            runtime.runtime_root,
+            "product removal queued; detached finalizer is waiting for exit");
+        handoff.parent_lifetime.PreserveUntilProcessExit();
+        return 0;
+    }
     if (wait_result == WAIT_OBJECT_0 && !installer_mode) {
         const auto maintenance =
             cyxwiz::runtime::ApplyPendingBackendPackMaintenance(

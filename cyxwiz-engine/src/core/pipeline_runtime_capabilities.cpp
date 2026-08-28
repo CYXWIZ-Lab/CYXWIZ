@@ -253,6 +253,23 @@ void CanonicalizePipelineParameterAliases(
     gui::NodeType node_type,
     std::map<std::string, std::string>& parameters,
     bool prefer_legacy) {
+    if (node_type == gui::NodeType::GroupNorm ||
+        node_type == gui::NodeType::InstanceNorm) {
+        const auto legacy = parameters.find("epsilon");
+        if (legacy == parameters.end()) {
+            return;
+        }
+
+        const auto canonical = parameters.find("eps");
+        if (!TrimRuntimeValue(legacy->second).empty() &&
+            (prefer_legacy || canonical == parameters.end() ||
+             TrimRuntimeValue(canonical->second).empty())) {
+            parameters["eps"] = legacy->second;
+        }
+        parameters.erase("epsilon");
+        return;
+    }
+
     if (node_type == gui::NodeType::JoinTables) {
         const auto shared_key = parameters.find("on_column");
         if (shared_key == parameters.end()) {
@@ -315,6 +332,7 @@ GetPipelineOperatorRuntimeCapabilities() {
         {"FilterDesigner", gui::NodeType::FilterDesigner},
         {"LinearRegressionNode", gui::NodeType::LinearRegressionNode},
         {"PolynomialRegressionNode", gui::NodeType::PolynomialRegressionNode},
+        {"RegressionModelPredictor", gui::NodeType::RegressionModelPredictor},
         {"DecisionTreeClassifier", gui::NodeType::DecisionTreeClassifier},
         {"RandomForestClassifier", gui::NodeType::RandomForestClassifier},
         {"GradientBoostingClassifier", gui::NodeType::GradientBoostingClassifier},
@@ -387,6 +405,12 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::GELU, std::nullopt, false},
         {"LeakyReLU", "LeakyReLU is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
          gui::NodeType::LeakyReLU, std::nullopt, false},
+        {"ELU", "ELU is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::ELU, std::nullopt, false},
+        {"Swish", "Swish is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::Swish, std::nullopt, false},
+        {"Mish", "Mish is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::Mish, std::nullopt, false},
         {"MSELoss", "MSELoss is a training loss node; PipelineExecutor loss execution is not implemented",
          gui::NodeType::MSELoss, std::nullopt, false},
         {"CrossEntropyLoss", "CrossEntropyLoss is a training loss node; PipelineExecutor loss execution is not implemented",
@@ -423,10 +447,12 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::Multiply, std::nullopt, false},
         {"Average", "Average is a tensor graph utility node; PipelineExecutor tensor arithmetic execution is not implemented",
          gui::NodeType::Average, std::nullopt, false},
-        {"Constant", "Constant is a tensor graph utility node; PipelineExecutor tensor source execution is not implemented",
+        {"Constant", "Constant belongs to the GraphExecutor scalar simulation lane; PipelineExecutor does not execute simulation sources",
          gui::NodeType::Constant, std::nullopt, false},
-        {"Lambda", "Lambda is a tensor graph utility node; PipelineExecutor custom tensor execution is not implemented",
-         gui::NodeType::Lambda, std::nullopt, false},
+        {"Lambda", "Lambda has no expression evaluator, model layer, PipelineExecutor operator, or sandboxed execution owner",
+         gui::NodeType::Lambda},
+        {"Parameter", "Parameter has no model-registration, initialization, gradient, optimizer, checkpoint, or graph execution owner",
+         gui::NodeType::Parameter},
         {"Reshape", "Reshape is a tensor graph utility node; PipelineExecutor tensor shape execution is not implemented",
          gui::NodeType::Reshape, std::nullopt, false},
         {"View", "View is a tensor graph utility node; PipelineExecutor tensor shape execution is not implemented",
@@ -481,9 +507,15 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::TensorLogicalMask, std::nullopt, false},
         {"Embedding", "Embedding is a training model layer node; PipelineExecutor embedding-layer execution is not implemented",
          gui::NodeType::Embedding, std::nullopt, false},
-        {"SignalSlider", "SignalSlider is an interactive tensor signal source; PipelineExecutor signal-widget execution is not implemented",
+        {"SignalSlider", "SignalSlider belongs to the GraphExecutor scalar simulation lane; PipelineExecutor does not execute interactive simulation sources",
          gui::NodeType::SignalSlider, std::nullopt, false},
-        {"SignalScope", "SignalScope is an interactive signal visualization node; PipelineExecutor signal-widget execution is not implemented",
+        {"SineWave", "SineWave belongs to the GraphExecutor scalar simulation lane; PipelineExecutor does not execute time-varying simulation sources",
+         gui::NodeType::SineWave, std::nullopt, false},
+        {"StepSignal", "StepSignal belongs to the GraphExecutor scalar simulation lane; PipelineExecutor does not execute time-varying simulation sources",
+         gui::NodeType::StepSignal, std::nullopt, false},
+        {"RampSignal", "RampSignal belongs to the GraphExecutor scalar simulation lane; PipelineExecutor does not execute time-varying simulation sources",
+         gui::NodeType::RampSignal, std::nullopt, false},
+        {"SignalScope", "SignalScope belongs to the GraphExecutor scalar simulation lane; PipelineExecutor does not execute interactive simulation sinks",
          gui::NodeType::SignalScope, std::nullopt, false},
         {"TrainTestSplit", "legacy TrainTestSplit graph execution is not implemented; old passthrough behavior is disabled"},
         {"ImagePreprocessor", "legacy ImagePreprocessor graph execution is not implemented; old passthrough behavior is disabled",
@@ -736,6 +768,7 @@ GetPipelineInputArityRuntimeCapabilities() {
         {"Join", 2},
         {"RowAppender", 2},
         {"ColumnAppender", 2},
+        {"RegressionModelPredictor", 2},
     };
     return capabilities;
 }
@@ -990,40 +1023,48 @@ GetPipelineFloatParameterRuntimeCapabilities() {
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedSequentialModelLayerCapabilities() {
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
+        {gui::NodeType::Conv1D,
+         "has a native backend primitive but no GraphCompiler/ModelBuilder/SequentialModel owner or production ArrayFire execution contract"},
         {gui::NodeType::Conv2D,
-         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+         "has a backend primitive and direct SequentialModel adapter but is not supported by ModelBuilder; its native CPU forward/backward formulas do not establish a production ArrayFire execution contract"},
+        {gui::NodeType::Conv3D,
+         "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path"},
+        {gui::NodeType::DepthwiseConv2D,
+         "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path"},
         {gui::NodeType::MaxPool2D,
-         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+         "has a backend primitive and direct SequentialModel adapter but is not constructed by ModelBuilder; its backward path and native fallback lack complete padding, residency, and strict-fallback evidence"},
         {gui::NodeType::AvgPool2D,
-         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+         "has a backend primitive and direct SequentialModel adapter but is not constructed by ModelBuilder; its backward path and native fallback lack complete padding, residency, and strict-fallback evidence"},
         {gui::NodeType::GlobalMaxPool,
-         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+         "has a compiler sketch but no backend layer or ModelBuilder/SequentialModel execution path"},
         {gui::NodeType::GlobalAvgPool,
-         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+         "has a native CPU backend primitive and direct SequentialModel adapter but is not constructed by ModelBuilder and has no production ArrayFire execution contract"},
+        {gui::NodeType::AdaptiveAvgPool,
+         "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path"},
         {gui::NodeType::ConvTranspose2D,
-         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+         "has a native backend primitive and compiler sketch but is not constructed by ModelBuilder/SequentialModel and lacks a production ArrayFire execution contract"},
         {gui::NodeType::Upsample,
-         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+         "has native nearest/bilinear backend primitives and a compiler sketch but is not constructed by ModelBuilder/SequentialModel or ArrayFire-first"},
         {gui::NodeType::PixelShuffle,
-         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+         "has a native depth-to-space backend primitive and compiler sketch but is not constructed by ModelBuilder/SequentialModel or ArrayFire-first"},
         {gui::NodeType::PolicyNetwork,
          "sketches reinforcement-learning policy training but is not supported by ModelBuilder/SequentialModel yet"},
         {gui::NodeType::ValueNetwork,
          "sketches reinforcement-learning value training but is not supported by ModelBuilder/SequentialModel yet"},
         {gui::NodeType::GroupNorm,
-         "visible in model analysis but is not supported by ModelBuilder/SequentialModel yet"},
+         "has a native Float32 [H,W,C,N] backend primitive but no ModelBuilder/SequentialModel owner or production ArrayFire-first execution contract"},
         {gui::NodeType::InstanceNorm,
-         "visible in model analysis but is not supported by ModelBuilder/SequentialModel yet"},
+         "has a native Float32 [H,W,C,N] backend primitive but no ModelBuilder/SequentialModel owner or production ArrayFire-first execution contract"},
         {gui::NodeType::SelfAttention,
-         "visible in model analysis but is not supported by ModelBuilder/SequentialModel yet"},
+         "retains a legacy explicit Query/Key/Value graph contract but has no distinct GraphCompiler/ModelBuilder execution owner; use Multi-Head Attention for supported unary self-attention"},
         {gui::NodeType::CrossAttention,
-         "visible in model analysis but is not supported by ModelBuilder/SequentialModel yet"},
+         "the backend attention primitive can compute Query/Key/Value attention, but Studio has no graph-level multi-input CrossAttention owner or gradient/output contract"},
         {gui::NodeType::LinearAttention,
-         "visible in model analysis but is not supported by ModelBuilder/SequentialModel yet"},
+         "has neither a backend linear-attention primitive nor a GraphCompiler/ModelBuilder execution owner"},
         {gui::NodeType::RNN,
-         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+         "has no backend simple-RNN layer, Python binding, ModelBuilder/SequentialModel module, or training owner and must not be substituted with GRU"},
         {gui::NodeType::Bidirectional,
-         "recognized by the graph compiler but is not supported by ModelBuilder/SequentialModel yet"},
+         "has no contract for binding an inner recurrent layer and is not constructed by GraphCompiler, ModelBuilder, or SequentialModel; bidirectional execution must be configured and validated on a concrete recurrent node"},
     };
     return capabilities;
 }
@@ -1031,8 +1072,9 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedTrainingControlCapabilities() {
     constexpr const char* scheduler_ownership_gap =
-        "the backend scheduler is numerically available, but TrainingExecutor "
-        "does not yet own its update cadence, run state, or checkpoint restoration";
+        "the backend scheduler is numerically available, but GraphCompiler/"
+        "TrainingExecutor do not construct it or own its update cadence, run "
+        "state, or checkpoint restoration";
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
         {gui::NodeType::StepLR, scheduler_ownership_gap},
         {gui::NodeType::CosineAnnealing, scheduler_ownership_gap},
@@ -1040,11 +1082,40 @@ GetPipelineUnsupportedTrainingControlCapabilities() {
         {gui::NodeType::ExponentialLR, scheduler_ownership_gap},
         {gui::NodeType::WarmupScheduler, scheduler_ownership_gap},
         {gui::NodeType::L1Regularization,
-         "configurable in the editor but is not connected to training execution yet"},
+         "has no Engine owner that reads model parameters, computes a differentiable L1 penalty, and adds it to the selected training loss"},
         {gui::NodeType::L2Regularization,
-         "configurable in the editor but is not connected to training execution yet"},
+         "has no Engine owner that reads model parameters, computes a differentiable L2 penalty, and adds it to the selected training loss; AdamW weight decay is separate"},
         {gui::NodeType::ElasticNet,
-         "configurable in the editor but is not connected to training execution yet"},
+         "has no Engine owner that reads model parameters, combines differentiable L1/L2 penalties, and adds the result to the selected training loss"},
+    };
+    return capabilities;
+}
+
+const std::vector<PipelineUnsupportedTrainingNodeCapability>&
+GetPipelineUnsupportedTrainingWorkflowCapabilities() {
+    static constexpr const char* kDatasetReason =
+        "has a typed metric-learning batch helper, but no graph materializer or TrainingExecutor owner routes table columns into device-ready pair/triplet batches";
+    static constexpr const char* kSharedEncoderReason =
+        "has a shared-encoder helper, but visual graph ownership, stateful branch snapshots, and device-resident gradient accumulation are not implemented";
+    static constexpr const char* kLossReason =
+        "has backend metric-learning loss primitives, but GraphCompiler/TrainingExecutor do not route pair/triplet embeddings and labels through a shared-weight training step";
+    static constexpr const char* kMetricsReason =
+        "has a focused metric helper, but no visual graph or TrainingExecutor owner computes and reports it from metric-learning batches";
+    static constexpr const char* kOutputReason =
+        "has inference response packaging helpers, but visual graph/runtime routing from a shared encoder to this output is not implemented";
+
+    static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
+        {gui::NodeType::PairDatasetBuilder, kDatasetReason},
+        {gui::NodeType::TripletDatasetBuilder, kDatasetReason},
+        {gui::NodeType::SharedEncoder, kSharedEncoderReason},
+        {gui::NodeType::SiameseBranch, kSharedEncoderReason},
+        {gui::NodeType::ContrastiveLoss, kLossReason},
+        {gui::NodeType::CosineEmbeddingLoss, kLossReason},
+        {gui::NodeType::TripletLoss, kLossReason},
+        {gui::NodeType::PairMetrics, kMetricsReason},
+        {gui::NodeType::RetrievalMetrics, kMetricsReason},
+        {gui::NodeType::EmbeddingOutput, kOutputReason},
+        {gui::NodeType::PairScoreOutput, kOutputReason},
     };
     return capabilities;
 }
@@ -1076,6 +1147,24 @@ GetPipelineSupportedTrainingBackendCapabilities() {
          "compiled by GraphCompiler and executed by TrainingExecutor for tested causal language-model stacks"},
         {gui::NodeType::TimeDistributed,
          "compiled by GraphCompiler and executed by TrainingExecutor as a per-timestep dense projection"},
+        {gui::NodeType::ReLU,
+         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
+        {gui::NodeType::LeakyReLU,
+         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
+        {gui::NodeType::ELU,
+         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
+        {gui::NodeType::GELU,
+         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
+        {gui::NodeType::Swish,
+         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
+        {gui::NodeType::Mish,
+         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
+        {gui::NodeType::Sigmoid,
+         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
+        {gui::NodeType::Tanh,
+         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
+        {gui::NodeType::Softmax,
+         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
     };
     return capabilities;
 }
@@ -1117,6 +1206,16 @@ GetPipelineSupportedTrainingRoleCapabilities() {
         {gui::NodeType::Tanh, PipelineTrainingSupportRole::Activation,
          "compiled and built as a training activation"},
         {gui::NodeType::Softmax, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::LeakyReLU, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::ELU, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::GELU, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::Swish, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::Mish, PipelineTrainingSupportRole::Activation,
          "compiled and built as a training activation"},
 
         {gui::NodeType::MSELoss, PipelineTrainingSupportRole::Loss,
@@ -1376,6 +1475,8 @@ const char* PipelineTrainingBackendSupportModeName(
         return "unsupported_sequential_model_layer";
     case PipelineTrainingBackendSupportMode::UnsupportedTrainingControl:
         return "unsupported_training_control";
+    case PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow:
+        return "unsupported_training_workflow";
     }
     return "unknown";
 }
@@ -1392,6 +1493,8 @@ const char* PipelineTrainingSupportRoleName(PipelineTrainingSupportRole role) {
         return "optimizer";
     case PipelineTrainingSupportRole::TrainingControl:
         return "training_control";
+    case PipelineTrainingSupportRole::TrainingWorkflow:
+        return "training_workflow";
     }
     return "unknown";
 }
@@ -1628,12 +1731,24 @@ const char* ResolvePipelineUnsupportedTrainingControlReason(gui::NodeType node_t
         : nullptr;
 }
 
+const char* ResolvePipelineUnsupportedTrainingWorkflowReason(gui::NodeType node_type) {
+    const auto support = ResolvePipelineTrainingBackendSupport(node_type);
+    return support.mode ==
+               PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow
+        ? support.reason
+        : nullptr;
+}
+
 bool IsPipelineUnsupportedSequentialModelLayer(gui::NodeType node_type) {
     return ResolvePipelineUnsupportedSequentialModelLayerReason(node_type) != nullptr;
 }
 
 bool IsPipelineUnsupportedTrainingControlNode(gui::NodeType node_type) {
     return ResolvePipelineUnsupportedTrainingControlReason(node_type) != nullptr;
+}
+
+bool IsPipelineUnsupportedTrainingWorkflowNode(gui::NodeType node_type) {
+    return ResolvePipelineUnsupportedTrainingWorkflowReason(node_type) != nullptr;
 }
 
 bool IsPipelineSupportedTrainingBackendNode(gui::NodeType node_type) {
@@ -1688,6 +1803,21 @@ ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
                 false,
                 false,
                 control_it->reason};
+    }
+
+    const auto& workflow_capabilities =
+        GetPipelineUnsupportedTrainingWorkflowCapabilities();
+    auto workflow_it = std::find_if(
+        workflow_capabilities.begin(),
+        workflow_capabilities.end(),
+        [node_type](const PipelineUnsupportedTrainingNodeCapability& capability) {
+            return capability.node_type == node_type;
+        });
+    if (workflow_it != workflow_capabilities.end()) {
+        return {PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow,
+                false,
+                false,
+                workflow_it->reason};
     }
 
     const auto& supported_capabilities =

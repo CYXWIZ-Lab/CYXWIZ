@@ -150,6 +150,12 @@ public:
     bool IsCancelled() const { return cancel_requested_; }
 
 private:
+    struct InputLink {
+        int node_id = -1;
+        std::optional<int> source_pin_index;
+        std::optional<int> target_pin_index;
+    };
+
     struct Node {
         int id;
         std::string type;
@@ -158,6 +164,7 @@ private:
         std::map<std::string, std::string> parameters;
         std::vector<int> inputs;   // Input node IDs
         std::vector<int> outputs;  // Output node IDs
+        std::vector<InputLink> input_links; // Typed artifact/table routing
 
         // Phase 8: Lazy evaluation support
         bool needs_execution = true;        // Dirty flag for change tracking
@@ -167,6 +174,7 @@ private:
 
     struct ExecutionContext {
         std::map<int, std::string> node_results;  // Node ID -> Arrow table name
+        std::map<int, std::string> model_artifacts; // Node ID -> fitted model path
         std::string input_dataset;                // Initial dataset name
         std::string output_dataset;               // Final result dataset name
         std::string deployment_dataset;           // Dataset ready for Node Editor deployment
@@ -285,6 +293,12 @@ private:
     std::vector<std::string> GetInputDatasetNames(const Node& node,
                                                   ExecutionContext& ctx,
                                                   size_t expected_count);
+    std::string GetInputDatasetForPin(const Node& node,
+                                      ExecutionContext& ctx,
+                                      int target_pin_index);
+    std::string GetInputModelArtifactForPin(const Node& node,
+                                            ExecutionContext& ctx,
+                                            int target_pin_index);
     bool FailUnsupportedNode(const Node& node, const std::string& reason);
     bool ExecutePipelineOperatorNode(const Node& node, ExecutionContext& ctx, gui::NodeType type);
 

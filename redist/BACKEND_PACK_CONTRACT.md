@@ -14,6 +14,7 @@ bootstrapper:
 
 ```text
 cyxwiz-runtime-bootstrapper[.exe]     # app-level launcher
+cyxwiz-product-removal-finalizer[.exe] # copied out for deferred removal
 cyxwiz-installer[.exe]
 cyxwiz-backend-pack-installer[.exe]
 runtime/
@@ -91,6 +92,55 @@ all path, receipt, launcher, and runtime resolution and rejects any difference.
 Only a deferred finalizer may consume that typed authorization to quarantine a
 product root after the installer and stable bootstrapper have exited.
 
+The cross-process handoff is `.cyxwiz-removal-request.json` in the product root.
+It is a regular non-symlink file bounded to 64 KiB and atomically published only
+after fresh removal authorization succeeds. Schema 1 contains exactly the
+request kind, normalized install root, scope, receipt ID, and complete pinned
+runtime identity. Loading rejects unknown fields, malformed values, copied
+roots, and any request made stale by receipt, launcher, or runtime changes. The
+request is intent plus pinned state, not ownership evidence and not independent
+deletion authority. A fresh explicit confirmation may replace it; the receipt
+remains immutable across that operation.
+
+The signed CPU base includes a small
+`cyxwiz-product-removal-finalizer[.exe]`. It accepts only the exact install root
+and an inherited native pipe token. The read token is owned by the finalizer;
+the stable bootstrapper owns the sole write token until process exit. The
+finalizer treats only EOF as the lifetime boundary, rejects pipe data or wait
+errors, closes its token, and then reloads the durable request so authorization
+cannot be carried across the wait unchecked. On Windows it is built with the
+static CRT and has no product-local runtime DLL dependency. This boundary is
+non-destructive. The detached scheduler bounds the source to 16 MiB and copies
+it without following a
+reparse point or symlink into a newly created temporary directory, passes only
+the pipe read token, and retains the write token under explicit parent-process
+ownership. Windows restricts inheritance with
+`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`; POSIX uses a double fork plus exact
+`execv`. The scheduler is not invoked by the stable bootstrapper until the
+cleanup transaction is complete.
+
+Product deactivation is one atomic sibling rename from the exact install root
+to `.cyxwiz-removing-<install-id>`. The transaction revalidates authorization
+immediately before the rename, refuses any pre-existing destination, and never
+merges or overwrites content. After rename it validates the relocated regular
+receipt against the original root, pinned installation ID, and scope; failure
+attempts rollback. The quarantine module performs no recursive cleanup. A
+separate platform adapter must remove entries without following symlinks,
+junctions, reparse points, or mounted filesystems and must preserve recovery
+evidence until all other owned content is gone.
+
+Cleanup performs a complete bounded preflight before mutation: at most 256
+directory levels and one million entries. POSIX uses directory-relative
+`openat`, `fstatat(AT_SYMLINK_NOFOLLOW)`, inode/device comparison, and
+`unlinkat`; a different filesystem device is rejected and symbolic links are
+unlinked without traversal. Windows pins direct directory handles without
+delete sharing, rejects reparse traversal, and deletes exact opened entries so
+junctions and reparse points are removed as links. Payload failure retains both
+`.cyxwiz-removal-request.json` and `.cyxwiz-installation.json`. After payload is
+empty, cleanup removes the request, then the receipt, then the verified empty
+quarantine root. A retry may complete if request evidence was already removed,
+but never proceeds without the relocated ownership receipt.
+
 The graphical `cyxwiz-installer` component manager remains in the signed
 versioned base and is resolved by the stable bootstrapper (`.exe` on Windows).
 It owns Recommended, CPU-only, and Custom package consent and launches the
@@ -135,10 +185,12 @@ Hardware drivers and vendor providers remain host prerequisites.
 `trusted-keys.json` is an app-bundled schema-1 document with exactly
 `schema_version` and `keys`. Each key entry contains exactly `key_id`,
 `algorithm=ed25519`, the 32-byte raw public key as 43-character unpadded
-base64url, one or both unique roles (`catalog`, `pack`), and a boolean
-`revoked`. Key IDs are unique, private keys are never present, and unknown
-fields or roles fail closed. Application updates may revoke a bundled key;
-catalog policy independently blocks or revokes individual packs.
+base64url, one or more unique roles (`catalog`, `pack`, `installer`), and a
+boolean `revoked`. The installer role authorizes only the first-stage setup
+descriptor; it does not authorize a catalog or backend-pack manifest. Key IDs
+are unique, private keys are never present, and unknown fields or roles fail
+closed. Application updates may revoke a bundled key; catalog policy
+independently blocks or revokes individual packs.
 
 ## Signed Envelope
 
@@ -176,15 +228,25 @@ URL with the manifest's signed `archive.file_name`; credentials, queries,
 fragments, directory-valued manifest URLs, and nested archive names are
 rejected. Offline media places that same archive file beside its copied signed
 manifest. This deterministic rule is the only implicit artifact-source
-mapping and introduces no unsigned mirror or redirect authority.
+mapping and introduces no unsigned mirror authority. Redirect authority is
+code-owned and limited to the one canonical GitHub Release case below; signed
+metadata cannot expand it.
 
 Online and offline artifacts enter one acquisition transaction. The service
 writes only to a sibling `.part` file, resumes from its retained byte length,
 requires the signed final byte size and SHA-256, flushes the completed file,
 and atomically publishes it without replacing an existing destination. HTTPS
-requests reject credentials and fragments, disable redirects, use bounded
-timeouts, and require exact `Content-Length` plus exact `Content-Range` for a
-resume. A changed remote object is rejected by the final signed hash.
+requests reject credentials and fragments, disable automatic redirects, use
+bounded timeouts, and require exact `Content-Length` plus exact
+`Content-Range` for a resume. A canonical immutable
+`https://github.com/OWNER/REPOSITORY/releases/download/TAG/ASSET` request may
+manually follow one `302` only to
+`https://release-assets.githubusercontent.com/github-production-release-asset/...`.
+The destination query is request-local and is never persisted or logged.
+Every other redirect, status, source shape, destination authority, and second
+hop fails before body consumption. The destination request forwards no origin
+credentials or cookies and replays only the exact Range header when resuming.
+A changed remote object is rejected by the final signed hash.
 
 ZIP extraction accepts only regular, non-link entries whose canonical UTF-8
 paths, sizes, and case-folded uniqueness exactly match the signed component
@@ -288,7 +350,8 @@ WinHTTP uses the operating system's automatic proxy configuration. On Linux
 and macOS, schema 1 uses direct certificate-verified HTTPS and has no explicit
 proxy-credential input; proxy-only deployments must use the offline workflow.
 Proxy URLs and credentials are never catalog or manifest fields and must not
-be copied into support output. Redirects remain disabled on every platform.
+be copied into support output. Automatic redirects remain disabled on every
+platform; only the code-owned one-hop GitHub Release policy above is eligible.
 Failure to reach the network leaves the verified local catalog and installed
 runtime inspectable and does not downgrade to unsigned metadata.
 
@@ -299,8 +362,9 @@ manifest digest, manifest signature, client version, platform, and
 architecture before publication. Verified manifests are atomically published
 first and the catalog last under the selected runtime root, never beside the
 installer executable; any source, verification, or publication failure leaves
-the previous verified catalog authoritative. The catalog endpoint must be a
-direct, non-redirecting HTTPS URL. Production builds configure it with
+the previous verified catalog authoritative. The catalog endpoint must be
+direct HTTPS or an exact immutable canonical GitHub Release asset URL accepted
+by the one-hop policy. Production builds configure it with
 `CYXWIZ_INSTALLER_CATALOG_URL`; local integration runs may override it with
 `--catalog-url`.
 

@@ -11,6 +11,8 @@
 
 namespace cyxwiz::runtime {
 
+struct VerifiedInstallerBundle;
+
 enum class BackendPackExtractionStage {
     Idle,
     Preparing,
@@ -61,6 +63,11 @@ public:
     BackendPackExtractionResult Extract(
         const std::filesystem::path& archive_path,
         const VerifiedBackendPackManifest& manifest,
+        const std::filesystem::path& destination,
+        std::uint64_t disk_budget_bytes);
+    BackendPackExtractionResult ExtractInstallerBundle(
+        const std::filesystem::path& archive_path,
+        const VerifiedInstallerBundle& bundle,
         const std::filesystem::path& destination,
         std::uint64_t disk_budget_bytes);
     void Cancel();

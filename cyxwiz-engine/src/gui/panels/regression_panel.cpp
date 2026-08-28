@@ -236,6 +236,12 @@ void RegressionPanel::RenderModelSummary() {
         snprintf(buf, sizeof(buf), "%.4f", result_.mse);
         AddRow("MSE", buf);
 
+        snprintf(buf, sizeof(buf), "%.4f", result_.residual_standard_error);
+        AddRow("Residual standard error", buf);
+
+        snprintf(buf, sizeof(buf), "%.4f", result_.residual_variance);
+        AddRow("Residual variance", buf);
+
         ImGui::EndTable();
     }
 
@@ -456,6 +462,10 @@ void RegressionPanel::RenderExportOptions() {
                 file << "RMSE," << result_.rmse << "\n";
                 file << "MAE," << result_.mae << "\n";
                 file << "MSE," << result_.mse << "\n";
+                file << "Residual standard error,"
+                     << result_.residual_standard_error << "\n";
+                file << "Residual variance,"
+                     << result_.residual_variance << "\n";
                 file << "n," << result_.n << "\n\n";
 
                 file << "Coefficients\n";

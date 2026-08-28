@@ -3215,7 +3215,8 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
 
         struct PendingInputLink {
             int start_node = -1;
-            std::optional<int> end_pin;
+            std::optional<int> start_pin_index;
+            std::optional<int> end_pin_index;
         };
         std::map<int, std::vector<PendingInputLink>> pending_inputs;
 
@@ -3261,9 +3262,19 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
             start_it->outputs.push_back(end_node);
             PendingInputLink pending;
             pending.start_node = start_node;
-            if (link_json.contains("end_pin") &&
-                link_json["end_pin"].is_number_integer()) {
-                pending.end_pin = link_json["end_pin"].get<int>();
+            if (link_json.contains("start_pin_index") &&
+                link_json["start_pin_index"].is_number_integer()) {
+                pending.start_pin_index =
+                    link_json["start_pin_index"].get<int>();
+            }
+            if (link_json.contains("end_pin_index") &&
+                link_json["end_pin_index"].is_number_integer()) {
+                pending.end_pin_index =
+                    link_json["end_pin_index"].get<int>();
+            } else if (link_json.contains("end_pin") &&
+                       link_json["end_pin"].is_number_integer()) {
+                // Backward-compatible support for older headless snapshots.
+                pending.end_pin_index = link_json["end_pin"].get<int>();
             }
             pending_inputs[end_node].push_back(std::move(pending));
         }
@@ -3272,14 +3283,14 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
             std::set<int> seen_pins;
             bool all_pinned = !inputs.empty();
             for (const auto& input : inputs) {
-                all_pinned = all_pinned && input.end_pin.has_value();
-                if (input.end_pin.has_value() &&
-                    !seen_pins.insert(*input.end_pin).second) {
+                all_pinned = all_pinned && input.end_pin_index.has_value();
+                if (input.end_pin_index.has_value() &&
+                    !seen_pins.insert(*input.end_pin_index).second) {
                     last_error_ = errors::FormatError(
                         errors::Runtime::PipelineMalformed,
                         "Node " + std::to_string(end_node) +
                             " has multiple links targeting input pin " +
-                            std::to_string(*input.end_pin));
+                            std::to_string(*input.end_pin_index));
                     return false;
                 }
             }
@@ -3288,7 +3299,7 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
                     inputs.begin(), inputs.end(),
                     [](const PendingInputLink& lhs,
                        const PendingInputLink& rhs) {
-                        return *lhs.end_pin < *rhs.end_pin;
+                        return *lhs.end_pin_index < *rhs.end_pin_index;
                     });
             }
 
@@ -3297,6 +3308,10 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
                 [end_node](const Node& node) { return node.id == end_node; });
             for (const auto& input : inputs) {
                 end_it->inputs.push_back(input.start_node);
+                end_it->input_links.push_back({
+                    input.start_node,
+                    input.start_pin_index,
+                    input.end_pin_index});
             }
         }
 
@@ -3334,7 +3349,39 @@ bool PipelineExecutor::ResolveAutomaticPreprocessingStatePaths(
         ? std::filesystem::current_path() / "artifacts"
         : std::filesystem::path(artifact_root_);
 
+    const auto node_slug = [](const Node& node, const std::string& fallback) {
+        std::string slug = node.name.empty() ? node.type : node.name;
+        std::transform(slug.begin(), slug.end(), slug.begin(),
+                       [](unsigned char c) {
+                           return std::isalnum(c)
+                               ? static_cast<char>(std::tolower(c))
+                               : '_';
+                       });
+        while (!slug.empty() && slug.back() == '_') {
+            slug.pop_back();
+        }
+        return slug.empty() ? fallback : slug;
+    };
+
     for (auto& node : nodes) {
+        if (node.type == "LinearRegressionNode" ||
+            node.type == "PolynomialRegressionNode") {
+            const std::string configured_path = TrimString(
+                ParameterOrDefault(node.parameters, "model_path", ""));
+            if (configured_path.empty()) {
+                const auto path = artifact_root / "regression" /
+                    run_id.str() /
+                    (std::to_string(node.id) + "_" +
+                     node_slug(node, "regression") +
+                     ".cyxregression.json");
+                node.parameters["model_path"] = path.string();
+                spdlog::info(
+                    "[Regression] Node '{}' will save its fitted Model "
+                    "artifact to '{}'.",
+                    node.name, path.string());
+            }
+            continue;
+        }
         if (node.type != "FillMissing" &&
             node.type != "StandardScaler") {
             continue;
@@ -3351,23 +3398,10 @@ bool PipelineExecutor::ResolveAutomaticPreprocessingStatePaths(
             continue;
         }
 
-        std::string slug = node.name.empty() ? node.type : node.name;
-        std::transform(slug.begin(), slug.end(), slug.begin(),
-                       [](unsigned char c) {
-                           return std::isalnum(c)
-                               ? static_cast<char>(std::tolower(c))
-                               : '_';
-                       });
-        while (!slug.empty() && slug.back() == '_') {
-            slug.pop_back();
-        }
-        if (slug.empty()) {
-            slug = "preprocessing";
-        }
-
         const auto path = artifact_root / "preprocessing" /
             run_id.str() /
-            (std::to_string(node.id) + "_" + slug +
+            (std::to_string(node.id) + "_" +
+             node_slug(node, "preprocessing") +
              ".cyxstate.json");
         node.parameters["state_path"] = path.string();
         spdlog::info(
@@ -5395,6 +5429,56 @@ std::vector<std::string> PipelineExecutor::GetInputDatasetNames(
     return dataset_names;
 }
 
+std::string PipelineExecutor::GetInputDatasetForPin(
+    const Node& node,
+    ExecutionContext& ctx,
+    int target_pin_index) {
+    for (const auto& link : node.input_links) {
+        if (link.target_pin_index != target_pin_index) {
+            continue;
+        }
+        const auto result = ctx.node_results.find(link.node_id);
+        if (result == ctx.node_results.end() || result->second.empty()) {
+            ReportError(node.type + ": Data input on pin " +
+                        std::to_string(target_pin_index) +
+                        " is not available from node " +
+                        std::to_string(link.node_id));
+            return {};
+        }
+        return result->second;
+    }
+    ReportError(node.type + ": required Data input pin " +
+                std::to_string(target_pin_index) + " is not connected");
+    return {};
+}
+
+std::string PipelineExecutor::GetInputModelArtifactForPin(
+    const Node& node,
+    ExecutionContext& ctx,
+    int target_pin_index) {
+    for (const auto& link : node.input_links) {
+        if (link.target_pin_index != target_pin_index) {
+            continue;
+        }
+        if (link.source_pin_index.has_value() &&
+            *link.source_pin_index != 1) {
+            ReportError(node.type + ": Model input must come from the "
+                        "upstream Model output connector");
+            return {};
+        }
+        const auto artifact = ctx.model_artifacts.find(link.node_id);
+        if (artifact == ctx.model_artifacts.end() || artifact->second.empty()) {
+            ReportError(node.type + ": fitted Model artifact from node " +
+                        std::to_string(link.node_id) + " is not available");
+            return {};
+        }
+        return artifact->second;
+    }
+    ReportError(node.type + ": required Model input pin " +
+                std::to_string(target_pin_index) + " is not connected");
+    return {};
+}
+
 bool PipelineExecutor::FailUnsupportedNode(const Node& node, const std::string& reason) {
     ReportError(node.type + " is not executable in the legacy Data Studio pipeline path: " +
                 reason);
@@ -5405,7 +5489,19 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     const Node& node,
     ExecutionContext& ctx,
     gui::NodeType type) {
-    std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    std::map<std::string, std::string> operator_parameters = node.parameters;
+    std::string input_dataset_name;
+    if (type == gui::NodeType::RegressionModelPredictor) {
+        input_dataset_name = GetInputDatasetForPin(node, ctx, 0);
+        const std::string model_path =
+            GetInputModelArtifactForPin(node, ctx, 1);
+        if (input_dataset_name.empty() || model_path.empty()) {
+            return false;
+        }
+        operator_parameters["model_path"] = model_path;
+    } else {
+        input_dataset_name = GetInputDatasetName(node, ctx);
+    }
     if (input_dataset_name.empty()) {
         ReportError(node.type + ": No input connection or dataset not found");
         return false;
@@ -5442,7 +5538,7 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     op->SetExecutionContext(std::move(operator_context));
 
     std::string configure_error;
-    if (!op->Configure(node.parameters, configure_error)) {
+    if (!op->Configure(operator_parameters, configure_error)) {
         ReportError(configure_error.empty()
                         ? node.type + ": operator configuration failed"
                         : configure_error);
@@ -5451,14 +5547,14 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
 
     std::string schema_error;
     if (!ValidatePipelineOperatorInputSchema(input_table, node.type,
-                                             node.parameters, type,
+                                             operator_parameters, type,
                                              schema_error)) {
         ReportError(schema_error);
         return false;
     }
 
     WarnIfDenseTextVectorizerMaterializationIsLarge(
-        node.type, node.parameters, input_table);
+        node.type, operator_parameters, input_table);
 
     auto result = op->Apply(input_table);
     if (!result.ok()) {
@@ -5478,6 +5574,21 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
 
     ctx.node_results[node.id] = output_dataset_name;
     ctx.output_dataset = output_dataset_name;
+
+    if (type == gui::NodeType::LinearRegressionNode ||
+        type == gui::NodeType::PolynomialRegressionNode) {
+        const auto model_path = operator_parameters.find("model_path");
+        if (model_path == operator_parameters.end() ||
+            model_path->second.empty() ||
+            !std::filesystem::is_regular_file(model_path->second)) {
+            ReportError(node.type +
+                        ": fitted Model artifact was not produced");
+            return false;
+        }
+        ctx.model_artifacts[node.id] = model_path->second;
+        spdlog::info("[Data Studio] {} Model output registered: '{}'",
+                     node.type, model_path->second);
+    }
 
     spdlog::info("[Data Studio] {} routed through PipelineOperatorFactory: {} rows, {} columns",
                  node.type, output_table->num_rows(), output_table->num_columns());
@@ -6634,6 +6745,7 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                 [this, node, &ctx, &execution_mutex]() mutable {
                     NodeExecutionResult result;
                     result.ctx.node_results = ctx.node_results;
+                    result.ctx.model_artifacts = ctx.model_artifacts;
                     std::lock_guard<std::mutex> lock(execution_mutex);
                     NotifyNodeExecution(*node, PipelineNodeExecutionEvent::Executing,
                                         "Executing " + node->name);
@@ -6656,6 +6768,10 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
             if (result.success && node) {
                 for (const auto& [result_node_id, dataset_name] : result.ctx.node_results) {
                     ctx.node_results[result_node_id] = dataset_name;
+                }
+                for (const auto& [result_node_id, artifact_path] :
+                     result.ctx.model_artifacts) {
+                    ctx.model_artifacts[result_node_id] = artifact_path;
                 }
                 if (result.ctx.deployment_ready) {
                     ctx.deployment_ready = true;

@@ -404,6 +404,7 @@ void RenderHeader(const InstallerCatalogState &catalog,
 void RenderSummary(InstallerViewState &state,
                    const InstallerCatalogState &catalog,
                    const CyxWizInstallLocation &install_location,
+                   const InstallerProductRemovalState &product_removal,
                    bool operation_running, const std::string &operation_message,
                    const InstallerPlanExecutionProgress &operation_progress,
                    InstallerViewAction &action) {
@@ -475,8 +476,11 @@ void RenderSummary(InstallerViewState &state,
                          (plan.pack_ids.empty() || catalog.available) &&
                          !state.install_location_dirty &&
                          install_location.valid && !operation_running;
-  ImGui::SetCursorPosY(
-      std::max(ImGui::GetCursorPosY(), ImGui::GetWindowHeight() - 92.0f));
+  const bool maintenance =
+      catalog.mode == CyxWizInstallerMode::Maintenance;
+  const float footer_height = maintenance ? 166.0f : 92.0f;
+  ImGui::SetCursorPosY(std::max(
+      ImGui::GetCursorPosY(), ImGui::GetWindowHeight() - footer_height));
   ImGui::BeginDisabled(!can_apply);
   if (ImGui::Button(ICON_FA_DOWNLOAD " Review & install",
                     ImVec2(-1.0f, 38.0f))) {
@@ -484,6 +488,11 @@ void RenderSummary(InstallerViewState &state,
     ImGui::OpenPopup("Review installation");
   }
   ImGui::EndDisabled();
+  if (maintenance && RenderInstallerRemovalControl(
+                         state.removal, product_removal,
+                         operation_running)) {
+    action.kind = InstallerViewActionKind::RemoveProduct;
+  }
   if (ImGui::Button("Close", ImVec2(-1.0f, 32.0f)) && !operation_running) {
     action.kind = InstallerViewActionKind::Close;
   }
@@ -546,6 +555,7 @@ void RenderReviewPopup(InstallerViewState &state,
 InstallerViewAction RenderInstallerView(
     InstallerViewState &state, const InstallerCatalogState &catalog,
     const CyxWizInstallLocation &install_location,
+    const InstallerProductRemovalState &product_removal,
     const std::string &platform_name, bool operation_running,
     const std::string &operation_message,
     const InstallerPlanExecutionProgress &operation_progress,
@@ -598,7 +608,8 @@ InstallerViewAction RenderInstallerView(
   ImGui::EndChild();
   ImGui::SameLine(0.0f, kColumnGap);
   ImGui::BeginChild("summary", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
-  RenderSummary(state, catalog, install_location, operation_running,
+  RenderSummary(state, catalog, install_location, product_removal,
+                operation_running,
                 operation_message, operation_progress, action);
   ImGui::EndChild();
 

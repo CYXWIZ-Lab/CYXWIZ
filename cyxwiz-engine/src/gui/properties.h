@@ -76,7 +76,6 @@ private:
 
     // Scope data buffers (node_id -> time/value ring buffer)
     std::map<int, properties_node_editors::ScopeBuffer> scope_buffers_;
-    float scope_demo_time_ = 0.0f;  // Demo animation timer
 
     // Phase 3: Enhanced properties state
     std::map<std::string, std::string> validation_errors_;  // param_name -> error message

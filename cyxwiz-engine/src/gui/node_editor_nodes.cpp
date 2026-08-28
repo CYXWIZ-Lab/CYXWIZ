@@ -431,135 +431,28 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         case NodeType::Output: {
-            // Output node - final layer that produces predictions
-            // Input: From previous layer
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            input_pin.description =
-                "Logits / final activations from the model head — usually "
-                "the last Dense layer's output of shape [batch, classes] "
-                "(or [batch, 1] for regression).";
-            node.inputs.push_back(input_pin);
-
-            // Output: Predictions (goes to Loss function)
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Predictions";
-            output_pin.is_input = false;
-            output_pin.is_required = false;  // Output is typically terminal; Predictions rarely chained further.
-            output_pin.description =
-                "Model predictions for the current batch. Connect to the "
-                "loss node's Predictions pin so the loss can compare "
-                "against DataLoader.Labels.";
-            node.outputs.push_back(output_pin);
-
-            node.parameters["classes"] = "10";
-            break;
-        }
-
-        case NodeType::Conv2D: {
-            // Conv2D remains constructible for saved-graph restoration and
-            // inspection even though interactive graph-add entry points block
-            // it until ModelBuilder supports the layer.
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
+        case NodeType::Conv2D:
         case NodeType::Conv1D:
         case NodeType::Conv3D:
         case NodeType::DepthwiseConv2D: {
-            // Convolutional layers
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            input_pin.description =
-                "Input feature map. Conv2D expects [batch, channels, "
-                "height, width]; Conv1D expects [batch, channels, "
-                "length]; Conv3D expects [batch, channels, depth, "
-                "height, width].";
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            output_pin.description =
-                "Convolved feature map with `filters` channels. Spatial "
-                "dimensions depend on kernel_size, stride, and padding "
-                "('same' preserves them, 'valid' shrinks).";
-            node.outputs.push_back(output_pin);
-
-            // Initialize default parameters
-            node.parameters["filters"] = "32";
-            node.parameters["kernel_size"] = "3";
-            node.parameters["stride"] = "1";
-            node.parameters["padding"] = "same";
-            node.parameters["activation"] = "relu";
-            if (node.type == NodeType::DepthwiseConv2D) {
-                node.parameters["depth_multiplier"] = "1";
-            }
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         case NodeType::MaxPool2D:
         case NodeType::AvgPool2D: {
-            // Pooling layers with size parameters
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            input_pin.description =
-                "Feature map of shape [batch, channels, H, W]. Pooling "
-                "reduces the spatial dimensions while leaving channel "
-                "count unchanged.";
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            output_pin.description =
-                "Spatially down-sampled feature map: each pool_size × "
-                "pool_size window collapses to one value (max or mean).";
-            node.outputs.push_back(output_pin);
-
-            // Initialize default parameters
-            node.parameters["pool_size"] = "2";
-            node.parameters["stride"] = "2";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         case NodeType::GlobalMaxPool:
         case NodeType::GlobalAvgPool:
         case NodeType::AdaptiveAvgPool: {
-            // Global pooling layers
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            // AdaptiveAvgPool has output size parameter
-            if (node.type == NodeType::AdaptiveAvgPool) {
-                node.parameters["output_size"] = "1";
-            }
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -1026,127 +919,25 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
 
         // ========== Recurrent Layers ==========
 
-        case NodeType::RNN:
         case NodeType::LSTM:
         case NodeType::GRU: {
-            // Recurrent layers
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            input_pin.description =
-                "3D sequence tensor [batch, seq_len, features]. For "
-                "text models this is usually the Embedding output; "
-                "features must equal the recurrent layer's input_size "
-                "(per-timestep, NOT seq_len * embed_dim).";
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            output_pin.description =
-                "If return_sequences=true: full sequence "
-                "[batch, seq_len, hidden * num_directions]. "
-                "Otherwise: last timestep [batch, hidden * "
-                "num_directions] — the common 'feed into a Dense "
-                "classifier' shape.";
-            node.outputs.push_back(output_pin);
-
-            NodePin hidden_pin;
-            hidden_pin.id = next_pin_id_++;
-            hidden_pin.type = PinType::Tensor;
-            hidden_pin.name = "Hidden";
-            hidden_pin.is_input = false;
-            hidden_pin.is_required = false;  // Optional — most users want Output only.
-            hidden_pin.description =
-                "Final hidden state h_n of shape "
-                "[num_layers * num_directions, batch, hidden]. Useful "
-                "for stacking recurrent blocks or for seq2seq models; "
-                "leave disconnected if you only want the Output.";
-            node.outputs.push_back(hidden_pin);
-
-            node.parameters["input_size"] = "0";
-            node.parameters["hidden_size"] = "256";
-            node.parameters["num_layers"] = "1";
-            node.parameters["bidirectional"] = "false";
-            node.parameters["return_sequences"] = "false";
-            node.parameters["dropout"] = "0.0";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
-        case NodeType::Bidirectional:
+        case NodeType::RNN:
+        case NodeType::Bidirectional: {
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
+            break;
+        }
+
         case NodeType::TimeDistributed: {
-            // Wrapper layers
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            input_pin.description =
-                "Sequence tensor [batch, seq_len, features]. "
-                "Bidirectional wraps a recurrent layer to run "
-                "forward+backward; TimeDistributed applies a layer "
-                "independently at each timestep.";
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            output_pin.description =
-                "Bidirectional output is concatenated (or summed, per "
-                "merge_mode) across directions — feature dim doubles "
-                "with concat. TimeDistributed preserves [batch, "
-                "seq_len, ...] but the inner layer transforms the "
-                "feature dim.";
-            node.outputs.push_back(output_pin);
-
-            if (node.type == NodeType::Bidirectional) {
-                node.parameters["merge_mode"] = "concat";
-            } else {
-                node.parameters["units"] = "128";
-                node.name = "TimeDistributed Dense";
-            }
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         case NodeType::Embedding: {
-            // Embedding layer
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Indices";
-            input_pin.is_input = true;
-            input_pin.description =
-                "Integer token IDs of shape [batch, seq_len]. Each ID "
-                "must be < num_embeddings; padding_idx is treated as "
-                "a no-grad zero embedding.";
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Embeddings";
-            output_pin.is_input = false;
-            output_pin.description =
-                "Dense vectors of shape [batch, seq_len, embedding_dim]. "
-                "Feed into a recurrent layer (LSTM/GRU) for sequence "
-                "models, or Flatten + Dense for bag-of-embeddings.";
-            node.outputs.push_back(output_pin);
-
-            node.parameters["num_embeddings"] = "10000";
-            node.parameters["embedding_dim"] = "256";
-            node.parameters["padding_idx"] = "-1";
-            node.parameters["max_norm"] = "0";
-            node.parameters["freeze"] = "false";
-            node.parameters["init_mode"] = "normal";
-            node.parameters["weights_file"] = "";
-            node.parameters["embedding_weights_file"] = "";
-            node.parameters["output_weights_file"] = "";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -1158,216 +949,16 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         case NodeType::SelfAttention:
-        case NodeType::CrossAttention: {
-            // Attention layers with Q, K, V and optional Mask
-            NodePin query_pin;
-            query_pin.id = next_pin_id_++;
-            query_pin.type = PinType::Tensor;
-            query_pin.name = "Query";
-            query_pin.is_input = true;
-            query_pin.is_required = true;
-            query_pin.description =
-                "Query tensor [batch, q_len, embed_dim]. For "
-                "SelfAttention wire the same upstream tensor into "
-                "Query, Key, and Value. For CrossAttention this is "
-                "the decoder's current state.";
-            node.inputs.push_back(query_pin);
-
-            NodePin key_pin;
-            key_pin.id = next_pin_id_++;
-            key_pin.type = PinType::Tensor;
-            key_pin.name = "Key";
-            key_pin.is_input = true;
-            key_pin.is_required = node.type != NodeType::MultiHeadAttention;
-            key_pin.description =
-                "Key tensor [batch, kv_len, embed_dim]. Determines "
-                "what positions Query attends over.";
-            node.inputs.push_back(key_pin);
-
-            NodePin value_pin;
-            value_pin.id = next_pin_id_++;
-            value_pin.type = PinType::Tensor;
-            value_pin.name = "Value";
-            value_pin.is_input = true;
-            value_pin.is_required = node.type != NodeType::MultiHeadAttention;
-            value_pin.description =
-                "Value tensor [batch, kv_len, embed_dim] — what gets "
-                "weighted-summed by the attention scores. Same kv_len "
-                "as Key.";
-            node.inputs.push_back(value_pin);
-
-            // Optional attention mask (for padding/causal masks)
-            NodePin mask_pin;
-            mask_pin.id = next_pin_id_++;
-            mask_pin.type = PinType::Tensor;
-            mask_pin.name = "Mask";
-            mask_pin.is_input = true;
-            mask_pin.is_required = false;  // Optional
-            mask_pin.is_variadic = false;
-            mask_pin.description =
-                "Optional. Boolean / additive mask blocking certain "
-                "positions — common uses: causal mask for autoregressive "
-                "decoding, padding mask to ignore PAD tokens.";
-            node.inputs.push_back(mask_pin);
-
-            // Output: Attended values
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            output_pin.description =
-                "Attention output [batch, q_len, embed_dim]. Drop into "
-                "the next layer of a Transformer block.";
-            node.outputs.push_back(output_pin);
-
-            // Optional output: Attention weights for visualization/debugging
-            NodePin attn_weights_pin;
-            attn_weights_pin.id = next_pin_id_++;
-            attn_weights_pin.type = PinType::Tensor;
-            attn_weights_pin.name = "Attn Weights";
-            attn_weights_pin.is_input = false;
-            attn_weights_pin.is_required = false;  // Optional — visualization only.
-            attn_weights_pin.description =
-                "Per-head attention weights [batch, num_heads, q_len, "
-                "kv_len]. Useful for visualization / interpretability "
-                "panels; leave disconnected if you don't need them.";
-            node.outputs.push_back(attn_weights_pin);
-
-            node.parameters["embed_dim"] = "512";
-            node.parameters["num_heads"] = "8";
-            node.parameters["dropout"] = "0.0";
-            node.parameters["batch_first"] = "true";
-            break;
-        }
-
+        case NodeType::CrossAttention:
         case NodeType::LinearAttention: {
-            // Linear attention (O(n) complexity) - Performer/Linear Transformer style
-            NodePin query_pin;
-            query_pin.id = next_pin_id_++;
-            query_pin.type = PinType::Tensor;
-            query_pin.name = "Query";
-            query_pin.is_input = true;
-            query_pin.is_required = true;
-            node.inputs.push_back(query_pin);
-
-            NodePin key_pin;
-            key_pin.id = next_pin_id_++;
-            key_pin.type = PinType::Tensor;
-            key_pin.name = "Key";
-            key_pin.is_input = true;
-            key_pin.is_required = true;
-            node.inputs.push_back(key_pin);
-
-            NodePin value_pin;
-            value_pin.id = next_pin_id_++;
-            value_pin.type = PinType::Tensor;
-            value_pin.name = "Value";
-            value_pin.is_input = true;
-            value_pin.is_required = true;
-            node.inputs.push_back(value_pin);
-
-            // Optional causal mask (for autoregressive)
-            NodePin mask_pin;
-            mask_pin.id = next_pin_id_++;
-            mask_pin.type = PinType::Tensor;
-            mask_pin.name = "Mask";
-            mask_pin.is_input = true;
-            mask_pin.is_required = false;
-            node.inputs.push_back(mask_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["embed_dim"] = "512";
-            node.parameters["num_heads"] = "8";
-            node.parameters["feature_map"] = "elu";  // elu, relu, favor+
-            node.parameters["eps"] = "1e-6";
-            node.parameters["causal"] = "false";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         case NodeType::TransformerEncoder:
-        case NodeType::TransformerDecoder: {
-            // Transformer blocks
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            input_pin.description =
-                "Sequence input [batch, seq_len, d_model]. Usually "
-                "the output of an Embedding + PositionalEncoding pair. "
-                "All `num_layers` encoder/decoder blocks run in series.";
-            node.inputs.push_back(input_pin);
-
-            if (node.type == NodeType::TransformerDecoder) {
-                NodePin memory_pin;
-                memory_pin.id = next_pin_id_++;
-                memory_pin.type = PinType::Tensor;
-                memory_pin.name = "Memory";
-                memory_pin.is_input = true;
-                memory_pin.is_required = false;
-                memory_pin.description =
-                    "Encoder output [batch, src_len, d_model] used as "
-                    "the cross-attention key/value source. Optional because "
-                    "current Studio runtime supports decoder-only causal "
-                    "self-attention; connected Memory requires a future "
-                    "seq2seq contract.";
-                node.inputs.push_back(memory_pin);
-            }
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            output_pin.description =
-                "Same shape as Input. For classifier heads use only "
-                "the [CLS] token; for decoder-only language models feed "
-                "into a projection head. Encoder-decoder Memory wiring "
-                "requires a future seq2seq contract.";
-            node.outputs.push_back(output_pin);
-
-            node.parameters["d_model"] = "512";
-            node.parameters["nhead"] = "8";
-            node.parameters["num_layers"] = "6";
-            node.parameters["dim_feedforward"] = "2048";
-            node.parameters["dropout"] = "0.1";
-            break;
-        }
-
+        case NodeType::TransformerDecoder:
         case NodeType::PositionalEncoding: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            input_pin.description =
-                "Embedded sequence [batch, seq_len, d_model] from an "
-                "Embedding layer. PositionalEncoding adds sinusoidal "
-                "position vectors so the Transformer can distinguish "
-                "token order.";
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            output_pin.description =
-                "Same shape as Input, with positional vectors added in "
-                "and a small dropout applied. Feed straight into a "
-                "TransformerEncoder/Decoder.";
-            node.outputs.push_back(output_pin);
-
-            node.parameters["d_model"] = "512";
-            node.parameters["max_len"] = "5000";
-            node.parameters["dropout"] = "0.1";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -1504,37 +1095,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::ReduceOnPlateau:
         case NodeType::ExponentialLR:
         case NodeType::WarmupScheduler: {
-            // Schedulers connect to optimizer
-            NodePin optim_pin;
-            optim_pin.id = next_pin_id_++;
-            optim_pin.type = PinType::Optimizer;
-            optim_pin.name = "Optimizer";
-            optim_pin.is_input = true;
-            node.inputs.push_back(optim_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Optimizer;
-            output_pin.name = "Scheduled";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            if (node.type == NodeType::StepLR) {
-                node.parameters["step_size"] = "10";
-                node.parameters["gamma"] = "0.1";
-            } else if (node.type == NodeType::CosineAnnealing) {
-                node.parameters["T_max"] = "100";
-                node.parameters["eta_min"] = "0.0";
-            } else if (node.type == NodeType::ReduceOnPlateau) {
-                node.parameters["mode"] = "min";
-                node.parameters["factor"] = "0.1";
-                node.parameters["patience"] = "10";
-            } else if (node.type == NodeType::ExponentialLR) {
-                node.parameters["gamma"] = "0.95";
-            } else if (node.type == NodeType::WarmupScheduler) {
-                node.parameters["warmup_steps"] = "1000";
-                node.parameters["warmup_ratio"] = "0.1";
-            }
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -1543,162 +1104,22 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::L1Regularization:
         case NodeType::L2Regularization:
         case NodeType::ElasticNet: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Parameters;
-            input_pin.name = "Parameters";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Loss;
-            output_pin.name = "Penalty";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["lambda"] = "0.01";
-            if (node.type == NodeType::ElasticNet) {
-                node.parameters["l1_ratio"] = "0.5";
-            }
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         // ========== Utility Nodes ==========
 
-        case NodeType::Lambda: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["function"] = "lambda x: x";
-            break;
-        }
-
-        case NodeType::Identity: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-            break;
-        }
-
-        case NodeType::Constant: {
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Value";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["value"] = "1.0";
-            node.parameters["shape"] = "1";
-            break;
-        }
-
-        case NodeType::SignalSlider: {
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Value";
-            out.is_input = false;
-            node.outputs.push_back(out);
-
-            node.parameters["min"] = "-1.0";
-            node.parameters["max"] = "1.0";
-            node.parameters["value"] = "0.0";
-            node.parameters["label"] = name;
-            break;
-        }
-
-        case NodeType::SineWave: {
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Signal";
-            out.is_input = false;
-            node.outputs.push_back(out);
-
-            node.parameters["amplitude"] = "1.0";
-            node.parameters["frequency"] = "1.0";
-            node.parameters["phase"] = "0.0";
-            node.parameters["offset"] = "0.0";
-            break;
-        }
-
-        case NodeType::StepSignal: {
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Signal";
-            out.is_input = false;
-            node.outputs.push_back(out);
-
-            node.parameters["step_time"] = "1.0";
-            node.parameters["initial_value"] = "0.0";
-            node.parameters["final_value"] = "1.0";
-            break;
-        }
-
-        case NodeType::RampSignal: {
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Signal";
-            out.is_input = false;
-            node.outputs.push_back(out);
-
-            node.parameters["start_value"] = "0.0";
-            node.parameters["end_value"] = "1.0";
-            node.parameters["duration"] = "5.0";
-            break;
-        }
-
+        case NodeType::Lambda:
+        case NodeType::Identity:
+        case NodeType::Parameter:
+        case NodeType::Constant:
+        case NodeType::SignalSlider:
+        case NodeType::SineWave:
+        case NodeType::StepSignal:
+        case NodeType::RampSignal:
         case NodeType::SignalScope: {
-            NodePin in;
-            in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
-            in.name = "Signal";
-            in.is_input = true;
-            in.is_variadic = true;
-            in.max_connections = PIN_UNLIMITED;
-            node.inputs.push_back(in);
-
-            node.parameters["window_size"] = "500";
-            node.parameters["auto_scale"] = "true";
-            break;
-        }
-
-        case NodeType::Parameter: {
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Parameter";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["shape"] = "256";
-            node.parameters["init"] = "xavier";
-            node.parameters["requires_grad"] = "true";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -1993,177 +1414,27 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
-        case NodeType::PairDatasetBuilder: {
-            NodePin in{next_pin_id_++, PinType::Dataset, "Rows", true};
-            node.inputs.push_back(in);
-            NodePin out{next_pin_id_++, PinType::Dataset, "Pair Batch", false};
-            node.outputs.push_back(out);
-            node.parameters["sample_a_column"] = "";
-            node.parameters["sample_b_column"] = "";
-            node.parameters["pair_label_column"] = "";
-            node.parameters["label_convention"] = "contrastive_zero_similar";
-            break;
-        }
-
-        case NodeType::TripletDatasetBuilder: {
-            NodePin in{next_pin_id_++, PinType::Dataset, "Rows", true};
-            node.inputs.push_back(in);
-            NodePin out{next_pin_id_++, PinType::Dataset, "Triplet Batch", false};
-            node.outputs.push_back(out);
-            node.parameters["anchor_column"] = "";
-            node.parameters["positive_column"] = "";
-            node.parameters["negative_column"] = "";
-            break;
-        }
-
-        case NodeType::SharedEncoder: {
-            NodePin in{next_pin_id_++, PinType::Tensor, "Encoder", true};
-            node.inputs.push_back(in);
-            NodePin out{next_pin_id_++, PinType::Parameters, "Shared Encoder", false};
-            node.outputs.push_back(out);
-            node.parameters["encoder_id"] = "shared_encoder";
-            break;
-        }
-
-        case NodeType::SiameseBranch: {
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Tensor, "Input", true});
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Parameters, "Shared Encoder", true});
-            node.outputs.push_back(
-                NodePin{next_pin_id_++, PinType::Tensor, "Embedding", false});
-            node.parameters["branch"] = "a";
-            break;
-        }
-
+        case NodeType::PairDatasetBuilder:
+        case NodeType::TripletDatasetBuilder:
+        case NodeType::SharedEncoder:
+        case NodeType::SiameseBranch:
         case NodeType::ContrastiveLoss:
-        case NodeType::CosineEmbeddingLoss: {
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Tensor, "Embedding A", true});
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Tensor, "Embedding B", true});
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Labels, "Labels", true});
-            node.outputs.push_back(
-                NodePin{next_pin_id_++, PinType::Loss, "Loss", false});
-            node.parameters["margin"] =
-                type == NodeType::ContrastiveLoss ? "1.0" : "0.0";
-            break;
-        }
-
-        case NodeType::TripletLoss: {
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Tensor, "Anchor", true});
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Tensor, "Positive", true});
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Tensor, "Negative", true});
-            node.outputs.push_back(
-                NodePin{next_pin_id_++, PinType::Loss, "Loss", false});
-            node.parameters["margin"] = "1.0";
-            break;
-        }
-
-        case NodeType::PairMetrics: {
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Tensor, "Embedding A", true});
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Tensor, "Embedding B", true});
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Labels, "Labels", true});
-            node.outputs.push_back(
-                NodePin{next_pin_id_++, PinType::Dataset, "Metrics", false});
-            node.parameters["threshold"] = "0.5";
-            break;
-        }
-
-        case NodeType::RetrievalMetrics: {
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Tensor, "Embeddings", true});
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Labels, "Class IDs", true});
-            node.outputs.push_back(
-                NodePin{next_pin_id_++, PinType::Dataset, "Metrics", false});
-            node.parameters["k"] = "10";
-            break;
-        }
-
-        case NodeType::EmbeddingOutput: {
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Tensor, "Embeddings", true});
-            node.outputs.push_back(
-                NodePin{next_pin_id_++, PinType::Dataset, "Embedding Records", false});
-            node.parameters["include_metadata"] = "true";
-            break;
-        }
-
+        case NodeType::CosineEmbeddingLoss:
+        case NodeType::TripletLoss:
+        case NodeType::PairMetrics:
+        case NodeType::RetrievalMetrics:
+        case NodeType::EmbeddingOutput:
         case NodeType::PairScoreOutput: {
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Tensor, "Embedding A", true});
-            node.inputs.push_back(
-                NodePin{next_pin_id_++, PinType::Tensor, "Embedding B", true});
-            node.outputs.push_back(
-                NodePin{next_pin_id_++, PinType::Dataset, "Pair Scores", false});
-            node.parameters["score_mode"] = "distance";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         // ========== Upsampling Layers ==========
 
-        case NodeType::ConvTranspose2D: {
-            NodePin in;
-            in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
-            in.name = "Input";
-            in.is_input = true;
-            node.inputs.push_back(in);
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Output";
-            out.is_input = false;
-            node.outputs.push_back(out);
-            node.parameters["in_channels"] = "64";
-            node.parameters["out_channels"] = "32";
-            node.parameters["kernel_size"] = "3";
-            node.parameters["stride"] = "2";
-            node.parameters["padding"] = "1";
-            node.parameters["output_padding"] = "1";
-            break;
-        }
-
-        case NodeType::Upsample: {
-            NodePin in;
-            in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
-            in.name = "Input";
-            in.is_input = true;
-            node.inputs.push_back(in);
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Output";
-            out.is_input = false;
-            node.outputs.push_back(out);
-            node.parameters["scale_factor"] = "2";
-            node.parameters["mode"] = "0"; // 0=Nearest, 1=Bilinear
-            break;
-        }
-
+        case NodeType::ConvTranspose2D:
+        case NodeType::Upsample:
         case NodeType::PixelShuffle: {
-            NodePin in;
-            in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
-            in.name = "Input";
-            in.is_input = true;
-            node.inputs.push_back(in);
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Output";
-            out.is_input = false;
-            node.outputs.push_back(out);
-            node.parameters["upscale_factor"] = "2";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -3224,190 +2495,26 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
             break;
         }
 
-        case NodeType::SVMClassifier: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Train Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin model_out;
-            model_out.id = next_pin_id_++;
-            model_out.type = PinType::Parameters;
-            model_out.name = "Model";
-            model_out.is_input = false;
-            node.outputs.push_back(model_out);
-
-            NodePin pred_out;
-            pred_out.id = next_pin_id_++;
-            pred_out.type = PinType::Labels;
-            pred_out.name = "Predictions";
-            pred_out.is_input = false;
-            node.outputs.push_back(pred_out);
-
-            node.parameters["kernel"] = "rbf";
-            node.parameters["C"] = "1.0";
-            node.parameters["gamma"] = "scale";
+        case NodeType::RegressionModelPredictor: {
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
-        case NodeType::KNNClassifier: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Train Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin model_out;
-            model_out.id = next_pin_id_++;
-            model_out.type = PinType::Parameters;
-            model_out.name = "Model";
-            model_out.is_input = false;
-            node.outputs.push_back(model_out);
-
-            NodePin pred_out;
-            pred_out.id = next_pin_id_++;
-            pred_out.type = PinType::Labels;
-            pred_out.name = "Predictions";
-            pred_out.is_input = false;
-            node.outputs.push_back(pred_out);
-
-            node.parameters["n_neighbors"] = "5";
-            node.parameters["weights"] = "uniform";
-            node.parameters["metric"] = "euclidean";
-            break;
-        }
-
-        case NodeType::NaiveBayesClassifier: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Train Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin model_out;
-            model_out.id = next_pin_id_++;
-            model_out.type = PinType::Parameters;
-            model_out.name = "Model";
-            model_out.is_input = false;
-            node.outputs.push_back(model_out);
-
-            NodePin pred_out;
-            pred_out.id = next_pin_id_++;
-            pred_out.type = PinType::Labels;
-            pred_out.name = "Predictions";
-            pred_out.is_input = false;
-            node.outputs.push_back(pred_out);
-
-            node.parameters["var_smoothing"] = "1e-9";
-            break;
-        }
-
+        case NodeType::SVMClassifier:
+        case NodeType::KNNClassifier:
+        case NodeType::NaiveBayesClassifier:
         case NodeType::LogisticRegressionNode: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Train Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin model_out;
-            model_out.id = next_pin_id_++;
-            model_out.type = PinType::Parameters;
-            model_out.name = "Model";
-            model_out.is_input = false;
-            node.outputs.push_back(model_out);
-
-            NodePin pred_out;
-            pred_out.id = next_pin_id_++;
-            pred_out.type = PinType::Labels;
-            pred_out.name = "Predictions";
-            pred_out.is_input = false;
-            node.outputs.push_back(pred_out);
-
-            node.parameters["C"] = "1.0";
-            node.parameters["solver"] = "lbfgs";
-            node.parameters["max_iter"] = "100";
+            // Saved graphs retain their historical static preview contract,
+            // but runtime capability truth keeps these nodes blocked until a
+            // real fit/artifact/predict owner exists.
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         // Regression nodes
-        case NodeType::LinearRegressionNode: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin fitted_out;
-            fitted_out.id = next_pin_id_++;
-            fitted_out.type = PinType::Dataset;
-            fitted_out.name = "Fitted";
-            fitted_out.is_input = false;
-            node.outputs.push_back(fitted_out);
-
-            // Tool-to-Node canonical params read by LinearRegressionOperator.
-            // feature_cols is comma-sep predictor columns; target_col is the
-            // response. Output appends prediction + residual columns to the
-            // input table.
-            node.parameters["feature_cols"] = "";
-            node.parameters["target_col"] = "";
-            node.parameters["fit_intercept"] = "true";
-            break;
-        }
-
+        case NodeType::LinearRegressionNode:
         case NodeType::PolynomialRegressionNode: {
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin fitted_out;
-            fitted_out.id = next_pin_id_++;
-            fitted_out.type = PinType::Dataset;
-            fitted_out.name = "Fitted";
-            fitted_out.is_input = false;
-            node.outputs.push_back(fitted_out);
-
-            // Tool-to-Node canonical params read by PolynomialRegressionOperator.
-            // Single predictor only (backend PolynomialRegression takes one x).
-            node.parameters["feature_col"] = "";
-            node.parameters["target_col"] = "";
-            node.parameters["degree"] = "2";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -4654,6 +3761,7 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
         // ===== ML Regression Nodes - Light Teal =====
         case NodeType::LinearRegressionNode:
         case NodeType::PolynomialRegressionNode:
+        case NodeType::RegressionModelPredictor:
         case NodeType::SVMRegressor:
             return IM_COL32(77, 182, 172, 255);
 

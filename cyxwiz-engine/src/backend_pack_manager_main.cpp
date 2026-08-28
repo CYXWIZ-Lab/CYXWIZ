@@ -1,8 +1,10 @@
 #include "core/backend_pack_manager_model.h"
 #include "installer/backend_pack_installer_platform.h"
 #include "installer/installer_operation.h"
+#include "installer/installer_product_removal.h"
 #include "installer/installer_theme.h"
 #include "installer/installer_view.h"
+#include "product_removal_protocol.h"
 
 // glad must own the OpenGL declarations before GLFW includes platform headers.
 // clang-format off
@@ -54,6 +56,7 @@ struct Arguments {
   cyxwiz::CyxWizInstallScope scope = cyxwiz::CyxWizInstallScope::CurrentUser;
   std::string selected_pack;
   std::string catalog_url = CYXWIZ_INSTALLER_DEFAULT_CATALOG_URL;
+  bool product_removal_host = false;
   bool package_smoke = false;
 };
 
@@ -78,6 +81,7 @@ bool ParseArguments(const std::vector<std::string> &values,
   bool metadata_seen = false;
   bool selection_seen = false;
   bool catalog_url_seen = false;
+  bool product_removal_host_seen = false;
   bool package_smoke_seen = false;
   for (std::size_t index = 1; index < values.size(); ++index) {
     if (values[index] == "--runtime-root" && !runtime_seen &&
@@ -99,6 +103,10 @@ bool ParseArguments(const std::vector<std::string> &values,
                index + 1 < values.size()) {
       output.catalog_url = values[++index];
       catalog_url_seen = true;
+    } else if (values[index] == "--product-removal-host" &&
+               !product_removal_host_seen) {
+      output.product_removal_host = true;
+      product_removal_host_seen = true;
     } else if (values[index] == "--package-smoke" && !package_smoke_seen) {
       output.package_smoke = true;
       package_smoke_seen = true;
@@ -109,6 +117,7 @@ bool ParseArguments(const std::vector<std::string> &values,
   }
   if (output.package_smoke &&
       (runtime_seen || metadata_seen || selection_seen || catalog_url_seen ||
+       product_removal_host_seen ||
        output.scope == cyxwiz::CyxWizInstallScope::AllUsers)) {
     error = "--package-smoke cannot be combined with installer arguments";
     return false;
@@ -146,6 +155,13 @@ ApplyPlanAsync(cyxwiz::installer::BackendPackInstallerPlatform &platform,
               progress->value = snapshot;
             });
       });
+}
+
+cyxwiz::CyxWizInstallScope InstallerScope(
+    cyxwiz::runtime::ProductInstallScope scope) {
+  return scope == cyxwiz::runtime::ProductInstallScope::AllUsers
+             ? cyxwiz::CyxWizInstallScope::AllUsers
+             : cyxwiz::CyxWizInstallScope::CurrentUser;
 }
 
 void ShowFatal(const std::string &message) {
@@ -193,6 +209,12 @@ int RunInstaller(const std::vector<std::string> &arguments,
     return 0;
   }
 
+  auto product_removal =
+      cyxwiz::installer::InspectInstallerProductRemoval(
+          parsed.runtime_root, parsed.product_removal_host);
+  if (product_removal.installed) {
+    parsed.scope = InstallerScope(product_removal.scope);
+  }
   auto install_location = cyxwiz::ResolveCyxWizInstallLocation(
       parsed.runtime_root.parent_path(), parsed.scope);
   if (!install_location.valid ||
@@ -281,6 +303,7 @@ int RunInstaller(const std::vector<std::string> &arguments,
   std::string operation_message;
   if (!visual_warning.empty())
     operation_message = visual_warning;
+  int requested_exit_code = 0;
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
@@ -323,8 +346,9 @@ int RunInstaller(const std::vector<std::string> &arguments,
     }
 
     const auto action = cyxwiz::installer::gui::RenderInstallerView(
-        view_state, catalog, install_location, platform->PlatformName(),
-        operation_running, operation_message, operation_progress,
+        view_state, catalog, install_location, product_removal,
+        platform->PlatformName(), operation_running, operation_message,
+        operation_progress,
         visual_assets);
     switch (action.kind) {
     case cyxwiz::installer::gui::InstallerViewActionKind::RefreshCatalog:
@@ -350,6 +374,11 @@ int RunInstaller(const std::vector<std::string> &arguments,
             executable_directory, install_location.scope,
             parsed.catalog_url);
         catalog = platform->Refresh();
+        product_removal =
+            cyxwiz::installer::InspectInstallerProductRemoval(
+                install_location.runtime_root,
+                parsed.product_removal_host &&
+                    install_location.runtime_root == parsed.runtime_root);
         view_state.custom_selection.clear();
         view_state.install_location_dirty = false;
       }
@@ -362,6 +391,14 @@ int RunInstaller(const std::vector<std::string> &arguments,
       operation = ApplyPlanAsync(*platform, action.plan, shared_progress);
       async_operation = AsyncOperation::InstallPlan;
       operation_running = true;
+      break;
+    case cyxwiz::installer::gui::InstallerViewActionKind::RemoveProduct:
+      if (cyxwiz::installer::QueueInstallerProductRemoval(
+              product_removal, operation_message)) {
+        requested_exit_code =
+            cyxwiz::runtime::kProductRemovalRequestedExitCode;
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+      }
       break;
     case cyxwiz::installer::gui::InstallerViewActionKind::Close:
       glfwSetWindowShouldClose(window, GLFW_TRUE);
@@ -394,7 +431,7 @@ int RunInstaller(const std::vector<std::string> &arguments,
   ImGui::DestroyContext();
   glfwDestroyWindow(window);
   glfwTerminate();
-  return 0;
+  return requested_exit_code;
 }
 
 #ifdef _WIN32

@@ -1,6 +1,7 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/error_codes.h"
 #include "../src/core/data_registry.h"
+#include "../src/core/node_metadata_registry.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/gui/loaders/data_loader.h"
 
@@ -406,6 +407,61 @@ int main() {
     Check(config.is_valid && config.layers.front().name == "Classifier Head",
           "compiler should preserve custom Dense names");
 
+    auto invalid_dense = stale_generated_dense;
+    invalid_dense.parameters["units"] = "not-a-number";
+    config = compiler.Compile({data, invalid_dense, loss, optimizer},
+                              links,
+                              true);
+    Check(!config.is_valid &&
+              HasIssueCode(config,
+                           cyxwiz::errors::Compiler::InvalidParameter),
+          "malformed Dense units should fail closed with an invalid-parameter code");
+
+    auto leaky_relu = Node(
+        8,
+        gui::NodeType::LeakyReLU,
+        "Leaky ReLU",
+        {Pin(801, gui::PinType::Tensor, "Input", true)},
+        {Pin(802, gui::PinType::Tensor, "Output", false)});
+    leaky_relu.parameters["negative_slope"] = "0";
+    const std::vector<gui::NodeLink> activation_links = {
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 8, 801),
+        Link(3, 8, 802, 4, 401),
+        Link(4, 1, 102, 4, 402),
+        Link(5, 4, 403, 5, 501),
+    };
+    config = compiler.Compile(
+        {data, dense, leaky_relu, loss, optimizer},
+        activation_links,
+        true);
+    Check(config.is_valid && config.layers.size() == 2 &&
+              config.layers[1].negative_slope == 0.0f,
+          "compiler should preserve an explicit zero LeakyReLU slope");
+
+    leaky_relu.parameters["negative_slope"] = "nan";
+    config = compiler.Compile(
+        {data, dense, leaky_relu, loss, optimizer},
+        activation_links,
+        true);
+    Check(!config.is_valid &&
+              HasIssueCode(config,
+                           cyxwiz::errors::Compiler::InvalidParameter),
+          "non-finite LeakyReLU slope should fail closed at compile time");
+
+    auto elu = leaky_relu;
+    elu.type = gui::NodeType::ELU;
+    elu.name = "ELU";
+    elu.parameters.clear();
+    elu.parameters["alpha"] = "0";
+    config = compiler.Compile({data, dense, elu, loss, optimizer},
+                              activation_links,
+                              true);
+    Check(!config.is_valid &&
+              HasIssueCode(config,
+                           cyxwiz::errors::Compiler::InvalidParameter),
+          "non-positive ELU alpha should fail closed at compile time");
+
     gui::RefreshGeneratedNodeName(stale_generated_dense);
     Check(stale_generated_dense.name == "Dense (512)",
           "property edits should refresh generated Dense names");
@@ -504,6 +560,64 @@ int main() {
                   "unsupported layer should report backend gap");
         }
     }
+
+    auto recurrent = Node(
+        38,
+        gui::NodeType::LSTM,
+        "Recurrent Contract",
+        {Pin(3801, gui::PinType::Tensor, "Input", true)},
+        {Pin(3802, gui::PinType::Tensor, "Output", false),
+         Pin(3803, gui::PinType::Tensor, "Hidden", false)});
+    recurrent.outputs[1].is_required = false;
+    recurrent.parameters = {
+        {"input_size", "0"},
+        {"hidden_size", "8"},
+        {"num_layers", "1"},
+        {"bidirectional", "true"},
+        {"return_sequences", "false"},
+        {"dropout", "0.0"},
+    };
+    nodes = {data, recurrent, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 38, 3801),
+        Link(2, 38, 3802, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid &&
+              HasIssueText(config, "reverse-direction backward gradients"),
+          "bidirectional LSTM training should fail closed at compile time");
+    Check(HasIssueCode(config,
+                       cyxwiz::errors::Compiler::UnsupportedTrainingNode),
+          "bidirectional LSTM should expose the unsupported-node code");
+
+    recurrent.parameters["bidirectional"] = "false";
+    recurrent.parameters["dropout"] = "0.1";
+    nodes = {data, recurrent, loss, optimizer};
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid &&
+              HasIssueText(config, "not wired through the Engine sequential module"),
+          "nonzero LSTM dropout should fail closed instead of being ignored");
+
+    recurrent.type = gui::NodeType::GRU;
+    recurrent.parameters["bidirectional"] = "true";
+    nodes = {data, recurrent, loss, optimizer};
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid &&
+              HasIssueText(config, "not wired through the Engine sequential module") &&
+              !HasIssueText(config, "reverse-direction backward gradients"),
+          "bidirectional GRU should preserve its supported directionality but reject ignored dropout");
+
+    recurrent.type = gui::NodeType::LSTM;
+    recurrent.parameters["bidirectional"] = "false";
+    recurrent.parameters["dropout"] = "0.0";
+    nodes = {data, recurrent, loss, optimizer};
+    links[1] = Link(2, 38, 3803, 4, 401);
+    config = compiler.Compile(nodes, links, true);
+    Check(!config.is_valid &&
+              HasIssueText(config, "legacy Hidden output pin is not routed"),
+          "connected recurrent Hidden compatibility pin should fail closed");
 
     auto standalone_mha = Node(37,
                                gui::NodeType::MultiHeadAttention,
@@ -1285,10 +1399,13 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(!config.is_valid,
           "selected metric-learning sketch should be invalid");
-    Check(HasIssueText(config, "SharedEncoder"),
-          "metric-learning sketch should report the matched sketch name");
-    Check(HasIssueText(config, "shared-weight graph contract"),
-          "metric-learning sketch should report missing shared encoder contract");
+    Check(HasIssueText(config, "sketches metric-learning/Siamese training") &&
+              HasIssueText(config, "SharedEncoder"),
+          "legacy Dense-name metric-learning sketch should report the matched "
+          "compatibility marker and missing workflow owner");
+    Check(HasIssueCode(config,
+                       cyxwiz::errors::Compiler::UnsupportedTrainingNode),
+          "metric-learning sketch should expose the unsupported-node code");
     Check(config.metric_learning_graph.detected,
           "metric-learning contract should detect selected SharedEncoder sketch");
     Check(!config.metric_learning_graph.executable,
@@ -1323,8 +1440,11 @@ int main() {
     config = compiler.Compile(nodes, links, true);
     Check(!config.is_valid,
           "typed metric-learning output node should be invalid");
-    Check(HasIssueText(config, "PairScoreOutput"),
-          "typed metric-learning node should report its enum contract");
+    Check(HasIssueText(
+              config,
+              cyxwiz::ResolvePipelineUnsupportedTrainingWorkflowReason(
+                  gui::NodeType::PairScoreOutput)),
+          "typed metric-learning node should report its canonical workflow gap");
     Check(config.metric_learning_graph.detected,
           "metric-learning contract should detect typed PairScoreOutput");
     Check(config.metric_learning_graph.kind ==
@@ -1378,8 +1498,8 @@ int main() {
           "selected triplet marker sketch should be invalid");
     Check(HasIssueText(config, "anchor_column"),
           "triplet sketch should report the matched parameter");
-    Check(HasIssueText(config, "pair/triplet batch payloads"),
-          "triplet sketch should report missing batch contract");
+    Check(HasIssueText(config, "no typed visual graph or TrainingExecutor owner"),
+          "legacy triplet-column sketch should report the missing workflow owner");
     Check(config.metric_learning_graph.detected,
           "metric-learning contract should detect triplet column sketch");
     Check(config.metric_learning_graph.kind ==
@@ -1476,6 +1596,68 @@ int main() {
         Check(HasIssueText(config, scheduler_case.reason),
               "unsupported training control should report execution gap");
     }
+
+    for (const auto& workflow_case :
+         cyxwiz::GetPipelineUnsupportedTrainingWorkflowCapabilities()) {
+        auto workflow = Node(
+            18,
+            workflow_case.node_type,
+            "UnsupportedTrainingWorkflow",
+            {Pin(1801, gui::PinType::Tensor, "Input", true)},
+            {Pin(1802, gui::PinType::Tensor, "Output", false)});
+
+        nodes = {data, workflow, dense, loss, optimizer};
+        links = {
+            Link(1, 1, 101, 18, 1801),
+            Link(2, 18, 1802, 2, 201),
+            Link(3, 2, 202, 4, 401),
+            Link(4, 1, 102, 4, 402),
+            Link(5, 4, 403, 5, 501),
+        };
+
+        config = compiler.Compile(nodes, links, true);
+        Check(!config.is_valid,
+              "unsupported metric-learning workflow should block the selected path");
+        Check(HasIssueText(config, workflow_case.reason),
+              "unsupported metric-learning workflow should report its canonical gap");
+        Check(HasIssueCode(config,
+                           cyxwiz::errors::Compiler::UnsupportedTrainingNode),
+              "unsupported metric-learning workflow should expose the unsupported-node code");
+    }
+
+    auto blocked_lambda = Node(
+        18,
+        gui::NodeType::Lambda,
+        "Blocked Utility",
+        {Pin(1801, gui::PinType::Tensor, "Input", true)},
+        {Pin(1802, gui::PinType::Tensor, "Output", false)});
+    nodes = {data, blocked_lambda, dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 18, 1801),
+        Link(2, 18, 1802, 2, 201),
+        Link(3, 2, 202, 4, 401),
+        Link(4, 1, 102, 4, 402),
+        Link(5, 4, 403, 5, 501),
+    };
+    config = compiler.Compile(nodes, links, true);
+    const auto* lambda_metadata =
+        cyxwiz::NodeMetadataRegistry::Instance().GetMetadata(
+            gui::NodeType::Lambda);
+    Check(!config.is_valid && lambda_metadata != nullptr,
+          "unowned Lambda should block the selected training path");
+    Check(HasIssueText(config, lambda_metadata->brief_description),
+          "Lambda compile error should use metadata contract truth");
+    Check(HasIssueCode(config,
+                       cyxwiz::errors::Compiler::UnsupportedTrainingNode),
+          "unowned Lambda should expose the unsupported-node code");
+
+    const auto parameter_runtime =
+        cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::Parameter);
+    Check(parameter_runtime.mode == cyxwiz::PipelineRuntimeSupportMode::FailClosed &&
+              parameter_runtime.fail_closed_reason != nullptr &&
+              std::string(parameter_runtime.fail_closed_reason).find(
+                  "model-registration") != std::string::npos,
+          "source-like Parameter should retain its canonical fail-closed runtime contract");
 
     auto abs = Node(8,
                     gui::NodeType::TensorAbs,
@@ -2535,11 +2717,17 @@ int main() {
     nodes = {data, class_dense, output, class_loss, optimizer};
     config = compiler.Compile(nodes, links, true);
     Check(config.is_valid,
-          "Output num_classes should be accepted as classes fallback");
+          "Output canonical num_classes should be accepted");
     Check(config.preprocessing.num_classes == 2,
-          "Output num_classes fallback should drive CrossEntropy class count");
+          "Output canonical num_classes should drive CrossEntropy class count");
     Check(!HasIssueText(config, "class count"),
-          "Output num_classes fallback should satisfy class-count validation");
+          "Output canonical num_classes should satisfy class-count validation");
+
+    output.parameters["classes"] = "3";
+    nodes = {data, class_dense, output, class_loss, optimizer};
+    config = compiler.Compile(nodes, links, true);
+    Check(config.is_valid && config.preprocessing.num_classes == 2,
+          "Output canonical num_classes should win over a conflicting legacy classes alias");
 
     auto sequence_tag_output = Node(
         18,

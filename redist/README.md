@@ -71,6 +71,112 @@ the CPU base, an optional backend pack, catalog, trust store, or corresponding
 cached manifest is absent. The native CI fixture uses ephemeral keys and
 non-routable package URLs and is test evidence only, never release metadata.
 
+The optional first-stage setup boundary consumes a separate deterministic
+installer bundle; it never owns package selection or product lifecycle logic.
+`package_installer_bundle.py` accepts a fully staged installer and emits one
+bounded ZIP, an exact component inventory in a schema-1 descriptor, and the
+canonical detached signing input. The descriptor pins the CyxWiz and bundle
+versions, release channel, platform, architecture, minimum setup version,
+validity window, archive digest, and every extracted file digest. Links,
+case-folded path collisions, missing GUI/helper/bootstrap metadata, oversized
+payloads, in-stage output, mutation during packaging, and replacement of an
+existing versioned artifact fail closed. The archive and signing input publish
+before the unsigned descriptor, so interruption cannot publish an
+authoritative incomplete descriptor.
+
+Release signing is a separate explicit operation:
+
+```text
+python redist/scripts/package_installer_bundle.py <stage> <output> ...
+python redist/scripts/sign_installer_bundle.py <descriptor> \
+  --private-key <ed25519.pem> --key-id <trusted-installer-key>
+```
+
+Ordinary builds never receive the private key. The resulting signed contract
+is the input for the small setup verifier/acquirer/launcher; the consolidated
+`cyxwiz-installer` remains the only graphical installation experience.
+
+The manually dispatched `Installer Alpha Candidate` workflow is the bounded
+pre-publication build. It requires the protected `cyxwiz-alpha` environment,
+the repository variable `CYXWIZ_ALPHA_CANDIDATE_ENABLED=true`, and the
+repository secret `CYXWIZ_INSTALLER_TRUST_STORE_B64`. That secret contains
+only the base64-encoded public `trusted-keys.json`; private signing keys are
+not inputs to this workflow. The dispatch also requires an immutable release
+tag and an exact HTTPS asset base whose final path segment matches that tag.
+The base may be a direct host or the canonical GitHub Release path
+`https://github.com/OWNER/REPOSITORY/releases/download/TAG`. It builds Windows
+x64, Linux x64, macOS Intel, and macOS Apple Silicon setup packages with the
+public trust root embedded and derives each descriptor URL from that base.
+Release-configured setup and clean installer-stage artifacts use the
+`cyxwiz-release-*` artifact prefix. The workflow deliberately does not create
+or upload a hosted release. Publication remains blocked until the signed
+base/optional-pack matrix, signed installer descriptors, final bootstrap
+metadata, and platform code signatures have passed their own release gate.
+
+After native candidate stages, setup packages, and signed base/optional-pack
+manifests exist for all four targets, assemble the release locally before any
+host mutation. `assemble_installer_alpha_release.py` accepts exactly one
+installer stage and setup package for `windows-x64`, `linux-x64`, `macos-x64`,
+and `macos-arm64`, plus all signed pack manifests and external catalog and
+installer signing keys. The pack signing step remains separate. The assembler
+verifies every pack signature/archive, requires a base and matching optional
+pack for every target, creates the flat hosted-asset catalog, replaces CI
+fixture metadata only in temporary copies of each stage, creates and signs all
+four installer descriptors, and verifies the installer signing key against the
+public trust root. It publishes atomically to a new output directory:
+
+```text
+alpha-output/
+  assets/                  # only this directory is eligible for upload
+    cyxwiz-backend-catalog-*.json
+    <pack manifests and archives>
+    cyxwiz-installer-*.zip
+    cyxwiz-installer-*.descriptor.json
+    cyxwiz-setup-*
+    SHA256SUMS.txt
+    release-inventory.json # installer-role signed exact upload inventory
+  bootstrap/               # exact metadata embedded in every GUI bundle
+  release-inventory.json   # identical ceremony copy for release records
+```
+
+Run `python redist/scripts/assemble_installer_alpha_release.py --help` for the
+complete release-ceremony arguments. The output must not already exist. The
+tool neither creates a Git tag nor contacts GitHub, and it never copies private
+keys into the result. Use a POSIX release host when packaging Linux/macOS stage
+directories so their executable modes remain representable; the native
+candidate workflow and its mode-preserving archives are the source of those
+stages. The assembler signs the exact payload inventory with the installer-role
+key and immediately re-verifies the inventory, catalog, pack manifests and
+archives, installer descriptors and bundles, checksums, and complete
+four-platform matrix through `installer_alpha_publication_contract.py`; the
+GitHub-specific draft snapshot is independently checked by
+`verify_installer_alpha_publication.py`.
+
+Upload every file from `alpha-output/assets/` to an existing GitHub draft that
+is already marked as a prerelease and whose remote tag exists. Do not upload the
+`bootstrap/` directory or add release assets manually. After platform code
+signing/notarization and release review pass, the manually dispatched
+`Installer Alpha Publish` workflow may promote that exact draft. It requires
+the protected `cyxwiz-alpha` environment, repository variable
+`CYXWIZ_ALPHA_PUBLISH_ENABLED=true`, and the same public-only
+`CYXWIZ_INSTALLER_TRUST_STORE_B64` secret used by candidate builds. The workflow
+can run only from the repository default branch, downloads the draft twice
+around validation, rejects changed/missing/extra
+assets, verifies every signed authority and byte hash, and performs only the
+final draft-to-prerelease state change. It never creates a release, uploads or
+repairs assets, builds packages, or receives a private signing key.
+
+The `--asset-base-url` argument is part of the signed release identity. It must
+be the exact versioned HTTPS directory where every file from `assets/` will be
+served, without credentials, query, or fragment. Automatic redirects remain
+disabled. A canonical immutable GitHub Release asset may manually follow one
+`302` to exactly `release-assets.githubusercontent.com` under GitHub's release
+asset namespace. All other sources remain non-redirecting, and a second hop,
+mutable `latest` URL, unexpected authority, downgrade, or malformed Location
+fails before body consumption. The short-lived destination query is never
+persisted or logged; signed size, hash, range, timeout, and cancellation checks
+remain authoritative.
+
 ### Native runtime bootstrapper
 
 The installed app-level `cyxwiz-runtime-bootstrapper` (`.exe` on Windows)
@@ -107,7 +213,10 @@ activation. It does not link the backend or ArrayFire DLLs, and a failed
 qualification leaves the pack inactive and the request available for retry.
 
 Fresh delivery rechecks and atomically publishes the signed base's stable
-`cyxwiz-runtime-bootstrapper` beside `runtime/` before generation-1 activation.
+`cyxwiz-product-removal-finalizer` first and
+`cyxwiz-runtime-bootstrapper` second beside `runtime/` before generation-1
+activation. Publishing the finalizer first cannot strand a launcher without
+its removal closure.
 Its `--installer` mode resolves the same versioned `cyxwiz-installer` GUI from
 the active base, allowing later platform registration to point at one stable
 launcher without copying the GUI or dependency closure into the product root.
@@ -118,8 +227,14 @@ Engine and Installer Start Menu links and an Apps & Features entry; Linux writes
 current-user or system desktop entries; macOS publishes Engine and Installer
 application bundles in the product root. Every maintenance entry resolves the
 installed GUI through `--installer`, and none changes the machine-wide loader
-environment. The current Apps & Features uninstall command reopens that GUI;
-full transactional product removal remains a separate lifecycle gate.
+environment. The Apps & Features uninstall command reopens that GUI through
+the stable bootstrapper. In maintenance mode the GUI offers full removal only
+for an exact installed runtime with a valid ownership receipt and finalizer.
+After explicit acknowledgement, it queues the version-pinned removal request
+and exits with the private removal code. The stable bootstrapper then schedules
+the detached finalizer and retains the lifetime token until its own process
+exits, ensuring installed binaries are released before unregistration,
+quarantine, and cleanup begin. Direct base-GUI launch cannot enable this flow.
 
 The matching unregistration boundary is idempotent and removes only the exact
 CyxWiz Start Menu/Apps & Features, desktop-entry, or application-bundle
@@ -144,6 +259,69 @@ runtime set, generation, base, and optional-pack inventory to remain identical
 when revalidated. The later finalizer must consume this typed authorization;
 path strings supplied directly to a delete operation are not sufficient.
 
+Confirmed removal is handed across processes through the bounded hidden
+`.cyxwiz-removal-request.json` file in the product root. Queueing first captures
+fresh typed authorization, then atomically publishes an exact schema containing
+the install root, scope, receipt ID, runtime set, generation, base, and selected
+optional packs. The stable bootstrapper and detached finalizer load that same
+schema and repeat live authorization validation; copying the request to another
+root or changing the active runtime makes it stale. A new explicit confirmation
+may replace a corrupt or stale request, but it never replaces ownership evidence.
+
+The CPU base also carries the dependency-isolated
+`cyxwiz-product-removal-finalizer` (`.exe` on Windows). Its first operation is
+to block on an inherited read-only lifetime pipe; the stable bootstrapper owns
+the only write end, so EOF is tied to process exit rather than a reusable PID.
+Only after EOF does the finalizer reload the durable request and repeat live
+authorization validation. The Windows finalizer uses the static CRT and depends
+only on system `KERNEL32.dll`, `ADVAPI32.dll`, `ole32.dll`, and `SHELL32.dll`,
+allowing it to run from a temporary directory after the product runtime is
+released. After authorization it performs the ordered removal transaction:
+exact native unregistration, atomic quarantine, then bounded no-follow cleanup.
+If quarantine fails, exact native registration is restored. Cleanup failure
+keeps the partially cleaned quarantine and its recovery evidence; it never
+restores a partial product tree.
+
+The detached scheduler copies that exact, 16 MiB-bounded, non-redirected
+executable into an exclusive temporary directory and launches it with only the read token
+inherited. Windows uses an explicit process handle list; POSIX uses a detached
+double-fork/`exec` boundary. A bounded result marker proves the child stayed
+blocked until the parent token closed. The handoff contract uses a dedicated
+non-destructive child, so tests never mutate a developer's native registration.
+
+Removal request schema 2 also pins the exact CyxWiz product version from the
+active signed base pack's bounded, non-redirected `RUNTIME_VERSIONS.json`.
+Registration and removal share the same safe-version rule. Schema 1 removal
+requests fail closed because they cannot prove which version of native OS
+registration may be removed or restored.
+
+Native unregistration preflights ownership before changing external state.
+Windows verifies the exact install root, version, uninstall commands, and both
+Start Menu shortcut identities before deleting fixed CyxWiz entries. Linux
+validates both managed desktop entries before removing either one; macOS
+likewise preflights both exact managed application bundles. An entry belonging
+to another installation or containing unmanaged changes fails closed.
+
+After every running installed process has released the product, the removal
+transaction revalidates authorization and atomically renames the exact product
+root to a deterministic sibling `.cyxwiz-removing-<install-id>` quarantine. It
+never overwrites or merges an existing quarantine. The moved receipt continues
+to name the original root and must match the pinned ID and scope; failed
+post-rename validation attempts an immediate rollback. Quarantine does not
+recursively delete content—bounded no-follow cleanup remains a separate finalizer
+stage so interruption cannot be mistaken for successful removal.
+
+The cleanup boundary now preflights that quarantine before deleting payload.
+It is bounded to 256 directory levels and one million entries. POSIX traverses
+with `openat`/`fstatat(AT_SYMLINK_NOFOLLOW)`/`unlinkat`, pins inode and device
+identity, removes links as links, and refuses another filesystem device.
+Windows pins directories without delete sharing, rejects redirected traversal,
+and removes files, directories, junctions, and reparse entries through exact
+handles. Both platforms keep the removal request and ownership receipt while
+payload cleanup is incomplete, remove the request next, and remove the receipt
+only after all other entries are gone. An interrupted cleanup can therefore be
+retried from the deterministic quarantine without following external targets.
+
 The packaged desktop application also includes `cyxwiz-installer` (`.exe` on
 Windows), a standalone graphical component manager. Recommended, CPU-only,
 and Custom package selection live there; the Engine Backend Manager launches
@@ -158,9 +336,10 @@ accelerator. Release publication still requires the clean-machine matrix for
 each shipped OS.
 
 Configure `CYXWIZ_INSTALLER_CATALOG_URL` at CMake configure time with the
-direct HTTPS URL of the production signed catalog. Leaving it empty keeps the
-packaged verified catalog available and makes online Refresh report that no
-source is configured. Local integration runs can supply
+direct HTTPS URL or canonical immutable GitHub Release URL of the production
+signed catalog. Leaving it empty keeps the packaged verified catalog available
+and makes online Refresh report that no source is configured. Local integration
+runs can supply
 `--catalog-url <https-url>` without changing the package. Refresh downloads
 bounded catalog and manifest documents off the render thread, verifies the
 complete snapshot with the packaged trust store, and publishes the catalog
@@ -280,8 +459,8 @@ app-bundled public trust root. Inputs with multiple valid pack signatures
 require an explicit `--pack-key-id` so key rotation cannot change catalog
 authority implicitly.
 
-Publish only `alpha-repository/hosted/` at the exact non-redirecting HTTPS base
-URL. Configure the installer with
+Publish only `alpha-repository/hosted/` at the configured direct HTTPS or
+canonical immutable GitHub Release base URL. Configure the installer with
 `CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR=.../alpha-repository/bootstrap` and
 `CYXWIZ_INSTALLER_CATALOG_URL=https://packages.example.com/cyxwiz/alpha/catalogs/current.json`.
 The bootstrap tree intentionally excludes the large pack archives. The

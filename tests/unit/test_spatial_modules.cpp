@@ -1,0 +1,163 @@
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+
+#include <cyxwiz/sequential.h>
+
+#include <chrono>
+#include <filesystem>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+TEST_CASE("Conv2DModule exposes clean SequentialModel parameter ownership",
+          "[conv][module]") {
+    auto module = std::make_unique<cyxwiz::Conv2DModule>(1, 1, 2, 1, 0, true);
+
+    float weight_values[] = {
+        1.0f, 2.0f,
+        3.0f, 4.0f,
+    };
+    float bias_values[] = {0.5f};
+    module->SetParameters({
+        {"weights", cyxwiz::Tensor(
+                        {2, 2, 1, 1}, weight_values,
+                        cyxwiz::DataType::Float32)},
+        {"bias", cyxwiz::Tensor(
+                     {1}, bias_values, cyxwiz::DataType::Float32)},
+    });
+
+    cyxwiz::SequentialModel model;
+    model.AddModule(std::move(module));
+
+    const auto parameters = model.GetParameters();
+    REQUIRE(parameters.count("layer0.weights") == 1);
+    REQUIRE(parameters.count("layer0.bias") == 1);
+    REQUIRE(parameters.count("layer0.grad_weights") == 0);
+    REQUIRE(parameters.count("layer0.grad_bias") == 0);
+
+    float input_values[] = {
+        1.0f, 2.0f, 3.0f,
+        4.0f, 5.0f, 6.0f,
+        7.0f, 8.0f, 9.0f,
+    };
+    const cyxwiz::Tensor input(
+        {3, 3, 1, 1}, input_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor output = model.Forward(input);
+    REQUIRE(output.Shape() == std::vector<size_t>{2, 2, 1, 1});
+
+    float grad_values[] = {1.0f, 2.0f, 3.0f, 4.0f};
+    const cyxwiz::Tensor grad_output(
+        {2, 2, 1, 1}, grad_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor grad_input = model.Backward(grad_output);
+    REQUIRE(grad_input.Shape() == std::vector<size_t>{3, 3, 1, 1});
+
+    const auto gradients = model.GetGradients();
+    REQUIRE(gradients.count("layer0.weights") == 1);
+    REQUIRE(gradients.count("layer0.bias") == 1);
+    REQUIRE(gradients.count("layer0.grad_weights") == 0);
+    REQUIRE(gradients.at("layer0.weights").Shape() ==
+            std::vector<size_t>{2, 2, 1, 1});
+    REQUIRE(gradients.at("layer0.bias").Shape() ==
+            std::vector<size_t>{1});
+
+    const float weight_before =
+        model.GetParameters().at("layer0.weights").Data<float>()[0];
+    cyxwiz::SGDOptimizer optimizer(0.01);
+    model.UpdateParameters(&optimizer);
+    const float weight_after =
+        model.GetParameters().at("layer0.weights").Data<float>()[0];
+    REQUIRE(weight_before == Catch::Approx(1.0f));
+    REQUIRE(weight_after == Catch::Approx(0.63f));
+
+    const auto unique_suffix =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto model_path = std::filesystem::temp_directory_path() /
+        ("cyxwiz_conv2d_module_" + std::to_string(unique_suffix) +
+         ".cyxmodel");
+    REQUIRE(model.Save(model_path.string()));
+
+    cyxwiz::SequentialModel restored;
+    restored.Add<cyxwiz::Conv2DModule>(1, 1, 2, 1, 0, true);
+    REQUIRE(restored.Load(model_path.string()));
+    REQUIRE(restored.GetParameters().at("layer0.weights").Data<float>()[0] ==
+            Catch::Approx(weight_after));
+
+    std::error_code remove_error;
+    std::filesystem::remove(model_path, remove_error);
+    REQUIRE_FALSE(remove_error);
+}
+
+TEST_CASE("Pooling modules provide parameter-free SequentialModel ownership",
+          "[pool][module]") {
+    float input_values[] = {
+        1.0f, 2.0f,
+        3.0f, 4.0f,
+    };
+    const cyxwiz::Tensor input(
+        {2, 2, 1, 1}, input_values, cyxwiz::DataType::Float32);
+
+    SECTION("MaxPool2D") {
+        cyxwiz::SequentialModel model;
+        model.Add<cyxwiz::MaxPool2DModule>(2, 2, 0);
+        const cyxwiz::Tensor output = model.Forward(input);
+        REQUIRE(output.Shape() == std::vector<size_t>{1, 1, 1, 1});
+        REQUIRE(output.Data<float>()[0] == Catch::Approx(4.0f));
+
+        float grad_values[] = {2.0f};
+        const cyxwiz::Tensor grad_output(
+            {1, 1, 1, 1}, grad_values, cyxwiz::DataType::Float32);
+        const cyxwiz::Tensor grad_input = model.Backward(grad_output);
+        REQUIRE(grad_input.Shape() == input.Shape());
+        REQUIRE(grad_input.Data<float>()[3] == Catch::Approx(2.0f));
+        REQUIRE(model.GetParameters().empty());
+        REQUIRE(model.GetGradients().empty());
+    }
+
+    SECTION("AvgPool2D") {
+        cyxwiz::SequentialModel model;
+        model.Add<cyxwiz::AvgPool2DModule>(2, 2, 0);
+        const cyxwiz::Tensor output = model.Forward(input);
+        REQUIRE(output.Shape() == std::vector<size_t>{1, 1, 1, 1});
+        REQUIRE(output.Data<float>()[0] == Catch::Approx(2.5f));
+
+        float grad_values[] = {1.0f};
+        const cyxwiz::Tensor grad_output(
+            {1, 1, 1, 1}, grad_values, cyxwiz::DataType::Float32);
+        const cyxwiz::Tensor grad_input = model.Backward(grad_output);
+        REQUIRE(grad_input.Shape() == input.Shape());
+        for (size_t i = 0; i < grad_input.NumElements(); ++i) {
+            REQUIRE(grad_input.Data<float>()[i] == Catch::Approx(0.25f));
+        }
+        REQUIRE(model.GetParameters().empty());
+        REQUIRE(model.GetGradients().empty());
+    }
+
+    SECTION("GlobalAvgPool2D") {
+        cyxwiz::SequentialModel model;
+        model.Add<cyxwiz::GlobalAvgPool2DModule>();
+        const cyxwiz::Tensor output = model.Forward(input);
+        REQUIRE(output.Shape() == std::vector<size_t>{1, 1});
+        REQUIRE(output.Data<float>()[0] == Catch::Approx(2.5f));
+
+        float grad_values[] = {1.0f};
+        const cyxwiz::Tensor grad_output(
+            {1, 1}, grad_values, cyxwiz::DataType::Float32);
+        const cyxwiz::Tensor grad_input = model.Backward(grad_output);
+        REQUIRE(grad_input.Shape() == input.Shape());
+        for (size_t i = 0; i < grad_input.NumElements(); ++i) {
+            REQUIRE(grad_input.Data<float>()[i] == Catch::Approx(0.25f));
+        }
+        REQUIRE(model.GetParameters().empty());
+        REQUIRE(model.GetGradients().empty());
+    }
+}
+
+TEST_CASE("Pooling layers reject invalid construction", "[pool][validation]") {
+    REQUIRE_THROWS_AS(cyxwiz::MaxPool2DLayer(0), std::invalid_argument);
+    REQUIRE_THROWS_AS(cyxwiz::MaxPool2DLayer(2, 0), std::invalid_argument);
+    REQUIRE_THROWS_AS(cyxwiz::MaxPool2DLayer(2, 2, -1), std::invalid_argument);
+    REQUIRE_THROWS_AS(cyxwiz::AvgPool2DLayer(0), std::invalid_argument);
+    REQUIRE_THROWS_AS(cyxwiz::AvgPool2DLayer(2, 0), std::invalid_argument);
+    REQUIRE_THROWS_AS(cyxwiz::AvgPool2DLayer(2, 2, -1), std::invalid_argument);
+}

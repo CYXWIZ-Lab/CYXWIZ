@@ -1,4 +1,4 @@
 interface:
   display_name: "Lean Software Guardrails"
   short_description: "Keep C++, web, and architecture lean"
-  default_prompt: "Use $lean-software-guardrails to review this change for modularity, language-specific safety, avoidable complexity, and validation gaps."
+  default_prompt: "Use $lean-software-guardrails to guide this software task with cohesive ownership, minimal complexity, language-specific safety, and proportionate validation."

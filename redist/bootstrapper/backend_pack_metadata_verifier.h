@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cyxwiz::runtime {
@@ -21,6 +22,12 @@ enum class BackendPackSupportStatus {
 enum class BackendPackManifestKind {
     BackendPack,
     Base
+};
+
+enum class TrustedMetadataRole {
+    Catalog,
+    Pack,
+    Installer
 };
 
 struct BackendPackCatalogEntry {
@@ -91,13 +98,23 @@ public:
         std::vector<unsigned char> public_key;
         bool catalog = false;
         bool pack = false;
+        bool installer = false;
         bool revoked = false;
     };
 
     static std::optional<BackendPackTrustStore> Load(
         const std::filesystem::path& path,
         std::string& error);
+    static std::optional<BackendPackTrustStore> LoadJson(
+        std::string_view bytes,
+        std::string& error);
     const Key* Find(const std::string& key_id) const;
+    bool VerifySignedDocument(
+        const std::filesystem::path& path,
+        const std::string& expected_kind,
+        TrustedMetadataRole role,
+        std::string& canonical_signed_body,
+        std::string& error) const;
 
 private:
     std::vector<Key> keys_;

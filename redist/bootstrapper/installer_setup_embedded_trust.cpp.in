@@ -1,0 +1,11 @@
+#include "installer_setup_embedded_trust.h"
+
+namespace cyxwiz::runtime {
+
+std::string_view EmbeddedInstallerTrustJson() {
+    static constexpr char trust_json[] =
+        R"CW_TRUST(@CYXWIZ_SETUP_EMBEDDED_TRUST_JSON@)CW_TRUST";
+    return trust_json;
+}
+
+}  // namespace cyxwiz::runtime

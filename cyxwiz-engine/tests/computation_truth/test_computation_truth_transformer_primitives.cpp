@@ -182,6 +182,71 @@ void TestEmbeddingForwardAndGradientParity() {
         CheckNear(grad[i], expected_grad_weight[i], 1e-6f,
                   "Embedding backward matches PyTorch sparse accumulation semantics");
     }
+
+    const float exact_float_tokens[] = {1.0f, 2.0f};
+    cyxwiz::Tensor exact_float_input(
+        {1, 2}, exact_float_tokens, cyxwiz::DataType::Float32);
+    CheckShape(embedding.Forward(exact_float_input), {1, 2, 3},
+               "Embedding exact Float32 token compatibility input");
+
+    const auto rejects_tokens = [&](const float* values,
+                                    const std::string& label) {
+        bool rejected = false;
+        try {
+            cyxwiz::Tensor invalid({1, 2}, values,
+                                   cyxwiz::DataType::Float32);
+            (void)embedding.Forward(invalid);
+        } catch (const std::exception&) {
+            rejected = true;
+        }
+        Check(rejected, label);
+    };
+    const float fractional_tokens[] = {1.5f, 2.0f};
+    rejects_tokens(
+        fractional_tokens,
+        "Embedding should reject fractional Float32 token IDs instead of clamping");
+    const float out_of_vocabulary_tokens[] = {1.0f, 5.0f};
+    rejects_tokens(
+        out_of_vocabulary_tokens,
+        "Embedding should reject out-of-vocabulary token IDs instead of clamping");
+
+    cyxwiz::EmbeddingModule bounded_embedding(5, 3, 0, 1.0f);
+    bounded_embedding.SetParameters({{"weight", weights}});
+    const int64_t padded_tokens[] = {0, 4};
+    cyxwiz::Tensor padded_input(
+        {1, 2}, padded_tokens, cyxwiz::DataType::Int64);
+    const cyxwiz::Tensor bounded_output = bounded_embedding.Forward(padded_input);
+    const float* bounded = bounded_output.Data<float>();
+    CheckNear(bounded[0], 0.0f, 1e-6f,
+              "Embedding padding output component 0");
+    CheckNear(bounded[1], 0.0f, 1e-6f,
+              "Embedding padding output component 1");
+    CheckNear(bounded[2], 0.0f, 1e-6f,
+              "Embedding padding output component 2");
+    const float bounded_norm = std::sqrt(
+        bounded[3] * bounded[3] + bounded[4] * bounded[4] +
+        bounded[5] * bounded[5]);
+    Check(bounded_norm <= 1.0f + 1e-5f,
+          "Embedding max_norm should cap a selected row before lookup");
+
+    const float bounded_grad_values[] = {
+        3.0f, 4.0f, 5.0f,
+        1.0f, 1.0f, 1.0f,
+    };
+    cyxwiz::Tensor bounded_grad_output(
+        {1, 2, 3}, bounded_grad_values, cyxwiz::DataType::Float32);
+    (void)bounded_embedding.Backward(bounded_grad_output);
+    const auto bounded_grads = bounded_embedding.GetGradients();
+    const auto bounded_it = bounded_grads.find("weight");
+    Check(bounded_it != bounded_grads.end(),
+          "Embedding padding/max_norm weight gradient exists");
+    const float* bounded_weight_grad = bounded_it->second.Data<float>();
+    CheckNear(bounded_weight_grad[0], 0.0f, 1e-6f,
+              "Embedding padding row gradient component 0");
+    CheckNear(bounded_weight_grad[1], 0.0f, 1e-6f,
+              "Embedding padding row gradient component 1");
+    CheckNear(bounded_weight_grad[2], 0.0f, 1e-6f,
+              "Embedding padding row gradient component 2");
 }
 
 void TestPositionalEncodingParity() {

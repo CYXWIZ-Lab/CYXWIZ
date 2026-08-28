@@ -3,6 +3,7 @@
 #include "properties_truth.h"
 #include <imgui.h>
 #include <implot.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -19,6 +20,28 @@ std::string ParamOr(const MLNode& node,
                     const char* fallback = "") {
     auto it = node.parameters.find(key);
     return it != node.parameters.end() ? it->second : fallback;
+}
+
+float ParseFiniteFloatOr(const std::string& text, float fallback) {
+    try {
+        size_t consumed = 0;
+        const float value = std::stof(text, &consumed);
+        return consumed == text.size() && std::isfinite(value)
+                   ? value
+                   : fallback;
+    } catch (...) {
+        return fallback;
+    }
+}
+
+int ParseIntOr(const std::string& text, int fallback) {
+    try {
+        size_t consumed = 0;
+        const int value = std::stoi(text, &consumed);
+        return consumed == text.size() ? value : fallback;
+    } catch (...) {
+        return fallback;
+    }
 }
 
 void RenderPathLine(const char* label, const std::string& value) {
@@ -322,6 +345,16 @@ void ScopeBuffer::Clear() {
     values.clear();
 }
 void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
+    const auto publish_simulation_parameter =
+        [&](const char* key) {
+            if (!context.node_editor) return;
+            const auto value = node.parameters.find(key);
+            if (value != node.parameters.end()) {
+                context.node_editor->SetSimulationNodeParameter(
+                    node.id, key, value->second);
+            }
+        };
+
     // Render editable parameters based on node type
     switch (node.type) {
         case NodeType::Dense:
@@ -503,7 +536,7 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             float rate = std::stof(rate_str);
             ImGui::Text("Drop Rate:");
             ImGui::SetNextItemWidth(200.0f);
-            if (ImGui::SliderFloat("##rate", &rate, 0.0f, 0.9f, "%.2f")) {
+            if (ImGui::SliderFloat("##rate", &rate, 0.0f, 1.0f, "%.2f")) {
                 char buf[32];
                 snprintf(buf, sizeof(buf), "%.2f", rate);
                 rate_str = buf;
@@ -843,28 +876,55 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             std::string& val_str = node.parameters["value"];
             std::string& min_str = node.parameters["min"];
             std::string& max_str = node.parameters["max"];
-            float val = std::stof(val_str.empty() ? "0" : val_str);
-            float mn = std::stof(min_str.empty() ? "-1" : min_str);
-            float mx = std::stof(max_str.empty() ? "1" : max_str);
+            float val = ParseFiniteFloatOr(val_str, 0.0f);
+            float mn = ParseFiniteFloatOr(min_str, -1.0f);
+            float mx = ParseFiniteFloatOr(max_str, 1.0f);
+            if (mn > mx) std::swap(mn, mx);
+            val = std::clamp(val, mn, mx);
 
             ImGui::Text("Value:");
             ImGui::SetNextItemWidth(200.0f);
             if (ImGui::SliderFloat("##slider_val", &val, mn, mx)) {
                 char buf[32]; snprintf(buf, sizeof(buf), "%.4f", val);
                 val_str = buf;
+                publish_simulation_parameter("value");
             }
 
             ImGui::Text("Range:");
             ImGui::SetNextItemWidth(90.0f);
             if (ImGui::InputFloat("##slider_min", &mn, 0, 0, "%.2f")) {
+                if (mn > mx) {
+                    mx = mn;
+                    char max_buf[32];
+                    snprintf(max_buf, sizeof(max_buf), "%.2f", mx);
+                    max_str = max_buf;
+                    publish_simulation_parameter("max");
+                }
                 char buf[32]; snprintf(buf, sizeof(buf), "%.2f", mn);
                 min_str = buf;
+                val = std::clamp(val, mn, mx);
+                snprintf(buf, sizeof(buf), "%.4f", val);
+                val_str = buf;
+                publish_simulation_parameter("min");
+                publish_simulation_parameter("value");
             }
             ImGui::SameLine();
             ImGui::SetNextItemWidth(90.0f);
             if (ImGui::InputFloat("##slider_max", &mx, 0, 0, "%.2f")) {
+                if (mx < mn) {
+                    mn = mx;
+                    char min_buf[32];
+                    snprintf(min_buf, sizeof(min_buf), "%.2f", mn);
+                    min_str = min_buf;
+                    publish_simulation_parameter("min");
+                }
                 char buf[32]; snprintf(buf, sizeof(buf), "%.2f", mx);
                 max_str = buf;
+                val = std::clamp(val, mn, mx);
+                snprintf(buf, sizeof(buf), "%.4f", val);
+                val_str = buf;
+                publish_simulation_parameter("max");
+                publish_simulation_parameter("value");
             }
             break;
         }
@@ -876,7 +936,7 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
 
             auto floatParam = [&](const char* label, const char* key, float step = 0.1f) {
                 std::string& s = node.parameters[key];
-                float v = std::stof(s.empty() ? "0" : s);
+                float v = ParseFiniteFloatOr(s, 0.0f);
                 ImGui::Text("%s:", label);
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(120.0f);
@@ -884,6 +944,7 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
                 if (ImGui::InputFloat(id.c_str(), &v, step, step * 10, "%.3f")) {
                     char buf[32]; snprintf(buf, sizeof(buf), "%.3f", v);
                     s = buf;
+                    publish_simulation_parameter(key);
                 }
             };
             floatParam("Amplitude", "amplitude");
@@ -899,14 +960,18 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
 
             auto floatParam = [&](const char* label, const char* key) {
                 std::string& s = node.parameters[key];
-                float v = std::stof(s.empty() ? "0" : s);
+                float v = ParseFiniteFloatOr(s, 0.0f);
                 ImGui::Text("%s:", label);
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(120.0f);
                 std::string id = std::string("##step_") + key;
                 if (ImGui::InputFloat(id.c_str(), &v, 0.1f, 1.0f, "%.3f")) {
+                    if (std::strcmp(key, "step_time") == 0) {
+                        v = std::max(v, 0.0f);
+                    }
                     char buf[32]; snprintf(buf, sizeof(buf), "%.3f", v);
                     s = buf;
+                    publish_simulation_parameter(key);
                 }
             };
             floatParam("Step Time", "step_time");
@@ -921,14 +986,18 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
 
             auto floatParam = [&](const char* label, const char* key) {
                 std::string& s = node.parameters[key];
-                float v = std::stof(s.empty() ? "0" : s);
+                float v = ParseFiniteFloatOr(s, 0.0f);
                 ImGui::Text("%s:", label);
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(120.0f);
                 std::string id = std::string("##ramp_") + key;
                 if (ImGui::InputFloat(id.c_str(), &v, 0.1f, 1.0f, "%.3f")) {
+                    if (std::strcmp(key, "duration") == 0) {
+                        v = std::max(v, 0.001f);
+                    }
                     char buf[32]; snprintf(buf, sizeof(buf), "%.3f", v);
                     s = buf;
+                    publish_simulation_parameter(key);
                 }
             };
             floatParam("Start Value", "start_value");
@@ -943,12 +1012,12 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             ImGui::Spacing();
 
             std::string& ws = node.parameters["window_size"];
-            int win = std::stoi(ws.empty() ? "500" : ws);
+            int win = std::clamp(ParseIntOr(ws, 500), 10, 100000);
             ImGui::Text("Window Size:");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(120.0f);
             if (ImGui::InputInt("##scope_win", &win)) {
-                if (win < 10) win = 10;
+                win = std::clamp(win, 10, 100000);
                 ws = std::to_string(win);
             }
 
@@ -966,10 +1035,23 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             auto& buf = context.scope_buffers[node.id];
             buf.max_samples = win;
 
-            // Generate demo data when no simulation is running
-            // (will be replaced by real simulation data when connected)
-            context.scope_demo_time += ImGui::GetIO().DeltaTime;
-            buf.Push(context.scope_demo_time, std::sin(2.0f * 3.14159f * 0.5f * context.scope_demo_time));
+            float live_value = 0.0f;
+            const bool has_live_value =
+                context.node_editor &&
+                context.node_editor->IsGraphSimulationRunning() &&
+                node.inputs.size() == 1 &&
+                context.node_editor->TryGetSimulationScalar(
+                    node.inputs[0].id, live_value);
+            if (has_live_value) {
+                const float sample_time =
+                    context.node_editor->GetSimulationTime();
+                if (buf.times.empty() || sample_time > buf.times.back()) {
+                    buf.Push(sample_time, live_value);
+                }
+            } else if (buf.times.empty()) {
+                ImGui::TextDisabled(
+                    "Connect one scalar signal and run simulation to view data.");
+            }
 
             if (!buf.times.empty()) {
                 // Copy deque to contiguous arrays for ImPlot
@@ -985,7 +1067,9 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
                     // Auto-scroll X axis to follow latest data
                     if (!t_arr.empty()) {
                         float t_max = t_arr.back();
-                        float t_window = win * 0.016f;  // Approximate window in seconds
+                        float t_window = t_arr.size() > 1
+                                             ? t_arr.back() - t_arr.front()
+                                             : 2.0f;
                         if (t_window < 2.0f) t_window = 2.0f;
                         ImPlot::SetupAxisLimits(ImAxis_X1, t_max - t_window, t_max, ImGuiCond_Always);
                     }
@@ -1000,7 +1084,6 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             // Controls
             if (ImGui::Button("Clear")) {
                 buf.Clear();
-                context.scope_demo_time = 0.0f;
             }
             ImGui::SameLine();
             ImGui::TextDisabled("Samples: %d", static_cast<int>(buf.times.size()));

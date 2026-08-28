@@ -144,7 +144,7 @@ int main() {
 
     {
         const auto& covered = gui::properties_truth::SpecializedTruthCoverageNodeTypes();
-        Check(covered.size() == 68,
+        Check(covered.size() == 76,
               "tofix48 baseline should record each specialized truth-covered node");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::DataInput),
               "DataInput should be in specialized truth coverage");
@@ -184,6 +184,10 @@ int main() {
               "Adam should be in specialized truth coverage");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Dense),
               "Dense should be in specialized truth coverage");
+        Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::ELU) &&
+                  gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Swish) &&
+                  gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Mish),
+              "all executable activation variants should have specialized truth coverage");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::BatchNorm),
               "BatchNorm should be in specialized truth coverage");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Reshape),
@@ -218,8 +222,16 @@ int main() {
               "TreeModelPredictor should be in specialized truth coverage");
         Check(!gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::ExportSQL),
               "ExportSQL should stay blocked metadata, not specialized truth coverage");
-        Check(!gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Embedding),
-              "Embedding should stay dialog-only until its focused contract is audited");
+        Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Embedding),
+              "Embedding should expose its audited dialog/runtime truth contract");
+        Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::MultiHeadAttention),
+              "MultiHeadAttention should expose its executable transformer contract");
+        Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::TransformerEncoder),
+              "TransformerEncoder should expose its executable transformer contract");
+        Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::TransformerDecoder),
+              "TransformerDecoder should expose its executable transformer contract");
+        Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::PositionalEncoding),
+              "PositionalEncoding should expose its executable transformer contract");
     }
 
     {
@@ -888,6 +900,144 @@ int main() {
     }
 
     {
+        auto head = MakeNode(
+            20, gui::NodeType::TimeDistributed, "TimeDistributed Dense");
+        head.parameters["out_features"] = "7";
+
+        const auto report = gui::properties_truth::ResolveNodeTruth(head);
+        const auto* units = FindProperty(report, "units");
+        Check(units != nullptr && units->effective_value == "7",
+              "TimeDistributed should surface its effective per-timestep Dense width");
+        Check(units->source_key == "out_features" &&
+                  HasStatus(*units,
+                            gui::properties_truth::TruthStatus::AliasUsed),
+              "TimeDistributed should identify the legacy out_features alias");
+
+        head.parameters["units"] = "8";
+        const auto conflict = gui::properties_truth::ResolveNodeTruth(head);
+        const auto* conflicting_units = FindProperty(conflict, "units");
+        Check(conflicting_units != nullptr &&
+                  HasStatus(*conflicting_units,
+                            gui::properties_truth::TruthStatus::Conflicting) &&
+                  conflict.has_issue,
+              "TimeDistributed should expose conflicting width aliases as an issue");
+    }
+
+    {
+        auto embedding = MakeNode(21, gui::NodeType::Embedding, "Embedding");
+        embedding.parameters["num_embeddings"] = "32";
+        embedding.parameters["embedding_dim"] = "6";
+        embedding.parameters["padding_idx"] = "0";
+        embedding.parameters["max_norm"] = "2.5";
+        embedding.parameters["freeze"] = "true";
+        embedding.parameters["embedding_weights_file"] = "tokens.bin";
+        embedding.parameters["init_mode"] = "uniform";
+
+        const auto report = gui::properties_truth::ResolveNodeTruth(embedding);
+        Check(!report.has_issue,
+              "valid Embedding runtime and dialog parameters should pass truth inspection");
+        const auto* vocabulary = FindProperty(report, "num_embeddings");
+        const auto* dimension = FindProperty(report, "embedding_dim");
+        const auto* padding = FindProperty(report, "padding_idx");
+        const auto* max_norm = FindProperty(report, "max_norm");
+        const auto* freeze = FindProperty(report, "freeze");
+        const auto* weights = FindProperty(report, "weights_file");
+        const auto* init_mode = FindProperty(report, "init_mode");
+        Check(vocabulary != nullptr && vocabulary->effective_value == "32" &&
+                  dimension != nullptr && dimension->effective_value == "6" &&
+                  padding != nullptr && padding->effective_value == "0" &&
+                  max_norm != nullptr && max_norm->effective_value == "2.5" &&
+                  freeze != nullptr && freeze->effective_value == "true",
+              "Embedding truth should preserve its executable numeric and freeze settings");
+        Check(weights != nullptr && weights->effective_value == "tokens.bin" &&
+                  weights->source_key == "embedding_weights_file" &&
+                  HasStatus(*weights,
+                            gui::properties_truth::TruthStatus::AliasUsed),
+              "Embedding truth should read and identify the legacy weights alias");
+        Check(init_mode != nullptr &&
+                  HasStatus(*init_mode,
+                            gui::properties_truth::TruthStatus::CompilerOnly),
+              "Embedding init_mode should be identified as dialog-only starter-matrix behavior");
+
+        embedding.parameters["padding_idx"] = "32";
+        embedding.parameters["max_norm"] = "-1";
+        embedding.parameters["weights_file"] = "other.bin";
+        const auto invalid = gui::properties_truth::ResolveNodeTruth(embedding);
+        const auto* invalid_padding = FindProperty(invalid, "padding_idx");
+        const auto* invalid_norm = FindProperty(invalid, "max_norm");
+        const auto* conflicting_weights = FindProperty(invalid, "weights_file");
+        Check(invalid.has_issue && invalid_padding != nullptr &&
+                  HasStatus(*invalid_padding,
+                            gui::properties_truth::TruthStatus::Missing) &&
+                  invalid_norm != nullptr &&
+                  HasStatus(*invalid_norm,
+                            gui::properties_truth::TruthStatus::Missing) &&
+                  conflicting_weights != nullptr &&
+                  HasStatus(*conflicting_weights,
+                            gui::properties_truth::TruthStatus::Conflicting),
+              "Embedding truth should fail closed on invalid padding, max_norm, and alias conflicts");
+    }
+
+    {
+        auto encoder = MakeNode(
+            22, gui::NodeType::TransformerEncoder, "Transformer Encoder");
+        encoder.parameters = {{"d_model", "8"},
+                              {"num_heads", "2"},
+                              {"nhead", "2"},
+                              {"dim_feedforward", "32"},
+                              {"ff_dim", "32"},
+                              {"dropout", "0.1"},
+                              {"norm_first", "false"},
+                              {"num_layers", "1"}};
+
+        const auto report = gui::properties_truth::ResolveNodeTruth(encoder);
+        const auto* heads = FindProperty(report, "num_heads");
+        const auto* depth = FindProperty(report, "num_layers");
+        const auto* contract = FindProperty(report, "transformer_contract");
+        Check(!report.has_issue && heads != nullptr &&
+                  heads->source_key == "num_heads" &&
+                  HasStatus(*heads,
+                            gui::properties_truth::TruthStatus::AliasUsed),
+              "Transformer truth should preserve equal-valued legacy aliases");
+        Check(depth != nullptr &&
+                  HasStatus(*depth,
+                            gui::properties_truth::TruthStatus::CompilerOnly),
+              "legacy num_layers=1 should be visible as compatibility-only");
+        Check(contract != nullptr && contract->effective_value.find("one CPU") !=
+                  std::string::npos,
+              "Transformer truth should disclose one CPU-backed block");
+
+        encoder.parameters["num_layers"] = "6";
+        const auto invalid = gui::properties_truth::ResolveNodeTruth(encoder);
+        const auto* invalid_contract =
+            FindProperty(invalid, "transformer_contract");
+        Check(invalid.has_issue && invalid_contract != nullptr &&
+                  HasStatus(*invalid_contract,
+                            gui::properties_truth::TruthStatus::Unsupported) &&
+                  invalid_contract->message.find("exactly one block") !=
+                      std::string::npos,
+              "Transformer truth should reject fictional internal depth");
+    }
+
+    {
+        auto positional = MakeNode(
+            23, gui::NodeType::PositionalEncoding, "Positional Encoding");
+        positional.parameters = {{"d_model", "8"},
+                                 {"max_len", "32"},
+                                 {"max_length", "64"}};
+        const auto report = gui::properties_truth::ResolveNodeTruth(positional);
+        const auto* maximum = FindProperty(report, "max_sequence_length");
+        const auto* contract = FindProperty(report, "transformer_contract");
+        Check(report.has_issue && maximum != nullptr &&
+                  HasStatus(*maximum,
+                            gui::properties_truth::TruthStatus::Conflicting) &&
+                  contract != nullptr &&
+                  HasStatus(*contract,
+                            gui::properties_truth::TruthStatus::Unsupported),
+              "PositionalEncoding truth should expose conflicting length aliases");
+    }
+
+    {
         auto norm = MakeNode(2, gui::NodeType::BatchNorm, "BatchNorm");
         norm.parameters["epsilon"] = "0.001";
         norm.parameters["momentum"] = "0";
@@ -904,8 +1054,24 @@ int main() {
         Check(momentum != nullptr,
               "BatchNorm should surface momentum truth");
         Check(HasStatus(*momentum,
-                        gui::properties_truth::TruthStatus::Missing),
-              "BatchNorm momentum <= 0 should be visible because ModelBuilder falls back");
+                        gui::properties_truth::TruthStatus::OK),
+              "BatchNorm momentum=0 should remain an exact executable value");
+        const auto* contract = FindProperty(
+            report, "normalization_regularization_contract");
+        Check(contract != nullptr &&
+                  HasStatus(*contract,
+                            gui::properties_truth::TruthStatus::OK),
+              "BatchNorm shared construction policy should accept equal aliases and zero momentum");
+
+        norm.parameters["eps"] = "0.01";
+        const auto conflict_report =
+            gui::properties_truth::ResolveNodeTruth(norm);
+        contract = FindProperty(
+            conflict_report, "normalization_regularization_contract");
+        Check(contract != nullptr &&
+                  HasStatus(*contract,
+                            gui::properties_truth::TruthStatus::Unsupported),
+              "BatchNorm conflicting epsilon aliases should fail executable truth");
     }
 
     {
@@ -916,8 +1082,32 @@ int main() {
         const auto* rate = FindProperty(report, "rate");
         Check(rate != nullptr,
               "Dropout should surface rate truth");
-        Check(HasStatus(*rate, gui::properties_truth::TruthStatus::Missing),
-              "Dropout rate >= 1 should be visible");
+        Check(HasStatus(*rate, gui::properties_truth::TruthStatus::OK),
+              "Dropout rate=1 should remain the executable PyTorch boundary");
+    }
+
+    {
+        auto norm = MakeNode(2, gui::NodeType::LayerNorm, "LayerNorm");
+        const auto automatic_report =
+            gui::properties_truth::ResolveNodeTruth(norm);
+        const auto* shape = FindProperty(automatic_report, "normalized_shape");
+        Check(shape != nullptr &&
+                  shape->effective_value == "automatic current feature width",
+              "LayerNorm empty shape should display its automatic runtime meaning");
+        const auto* affine =
+            FindProperty(automatic_report, "elementwise_affine");
+        Check(affine != nullptr && affine->effective_value == "true",
+              "LayerNorm should expose its trainable affine setting");
+
+        norm.parameters["normalized_shape"] = "4,-1";
+        const auto invalid_report =
+            gui::properties_truth::ResolveNodeTruth(norm);
+        const auto* contract = FindProperty(
+            invalid_report, "normalization_regularization_contract");
+        Check(contract != nullptr &&
+                  HasStatus(*contract,
+                            gui::properties_truth::TruthStatus::Unsupported),
+              "LayerNorm invalid trailing shape should fail executable truth");
     }
 
     {
@@ -939,6 +1129,30 @@ int main() {
         Check(shape_effect->effective_value.find("preserves") !=
                   std::string::npos,
               "Activation shape truth should explain shape preservation");
+    }
+
+    {
+        auto elu = MakeNode(3, gui::NodeType::ELU, "ELU");
+        elu.parameters["alpha"] = "0";
+        const auto invalid = gui::properties_truth::ResolveNodeTruth(elu);
+        const auto* alpha = FindProperty(invalid, "alpha");
+        const auto* configuration =
+            FindProperty(invalid, "dense_activation_contract");
+        Check(alpha != nullptr &&
+                  HasStatus(*alpha, gui::properties_truth::TruthStatus::Missing),
+              "ELU should display its invalid alpha instead of omitting the property");
+        Check(configuration != nullptr &&
+                  HasStatus(*configuration,
+                            gui::properties_truth::TruthStatus::Unsupported),
+              "ELU should display the shared compiler/runtime rejection");
+
+        auto swish = MakeNode(4, gui::NodeType::Swish, "Swish");
+        const auto swish_report =
+            gui::properties_truth::ResolveNodeTruth(swish);
+        Check(FindProperty(swish_report, "shape_effect") != nullptr &&
+                  FindProperty(swish_report,
+                               "dense_activation_contract") != nullptr,
+              "Swish should display shape and executable configuration truth");
     }
 
     {
@@ -1019,7 +1233,10 @@ int main() {
     {
         auto gru = MakeNode(4, gui::NodeType::GRU, "GRU 32");
         gru.parameters["hidden_size"] = "8";
+        gru.parameters["num_layers"] = "2";
+        gru.parameters["bidirectional"] = "true";
         gru.parameters["return_sequences"] = "true";
+        gru.parameters["dropout"] = "0.0";
 
         const auto report = gui::properties_truth::ResolveNodeTruth(gru);
         const auto* hidden_size = FindProperty(report, "hidden_size");
@@ -1038,6 +1255,63 @@ int main() {
               "GRU should surface return_sequences truth");
         Check(return_sequences->effective_value == "true",
               "return_sequences should normalize true values");
+
+        const auto* num_layers = FindProperty(report, "num_layers");
+        Check(num_layers != nullptr && num_layers->effective_value == "2",
+              "GRU should surface the constructed recurrent layer count");
+        const auto* bidirectional = FindProperty(report, "bidirectional");
+        Check(bidirectional != nullptr &&
+                  bidirectional->effective_value == "true" &&
+                  HasStatus(*bidirectional,
+                            gui::properties_truth::TruthStatus::RuntimeOnly),
+              "bidirectional GRU should disclose its split runtime path");
+        const auto* dropout = FindProperty(report, "dropout");
+        Check(dropout != nullptr && dropout->effective_value == "0.0" &&
+                  !HasStatus(*dropout,
+                             gui::properties_truth::TruthStatus::Unsupported),
+              "zero recurrent dropout should remain supported");
+        const auto* hidden_output = FindProperty(report, "hidden_output");
+        Check(hidden_output != nullptr &&
+                  hidden_output->effective_value == "not routed" &&
+                  HasStatus(*hidden_output,
+                            gui::properties_truth::TruthStatus::CompilerOnly),
+              "disconnected legacy Hidden pin should disclose compatibility status");
+    }
+
+    {
+        auto lstm = MakeNode(40, gui::NodeType::LSTM, "LSTM 16");
+        lstm.parameters["hidden_size"] = "16";
+        lstm.parameters["bidirectional"] = "true";
+        lstm.parameters["dropout"] = "0.25";
+        AddOutput(lstm, 4001, "Output");
+        AddOutput(lstm, 4002, "Hidden");
+        const std::vector<gui::NodeLink> links = {
+            {1, 40, 4002, 41, 4101},
+        };
+
+        const auto report = gui::properties_truth::ResolveNodeTruth(
+            lstm,
+            gui::properties_truth::NodeTruthContext{
+                nullptr, &links, nullptr, nullptr});
+        const auto* bidirectional = FindProperty(report, "bidirectional");
+        Check(bidirectional != nullptr &&
+                  HasStatus(*bidirectional,
+                            gui::properties_truth::TruthStatus::Unsupported) &&
+                  bidirectional->message.find("backward gradients") !=
+                      std::string::npos,
+              "bidirectional LSTM should surface the reverse-gradient blocker");
+        const auto* dropout = FindProperty(report, "dropout");
+        Check(dropout != nullptr &&
+                  HasStatus(*dropout,
+                            gui::properties_truth::TruthStatus::Unsupported) &&
+                  dropout->message.find("not wired") != std::string::npos,
+              "nonzero LSTM dropout should disclose that it is not consumed");
+        const auto* hidden_output = FindProperty(report, "hidden_output");
+        Check(hidden_output != nullptr &&
+                  HasStatus(*hidden_output,
+                            gui::properties_truth::TruthStatus::Unsupported) &&
+                  report.has_issue,
+              "connected legacy Hidden pin should be an actionable truth issue");
     }
 
     {

@@ -1,0 +1,109 @@
+name: Installer Alpha Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing immutable draft prerelease tag
+        required: true
+        type: string
+      cyxwiz_release:
+        description: CyxWiz release version in the signed inventory
+        required: true
+        default: "0.2.0"
+        type: string
+      bundle_version:
+        description: Installer bundle version in the signed inventory
+        required: true
+        default: "1.0.0"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Verify and publish existing draft
+    if: >-
+      vars.CYXWIZ_ALPHA_PUBLISH_ENABLED == 'true' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    environment: cyxwiz-alpha
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      RELEASE_REPOSITORY: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      CYXWIZ_RELEASE: ${{ inputs.cyxwiz_release }}
+      BUNDLE_VERSION: ${{ inputs.bundle_version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Materialize public trust and validate release identity
+        shell: bash
+        env:
+          TRUST_STORE_B64: ${{ secrets.CYXWIZ_INSTALLER_TRUST_STORE_B64 }}
+        run: |
+          python -c "import base64, os, pathlib; pathlib.Path('trusted-keys.json').write_bytes(base64.b64decode(os.environ['TRUST_STORE_B64'], validate=True))"
+          python redist/scripts/prepare_installer_release_configuration.py \
+            --trust-store trusted-keys.json \
+            --repository "${RELEASE_REPOSITORY}" \
+            --asset-base-url "https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}" \
+            --release-tag "${RELEASE_TAG}" \
+            --cyxwiz-release "${CYXWIZ_RELEASE}" \
+            --bundle-version "${BUNDLE_VERSION}" \
+            --platform windows \
+            --architecture x86_64 \
+            --trust-output validated-trust.json \
+            --configuration-output release-configuration.json
+
+      - name: Download one stable draft snapshot
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${RELEASE_TAG}" \
+            --repo "${RELEASE_REPOSITORY}" \
+            --json tagName,isDraft,isPrerelease,isImmutable,assets \
+            > release-before.json
+          mkdir release-assets
+          gh release download "${RELEASE_TAG}" \
+            --repo "${RELEASE_REPOSITORY}" \
+            --dir release-assets
+          gh release view "${RELEASE_TAG}" \
+            --repo "${RELEASE_REPOSITORY}" \
+            --json tagName,isDraft,isPrerelease,isImmutable,assets \
+            > release-after.json
+
+      - name: Verify signed release and unchanged GitHub assets
+        shell: bash
+        run: |
+          python redist/scripts/verify_installer_alpha_publication.py \
+            release-assets \
+            --trust-root validated-trust.json \
+            --repository "${RELEASE_REPOSITORY}" \
+            --release-tag "${RELEASE_TAG}" \
+            --cyxwiz-release "${CYXWIZ_RELEASE}" \
+            --bundle-version "${BUNDLE_VERSION}" \
+            --require-github \
+            --release-view-before release-before.json \
+            --release-view-after release-after.json
+
+      - name: Publish the verified alpha prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${RELEASE_TAG}" \
+            --repo "${RELEASE_REPOSITORY}" \
+            --draft=false \
+            --prerelease \
+            --latest=false \
+            --verify-tag
+          test "$(gh release view "${RELEASE_TAG}" \
+            --repo "${RELEASE_REPOSITORY}" \
+            --json isDraft,isPrerelease \
+            --jq '(.isDraft == false) and (.isPrerelease == true)')" = "true"

@@ -23,7 +23,6 @@ struct ScopeBuffer {
 struct RenderNodePropertiesContext {
     NodeEditor* node_editor;
     std::map<int, ScopeBuffer>& scope_buffers;
-    float& scope_demo_time;
     std::function<void()> invalidate_shapes;
 };
 

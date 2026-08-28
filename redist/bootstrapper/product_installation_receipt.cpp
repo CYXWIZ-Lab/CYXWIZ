@@ -61,32 +61,13 @@ std::filesystem::path Utf8Path(const std::string& value) {
     return std::filesystem::path(utf8);
 }
 
-const char* ScopeName(ProductInstallScope scope) {
-    return scope == ProductInstallScope::AllUsers
-        ? "all_users" : "current_user";
-}
-
-bool ParseScope(const Json& value, ProductInstallScope& scope) {
-    if (!value.is_string()) return false;
-    const auto text = value.get<std::string>();
-    if (text == "current_user") {
-        scope = ProductInstallScope::CurrentUser;
-        return true;
-    }
-    if (text == "all_users") {
-        scope = ProductInstallScope::AllUsers;
-        return true;
-    }
-    return false;
-}
-
 Json ReceiptDocument(const ProductInstallationReceipt& receipt) {
     return {
         {"schema_version", std::uint64_t{1}},
         {"kind", kReceiptKind},
         {"install_id", receipt.install_id},
         {"install_root", PathUtf8(receipt.install_root)},
-        {"scope", ScopeName(receipt.scope)},
+        {"scope", ProductInstallScopeName(receipt.scope)},
     };
 }
 
@@ -127,7 +108,9 @@ bool ReadReceiptFile(
         document["install_root"].get<std::string>());
     if (!IsInstallId(parsed.install_id) ||
         !IsNormalizedProductRoot(parsed.install_root) ||
-        !ParseScope(document["scope"], parsed.scope)) {
+        !document["scope"].is_string() ||
+        !ParseProductInstallScope(
+            document["scope"].get<std::string>(), parsed.scope)) {
         error = "The product installation receipt values are invalid";
         return false;
     }
@@ -163,6 +146,30 @@ bool GenerateInstallId(std::string& output, std::string& error) {
 
 }  // namespace
 
+std::string_view ProductInstallScopeName(ProductInstallScope scope) {
+    switch (scope) {
+    case ProductInstallScope::CurrentUser:
+        return "current_user";
+    case ProductInstallScope::AllUsers:
+        return "all_users";
+    }
+    return {};
+}
+
+bool ParseProductInstallScope(
+    std::string_view value,
+    ProductInstallScope& scope) {
+    if (value == "current_user") {
+        scope = ProductInstallScope::CurrentUser;
+        return true;
+    }
+    if (value == "all_users") {
+        scope = ProductInstallScope::AllUsers;
+        return true;
+    }
+    return false;
+}
+
 std::filesystem::path ProductInstallationReceiptPath(
     const std::filesystem::path& install_root) {
     return install_root / ".cyxwiz-installation.json";
@@ -184,6 +191,32 @@ bool LoadProductInstallationReceipt(
     if (receipt.install_root != install_root) {
         receipt = {};
         error = "The product installation receipt belongs to another root";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool LoadRelocatedProductInstallationReceipt(
+    const std::filesystem::path& relocated_root,
+    const std::filesystem::path& original_install_root,
+    ProductInstallationReceipt& receipt,
+    std::string& error) {
+    receipt = {};
+    if (!IsNormalizedProductRoot(relocated_root) ||
+        !IsNormalizedProductRoot(original_install_root) ||
+        relocated_root.parent_path() != original_install_root.parent_path() ||
+        relocated_root == original_install_root) {
+        error = "Normalized sibling product roots are required";
+        return false;
+    }
+    if (!ReadReceiptFile(
+            ProductInstallationReceiptPath(relocated_root), receipt, error)) {
+        return false;
+    }
+    if (receipt.install_root != original_install_root) {
+        receipt = {};
+        error = "The relocated product receipt belongs to another root";
         return false;
     }
     error.clear();

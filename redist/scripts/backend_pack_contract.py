@@ -14,7 +14,7 @@ SIGNATURE_ALGORITHM = "ed25519"
 BACKENDS = ("cpu", "cuda", "opencl", "oneapi")
 PACK_KINDS = ("base", "backend_pack")
 SUPPORT_STATES = ("supported", "diagnostic", "blocked", "revoked")
-TRUST_ROLES = ("catalog", "pack")
+TRUST_ROLES = ("catalog", "pack", "installer")
 IDENTITY_CONFIDENCE = (
     "unknown",
     "backend_local",

@@ -88,10 +88,12 @@ bool ReadTextFile(
 }
 
 #if !defined(__APPLE__)
-bool RemoveOwnedTextFile(
+bool ValidateOwnedTextFile(
     const std::filesystem::path& path,
     const std::string& expected,
+    bool& present,
     std::string& error) {
+    present = false;
     std::error_code filesystem_error;
     const auto status = std::filesystem::symlink_status(
         path, filesystem_error);
@@ -107,6 +109,16 @@ bool RemoveOwnedTextFile(
         error = "CyxWiz product integration contains unmanaged changes";
         return false;
     }
+    present = true;
+    return true;
+}
+
+bool RemoveOwnedTextFile(
+    const std::filesystem::path& path,
+    bool present,
+    std::string& error) {
+    if (!present) return true;
+    std::error_code filesystem_error;
     if (!std::filesystem::remove(path, filesystem_error) || filesystem_error) {
         error = "Cannot remove CyxWiz product integration file: " +
             filesystem_error.message();
@@ -414,12 +426,21 @@ ProductUnregistrationResult UnregisterPlatformProduct(
     }
     const auto launcher = request.install_root /
         std::string(CurrentRuntimeBootstrapperExecutableName());
-    if (!RemoveOwnedTextFile(
-            applications / "cyxwiz.desktop",
-            DesktopEntry(launcher, false), error) ||
-        !RemoveOwnedTextFile(
-            applications / "cyxwiz-installer.desktop",
-            DesktopEntry(launcher, true), error)) {
+    const auto engine_entry = applications / "cyxwiz.desktop";
+    const auto installer_entry = applications / "cyxwiz-installer.desktop";
+    bool engine_present = false;
+    bool installer_present = false;
+    if (!ValidateOwnedTextFile(
+            engine_entry, DesktopEntry(launcher, false),
+            engine_present, error) ||
+        !ValidateOwnedTextFile(
+            installer_entry, DesktopEntry(launcher, true),
+            installer_present, error)) {
+        result.message = std::move(error);
+        return result;
+    }
+    if (!RemoveOwnedTextFile(engine_entry, engine_present, error) ||
+        !RemoveOwnedTextFile(installer_entry, installer_present, error)) {
         result.message = std::move(error);
         return result;
     }

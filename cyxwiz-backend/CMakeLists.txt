@@ -136,6 +136,7 @@ set(BACKEND_SOURCES
     src/algorithms/sequential.cpp
     src/algorithms/sequential/activation_modules.cpp
     src/algorithms/sequential/feedforward_modules.cpp
+    src/algorithms/sequential/spatial_modules.cpp
     src/algorithms/sequential/recurrent_modules.cpp
     src/algorithms/sequential/regularization_shape_modules.cpp
     src/algorithms/sequential/tensor_modules.cpp

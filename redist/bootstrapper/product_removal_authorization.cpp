@@ -1,9 +1,11 @@
 #include "product_removal_authorization.h"
 
 #include "backend_pack_platform.h"
+#include "product_release_version.h"
 
 #include <algorithm>
 #include <system_error>
+#include <utility>
 
 namespace cyxwiz::runtime {
 namespace {
@@ -112,9 +114,17 @@ bool CaptureProductRemovalAuthorization(
         return false;
     }
 
+    std::string product_version;
+    if (!LoadProductReleaseVersion(
+            active.base_directory, product_version, error)) {
+        error = "The active product release identity is invalid: " + error;
+        return false;
+    }
+
     authorization.install_root = install_root;
     authorization.scope = scope;
     authorization.install_id = receipt.install_id;
+    authorization.product_version = std::move(product_version);
     authorization.runtime = RuntimeIdentity(active);
     error.clear();
     return true;
@@ -131,6 +141,10 @@ bool ValidateProductRemovalAuthorization(
     }
     if (current.install_id != authorization.install_id) {
         error = "The product installation identity changed before removal";
+        return false;
+    }
+    if (current.product_version != authorization.product_version) {
+        error = "The product release version changed before removal";
         return false;
     }
     if (!SameRuntimeIdentity(current.runtime, authorization.runtime)) {

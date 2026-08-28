@@ -1,5 +1,6 @@
 ﻿#include <cyxwiz/sequential.h>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -137,6 +138,26 @@ EmbeddingModule::EmbeddingModule(size_t num_embeddings, size_t embedding_dim,
     , padding_idx_(padding_idx)
     , max_norm_(max_norm)
 {
+    if (num_embeddings_ < 2 ||
+        num_embeddings_ > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        throw std::invalid_argument(
+            "EmbeddingModule: num_embeddings must be in [2, INT_MAX]");
+    }
+    if (embedding_dim_ < 1 ||
+        embedding_dim_ > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        throw std::invalid_argument(
+            "EmbeddingModule: embedding_dim must be in [1, INT_MAX]");
+    }
+    if (padding_idx_ < -1 ||
+        (padding_idx_ >= 0 &&
+         static_cast<size_t>(padding_idx_) >= num_embeddings_)) {
+        throw std::invalid_argument(
+            "EmbeddingModule: padding_idx must be -1 or a valid token id");
+    }
+    if (!std::isfinite(max_norm_) || max_norm_ < 0.0f) {
+        throw std::invalid_argument(
+            "EmbeddingModule: max_norm must be finite and >= 0");
+    }
     layer_ = std::make_unique<EmbeddingLayer>(
         static_cast<int>(num_embeddings),
         static_cast<int>(embedding_dim),
@@ -152,31 +173,61 @@ Tensor EmbeddingModule::Forward(const Tensor& input) {
     // integer tensors. Normalize both forms here so the model-facing contract
     // stays narrow.
     const auto& shape = input.Shape();
+    if (shape.size() != 1 && shape.size() != 2) {
+        throw std::runtime_error(
+            "EmbeddingModule: input must be [sequence] or [batch, sequence]");
+    }
     size_t total = 1;
-    for (auto d : shape) total *= d;
+    for (size_t d : shape) {
+        if (d == 0 || total > std::numeric_limits<size_t>::max() / d) {
+            throw std::runtime_error(
+                "EmbeddingModule: input dimensions must be nonzero and bounded");
+        }
+        total *= d;
+    }
 
     Tensor int_input(shape, DataType::Int32);
-    int32_t* dst = static_cast<int32_t*>(int_input.Data());
+    int32_t* dst = int_input.MutableData<int32_t>();
     const int32_t vocab_max = static_cast<int32_t>(num_embeddings_) - 1;
+    const float* float_ids = input.GetDataType() == DataType::Float32
+        ? input.ReadData<float>() : nullptr;
+    const int32_t* int32_ids = input.GetDataType() == DataType::Int32
+        ? input.ReadData<int32_t>() : nullptr;
+    const int64_t* int64_ids = input.GetDataType() == DataType::Int64
+        ? input.ReadData<int64_t>() : nullptr;
     for (size_t i = 0; i < total; ++i) {
         int32_t idx = 0;
         switch (input.GetDataType()) {
-            case DataType::Float32:
-                idx = static_cast<int32_t>(input.Data<float>()[i]);
+            case DataType::Float32: {
+                const float value = float_ids[i];
+                if (!std::isfinite(value) || std::trunc(value) != value ||
+                    value < 0.0f || value > static_cast<float>(vocab_max)) {
+                    throw std::runtime_error(
+                        "EmbeddingModule: Float32 token ids must be finite exact integers in vocabulary range");
+                }
+                idx = static_cast<int32_t>(value);
                 break;
+            }
             case DataType::Int32:
-                idx = input.Data<int32_t>()[i];
+                idx = int32_ids[i];
                 break;
-            case DataType::Int64:
-                idx = static_cast<int32_t>(input.Data<int64_t>()[i]);
+            case DataType::Int64: {
+                const int64_t value = int64_ids[i];
+                if (value < 0 || value > static_cast<int64_t>(vocab_max)) {
+                    throw std::runtime_error(
+                        "EmbeddingModule: Int64 token id is outside vocabulary range");
+                }
+                idx = static_cast<int32_t>(value);
                 break;
+            }
             default:
                 throw std::runtime_error(
                     "EmbeddingModule: input token ids must be Float32, Int32, or Int64");
         }
-        // Clamp to valid range. Out-of-vocab IDs map to 0 (the [PAD]
-        // slot by convention — safe fallback).
-        if (idx < 0 || idx > vocab_max) idx = 0;
+        if (idx < 0 || idx > vocab_max) {
+            throw std::runtime_error(
+                "EmbeddingModule: token id is outside vocabulary range");
+        }
         dst[i] = idx;
     }
 

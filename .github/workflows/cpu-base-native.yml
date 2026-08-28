@@ -136,6 +136,7 @@ jobs:
           cmake --build build --config Release --parallel
           --target cyxwiz-engine cyxwiz-installer
           cyxwiz-backend-pack-installer cyxwiz-runtime-bootstrapper
+          cyxwiz-product-removal-finalizer
           cyxwiz-route-probe
 
       - name: Download pinned redistribution inputs

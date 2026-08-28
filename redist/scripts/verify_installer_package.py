@@ -30,13 +30,22 @@ CONTRACT_TESTS = (
     "test_backend_pack_lifecycle_service",
     "test_runtime_bootstrapper",
     "test_installer_verification_summary",
+    "test_installer_product_removal",
     "test_product_installation_receipt",
     "test_product_removal_authorization",
+    "test_product_removal_cleanup",
+    "test_product_removal_quarantine",
+    "test_product_removal_finalizer",
+    "test_product_removal_handoff",
+    "test_product_removal_request",
+    "test_product_removal_transaction",
     "test_product_registration",
 )
 
 CONTRACT_SUPPORT_EXECUTABLES = (
+    "cyxwiz-product-removal-finalizer",
     "cyxwiz-runtime-bootstrapper",
+    "test_product_removal_finalizer_child",
     "test_runtime_bootstrapper_child",
 )
 

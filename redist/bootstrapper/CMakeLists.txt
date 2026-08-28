@@ -7,11 +7,30 @@ add_library(cyxwiz-runtime-bootstrap STATIC
     atomic_file_publisher.cpp
     backend_pack_state_service.cpp
     product_installation_receipt.cpp
+    product_registration.cpp
+    product_release_version.cpp
     product_removal_authorization.cpp
+    product_removal_cleanup.cpp
+    product_removal_finalizer.cpp
+    product_removal_handoff.cpp
+    product_removal_quarantine.cpp
+    product_removal_request.cpp
+    product_removal_transaction.cpp
     runtime_layout.cpp
 )
 if(WIN32)
-    target_sources(cyxwiz-runtime-bootstrap PRIVATE windows_dll_search.cpp)
+    target_sources(cyxwiz-runtime-bootstrap PRIVATE
+        product_registration_windows.cpp
+        product_removal_cleanup_windows.cpp
+        product_removal_handoff_windows.cpp
+        windows_dll_search.cpp
+    )
+else()
+    target_sources(cyxwiz-runtime-bootstrap PRIVATE
+        product_registration_posix.cpp
+        product_removal_cleanup_posix.cpp
+        product_removal_handoff_posix.cpp
+    )
 endif()
 target_include_directories(cyxwiz-runtime-bootstrap PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -19,6 +38,11 @@ target_include_directories(cyxwiz-runtime-bootstrap PUBLIC
 target_link_libraries(cyxwiz-runtime-bootstrap PUBLIC
     nlohmann_json::nlohmann_json
 )
+if(WIN32)
+    target_link_libraries(cyxwiz-runtime-bootstrap PUBLIC
+        advapi32 ole32 shell32
+    )
+endif()
 
 add_library(cyxwiz-backend-pack-maintenance STATIC
     backend_pack_maintenance_request.cpp
@@ -34,15 +58,18 @@ target_link_libraries(cyxwiz-backend-pack-maintenance PUBLIC
 add_library(cyxwiz-backend-pack-service STATIC
     backend_pack_acquisition.cpp
     backend_pack_archive_extractor.cpp
-    base_launcher_publisher.cpp
+    base_stable_tool_publisher.cpp
     backend_pack_hash.cpp
     backend_pack_https_source.cpp
+    github_release_redirect_policy.cpp
     backend_pack_installer.cpp
     backend_pack_lifecycle_service.cpp
     backend_pack_metadata_cache.cpp
     backend_pack_metadata_refresh.cpp
     backend_pack_metadata_verifier.cpp
     backend_pack_path.cpp
+    installer_bundle_verifier.cpp
+    installer_setup_service.cpp
 )
 target_include_directories(cyxwiz-backend-pack-service PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -91,8 +118,139 @@ if(NOT CYXWIZ_BUILD_INSTALLER_ONLY)
 endif()
 unset(_cyxwiz_runtime_bootstrapper_source)
 
+set(CYXWIZ_SETUP_BUNDLE_URL "" CACHE STRING
+    "Default HTTPS URL for the signed CyxWiz installer bundle descriptor")
+set(CYXWIZ_SETUP_VERSION "1.0.0" CACHE STRING
+    "Semantic version of the CyxWiz first-stage setup program")
+set(CYXWIZ_SETUP_TRUST_STORE "" CACHE FILEPATH
+    "Installer-role public trust JSON embedded in official setup builds")
+set(CYXWIZ_SETUP_EMBEDDED_TRUST_JSON "")
+if(CYXWIZ_SETUP_TRUST_STORE)
+    get_filename_component(
+        _cyxwiz_setup_trust_store "${CYXWIZ_SETUP_TRUST_STORE}" ABSOLUTE)
+    if(NOT EXISTS "${_cyxwiz_setup_trust_store}" OR
+       IS_DIRECTORY "${_cyxwiz_setup_trust_store}")
+        message(FATAL_ERROR
+            "CYXWIZ_SETUP_TRUST_STORE is not a regular file: ${_cyxwiz_setup_trust_store}")
+    endif()
+    file(SIZE "${_cyxwiz_setup_trust_store}" _cyxwiz_setup_trust_size)
+    if(_cyxwiz_setup_trust_size EQUAL 0 OR
+       _cyxwiz_setup_trust_size GREATER 4194304)
+        message(FATAL_ERROR
+            "Embedded setup trust must contain 1-4194304 bytes")
+    endif()
+    file(READ "${_cyxwiz_setup_trust_store}"
+        CYXWIZ_SETUP_EMBEDDED_TRUST_JSON)
+    string(FIND "${CYXWIZ_SETUP_EMBEDDED_TRUST_JSON}"
+        ")CW_TRUST\"" _cyxwiz_setup_trust_delimiter)
+    if(NOT _cyxwiz_setup_trust_delimiter EQUAL -1)
+        message(FATAL_ERROR "Embedded setup trust contains the raw delimiter")
+    endif()
+endif()
+set(_cyxwiz_setup_generated_dir
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${_cyxwiz_setup_generated_dir}")
+configure_file(
+    installer_setup_embedded_trust.cpp.in
+    "${_cyxwiz_setup_generated_dir}/installer_setup_embedded_trust.cpp"
+    @ONLY
+)
+if(WIN32)
+    set(_cyxwiz_setup_platform "windows")
+    set(_cyxwiz_setup_launcher_source installer_setup_launcher_windows.cpp)
+elseif(APPLE)
+    set(_cyxwiz_setup_platform "macos")
+    set(_cyxwiz_setup_launcher_source installer_setup_launcher_posix.cpp)
+else()
+    set(_cyxwiz_setup_platform "linux")
+    set(_cyxwiz_setup_launcher_source installer_setup_launcher_posix.cpp)
+endif()
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _cyxwiz_setup_processor)
+if(_cyxwiz_setup_processor MATCHES "^(arm64|aarch64)$")
+    set(_cyxwiz_setup_architecture "arm64")
+else()
+    set(_cyxwiz_setup_architecture "x86_64")
+endif()
+add_executable(cyxwiz-setup
+    installer_setup_main.cpp
+    "${_cyxwiz_setup_generated_dir}/installer_setup_embedded_trust.cpp"
+    ${_cyxwiz_setup_launcher_source}
+)
+target_include_directories(cyxwiz-setup PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(cyxwiz-setup PRIVATE cyxwiz-backend-pack-service)
+target_compile_definitions(cyxwiz-setup PRIVATE
+    CYXWIZ_SETUP_VERSION="${CYXWIZ_SETUP_VERSION}"
+    CYXWIZ_SETUP_PLATFORM="${_cyxwiz_setup_platform}"
+    CYXWIZ_SETUP_ARCHITECTURE="${_cyxwiz_setup_architecture}"
+    CYXWIZ_SETUP_BUNDLE_URL="${CYXWIZ_SETUP_BUNDLE_URL}"
+)
+set_target_properties(cyxwiz-setup PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+install(TARGETS cyxwiz-setup
+    RUNTIME_DEPENDENCY_SET cyxwiz-setup-runtime-dependencies
+    RUNTIME DESTINATION . COMPONENT cyxwiz-setup
+)
+install(FILES "${CMAKE_SOURCE_DIR}/LICENSE"
+    DESTINATION . COMPONENT cyxwiz-setup
+)
+
+# This executable is copied outside the installation before destructive
+# cleanup. Compile its small validation closure directly so Windows can use a
+# static CRT and the finalizer never depends on DLLs inside the product root.
+add_executable(cyxwiz-product-removal-finalizer
+    product_removal_finalizer_main.cpp
+    product_removal_finalizer.cpp
+    product_removal_transaction.cpp
+    product_removal_quarantine.cpp
+    product_removal_cleanup.cpp
+    product_removal_request.cpp
+    product_removal_authorization.cpp
+    product_registration.cpp
+    product_release_version.cpp
+    product_installation_receipt.cpp
+    atomic_file_publisher.cpp
+    runtime_layout.cpp
+)
+if(WIN32)
+    target_sources(cyxwiz-product-removal-finalizer PRIVATE
+        product_registration_windows.cpp
+        product_removal_cleanup_windows.cpp
+    )
+else()
+    target_sources(cyxwiz-product-removal-finalizer PRIVATE
+        product_registration_posix.cpp
+        product_removal_cleanup_posix.cpp
+    )
+endif()
+target_include_directories(cyxwiz-product-removal-finalizer PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+target_link_libraries(cyxwiz-product-removal-finalizer PRIVATE
+    nlohmann_json::nlohmann_json
+)
+if(WIN32)
+    target_link_libraries(cyxwiz-product-removal-finalizer PRIVATE
+        advapi32 ole32 shell32
+    )
+endif()
+set_target_properties(cyxwiz-product-removal-finalizer PROPERTIES
+    CXX_STANDARD 20
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(MSVC)
+    set_property(TARGET cyxwiz-product-removal-finalizer PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+if(NOT CYXWIZ_BUILD_INSTALLER_ONLY)
+    install(TARGETS cyxwiz-product-removal-finalizer RUNTIME DESTINATION .)
+endif()
+
 if(CYXWIZ_BUILD_TESTS)
     enable_testing()
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    find_program(CYXWIZ_OPENSSL_EXECUTABLE openssl REQUIRED)
     add_executable(generate_installer_metadata_fixture
         generate_installer_metadata_fixture.cpp
     )
@@ -197,6 +355,22 @@ if(CYXWIZ_BUILD_TESTS)
         COMMAND test_backend_pack_delivery
     )
 
+    add_executable(test_github_release_redirect_policy
+        test_github_release_redirect_policy.cpp
+        github_release_redirect_policy.cpp
+    )
+    target_include_directories(test_github_release_redirect_policy PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    set_target_properties(test_github_release_redirect_policy PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME github_release_redirect_policy_contract
+        COMMAND test_github_release_redirect_policy
+    )
+
     add_executable(test_backend_pack_maintenance
         test_backend_pack_maintenance.cpp
     )
@@ -239,5 +413,50 @@ if(CYXWIZ_BUILD_TESTS)
     add_test(
         NAME backend_pack_lifecycle_service_contract
         COMMAND test_backend_pack_lifecycle_service
+    )
+
+    add_executable(test_installer_setup_child test_installer_setup_child.cpp)
+    set_target_properties(test_installer_setup_child PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME installer_setup_signed_bundle_contract
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/redist/tests/test_installer_setup.py"
+            --setup $<TARGET_FILE:cyxwiz-setup>
+            --child $<TARGET_FILE:test_installer_setup_child>
+            --platform "${_cyxwiz_setup_platform}"
+            --architecture "${_cyxwiz_setup_architecture}"
+            --openssl "${CYXWIZ_OPENSSL_EXECUTABLE}"
+    )
+
+    set(_cyxwiz_setup_saved_trust_json
+        "${CYXWIZ_SETUP_EMBEDDED_TRUST_JSON}")
+    file(READ
+        "${CMAKE_SOURCE_DIR}/redist/tests/fixtures/setup-trusted-keys.json"
+        CYXWIZ_SETUP_EMBEDDED_TRUST_JSON)
+    configure_file(
+        installer_setup_embedded_trust.cpp.in
+        "${_cyxwiz_setup_generated_dir}/test_installer_setup_embedded_trust.cpp"
+        @ONLY
+    )
+    set(CYXWIZ_SETUP_EMBEDDED_TRUST_JSON
+        "${_cyxwiz_setup_saved_trust_json}")
+    add_executable(test_installer_setup_embedded_trust
+        test_installer_setup_embedded_trust.cpp
+        "${_cyxwiz_setup_generated_dir}/test_installer_setup_embedded_trust.cpp"
+    )
+    target_include_directories(test_installer_setup_embedded_trust PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(test_installer_setup_embedded_trust PRIVATE
+        cyxwiz-backend-pack-service)
+    set_target_properties(test_installer_setup_embedded_trust PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME installer_setup_embedded_trust_contract
+        COMMAND test_installer_setup_embedded_trust
     )
 endif()

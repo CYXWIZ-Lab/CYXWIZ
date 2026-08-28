@@ -3,6 +3,7 @@
 #include "backend_placement_capabilities.h"
 #include "execution_placement_plan.h"
 #include "data_registry.h"
+#include "dense_activation_configuration_policy.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
 #include "label_column_resolver.h"
@@ -1789,6 +1790,27 @@ bool HasConnectedSelectedInputPinNamed(
     return false;
 }
 
+bool HasConnectedSelectedOutputPinNamed(
+    const gui::MLNode& node,
+    const std::vector<gui::NodeLink>& links,
+    const std::unordered_set<int>& selected_node_ids,
+    const char* pin_name) {
+    for (const auto& pin : node.outputs) {
+        if (pin.is_input || pin.name != pin_name) {
+            continue;
+        }
+        for (const auto& link : links) {
+            if (link.from_node == node.id &&
+                link.from_pin == pin.id &&
+                selected_node_ids.count(link.from_node) > 0 &&
+                selected_node_ids.count(link.to_node) > 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 // Build the legacy single-string error_message from the issues list so
 // existing callers that only look at error_message keep working.
 std::string JoinErrorMessages(const std::vector<ValidationIssue>& issues) {
@@ -3362,16 +3384,21 @@ void ValidateTrainingPathImplementationStatus(
         if (LooksLikeMetricLearningTrainingSketch(node,
                                                   metric_learning_key)) {
             std::ostringstream msg;
-            msg << "Node '" << node.name
-                << "' sketches metric-learning/Siamese training via '"
-                << metric_learning_key
-                << "', but Studio training currently has one selected input "
-                   "tensor and no shared-weight graph contract. This path "
-                   "needs typed pair/triplet batch payloads, shared encoder "
-                   "ownership, pair/triplet loss wiring, mining/sampling "
-                   "rules, and embedding output packaging before it can "
-                   "compile truthfully.";
-            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name);
+            const auto support =
+                ResolvePipelineTrainingBackendSupport(node.type);
+            if (support.mode == PipelineTrainingBackendSupportMode::
+                                    UnsupportedTrainingWorkflow &&
+                support.reason != nullptr) {
+                msg << "Node '" << node.name << "' " << support.reason;
+            } else {
+                msg << "Node '" << node.name
+                    << "' sketches metric-learning/Siamese training via '"
+                    << metric_learning_key
+                    << "', but no typed visual graph or TrainingExecutor "
+                       "owner is registered for the workflow.";
+            }
+            AddIssue(config, IssueLevel::Error, msg.str(), node.id, node.name,
+                     errors::Compiler::UnsupportedTrainingNode);
             continue;
         }
 
@@ -3397,7 +3424,7 @@ void ValidateTrainingPathImplementationStatus(
             training_support.mode ==
                 PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer) {
             std::ostringstream msg;
-            msg << "Node '" << node.name << "' is "
+            msg << "Node '" << node.name << "' "
                 << training_support.reason;
             AddIssue(config, IssueLevel::Error, msg.str(), node.id,
                      node.name, errors::Compiler::UnsupportedTrainingNode);
@@ -4345,8 +4372,52 @@ TrainingConfiguration GraphCompiler::Compile(
 
         // Handle model layers and activations
         if (IsModelLayer(node->type) || IsActivation(node->type)) {
+            if (const auto reason =
+                    ResolveInvalidDenseActivationConfigurationReason(
+                        node->type, node->parameters)) {
+                AddIssue(config, IssueLevel::Error, *reason, node->id,
+                         node->name, errors::Compiler::InvalidParameter);
+            }
+            if (const auto reason =
+                    ResolveInvalidSequenceProjectionConfigurationReason(
+                        node->type, node->parameters)) {
+                AddIssue(config, IssueLevel::Error, *reason, node->id,
+                         node->name, errors::Compiler::InvalidParameter);
+            }
+            if (const auto reason =
+                    ResolveInvalidNormalizationRegularizationConfigurationReason(
+                        node->type, node->parameters)) {
+                AddIssue(config, IssueLevel::Error, *reason, node->id,
+                         node->name, errors::Compiler::InvalidParameter);
+            }
+            if (const auto reason = ResolveInvalidTransformerConfigurationReason(
+                    node->type, node->parameters)) {
+                AddIssue(config, IssueLevel::Error, *reason, node->id,
+                         node->name, errors::Compiler::InvalidParameter);
+            }
             CompiledLayer layer = ExtractLayerConfig(*node);
             layer.input_shape = current_shape;
+
+            if (const auto reason =
+                    ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+                        node->type, layer.parameters)) {
+                AddIssue(config, IssueLevel::Error, *reason, node->id,
+                         node->name,
+                         errors::Compiler::UnsupportedTrainingNode);
+            }
+            if ((node->type == gui::NodeType::LSTM ||
+                 node->type == gui::NodeType::GRU) &&
+                HasConnectedSelectedOutputPinNamed(
+                    *node, links, training_path_ids, "Hidden")) {
+                AddIssue(
+                    config,
+                    IssueLevel::Error,
+                    "The legacy Hidden output pin is not routed by the Engine "
+                    "sequential model. Leave Hidden disconnected and use Output.",
+                    node->id,
+                    node->name,
+                    errors::Compiler::UnsupportedTrainingNode);
+            }
 
             // Infer output shape
             if (node->type == gui::NodeType::Reshape ||
@@ -4560,10 +4631,10 @@ TrainingConfiguration GraphCompiler::Compile(
             auto it = output_node->parameters.find(
                 output_node->type == gui::NodeType::SequenceTagOutput
                     ? "num_tags"
-                    : "classes");
+                    : "num_classes");
             if (output_node->type == gui::NodeType::Output &&
                 it == output_node->parameters.end()) {
-                it = output_node->parameters.find("num_classes");
+                it = output_node->parameters.find("classes");
             }
             if (it != output_node->parameters.end() && !it->second.empty()) {
                 try {
@@ -5266,20 +5337,7 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
 }
 
 bool GraphCompiler::IsActivation(gui::NodeType type) const {
-    switch (type) {
-        case gui::NodeType::ReLU:
-        case gui::NodeType::LeakyReLU:
-        case gui::NodeType::ELU:
-        case gui::NodeType::GELU:
-        case gui::NodeType::Swish:
-        case gui::NodeType::Mish:
-        case gui::NodeType::Sigmoid:
-        case gui::NodeType::Tanh:
-        case gui::NodeType::Softmax:
-            return true;
-        default:
-            return false;
-    }
+    return IsExecutableActivationNode(type);
 }
 
 // ---------------------------------------------------------------------------
@@ -5595,14 +5653,20 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
 
     // Extract specific parameters
     switch (node.type) {
-        case gui::NodeType::Dense:
-            if (node.parameters.count("units"))
-                layer.units = std::stoi(node.parameters.at("units"));
+        case gui::NodeType::Dense: {
+            DenseActivationConfiguration configuration;
+            if (!ResolveDenseActivationConfiguration(
+                    node.type, node.parameters, configuration)) {
+                layer.units = static_cast<int>(configuration.dense_units);
+            }
             break;
+        }
 
         case gui::NodeType::TimeDistributed:
-            if (node.parameters.count("units"))
-                layer.units = std::stoi(node.parameters.at("units"));
+            layer.units = static_cast<int>(ParseSizeParam(
+                node.parameters,
+                "units",
+                ParseSizeParam(node.parameters, "out_features", 0)));
             break;
 
         case gui::NodeType::Embedding:
@@ -5632,26 +5696,31 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
             break;
 
         case gui::NodeType::BatchNorm:
-            if (node.parameters.count("eps"))
-                layer.eps = std::stof(node.parameters.at("eps"));
-            if (node.parameters.count("momentum"))
-                layer.momentum = std::stof(node.parameters.at("momentum"));
-            break;
-
         case gui::NodeType::Dropout:
-            if (node.parameters.count("rate"))
-                layer.dropout_rate = std::stof(node.parameters.at("rate"));
+        case gui::NodeType::LayerNorm:
+            // The shared policy validates these raw persisted parameters and
+            // ModelBuilder consumes the exact resolved values. Avoid a second
+            // parser in CompiledLayer fields, which previously changed zero
+            // Dropout/BatchNorm values into defaults.
             break;
 
-        case gui::NodeType::LeakyReLU:
-            if (node.parameters.count("negative_slope"))
-                layer.negative_slope = std::stof(node.parameters.at("negative_slope"));
+        case gui::NodeType::LeakyReLU: {
+            DenseActivationConfiguration configuration;
+            if (!ResolveDenseActivationConfiguration(
+                    node.type, node.parameters, configuration)) {
+                layer.negative_slope = configuration.negative_slope;
+            }
             break;
+        }
 
-        case gui::NodeType::ELU:
-            if (node.parameters.count("alpha"))
-                layer.alpha = std::stof(node.parameters.at("alpha"));
+        case gui::NodeType::ELU: {
+            DenseActivationConfiguration configuration;
+            if (!ResolveDenseActivationConfiguration(
+                    node.type, node.parameters, configuration)) {
+                layer.alpha = configuration.elu_alpha;
+            }
             break;
+        }
 
         case gui::NodeType::ConvTranspose2D:
             if (node.parameters.count("in_channels"))
