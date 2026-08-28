@@ -73,6 +73,12 @@ The broad tracking ticket is:
   against an independent PyTorch tensor-equation fixture.
 - Activates ArrayFire CPU exactly, binds an immutable execution context, and
   runs the fixture-backed core checks with native CPU fallback forbidden.
+- Repeats the complete Adam/AdamW/NAdam, SGD, RMSprop/AdaGrad/Adadelta, and
+  LAMB multi-step/state/resume fixture matrix on every selectable installed
+  CUDA/OpenCL route. Each route is activated exactly, forbids native fallback,
+  and permits only bounded attributed verification readbacks. oneAPI optimizer
+  evidence remains a process-isolated qualification gap; known-bad oneAPI
+  device 0 is never selected by this in-process matrix.
 - Rejects native fallback attempts and undeclared host synchronization; only
   bounded, attributed test-output readbacks are allowed.
 - Proves regression losses and every supported CrossEntropy rank use strict

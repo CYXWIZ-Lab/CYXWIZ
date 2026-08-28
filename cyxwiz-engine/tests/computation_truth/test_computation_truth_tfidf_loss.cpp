@@ -1277,6 +1277,13 @@ void TestLambMultiStepParity(const json& cases) {
     }
 }
 
+void TestOptimizerMultiStepParity(const json& cases) {
+    TestAdamFamilyMultiStepParity(cases);
+    TestSGDMomentumMultiStepParity(cases);
+    TestAdaptiveOptimizerMultiStepParity(cases);
+    TestLambMultiStepParity(cases);
+}
+
 void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
     const bool initialized_here = !cyxwiz::IsInitialized();
     if (initialized_here) {
@@ -1333,10 +1340,7 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestCrossEntropyParity(cases);
         TestCrossEntropyMatrixParity(cases);
         TestLinearForwardBackwardParity(cases);
-        TestAdamFamilyMultiStepParity(cases);
-        TestSGDMomentumMultiStepParity(cases);
-        TestAdaptiveOptimizerMultiStepParity(cases);
-        TestLambMultiStepParity(cases);
+        TestOptimizerMultiStepParity(cases);
     }
     g_fallback_events = nullptr;
     g_host_sync_events = nullptr;
@@ -1359,6 +1363,91 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
     }
 }
 
+void TestInstalledAcceleratorOptimizerTruth(const json& cases) {
+    const bool initialized_here = !cyxwiz::IsInitialized();
+    if (initialized_here) {
+        Check(cyxwiz::Initialize(), "CyxWiz backend initialization failed");
+    }
+
+    size_t exercised_routes = 0;
+    for (const auto& device : cyxwiz::Device::GetAvailableDevices()) {
+        if (!device.device_selectable ||
+            (device.type != cyxwiz::DeviceType::CUDA &&
+             device.type != cyxwiz::DeviceType::OPENCL)) {
+            continue;
+        }
+
+        const auto activation =
+            cyxwiz::Device(device.type, device.device_id).ActivateExact(true);
+        const std::string route = device.name + " device=" +
+            std::to_string(device.device_id);
+        Check(activation.success,
+              "accelerator optimizer activation failed for " + route +
+                  ": " + activation.message);
+        Check(activation.execution_validated &&
+                  activation.effective_type == device.type &&
+                  activation.effective_device_id == device.device_id,
+              "accelerator optimizer activation changed exact route for " +
+                  route);
+
+        const std::string backend = cyxwiz::CurrentArrayFireBackendName();
+        auto context = cyxwiz::CaptureCurrentExecutionDeviceContext(
+            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+        context.execution_validated = activation.execution_validated;
+        Check(context.valid && context.platform == "arrayfire" &&
+                  context.requested_backend == context.effective_backend &&
+                  context.requested_device_id == device.device_id &&
+                  context.effective_device_id == device.device_id &&
+                  !context.selection_fallback_applied,
+              "accelerator optimizer context lost exact route identity for " +
+                  route);
+
+        std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent> fallback_events;
+        std::vector<cyxwiz::ArrayFireHostSyncEvent> host_sync_events;
+        g_fallback_events = &fallback_events;
+        g_host_sync_events = &host_sync_events;
+        {
+            const cyxwiz::ScopedArrayFireFallbackPolicy strict_policy(
+                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver
+                fallback_observer(&RecordFallbackEvent);
+            const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
+                &RecordHostSyncEvent);
+            const cyxwiz::ScopedActiveExecutionDeviceContext active_run;
+            const cyxwiz::ScopedExecutionDeviceContext bound_context(context);
+            TestOptimizerMultiStepParity(cases);
+        }
+        g_fallback_events = nullptr;
+        g_host_sync_events = nullptr;
+
+        Check(fallback_events.empty(),
+              "accelerator optimizer path attempted native CPU fallback for " +
+                  route);
+        for (const auto& event : host_sync_events) {
+            Check(event.selected_backend == backend,
+                  "accelerator optimizer readback lost backend identity for " +
+                      route);
+            Check(event.attribution_category == "debug_sample_dump" &&
+                      event.bytes <= 4096,
+                  "accelerator optimizer performed an undeclared host sync for " +
+                      route + ": " + event.attribution_category +
+                      " operation=" + event.operation_name);
+        }
+        ++exercised_routes;
+    }
+
+    if (exercised_routes == 0) {
+        std::cout << "SKIP: no selectable CUDA/OpenCL optimizer route\n";
+    }
+    const auto cpu_restore =
+        cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
+    Check(cpu_restore.success,
+          "failed to restore ArrayFire CPU after optimizer route matrix");
+    if (initialized_here) {
+        cyxwiz::Shutdown();
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1370,6 +1459,7 @@ int main(int argc, char** argv) {
     TestBoundedTFIDFMaterialization();
     TestTFIDFNGramMaterialization();
     TestArrayFireCpuTrainingCoreTruth(cases);
+    TestInstalledAcceleratorOptimizerTruth(cases);
     std::cout << "Computation truth TF-IDF + regression/CrossEntropy + Linear + optimizer checks passed\n";
     return 0;
 }
