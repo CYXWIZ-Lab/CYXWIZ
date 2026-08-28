@@ -294,6 +294,29 @@ are not copied from a catalog as authorization. A catalog can constrain
 device kind, provider, driver, runtime, and matrix requirements; the local
 qualification cache proves the exact machine route.
 
+## Compatibility Decision Boundary
+
+`BackendPackCompatibilityDecision` is the shared immutable-value vocabulary
+for catalog-to-machine decisions. It keeps these axes independent:
+
+- signed catalog support;
+- machine eligibility (`unknown`, `compatible`, or `incompatible`);
+- install recommendation;
+- local package state and integrity;
+- exact-route verification requirement and outcome;
+- Ticket 91 training authorization;
+- Ticket 89 measured-performance status; and
+- the compatibility rule and bounded remediation category.
+
+The default decision has unknown eligibility, is not offered or measured, has
+not been verified or authorized, and requires verification. No field implies
+another: compatibility does not authorize execution, installation does not
+prove compatibility, passed verification does not claim fastest performance,
+and diagnostic override is not certified or recommended. The matched physical
+fingerprint is internal evidence for route reconciliation and invalidation; UI
+and support serializers must not expose it. The compatibility layer returns a
+value only. It does not select, download, stage, activate, or switch a route.
+
 ## Catalog
 
 The signed catalog body contains exactly:
