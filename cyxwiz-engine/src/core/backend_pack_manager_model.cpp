@@ -15,9 +15,8 @@ bool CatalogAllowsConsent(BackendPackCatalogSupport support) {
 }
 
 bool CompatibilityAllowsConsent(const BackendPackManagerRecord &record) {
-  if (!record.compatibility)
-    return true;
-  return record.compatibility->eligibility !=
+  return record.compatibility.has_value() &&
+         record.compatibility->eligibility !=
              runtime::BackendPackEligibility::Incompatible &&
          record.compatibility->install_recommendation !=
              runtime::BackendPackInstallRecommendation::NotOffered;
@@ -109,8 +108,9 @@ EvaluateBackendPackAction(BackendPackAction action,
     return Disabled("The signed catalog does not authorize this pack");
   }
   if (!CompatibilityAllowsConsent(*record)) {
-    return Disabled("This pack is incompatible with the selected runtime or "
-                    "known machine capabilities");
+    return Disabled("Compatibility evidence is unavailable or this pack is "
+                    "incompatible with the selected runtime or known machine "
+                    "capabilities");
   }
   if (!record->delivery_metadata_available) {
     return Disabled(record->delivery_metadata_error.empty()
@@ -251,6 +251,7 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
     }
     if (!base || base->pack_id.empty() ||
         base->catalog_support != BackendPackCatalogSupport::Supported ||
+        !CompatibilityAllowsConsent(*base) ||
         !base->delivery_metadata_available) {
       plan.message = "A supported signed CyxWiz Engine/CPU base is required "
                      "for a fresh installation";
