@@ -89,6 +89,82 @@ def regression_loss_matrix() -> list[dict[str, Any]]:
     return cases
 
 
+def elementwise_activation_matrix() -> list[dict[str, Any]]:
+    """Forward/autograd truth at smooth, branch-boundary, and finite extremes."""
+    definitions = [
+        ("relu", "torch.nn.functional.relu", {}, functional.relu),
+        (
+            "leaky_relu",
+            "torch.nn.functional.leaky_relu",
+            {"alpha": 0.2},
+            lambda value: functional.leaky_relu(value, negative_slope=0.2),
+        ),
+        (
+            "elu",
+            "torch.nn.functional.elu",
+            {"alpha": 1.3},
+            lambda value: functional.elu(value, alpha=1.3),
+        ),
+        (
+            "gelu_tanh",
+            "torch.nn.functional.gelu(approximate=tanh)",
+            {},
+            lambda value: functional.gelu(value, approximate="tanh"),
+        ),
+        ("silu", "torch.nn.functional.silu", {}, functional.silu),
+        ("sigmoid", "torch.sigmoid", {}, torch.sigmoid),
+        ("tanh", "torch.tanh", {}, torch.tanh),
+        ("mish", "torch.nn.functional.mish", {}, functional.mish),
+        (
+            "hardswish",
+            "torch.nn.functional.hardswish",
+            {},
+            functional.hardswish,
+        ),
+        ("selu", "torch.nn.functional.selu", {}, functional.selu),
+    ]
+    input_values = [
+        [-100.0, -20.0, -3.0, -2.999, -1.0],
+        [-1.0e-6, 0.0, 1.0e-6, 1.0, 2.999],
+        [3.0, 20.0, 100.0, -0.5, 0.5],
+    ]
+    grad_output_values = [
+        [0.25, -0.5, 0.75, -1.0, 1.25],
+        [-1.5, 1.75, -2.0, 2.25, -2.5],
+        [2.75, -3.0, 3.25, -3.5, 3.75],
+    ]
+    cases: list[dict[str, Any]] = []
+    for name, operation, parameters, activation in definitions:
+        input_tensor = torch.tensor(
+            input_values, dtype=torch.float32, requires_grad=True
+        )
+        grad_output = torch.tensor(grad_output_values, dtype=torch.float32)
+        output = activation(input_tensor)
+        (grad_input,) = torch.autograd.grad(
+            output, input_tensor, grad_outputs=grad_output
+        )
+        cases.append({
+            "name": name,
+            "operation": operation,
+            "dtype": "float32",
+            "parameters": parameters,
+            "coverage": [
+                "rank2",
+                "zero",
+                "branch_boundaries",
+                "finite_extremes",
+            ],
+            "tolerance": {"atol": 2.0e-5, "rtol": 2.0e-5},
+            "input": tensor_fixture(input_tensor),
+            "grad_output": tensor_fixture(grad_output),
+            "expected": {
+                "output": tensor_fixture(output),
+                "grad_input": tensor_fixture(grad_input),
+            },
+        })
+    return cases
+
+
 def linear_case(
     name: str,
     input_values: list[Any],
@@ -2527,6 +2603,8 @@ def generate_fixture() -> dict[str, Any]:
         },
         "seed": 39,
         "cases": {
+            "elementwise_activation_forward_backward_f32":
+                elementwise_activation_matrix(),
             "dropout_semantics_f32": dropout_semantics(),
             "flatten_forward_backward_f32": flatten_matrix(),
             "tensor_concat_f32": tensor_concat_matrix(),

@@ -351,11 +351,11 @@
       "callers": ["Dense", "activation modules", "model families"],
       "contract": "Forward and analytical input gradient match the corresponding PyTorch operation, including boundary points and finite extremes.",
       "supported": "Float32 public activation domain",
-      "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_activations"],
-      "execution": "mixed; ArrayFire path must be audited per activation",
+      "oracle": "Generated PyTorch 2.10 forward/autograd fixtures",
+      "tests": ["cyxwiz-tests:test_activations", "test_computation_truth_tfidf_loss:elementwise_activation_forward_backward_f32"],
+      "execution": "strict ArrayFire-resident CPU, CUDA and OpenCL routes; declared native CPU compatibility fallback",
       "status": "partial",
-      "gaps": ["fixture provenance", "boundary/extreme cases", "fallback/residency matrix"]
+      "gaps": ["native CPU compatibility fallback qualification", "process-isolated oneAPI activation qualification"]
     },
     {
       "id": "ACT-SOFTMAX-001",

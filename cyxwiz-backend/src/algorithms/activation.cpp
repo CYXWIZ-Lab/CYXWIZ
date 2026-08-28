@@ -753,8 +753,9 @@ Tensor MishActivation::Forward(const Tensor& input) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
-        // Mish: x * tanh(softplus(x)) = x * tanh(ln(1 + exp(x)))
-        af::array softplus_x = af::log(1.0f + af::exp(x));
+        // Stable softplus avoids exp overflow for large finite inputs.
+        af::array softplus_x =
+            af::max(x, 0.0f) + af::log(1.0f + af::exp(-af::abs(x)));
         af::array output = x * af::tanh(softplus_x);
         return AfToTensor(output);
     } catch (const af::exception& e) {
@@ -773,11 +774,11 @@ Tensor MishActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         // Mish derivative is complex:
         // d/dx [x * tanh(softplus(x))]
         // = tanh(softplus(x)) + x * sech^2(softplus(x)) * sigmoid(x)
-        af::array exp_x = af::exp(x);
-        af::array softplus_x = af::log(1.0f + exp_x);
+        af::array softplus_x =
+            af::max(x, 0.0f) + af::log(1.0f + af::exp(-af::abs(x)));
         af::array tanh_sp = af::tanh(softplus_x);
         af::array sech2_sp = 1.0f - tanh_sp * tanh_sp;
-        af::array sigmoid_x = exp_x / (1.0f + exp_x);
+        af::array sigmoid_x = af::sigmoid(x);
 
         af::array dx = grad_out * (tanh_sp + x * sech2_sp * sigmoid_x);
 
@@ -886,7 +887,8 @@ Tensor SELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         // d(SELU)/dx = scale for x > 0, scale * alpha * exp(x) for x <= 0
         af::array positive_mask = (x > 0).as(af::dtype::f32);
         af::array negative_mask = (x <= 0).as(af::dtype::f32);
-        af::array grad_input = grad * SCALE * (positive_mask + ALPHA * af::exp(x) * negative_mask);
+        af::array grad_input = grad * SCALE *
+            (positive_mask + ALPHA * af::exp(af::min(x, 0.0f)) * negative_mask);
         return AfToTensor(grad_input);
     } catch (const af::exception& e) {
         LogActivationFallbackOnce("SELU::Backward", e.what(), grad_output, "grad_output");

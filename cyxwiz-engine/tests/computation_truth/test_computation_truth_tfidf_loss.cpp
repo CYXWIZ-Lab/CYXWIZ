@@ -3,6 +3,7 @@
 #include "../../src/core/execution_device_context.h"
 
 #include <cyxwiz/cyxwiz.h>
+#include <cyxwiz/activation.h>
 #include <cyxwiz/layers/linear.h>
 #include <cyxwiz/loss.h>
 #include <cyxwiz/optimizers/adaptive.h>
@@ -727,6 +728,88 @@ void TestLinearForwardBackwardParity(const json& cases) {
     }
 }
 
+std::unique_ptr<cyxwiz::Activation> CreateFixtureActivation(
+    const json& test_case) {
+    const std::string name = test_case.at("name").get<std::string>();
+    if (name == "relu") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::ReLU);
+    }
+    if (name == "leaky_relu") {
+        return cyxwiz::CreateActivation(
+            cyxwiz::ActivationType::LeakyReLU,
+            test_case.at("parameters").at("alpha").get<float>());
+    }
+    if (name == "elu") {
+        return cyxwiz::CreateActivation(
+            cyxwiz::ActivationType::ELU,
+            test_case.at("parameters").at("alpha").get<float>());
+    }
+    if (name == "gelu_tanh") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::GELU);
+    }
+    if (name == "silu") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::SiLU);
+    }
+    if (name == "sigmoid") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::Sigmoid);
+    }
+    if (name == "tanh") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::Tanh);
+    }
+    if (name == "mish") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::Mish);
+    }
+    if (name == "hardswish") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::Hardswish);
+    }
+    if (name == "selu") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::SELU);
+    }
+    Check(false, "unknown activation fixture: " + name);
+    return nullptr;
+}
+
+void TestElementwiseActivationParity(const json& cases) {
+    for (const auto& test_case :
+         cases.at("elementwise_activation_forward_backward_f32")) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("dtype", "") == "float32",
+              name + " activation fixture dtype mismatch");
+        Check(test_case.value("operation", "").rfind("torch.", 0) == 0,
+              name + " activation fixture must declare a PyTorch operation");
+        const auto coverage =
+            test_case.at("coverage").get<std::vector<std::string>>();
+        Check(coverage.size() == 4,
+              name + " activation fixture coverage metadata mismatch");
+
+        auto activation = CreateFixtureActivation(test_case);
+        const auto input = FloatTensorFromFixture(
+            test_case.at("input"), name + " activation input");
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto output = activation->Forward(input);
+        const auto grad_input = activation->Backward(
+            FloatTensorFromFixture(test_case.at("grad_output"),
+                                   name + " activation grad_output"),
+            input);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              name + " activation attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              name + " activation materialized a tensor during compute");
+
+        const auto tolerance = ReadTolerance(test_case);
+        CheckTensor(output, test_case.at("expected").at("output"), tolerance,
+                    name + " activation forward");
+        CheckTensor(grad_input,
+                    test_case.at("expected").at("grad_input"), tolerance,
+                    name + " activation backward");
+    }
+}
+
 void TestLinearMultiBatchUpdateParity(const json& cases) {
     const auto& test_case = cases.at("linear_multibatch_sgd_f32");
     Check(test_case.value("operation", "") ==
@@ -1414,6 +1497,7 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestRegressionLossParity(cases);
         TestCrossEntropyParity(cases);
         TestCrossEntropyMatrixParity(cases);
+        TestElementwiseActivationParity(cases);
         TestLinearForwardBackwardParity(cases);
         TestLinearMultiBatchUpdateParity(cases);
         TestOptimizerMultiStepParity(cases);
@@ -1491,6 +1575,7 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
                 &RecordHostSyncEvent);
             const cyxwiz::ScopedActiveExecutionDeviceContext active_run;
             const cyxwiz::ScopedExecutionDeviceContext bound_context(context);
+            TestElementwiseActivationParity(cases);
             TestLinearForwardBackwardParity(cases);
             TestLinearMultiBatchUpdateParity(cases);
             TestOptimizerMultiStepParity(cases);
@@ -1538,6 +1623,6 @@ int main(int argc, char** argv) {
     TestTFIDFNGramMaterialization();
     TestArrayFireCpuTrainingCoreTruth(cases);
     TestInstalledAcceleratorTrainingCoreTruth(cases);
-    std::cout << "Computation truth TF-IDF + regression/CrossEntropy + Linear + optimizer checks passed\n";
+    std::cout << "Computation truth TF-IDF + training-core checks passed\n";
     return 0;
 }
