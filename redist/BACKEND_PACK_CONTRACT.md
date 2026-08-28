@@ -317,6 +317,27 @@ fingerprint is internal evidence for route reconciliation and invalidation; UI
 and support serializers must not expose it. The compatibility layer returns a
 value only. It does not select, download, stage, activate, or switch a route.
 
+Evaluation is deterministic and fail-closed. Signed support, target platform,
+and architecture are checked before runtime-set, companion-base, ArrayFire ABI,
+device kind, provider type, CPU feature, physical-identity confidence, and
+minimum-driver constraints. A required CPU base can be compatible from its
+signed platform identity without a preinstalled runtime. An optional pack
+requires the active base or the base selected in the same installer plan.
+
+Missing machine facts produce `unknown`, never a fabricated incompatibility.
+A known mismatch produces `incompatible`; blocked or revoked catalog policy is
+never overridden locally. Falling outside a declared tested-driver range keeps
+an otherwise compatible pack available for isolated verification, while a
+proven minimum-driver failure requires driver remediation. Ambiguous equally
+confident physical-device matches remain unknown instead of binding a pack to
+an arbitrary route.
+
+The evaluator does not consume route-verification, training-authorization, or
+benchmark outcomes. Consequently, an isolated oneAPI crash can mark that exact
+local route as crashed and unauthorized without rewriting signed oneAPI support
+or the compatibility result for other machines. A preferred recommendation is
+assigned only after comparable verified benchmark evidence exists.
+
 ## Catalog
 
 The signed catalog body contains exactly:

@@ -3,6 +3,7 @@
 #include "backend_pack_metadata_verifier.h"
 
 #include <string>
+#include <vector>
 
 namespace cyxwiz::runtime {
 
@@ -65,6 +66,7 @@ enum class BackendPackCompatibilityRule {
   ArrayFireAbi,
   Provider,
   DeviceKind,
+  CpuFeatures,
   IdentityConfidence,
   MinimumDriver,
   TestedDriverRange,
@@ -92,9 +94,21 @@ struct BackendPackMatchedDevice {
   std::string physical_fingerprint;
   std::string provider;
   std::string driver_version;
+  std::vector<std::string> provider_types;
+  std::vector<std::string> cpu_features;
   BackendPackDeviceKind device_kind = BackendPackDeviceKind::Unknown;
   BackendPackIdentityConfidence identity_confidence =
       BackendPackIdentityConfidence::Unknown;
+};
+
+struct BackendPackCompatibilityContext {
+  std::string platform;
+  std::string architecture;
+  // The active base, or the base selected in the same installer plan.
+  std::string runtime_set_id;
+  std::string base_pack_id;
+  std::string arrayfire_abi;
+  std::vector<BackendPackMatchedDevice> devices;
 };
 
 struct BackendPackCompatibilityDecision {
@@ -125,6 +139,10 @@ struct BackendPackCompatibilityDecision {
       BackendPackPerformanceStatus::NotMeasured;
   BackendPackRemediation remediation = BackendPackRemediation::VerifyRoute;
 };
+
+BackendPackCompatibilityDecision EvaluateBackendPackCompatibility(
+    const VerifiedBackendPackManifest &manifest,
+    const BackendPackCompatibilityContext &context);
 
 const char *BackendPackEligibilityName(BackendPackEligibility value);
 const char *

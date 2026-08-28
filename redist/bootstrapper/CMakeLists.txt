@@ -59,6 +59,7 @@ add_library(cyxwiz-backend-pack-service STATIC
     backend_pack_acquisition.cpp
     backend_pack_archive_extractor.cpp
     backend_pack_compatibility.cpp
+    backend_pack_compatibility_names.cpp
     base_stable_tool_publisher.cpp
     backend_pack_hash.cpp
     backend_pack_https_source.cpp
