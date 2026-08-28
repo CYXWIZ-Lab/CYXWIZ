@@ -359,9 +359,17 @@ BackendPackCompatibilityDecision EvaluateBackendPackCompatibility(
     return decision;
   }
 
+  bool missing_provider_fact = false;
   bool missing_driver_fact = false;
   bool outdated_driver = false;
+  const bool has_provider_driver_constraints =
+      !manifest.compatibility.minimum_driver_versions.empty() ||
+      !manifest.compatibility.tested_driver_ranges.empty();
   const auto driver_candidates = Filter(candidates, [&](const auto *device) {
+    if (has_provider_driver_constraints && device->provider.empty()) {
+      missing_provider_fact = true;
+      return false;
+    }
     const auto minimum =
         manifest.compatibility.minimum_driver_versions.find(device->provider);
     if (minimum == manifest.compatibility.minimum_driver_versions.end())
@@ -384,7 +392,10 @@ BackendPackCompatibilityDecision EvaluateBackendPackCompatibility(
   });
   candidates = driver_candidates;
   if (candidates.empty()) {
-    if (missing_driver_fact) {
+    if (missing_provider_fact) {
+      SetUnknown(decision, BackendPackCompatibilityRule::Provider,
+                 BackendPackRemediation::VerifyRoute);
+    } else if (missing_driver_fact) {
       SetUnknown(decision, BackendPackCompatibilityRule::MinimumDriver,
                  BackendPackRemediation::UpdateDriver);
     } else if (outdated_driver) {
