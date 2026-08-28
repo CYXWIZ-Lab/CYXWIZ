@@ -222,12 +222,12 @@
       "implementation": ["cyxwiz-backend/src/core/device.cpp"],
       "callers": ["Engine startup", "TrainingExecutor preflight", "preferences"],
       "contract": "Requested and effective backend/device remain distinct; exact activation validates execution and never relabels another backend.",
-      "supported": "ArrayFire CPU; CUDA/OpenCL/oneAPI when installed",
+      "supported": "ArrayFire CPU and locally qualified CUDA/OpenCL/oneAPI routes; unavailable or ineligible optional routes produce an explicit skip",
       "oracle": "ArrayFire runtime identity plus engine contract",
-      "tests": ["test_device_runtime_truth", "test_training_executor_arrow_parquet"],
-      "execution": "runtime selection boundary",
-      "status": "partial",
-      "gaps": ["explicit optional-backend skip report", "complete CPU-accelerator-CPU matrix on each installed backend"]
+      "tests": ["cyxwiz-tests:[device]~[oneapi]", "cyxwiz-tests:[device][selection][transaction]", "test_device_runtime_truth", "test_training_executor_arrow_parquet"],
+      "execution": "runtime selection transaction with qualification, exact activation, process-route restoration, identity revalidation and atomic next-run commit",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "EXEC-CONTEXT-001",
@@ -235,15 +235,15 @@
       "operation": "ExecutionDeviceContext capture, immutable bind and active-run mutation gate",
       "tier": 0,
       "owner": "cyxwiz-engine/src/core/execution_device_context.h",
-      "implementation": ["cyxwiz-engine/src/core/training_executor.cpp"],
+      "implementation": ["cyxwiz-engine/src/core/execution_device_preferences.h", "cyxwiz-engine/src/core/training_executor.cpp"],
       "callers": ["TrainingExecutor", "trace", "GUI runtime truth"],
       "contract": "One context is bound before compute and preserves requested/effective identity, generation and fallback policy for the run.",
       "supported": "Engine ArrayFire runs",
       "oracle": "engine execution contract",
-      "tests": ["test_computation_truth_tfidf_loss", "test_training_executor_arrow_parquet"],
-      "execution": "run-scoped control plane",
-      "status": "partial",
-      "gaps": ["active-run mutation/defer assertion across GUI boundary"]
+      "tests": ["cyxwiz-tests:[device][selection][transaction]", "test_computation_truth_tfidf_loss", "test_training_executor_arrow_parquet"],
+      "execution": "run-scoped control plane with a shared execution lease and fail-closed device-selection mutation gate",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "EXEC-FALLBACK-001",

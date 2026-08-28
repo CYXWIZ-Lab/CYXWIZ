@@ -29,7 +29,8 @@ enum class DeviceSelectionTransactionStage {
     Restore,
     Revalidation,
     Commit,
-    Complete
+    Complete,
+    ExecutionGuard
 };
 
 enum class DeviceSelectionTransactionStatus {
@@ -42,7 +43,8 @@ enum class DeviceSelectionTransactionStatus {
     EffectiveRouteMismatch,
     RestoreFailed,
     RevalidationFailed,
-    CommitFailed
+    CommitFailed,
+    ExecutionActive
 };
 
 struct DeviceSelectionTransactionResult {
@@ -156,6 +158,8 @@ inline const char* DeviceSelectionTransactionStageName(
         case DeviceSelectionTransactionStage::Revalidation: return "revalidation";
         case DeviceSelectionTransactionStage::Commit: return "commit";
         case DeviceSelectionTransactionStage::Complete: return "complete";
+        case DeviceSelectionTransactionStage::ExecutionGuard:
+            return "execution_guard";
         default: return "not_started";
     }
 }
@@ -297,6 +301,17 @@ inline DeviceSelectionTransactionResult CommitExecutionDeviceSelection(
     const PendingExecutionDeviceSelection& candidate,
     std::function<void(const PendingExecutionDeviceSelection&)>
         commit_override = {}) {
+    runtime::RuntimeMutationLease runtime_mutation;
+    if (!runtime_mutation.OwnsMutation() ||
+        HasActiveExecutionDeviceContext()) {
+        DeviceSelectionTransactionResult result;
+        result.stage = DeviceSelectionTransactionStage::ExecutionGuard;
+        result.status = DeviceSelectionTransactionStatus::ExecutionActive;
+        result.message =
+            "Device selection is blocked while an execution context is active";
+        return result;
+    }
+
     std::optional<PendingExecutionDeviceSelection> original;
     if (const auto* current = Device::GetCurrentDevice()) {
         const DeviceInfo info = current->GetInfo();

@@ -15,11 +15,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <optional>
+#include <thread>
 #include <tuple>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -47,6 +50,41 @@ private:
 #endif
 
 namespace {
+
+class ActiveExecutionContextHold {
+public:
+    ActiveExecutionContextHold()
+        : thread_([this] {
+              const cyxwiz::ScopedActiveExecutionDeviceContext active_context;
+              std::unique_lock<std::mutex> lock(mutex_);
+              active_ = true;
+              condition_.notify_all();
+              condition_.wait(lock, [this] { return release_; });
+          }) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        condition_.wait(lock, [this] { return active_; });
+    }
+
+    ActiveExecutionContextHold(const ActiveExecutionContextHold&) = delete;
+    ActiveExecutionContextHold& operator=(
+        const ActiveExecutionContextHold&) = delete;
+
+    ~ActiveExecutionContextHold() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            release_ = true;
+        }
+        condition_.notify_all();
+        thread_.join();
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    bool active_ = false;
+    bool release_ = false;
+    std::thread thread_;
+};
 
 class FakeArrayFireProbeAdapter final
     : public cyxwiz::detail::ArrayFireProbeAdapter {
@@ -1806,6 +1844,25 @@ TEST_CASE("Device selection transaction preserves state at every failure stage",
         cyxwiz::RunDeviceSelectionTransaction(candidate, identity_hooks);
     CHECK_FALSE(identity.committed);
     CHECK(identity.status == Status::IdentityMismatch);
+}
+
+TEST_CASE("Production device selection rejects an active execution context",
+          "[device][selection][transaction]") {
+    ActiveExecutionContextHold active_execution;
+    int commit_calls = 0;
+
+    const auto result = cyxwiz::CommitExecutionDeviceSelection(
+        {cyxwiz::DeviceType::CPU, 0, {}},
+        [&](const auto&) { ++commit_calls; });
+
+    CHECK_FALSE(result.committed);
+    CHECK(result.stage ==
+          cyxwiz::DeviceSelectionTransactionStage::ExecutionGuard);
+    CHECK(result.status ==
+          cyxwiz::DeviceSelectionTransactionStatus::ExecutionActive);
+    CHECK(result.message.find("execution context is active") !=
+          std::string::npos);
+    CHECK(commit_calls == 0);
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
