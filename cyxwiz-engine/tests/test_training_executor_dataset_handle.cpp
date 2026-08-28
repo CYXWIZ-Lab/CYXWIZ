@@ -1,3 +1,4 @@
+#include "../src/core/crash_run_recorder.h"
 #include "../src/core/data_registry.h"
 #include "../src/core/dataset_base.h"
 #include "../src/core/debug_run_paths.h"
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -248,6 +250,66 @@ void CheckPausedLifecycle(
           "legacy lifecycle must retain strict zero-fallback truth");
 }
 
+void CheckRuntimeFailureLifecycle(
+    const cyxwiz::DatasetHandle& dataset,
+    const std::filesystem::path& work_dir) {
+    CommitCpuPreferencesSelection();
+    cyxwiz::TrainingExecutor executor(
+        MakeConfig(work_dir / "runtime-failure"), dataset);
+    constexpr const char* reason =
+        "injected_legacy_dataset_lifecycle_failure";
+    int completion_callback_count = 0;
+    bool threw = false;
+    try {
+        executor.Train(
+            1,
+            2,
+            [](int, int, int, float, float) {
+                throw std::runtime_error(
+                    "injected_legacy_dataset_lifecycle_failure");
+            },
+            nullptr,
+            [&](const cyxwiz::TrainingMetrics&) {
+                ++completion_callback_count;
+            });
+    } catch (const std::runtime_error& error) {
+        threw = std::string(error.what()).find(reason) != std::string::npos;
+    }
+
+    const auto metrics = executor.GetMetrics();
+    Check(threw, "legacy runtime failure should propagate to the caller");
+    Check(completion_callback_count == 0,
+          "legacy runtime failure must not invoke completion");
+    Check(metrics.is_complete && !metrics.is_training &&
+              !metrics.is_paused && metrics.current_epoch == 1 &&
+              metrics.last_executed_epoch == 0 &&
+              metrics.terminal_status == "failed" &&
+              metrics.terminal_reason.find(reason) != std::string::npos,
+          "legacy runtime failure should preserve exact terminal truth");
+
+    const auto crash_run = cyxwiz::CrashRunRecorder::LoadLastRun();
+    Check(crash_run.has_value() && crash_run->status == "failed" &&
+              crash_run->terminal_reason == metrics.terminal_reason &&
+              crash_run->failure_reason == metrics.terminal_reason &&
+              crash_run->epoch == 1 &&
+              crash_run->last_executed_epoch == 0,
+          "legacy runtime failure should persist exact debug-run truth");
+
+    const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    Check(trace.available && trace.status == "failed",
+          "legacy runtime failure should terminate the trace as failed");
+    int terminal_event_count = 0;
+    for (const auto& event : trace.recent_events) {
+        if (event.stage == "TrainingTerminal" &&
+            event.status == "failed" &&
+            event.terminal_reason == metrics.terminal_reason) {
+            ++terminal_event_count;
+        }
+    }
+    Check(terminal_event_count == 1,
+          "legacy runtime failure should record one terminal event");
+}
+
 } // namespace
 
 int main() {
@@ -275,6 +337,7 @@ int main() {
 
     CheckPausedLifecycle(dataset, work_dir, PausedAction::Resume);
     CheckPausedLifecycle(dataset, work_dir, PausedAction::Cancel);
+    CheckRuntimeFailureLifecycle(dataset, work_dir);
 
     fs::remove_all(work_dir);
     std::cout << "Legacy DatasetHandle lifecycle contracts passed\n";

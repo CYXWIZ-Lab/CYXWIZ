@@ -626,8 +626,8 @@
       "oracle": "deterministic lifecycle state machine",
       "tests": ["test_training_executor_arrow_parquet", "test_training_manager_session", "test_pipeline_executor_operator_routing --async-task-terminal-contract", "test_text_gui_training_launch --training-status-contract-only"],
       "execution": "run control plane",
-      "status": "partial",
-      "gaps": ["live UI validation"]
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LIFE-EARLY-001",
@@ -642,8 +642,8 @@
       "oracle": "deterministic constant/plateau validation fixture",
       "tests": ["test_training_executor_arrow_parquet", "test_training_manager_session", "test_pipeline_executor_operator_routing --async-task-terminal-contract", "test_text_gui_training_launch --training-status-contract-only"],
       "execution": "run control plane",
-      "status": "partial",
-      "gaps": ["live UI validation"]
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LIFE-STOP-001",
@@ -658,8 +658,8 @@
       "oracle": "deterministic lifecycle state machine",
       "tests": ["test_training_executor_arrow_parquet --paused-control-matrix-only", "test_training_executor_dataset_handle", "test_training_manager_session", "test_pipeline_executor_operator_routing --async-task-terminal-contract", "test_text_gui_training_launch --training-status-contract-only"],
       "execution": "run control plane",
-      "status": "partial",
-      "gaps": ["live UI validation"]
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LIFE-FAIL-001",
@@ -672,10 +672,10 @@
       "contract": "Preflight rejects before any batch; runtime exception records failed with non-empty reason across every reporting surface.",
       "supported": "TrainingExecutor runs",
       "oracle": "deterministic injected failure",
-      "tests": ["test_training_executor_arrow_parquet", "test_training_manager_session", "test_pipeline_executor_operator_routing --async-task-terminal-contract", "test_text_gui_training_launch --training-status-contract-only", "test_debugger_contracts"],
+      "tests": ["test_training_executor_arrow_parquet --failure-matrix", "test_training_executor_dataset_handle --failure-matrix", "test_training_manager_session", "test_pipeline_executor_operator_routing --async-task-terminal-contract", "test_text_gui_training_launch --training-status-contract-only", "test_debugger_contracts"],
       "execution": "run control plane",
-      "status": "partial",
-      "gaps": ["remaining dataset modes", "live UI validation"]
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LIFE-CHECKPOINT-001",
@@ -690,8 +690,8 @@
       "oracle": "deterministic improving-then-plateau fixture",
       "tests": ["test_debug_executor --checkpoint-serialization-only", "test_training_executor_arrow_parquet", "test_training_manager_session", "test_text_gui_training_launch --training-status-contract-only", "test_debugger_contracts"],
       "execution": "bounded checkpoint output/input boundary",
-      "status": "partial",
-      "gaps": ["live UI validation"]
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LIFE-CADENCE-001",
@@ -706,8 +706,8 @@
       "oracle": "deterministic counted callbacks",
       "tests": ["test_training_executor_arrow_parquet", "test_training_manager_session"],
       "execution": "run control and bounded scalar reporting",
-      "status": "partial",
-      "gaps": ["live UI cadence validation"]
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LIFE-ACCUM-001",

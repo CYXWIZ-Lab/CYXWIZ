@@ -3097,7 +3097,12 @@ void CheckPausedControlCase(
     }
 }
 
-void CheckPausedControlMode(
+void CheckRuntimeFailureMode(
+    const PausedExecutorFactory& make_executor,
+    const std::filesystem::path& work_dir,
+    const std::string& mode);
+
+void CheckLifecycleControlMode(
     const PausedExecutorFactory& make_executor,
     const std::filesystem::path& work_dir,
     const std::string& mode,
@@ -3109,9 +3114,50 @@ void CheckPausedControlMode(
     CheckPausedControlCase(
         make_executor, work_dir, mode, expected_batches, strict_residency,
         PausedControlAction::Cancel);
+    CheckRuntimeFailureMode(make_executor, work_dir, mode);
 }
 
-void TestPausedControlAcrossModernDatasetModes(
+void CheckRuntimeFailureMode(
+    const PausedExecutorFactory& make_executor,
+    const std::filesystem::path& work_dir,
+    const std::string& mode) {
+    const std::string reason = "injected_" + mode + "_lifecycle_failure";
+    auto executor = make_executor(work_dir / (mode + "-failure"));
+    int completion_callback_count = 0;
+    bool threw = false;
+    try {
+        executor->Train(
+            1,
+            2,
+            [&](int, int, int, float, float) {
+                throw std::runtime_error(reason);
+            },
+            nullptr,
+            [&](const cyxwiz::TrainingMetrics&) {
+                ++completion_callback_count;
+            });
+    } catch (const std::runtime_error& error) {
+        threw = std::string(error.what()).find(reason) != std::string::npos;
+    }
+
+    const auto final_metrics = executor->GetMetrics();
+    Check(threw, mode + " runtime failure should propagate to the caller");
+    Check(completion_callback_count == 0,
+          mode + " runtime failure must not invoke completion");
+    Check(final_metrics.is_complete && !final_metrics.is_training &&
+              !final_metrics.is_paused,
+          mode + " runtime failure should close lifecycle state");
+    Check(final_metrics.current_epoch == 1 &&
+              final_metrics.last_executed_epoch == 0 &&
+              final_metrics.terminal_status == "failed" &&
+              final_metrics.terminal_reason.find(reason) != std::string::npos,
+          mode + " runtime failure should preserve exact terminal truth");
+    CheckTerminalEvidence(
+        "failed", final_metrics.terminal_reason, 1, 0,
+        mode + " runtime failure");
+}
+
+void TestLifecycleControlAcrossModernDatasetModes(
     const std::filesystem::path& work_dir) {
     const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(
         MakeTrainingTable(), "paused_control_arrow");
@@ -3127,7 +3173,7 @@ void TestPausedControlAcrossModernDatasetModes(
         return config;
     };
 
-    CheckPausedControlMode(
+    CheckLifecycleControlMode(
         [&](const std::filesystem::path& path) {
             return std::make_unique<cyxwiz::TrainingExecutor>(
                 make_tabular_config(path), dataset, "label");
@@ -3143,7 +3189,7 @@ void TestPausedControlAcrossModernDatasetModes(
         parquet_path.string(), "paused_control_parquet");
     Check(parquet_dataset != nullptr,
           "paused-control Parquet fixture should open");
-    CheckPausedControlMode(
+    CheckLifecycleControlMode(
         [&](const std::filesystem::path& path) {
             return std::make_unique<cyxwiz::TrainingExecutor>(
                 make_tabular_config(path), parquet_dataset, "label");
@@ -3153,7 +3199,7 @@ void TestPausedControlAcrossModernDatasetModes(
         3,
         true);
 
-    CheckPausedControlMode(
+    CheckLifecycleControlMode(
         [&](const std::filesystem::path& path) {
             auto config = make_tabular_config(path);
             return std::make_unique<cyxwiz::TrainingExecutor>(
@@ -3185,7 +3231,7 @@ void TestPausedControlAcrossModernDatasetModes(
     const auto sequence = cyxwiz::BuildNERSequenceData(
         sequence_rows, builder_config);
 
-    CheckPausedControlMode(
+    CheckLifecycleControlMode(
         [&](const std::filesystem::path& path) {
             cyxwiz::TrainingConfiguration config;
             config.dataset_name = "paused_control_sequence";
@@ -3227,6 +3273,21 @@ void TestPausedControlAcrossModernDatasetModes(
         "sequence",
         2,
         false);
+    CheckRuntimeFailureMode(
+        [&](const std::filesystem::path& path) {
+            auto config = make_tabular_config(path);
+            config.train_ratio = 0.5f;
+            config.val_ratio = 0.25f;
+            config.test_ratio = 0.25f;
+            auto batchers = cyxwiz::BuildArrowTrainingBatchers(
+                config, dataset, "label", config.batch_size);
+            auto resolved = cyxwiz::TakeResolvedExternalBatchers(
+                std::move(batchers));
+            return std::make_unique<cyxwiz::TrainingExecutor>(
+                std::move(config), std::move(resolved));
+        },
+        work_dir,
+        "external-resolved");
 }
 
 void RunExecutor(cyxwiz::TrainingExecutor& executor,
@@ -4522,7 +4583,7 @@ int main(int argc, char** argv) {
 
     if (argc == 2 &&
         std::string(argv[1]) == "--paused-control-matrix-only") {
-        TestPausedControlAcrossModernDatasetModes(
+        TestLifecycleControlAcrossModernDatasetModes(
             work_dir / "paused-control-matrix");
         fs::remove_all(work_dir);
         std::cout << "Paused-control dataset-mode matrix passed\n";
@@ -4578,7 +4639,7 @@ int main(int argc, char** argv) {
     TestPluginStopLifecycle(dataset, work_dir);
     TestUserCancellationLifecycle(dataset, work_dir);
     TestInjectedRuntimeFailureLifecycle(dataset, work_dir);
-    TestPausedControlAcrossModernDatasetModes(
+    TestLifecycleControlAcrossModernDatasetModes(
         work_dir / "paused-control-matrix");
 
 #ifndef NDEBUG
