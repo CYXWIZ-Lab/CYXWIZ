@@ -1,4 +1,4 @@
-#include "../src/core/installer_verification_summary.h"
+#include "../src/core/backend_pack_decision_reconciliation.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -129,12 +129,121 @@ void TestStaleRuntimeEvidenceIsNotPresentedAsCurrent() {
           "stale routes should not be presented as current results");
 }
 
+cyxwiz::BackendPackManagerRecord ActivePack(std::string pack_id,
+                                            std::string backend) {
+    cyxwiz::BackendPackManagerRecord record;
+    record.pack_id = std::move(pack_id);
+    record.installed_pack_id = record.pack_id;
+    record.backend = std::move(backend);
+    record.catalog_support =
+        cyxwiz::BackendPackCatalogSupport::Supported;
+    record.installed = true;
+    record.active = true;
+    record.compatibility.emplace();
+    record.compatibility->catalog_support =
+        cyxwiz::runtime::BackendPackSupportStatus::Supported;
+    record.compatibility->eligibility =
+        cyxwiz::runtime::BackendPackEligibility::Compatible;
+    record.compatibility->recommendation_target_eligible = true;
+    record.compatibility->install_recommendation = cyxwiz::runtime::
+        BackendPackInstallRecommendation::AvailableAfterVerification;
+    return record;
+}
+
+void TestVerificationReconcilesWithoutChangingCompatibilityPolicy() {
+    cyxwiz::RouteQualificationSnapshot snapshot;
+    snapshot.runtime_set_id = "runtime-v1";
+    snapshot.base_pack_id = "base-v1";
+    snapshot.routes.push_back(PassedRoute(
+        cyxwiz::DeviceType::CPU, 0, "base-v1", "System CPU", 4.0));
+    snapshot.routes.push_back(PassedRoute(
+        cyxwiz::DeviceType::CUDA, 0, "cuda-v1", "Discrete GPU", 2.0));
+
+    cyxwiz::RouteQualificationRecord crashed;
+    crashed.type = cyxwiz::DeviceType::ONEAPI;
+    crashed.device_id = 0;
+    crashed.pack_id = "oneapi-v1";
+    crashed.operation_count = cyxwiz::kRouteQualificationOperationCount;
+    crashed.pass_count = crashed.operation_count - 1;
+    crashed.crash_count = 1;
+    crashed.failure.category =
+        cyxwiz::RouteFailureCategory::ChildProcessCrash;
+    snapshot.routes.push_back(std::move(crashed));
+
+    cyxwiz::RuntimeQualificationIdentity active;
+    active.runtime_set_id = "runtime-v1";
+    active.base_pack_id = "base-v1";
+    active.backend_packs.push_back(
+        {cyxwiz::DeviceType::CUDA, "cuda-v1"});
+    active.backend_packs.push_back(
+        {cyxwiz::DeviceType::ONEAPI, "oneapi-v1"});
+    const auto summary = cyxwiz::BuildInstallerVerificationSummary(
+        snapshot, active);
+
+    std::vector records{
+        ActivePack("base-v1", "cpu"), ActivePack("cuda-v1", "cuda"),
+        ActivePack("oneapi-v1", "oneapi")};
+    cyxwiz::ReconcileBackendPackDecisionEvidence(records, summary);
+
+    const auto& cuda = *records[1].compatibility;
+    Check(cuda.verification_status ==
+              cyxwiz::runtime::BackendPackRouteVerificationStatus::Passed &&
+              cuda.training_authorization == cyxwiz::runtime::
+                  BackendPackTrainingAuthorizationStatus::Authorized &&
+              cuda.performance_status == cyxwiz::runtime::
+                  BackendPackPerformanceStatus::PreferredMeasured &&
+              cuda.install_recommendation == cyxwiz::runtime::
+                  BackendPackInstallRecommendation::Recommended &&
+              records[1].training_authorized,
+          "the best comparable verified active pack should be recommended");
+
+    const auto& oneapi = *records[2].compatibility;
+    Check(oneapi.verification_status ==
+              cyxwiz::runtime::BackendPackRouteVerificationStatus::Crashed &&
+              oneapi.training_authorization == cyxwiz::runtime::
+                  BackendPackTrainingAuthorizationStatus::Rejected &&
+              oneapi.install_recommendation == cyxwiz::runtime::
+                  BackendPackInstallRecommendation::AvailableAfterVerification &&
+              oneapi.eligibility ==
+                  cyxwiz::runtime::BackendPackEligibility::Compatible &&
+              !records[2].training_authorized,
+          "a local crash must reject that route without globally blocking the "
+          "signed oneAPI pack");
+
+    records[1].compatibility->recommendation_target_eligible = false;
+    cyxwiz::ReconcileBackendPackDecisionEvidence(records, summary);
+    Check(records[1].compatibility->performance_status == cyxwiz::runtime::
+              BackendPackPerformanceStatus::PreferredMeasured &&
+              records[1].compatibility->install_recommendation ==
+                  cyxwiz::runtime::BackendPackInstallRecommendation::
+                      AvailableAfterVerification,
+          "benchmark evidence must not override signed recommendation "
+          "eligibility");
+
+    auto stale_summary = summary;
+    stale_summary.evidence_matches_runtime = false;
+    records[1].compatibility->recommendation_target_eligible = true;
+    cyxwiz::ReconcileBackendPackDecisionEvidence(records, stale_summary);
+    Check(records[1].compatibility->verification_status == cyxwiz::runtime::
+              BackendPackRouteVerificationStatus::Stale &&
+              records[1].compatibility->training_authorization == cyxwiz::
+                  runtime::BackendPackTrainingAuthorizationStatus::
+                      NotEvaluated &&
+              records[1].compatibility->performance_status == cyxwiz::runtime::
+                  BackendPackPerformanceStatus::NotMeasured &&
+              records[1].compatibility->install_recommendation ==
+                  cyxwiz::runtime::BackendPackInstallRecommendation::
+                      AvailableAfterVerification,
+          "stale evidence must clear local authorization and recommendation");
+}
+
 }  // namespace
 
 int main() {
     TestBestMeasuredAndProductionSafeFailureText();
     TestSingleBenchmarkDoesNotClaimFastest();
     TestStaleRuntimeEvidenceIsNotPresentedAsCurrent();
+    TestVerificationReconcilesWithoutChangingCompatibilityPolicy();
     std::cout << "Installer verification summary tests passed\n";
     return 0;
 }

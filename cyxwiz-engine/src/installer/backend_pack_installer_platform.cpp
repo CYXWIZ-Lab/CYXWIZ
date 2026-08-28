@@ -29,6 +29,7 @@
 #include "backend_pack_metadata_refresh.h"
 #include "backend_pack_state_service.h"
 #include "core/backend_pack_catalog_adapter.h"
+#include "core/backend_pack_decision_reconciliation.h"
 #include "core/compute_runtime_paths.h"
 #include "core/route_qualification_snapshot.h"
 
@@ -317,6 +318,8 @@ public:
             return state;
         }
         state.records = BuildBackendPackCatalogRecords(snapshot, active);
+        ReconcileBackendPackDecisionEvidence(
+            state.records, state.verification);
         state.available = true;
         state.catalog_id = snapshot.catalog.catalog_id;
         state.message = "Verified signed catalog " + state.catalog_id;

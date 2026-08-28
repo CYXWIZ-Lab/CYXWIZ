@@ -96,6 +96,7 @@ if(CYXWIZ_BUILD_TESTS)
 
     add_executable(test_installer_verification_summary
         "${_cyxwiz_installer_engine_dir}/tests/test_installer_verification_summary.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_decision_reconciliation.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/installer_verification_summary.cpp"
     )
     target_include_directories(test_installer_verification_summary PRIVATE
@@ -103,6 +104,7 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_backend_dir}/include"
         "${CMAKE_BINARY_DIR}/cyxwiz-backend/include"
         "${_cyxwiz_installer_generated_include}"
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper"
     )
     set_target_properties(test_installer_verification_summary PROPERTIES
         CXX_STANDARD 20
@@ -300,6 +302,7 @@ set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_removal_view.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_catalog_adapter.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_decision_reconciliation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/installer_verification_summary.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_snapshot.cpp"

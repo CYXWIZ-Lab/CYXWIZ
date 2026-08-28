@@ -33,6 +33,7 @@ cyxwiz::BackendPackManagerRecord Pack(std::string id,
         cyxwiz::runtime::BackendPackEligibility::Compatible;
     pack.compatibility->install_recommendation = cyxwiz::runtime::
         BackendPackInstallRecommendation::AvailableAfterVerification;
+    pack.compatibility->recommendation_target_eligible = true;
     break;
   case cyxwiz::BackendPackCatalogSupport::Diagnostic:
     pack.compatibility->catalog_support =
@@ -337,6 +338,7 @@ void TestCatalogAdapter() {
   candidate.manifest->compatibility.device_kinds = {"gpu"};
   candidate.manifest->compatibility.minimum_identity_confidence =
       "stable_hardware";
+  candidate.manifest->compatibility.recommendation_targets = {"opencl"};
   candidate.manifest->compatibility.support_status =
       cyxwiz::runtime::BackendPackSupportStatus::Supported;
   snapshot.records.push_back(candidate);

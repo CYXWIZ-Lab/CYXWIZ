@@ -218,6 +218,9 @@ BackendPackCompatibilityDecision EvaluateBackendPackCompatibility(
   decision.architecture = manifest.architecture;
   decision.arrayfire_abi = manifest.arrayfire_abi;
   decision.catalog_support = manifest.compatibility.support_status;
+  decision.recommendation_target_eligible =
+      Contains(manifest.compatibility.recommendation_targets,
+               manifest.backend);
 
   if (decision.catalog_support == BackendPackSupportStatus::Blocked ||
       decision.catalog_support == BackendPackSupportStatus::Revoked) {
