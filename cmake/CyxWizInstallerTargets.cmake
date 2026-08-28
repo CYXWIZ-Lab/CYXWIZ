@@ -86,6 +86,9 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_generated_include}"
         "${CMAKE_SOURCE_DIR}/redist/bootstrapper"
     )
+    target_link_libraries(test_backend_pack_manager_model PRIVATE
+        cyxwiz-backend-pack-service
+    )
     set_target_properties(test_backend_pack_manager_model PROPERTIES
         CXX_STANDARD 20
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

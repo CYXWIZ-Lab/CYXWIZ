@@ -24,6 +24,31 @@ cyxwiz::BackendPackManagerRecord Pack(std::string id,
   pack.backend = "opencl";
   pack.pack_id = std::move(id);
   pack.catalog_support = support;
+  pack.compatibility.emplace();
+  switch (support) {
+  case cyxwiz::BackendPackCatalogSupport::Supported:
+    pack.compatibility->catalog_support =
+        cyxwiz::runtime::BackendPackSupportStatus::Supported;
+    pack.compatibility->eligibility =
+        cyxwiz::runtime::BackendPackEligibility::Compatible;
+    pack.compatibility->install_recommendation = cyxwiz::runtime::
+        BackendPackInstallRecommendation::AvailableAfterVerification;
+    break;
+  case cyxwiz::BackendPackCatalogSupport::Diagnostic:
+    pack.compatibility->catalog_support =
+        cyxwiz::runtime::BackendPackSupportStatus::Diagnostic;
+    pack.compatibility->eligibility =
+        cyxwiz::runtime::BackendPackEligibility::Compatible;
+    pack.compatibility->install_recommendation =
+        cyxwiz::runtime::BackendPackInstallRecommendation::DiagnosticOnly;
+    break;
+  case cyxwiz::BackendPackCatalogSupport::Blocked:
+  case cyxwiz::BackendPackCatalogSupport::Revoked:
+  case cyxwiz::BackendPackCatalogSupport::Unavailable:
+    pack.compatibility->eligibility =
+        cyxwiz::runtime::BackendPackEligibility::Incompatible;
+    break;
+  }
   pack.installed = installed;
   if (installed)
     pack.installed_pack_id = pack.pack_id;
@@ -33,17 +58,15 @@ cyxwiz::BackendPackManagerRecord Pack(std::string id,
 void TestInstallerChoices() {
   auto recommended =
       Pack("opencl-v1", cyxwiz::BackendPackCatalogSupport::Supported);
-  recommended.recommended = true;
+  recommended.compatibility->install_recommendation =
+      cyxwiz::runtime::BackendPackInstallRecommendation::Recommended;
   recommended.delivery_metadata_available = true;
   auto diagnostic =
       Pack("oneapi-v1", cyxwiz::BackendPackCatalogSupport::Diagnostic);
-  diagnostic.recommended = true;
   diagnostic.delivery_metadata_available = true;
   auto blocked = Pack("cuda-old", cyxwiz::BackendPackCatalogSupport::Blocked);
-  blocked.recommended = true;
   auto base = Pack("base-v1", cyxwiz::BackendPackCatalogSupport::Supported);
   base.backend = "cpu";
-  base.recommended = true;
   const std::vector records{recommended, diagnostic, blocked, base};
 
   const auto automatic = cyxwiz::ResolveBackendPackInstallerSelection(
@@ -64,6 +87,18 @@ void TestInstallerChoices() {
   const auto rejected = cyxwiz::ResolveBackendPackInstallerSelection(
       cyxwiz::BackendPackInstallChoice::Custom, records, {"cuda-old"});
   Check(!rejected.valid, "Custom must reject catalog-blocked packs");
+  auto incompatible =
+      Pack("opencl-foreign", cyxwiz::BackendPackCatalogSupport::Supported);
+  incompatible.delivery_metadata_available = true;
+  incompatible.compatibility->eligibility =
+      cyxwiz::runtime::BackendPackEligibility::Incompatible;
+  incompatible.compatibility->install_recommendation =
+      cyxwiz::runtime::BackendPackInstallRecommendation::NotOffered;
+  const auto machine_rejected = cyxwiz::ResolveBackendPackInstallerSelection(
+      cyxwiz::BackendPackInstallChoice::Custom, {incompatible},
+      {"opencl-foreign"});
+  Check(!machine_rejected.valid,
+        "Custom must reject a proven-incompatible pack");
   const auto empty_custom = cyxwiz::ResolveBackendPackInstallerSelection(
       cyxwiz::BackendPackInstallChoice::Custom, records);
   Check(!empty_custom.valid,
@@ -285,11 +320,25 @@ void TestCatalogAdapter() {
       "C:/CyxWiz/runtime/catalogs/manifests/opencl-v2.json";
   candidate.manifest.emplace();
   candidate.manifest->pack_id = "opencl-v2";
+  candidate.manifest->kind =
+      cyxwiz::runtime::BackendPackManifestKind::BackendPack;
   candidate.manifest->backend = "opencl";
   candidate.manifest->package_version = "2.0.0";
+  candidate.manifest->platform =
+      cyxwiz::runtime::CurrentBackendPackPlatformId();
+  candidate.manifest->architecture =
+      cyxwiz::runtime::CurrentBackendPackArchitectureId();
+  candidate.manifest->runtime_set_id = "set-v1";
+  candidate.manifest->companion_base_id = "base-v1";
+  candidate.manifest->arrayfire_abi = "arrayfire-3.9";
   candidate.manifest->archive.size = 5 * 1024 * 1024;
   candidate.manifest->licenses = {"arrayfire"};
   candidate.manifest->compatibility.provider_types = {"opencl-icd"};
+  candidate.manifest->compatibility.device_kinds = {"gpu"};
+  candidate.manifest->compatibility.minimum_identity_confidence =
+      "stable_hardware";
+  candidate.manifest->compatibility.support_status =
+      cyxwiz::runtime::BackendPackSupportStatus::Supported;
   snapshot.records.push_back(candidate);
 
   cyxwiz::runtime::VerifiedBackendPackCatalogRecord unavailable;
@@ -305,7 +354,23 @@ void TestCatalogAdapter() {
   active.base_pack_id = "base-v1";
   active.packs.push_back({"opencl", "opencl-v1"});
   active.packs.push_back({"oneapi", "oneapi-local"});
-  const auto records = cyxwiz::BuildBackendPackCatalogRecords(snapshot, active);
+  cyxwiz::runtime::BackendPackCompatibilityContext compatibility_context;
+  compatibility_context.platform =
+      cyxwiz::runtime::CurrentBackendPackPlatformId();
+  compatibility_context.architecture =
+      cyxwiz::runtime::CurrentBackendPackArchitectureId();
+  compatibility_context.runtime_set_id = "set-v1";
+  compatibility_context.base_pack_id = "base-v1";
+  compatibility_context.arrayfire_abi = "arrayfire-3.9";
+  cyxwiz::runtime::BackendPackMatchedDevice device;
+  device.provider = "intel";
+  device.provider_types = {"opencl-icd"};
+  device.device_kind = cyxwiz::runtime::BackendPackDeviceKind::Gpu;
+  device.identity_confidence =
+      cyxwiz::runtime::BackendPackIdentityConfidence::StableHardware;
+  compatibility_context.devices.push_back(std::move(device));
+  const auto records = cyxwiz::BuildBackendPackCatalogRecords(
+      snapshot, active, compatibility_context);
   Check(records.size() == 4, "Catalog view must retain the required base and "
                              "current packs absent from the catalog");
   const auto &update = records[0];
@@ -313,10 +378,25 @@ void TestCatalogAdapter() {
       update.pack_id == "opencl-v2" && update.installed && !update.active &&
           update.installed_pack_id == "opencl-v1" && update.update_available &&
           update.delivery_metadata_available &&
+          update.compatibility.has_value() &&
+          update.compatibility->eligibility ==
+              cyxwiz::runtime::BackendPackEligibility::Compatible &&
+          !cyxwiz::IsBackendPackRecommended(update) &&
           update.licenses == std::vector<std::string>{"arrayfire"} &&
           update.provider_requirements ==
               std::vector<std::string>{"opencl-icd"},
       "Catalog view must expose signed consent data and exact update identity");
+  const auto records_without_device_facts =
+      cyxwiz::BuildBackendPackCatalogRecords(snapshot, active);
+  Check(
+      records_without_device_facts.front().compatibility.has_value() &&
+          records_without_device_facts.front().compatibility->eligibility ==
+              cyxwiz::runtime::BackendPackEligibility::Unknown &&
+          !cyxwiz::IsBackendPackRecommended(
+              records_without_device_facts.front()) &&
+          cyxwiz::HasSelectableCustomBackendPack(records_without_device_facts),
+      "unknown device facts must keep a supported pack visible for explicit "
+      "verification without recommending it");
   Check(!records[1].delivery_metadata_available &&
             !records[1].delivery_metadata_error.empty(),
         "Invalid per-pack metadata must stay visible but unavailable");

@@ -174,7 +174,7 @@ void RenderWorkloads(InstallerViewState &state,
     const bool included =
         record.backend == "cpu" ||
         (state.choice == BackendPackInstallChoice::Recommended &&
-         record.recommended) ||
+         IsBackendPackRecommended(record)) ||
         (state.choice == BackendPackInstallChoice::Custom &&
          state.custom_selection.contains(record.pack_id));
     if (!included)
@@ -228,7 +228,7 @@ void RenderComponents(InstallerViewState &state,
       ImGui::SameLine();
       ImGui::TextDisabled("Required");
     }
-    if (record.recommended) {
+    if (IsBackendPackRecommended(record)) {
       ImGui::SameLine();
       ImGui::TextColored(kSuccess, "Recommended");
     }
