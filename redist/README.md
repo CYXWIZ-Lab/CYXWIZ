@@ -134,8 +134,9 @@ alpha-output/
     cyxwiz-installer-*.descriptor.json
     cyxwiz-setup-*
     SHA256SUMS.txt
+    release-inventory.json # installer-role signed exact upload inventory
   bootstrap/               # exact metadata embedded in every GUI bundle
-  release-inventory.json   # sizes and SHA-256 for all payload assets
+  release-inventory.json   # identical ceremony copy for release records
 ```
 
 Run `python redist/scripts/assemble_installer_alpha_release.py --help` for the
@@ -144,7 +145,26 @@ tool neither creates a Git tag nor contacts GitHub, and it never copies private
 keys into the result. Use a POSIX release host when packaging Linux/macOS stage
 directories so their executable modes remain representable; the native
 candidate workflow and its mode-preserving archives are the source of those
-stages.
+stages. The assembler signs the exact payload inventory with the installer-role
+key and immediately re-verifies the inventory, catalog, pack manifests and
+archives, installer descriptors and bundles, checksums, and complete
+four-platform matrix through `installer_alpha_publication_contract.py`; the
+GitHub-specific draft snapshot is independently checked by
+`verify_installer_alpha_publication.py`.
+
+Upload every file from `alpha-output/assets/` to an existing GitHub draft that
+is already marked as a prerelease and whose remote tag exists. Do not upload the
+`bootstrap/` directory or add release assets manually. After platform code
+signing/notarization and release review pass, the manually dispatched
+`Installer Alpha Publish` workflow may promote that exact draft. It requires
+the protected `cyxwiz-alpha` environment, repository variable
+`CYXWIZ_ALPHA_PUBLISH_ENABLED=true`, and the same public-only
+`CYXWIZ_INSTALLER_TRUST_STORE_B64` secret used by candidate builds. The workflow
+can run only from the repository default branch, downloads the draft twice
+around validation, rejects changed/missing/extra
+assets, verifies every signed authority and byte hash, and performs only the
+final draft-to-prerelease state change. It never creates a release, uploads or
+repairs assets, builds packages, or receives a private signing key.
 
 The `--asset-base-url` argument is part of the signed release identity. It must
 be the exact versioned HTTPS directory where every file from `assets/` will be

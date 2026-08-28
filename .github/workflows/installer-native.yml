@@ -56,6 +56,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/installer-alpha-candidate.yml"
+      - ".github/workflows/installer-alpha-publish.yml"
       - ".github/workflows/installer-native.yml"
       - "CMakeLists.txt"
       - "cmake/CyxWizInstallerTargets.cmake"
@@ -64,6 +65,8 @@ on:
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
       - "redist/scripts/assemble_installer_alpha_release.py"
+      - "redist/scripts/installer_alpha_publication_contract.py"
+      - "redist/scripts/verify_installer_alpha_publication.py"
       - "redist/scripts/backend_pack_contract.py"
       - "redist/scripts/prepare_backend_pack_repository.py"
       - "redist/scripts/installer_bundle_contract.py"
@@ -73,6 +76,7 @@ on:
       - "redist/scripts/verify_installer_package.py"
       - "redist/tests/test_installer_bundle.py"
       - "redist/tests/test_assemble_installer_alpha_release.py"
+      - "redist/tests/test_installer_alpha_publication_contract.py"
       - "redist/tests/test_backend_pack_contract.py"
       - "redist/tests/test_prepare_installer_release_configuration.py"
       - "redist/tests/test_installer_setup.py"
@@ -85,6 +89,7 @@ on:
       - Nodes_Implementation
     paths:
       - ".github/workflows/installer-alpha-candidate.yml"
+      - ".github/workflows/installer-alpha-publish.yml"
       - ".github/workflows/installer-native.yml"
       - "CMakeLists.txt"
       - "cmake/CyxWizInstallerTargets.cmake"
@@ -93,6 +98,8 @@ on:
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
       - "redist/scripts/assemble_installer_alpha_release.py"
+      - "redist/scripts/installer_alpha_publication_contract.py"
+      - "redist/scripts/verify_installer_alpha_publication.py"
       - "redist/scripts/backend_pack_contract.py"
       - "redist/scripts/prepare_backend_pack_repository.py"
       - "redist/scripts/installer_bundle_contract.py"
@@ -102,6 +109,7 @@ on:
       - "redist/scripts/verify_installer_package.py"
       - "redist/tests/test_installer_bundle.py"
       - "redist/tests/test_assemble_installer_alpha_release.py"
+      - "redist/tests/test_installer_alpha_publication_contract.py"
       - "redist/tests/test_backend_pack_contract.py"
       - "redist/tests/test_prepare_installer_release_configuration.py"
       - "redist/tests/test_installer_setup.py"
@@ -207,6 +215,7 @@ jobs:
         run: >-
           python -B -m unittest
           redist.tests.test_assemble_installer_alpha_release
+          redist.tests.test_installer_alpha_publication_contract
           redist.tests.test_prepare_backend_pack_repository
           redist.tests.test_prepare_installer_release_configuration
           redist.tests.test_installer_bundle

@@ -269,9 +269,13 @@ class AlphaReleaseAssemblerTests(unittest.TestCase):
     def test_assembles_complete_flat_signed_release_atomically(self) -> None:
         output = assembler.assemble(self.arguments())
         assets = output / "assets"
-        inventory = json.loads(
+        inventory_document = json.loads(
             (output / "release-inventory.json").read_text(encoding="utf-8")
         )
+        self.assertEqual(
+            "cyxwiz-alpha-release-inventory", inventory_document["kind"]
+        )
+        inventory = inventory_document["signed"]
         self.assertEqual("cyxwiz-alpha-release-assets", inventory["kind"])
         self.assertEqual(
             "https://packages.example.test/cyxwiz/v0.2.0-alpha.1",
@@ -283,8 +287,12 @@ class AlphaReleaseAssemblerTests(unittest.TestCase):
             inventory["catalog_url"],
         )
         self.assertEqual(29, len(inventory["assets"]))
-        self.assertEqual(30, len(list(assets.iterdir())))
+        self.assertEqual(31, len(list(assets.iterdir())))
         self.assertTrue((assets / "SHA256SUMS.txt").is_file())
+        self.assertEqual(
+            (output / "release-inventory.json").read_bytes(),
+            (assets / "release-inventory.json").read_bytes(),
+        )
         catalog_bytes = (output / "bootstrap/catalogs/current.json").read_bytes()
         self.assertIn(
             b"https://packages.example.test/cyxwiz/v0.2.0-alpha.1/",

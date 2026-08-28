@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -21,7 +22,8 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import package_installer_bundle as installer_packager  # noqa: E402
 import prepare_backend_pack_repository as pack_repository  # noqa: E402
-from backend_pack_contract import validate_pack_manifest  # noqa: E402
+from backend_pack_contract import canonical_json_bytes, validate_pack_manifest  # noqa: E402
+import installer_alpha_publication_contract as publication_contract  # noqa: E402
 from prepare_installer_release_configuration import (  # noqa: E402
     REPOSITORY,
     ReleaseConfigurationError,
@@ -313,7 +315,10 @@ def assemble(args: argparse.Namespace) -> Path:
         publication = temporary_root / "publication"
         assets = publication / "assets"
         assets.mkdir(parents=True)
-        observed: dict[str, str] = {"sha256sums.txt": "SHA256SUMS.txt"}
+        observed: dict[str, str] = {
+            "sha256sums.txt": "SHA256SUMS.txt",
+            "release-inventory.json": "release-inventory.json",
+        }
         for asset in sorted((repository_root / "hosted").iterdir()):
             _copy_asset(asset, assets, observed)
 
@@ -351,8 +356,7 @@ def assemble(args: argparse.Namespace) -> Path:
         )
         checksum_path = assets / "SHA256SUMS.txt"
         checksum_path.write_text(checksums, encoding="ascii", newline="\n")
-        inventory = {
-            "schema_version": 1,
+        inventory_body = {
             "kind": "cyxwiz-alpha-release-assets",
             "repository": args.repository,
             "release_tag": args.release_tag,
@@ -369,10 +373,27 @@ def assemble(args: argparse.Namespace) -> Path:
                 for path in payload_assets
             ],
         }
-        (publication / "release-inventory.json").write_text(
-            json.dumps(inventory, indent=2) + "\n",
-            encoding="utf-8",
-            newline="\n",
+        inventory_signature = pack_repository.sign_with_openssl(
+            canonical_json_bytes(inventory_body), installer_key, args.openssl
+        )
+        inventory = publication_contract.build_signed_inventory(
+            inventory_body,
+            args.installer_key_id,
+            base64.urlsafe_b64encode(inventory_signature)
+            .decode("ascii")
+            .rstrip("="),
+        )
+        inventory_bytes = (json.dumps(inventory, indent=2) + "\n").encode("utf-8")
+        (publication / "release-inventory.json").write_bytes(inventory_bytes)
+        (assets / "release-inventory.json").write_bytes(inventory_bytes)
+        publication_contract.validate_upload_directory(
+            assets,
+            trust_root,
+            args.repository,
+            args.release_tag,
+            args.cyxwiz_release,
+            args.bundle_version,
+            openssl=args.openssl,
         )
         shutil.copytree(repository_root / "bootstrap", publication / "bootstrap")
         os.replace(publication, output)
