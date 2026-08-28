@@ -1024,7 +1024,7 @@ const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedSequentialModelLayerCapabilities() {
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
         {gui::NodeType::Conv1D,
-         "has a native backend primitive but no GraphCompiler/ModelBuilder/SequentialModel owner or production ArrayFire execution contract"},
+         "has a native CPU backend primitive and direct SequentialModel adapter but is not supported by ModelBuilder and has no production ArrayFire execution contract"},
         {gui::NodeType::Conv2D,
          "has a backend primitive and direct SequentialModel adapter but is not supported by ModelBuilder; its native CPU forward/backward formulas do not establish a production ArrayFire execution contract"},
         {gui::NodeType::Conv3D,
