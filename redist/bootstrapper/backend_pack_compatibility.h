@@ -122,6 +122,7 @@ struct BackendPackCompatibilityDecision {
   std::string arrayfire_abi;
   BackendPackSupportStatus catalog_support = BackendPackSupportStatus::Blocked;
   BackendPackEligibility eligibility = BackendPackEligibility::Unknown;
+  bool recommendation_target_eligible = false;
   BackendPackCompatibilityRule rule =
       BackendPackCompatibilityRule::InsufficientFacts;
   BackendPackMatchedDevice matched_device;

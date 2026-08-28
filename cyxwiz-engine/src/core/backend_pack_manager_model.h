@@ -1,7 +1,10 @@
 #pragma once
 
+#include "backend_pack_compatibility.h"
+
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -60,9 +63,9 @@ struct BackendPackManagerRecord {
   bool qualification_evidence_available = false;
   bool training_authorized = false;
   bool update_available = false;
-  bool recommended = false;
   bool delivery_metadata_available = false;
   std::string delivery_metadata_error;
+  std::optional<runtime::BackendPackCompatibilityDecision> compatibility;
 };
 
 struct BackendPackManagerContext {
@@ -112,6 +115,8 @@ BackendPackInstallerSelection ResolveBackendPackInstallerSelection(
 
 bool HasSelectableCustomBackendPack(
     const std::vector<BackendPackManagerRecord> &catalog_records);
+
+bool IsBackendPackRecommended(const BackendPackManagerRecord &record);
 
 BackendPackInstallerPlan BuildBackendPackInstallerPlan(
     const BackendPackInstallerSelection &selection,

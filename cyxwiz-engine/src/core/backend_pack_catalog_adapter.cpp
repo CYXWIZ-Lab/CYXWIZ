@@ -1,5 +1,7 @@
 #include "backend_pack_catalog_adapter.h"
 
+#include "backend_pack_platform.h"
+
 #include <algorithm>
 #include <utility>
 
@@ -39,11 +41,72 @@ const runtime::ActivePackState* FindActivePack(
     return match == active_runtime.packs.end() ? nullptr : &*match;
 }
 
+runtime::BackendPackCompatibilityContext BuildDefaultCompatibilityContext(
+    const runtime::VerifiedBackendPackCatalogSnapshot& catalog,
+    const runtime::ActiveRuntimeState& active_runtime) {
+    runtime::BackendPackCompatibilityContext context;
+    context.platform = runtime::CurrentBackendPackPlatformId();
+    context.architecture = runtime::CurrentBackendPackArchitectureId();
+    context.runtime_set_id = active_runtime.runtime_set_id;
+    context.base_pack_id = active_runtime.base_pack_id;
+
+    if (!active_runtime.base_pack_id.empty()) {
+        for (const auto& candidate : catalog.records) {
+            if (!candidate.manifest) continue;
+            const auto& manifest = *candidate.manifest;
+            if (manifest.runtime_set_id != active_runtime.runtime_set_id) {
+                continue;
+            }
+            if ((manifest.kind == runtime::BackendPackManifestKind::Base &&
+                 manifest.pack_id == active_runtime.base_pack_id) ||
+                (manifest.kind ==
+                     runtime::BackendPackManifestKind::BackendPack &&
+                 manifest.companion_base_id == active_runtime.base_pack_id)) {
+                if (context.arrayfire_abi.empty()) {
+                    context.arrayfire_abi = manifest.arrayfire_abi;
+                } else if (context.arrayfire_abi != manifest.arrayfire_abi) {
+                    context.arrayfire_abi.clear();
+                    break;
+                }
+            }
+        }
+        return context;
+    }
+
+    const runtime::VerifiedBackendPackManifest* selected_base = nullptr;
+    for (const auto& candidate : catalog.records) {
+        if (!candidate.manifest ||
+            candidate.manifest->kind !=
+                runtime::BackendPackManifestKind::Base ||
+            candidate.manifest->compatibility.support_status !=
+                runtime::BackendPackSupportStatus::Supported) {
+            continue;
+        }
+        if (selected_base != nullptr) return context;
+        selected_base = &*candidate.manifest;
+    }
+    if (selected_base != nullptr) {
+        context.runtime_set_id = selected_base->runtime_set_id;
+        context.base_pack_id = selected_base->pack_id;
+        context.arrayfire_abi = selected_base->arrayfire_abi;
+    }
+    return context;
+}
+
 }  // namespace
 
 std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
     const runtime::VerifiedBackendPackCatalogSnapshot& catalog,
     const runtime::ActiveRuntimeState& active_runtime) {
+    return BuildBackendPackCatalogRecords(
+        catalog, active_runtime,
+        BuildDefaultCompatibilityContext(catalog, active_runtime));
+}
+
+std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
+    const runtime::VerifiedBackendPackCatalogSnapshot& catalog,
+    const runtime::ActiveRuntimeState& active_runtime,
+    const runtime::BackendPackCompatibilityContext& compatibility_context) {
     std::vector<BackendPackManagerRecord> records;
     records.reserve(catalog.records.size() + active_runtime.packs.size());
     for (const auto& candidate : catalog.records) {
@@ -57,6 +120,8 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
         record.delivery_metadata_error = candidate.manifest_error;
         const runtime::ActivePackState* installed = nullptr;
         if (candidate.manifest) {
+            record.compatibility = runtime::EvaluateBackendPackCompatibility(
+                *candidate.manifest, compatibility_context);
             record.backend = candidate.manifest->backend;
             record.package_version = candidate.manifest->package_version;
             record.runtime_set_id = candidate.manifest->runtime_set_id;

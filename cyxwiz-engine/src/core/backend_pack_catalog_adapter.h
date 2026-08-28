@@ -13,4 +13,9 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
     const runtime::VerifiedBackendPackCatalogSnapshot& catalog,
     const runtime::ActiveRuntimeState& active_runtime);
 
+std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
+    const runtime::VerifiedBackendPackCatalogSnapshot& catalog,
+    const runtime::ActiveRuntimeState& active_runtime,
+    const runtime::BackendPackCompatibilityContext& compatibility_context);
+
 }  // namespace cyxwiz

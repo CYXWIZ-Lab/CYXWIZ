@@ -14,6 +14,15 @@ bool CatalogAllowsConsent(BackendPackCatalogSupport support) {
          support == BackendPackCatalogSupport::Diagnostic;
 }
 
+bool CompatibilityAllowsConsent(const BackendPackManagerRecord &record) {
+  if (!record.compatibility)
+    return true;
+  return record.compatibility->eligibility !=
+             runtime::BackendPackEligibility::Incompatible &&
+         record.compatibility->install_recommendation !=
+             runtime::BackendPackInstallRecommendation::NotOffered;
+}
+
 BackendPackActionDecision Disabled(std::string reason) {
   return {false, std::move(reason)};
 }
@@ -99,6 +108,10 @@ EvaluateBackendPackAction(BackendPackAction action,
   if (!CatalogAllowsConsent(record->catalog_support)) {
     return Disabled("The signed catalog does not authorize this pack");
   }
+  if (!CompatibilityAllowsConsent(*record)) {
+    return Disabled("This pack is incompatible with the selected runtime or "
+                    "known machine capabilities");
+  }
   if (!record->delivery_metadata_available) {
     return Disabled(record->delivery_metadata_error.empty()
                         ? "The signed pack manifest is unavailable"
@@ -156,9 +169,9 @@ BackendPackInstallerSelection ResolveBackendPackInstallerSelection(
   std::set<std::string> selected;
   if (choice == BackendPackInstallChoice::Recommended) {
     for (const auto &record : catalog_records) {
-      if (record.backend != "cpu" && record.recommended &&
+      if (record.backend != "cpu" && IsBackendPackRecommended(record) &&
           record.catalog_support == BackendPackCatalogSupport::Supported &&
-          !record.pack_id.empty()) {
+          CompatibilityAllowsConsent(record) && !record.pack_id.empty()) {
         selected.insert(record.pack_id);
       }
     }
@@ -179,7 +192,8 @@ BackendPackInstallerSelection ResolveBackendPackInstallerSelection(
                        return candidate.pack_id == pack_id;
                      });
     if (record == catalog_records.end() || record->backend == "cpu" ||
-        !CatalogAllowsConsent(record->catalog_support)) {
+        !CatalogAllowsConsent(record->catalog_support) ||
+        !CompatibilityAllowsConsent(*record)) {
       result.message = "Custom selection contains a pack not authorized by the "
                        "signed catalog";
       return result;
@@ -201,8 +215,15 @@ bool HasSelectableCustomBackendPack(
                      [](const BackendPackManagerRecord &record) {
                        return record.backend != "cpu" &&
                               record.delivery_metadata_available &&
-                              CatalogAllowsConsent(record.catalog_support);
+                              CatalogAllowsConsent(record.catalog_support) &&
+                              CompatibilityAllowsConsent(record);
                      });
+}
+
+bool IsBackendPackRecommended(const BackendPackManagerRecord &record) {
+  return record.compatibility.has_value() &&
+         record.compatibility->install_recommendation ==
+             runtime::BackendPackInstallRecommendation::Recommended;
 }
 
 BackendPackInstallerPlan BuildBackendPackInstallerPlan(
@@ -257,6 +278,7 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
         [&](const auto &candidate) { return candidate.pack_id == pack_id; });
     if (record == catalog_records.end() || record->backend == "cpu" ||
         !CatalogAllowsConsent(record->catalog_support) ||
+        !CompatibilityAllowsConsent(*record) ||
         !record->delivery_metadata_available) {
       plan.message =
           "A selected pack is not deliverable from the signed catalog";

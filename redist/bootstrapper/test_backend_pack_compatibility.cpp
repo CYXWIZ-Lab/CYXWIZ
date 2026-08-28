@@ -120,6 +120,7 @@ cyxwiz::runtime::VerifiedBackendPackManifest OneApiManifest() {
   manifest.compatibility.tested_driver_ranges = {
       {"intel", ">=31.0.101.2115,<32.0"}};
   manifest.compatibility.minimum_identity_confidence = "stable_hardware";
+  manifest.compatibility.recommendation_targets = {"oneapi"};
   manifest.compatibility.support_status = BackendPackSupportStatus::Supported;
   return manifest;
 }
@@ -153,6 +154,7 @@ void TestCompatibilityEvaluation() {
             compatible.rule == BackendPackCompatibilityRule::CompleteMatch &&
             compatible.install_recommendation ==
                 BackendPackInstallRecommendation::AvailableAfterVerification &&
+            compatible.recommendation_target_eligible &&
             compatible.verification_status ==
                 BackendPackRouteVerificationStatus::NotRun &&
             compatible.training_authorization ==
@@ -295,6 +297,8 @@ void TestIndependentDefaultStates() {
   Check(decision.install_recommendation ==
             BackendPackInstallRecommendation::NotOffered,
         "unknown eligibility must not default to a recommendation");
+  Check(!decision.recommendation_target_eligible,
+        "recommendation eligibility must come from signed metadata");
   Check(decision.verification_requirement ==
                 BackendPackVerificationRequirement::Required &&
             decision.verification_status ==

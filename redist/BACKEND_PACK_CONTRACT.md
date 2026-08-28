@@ -338,6 +338,16 @@ local route as crashed and unauthorized without rewriting signed oneAPI support
 or the compatibility result for other machines. A preferred recommendation is
 assigned only after comparable verified benchmark evidence exists.
 
+The component-manager catalog adapter attaches one compatibility decision to
+every verified manifest record. A proven-incompatible or `not_offered` pack is
+not selectable and cannot enter an install plan. A supported pack with missing
+machine facts remains visible in Custom so the user can explicitly install and
+verify it; unknown is not silently converted into incompatible. Recommended is
+derived only from the decision's typed recommendation. Display-adapter vendor
+names, provider presence, and catalog availability alone never create a
+recommendation. Comparable benchmark evidence may promote a verified pack only
+when its signed `recommendation_targets` explicitly includes that backend.
+
 ## Catalog
 
 The signed catalog body contains exactly:

@@ -144,6 +144,7 @@ InstallerVerificationSummary BuildInstallerVerificationSummary(
         InstallerRouteVerificationResult route;
         route.type = record.type;
         route.device_id = record.device_id;
+        route.pack_id = record.pack_id;
         route.backend = BackendName(record.type);
         route.display_name = record.display_name;
         route.active = !record.pack_id.empty() &&

@@ -8,8 +8,6 @@
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
-#include <cwctype>
-#include <fstream>
 #include <iomanip>
 #include <limits>
 #include <sstream>
@@ -31,6 +29,7 @@
 #include "backend_pack_metadata_refresh.h"
 #include "backend_pack_state_service.h"
 #include "core/backend_pack_catalog_adapter.h"
+#include "core/backend_pack_decision_reconciliation.h"
 #include "core/compute_runtime_paths.h"
 #include "core/route_qualification_snapshot.h"
 
@@ -182,32 +181,6 @@ int RunHelper(
     return -1;
 }
 
-std::vector<std::string> RecommendedBackends() {
-    bool nvidia = false;
-    bool intel = false;
-    bool amd = false;
-    for (DWORD index = 0;; ++index) {
-        DISPLAY_DEVICEW device{};
-        device.cb = sizeof(device);
-        if (!::EnumDisplayDevicesW(nullptr, index, &device, 0)) break;
-        if ((device.StateFlags & DISPLAY_DEVICE_MIRRORING_DRIVER) != 0) {
-            continue;
-        }
-        std::wstring name(device.DeviceString);
-        std::transform(
-            name.begin(), name.end(), name.begin(),
-            [](wchar_t value) { return std::towlower(value); });
-        nvidia = nvidia || name.find(L"nvidia") != std::wstring::npos;
-        intel = intel || name.find(L"intel") != std::wstring::npos;
-        amd = amd || name.find(L"amd") != std::wstring::npos ||
-              name.find(L"radeon") != std::wstring::npos;
-    }
-    std::vector<std::string> backends;
-    if (nvidia) backends.push_back("cuda");
-    if (intel || amd) backends.push_back("opencl");
-    return backends;
-}
-
 #else
 
 int RunHelper(
@@ -252,34 +225,6 @@ int RunHelper(
         return -1;
     }
     return WEXITSTATUS(status);
-}
-
-std::vector<std::string> RecommendedBackends() {
-    std::vector<std::string> backends;
-#if defined(__linux__)
-    bool nvidia = std::filesystem::is_regular_file(
-        "/proc/driver/nvidia/version");
-    bool intel_or_amd = false;
-    std::error_code error;
-    const std::filesystem::path drm_root("/sys/class/drm");
-    for (std::filesystem::directory_iterator iterator(drm_root, error), end;
-         !error && iterator != end; iterator.increment(error)) {
-        std::ifstream vendor(iterator->path() / "device" / "vendor");
-        std::string value;
-        if (!(vendor >> value)) continue;
-        std::transform(
-            value.begin(), value.end(), value.begin(),
-            [](unsigned char character) {
-                return static_cast<char>(std::tolower(character));
-            });
-        nvidia = nvidia || value == "0x10de";
-        intel_or_amd = intel_or_amd || value == "0x8086" ||
-            value == "0x1002";
-    }
-    if (nvidia) backends.push_back("cuda");
-    if (intel_or_amd) backends.push_back("opencl");
-#endif
-    return backends;
 }
 
 #endif
@@ -373,15 +318,8 @@ public:
             return state;
         }
         state.records = BuildBackendPackCatalogRecords(snapshot, active);
-        const auto recommended = RecommendedBackends();
-        for (auto& record : state.records) {
-            record.recommended =
-                record.backend != "cpu" &&
-                record.catalog_support == BackendPackCatalogSupport::Supported &&
-                std::find(
-                    recommended.begin(), recommended.end(), record.backend) !=
-                    recommended.end();
-        }
+        ReconcileBackendPackDecisionEvidence(
+            state.records, state.verification);
         state.available = true;
         state.catalog_id = snapshot.catalog.catalog_id;
         state.message = "Verified signed catalog " + state.catalog_id;

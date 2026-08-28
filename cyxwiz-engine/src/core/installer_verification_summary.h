@@ -20,6 +20,7 @@ enum class InstallerRouteVerificationStatus {
 struct InstallerRouteVerificationResult {
     DeviceType type = DeviceType::CPU;
     int device_id = 0;
+    std::string pack_id;
     std::string backend;
     std::string display_name;
     InstallerRouteVerificationStatus status =
