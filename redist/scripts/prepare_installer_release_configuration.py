@@ -12,16 +12,20 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Sequence
+from urllib.parse import urlsplit
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from backend_pack_contract import validate_trust_root  # noqa: E402
+from prepare_backend_pack_repository import (  # noqa: E402
+    RepositoryError,
+    direct_https_base_url,
+)
 
 
 MAX_TRUST_BYTES = 4 * 1024 * 1024
-REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 RELEASE_TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?")
 TARGETS = {
@@ -39,7 +43,11 @@ class ReleaseConfigurationError(RuntimeError):
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--trust-store", required=True, type=Path)
-    parser.add_argument("--repository", required=True)
+    parser.add_argument(
+        "--asset-base-url",
+        required=True,
+        help="Direct non-redirecting HTTPS root containing release assets",
+    )
     parser.add_argument("--release-tag", required=True)
     parser.add_argument("--cyxwiz-release", required=True)
     parser.add_argument("--bundle-version", required=True)
@@ -76,11 +84,24 @@ def _read_trust(path: Path) -> tuple[bytes, dict[str, Any]]:
     return content, document
 
 
-def _validate_identity(args: argparse.Namespace) -> None:
-    if REPOSITORY.fullmatch(args.repository) is None:
-        raise ReleaseConfigurationError("repository must be exact owner/name")
-    if RELEASE_TAG.fullmatch(args.release_tag) is None:
+def versioned_asset_base_url(value: str, release_tag: str) -> str:
+    if RELEASE_TAG.fullmatch(release_tag) is None:
         raise ReleaseConfigurationError("release tag is not a safe asset tag")
+    try:
+        base_url = direct_https_base_url(value)
+    except RepositoryError as error:
+        raise ReleaseConfigurationError(str(error)) from error
+    if urlsplit(base_url).path.rsplit("/", 1)[-1] != release_tag:
+        raise ReleaseConfigurationError(
+            "asset base URL must end with the exact immutable release tag"
+        )
+    return base_url
+
+
+def _validate_identity(args: argparse.Namespace) -> None:
+    args.asset_base_url = versioned_asset_base_url(
+        args.asset_base_url, args.release_tag
+    )
     for label, value in (
         ("CyxWiz release", args.cyxwiz_release),
         ("bundle version", args.bundle_version),
@@ -99,8 +120,7 @@ def prepare(args: argparse.Namespace) -> dict[str, str]:
         f"{args.platform}-{args.architecture}.descriptor.json"
     ).lower()
     descriptor_url = (
-        f"https://github.com/{args.repository}/releases/download/"
-        f"{args.release_tag}/{descriptor_name}"
+        f"{args.asset_base_url}/{descriptor_name}"
     )
     trust_output = args.trust_output.resolve()
     configuration_output = args.configuration_output.resolve()

@@ -54,7 +54,8 @@ class InstallerReleaseConfigurationTests(unittest.TestCase):
         return release_configuration.parse_args(
             [
                 "--trust-store", str(self.trust),
-                "--repository", "CYXWIZ-Lab/CYXWIZ",
+                "--asset-base-url",
+                "https://packages.example.test/cyxwiz/v0.2.0-alpha.1",
                 "--release-tag", "v0.2.0-alpha.1",
                 "--cyxwiz-release", "0.2.0",
                 "--bundle-version", "1.0.0",
@@ -76,8 +77,7 @@ class InstallerReleaseConfigurationTests(unittest.TestCase):
         )
         result = release_configuration.prepare(self.args())
         self.assertEqual(
-            "https://github.com/CYXWIZ-Lab/CYXWIZ/releases/download/"
-            "v0.2.0-alpha.1/"
+            "https://packages.example.test/cyxwiz/v0.2.0-alpha.1/"
             "cyxwiz-installer-0.2.0-1.0.0-macos-x86_64.descriptor.json",
             result["descriptor_url"],
         )
@@ -109,13 +109,23 @@ class InstallerReleaseConfigurationTests(unittest.TestCase):
         ):
             release_configuration.prepare(self.args())
 
-    def test_rejects_unsafe_release_tag(self) -> None:
+    def test_rejects_non_direct_asset_url(self) -> None:
         self.write_trust(trust_document("installer"))
         arguments = self.args()
-        arguments.release_tag = "../../latest"
+        arguments.asset_base_url = "https://user@example.test/assets?token=secret"
         with self.assertRaisesRegex(
             release_configuration.ReleaseConfigurationError,
-            "release tag",
+            "direct HTTPS",
+        ):
+            release_configuration.prepare(arguments)
+
+    def test_rejects_asset_url_outside_release_tag(self) -> None:
+        self.write_trust(trust_document("installer"))
+        arguments = self.args()
+        arguments.asset_base_url = "https://packages.example.test/cyxwiz/latest"
+        with self.assertRaisesRegex(
+            release_configuration.ReleaseConfigurationError,
+            "exact immutable release tag",
         ):
             release_configuration.prepare(arguments)
 

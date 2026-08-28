@@ -9,7 +9,12 @@ on:
         default: false
         type: boolean
       release_tag:
-        description: Immutable GitHub Release tag used by setup URLs
+        description: Immutable release tag matching the asset URL path
+        required: false
+        default: ""
+        type: string
+      asset_base_url:
+        description: Direct non-redirecting HTTPS root used by setup URLs
         required: false
         default: ""
         type: string
@@ -30,6 +35,10 @@ on:
         default: false
         type: boolean
       release_tag:
+        required: false
+        default: ""
+        type: string
+      asset_base_url:
         required: false
         default: ""
         type: string
@@ -54,6 +63,7 @@ on:
       - "cyxwiz-backend/**"
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
+      - "redist/scripts/assemble_installer_alpha_release.py"
       - "redist/scripts/backend_pack_contract.py"
       - "redist/scripts/prepare_backend_pack_repository.py"
       - "redist/scripts/installer_bundle_contract.py"
@@ -62,6 +72,7 @@ on:
       - "redist/scripts/sign_installer_bundle.py"
       - "redist/scripts/verify_installer_package.py"
       - "redist/tests/test_installer_bundle.py"
+      - "redist/tests/test_assemble_installer_alpha_release.py"
       - "redist/tests/test_backend_pack_contract.py"
       - "redist/tests/test_prepare_installer_release_configuration.py"
       - "redist/tests/test_installer_setup.py"
@@ -81,6 +92,7 @@ on:
       - "cyxwiz-backend/**"
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
+      - "redist/scripts/assemble_installer_alpha_release.py"
       - "redist/scripts/backend_pack_contract.py"
       - "redist/scripts/prepare_backend_pack_repository.py"
       - "redist/scripts/installer_bundle_contract.py"
@@ -89,6 +101,7 @@ on:
       - "redist/scripts/sign_installer_bundle.py"
       - "redist/scripts/verify_installer_package.py"
       - "redist/tests/test_installer_bundle.py"
+      - "redist/tests/test_assemble_installer_alpha_release.py"
       - "redist/tests/test_backend_pack_contract.py"
       - "redist/tests/test_prepare_installer_release_configuration.py"
       - "redist/tests/test_installer_setup.py"
@@ -144,6 +157,10 @@ jobs:
         shell: pwsh
         env:
           RELEASE_TRUST_B64: ${{ secrets.CYXWIZ_INSTALLER_TRUST_STORE_B64 }}
+          RELEASE_ASSET_BASE_URL: ${{ inputs.asset_base_url }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_CYXWIZ_VERSION: ${{ inputs.cyxwiz_release }}
+          RELEASE_BUNDLE_VERSION: ${{ inputs.bundle_version }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:RELEASE_TRUST_B64)) {
             throw 'CYXWIZ_INSTALLER_TRUST_STORE_B64 is required in release mode'
@@ -159,10 +176,10 @@ jobs:
           [IO.File]::WriteAllBytes($inputTrust, $trustBytes)
           python -B redist/scripts/prepare_installer_release_configuration.py `
             --trust-store $inputTrust `
-            --repository '${{ github.repository }}' `
-            --release-tag '${{ inputs.release_tag }}' `
-            --cyxwiz-release '${{ inputs.cyxwiz_release }}' `
-            --bundle-version '${{ inputs.bundle_version }}' `
+            --asset-base-url $env:RELEASE_ASSET_BASE_URL `
+            --release-tag $env:RELEASE_TAG `
+            --cyxwiz-release $env:RELEASE_CYXWIZ_VERSION `
+            --bundle-version $env:RELEASE_BUNDLE_VERSION `
             --platform '${{ matrix.platform }}' `
             --architecture '${{ matrix.architecture }}' `
             --trust-output $embeddedTrust `
@@ -187,6 +204,7 @@ jobs:
       - name: Run release metadata contracts
         run: >-
           python -B -m unittest
+          redist.tests.test_assemble_installer_alpha_release
           redist.tests.test_prepare_backend_pack_repository
           redist.tests.test_prepare_installer_release_configuration
           redist.tests.test_installer_bundle
@@ -387,12 +405,28 @@ jobs:
           tar -C setup-stage -czf \
             setup-package/cyxwiz-setup-${{ matrix.artifact }}.tar.gz .
 
+      - name: Package Windows release installer stage
+        if: inputs.release_mode == true && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-installer-package |
+            Out-Null
+          Compress-Archive -Path installer-stage/* `
+            -DestinationPath release-installer-package/cyxwiz-installer-stage-${{ matrix.artifact }}.zip
+
+      - name: Package Unix release installer stage
+        if: inputs.release_mode == true && runner.os != 'Windows'
+        run: |
+          mkdir -p release-installer-package
+          tar -C installer-stage -czf \
+            release-installer-package/cyxwiz-installer-stage-${{ matrix.artifact }}.tar.gz .
+
       - name: Upload clean release installer stage
         if: inputs.release_mode == true
         uses: actions/upload-artifact@v4
         with:
           name: cyxwiz-release-installer-stage-${{ matrix.artifact }}
-          path: installer-stage/
+          path: release-installer-package/
           if-no-files-found: error
 
       - name: Upload release-configured setup

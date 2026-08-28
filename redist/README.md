@@ -101,14 +101,58 @@ pre-publication build. It requires the protected `cyxwiz-alpha` environment,
 the repository variable `CYXWIZ_ALPHA_CANDIDATE_ENABLED=true`, and the
 repository secret `CYXWIZ_INSTALLER_TRUST_STORE_B64`. That secret contains
 only the base64-encoded public `trusted-keys.json`; private signing keys are
-not inputs to this workflow. For the requested immutable tag it builds Windows
+not inputs to this workflow. The dispatch also requires an immutable release
+tag and the exact non-redirecting HTTPS asset base whose final path segment
+matches that tag. It builds Windows
 x64, Linux x64, macOS Intel, and macOS Apple Silicon setup packages with the
-public trust root embedded and the exact future GitHub Release descriptor URL
-compiled in. Release-configured setup and clean installer-stage artifacts use
-the `cyxwiz-release-*` artifact prefix. The workflow deliberately does not
-create a tag or GitHub Release. Publication remains blocked until the signed
+public trust root embedded and derives each descriptor URL from that base.
+Release-configured setup and clean installer-stage artifacts use the
+`cyxwiz-release-*` artifact prefix. The workflow deliberately does not create
+or upload a hosted release. Publication remains blocked until the signed
 base/optional-pack matrix, signed installer descriptors, final bootstrap
 metadata, and platform code signatures have passed their own release gate.
+
+After native candidate stages, setup packages, and signed base/optional-pack
+manifests exist for all four targets, assemble the release locally before any
+host mutation. `assemble_installer_alpha_release.py` accepts exactly one
+installer stage and setup package for `windows-x64`, `linux-x64`, `macos-x64`,
+and `macos-arm64`, plus all signed pack manifests and external catalog and
+installer signing keys. The pack signing step remains separate. The assembler
+verifies every pack signature/archive, requires a base and matching optional
+pack for every target, creates the flat hosted-asset catalog, replaces CI
+fixture metadata only in temporary copies of each stage, creates and signs all
+four installer descriptors, and verifies the installer signing key against the
+public trust root. It publishes atomically to a new output directory:
+
+```text
+alpha-output/
+  assets/                  # only this directory is eligible for upload
+    cyxwiz-backend-catalog-*.json
+    <pack manifests and archives>
+    cyxwiz-installer-*.zip
+    cyxwiz-installer-*.descriptor.json
+    cyxwiz-setup-*
+    SHA256SUMS.txt
+  bootstrap/               # exact metadata embedded in every GUI bundle
+  release-inventory.json   # sizes and SHA-256 for all payload assets
+```
+
+Run `python redist/scripts/assemble_installer_alpha_release.py --help` for the
+complete release-ceremony arguments. The output must not already exist. The
+tool neither creates a Git tag nor contacts GitHub, and it never copies private
+keys into the result. Use a POSIX release host when packaging Linux/macOS stage
+directories so their executable modes remain representable; the native
+candidate workflow and its mode-preserving archives are the source of those
+stages.
+
+The `--asset-base-url` argument is part of the signed release identity. It must
+be the exact versioned HTTPS directory where every file from `assets/` will be
+served without a redirect, credentials, query, or fragment. Standard GitHub
+Release download endpoints redirect to a separate asset service, while the
+current runtime deliberately disables redirects. They are therefore not a
+compatible production asset base yet. Supporting them requires a separate,
+bounded redirect-authority policy in both native HTTPS adapters; do not work
+around this by weakening verification or signing the redirect destination.
 
 ### Native runtime bootstrapper
 

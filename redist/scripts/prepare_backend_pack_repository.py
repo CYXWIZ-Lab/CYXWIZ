@@ -100,7 +100,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="nested",
         help=(
             "Hosted asset layout: nested for a conventional HTTPS tree or "
-            "flat for GitHub Release assets"
+            "flat for a single release-asset directory"
         ),
     )
     parser.add_argument("--output", required=True, type=Path)
@@ -241,6 +241,25 @@ def _verified_envelope_key(
     return valid[0]
 
 
+def verify_trusted_metadata_signature(
+    document: Mapping[str, Any],
+    trust_root: Path,
+    role: str,
+    openssl: str = "openssl",
+    key_id: str | None = None,
+) -> str:
+    if role not in {"catalog", "pack", "installer"}:
+        raise RepositoryError(f"Unsupported metadata trust role: {role}")
+    trust_document, _ = _load_json(trust_root.resolve(), "trust root")
+    return _verified_envelope_key(
+        document,
+        _trusted_keys(trust_document),
+        role,
+        openssl,
+        key_id,
+    )
+
+
 def _sha256_file(path: Path) -> tuple[int, str]:
     if path.is_symlink() or not path.is_file():
         raise RepositoryError(f"Pack archive is not a regular file: {path}")
@@ -342,7 +361,7 @@ def _validate_hosted_asset_names(
             observed[folded] = name
 
 
-def _direct_https_base_url(value: str) -> str:
+def direct_https_base_url(value: str) -> str:
     if (
         len(value) > 4000
         or any(
@@ -525,7 +544,7 @@ def prepare_repository(args: argparse.Namespace) -> str:
     _validate_hosted_asset_names(
         packs, args.catalog_id, args.hosted_layout
     )
-    base_url = _direct_https_base_url(args.base_url)
+    base_url = direct_https_base_url(args.base_url)
     catalog = _catalog_document(
         packs,
         base_url,

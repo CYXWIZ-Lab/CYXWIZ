@@ -4,7 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Immutable alpha tag reserved for the future GitHub Release
+        description: Immutable alpha tag matching the asset URL path
+        required: true
+        type: string
+      asset_base_url:
+        description: Direct non-redirecting HTTPS root reserved for these assets
         required: true
         type: string
       cyxwiz_release:
@@ -32,7 +36,7 @@ jobs:
       - name: Record bounded publication scope
         run: |
           echo 'Building release-configured artifacts only.'
-          echo 'This workflow does not create or upload a GitHub Release.'
+          echo 'This workflow does not create or upload a hosted release.'
 
   build:
     name: Build four-platform candidate
@@ -41,6 +45,7 @@ jobs:
     with:
       release_mode: true
       release_tag: ${{ inputs.release_tag }}
+      asset_base_url: ${{ inputs.asset_base_url }}
       cyxwiz_release: ${{ inputs.cyxwiz_release }}
       bundle_version: ${{ inputs.bundle_version }}
     secrets:
