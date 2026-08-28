@@ -173,6 +173,38 @@ protected:
 };
 
 /**
+ * @brief SequentialModel ownership adapter for the legacy Conv1D primitive.
+ *
+ * Preserves the existing `[L,C,N]` Tensor contract and native formulas. The
+ * node remains blocked in Studio until it has an ArrayFire-first execution
+ * path and the full Part F numerical, residency, and training evidence.
+ */
+class CYXWIZ_API Conv1DModule : public Module {
+public:
+    Conv1DModule(int in_channels, int out_channels, int kernel_size,
+                 int stride = 1, int padding = 0, int dilation = 1,
+                 bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<Conv1DLayer> layer_;
+    int in_channels_;
+    int out_channels_;
+    int kernel_size_;
+    int stride_;
+    int padding_;
+    int dilation_;
+    bool use_bias_;
+};
+
+/**
  * @brief SequentialModel ownership adapter for the legacy Conv2D primitive.
  *
  * Preserves the existing `[H,W,C,N]` Tensor contract and convolution math.
