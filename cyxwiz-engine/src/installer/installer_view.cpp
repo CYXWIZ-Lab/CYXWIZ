@@ -443,22 +443,30 @@ void RenderSummary(InstallerViewState &state,
   ImGui::TextWrapped("%s", plan.message.c_str());
 
   if (operation_running) {
-    const float progress = operation_progress.total_steps == 0
-                               ? 0.0f
-                               : static_cast<float>(
-                                     operation_progress.completed_steps) /
-                                     static_cast<float>(
-                                         operation_progress.total_steps);
+    const float progress = std::clamp(
+        operation_progress.overall_fraction, 0.0f, 1.0f);
     std::string progress_label = "Preparing";
     if (operation_progress.total_steps != 0) {
       const auto current_step =
           std::min(operation_progress.completed_steps + 1,
                    operation_progress.total_steps);
-      progress_label = "Step " + std::to_string(current_step) + " of " +
-                       std::to_string(operation_progress.total_steps);
+      progress_label = std::to_string(
+                           static_cast<int>(progress * 100.0f)) +
+                       "%  |  Step " + std::to_string(current_step) +
+                       " of " + std::to_string(operation_progress.total_steps);
     }
     ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f),
                        progress_label.c_str());
+    if (operation_progress.total_bytes != 0) {
+      const auto completed =
+          operation_progress.completed_bytes == 0
+              ? std::string("0 B")
+              : FormatBackendPackByteSize(
+                    operation_progress.completed_bytes);
+      const auto total =
+          FormatBackendPackByteSize(operation_progress.total_bytes);
+      ImGui::TextDisabled("%s / %s", completed.c_str(), total.c_str());
+    }
     if (!operation_progress.activity.empty()) {
       ImGui::TextWrapped("%s", operation_progress.activity.c_str());
     }
@@ -475,16 +483,29 @@ void RenderSummary(InstallerViewState &state,
                          install_location.valid && !operation_running;
   const bool maintenance =
       catalog.mode == CyxWizInstallerMode::Maintenance;
-  const float footer_height = maintenance ? 166.0f : 92.0f;
+  const float footer_height = maintenance ? 166.0f : 116.0f;
   ImGui::SetCursorPosY(std::max(
       ImGui::GetCursorPosY(), ImGui::GetWindowHeight() - footer_height));
-  ImGui::BeginDisabled(!can_apply);
-  if (ImGui::Button(ICON_FA_DOWNLOAD " Review & install",
-                    ImVec2(-1.0f, 38.0f))) {
-    state.pending_plan = plan;
-    state.review_requested = true;
+  if (state.install_completed) {
+    ImGui::TextColored(kSuccess, "%s Installation complete",
+                       ICON_FA_CIRCLE_CHECK);
+    ImGui::BeginDisabled(operation_running || state.engine_launched);
+    if (ImGui::Button(
+            state.engine_launched ? "CyxWiz is running"
+                                  : "Launch CyxWiz",
+            ImVec2(-1.0f, 38.0f))) {
+      action.kind = InstallerViewActionKind::LaunchEngine;
+    }
+    ImGui::EndDisabled();
+  } else {
+    ImGui::BeginDisabled(!can_apply);
+    if (ImGui::Button(ICON_FA_DOWNLOAD " Review & install",
+                      ImVec2(-1.0f, 38.0f))) {
+      state.pending_plan = plan;
+      state.review_requested = true;
+    }
+    ImGui::EndDisabled();
   }
-  ImGui::EndDisabled();
   if (maintenance && RenderInstallerRemovalControl(
                          state.removal, product_removal,
                          operation_running)) {
@@ -533,10 +554,13 @@ void RenderReviewPopup(InstallerViewState &state,
                                   : size.c_str());
   ImGui::TextDisabled(
       "A package that fails verification or qualification remains inactive.");
+  ImGui::Checkbox("Launch CyxWiz when installation completes",
+                  &state.launch_after_install);
   ImGui::BeginDisabled(operation_running);
   if (ImGui::Button("Apply changes", ImVec2(170.0f, 36.0f))) {
     action.kind = InstallerViewActionKind::ApplyPlan;
     action.plan = state.pending_plan;
+    action.launch_after_install = state.launch_after_install;
     ImGui::CloseCurrentPopup();
   }
   ImGui::SameLine();

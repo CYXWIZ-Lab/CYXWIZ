@@ -75,16 +75,36 @@ BackendPackLifecycleService::BackendPackLifecycleService(
       qualification_(std::move(qualification)),
       observer_(std::move(observer)),
       acquirer_([this](const BackendPackAcquisitionProgress& progress) {
-          SetStage(BackendPackLifecycleStage::Acquiring, progress.message);
+          auto lifecycle = GetProgress();
+          lifecycle.stage = BackendPackLifecycleStage::Acquiring;
+          lifecycle.completed_bytes = progress.completed_bytes;
+          lifecycle.total_bytes = progress.total_bytes;
+          lifecycle.component_index = 0;
+          lifecycle.component_count = 0;
+          lifecycle.message = progress.message;
+          SetProgress(std::move(lifecycle));
       }),
       extractor_([this](const BackendPackExtractionProgress& progress) {
-          SetStage(BackendPackLifecycleStage::Extracting, progress.message);
+          auto lifecycle = GetProgress();
+          lifecycle.stage = BackendPackLifecycleStage::Extracting;
+          lifecycle.completed_bytes = progress.completed_bytes;
+          lifecycle.total_bytes = progress.total_bytes;
+          lifecycle.component_index = progress.component_index;
+          lifecycle.component_count = progress.component_count;
+          lifecycle.message = progress.message;
+          SetProgress(std::move(lifecycle));
       }),
       installer_(
           runtime_root_, execution_active_,
           [this](const BackendPackInstallProgress& progress) {
-              SetStage(BackendPackLifecycleStage::Installing,
-                       progress.message);
+              auto lifecycle = GetProgress();
+              lifecycle.stage = BackendPackLifecycleStage::Installing;
+              lifecycle.completed_bytes = progress.completed_bytes;
+              lifecycle.total_bytes = progress.total_bytes;
+              lifecycle.component_index = progress.component_index;
+              lifecycle.component_count = progress.component_count;
+              lifecycle.message = progress.message;
+              SetProgress(std::move(lifecycle));
           }),
       remover_(
           runtime_root_, execution_active_,
@@ -676,6 +696,10 @@ void BackendPackLifecycleService::SetStage(
     std::string message) {
     auto progress = GetProgress();
     progress.stage = stage;
+    progress.completed_bytes = 0;
+    progress.total_bytes = 0;
+    progress.component_index = 0;
+    progress.component_count = 0;
     progress.message = std::move(message);
     SetProgress(std::move(progress));
 }

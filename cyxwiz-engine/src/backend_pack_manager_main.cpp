@@ -152,7 +152,11 @@ ApplyPlanAsync(cyxwiz::installer::BackendPackInstallerPlatform &platform,
                 const cyxwiz::installer::InstallerPlanExecutionProgress
                     &snapshot) {
               const std::scoped_lock lock(progress->mutex);
-              progress->value = snapshot;
+              auto monotonic = snapshot;
+              monotonic.overall_fraction = std::max(
+                  progress->value.overall_fraction,
+                  snapshot.overall_fraction);
+              progress->value = std::move(monotonic);
             });
       });
 }
@@ -299,6 +303,7 @@ int RunInstaller(const std::vector<std::string> &arguments,
       catalog_refresh;
   std::shared_ptr<SharedInstallProgress> shared_progress;
   bool operation_running = false;
+  bool launch_when_complete = false;
   AsyncOperation async_operation = AsyncOperation::None;
   std::string operation_message;
   if (!visual_warning.empty())
@@ -316,6 +321,18 @@ int RunInstaller(const std::vector<std::string> &arguments,
       async_operation = AsyncOperation::None;
       operation_message = result.message;
       catalog = platform->Refresh();
+      product_removal = cyxwiz::installer::InspectInstallerProductRemoval(
+          install_location.runtime_root,
+          parsed.product_removal_host &&
+              install_location.runtime_root == parsed.runtime_root);
+      view_state.install_completed = result.succeeded;
+      if (result.succeeded && launch_when_complete) {
+        const auto launched = platform->LaunchEngine();
+        if (!operation_message.empty()) operation_message += '\n';
+        operation_message += launched.message;
+        view_state.engine_launched = launched.succeeded;
+      }
+      launch_when_complete = false;
     } else if (operation_running &&
                async_operation == AsyncOperation::CatalogRefresh &&
                catalog_refresh.valid() &&
@@ -328,6 +345,7 @@ int RunInstaller(const std::vector<std::string> &arguments,
       if (shared_progress) {
         const std::scoped_lock lock(shared_progress->mutex);
         shared_progress->value.completed_steps = 1;
+        shared_progress->value.overall_fraction = 1.0f;
         shared_progress->value.activity = result.succeeded
             ? "Signed catalog refresh completed"
             : "Signed catalog refresh failed; local catalog retained";
@@ -386,12 +404,21 @@ int RunInstaller(const std::vector<std::string> &arguments,
     }
     case cyxwiz::installer::gui::InstallerViewActionKind::ApplyPlan:
       operation_message.clear();
+      view_state.install_completed = false;
+      view_state.engine_launched = false;
+      launch_when_complete = action.launch_after_install;
       shared_progress = std::make_shared<SharedInstallProgress>();
       shared_progress->value.activity = "Preparing installation changes";
       operation = ApplyPlanAsync(*platform, action.plan, shared_progress);
       async_operation = AsyncOperation::InstallPlan;
       operation_running = true;
       break;
+    case cyxwiz::installer::gui::InstallerViewActionKind::LaunchEngine: {
+      const auto launched = platform->LaunchEngine();
+      operation_message = launched.message;
+      view_state.engine_launched = launched.succeeded;
+      break;
+    }
     case cyxwiz::installer::gui::InstallerViewActionKind::RemoveProduct:
       if (cyxwiz::installer::QueueInstallerProductRemoval(
               product_removal, operation_message)) {

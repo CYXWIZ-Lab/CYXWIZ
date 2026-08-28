@@ -103,6 +103,10 @@ struct BackendPackLifecycleProgress {
     BackendPackLifecycleStage stage = BackendPackLifecycleStage::Idle;
     std::string pack_id;
     std::string backend;
+    std::uint64_t completed_bytes = 0;
+    std::uint64_t total_bytes = 0;
+    std::size_t component_index = 0;
+    std::size_t component_count = 0;
     std::string message;
 };
 

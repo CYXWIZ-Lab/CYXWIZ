@@ -17,6 +17,7 @@ enum class InstallerViewActionKind {
   RefreshCatalog,
   UseInstallLocation,
   ApplyPlan,
+  LaunchEngine,
   RemoveProduct,
   Close
 };
@@ -26,6 +27,7 @@ struct InstallerViewAction {
   std::filesystem::path install_root;
   CyxWizInstallScope scope = CyxWizInstallScope::CurrentUser;
   BackendPackInstallerPlan plan;
+  bool launch_after_install = true;
 };
 
 struct InstallerViewState {
@@ -35,6 +37,9 @@ struct InstallerViewState {
   CyxWizInstallScope install_scope = CyxWizInstallScope::CurrentUser;
   bool install_location_dirty = false;
   bool review_requested = false;
+  bool launch_after_install = true;
+  bool install_completed = false;
+  bool engine_launched = false;
   std::string install_location_message;
   BackendPackInstallerPlan pending_plan;
   InstallerRemovalViewState removal;

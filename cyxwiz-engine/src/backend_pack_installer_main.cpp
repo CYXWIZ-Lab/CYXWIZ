@@ -1,5 +1,6 @@
 #include "core/backend_pack_qualification_adapter.h"
 #include "core/compute_runtime_paths.h"
+#include "installer/installer_progress_channel.h"
 
 #include "backend_pack_lifecycle_service.h"
 #include "backend_pack_metadata_cache.h"
@@ -38,6 +39,7 @@ struct Options {
     std::filesystem::path metadata_root;
     std::string pack_id;
     std::string deactivate_backend;
+    std::string progress_token;
     bool base = false;
     bool repair = false;
     bool offline = false;
@@ -129,6 +131,7 @@ bool ParseOptions(
     bool saw_base_pack_id = false;
     bool saw_deactivate_backend = false;
     bool saw_all_users = false;
+    bool saw_progress_token = false;
     for (int index = 1; index < argc; ++index) {
         const std::wstring_view argument(argv[index]);
         if (argument == L"--runtime-root" && !saw_runtime_root &&
@@ -188,6 +191,16 @@ bool ParseOptions(
         } else if (argument == L"--all-users" && !saw_all_users) {
             output.all_users = true;
             saw_all_users = true;
+        } else if (argument == L"--progress-token" &&
+                   !saw_progress_token && index + 1 < argc) {
+            const std::wstring value(argv[++index]);
+            output.progress_token.assign(value.begin(), value.end());
+            if (!cyxwiz::installer::IsInstallerProgressToken(
+                    output.progress_token)) {
+                error = "--progress-token must be a 32-character lowercase hexadecimal token";
+                return false;
+            }
+            saw_progress_token = true;
         } else {
             error = "Unsupported, duplicate, or incomplete installer argument";
             return false;
@@ -218,6 +231,7 @@ bool ParseOptions(
     bool saw_base_pack_id = false;
     bool saw_deactivate_backend = false;
     bool saw_all_users = false;
+    bool saw_progress_token = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--runtime-root" && !saw_runtime_root &&
@@ -261,6 +275,15 @@ bool ParseOptions(
         } else if (argument == "--all-users" && !saw_all_users) {
             output.all_users = true;
             saw_all_users = true;
+        } else if (argument == "--progress-token" &&
+                   !saw_progress_token && index + 1 < argc) {
+            output.progress_token = argv[++index];
+            if (!cyxwiz::installer::IsInstallerProgressToken(
+                    output.progress_token)) {
+                error = "--progress-token must be a 32-character lowercase hexadecimal token";
+                return false;
+            }
+            saw_progress_token = true;
         } else {
             error = "Unsupported, duplicate, or incomplete installer argument";
             return false;
@@ -294,7 +317,24 @@ int main(int argc, char** argv) {
         std::cerr << "CyxWiz backend-pack installer: " << error << '\n';
         return 78;
     }
+    const auto progress_path = options.progress_token.empty()
+        ? std::filesystem::path{}
+        : cyxwiz::installer::InstallerProgressPath(
+              options.runtime_root, options.progress_token);
+    const auto publish_progress = [&](std::string stage,
+                                      std::string message,
+                                      std::uint64_t completed_bytes = 0,
+                                      std::uint64_t total_bytes = 0,
+                                      std::size_t component_index = 0,
+                                      std::size_t component_count = 0) {
+        if (progress_path.empty()) return;
+        cyxwiz::installer::PublishInstallerProgress(
+            progress_path,
+            {std::move(stage), completed_bytes, total_bytes,
+             component_index, component_count, std::move(message)});
+    };
     if (!options.deactivate_backend.empty()) {
+        publish_progress("removing", "Deactivating the selected backend");
         if (options.deactivate_backend != "cuda" &&
             options.deactivate_backend != "opencl" &&
             options.deactivate_backend != "oneapi") {
@@ -322,6 +362,10 @@ int main(int argc, char** argv) {
             options.runtime_root);
         const auto result = state_service.DeactivateOptionalPack(
             options.deactivate_backend);
+        publish_progress(
+            result.status == cyxwiz::runtime::BackendPackStateStatus::Completed
+                ? "complete" : "failed",
+            result.message);
         std::cout << result.message << '\n';
         return result.status ==
                 cyxwiz::runtime::BackendPackStateStatus::Completed
@@ -389,11 +433,18 @@ int main(int argc, char** argv) {
         cyxwiz::runtime::BackendPackExecutionActiveCheck{},
         cyxwiz::CreateBackendPackQualificationHook(
             qualification_service, std::move(qualification_options)),
-        [](const cyxwiz::runtime::BackendPackLifecycleProgress& progress) {
+        [publish_progress](
+            const cyxwiz::runtime::BackendPackLifecycleProgress& progress) {
             std::cout
                 << cyxwiz::runtime::BackendPackLifecycleStageName(
                        progress.stage)
                 << ": " << progress.message << '\n';
+            publish_progress(
+                cyxwiz::runtime::BackendPackLifecycleStageName(
+                    progress.stage),
+                progress.message, progress.completed_bytes,
+                progress.total_bytes, progress.component_index,
+                progress.component_count);
         });
 
     cyxwiz::runtime::BackendPackDeliveryRequest request;

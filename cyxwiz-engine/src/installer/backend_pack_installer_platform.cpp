@@ -10,7 +10,9 @@
 #include <cstdlib>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <sstream>
+#include <thread>
 #include <utility>
 
 #ifdef _WIN32
@@ -82,6 +84,26 @@ std::filesystem::path HelperPath(
         runtime::CurrentBackendPackInstallerExecutableName();
 }
 
+void PollHelperProgress(
+    const std::filesystem::path& progress_path,
+    const InstallerOperationDetailObserver& observer,
+    std::optional<InstallerHelperProgress>& previous) {
+    if (!observer) return;
+    const auto current = ReadInstallerProgress(progress_path);
+    if (!current.has_value()) return;
+    const bool changed = !previous.has_value() ||
+        current->stage != previous->stage ||
+        current->completed_bytes != previous->completed_bytes ||
+        current->total_bytes != previous->total_bytes ||
+        current->component_index != previous->component_index ||
+        current->component_count != previous->component_count ||
+        current->message != previous->message;
+    if (changed) {
+        observer(*current);
+        previous = current;
+    }
+}
+
 #ifdef _WIN32
 
 std::wstring QuoteWindowsArgument(const std::wstring& value) {
@@ -107,6 +129,30 @@ std::wstring QuoteWindowsArgument(const std::wstring& value) {
     return quoted;
 }
 
+int WaitForHelper(
+    HANDLE process, const std::filesystem::path& progress_path,
+    const InstallerOperationDetailObserver& observer, std::string& error) {
+    std::optional<InstallerHelperProgress> previous;
+    DWORD wait = WAIT_TIMEOUT;
+    while ((wait = ::WaitForSingleObject(process, 100)) == WAIT_TIMEOUT) {
+        PollHelperProgress(progress_path, observer, previous);
+    }
+    PollHelperProgress(progress_path, observer, previous);
+    std::error_code cleanup_error;
+    std::filesystem::remove(progress_path, cleanup_error);
+    DWORD exit_code = 1;
+    if (wait == WAIT_OBJECT_0 &&
+        ::GetExitCodeProcess(process, &exit_code)) {
+        ::CloseHandle(process);
+        return exit_code <= static_cast<DWORD>(
+                   std::numeric_limits<int>::max())
+            ? static_cast<int>(exit_code) : -1;
+    }
+    error = "Waiting for the signed pack helper failed";
+    ::CloseHandle(process);
+    return -1;
+}
+
 int RunHelper(
     const std::filesystem::path& helper,
     const std::filesystem::path& runtime_root,
@@ -114,12 +160,18 @@ int RunHelper(
     bool elevate,
     const std::wstring& operation,
     const std::string& value,
+    const InstallerOperationDetailObserver& observer,
     std::string& error) {
+    const auto progress_token = CreateInstallerProgressToken();
+    const auto progress_path =
+        InstallerProgressPath(runtime_root, progress_token);
     const std::wstring parameters =
         L"--runtime-root " + QuoteWindowsArgument(runtime_root.native()) +
         L" --metadata-root " + QuoteWindowsArgument(metadata_root.native()) +
         L" " + operation + L" " + QuoteWindowsArgument(
             std::wstring(value.begin(), value.end())) +
+        L" --progress-token " + QuoteWindowsArgument(
+            std::wstring(progress_token.begin(), progress_token.end())) +
         (elevate ? L" --all-users" : L"");
     if (elevate) {
         SHELLEXECUTEINFOW execute{};
@@ -138,18 +190,8 @@ int RunHelper(
                       std::to_string(code);
             return -1;
         }
-        const DWORD wait = ::WaitForSingleObject(execute.hProcess, INFINITE);
-        DWORD exit_code = 1;
-        if (wait == WAIT_OBJECT_0 &&
-            ::GetExitCodeProcess(execute.hProcess, &exit_code)) {
-            ::CloseHandle(execute.hProcess);
-            return exit_code <= static_cast<DWORD>(
-                       std::numeric_limits<int>::max())
-                ? static_cast<int>(exit_code) : -1;
-        }
-        error = "Waiting for the authorized pack helper failed";
-        ::CloseHandle(execute.hProcess);
-        return -1;
+        return WaitForHelper(
+            execute.hProcess, progress_path, observer, error);
     }
     std::wstring command = QuoteWindowsArgument(helper.native()) + L" " +
         parameters;
@@ -167,18 +209,7 @@ int RunHelper(
         return -1;
     }
     ::CloseHandle(process.hThread);
-    const DWORD wait = ::WaitForSingleObject(process.hProcess, INFINITE);
-    DWORD exit_code = 1;
-    if (wait == WAIT_OBJECT_0 &&
-        ::GetExitCodeProcess(process.hProcess, &exit_code)) {
-        ::CloseHandle(process.hProcess);
-        return exit_code <= static_cast<DWORD>(
-                   std::numeric_limits<int>::max())
-            ? static_cast<int>(exit_code) : -1;
-    }
-    error = "Waiting for the signed pack helper failed";
-    ::CloseHandle(process.hProcess);
-    return -1;
+    return WaitForHelper(process.hProcess, progress_path, observer, error);
 }
 
 #else
@@ -190,6 +221,7 @@ int RunHelper(
     bool elevate,
     const char* operation,
     const std::string& value,
+    const InstallerOperationDetailObserver& observer,
     std::string& error) {
     if (elevate && ::geteuid() != 0) {
         error =
@@ -200,9 +232,13 @@ int RunHelper(
     const auto root_text = runtime_root.string();
     const auto metadata_text = metadata_root.string();
     const std::string operation_text(operation);
+    const auto progress_token = CreateInstallerProgressToken();
+    const auto progress_path =
+        InstallerProgressPath(runtime_root, progress_token);
     std::vector<std::string> arguments{
         helper_text, "--runtime-root", root_text,
-        "--metadata-root", metadata_text, operation_text, value};
+        "--metadata-root", metadata_text, operation_text, value,
+        "--progress-token", progress_token};
     if (elevate) arguments.emplace_back("--all-users");
     std::vector<char*> native_arguments;
     native_arguments.reserve(arguments.size() + 1);
@@ -219,8 +255,17 @@ int RunHelper(
         ::execv(helper_text.c_str(), native_arguments.data());
         ::_exit(127);
     }
+    std::optional<InstallerHelperProgress> previous;
     int status = 0;
-    if (::waitpid(child, &status, 0) != child || !WIFEXITED(status)) {
+    pid_t waited = 0;
+    while ((waited = ::waitpid(child, &status, WNOHANG)) == 0) {
+        PollHelperProgress(progress_path, observer, previous);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    PollHelperProgress(progress_path, observer, previous);
+    std::error_code cleanup_error;
+    std::filesystem::remove(progress_path, cleanup_error);
+    if (waited != child || !WIFEXITED(status)) {
         error = "Waiting for the signed pack helper failed";
         return -1;
     }
@@ -361,7 +406,8 @@ public:
     }
 
     InstallerOperationResult InstallOrUpdate(
-        const std::string& pack_id) override {
+        const std::string& pack_id,
+        const InstallerOperationDetailObserver& observer) override {
         InstallerOperationResult result;
         if (!IsIdentifier(pack_id)) {
             result.message = "The selected pack identity is invalid";
@@ -381,7 +427,7 @@ public:
 #else
             "--pack-id",
 #endif
-            pack_id, error);
+            pack_id, observer, error);
         if (exit_code == 0) {
             result.succeeded = true;
             result.activated = true;
@@ -401,7 +447,8 @@ public:
     }
 
     InstallerOperationResult InstallBase(
-        const std::string& pack_id) override {
+        const std::string& pack_id,
+        const InstallerOperationDetailObserver& observer) override {
         InstallerOperationResult result;
         if (!IsIdentifier(pack_id)) {
             result.message = "The required base identity is invalid";
@@ -421,7 +468,7 @@ public:
 #else
             "--base-pack-id",
 #endif
-            pack_id, error);
+            pack_id, observer, error);
         if (exit_code == 0) {
             result.succeeded = true;
             result.activated = true;
@@ -446,7 +493,8 @@ public:
     }
 
     InstallerOperationResult DeactivateBackend(
-        const std::string& backend) override {
+        const std::string& backend,
+        const InstallerOperationDetailObserver& observer) override {
         InstallerOperationResult result;
         if (backend != "cuda" && backend != "opencl" &&
             backend != "oneapi") {
@@ -467,7 +515,7 @@ public:
 #else
             "--deactivate-backend",
 #endif
-            backend, error);
+            backend, observer, error);
         if (exit_code == 0) {
             result.succeeded = true;
             result.message = backend +
@@ -478,6 +526,61 @@ public:
                       std::to_string(exit_code)
                 : std::move(error);
         }
+        return result;
+    }
+
+    InstallerOperationResult LaunchEngine() override {
+        InstallerOperationResult result;
+        const auto launcher = runtime_root_.parent_path() /
+            runtime::CurrentRuntimeBootstrapperExecutableName();
+        if (!std::filesystem::is_regular_file(launcher)) {
+            result.message =
+                "The installed CyxWiz launcher is missing";
+            return result;
+        }
+#ifdef _WIN32
+        std::wstring command = QuoteWindowsArgument(launcher.native());
+        std::vector<wchar_t> mutable_command(command.begin(), command.end());
+        mutable_command.push_back(L'\0');
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION process{};
+        if (!::CreateProcessW(
+                launcher.c_str(), mutable_command.data(), nullptr, nullptr,
+                FALSE, 0, nullptr, launcher.parent_path().c_str(),
+                &startup, &process)) {
+            result.message = "Cannot launch CyxWiz; Win32 error " +
+                std::to_string(::GetLastError());
+            return result;
+        }
+        ::CloseHandle(process.hThread);
+        ::CloseHandle(process.hProcess);
+#else
+        const pid_t intermediate = ::fork();
+        if (intermediate < 0) {
+            result.message = "Cannot fork the installed CyxWiz launcher";
+            return result;
+        }
+        if (intermediate == 0) {
+            const pid_t child = ::fork();
+            if (child == 0) {
+                ::setsid();
+                ::chdir(launcher.parent_path().c_str());
+                ::execl(launcher.c_str(), launcher.c_str(), nullptr);
+                ::_exit(127);
+            }
+            ::_exit(child < 0 ? 127 : 0);
+        }
+        int status = 0;
+        if (::waitpid(intermediate, &status, 0) != intermediate ||
+            !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            result.message = "Cannot launch the installed CyxWiz process";
+            return result;
+        }
+#endif
+        result.succeeded = true;
+        result.activated = true;
+        result.message = "CyxWiz launched";
         return result;
     }
 

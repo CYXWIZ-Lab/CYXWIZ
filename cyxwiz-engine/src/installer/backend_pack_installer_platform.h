@@ -2,8 +2,10 @@
 
 #include "core/backend_pack_manager_model.h"
 #include "core/installer_verification_summary.h"
+#include "installer_progress_channel.h"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -30,6 +32,9 @@ struct InstallerCatalogRefreshResult {
     std::string message;
 };
 
+using InstallerOperationDetailObserver =
+    std::function<void(const InstallerHelperProgress &)>;
+
 class BackendPackInstallerPlatform {
 public:
     virtual ~BackendPackInstallerPlatform() = default;
@@ -37,11 +42,15 @@ public:
     virtual InstallerCatalogState Refresh() = 0;
     virtual InstallerCatalogRefreshResult RefreshOnline() = 0;
     virtual InstallerOperationResult InstallBase(
-        const std::string& pack_id) = 0;
+        const std::string& pack_id,
+        const InstallerOperationDetailObserver& observer = {}) = 0;
     virtual InstallerOperationResult InstallOrUpdate(
-        const std::string& pack_id) = 0;
+        const std::string& pack_id,
+        const InstallerOperationDetailObserver& observer = {}) = 0;
     virtual InstallerOperationResult DeactivateBackend(
-        const std::string& backend) = 0;
+        const std::string& backend,
+        const InstallerOperationDetailObserver& observer = {}) = 0;
+    virtual InstallerOperationResult LaunchEngine() = 0;
     virtual std::string PlatformName() const = 0;
 };
 

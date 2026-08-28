@@ -39,6 +39,7 @@ endif()
 
 add_executable(cyxwiz-backend-pack-installer
     "${_cyxwiz_installer_engine_dir}/src/backend_pack_installer_main.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_progress_channel.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_qualification_adapter.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_service.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_snapshot.cpp"
@@ -79,6 +80,7 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/installer_pack_presentation.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_operation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/installer/installer_progress_channel.cpp"
     )
     target_include_directories(test_backend_pack_manager_model PRIVATE
         "${_cyxwiz_installer_engine_dir}/src"
@@ -89,6 +91,7 @@ if(CYXWIZ_BUILD_TESTS)
     )
     target_link_libraries(test_backend_pack_manager_model PRIVATE
         cyxwiz-backend-pack-service
+        nlohmann_json::nlohmann_json
     )
     set_target_properties(test_backend_pack_manager_model PROPERTIES
         CXX_STANDARD 20
@@ -297,6 +300,7 @@ find_package(OpenGL REQUIRED)
 set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/backend_pack_manager_main.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/backend_pack_installer_platform.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_progress_channel.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_theme.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_view.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_operation.cpp"

@@ -2,8 +2,10 @@
 #include "../src/core/backend_pack_manager_model.h"
 #include "../src/core/installer_pack_presentation.h"
 #include "../src/installer/installer_operation.h"
+#include "../src/installer/installer_progress_channel.h"
 #include "backend_pack_platform.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -500,6 +502,29 @@ void TestInstallLocation() {
         "least-privilege by default");
 }
 
+void TestInstallerProgressChannel() {
+  const auto token = cyxwiz::installer::CreateInstallerProgressToken();
+  Check(cyxwiz::installer::IsInstallerProgressToken(token) &&
+            !cyxwiz::installer::IsInstallerProgressToken("../escape"),
+        "Progress tokens must be bounded path-safe identities");
+  const auto root = std::filesystem::temp_directory_path() /
+                    ("cyxwiz-progress-test-" + token);
+  const auto path = cyxwiz::installer::InstallerProgressPath(root, token);
+  const cyxwiz::installer::InstallerHelperProgress expected{
+      "acquiring", 64, 128, 0, 0, "Downloading test package"};
+  Check(!path.empty() &&
+            cyxwiz::installer::PublishInstallerProgress(path, expected),
+        "The helper must publish a bounded progress snapshot");
+  const auto actual = cyxwiz::installer::ReadInstallerProgress(path);
+  Check(actual.has_value() && actual->stage == expected.stage &&
+            actual->completed_bytes == expected.completed_bytes &&
+            actual->total_bytes == expected.total_bytes &&
+            actual->message == expected.message,
+        "The GUI must read the exact helper progress snapshot");
+  std::error_code cleanup_error;
+  std::filesystem::remove_all(root, cleanup_error);
+}
+
 class RecordingInstallerPlatform final
     : public cyxwiz::installer::BackendPackInstallerPlatform {
 public:
@@ -509,21 +534,41 @@ public:
   }
 
   cyxwiz::installer::InstallerOperationResult
-  InstallBase(const std::string &pack_id) override {
+  InstallBase(
+      const std::string &pack_id,
+      const cyxwiz::installer::InstallerOperationDetailObserver &observer)
+      override {
     calls.push_back("base:" + pack_id);
+    if (observer)
+      observer({"acquiring", 50, 100, 0, 0, "Downloading CPU Engine"});
     return Result(pack_id);
   }
 
   cyxwiz::installer::InstallerOperationResult
-  InstallOrUpdate(const std::string &pack_id) override {
+  InstallOrUpdate(
+      const std::string &pack_id,
+      const cyxwiz::installer::InstallerOperationDetailObserver &observer)
+      override {
     calls.push_back("pack:" + pack_id);
+    if (observer)
+      observer({"extracting", 75, 100, 3, 4, "Extracting backend"});
     return Result(pack_id);
   }
 
   cyxwiz::installer::InstallerOperationResult
-  DeactivateBackend(const std::string &backend) override {
+  DeactivateBackend(
+      const std::string &backend,
+      const cyxwiz::installer::InstallerOperationDetailObserver &observer)
+      override {
     calls.push_back("deactivate:" + backend);
+    if (observer)
+      observer({"removing", 0, 0, 0, 0, "Deactivating backend"});
     return Result(backend);
+  }
+
+  cyxwiz::installer::InstallerOperationResult LaunchEngine() override {
+    calls.push_back("launch");
+    return {true, true, "launched"};
   }
 
   std::string PlatformName() const override { return "test"; }
@@ -558,7 +603,13 @@ void TestInstallerPlanExecution() {
                                          "pack:opencl-v1",
                                          "deactivate:oneapi"} &&
             !progress.empty() && progress.back().completed_steps == 4 &&
-            progress.back().total_steps == 4,
+            progress.back().total_steps == 4 &&
+            progress.back().overall_fraction == 1.0f &&
+            std::any_of(progress.begin(), progress.end(), [](const auto &item) {
+              return item.total_bytes == 100 &&
+                     item.overall_fraction > 0.0f &&
+                     item.overall_fraction < 1.0f;
+            }),
         "Plan execution must report truthful steps and preserve operation "
         "order");
 
@@ -584,6 +635,7 @@ int main() {
   TestCatalogAdapter();
   TestDisplayFormatting();
   TestInstallLocation();
+  TestInstallerProgressChannel();
   TestInstallerPackPresentation();
   TestInstallerPlanExecution();
   std::cout << "Backend pack manager model tests passed\n";
