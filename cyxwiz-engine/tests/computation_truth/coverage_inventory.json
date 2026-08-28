@@ -608,10 +608,10 @@
       "contract": "Full-dataset denominators and degenerate-target behavior match sklearn.",
       "supported": "double host vectors; TrainingExecutor Float32 batches",
       "oracle": "scikit-learn",
-      "tests": ["test_training_executor_arrow_parquet", "test_training_executor_arrow_parquet --uneven-epoch-metrics-only"],
-      "execution": "bounded reporting/host evaluation boundary",
-      "status": "partial",
-      "gaps": ["complete independent fixture"]
+      "tests": ["cyxwiz-tests:[regression_metrics]", "test_training_executor_arrow_parquet", "test_training_executor_arrow_parquet --uneven-epoch-metrics-only"],
+      "execution": "bounded host-vector evaluation with explicit finite-input validation; TrainingExecutor accumulates device-resident absolute/squared-error totals and performs bounded reporting readback",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LIFE-COMPLETE-001",

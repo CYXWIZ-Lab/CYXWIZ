@@ -109,7 +109,7 @@ struct CYXWIZ_API RegressionMetrics {
     double rmse = 0.0;      // Root Mean Squared Error
     double mae = 0.0;       // Mean Absolute Error
     double r_squared = 0.0; // Coefficient of determination (R²)
-    double mape = 0.0;      // Mean Absolute Percentage Error
+    double mape = 0.0;      // sklearn relative MAPE ratio (1.0 == 100%)
     double max_error = 0.0; // Maximum absolute error
 
     bool success = false;

@@ -25,6 +25,7 @@ add_executable(cyxwiz-tests
     unit/test_arrayfire_backend_utils.cpp
     unit/test_arrayfire_backend_smoke.cpp
     unit/test_loss.cpp
+    unit/test_model_evaluation.cpp
     unit/test_device.cpp
     unit/test_optimizer.cpp
     unit/test_scheduler.cpp
@@ -64,6 +65,13 @@ set(CYXWIZ_TRAINING_CORE_FIXTURE_PATH
 set_source_files_properties(unit/test_scheduler.cpp PROPERTIES
     COMPILE_DEFINITIONS
         "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set(CYXWIZ_REGRESSION_METRICS_FIXTURE_PATH
+    "${CMAKE_SOURCE_DIR}/cyxwiz-engine/tests/computation_truth/fixtures/regression_metrics_sklearn.json"
+)
+set_source_files_properties(unit/test_model_evaluation.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_REGRESSION_METRICS_FIXTURE_PATH=\"${CYXWIZ_REGRESSION_METRICS_FIXTURE_PATH}\""
 )
 set_source_files_properties(unit/test_flatten_layer.cpp PROPERTIES
     COMPILE_DEFINITIONS
