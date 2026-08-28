@@ -1,5 +1,6 @@
 #include "../src/core/backend_pack_catalog_adapter.h"
 #include "../src/core/backend_pack_manager_model.h"
+#include "../src/core/installer_pack_presentation.h"
 #include "../src/installer/installer_operation.h"
 #include "backend_pack_platform.h"
 
@@ -100,6 +101,8 @@ void TestInstallerChoices() {
       {"opencl-foreign"});
   Check(!machine_rejected.valid,
         "Custom must reject a proven-incompatible pack");
+  Check(!cyxwiz::IsBackendPackSelectableForInstaller(incompatible),
+        "The component selector must disable proven-incompatible packs");
   const auto empty_custom = cyxwiz::ResolveBackendPackInstallerSelection(
       cyxwiz::BackendPackInstallChoice::Custom, records);
   Check(!empty_custom.valid,
@@ -116,6 +119,50 @@ void TestInstallerChoices() {
             std::vector{diagnostic, blocked, base}),
         "Unavailable and blocked optional packs must not enable Custom "
         "selection");
+}
+
+void TestInstallerPackPresentation() {
+  auto pack = Pack("cuda-v1", cyxwiz::BackendPackCatalogSupport::Supported,
+                   true);
+  pack.backend = "cuda";
+  pack.active = true;
+  pack.delivery_metadata_available = true;
+  pack.compatibility->verification_status =
+      cyxwiz::runtime::BackendPackRouteVerificationStatus::Passed;
+  pack.compatibility->training_authorization =
+      cyxwiz::runtime::BackendPackTrainingAuthorizationStatus::Authorized;
+  pack.compatibility->performance_status =
+      cyxwiz::runtime::BackendPackPerformanceStatus::PreferredMeasured;
+  pack.compatibility->install_recommendation =
+      cyxwiz::runtime::BackendPackInstallRecommendation::Recommended;
+  auto presentation = cyxwiz::BuildInstallerPackPresentation(pack);
+  Check(presentation.status == "Best verified" &&
+            presentation.tone ==
+                cyxwiz::InstallerPackPresentationTone::Success,
+        "the preferred verified route must have a customer-safe best label");
+
+  pack.compatibility->verification_status =
+      cyxwiz::runtime::BackendPackRouteVerificationStatus::Crashed;
+  pack.compatibility->install_recommendation = cyxwiz::runtime::
+      BackendPackInstallRecommendation::AvailableAfterVerification;
+  presentation = cyxwiz::BuildInstallerPackPresentation(pack);
+  Check(presentation.status == "Verification crashed" &&
+            presentation.explanation.find("ticket") == std::string::npos &&
+            !presentation.action.empty(),
+        "a local crash must show a safe reason and recovery action");
+
+  pack.compatibility->eligibility =
+      cyxwiz::runtime::BackendPackEligibility::Incompatible;
+  pack.compatibility->rule =
+      cyxwiz::runtime::BackendPackCompatibilityRule::MinimumDriver;
+  pack.compatibility->remediation =
+      cyxwiz::runtime::BackendPackRemediation::UpdateDriver;
+  pack.compatibility->install_recommendation =
+      cyxwiz::runtime::BackendPackInstallRecommendation::NotOffered;
+  presentation = cyxwiz::BuildInstallerPackPresentation(pack);
+  Check(presentation.status == "Not compatible" &&
+            presentation.action.find("Update") != std::string::npos,
+        "a minimum-driver mismatch must show bounded remediation");
 }
 
 void TestActionPolicy() {
@@ -537,6 +584,7 @@ int main() {
   TestCatalogAdapter();
   TestDisplayFormatting();
   TestInstallLocation();
+  TestInstallerPackPresentation();
   TestInstallerPlanExecution();
   std::cout << "Backend pack manager model tests passed\n";
   return 0;

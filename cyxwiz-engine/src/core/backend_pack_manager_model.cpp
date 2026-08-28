@@ -213,11 +213,15 @@ bool HasSelectableCustomBackendPack(
     const std::vector<BackendPackManagerRecord> &catalog_records) {
   return std::any_of(catalog_records.begin(), catalog_records.end(),
                      [](const BackendPackManagerRecord &record) {
-                       return record.backend != "cpu" &&
-                              record.delivery_metadata_available &&
-                              CatalogAllowsConsent(record.catalog_support) &&
-                              CompatibilityAllowsConsent(record);
+                       return IsBackendPackSelectableForInstaller(record);
                      });
+}
+
+bool IsBackendPackSelectableForInstaller(
+    const BackendPackManagerRecord &record) {
+  return record.backend != "cpu" && record.delivery_metadata_available &&
+         CatalogAllowsConsent(record.catalog_support) &&
+         CompatibilityAllowsConsent(record);
 }
 
 bool IsBackendPackRecommended(const BackendPackManagerRecord &record) {

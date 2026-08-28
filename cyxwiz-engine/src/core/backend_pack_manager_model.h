@@ -116,6 +116,9 @@ BackendPackInstallerSelection ResolveBackendPackInstallerSelection(
 bool HasSelectableCustomBackendPack(
     const std::vector<BackendPackManagerRecord> &catalog_records);
 
+bool IsBackendPackSelectableForInstaller(
+    const BackendPackManagerRecord &record);
+
 bool IsBackendPackRecommended(const BackendPackManagerRecord &record);
 
 BackendPackInstallerPlan BuildBackendPackInstallerPlan(

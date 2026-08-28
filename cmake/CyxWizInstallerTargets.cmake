@@ -77,6 +77,7 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/tests/test_backend_pack_manager_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_catalog_adapter.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/installer_pack_presentation.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_operation.cpp"
     )
     target_include_directories(test_backend_pack_manager_model PRIVATE
@@ -304,6 +305,7 @@ set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_catalog_adapter.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_decision_reconciliation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/core/installer_pack_presentation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/installer_verification_summary.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_snapshot.cpp"
 )

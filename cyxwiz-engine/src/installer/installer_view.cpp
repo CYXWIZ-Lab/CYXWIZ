@@ -1,5 +1,6 @@
 #include "installer_view.h"
 
+#include "core/installer_pack_presentation.h"
 #include "gui/icons.h"
 
 #include <imgui.h>
@@ -57,30 +58,18 @@ const char *BackendDescription(std::string_view backend) {
   return "Optional signed compute package.";
 }
 
-const char *PackState(const BackendPackManagerRecord &record) {
-  if (!record.delivery_metadata_available && !record.installed) {
-    return "Unavailable";
-  }
-  if (record.update_available)
-    return "Update available";
-  if (record.active)
-    return "Installed and active";
-  if (record.installed)
-    return "Installed";
-  return "Available";
-}
-
-ImVec4 PackStateColor(const BackendPackManagerRecord &record) {
-  if (record.active || record.training_authorized)
+ImVec4 PackToneColor(InstallerPackPresentationTone tone) {
+  switch (tone) {
+  case InstallerPackPresentationTone::Success:
     return kSuccess;
-  if (record.update_available ||
-      record.catalog_support == BackendPackCatalogSupport::Diagnostic) {
+  case InstallerPackPresentationTone::Warning:
     return kWarning;
-  }
-  if (!record.delivery_metadata_available ||
-      record.catalog_support == BackendPackCatalogSupport::Blocked ||
-      record.catalog_support == BackendPackCatalogSupport::Revoked) {
+  case InstallerPackPresentationTone::Danger:
     return kDanger;
+  case InstallerPackPresentationTone::Accent:
+    return kAccent;
+  case InstallerPackPresentationTone::Neutral:
+    return ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
   }
   return kAccent;
 }
@@ -144,7 +133,8 @@ void RenderWorkloads(InstallerViewState &state,
       std::max(185.0f, (ImGui::GetContentRegionAvail().x - gap * 2.0f) / 3.0f);
   const ImVec2 size(card_width, 112.0f);
   if (WorkloadCard("recommended", ICON_FA_GAUGE_HIGH, "Recommended",
-                   "Detected hardware plus catalog-supported packages.",
+                   "Best comparable verified configuration, or CPU when no "
+                   "optional route qualifies.",
                    state.choice == BackendPackInstallChoice::Recommended,
                    !operation_running, size)) {
     state.choice = BackendPackInstallChoice::Recommended;
@@ -179,8 +169,10 @@ void RenderWorkloads(InstallerViewState &state,
          state.custom_selection.contains(record.pack_id));
     if (!included)
       continue;
+    const auto presentation = BuildInstallerPackPresentation(record);
     ImGui::BulletText("%s %s  %s", BackendIcon(record.backend),
-                      BackendName(record.backend), PackState(record));
+                      BackendName(record.backend),
+                      presentation.status.c_str());
   }
 }
 
@@ -203,12 +195,10 @@ void RenderComponents(InstallerViewState &state,
     ImGui::PushID(record.pack_id.c_str());
     ImGui::PushStyleColor(ImGuiCol_ChildBg,
                           ImVec4(0.055f, 0.115f, 0.19f, 1.0f));
-    ImGui::BeginChild("component", ImVec2(0.0f, 108.0f),
+    ImGui::BeginChild("component", ImVec2(0.0f, 154.0f),
                       ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
-    const bool selectable =
-        record.backend != "cpu" && record.delivery_metadata_available &&
-        (record.catalog_support == BackendPackCatalogSupport::Supported ||
-         record.catalog_support == BackendPackCatalogSupport::Diagnostic);
+    const bool selectable = IsBackendPackSelectableForInstaller(record);
+    const auto presentation = BuildInstallerPackPresentation(record);
     bool selected = record.backend == "cpu" ||
                     state.custom_selection.contains(record.pack_id);
     ImGui::BeginDisabled(!selectable || operation_running);
@@ -233,7 +223,8 @@ void RenderComponents(InstallerViewState &state,
       ImGui::TextColored(kSuccess, "Recommended");
     }
     ImGui::SameLine(ImGui::GetWindowWidth() - 175.0f);
-    ImGui::TextColored(PackStateColor(record), "%s", PackState(record));
+    ImGui::TextColored(PackToneColor(presentation.tone), "%s",
+                       presentation.status.c_str());
     ImGui::Indent(29.0f);
     ImGui::TextDisabled("%s", BackendDescription(record.backend));
     const auto size = FormatBackendPackByteSize(record.download_size_bytes);
@@ -243,6 +234,12 @@ void RenderComponents(InstallerViewState &state,
                             ? "not published"
                             : record.package_version.c_str(),
                         size.c_str(), providers.c_str());
+    ImGui::TextWrapped("%s", presentation.explanation.c_str());
+    if (!presentation.action.empty()) {
+      ImGui::PushStyleColor(ImGuiCol_Text, kWarning);
+      ImGui::TextWrapped("%s", presentation.action.c_str());
+      ImGui::PopStyleColor();
+    }
     if (!record.delivery_metadata_error.empty()) {
       ImGui::TextColored(kDanger, "%s", record.delivery_metadata_error.c_str());
     }
