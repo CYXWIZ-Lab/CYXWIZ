@@ -24,6 +24,19 @@ sign_pack_manifest = importlib.util.module_from_spec(SIGN_SPEC)
 sys.modules[SIGN_SPEC.name] = sign_pack_manifest
 SIGN_SPEC.loader.exec_module(sign_pack_manifest)
 
+PROMOTION_SCRIPT = (
+    Path(__file__).resolve().parents[1]
+    / "scripts"
+    / "prepare_pack_support_promotion.py"
+)
+PROMOTION_SPEC = importlib.util.spec_from_file_location(
+    "prepare_pack_support_promotion", PROMOTION_SCRIPT
+)
+assert PROMOTION_SPEC and PROMOTION_SPEC.loader
+prepare_pack_support_promotion = importlib.util.module_from_spec(PROMOTION_SPEC)
+sys.modules[PROMOTION_SPEC.name] = prepare_pack_support_promotion
+PROMOTION_SPEC.loader.exec_module(prepare_pack_support_promotion)
+
 
 class PackageReleaseTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -347,6 +360,69 @@ class PackageReleaseTests(unittest.TestCase):
             sign_pack_manifest.load_signature_input(
                 archive.with_suffix(".zip.manifest.json")
             )
+
+    def test_support_promotion_changes_only_status_and_requires_resigning(self) -> None:
+        args = self.artifact_args(
+            "pack",
+            "--backend",
+            "opencl",
+            "--arrayfire-dir",
+            str(self.create_arrayfire(opencl=True)),
+            "--generated-utc",
+            "2026-08-13T20:00:00Z",
+            "--signing-key-id",
+            "diagnostic-2026",
+            "--signature",
+            "A" * 86,
+        )
+        _, archive = package_release.build_package(args, self.script)
+        assert archive is not None
+        source = archive.with_suffix(".zip.manifest.json")
+        source_document = json.loads(source.read_text(encoding="utf-8"))
+        output = self.root / "supported" / source.name
+
+        manifest, signature_input = prepare_pack_support_promotion.prepare(
+            source, output
+        )
+
+        promoted = json.loads(manifest.read_text(encoding="utf-8"))
+        expected = json.loads(json.dumps(source_document["signed"]))
+        expected["compatibility"]["support_status"] = "supported"
+        self.assertEqual(expected, promoted["signed"])
+        self.assertEqual([], promoted["signatures"])
+        self.assertEqual(
+            package_release.canonical_json_bytes(promoted["signed"]),
+            signature_input.read_bytes(),
+        )
+        self.assertEqual(
+            "diagnostic",
+            source_document["signed"]["compatibility"]["support_status"],
+        )
+
+    def test_support_promotion_rejects_changed_signature_input(self) -> None:
+        args = self.artifact_args(
+            "pack",
+            "--backend",
+            "opencl",
+            "--arrayfire-dir",
+            str(self.create_arrayfire(opencl=True)),
+            "--generated-utc",
+            "2026-08-13T20:00:00Z",
+            "--signing-key-id",
+            "diagnostic-2026",
+            "--signature",
+            "A" * 86,
+        )
+        _, archive = package_release.build_package(args, self.script)
+        assert archive is not None
+        source = archive.with_suffix(".zip.manifest.json")
+        archive.with_suffix(".zip.signed.json").write_bytes(b"changed")
+
+        with self.assertRaisesRegex(
+            prepare_pack_support_promotion.PromotionError,
+            "does not match",
+        ):
+            prepare_pack_support_promotion.prepare_document(source)
 
     def test_openssl_release_step_signs_and_self_verifies_manifest(self) -> None:
         openssl = shutil.which("openssl")
