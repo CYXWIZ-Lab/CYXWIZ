@@ -33,9 +33,9 @@
       "supported": "all Tensor dtypes",
       "oracle": "engine ownership and host-sync trace contract",
       "tests": ["cyxwiz-tests:[tensor]", "cyxwiz-tests:[tensor_host_access]", "cyxwiz-tests:[source_scan]", "test_training_executor_arrow_parquet"],
-      "execution": "declared host boundary",
+      "execution": "exact source inventory distinguishes compatibility compute from explicit host, transport and selected-native-backend ownership",
       "status": "partial",
-      "gaps": ["remaining legacy compatibility Data audit outside the guarded training manifest"]
+      "gaps": ["50 reviewed legacy Data-access files remain: 34 compatibility-compute owners and 16 explicit host, transport or selected-native-backend owners"]
     },
     {
       "id": "TENSOR-LAYOUT-001",
@@ -256,10 +256,10 @@
       "contract": "Every attempt records operation/reason/backend/context/policy; strict mode rejects before native compute; ArrayFire CPU is not native fallback.",
       "supported": "declared compatibility gaps only",
       "oracle": "engine execution contract",
-      "tests": ["cyxwiz-tests:test_arrayfire_backend_utils", "cyxwiz-tests:test_arrayfire_fallback_source_scan", "test_computation_truth_tfidf_loss", "test_training_executor_arrow_parquet"],
-      "execution": "observed compatibility boundary",
+      "tests": ["cyxwiz-tests:[fallback]", "cyxwiz-tests:[policy]", "cyxwiz-tests:[source_scan]", "cyxwiz-tests:[tensor_host_access]", "test_computation_truth_tfidf_loss", "test_training_executor_arrow_parquet"],
+      "execution": "observed compatibility boundary plus exact reviewed legacy-access ownership inventory",
       "status": "partial",
-      "gaps": ["public-surface audit for unclassified direct CPU branches"]
+      "gaps": ["migrate or explicitly guard the 34 inventoried compatibility-compute files that still use legacy Tensor Data access"]
     },
     {
       "id": "EXEC-SYNC-001",

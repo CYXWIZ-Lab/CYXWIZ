@@ -190,6 +190,8 @@ const char* BackendFallbackReasonName(BackendFallbackReason reason) {
         return "unsupported_dtype";
     case BackendFallbackReason::UnsupportedShape:
         return "unsupported_shape";
+    case BackendFallbackReason::UnsupportedOperation:
+        return "unsupported_operation";
     case BackendFallbackReason::BackendCompileTimeout:
         return "backend_compile_timeout";
     case BackendFallbackReason::BackendInternalError:

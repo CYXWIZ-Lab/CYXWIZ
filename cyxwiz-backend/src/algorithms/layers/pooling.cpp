@@ -31,6 +31,11 @@ void LogPoolingFallbackOnce(
         ClassifyArrayFireBackendFallbackReason(error_message);
     const std::string context = BuildArrayFireBackendFallbackContext(
         BuildTensorShapeContext(tensor_name, tensor.Shape()));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        operation_name,
+        reason,
+        error_message,
+        context);
     const bool log_fallback =
         ShouldLogArrayFireBackendFallbackOnce(
             operation_name, reason, context);
@@ -118,6 +123,9 @@ Tensor MaxPool2DLayer::Forward(const Tensor& input) {
     }
 #endif
 
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        "MaxPool2DLayer::Forward");
     ValidatePoolInput(input, "MaxPool2D");
     const std::vector<size_t>& shape = input.Shape();
     const size_t in_h = shape[0];
@@ -134,9 +142,9 @@ Tensor MaxPool2DLayer::Forward(const Tensor& input) {
 
     Tensor output({out_h, out_w, channels, batch_size}, DataType::Float32);
     max_indices_ = Tensor({out_h, out_w, channels, batch_size}, DataType::Int32);
-    const float* input_data = input.Data<float>();
-    float* output_data = output.Data<float>();
-    int32_t* index_data = max_indices_.Data<int32_t>();
+    const float* input_data = input.ReadData<float>();
+    float* output_data = output.MutableData<float>();
+    int32_t* index_data = max_indices_.MutableData<int32_t>();
 
     for (size_t b = 0; b < batch_size; ++b) {
         for (size_t c = 0; c < channels; ++c) {
@@ -223,6 +231,9 @@ Tensor MaxPool2DLayer::Backward(const Tensor& grad_output) {
     }
 #endif
 
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        "MaxPool2DLayer::Backward");
     ValidatePoolInput(cached_input_, "MaxPool2D");
     if (grad_output.GetDataType() != DataType::Float32) {
         throw std::runtime_error("MaxPool2D backward CPU fallback requires Float32 grad_output");
@@ -244,9 +255,9 @@ Tensor MaxPool2DLayer::Backward(const Tensor& grad_output) {
     const size_t out_h = grad_shape[0];
     const size_t out_w = grad_shape[1];
     Tensor grad_input = Tensor::Zeros(input_shape, DataType::Float32);
-    const float* grad_data = grad_output.Data<float>();
-    const int32_t* index_data = max_indices_.Data<int32_t>();
-    float* grad_input_data = grad_input.Data<float>();
+    const float* grad_data = grad_output.ReadData<float>();
+    const int32_t* index_data = max_indices_.ReadData<int32_t>();
+    float* grad_input_data = grad_input.MutableData<float>();
 
     for (size_t b = 0; b < batch_size; ++b) {
         for (size_t c = 0; c < channels; ++c) {
@@ -333,6 +344,9 @@ Tensor AvgPool2DLayer::Forward(const Tensor& input) {
     }
 #endif
 
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        "AvgPool2DLayer::Forward");
     ValidatePoolInput(input, "AvgPool2D");
     const std::vector<size_t>& shape = input.Shape();
     const size_t in_h = shape[0];
@@ -348,8 +362,8 @@ Tensor AvgPool2DLayer::Forward(const Tensor& input) {
     const size_t out_w = (padded_w - static_cast<size_t>(pool_size_)) / static_cast<size_t>(stride_) + 1;
 
     Tensor output({out_h, out_w, channels, batch_size}, DataType::Float32);
-    const float* input_data = input.Data<float>();
-    float* output_data = output.Data<float>();
+    const float* input_data = input.ReadData<float>();
+    float* output_data = output.MutableData<float>();
     const float scale = 1.0f / static_cast<float>(pool_size_ * pool_size_);
 
     for (size_t b = 0; b < batch_size; ++b) {
@@ -428,6 +442,9 @@ Tensor AvgPool2DLayer::Backward(const Tensor& grad_output) {
     }
 #endif
 
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        "AvgPool2DLayer::Backward");
     ValidatePoolInput(cached_input_, "AvgPool2D");
     if (grad_output.GetDataType() != DataType::Float32) {
         throw std::runtime_error("AvgPool2D backward CPU fallback requires Float32 grad_output");
@@ -445,8 +462,8 @@ Tensor AvgPool2DLayer::Backward(const Tensor& grad_output) {
     const size_t out_h = grad_shape[0];
     const size_t out_w = grad_shape[1];
     Tensor grad_input = Tensor::Zeros(input_shape, DataType::Float32);
-    const float* grad_data = grad_output.Data<float>();
-    float* grad_input_data = grad_input.Data<float>();
+    const float* grad_data = grad_output.ReadData<float>();
+    float* grad_input_data = grad_input.MutableData<float>();
     const float scale = 1.0f / static_cast<float>(pool_size_ * pool_size_);
 
     for (size_t b = 0; b < batch_size; ++b) {
@@ -480,17 +497,28 @@ Tensor AvgPool2DLayer::Backward(const Tensor& grad_output) {
 // ============================================================================
 
 Tensor GlobalAvgPool2DLayer::Forward(const Tensor& input) {
-    cached_input_ = input;
-
     ValidatePoolInput(input, "GlobalAvgPool2D");
     const std::vector<size_t>& shape = input.Shape();
     const size_t in_h = shape[0];
     const size_t in_w = shape[1];
     const size_t channels = shape[2];
     const size_t batch_size = shape[3];
+
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext("input", shape));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "GlobalAvgPool2DLayer::Forward",
+        BackendFallbackReason::UnsupportedOperation,
+        "ArrayFire implementation unavailable",
+        context);
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        "GlobalAvgPool2DLayer::Forward");
+    cached_input_ = input;
+
     Tensor output({channels, batch_size}, DataType::Float32);
-    const float* input_data = input.Data<float>();
-    float* output_data = output.Data<float>();
+    const float* input_data = input.ReadData<float>();
+    float* output_data = output.MutableData<float>();
     const float scale = 1.0f / static_cast<float>(in_h * in_w);
 
     for (size_t b = 0; b < batch_size; ++b) {
@@ -522,9 +550,20 @@ Tensor GlobalAvgPool2DLayer::Backward(const Tensor& grad_output) {
         throw std::runtime_error("GlobalAvgPool2D backward gradient shape mismatch");
     }
 
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext("grad_output", grad_output.Shape()));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "GlobalAvgPool2DLayer::Backward",
+        BackendFallbackReason::UnsupportedOperation,
+        "ArrayFire implementation unavailable",
+        context);
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        "GlobalAvgPool2DLayer::Backward");
+
     Tensor grad_input(input_shape, DataType::Float32);
-    const float* grad_data = grad_output.Data<float>();
-    float* grad_input_data = grad_input.Data<float>();
+    const float* grad_data = grad_output.ReadData<float>();
+    float* grad_input_data = grad_input.MutableData<float>();
     const float scale = 1.0f / static_cast<float>(in_h * in_w);
 
     for (size_t b = 0; b < batch_size; ++b) {

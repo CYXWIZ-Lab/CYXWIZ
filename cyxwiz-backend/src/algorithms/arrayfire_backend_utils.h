@@ -16,6 +16,7 @@ enum class BackendFallbackReason {
     GpuOutOfMemory,
     UnsupportedDtype,
     UnsupportedShape,
+    UnsupportedOperation,
     BackendCompileTimeout,
     BackendInternalError,
 };
