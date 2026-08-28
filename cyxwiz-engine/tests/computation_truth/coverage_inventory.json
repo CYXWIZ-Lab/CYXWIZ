@@ -35,7 +35,7 @@
       "tests": ["cyxwiz-tests:[tensor]", "cyxwiz-tests:[tensor_host_access]", "cyxwiz-tests:[source_scan]", "test_training_executor_arrow_parquet"],
       "execution": "exact source inventory distinguishes compatibility compute from explicit host, transport and selected-native-backend ownership",
       "status": "partial",
-      "gaps": ["49 reviewed legacy Data-access files remain: 33 compatibility-compute owners and 16 explicit host, transport or selected-native-backend owners"]
+      "gaps": ["48 reviewed legacy Data-access files remain: 32 compatibility-compute owners and 16 explicit host, transport or selected-native-backend owners"]
     },
     {
       "id": "TENSOR-LAYOUT-001",
@@ -259,7 +259,7 @@
       "tests": ["cyxwiz-tests:[fallback]", "cyxwiz-tests:[policy]", "cyxwiz-tests:[source_scan]", "cyxwiz-tests:[tensor_host_access]", "test_computation_truth_tfidf_loss", "test_training_executor_arrow_parquet"],
       "execution": "observed compatibility boundary plus exact reviewed legacy-access ownership inventory",
       "status": "partial",
-      "gaps": ["migrate or explicitly guard the 33 inventoried compatibility-compute files that still use legacy Tensor Data access"]
+      "gaps": ["migrate or explicitly guard the 32 inventoried compatibility-compute files that still use legacy Tensor Data access"]
     },
     {
       "id": "EXEC-SYNC-001",
@@ -544,10 +544,10 @@
       "contract": "Accumulator, momentum, epsilon, step and update semantics match the selected PyTorch configurations.",
       "supported": "Float32 named parameter maps",
       "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_optimizer"],
-      "execution": "audit needed",
+      "tests": ["cyxwiz-tests:[optimizer]", "cyxwiz-tests:[fallback]", "cyxwiz-tests:[checkpoint]", "test_computation_truth_tfidf_loss"],
+      "execution": "ArrayFire-first; strict ArrayFire CPU proves three-step parameters and accumulator state; native CPU compatibility is explicitly observed and attributed",
       "status": "partial",
-      "gaps": ["multi-step fixtures", "state serialization", "fallback/residency"]
+      "gaps": ["accelerator matrix"]
     },
     {
       "id": "OPT-LAMB-001",

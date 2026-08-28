@@ -63,23 +63,9 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
         const Tensor& grad = grad_it->second;
         size_t num_elements = param.NumElements();
 
-        bool use_native_cpu = !arrayfire_available;
-        if (ShouldForceArrayFireBackendFallbackForTesting(kOperation)) {
-            optimizer_detail::LogOptimizerFallbackOnce(
-                kOperation,
-                name,
-                param,
-                BackendFallbackReason::GpuBackendException,
-                "forced ArrayFire backend fallback test hook");
-            use_native_cpu = true;
-        } else if (use_native_cpu) {
-            optimizer_detail::LogOptimizerFallbackOnce(
-                kOperation,
-                name,
-                param,
-                BackendFallbackReason::BackendUnavailable,
-                "ArrayFire backend unavailable");
-        }
+        const bool use_native_cpu =
+            optimizer_detail::PrepareOptimizerNativeCpuFallback(
+                kOperation, name, param, arrayfire_available);
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
         if (!use_native_cpu) {

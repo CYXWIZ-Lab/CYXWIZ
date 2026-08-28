@@ -69,6 +69,467 @@
         "rtol": 1e-05
       }
     },
+    "adaptive_optimizer_multistep_f32": {
+      "adadelta": {
+        "dtype": "float32",
+        "expected_steps": [
+          {
+            "parameter": {
+              "shape": [
+                3
+              ],
+              "values": [
+                0.9984189867973328,
+                -1.998418927192688,
+                0.4984193742275238
+              ]
+            },
+            "state": {
+              "acc_delta": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  9.998401537814061e-07,
+                  9.999602070820401e-07,
+                  9.993606226998963e-07
+                ]
+              },
+              "square_avg": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  0.0062500000931322575,
+                  0.02500000037252903,
+                  0.0015625000232830644
+                ]
+              }
+            },
+            "step_count": 1
+          },
+          {
+            "parameter": {
+              "shape": [
+                3
+              ],
+              "values": [
+                0.9994614720344543,
+                -1.9994614124298096,
+                0.49624404311180115
+              ]
+            },
+            "state": {
+              "acc_delta": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  1.3345434126676992e-06,
+                  1.3347230378712993e-06,
+                  2.792238774418365e-06
+                ]
+              },
+              "square_avg": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  0.007187499664723873,
+                  0.028749998658895493,
+                  0.02640625089406967
+                ]
+              }
+            },
+            "step_count": 2
+          },
+          {
+            "parameter": {
+              "shape": [
+                3
+              ],
+              "values": [
+                0.9971736073493958,
+                -1.9983958005905151,
+                0.49812135100364685
+              ]
+            },
+            "state": {
+              "acc_delta": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  3.2948164516710676e-06,
+                  1.6554628246012726e-06,
+                  3.922731593775097e-06
+                ]
+              },
+              "square_avg": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  0.06271874904632568,
+                  0.03212499991059303,
+                  0.037828125059604645
+                ]
+              }
+            },
+            "step_count": 3
+          }
+        ],
+        "gradients": [
+          {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.25,
+              -0.5,
+              0.125
+            ]
+          },
+          {
+            "shape": [
+              3
+            ],
+            "values": [
+              -0.125,
+              0.25,
+              0.5
+            ]
+          },
+          {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.75,
+              -0.25,
+              -0.375
+            ]
+          }
+        ],
+        "hyperparameters": {
+          "epsilon": 1e-06,
+          "learning_rate": 0.5,
+          "rho": 0.9
+        },
+        "initial_parameter": {
+          "shape": [
+            3
+          ],
+          "values": [
+            1.0,
+            -2.0,
+            0.5
+          ]
+        },
+        "operation": "torch.optim.Adadelta",
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        },
+        "zero_grad_contract": "clears gradients without resetting optimizer state"
+      },
+      "adagrad": {
+        "dtype": "float32",
+        "expected_steps": [
+          {
+            "parameter": {
+              "shape": [
+                3
+              ],
+              "values": [
+                0.8999999761581421,
+                -1.899999976158142,
+                0.4000000059604645
+              ]
+            },
+            "state": {
+              "sum": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  0.0625,
+                  0.25,
+                  0.015625
+                ]
+              }
+            },
+            "step_count": 1
+          },
+          {
+            "parameter": {
+              "shape": [
+                3
+              ],
+              "values": [
+                0.9447213411331177,
+                -1.9447213411331177,
+                0.3029857575893402
+              ]
+            },
+            "state": {
+              "sum": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  0.078125,
+                  0.3125,
+                  0.265625
+                ]
+              }
+            },
+            "step_count": 2
+          },
+          {
+            "parameter": {
+              "shape": [
+                3
+              ],
+              "values": [
+                0.8510170578956604,
+                -1.9038965702056885,
+                0.36182060837745667
+              ]
+            },
+            "state": {
+              "sum": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  0.640625,
+                  0.375,
+                  0.40625
+                ]
+              }
+            },
+            "step_count": 3
+          }
+        ],
+        "gradients": [
+          {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.25,
+              -0.5,
+              0.125
+            ]
+          },
+          {
+            "shape": [
+              3
+            ],
+            "values": [
+              -0.125,
+              0.25,
+              0.5
+            ]
+          },
+          {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.75,
+              -0.25,
+              -0.375
+            ]
+          }
+        ],
+        "hyperparameters": {
+          "epsilon": 1e-10,
+          "learning_rate": 0.1
+        },
+        "initial_parameter": {
+          "shape": [
+            3
+          ],
+          "values": [
+            1.0,
+            -2.0,
+            0.5
+          ]
+        },
+        "operation": "torch.optim.Adagrad",
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        },
+        "zero_grad_contract": "clears gradients without resetting optimizer state"
+      },
+      "rmsprop": {
+        "dtype": "float32",
+        "expected_steps": [
+          {
+            "parameter": {
+              "shape": [
+                3
+              ],
+              "values": [
+                0.9683772325515747,
+                -1.9683772325515747,
+                0.4683772325515747
+              ]
+            },
+            "state": {
+              "momentum_buffer": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  3.1622774600982666,
+                  -3.1622774600982666,
+                  3.1622767448425293
+                ]
+              },
+              "square_avg": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  0.0062500000931322575,
+                  0.02500000037252903,
+                  0.0015625000232830644
+                ]
+              }
+            },
+            "step_count": 1
+          },
+          {
+            "parameter": {
+              "shape": [
+                3
+              ],
+              "values": [
+                0.9673100113868713,
+                -1.9673100709915161,
+                0.42179661989212036
+              ]
+            },
+            "state": {
+              "momentum_buffer": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  0.1067192554473877,
+                  -0.1067192554473877,
+                  4.6580610275268555
+                ]
+              },
+              "square_avg": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  0.007187499664723873,
+                  0.028749998658895493,
+                  0.02640625089406967
+                ]
+              }
+            },
+            "step_count": 2
+          },
+          {
+            "parameter": {
+              "shape": [
+                3
+              ],
+              "values": [
+                0.9368287920951843,
+                -1.952828288078308,
+                0.4177870750427246
+              ]
+            },
+            "state": {
+              "momentum_buffer": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  3.048123359680176,
+                  -1.4481803178787231,
+                  0.4009559154510498
+                ]
+              },
+              "square_avg": {
+                "shape": [
+                  3
+                ],
+                "values": [
+                  0.06271874904632568,
+                  0.03212499991059303,
+                  0.037828125059604645
+                ]
+              }
+            },
+            "step_count": 3
+          }
+        ],
+        "gradients": [
+          {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.25,
+              -0.5,
+              0.125
+            ]
+          },
+          {
+            "shape": [
+              3
+            ],
+            "values": [
+              -0.125,
+              0.25,
+              0.5
+            ]
+          },
+          {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.75,
+              -0.25,
+              -0.375
+            ]
+          }
+        ],
+        "hyperparameters": {
+          "alpha": 0.9,
+          "epsilon": 1e-08,
+          "learning_rate": 0.01,
+          "momentum": 0.5
+        },
+        "initial_parameter": {
+          "shape": [
+            3
+          ],
+          "values": [
+            1.0,
+            -2.0,
+            0.5
+          ]
+        },
+        "operation": "torch.optim.RMSprop",
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        },
+        "zero_grad_contract": "clears gradients without resetting optimizer state"
+      }
+    },
     "cross_entropy_index_mean_f32": {
       "dtype": "float32",
       "expected": {

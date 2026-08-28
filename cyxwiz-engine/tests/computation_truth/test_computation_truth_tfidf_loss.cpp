@@ -5,6 +5,7 @@
 #include <cyxwiz/cyxwiz.h>
 #include <cyxwiz/layers/linear.h>
 #include <cyxwiz/loss.h>
+#include <cyxwiz/optimizers/adaptive.h>
 #include <cyxwiz/optimizers/adam.h>
 #include <cyxwiz/optimizers/sgd.h>
 #include <cyxwiz/tensor.h>
@@ -733,6 +734,162 @@ void TestSGDMomentumMultiStepParity(const json& cases) {
     }
 }
 
+template <typename OptimizerFactory>
+void TestAdaptiveOptimizerCase(
+    const json& test_case,
+    const std::string& label,
+    OptimizerFactory&& factory,
+    const std::vector<std::pair<std::string, std::string>>& state_mapping) {
+    Check(test_case.value("dtype", "") == "float32",
+          label + " fixture dtype mismatch");
+    Check(test_case.value("zero_grad_contract", "") ==
+              "clears gradients without resetting optimizer state",
+          label + " zero_grad fixture contract mismatch");
+    const auto initial = ReadFloatValues(
+        test_case.at("initial_parameter"), label + " initial parameter");
+    const auto parameter_shape = ReadShape(
+        test_case.at("initial_parameter"), label + " initial parameter");
+    const auto& gradients = test_case.at("gradients");
+    const auto& expected_steps = test_case.at("expected_steps");
+    Check(gradients.size() == expected_steps.size(),
+          label + " fixture gradient/step count mismatch");
+
+    std::map<std::string, cyxwiz::Tensor> parameters = {
+        {"weight", cyxwiz::Tensor(parameter_shape, initial.data(),
+                                  cyxwiz::DataType::Float32)},
+    };
+    auto optimizer = factory();
+    cyxwiz::OptimizerState checkpoint;
+    std::map<std::string, cyxwiz::Tensor> checkpoint_parameters;
+
+    for (size_t index = 0; index < gradients.size(); ++index) {
+        const auto gradient_values = ReadFloatValues(
+            gradients.at(index), label + " gradient");
+        const std::map<std::string, cyxwiz::Tensor> step_gradients = {
+            {"weight", cyxwiz::Tensor(
+                           ReadShape(gradients.at(index), label + " gradient"),
+                           gradient_values.data(), cyxwiz::DataType::Float32)},
+        };
+        optimizer->ZeroGrad();
+        optimizer->Step(parameters, step_gradients);
+
+        const auto& expected = expected_steps.at(index);
+        Check(optimizer->GetStepCount() ==
+                  expected.at("step_count").get<int>(),
+              label + " PyTorch step-count parity");
+        CheckTensor(parameters.at("weight"), expected.at("parameter"),
+                    ReadTolerance(test_case),
+                    label + " multi-step parameter");
+
+        cyxwiz::OptimizerState state;
+        std::string error;
+        Check(optimizer->ExportState(state, error),
+              label + " state export failed: " + error);
+        Check(error.empty(), label + " state export returned an error");
+        Check(state.step_count == optimizer->GetStepCount(),
+              label + " exported step count mismatch");
+        for (const auto& [cyxwiz_name, pytorch_name] : state_mapping) {
+            Check(state.tensors.count(cyxwiz_name) == 1,
+                  label + " state is missing " + cyxwiz_name);
+            CheckTensor(state.tensors.at(cyxwiz_name),
+                        expected.at("state").at(pytorch_name),
+                        ReadTolerance(test_case),
+                        label + " state parity for " + pytorch_name);
+        }
+        if (index + 2 == gradients.size()) {
+            checkpoint = state;
+            checkpoint_parameters = parameters;
+        }
+    }
+
+    auto resumed = factory();
+    std::string error;
+    Check(resumed->ImportState(checkpoint, error),
+          label + " state import failed: " + error);
+    Check(error.empty(), label + " state import returned an error");
+    const size_t final_index = gradients.size() - 1;
+    const auto final_gradient_values = ReadFloatValues(
+        gradients.at(final_index), label + " resumed gradient");
+    const std::map<std::string, cyxwiz::Tensor> final_gradients = {
+        {"weight", cyxwiz::Tensor(
+                       ReadShape(
+                           gradients.at(final_index), label + " resumed gradient"),
+                       final_gradient_values.data(), cyxwiz::DataType::Float32)},
+    };
+    resumed->ZeroGrad();
+    resumed->Step(checkpoint_parameters, final_gradients);
+    CheckTensor(checkpoint_parameters.at("weight"),
+                expected_steps.at(final_index).at("parameter"),
+                ReadTolerance(test_case),
+                label + " resumed parameter");
+    Check(resumed->GetStepCount() == optimizer->GetStepCount(),
+          label + " resumed step count mismatch");
+    cyxwiz::OptimizerState resumed_state;
+    Check(resumed->ExportState(resumed_state, error),
+          label + " resumed state export failed: " + error);
+    for (const auto& [cyxwiz_name, pytorch_name] : state_mapping) {
+        Check(resumed_state.tensors.count(cyxwiz_name) == 1,
+              label + " resumed state is missing " + cyxwiz_name);
+        CheckTensor(resumed_state.tensors.at(cyxwiz_name),
+                    expected_steps.at(final_index).at("state").at(pytorch_name),
+                    ReadTolerance(test_case),
+                    label + " resumed state parity for " + pytorch_name);
+    }
+}
+
+void TestAdaptiveOptimizerMultiStepParity(const json& cases) {
+    const auto& adaptive = cases.at("adaptive_optimizer_multistep_f32");
+
+    const auto& rmsprop = adaptive.at("rmsprop");
+    Check(rmsprop.value("operation", "") == "torch.optim.RMSprop",
+          "RMSprop fixture operation mismatch");
+    const auto& rmsprop_hyper = rmsprop.at("hyperparameters");
+    TestAdaptiveOptimizerCase(
+        rmsprop,
+        "RMSprop",
+        [&rmsprop_hyper]() {
+            return std::make_unique<cyxwiz::RMSpropOptimizer>(
+                rmsprop_hyper.at("learning_rate").get<double>(),
+                rmsprop_hyper.at("alpha").get<double>(),
+                rmsprop_hyper.at("epsilon").get<double>(),
+                rmsprop_hyper.at("momentum").get<double>());
+        },
+        {{"square_average/weight", "square_avg"},
+         {"momentum_buffer/weight", "momentum_buffer"}});
+
+    const auto& adagrad = adaptive.at("adagrad");
+    Check(adagrad.value("operation", "") == "torch.optim.Adagrad",
+          "AdaGrad fixture operation mismatch");
+    const auto& adagrad_hyper = adagrad.at("hyperparameters");
+    TestAdaptiveOptimizerCase(
+        adagrad,
+        "AdaGrad",
+        [&adagrad_hyper]() {
+            return std::make_unique<cyxwiz::AdaGradOptimizer>(
+                adagrad_hyper.at("learning_rate").get<double>(),
+                adagrad_hyper.at("epsilon").get<double>());
+        },
+        {{"sum/weight", "sum"}});
+
+    const auto& adadelta = adaptive.at("adadelta");
+    Check(adadelta.value("operation", "") == "torch.optim.Adadelta",
+          "Adadelta fixture operation mismatch");
+    const auto& adadelta_hyper = adadelta.at("hyperparameters");
+    TestAdaptiveOptimizerCase(
+        adadelta,
+        "Adadelta",
+        [&adadelta_hyper]() {
+            auto optimizer = std::make_unique<cyxwiz::AdadeltaOptimizer>(
+                adadelta_hyper.at("rho").get<double>(),
+                adadelta_hyper.at("epsilon").get<double>());
+            optimizer->SetLearningRate(
+                adadelta_hyper.at("learning_rate").get<double>());
+            return optimizer;
+        },
+        {{"square_average/weight", "square_avg"},
+         {"accumulated_delta/weight", "acc_delta"}});
+}
+
 void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
     const bool initialized_here = !cyxwiz::IsInitialized();
     if (initialized_here) {
@@ -790,6 +947,7 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestLinearForwardBackwardParity(cases);
         TestAdamWOneStepParity(cases);
         TestSGDMomentumMultiStepParity(cases);
+        TestAdaptiveOptimizerMultiStepParity(cases);
     }
     g_fallback_events = nullptr;
     g_host_sync_events = nullptr;

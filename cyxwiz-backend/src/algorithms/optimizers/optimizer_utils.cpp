@@ -17,6 +17,32 @@ bool OptimizerArrayFireAvailable() {
     return IsCurrentArrayFireBackendAvailable();
 }
 
+bool PrepareOptimizerNativeCpuFallback(
+    const char* operation_name,
+    const std::string& parameter_name,
+    const Tensor& parameter,
+    bool arrayfire_available) {
+    if (ShouldForceArrayFireBackendFallbackForTesting(operation_name)) {
+        LogOptimizerFallbackOnce(
+            operation_name,
+            parameter_name,
+            parameter,
+            BackendFallbackReason::GpuBackendException,
+            "forced ArrayFire backend fallback test hook");
+        return true;
+    }
+    if (!arrayfire_available) {
+        LogOptimizerFallbackOnce(
+            operation_name,
+            parameter_name,
+            parameter,
+            BackendFallbackReason::BackendUnavailable,
+            "ArrayFire backend unavailable");
+        return true;
+    }
+    return false;
+}
+
 void LogOptimizerFallbackOnce(
     const char* operation_name,
     const std::string& parameter_name,

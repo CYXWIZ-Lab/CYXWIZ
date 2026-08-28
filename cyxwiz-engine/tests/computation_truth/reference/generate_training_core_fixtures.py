@@ -1741,6 +1741,103 @@ def sgd_momentum_multistep_case() -> dict[str, Any]:
     }
 
 
+def adaptive_optimizer_multistep_cases() -> dict[str, Any]:
+    gradients = [
+        torch.tensor([0.25, -0.5, 0.125], dtype=torch.float32),
+        torch.tensor([-0.125, 0.25, 0.5], dtype=torch.float32),
+        torch.tensor([0.75, -0.25, -0.375], dtype=torch.float32),
+    ]
+
+    def run_case(
+        optimizer_name: str,
+        hyperparameters: dict[str, float],
+    ) -> dict[str, Any]:
+        parameter = torch.nn.Parameter(
+            torch.tensor([1.0, -2.0, 0.5], dtype=torch.float32)
+        )
+        initial_parameter = parameter.detach().clone()
+        if optimizer_name == "rmsprop":
+            optimizer = torch.optim.RMSprop(
+                [parameter],
+                lr=hyperparameters["learning_rate"],
+                alpha=hyperparameters["alpha"],
+                eps=hyperparameters["epsilon"],
+                momentum=hyperparameters["momentum"],
+                centered=False,
+                weight_decay=0.0,
+                foreach=False,
+            )
+            state_names = ["square_avg", "momentum_buffer"]
+        elif optimizer_name == "adagrad":
+            optimizer = torch.optim.Adagrad(
+                [parameter],
+                lr=hyperparameters["learning_rate"],
+                lr_decay=0.0,
+                weight_decay=0.0,
+                initial_accumulator_value=0.0,
+                eps=hyperparameters["epsilon"],
+                foreach=False,
+            )
+            state_names = ["sum"]
+        elif optimizer_name == "adadelta":
+            optimizer = torch.optim.Adadelta(
+                [parameter],
+                lr=hyperparameters["learning_rate"],
+                rho=hyperparameters["rho"],
+                eps=hyperparameters["epsilon"],
+                weight_decay=0.0,
+                foreach=False,
+            )
+            state_names = ["square_avg", "acc_delta"]
+        else:
+            raise ValueError(f"unsupported adaptive optimizer: {optimizer_name}")
+
+        expected_steps = []
+        for step_count, gradient in enumerate(gradients, start=1):
+            optimizer.zero_grad(set_to_none=True)
+            parameter.grad = gradient.clone()
+            optimizer.step()
+            state = optimizer.state[parameter]
+            expected_steps.append({
+                "step_count": step_count,
+                "parameter": tensor_fixture(parameter),
+                "state": {
+                    name: tensor_fixture(state[name]) for name in state_names
+                },
+            })
+
+        return {
+            "operation": f"torch.optim.{optimizer.__class__.__name__}",
+            "dtype": "float32",
+            "hyperparameters": hyperparameters,
+            "tolerance": {"atol": 1.0e-6, "rtol": 1.0e-6},
+            "initial_parameter": tensor_fixture(initial_parameter),
+            "gradients": [tensor_fixture(gradient) for gradient in gradients],
+            "expected_steps": expected_steps,
+            "zero_grad_contract": "clears gradients without resetting optimizer state",
+        }
+
+    return {
+        "rmsprop": run_case(
+            "rmsprop",
+            {
+                "learning_rate": 0.01,
+                "alpha": 0.9,
+                "epsilon": 1.0e-8,
+                "momentum": 0.5,
+            },
+        ),
+        "adagrad": run_case(
+            "adagrad",
+            {"learning_rate": 0.1, "epsilon": 1.0e-10},
+        ),
+        "adadelta": run_case(
+            "adadelta",
+            {"learning_rate": 0.5, "rho": 0.9, "epsilon": 1.0e-6},
+        ),
+    }
+
+
 def weighted_sampler_case() -> dict[str, Any]:
     class_counts = [3072, 1024]
     labels = torch.repeat_interleave(
@@ -2073,6 +2170,8 @@ def generate_fixture() -> dict[str, Any]:
             "cross_entropy_matrix_f32": cross_entropy_matrix(),
             "adamw_step1_f32": adamw_case(),
             "sgd_momentum_multistep_f32": sgd_momentum_multistep_case(),
+            "adaptive_optimizer_multistep_f32":
+                adaptive_optimizer_multistep_cases(),
             "gradient_accumulation_linear_ce_sgd_f32":
                 gradient_accumulation_matrix(),
             "weighted_sampler_inverse_frequency": weighted_sampler_case(),
