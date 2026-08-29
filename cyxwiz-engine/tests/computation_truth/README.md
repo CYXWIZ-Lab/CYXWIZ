@@ -94,6 +94,15 @@ The broad tracking ticket is:
   identity, no native fallback, and only bounded attributed verification
   readback. Locally incompatible oneAPI routes remain quarantined by device
   qualification and do not block this computation contract.
+- Proves the transformer-owned `DenseLayer` affine primitive against the same
+  generated PyTorch Linear oracle for biased and unbiased rank-1/rank-2
+  forward/input-gradient/parameter-gradient cases and two variable-size SGD
+  updates. Invalid construction, dtype, shape, parameter, and
+  backward-before-forward state fail before compute; supplied parameters are
+  validated atomically. The matrix runs under the same strict ArrayFire CPU
+  and qualified CUDA/OpenCL residency contract. GUI Dense nodes are a separate
+  ownership boundary: ModelBuilder emits `LinearModule`, and activation is an
+  explicit following graph module rather than a hidden DenseLayer property.
 - Rejects native fallback attempts and undeclared host synchronization; only
   bounded, attributed test-output readbacks are allowed.
 - Proves regression losses and every supported CrossEntropy rank use strict

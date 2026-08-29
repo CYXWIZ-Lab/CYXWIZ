@@ -296,18 +296,18 @@
     {
       "id": "LAYER-DENSE-001",
       "family": "layer",
-      "operation": "Dense wrapper forward/backward and activation composition",
+      "operation": "DenseLayer affine forward/backward and transformer parameter-gradient ownership",
       "tier": 1,
       "owner": "cyxwiz-backend/include/cyxwiz/layers/dense.h",
       "implementation": ["cyxwiz-backend/src/algorithms/layers/dense.cpp"],
-      "callers": ["SequentialModel", "graph models"],
-      "contract": "Dense preserves Linear parameter semantics and applies the configured activation exactly once.",
-      "supported": "Float32 configurations exposed by DenseLayer",
-      "oracle": "PyTorch Linear plus activation",
-      "tests": ["cyxwiz-tests:test_dense_layer", "test_training_executor_arrow_parquet"],
-      "execution": "ArrayFire-first where component operations support it",
-      "status": "partial",
-      "gaps": ["PyTorch fixture", "activation variants", "parameter-gradient and residency matrix"]
+      "callers": ["TransformerEncoderLayer", "TransformerDecoderLayer"],
+      "contract": "Forward is input @ weights^T + bias with rank preserved; input/weight/bias gradients use PyTorch sum-over-batch semantics; invalid dimensions, dtypes, shapes and backward-before-forward fail before compute; parameter updates validate atomically. Legacy GetParameters retains grad_* serialization keys while GetGradients exposes the exact optimizer mapping. GUI Dense nodes compile to LinearModule and activation remains a separate graph node.",
+      "supported": "non-empty rank-1/rank-2 Float32, optional bias, positive feature widths",
+      "oracle": "generated PyTorch functional.linear and torch.nn.Linear plus two-step SGD fixture shared with the equivalent Linear primitive",
+      "tests": ["test_computation_truth_tfidf_loss", "cyxwiz-tests:[dense]", "cyxwiz-tests:test_arrayfire_backend_smoke", "test_debug_executor:Dense activation construction contract"],
+      "execution": "ArrayFire-first; strict ArrayFire CPU and every locally qualified CUDA/OpenCL route prove biased/unbiased rank-1/rank-2 forward/backward and two-step multi-batch SGD updates with exact route identity, no native fallback and bounded attributed verification readback; compatibility fallback is CPU-equivalent and strict mode rejects forced fallback; locally incompatible oneAPI routes are explicit device-selection skips",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LAYER-SHAPE-001",

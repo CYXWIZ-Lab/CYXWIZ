@@ -5,7 +5,93 @@
 #include <cyxwiz/tensor.h>
 #include "algorithms/arrayfire_backend_utils.h"
 #include <map>
+#include <stdexcept>
 #include <vector>
+
+TEST_CASE("DenseLayer supports unbiased rank-1 affine gradients",
+          "[dense][layer][rank1]") {
+    cyxwiz::DenseLayer layer(3, 2, false);
+    const float weight_values[] = {
+        0.5f, -1.0f, 2.0f,
+        -0.25f, 0.75f, 1.5f,
+    };
+    layer.SetParameters({
+        {"weights", cyxwiz::Tensor(
+                        {2, 3}, weight_values, cyxwiz::DataType::Float32)},
+    });
+
+    const float input_values[] = {1.5f, -2.0f, 0.25f};
+    const auto output = layer.Forward(cyxwiz::Tensor(
+        {3}, input_values, cyxwiz::DataType::Float32));
+    REQUIRE(output.Shape() == std::vector<size_t>{2});
+    REQUIRE(output.Data<float>()[0] == Catch::Approx(3.25f));
+    REQUIRE(output.Data<float>()[1] == Catch::Approx(-1.5f));
+
+    const float grad_values[] = {-0.75f, 1.25f};
+    const auto grad_input = layer.Backward(cyxwiz::Tensor(
+        {2}, grad_values, cyxwiz::DataType::Float32));
+    REQUIRE(grad_input.Shape() == std::vector<size_t>{3});
+    REQUIRE(grad_input.Data<float>()[0] == Catch::Approx(-0.6875f));
+    REQUIRE(grad_input.Data<float>()[1] == Catch::Approx(1.6875f));
+    REQUIRE(grad_input.Data<float>()[2] == Catch::Approx(0.375f));
+
+    const auto gradients = layer.GetGradients();
+    REQUIRE(gradients.count("bias") == 0);
+    const float expected_weights[] = {
+        -1.125f, 1.5f, -0.1875f,
+        1.875f, -2.5f, 0.3125f,
+    };
+    for (size_t index = 0; index < 6; ++index) {
+        REQUIRE(gradients.at("weights").Data<float>()[index] ==
+                Catch::Approx(expected_weights[index]));
+    }
+}
+
+TEST_CASE("DenseLayer rejects invalid state before compute",
+          "[dense][layer][validation]") {
+    REQUIRE_THROWS_AS(cyxwiz::DenseLayer(0, 2), std::invalid_argument);
+    REQUIRE_THROWS_AS(cyxwiz::DenseLayer(3, -1), std::invalid_argument);
+
+    cyxwiz::DenseLayer layer(3, 2, true);
+    REQUIRE_THROWS_AS(
+        layer.Backward(cyxwiz::Tensor::Ones({2, 2})), std::logic_error);
+    REQUIRE_THROWS_AS(
+        layer.Forward(cyxwiz::Tensor::Ones(
+            {2, 3}, cyxwiz::DataType::Float64)),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        layer.Forward(cyxwiz::Tensor::Ones({2, 4})),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        layer.SetParameters({
+            {"weights", cyxwiz::Tensor::Ones({3, 2})},
+        }),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        layer.SetParameters({
+            {"bias", cyxwiz::Tensor::Ones(
+                         {2}, cyxwiz::DataType::Float64)},
+        }),
+        std::invalid_argument);
+    const float weight_before_rejected_update =
+        layer.GetParameters().at("weights").Data<float>()[0];
+    REQUIRE_THROWS_AS(
+        layer.SetParameters({
+            {"weights", cyxwiz::Tensor::Ones({2, 3})},
+            {"bias", cyxwiz::Tensor::Ones(
+                         {2}, cyxwiz::DataType::Float64)},
+        }),
+        std::invalid_argument);
+    REQUIRE(layer.GetParameters().at("weights").Data<float>()[0] ==
+            Catch::Approx(weight_before_rejected_update));
+
+    cyxwiz::DenseLayer no_bias(3, 2, false);
+    REQUIRE_THROWS_AS(
+        no_bias.SetParameters({
+            {"bias", cyxwiz::Tensor::Zeros({2})},
+        }),
+        std::invalid_argument);
+}
 
 TEST_CASE("DenseLayer computes deterministic forward and backward values", "[dense][layer]") {
     cyxwiz::DenseLayer layer(3, 2, true);

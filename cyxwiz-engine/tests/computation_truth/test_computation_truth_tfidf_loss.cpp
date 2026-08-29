@@ -4,6 +4,7 @@
 
 #include <cyxwiz/cyxwiz.h>
 #include <cyxwiz/activation.h>
+#include <cyxwiz/layers/dense.h>
 #include <cyxwiz/layers/linear.h>
 #include <cyxwiz/loss.h>
 #include <cyxwiz/sequential.h>
@@ -729,6 +730,60 @@ void TestLinearForwardBackwardParity(const json& cases) {
     }
 }
 
+void TestDenseForwardBackwardParity(const json& cases) {
+    for (const auto& test_case :
+         cases.at("linear_forward_backward_f32")) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("operation", "") ==
+                  "torch.nn.functional.linear" &&
+                  test_case.value("dtype", "") == "float32" &&
+                  test_case.value("parameter_gradient_reduction", "") ==
+                      "sum_over_batch",
+              name + " Dense PyTorch fixture metadata mismatch");
+        const bool use_bias = test_case.at("use_bias").get<bool>();
+        const auto weight_shape =
+            ReadShape(test_case.at("weight"), name + " Dense weights");
+        const auto tolerance = ReadTolerance(test_case);
+
+        cyxwiz::DenseLayer dense(
+            static_cast<int>(weight_shape[1]),
+            static_cast<int>(weight_shape[0]), use_bias);
+        std::map<std::string, cyxwiz::Tensor> parameters = {
+            {"weights", FloatTensorFromFixture(
+                            test_case.at("weight"),
+                            name + " Dense weights")},
+        };
+        if (use_bias) {
+            parameters.emplace(
+                "bias", FloatTensorFromFixture(
+                            test_case.at("bias"), name + " Dense bias"));
+        }
+        dense.SetParameters(parameters);
+
+        const auto output = dense.Forward(FloatTensorFromFixture(
+            test_case.at("input"), name + " Dense input"));
+        CheckTensor(output, test_case.at("expected").at("output"), tolerance,
+                    name + " Dense forward output");
+        const auto grad_input = dense.Backward(FloatTensorFromFixture(
+            test_case.at("grad_output"), name + " Dense grad_output"));
+        CheckTensor(grad_input,
+                    test_case.at("expected").at("grad_input"), tolerance,
+                    name + " Dense backward grad_input");
+
+        const auto gradients = dense.GetGradients();
+        CheckTensor(gradients.at("weights"),
+                    test_case.at("expected").at("grad_weight"), tolerance,
+                    name + " Dense backward grad_weights");
+        Check(gradients.count("bias") == (use_bias ? 1U : 0U),
+              name + " Dense bias-gradient ownership mismatch");
+        if (use_bias) {
+            CheckTensor(gradients.at("bias"),
+                        test_case.at("expected").at("grad_bias"), tolerance,
+                        name + " Dense backward grad_bias");
+        }
+    }
+}
+
 std::unique_ptr<cyxwiz::Activation> CreateFixtureActivation(
     const json& test_case) {
     const std::string name = test_case.at("name").get<std::string>();
@@ -928,6 +983,70 @@ void TestLinearMultiBatchUpdateParity(const json& cases) {
         CheckTensor(parameters.at("weight"),
                     step.at("expected").at("updated_weight"), tolerance,
                     label + " updated weight");
+        CheckTensor(parameters.at("bias"),
+                    step.at("expected").at("updated_bias"), tolerance,
+                    label + " updated bias");
+        ++step_index;
+        Check(optimizer.GetStepCount() == static_cast<int>(step_index),
+              label + " optimizer step count mismatch");
+    }
+}
+
+void TestDenseMultiBatchUpdateParity(const json& cases) {
+    const auto& test_case = cases.at("linear_multibatch_sgd_f32");
+    Check(test_case.value("operation", "") ==
+              "torch.nn.Linear + torch.optim.SGD" &&
+              test_case.value("parameter_gradient_reduction", "") ==
+                  "sum_over_batch",
+          "Dense multi-batch PyTorch fixture metadata mismatch");
+    const auto tolerance = ReadTolerance(test_case);
+    const auto weight_shape = ReadShape(
+        test_case.at("initial").at("weight"),
+        "Dense multi-batch initial weights");
+    cyxwiz::DenseLayer dense(
+        static_cast<int>(weight_shape[1]),
+        static_cast<int>(weight_shape[0]), true);
+    dense.SetParameters({
+        {"weights", FloatTensorFromFixture(
+                        test_case.at("initial").at("weight"),
+                        "Dense multi-batch initial weights")},
+        {"bias", FloatTensorFromFixture(
+                     test_case.at("initial").at("bias"),
+                     "Dense multi-batch initial bias")},
+    });
+    cyxwiz::SGDOptimizer optimizer(
+        test_case.at("learning_rate").get<double>());
+
+    size_t step_index = 0;
+    for (const auto& step : test_case.at("steps")) {
+        const std::string label =
+            "Dense multi-batch step " + std::to_string(step_index + 1);
+        const auto output = dense.Forward(FloatTensorFromFixture(
+            step.at("input"), label + " input"));
+        CheckTensor(output, step.at("expected").at("output"), tolerance,
+                    label + " output");
+        const auto grad_input = dense.Backward(FloatTensorFromFixture(
+            step.at("grad_output"), label + " grad_output"));
+        CheckTensor(grad_input, step.at("expected").at("grad_input"),
+                    tolerance, label + " grad_input");
+        const auto gradients = dense.GetGradients();
+        CheckTensor(gradients.at("weights"),
+                    step.at("expected").at("grad_weight"), tolerance,
+                    label + " grad_weights");
+        CheckTensor(gradients.at("bias"),
+                    step.at("expected").at("grad_bias"), tolerance,
+                    label + " grad_bias");
+
+        const auto dense_state = dense.GetParameters();
+        std::map<std::string, cyxwiz::Tensor> parameters = {
+            {"weights", dense_state.at("weights")},
+            {"bias", dense_state.at("bias")},
+        };
+        optimizer.Step(parameters, gradients);
+        dense.SetParameters(parameters);
+        CheckTensor(parameters.at("weights"),
+                    step.at("expected").at("updated_weight"), tolerance,
+                    label + " updated weights");
         CheckTensor(parameters.at("bias"),
                     step.at("expected").at("updated_bias"), tolerance,
                     label + " updated bias");
@@ -1570,6 +1689,8 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestPReLUParity(cases);
         TestLinearForwardBackwardParity(cases);
         TestLinearMultiBatchUpdateParity(cases);
+        TestDenseForwardBackwardParity(cases);
+        TestDenseMultiBatchUpdateParity(cases);
         TestOptimizerMultiStepParity(cases);
     }
     g_fallback_events = nullptr;
@@ -1650,6 +1771,8 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
             TestPReLUParity(cases);
             TestLinearForwardBackwardParity(cases);
             TestLinearMultiBatchUpdateParity(cases);
+            TestDenseForwardBackwardParity(cases);
+            TestDenseMultiBatchUpdateParity(cases);
             TestOptimizerMultiStepParity(cases);
         }
         g_fallback_events = nullptr;
