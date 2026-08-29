@@ -13,6 +13,7 @@
 #include <cyxwiz/loss.h>
 #include <cyxwiz/tensor.h>
 
+#include "core/arrayfire_backend_discovery_isolation.h"
 #include "core/route_qualification_snapshot.h"
 
 #include <algorithm>
@@ -206,8 +207,11 @@ bool IsRelevantRuntimeModule(std::string name) {
                    return static_cast<char>(std::tolower(value));
                  });
   static const char *needles[] = {
-      "af.dll", "afcpu", "afoneapi", "sycl", "ur_", "opencl",
-      "intelocl", "igdrcl", "ze_loader", "mkl_rt", "mkl_sycl", "igc"};
+      "af.dll",  "afcpu",  "afcuda",   "afopencl", "afoneapi",
+      "cublas",  "cudnn",  "cufft",    "cusolver", "cusparse",
+      "nvjitlink", "nvrtc", "sycl",     "ur_",      "opencl",
+      "intelocl", "igdrcl", "ze_loader", "mkl_rt",   "mkl_sycl",
+      "igc"};
   for (const char *needle : needles) {
     if (name.find(needle) != std::string::npos)
       return true;
@@ -515,6 +519,11 @@ void RunOperation(const ProbeOptions &options) {
 
 int main(int argc, char **argv) {
   try {
+    cyxwiz::ScopedArrayFireBackendDiscoveryIsolation isolation;
+    std::string isolation_error;
+    if (!isolation.Apply(isolation_error)) {
+      throw std::runtime_error(isolation_error);
+    }
     const ProbeOptions options = ParseOptions(argc, argv);
     active_backend_name = options.backend_name;
     active_device_id = options.device_id;

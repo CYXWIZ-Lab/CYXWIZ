@@ -26,6 +26,7 @@ endif()
 if(TARGET cyxwiz-backend)
     add_executable(cyxwiz-route-probe
         "${CMAKE_SOURCE_DIR}/tests/smoke/test_oneapi_operation_probe.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/arrayfire_backend_discovery_isolation.cpp"
     )
     target_link_libraries(cyxwiz-route-probe PRIVATE cyxwiz-backend)
     target_include_directories(cyxwiz-route-probe PRIVATE
@@ -74,6 +75,22 @@ install(TARGETS cyxwiz-backend-pack-installer
 )
 
 if(CYXWIZ_BUILD_TESTS)
+    add_executable(test_arrayfire_backend_discovery_isolation
+        "${_cyxwiz_installer_engine_dir}/tests/test_arrayfire_backend_discovery_isolation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/arrayfire_backend_discovery_isolation.cpp"
+    )
+    target_include_directories(test_arrayfire_backend_discovery_isolation PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+    )
+    set_target_properties(test_arrayfire_backend_discovery_isolation PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME arrayfire_backend_discovery_isolation_contract
+        COMMAND test_arrayfire_backend_discovery_isolation
+    )
+
     add_executable(test_backend_pack_manager_model
         "${_cyxwiz_installer_engine_dir}/tests/test_backend_pack_manager_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_catalog_adapter.cpp"

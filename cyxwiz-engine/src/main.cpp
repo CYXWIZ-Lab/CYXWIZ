@@ -5,6 +5,7 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include "core/runtime_log_sink.h"
+#include "core/arrayfire_backend_discovery_isolation.h"
 #include "core/compute_runtime_config.h"
 #include "core/compute_runtime_paths.h"
 #include "core/execution_device_preferences.h"
@@ -246,10 +247,22 @@ int main(int argc, char** argv) {
             qualification.message);
     }
 
-    // Initialize backend
-    if (!cyxwiz::Initialize()) {
-        spdlog::error("Failed to initialize CyxWiz backend");
-        return 1;
+    // Initialize ArrayFire while packaged backend discovery is constrained to
+    // the immutable active runtime. The scope restores the ordinary process
+    // environment after ArrayFire has cached its backend handles.
+    {
+        cyxwiz::ScopedArrayFireBackendDiscoveryIsolation isolation;
+        std::string isolation_error;
+        if (!isolation.Apply(isolation_error)) {
+            spdlog::error(
+                "Failed to isolate ArrayFire backend discovery: {}",
+                isolation_error);
+            return 78;
+        }
+        if (!cyxwiz::Initialize()) {
+            spdlog::error("Failed to initialize CyxWiz backend");
+            return 1;
+        }
     }
 
     if (IsPackageSmokeRequested(argc, argv)) {

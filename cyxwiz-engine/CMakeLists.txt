@@ -105,6 +105,7 @@ set(ENGINE_SOURCES
     src/core/python_detector.cpp
     src/core/window_manager.cpp
     src/core/compute_runtime_config.cpp
+    src/core/arrayfire_backend_discovery_isolation.cpp
     src/core/route_qualification_snapshot.cpp
     src/core/route_qualification_service.cpp
     src/core/route_recommendation.cpp
