@@ -290,6 +290,7 @@ public:
 
     InstallerCatalogState Refresh() override {
         InstallerCatalogState state;
+        state.cuda_prerequisite = DetectInstallerCudaPrerequisite();
         if (!runtime_root_.is_absolute()) {
             state.message = "The CyxWiz runtime root must be absolute";
             return state;
@@ -492,6 +493,52 @@ public:
         return result;
     }
 
+    InstallerOperationResult UpdateBase(
+        const std::string& pack_id,
+        const InstallerOperationDetailObserver& observer) override {
+        InstallerOperationResult result;
+        if (!IsIdentifier(pack_id)) {
+            result.message = "The CPU-base update identity is invalid";
+            return result;
+        }
+        const auto helper = HelperPath(executable_directory_);
+        if (!std::filesystem::is_regular_file(helper)) {
+            result.message =
+                "The signed product-update helper is missing";
+            return result;
+        }
+        std::string error;
+        const int exit_code = RunHelper(
+            helper, runtime_root_, CurrentCatalogRoot(), elevate_,
+#ifdef _WIN32
+            L"--update-base-pack-id",
+#else
+            "--update-base-pack-id",
+#endif
+            pack_id, observer, error);
+        if (exit_code == 0) {
+            result.succeeded = true;
+            result.activated = true;
+            result.message = pack_id +
+                " was installed, CPU-qualified, and activated as the current Engine";
+        } else if (exit_code == 3) {
+            result.succeeded = true;
+            result.activated = true;
+            result.message = pack_id +
+                " was activated, but operating-system launch integration could not be refreshed";
+        } else if (exit_code == 2) {
+            result.succeeded = true;
+            result.message = pack_id +
+                " was installed but CPU qualification kept the previous Engine active";
+        } else {
+            result.message = error.empty()
+                ? "Base update failed with helper exit code " +
+                      std::to_string(exit_code)
+                : std::move(error);
+        }
+        return result;
+    }
+
     InstallerOperationResult DeactivateBackend(
         const std::string& backend,
         const InstallerOperationDetailObserver& observer) override {
@@ -530,6 +577,26 @@ public:
     }
 
     InstallerOperationResult LaunchEngine() override {
+        return LaunchStableBootstrapper(false);
+    }
+
+    InstallerOperationResult OpenInstalledManager() override {
+        return LaunchStableBootstrapper(true);
+    }
+
+    std::string PlatformName() const override {
+#ifdef _WIN32
+        return "Windows";
+#elif defined(__APPLE__)
+        return "macOS";
+#else
+        return "Linux";
+#endif
+    }
+
+private:
+    InstallerOperationResult LaunchStableBootstrapper(
+        bool installer_mode) const {
         InstallerOperationResult result;
         const auto launcher = runtime_root_.parent_path() /
             runtime::CurrentRuntimeBootstrapperExecutableName();
@@ -540,6 +607,7 @@ public:
         }
 #ifdef _WIN32
         std::wstring command = QuoteWindowsArgument(launcher.native());
+        if (installer_mode) command += L" --installer";
         std::vector<wchar_t> mutable_command(command.begin(), command.end());
         mutable_command.push_back(L'\0');
         STARTUPINFOW startup{};
@@ -566,7 +634,12 @@ public:
             if (child == 0) {
                 ::setsid();
                 ::chdir(launcher.parent_path().c_str());
-                ::execl(launcher.c_str(), launcher.c_str(), nullptr);
+                if (installer_mode) {
+                    ::execl(launcher.c_str(), launcher.c_str(),
+                            "--installer", nullptr);
+                } else {
+                    ::execl(launcher.c_str(), launcher.c_str(), nullptr);
+                }
                 ::_exit(127);
             }
             ::_exit(child < 0 ? 127 : 0);
@@ -580,21 +653,11 @@ public:
 #endif
         result.succeeded = true;
         result.activated = true;
-        result.message = "CyxWiz launched";
+        result.message = installer_mode
+            ? "Installed CyxWiz manager opened"
+            : "CyxWiz launched";
         return result;
     }
-
-    std::string PlatformName() const override {
-#ifdef _WIN32
-        return "Windows";
-#elif defined(__APPLE__)
-        return "macOS";
-#else
-        return "Linux";
-#endif
-    }
-
-private:
     std::filesystem::path CurrentCatalogRoot() const {
         std::error_code error;
         const bool has_cached_catalog = std::filesystem::is_regular_file(

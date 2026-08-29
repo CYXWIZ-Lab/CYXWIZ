@@ -245,11 +245,17 @@ public:
             "catalog-2026", catalog_key_));
     }
 
-    void PrepareBase() {
+    void PrepareBase(
+        const std::string& pack_id = "base-v1",
+        const std::string& runtime_set_id = "set-v1",
+        bool fresh = true) {
         std::error_code error;
-        std::filesystem::remove(runtime / "active-runtime.json", error);
-        std::filesystem::remove_all(runtime / "base" / "base-v1", error);
-        archive = root / "base-v1.zip";
+        if (fresh) {
+            std::filesystem::remove(runtime / "active-runtime.json", error);
+        }
+        std::filesystem::remove_all(
+            runtime / "base" / pack_id, error);
+        archive = root / (pack_id + ".zip");
         manifest_path = root / "base-manifest.json";
         catalog_path = root / "base-catalog.json";
         const std::string engine(CurrentEngineExecutableName());
@@ -268,10 +274,10 @@ public:
             throw std::runtime_error(hash_error);
         }
         Json body = {
-            {"pack_id", "base-v1"}, {"pack_kind", "base"},
+            {"pack_id", pack_id}, {"pack_kind", "base"},
             {"backend", "cpu"}, {"package_version", "1.0.0"},
             {"platform", "win64"}, {"architecture", "x86_64"},
-            {"runtime_set_id", "set-v1"},
+            {"runtime_set_id", runtime_set_id},
             {"cyxwiz_release", {{"minimum", "0.2.0"}, {"maximum", "0.2.x"}}},
             {"arrayfire", {{"version", "3.10.0"}, {"abi", "arrayfire-3.10"}}},
             {"companion_base_id", nullptr}, {"conflicts", Json::array()},
@@ -301,7 +307,7 @@ public:
                 {"executable", false}}})},
             {"licenses", Json::array({{{"component", "cyxwiz"},
                 {"path", "LICENSE"}}})},
-            {"archive", {{"file_name", "base-v1.zip"},
+            {"archive", {{"file_name", pack_id + ".zip"},
                 {"size", archive_size}, {"sha256", archive_hash}}},
             {"generated_utc", "2026-08-13T20:00:00Z"}};
         const auto manifest_bytes = WriteJson(
@@ -313,8 +319,8 @@ public:
             {"generated_utc", "2026-08-13T20:00:00Z"},
             {"expires_utc", "2026-09-13T20:00:00Z"},
             {"minimum_client_version", "0.2.0"},
-            {"packs", Json::array({{{"pack_id", "base-v1"},
-                {"manifest_url", "https://downloads.cyxwiz.com/base-v1.json"},
+            {"packs", Json::array({{{"pack_id", pack_id},
+                {"manifest_url", "https://downloads.cyxwiz.com/" + pack_id + ".json"},
                 {"manifest_sha256", Hash(manifest_bytes)},
                 {"signing_key_id", "pack-2026"},
                 {"support_status", "supported"}}})}};
@@ -546,6 +552,60 @@ int main() {
                     std::string(CurrentProductRemovalFinalizerExecutableName())) ==
                     '\0',
             "fresh base delivery must verify, stage, publish stable tools, qualify, and initialize generation 1");
+    }
+    {
+        Fixture fixture;
+        fixture.PrepareBase();
+        BackendPackLifecycleService initial_service(
+            fixture.runtime, fixture.Verifier(), [] { return false; },
+            [](const auto&, const auto&, const auto&) {
+                return BackendPackQualificationDecision{
+                    BackendPackQualificationDisposition::Qualified,
+                    "Initial CPU base qualified"};
+            });
+        auto initial_request = fixture.Request();
+        initial_request.pack_id = "base-v1";
+        OfflineBackendPackArtifactSource initial_source(fixture.archive);
+        const auto initial =
+            initial_service.DeliverBase(initial_request, initial_source);
+
+        const auto stable_launcher = fixture.root /
+            std::string(CurrentRuntimeBootstrapperExecutableName());
+        std::ofstream(stable_launcher, std::ios::binary | std::ios::trunc)
+            .put('p');
+        fixture.PrepareBase("base-v2", "set-v2", false);
+        bool saw_update_candidate = false;
+        BackendPackLifecycleService update_service(
+            fixture.runtime, fixture.Verifier(), [] { return false; },
+            [&](const auto& manifest, const auto&, const auto& candidate) {
+                saw_update_candidate =
+                    manifest.pack_id == "base-v2" &&
+                    candidate.runtime_set_id == "set-v2" &&
+                    candidate.base_pack_id == "base-v2" &&
+                    candidate.generation == 2 && candidate.packs.empty();
+                return BackendPackQualificationDecision{
+                    BackendPackQualificationDisposition::Qualified,
+                    "CPU base update qualified"};
+            });
+        auto update_request = fixture.Request();
+        update_request.pack_id = "base-v2";
+        OfflineBackendPackArtifactSource update_source(fixture.archive);
+        const auto updated = update_service.DeliverBaseUpdate(
+            update_request, update_source);
+        const auto active = fixture.Active();
+        failures += !Expect(
+            initial.status ==
+                    BackendPackLifecycleStatus::InstalledAndActivated &&
+                updated.status ==
+                    BackendPackLifecycleStatus::InstalledAndActivated &&
+                saw_update_candidate && active.runtime_set_id == "set-v2" &&
+                active.base_pack_id == "base-v2" &&
+                active.generation == 2 && active.packs.empty() &&
+                std::filesystem::is_regular_file(
+                    fixture.runtime / "rollback" / "set-v2" /
+                    "previous-active-runtime.json") &&
+                Fixture::ReadByte(stable_launcher) == 'p',
+            "base update must qualify and activate the new CPU runtime without replacing the running stable launcher");
     }
     {
         Fixture fixture;

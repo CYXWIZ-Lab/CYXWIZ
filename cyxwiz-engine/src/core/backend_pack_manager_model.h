@@ -96,6 +96,7 @@ struct BackendPackInstallerSelection {
 struct BackendPackInstallerPlan {
   bool valid = false;
   bool install_base = false;
+  bool update_base = false;
   std::string base_pack_id;
   std::vector<std::string> pack_ids;
   std::vector<std::string> deactivate_backends;

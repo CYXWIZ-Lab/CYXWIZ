@@ -121,31 +121,49 @@ BackendPackInstaller::BackendPackInstaller(
 BackendPackInstallResult BackendPackInstaller::InstallOrUpdate(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes) {
-    return Apply(payload, disk_budget_bytes, false, true, false);
+    return Apply(
+        payload, disk_budget_bytes, false, true,
+        InstallTarget::OptionalPack);
 }
 
 BackendPackInstallResult BackendPackInstaller::StageInstallOrUpdate(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes) {
-    return Apply(payload, disk_budget_bytes, false, false, false);
+    return Apply(
+        payload, disk_budget_bytes, false, false,
+        InstallTarget::OptionalPack);
 }
 
 BackendPackInstallResult BackendPackInstaller::StageBase(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes) {
-    return Apply(payload, disk_budget_bytes, false, false, true);
+    return Apply(
+        payload, disk_budget_bytes, false, false,
+        InstallTarget::FreshBase);
+}
+
+BackendPackInstallResult BackendPackInstaller::StageBaseUpdate(
+    const VerifiedBackendPackPayload& payload,
+    std::uint64_t disk_budget_bytes) {
+    return Apply(
+        payload, disk_budget_bytes, false, false,
+        InstallTarget::BaseUpdate);
 }
 
 BackendPackInstallResult BackendPackInstaller::Repair(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes) {
-    return Apply(payload, disk_budget_bytes, true, true, false);
+    return Apply(
+        payload, disk_budget_bytes, true, true,
+        InstallTarget::OptionalPack);
 }
 
 BackendPackInstallResult BackendPackInstaller::StageRepair(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes) {
-    return Apply(payload, disk_budget_bytes, true, false, false);
+    return Apply(
+        payload, disk_budget_bytes, true, false,
+        InstallTarget::OptionalPack);
 }
 
 BackendPackInstallResult BackendPackInstaller::Apply(
@@ -153,7 +171,8 @@ BackendPackInstallResult BackendPackInstaller::Apply(
     std::uint64_t disk_budget_bytes,
     bool repair,
     bool activate,
-    bool base) {
+    InstallTarget target) {
+    const bool base = target != InstallTarget::OptionalPack;
     std::unique_lock<std::mutex> install_lock(
         install_mutex_, std::try_to_lock);
     if (!install_lock.owns_lock()) {
@@ -187,7 +206,7 @@ BackendPackInstallResult BackendPackInstaller::Apply(
     }
     ActiveRuntimeState active;
     std::string error;
-    if (base) {
+    if (target == InstallTarget::FreshBase) {
         std::error_code active_error;
         if (std::filesystem::exists(
                 runtime_root_ / "active-runtime.json", active_error) ||
@@ -198,6 +217,14 @@ BackendPackInstallResult BackendPackInstaller::Apply(
                     ? "Cannot inspect the active runtime state: " +
                           active_error.message()
                     : "A CPU base is already active");
+        }
+    } else if (target == InstallTarget::BaseUpdate) {
+        if (!LoadActiveRuntimeState(
+                runtime_root_ / "active-runtime.json", active, error)) {
+            return Finish(
+                BackendPackInstallStatus::InvalidRequest,
+                error.empty() ? "A CPU base must be active before update"
+                              : error);
         }
     } else if (!LoadActiveRuntimeState(
                    runtime_root_ / "active-runtime.json", active, error) ||
@@ -331,11 +358,11 @@ BackendPackInstallResult BackendPackInstaller::Apply(
             const auto& component = payload.components[index];
             const auto relative =
                 BackendPackNativeRelativePath(component.relative_path);
-            const auto target = staged_payload / relative;
+            const auto staged_component = staged_payload / relative;
             std::filesystem::create_directories(
-                target.parent_path(), filesystem_error);
+                staged_component.parent_path(), filesystem_error);
             if (filesystem_error || !std::filesystem::copy_file(
-                    payload.source_directory / relative, target,
+                    payload.source_directory / relative, staged_component,
                     std::filesystem::copy_options::none, filesystem_error)) {
                 std::filesystem::remove_all(staging_root, filesystem_error);
                 return Finish(

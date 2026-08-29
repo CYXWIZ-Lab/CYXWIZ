@@ -115,6 +115,32 @@ BackendPackStateResult BackendPackStateService::ActivateOptionalPack(
         });
 }
 
+BackendPackStateResult BackendPackStateService::UpdateBase(
+    std::string runtime_set_id,
+    std::string base_pack_id) {
+    if (runtime_set_id.empty() || base_pack_id.empty()) {
+        return {BackendPackStateStatus::InvalidRequest,
+                "Runtime-set and base-pack identities are required"};
+    }
+    return Mutate(
+        "update_base", {}, base_pack_id,
+        [runtime_set_id = std::move(runtime_set_id),
+         base_pack_id = std::move(base_pack_id)](
+            const ActiveRuntimeState& previous,
+            ActiveRuntimeState& candidate,
+            std::string& error) {
+            if (previous.runtime_set_id == runtime_set_id &&
+                previous.base_pack_id == base_pack_id) {
+                error = "The requested CPU-base runtime is already active";
+                return false;
+            }
+            candidate.runtime_set_id = runtime_set_id;
+            candidate.base_pack_id = base_pack_id;
+            candidate.packs.clear();
+            return true;
+        });
+}
+
 BackendPackStateResult BackendPackStateService::DeactivateOptionalPack(
     std::string backend) {
     if (!IsOptionalBackend(backend)) {
@@ -238,7 +264,7 @@ BackendPackStateResult BackendPackStateService::Mutate(
     progress.message = "Saving the previous complete runtime state";
     SetProgress(progress);
     if (!SaveActiveRuntimeStateAtomic(
-            RollbackPath(previous), previous, error)) {
+            RollbackPath(candidate), previous, error)) {
         progress.stage = BackendPackStateStage::Failed;
         progress.message = error;
         SetProgress(progress);

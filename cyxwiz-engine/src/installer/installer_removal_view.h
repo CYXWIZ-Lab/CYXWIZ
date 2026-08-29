@@ -8,7 +8,13 @@ struct InstallerRemovalViewState {
   bool acknowledged = false;
 };
 
-bool RenderInstallerRemovalControl(
+enum class InstallerRemovalViewAction {
+  None,
+  OpenInstalledManager,
+  RemoveProduct,
+};
+
+InstallerRemovalViewAction RenderInstallerRemovalControl(
     InstallerRemovalViewState &view_state,
     const InstallerProductRemovalState &removal,
     bool operation_running);

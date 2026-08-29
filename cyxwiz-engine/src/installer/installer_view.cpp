@@ -156,7 +156,7 @@ void RenderWorkloads(InstallerViewState &state,
           state.choice == BackendPackInstallChoice::Custom,
           custom_available && !operation_running, size)) {
     state.choice = BackendPackInstallChoice::Custom;
-    state.page = 1;
+    state.requested_page = 1;
   }
   ImGui::Dummy(ImVec2(0.0f, 8.0f));
   ImGui::Text("What will be installed");
@@ -195,7 +195,9 @@ void RenderComponents(InstallerViewState &state,
     ImGui::PushID(record.pack_id.c_str());
     ImGui::PushStyleColor(ImGuiCol_ChildBg,
                           ImVec4(0.055f, 0.115f, 0.19f, 1.0f));
-    ImGui::BeginChild("component", ImVec2(0.0f, 154.0f),
+    const float component_height =
+        record.backend == "cuda" ? 184.0f : 154.0f;
+    ImGui::BeginChild("component", ImVec2(0.0f, component_height),
                       ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
     const bool selectable = IsBackendPackSelectableForInstaller(record);
     const auto presentation = BuildInstallerPackPresentation(record);
@@ -235,6 +237,12 @@ void RenderComponents(InstallerViewState &state,
                             : record.package_version.c_str(),
                         size.c_str(), providers.c_str());
     ImGui::TextWrapped("%s", presentation.explanation.c_str());
+    if (record.backend == "cuda" &&
+        !catalog.cuda_prerequisite.message.empty()) {
+      ImGui::TextColored(
+          catalog.cuda_prerequisite.device_available ? kSuccess : kWarning,
+          "%s", catalog.cuda_prerequisite.message.c_str());
+    }
     if (!presentation.action.empty()) {
       ImGui::PushStyleColor(ImGuiCol_Text, kWarning);
       ImGui::TextWrapped("%s", presentation.action.c_str());
@@ -242,6 +250,49 @@ void RenderComponents(InstallerViewState &state,
     }
     if (!record.delivery_metadata_error.empty()) {
       ImGui::TextColored(kDanger, "%s", record.delivery_metadata_error.c_str());
+    }
+    ImGui::Unindent(29.0f);
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+    ImGui::PopID();
+  }
+
+  for (const std::string_view backend : {"cuda", "opencl", "oneapi"}) {
+    const bool published = std::any_of(
+        catalog.records.begin(), catalog.records.end(),
+        [&](const BackendPackManagerRecord &record) {
+          return record.backend == backend;
+        });
+    if (published)
+      continue;
+    ImGui::PushID(backend.data());
+    ImGui::PushStyleColor(ImGuiCol_ChildBg,
+                          ImVec4(0.055f, 0.115f, 0.19f, 1.0f));
+    const float component_height =
+        backend == "cuda" ? 166.0f : 126.0f;
+    ImGui::BeginChild("component-unavailable",
+                      ImVec2(0.0f, component_height),
+                      ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+    bool selected = false;
+    ImGui::BeginDisabled();
+    ImGui::Checkbox("##selected", &selected);
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextColored(kAccent, "%s", BackendIcon(backend));
+    ImGui::SameLine();
+    ImGui::TextUnformatted(BackendName(backend));
+    ImGui::SameLine(ImGui::GetWindowWidth() - 175.0f);
+    ImGui::TextColored(kWarning, "Not published");
+    ImGui::Indent(29.0f);
+    ImGui::TextDisabled("%s", BackendDescription(backend));
+    ImGui::TextWrapped(
+        "No signed %s package is published for this platform and release.",
+        BackendName(backend));
+    if (backend == "cuda" &&
+        !catalog.cuda_prerequisite.message.empty()) {
+      ImGui::TextColored(
+          catalog.cuda_prerequisite.device_available ? kSuccess : kWarning,
+          "%s", catalog.cuda_prerequisite.message.c_str());
     }
     ImGui::Unindent(29.0f);
     ImGui::EndChild();
@@ -295,6 +346,9 @@ void RenderLocation(InstallerViewState &state,
               ? "System-wide installation requires platform authorization"
               : "Current-user installation is the recommended least-privilege "
                 "choice";
+      action.kind = InstallerViewActionKind::UseInstallLocation;
+      action.install_root = default_root;
+      action.scope = next_scope;
     }
   } else {
     const auto value = install_location.install_root.u8string();
@@ -390,7 +444,11 @@ void RenderHeader(const InstallerCatalogState &catalog,
       catalog.available ? ICON_FA_SHIELD : ICON_FA_TRIANGLE_EXCLAMATION,
       catalog.available ? "Catalog verified" : "Catalog unavailable");
   ImGui::BeginDisabled(operation_running);
-  if (ImGui::Button(ICON_FA_ROTATE " Refresh catalog",
+  const char *refresh_label =
+      catalog.mode == CyxWizInstallerMode::Maintenance
+          ? ICON_FA_ROTATE " Check for updates"
+          : ICON_FA_ROTATE " Refresh catalog";
+  if (ImGui::Button(refresh_label,
                     ImVec2(button_width, 0.0f))) {
     action.kind = InstallerViewActionKind::RefreshCatalog;
   }
@@ -419,7 +477,9 @@ void RenderSummary(InstallerViewState &state,
                                                             : "Custom");
   ImGui::Spacing();
   ImGui::TextDisabled("Components");
-  ImGui::BulletText("CPU Engine (required)");
+  ImGui::BulletText("%s", plan.update_base
+                                  ? "CPU Engine (update available)"
+                                  : "CPU Engine (required)");
   for (const auto &pack_id : selection.pack_ids) {
     const auto record =
         std::find_if(catalog.records.begin(), catalog.records.end(),
@@ -452,11 +512,20 @@ void RenderSummary(InstallerViewState &state,
                    operation_progress.total_steps);
       progress_label = std::to_string(
                            static_cast<int>(progress * 100.0f)) +
-                       "%  |  Step " + std::to_string(current_step) +
+                       "%  |  Component " + std::to_string(current_step) +
                        " of " + std::to_string(operation_progress.total_steps);
     }
     ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f),
                        progress_label.c_str());
+    if (operation_progress.phase_count != 0) {
+      std::string phase_text =
+          "Phase " + std::to_string(operation_progress.phase_index) +
+          " of " + std::to_string(operation_progress.phase_count);
+      if (!operation_progress.phase_label.empty()) {
+        phase_text += ": " + operation_progress.phase_label;
+      }
+      ImGui::TextUnformatted(phase_text.c_str());
+    }
     if (operation_progress.total_bytes != 0) {
       const auto completed =
           operation_progress.completed_bytes == 0
@@ -475,7 +544,8 @@ void RenderSummary(InstallerViewState &state,
     ImGui::TextWrapped("%s", operation_message.c_str());
   }
 
-  const bool has_changes = plan.install_base || !plan.pack_ids.empty() ||
+  const bool has_changes = plan.install_base || plan.update_base ||
+                           !plan.pack_ids.empty() ||
                            !plan.deactivate_backends.empty();
   const bool can_apply = plan.valid && has_changes &&
                          (plan.pack_ids.empty() || catalog.available) &&
@@ -499,17 +569,25 @@ void RenderSummary(InstallerViewState &state,
     ImGui::EndDisabled();
   } else {
     ImGui::BeginDisabled(!can_apply);
-    if (ImGui::Button(ICON_FA_DOWNLOAD " Review & install",
+    const char *review_label = plan.update_base
+                                   ? ICON_FA_DOWNLOAD " Review & update"
+                                   : ICON_FA_DOWNLOAD " Review & install";
+    if (ImGui::Button(review_label,
                       ImVec2(-1.0f, 38.0f))) {
       state.pending_plan = plan;
       state.review_requested = true;
     }
     ImGui::EndDisabled();
   }
-  if (maintenance && RenderInstallerRemovalControl(
-                         state.removal, product_removal,
-                         operation_running)) {
-    action.kind = InstallerViewActionKind::RemoveProduct;
+  if (maintenance) {
+    const auto removal_action = RenderInstallerRemovalControl(
+        state.removal, product_removal, operation_running);
+    if (removal_action == InstallerRemovalViewAction::RemoveProduct) {
+      action.kind = InstallerViewActionKind::RemoveProduct;
+    } else if (removal_action ==
+               InstallerRemovalViewAction::OpenInstalledManager) {
+      action.kind = InstallerViewActionKind::OpenInstalledManager;
+    }
   }
   if (ImGui::Button("Close", ImVec2(-1.0f, 32.0f)) && !operation_running) {
     action.kind = InstallerViewActionKind::Close;
@@ -534,6 +612,12 @@ void RenderReviewPopup(InstallerViewState &state,
     ImGui::BulletText("%s", state.pending_plan.base_pack_id.c_str());
     ImGui::TextWrapped("Location: %s",
                        reinterpret_cast<const char *>(root.c_str()));
+  }
+  if (state.pending_plan.update_base) {
+    ImGui::Text("Update CyxWiz Engine/CPU base:");
+    ImGui::BulletText("%s", state.pending_plan.base_pack_id.c_str());
+    ImGui::TextDisabled(
+        "The previous complete runtime remains available for rollback.");
   }
   if (!state.pending_plan.pack_ids.empty()) {
     ImGui::Text("Download and locally qualify:");
@@ -602,12 +686,19 @@ InstallerViewAction RenderInstallerView(
                            kColumnGap);
   ImGui::BeginChild("main-content", ImVec2(content_width, 0.0f));
   if (ImGui::BeginTabBar("installer-pages")) {
-    if (ImGui::BeginTabItem("Workloads")) {
+    const auto workloads_flags = state.requested_page == 0
+                                     ? ImGuiTabItemFlags_SetSelected
+                                     : ImGuiTabItemFlags_None;
+    const auto components_flags = state.requested_page == 1
+                                      ? ImGuiTabItemFlags_SetSelected
+                                      : ImGuiTabItemFlags_None;
+    if (ImGui::BeginTabItem("Workloads", nullptr, workloads_flags)) {
       state.page = 0;
       RenderWorkloads(state, catalog, operation_running);
       ImGui::EndTabItem();
     }
-    if (ImGui::BeginTabItem("Individual components")) {
+    if (ImGui::BeginTabItem("Individual components", nullptr,
+                            components_flags)) {
       state.page = 1;
       RenderComponents(state, catalog, operation_running);
       ImGui::EndTabItem();
@@ -625,6 +716,7 @@ InstallerViewAction RenderInstallerView(
       ImGui::EndTabItem();
     }
     ImGui::EndTabBar();
+    state.requested_page = -1;
   }
   ImGui::EndChild();
   ImGui::SameLine(0.0f, kColumnGap);

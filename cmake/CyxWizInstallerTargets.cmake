@@ -80,6 +80,7 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/installer_pack_presentation.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_operation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/installer/installer_cuda_prerequisite.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_progress_channel.cpp"
     )
     target_include_directories(test_backend_pack_manager_model PRIVATE
@@ -92,6 +93,7 @@ if(CYXWIZ_BUILD_TESTS)
     target_link_libraries(test_backend_pack_manager_model PRIVATE
         cyxwiz-backend-pack-service
         nlohmann_json::nlohmann_json
+        ${CMAKE_DL_LIBS}
     )
     set_target_properties(test_backend_pack_manager_model PROPERTIES
         CXX_STANDARD 20
@@ -300,6 +302,8 @@ find_package(OpenGL REQUIRED)
 set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/backend_pack_manager_main.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/backend_pack_installer_platform.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_cuda_prerequisite.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_frame_pacing.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_progress_channel.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_theme.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_view.cpp"
@@ -335,6 +339,7 @@ target_link_libraries(cyxwiz-installer PRIVATE
     cyxwiz-backend-pack-service
     cyxwiz-runtime-bootstrap
     nlohmann_json::nlohmann_json
+    ${CMAKE_DL_LIBS}
 )
 target_compile_definitions(cyxwiz-installer PRIVATE
     CYXWIZ_INSTALLER_DEFAULT_CATALOG_URL="${CYXWIZ_INSTALLER_CATALOG_URL}"

@@ -90,6 +90,9 @@ public:
     BackendPackInstallResult StageBase(
         const VerifiedBackendPackPayload& payload,
         std::uint64_t disk_budget_bytes);
+    BackendPackInstallResult StageBaseUpdate(
+        const VerifiedBackendPackPayload& payload,
+        std::uint64_t disk_budget_bytes);
     BackendPackInstallResult Repair(
         const VerifiedBackendPackPayload& payload,
         std::uint64_t disk_budget_bytes);
@@ -100,12 +103,18 @@ public:
     BackendPackInstallProgress GetProgress() const;
 
 private:
+    enum class InstallTarget {
+        OptionalPack,
+        FreshBase,
+        BaseUpdate
+    };
+
     BackendPackInstallResult Apply(
         const VerifiedBackendPackPayload& payload,
         std::uint64_t disk_budget_bytes,
         bool repair,
         bool activate,
-        bool base);
+        InstallTarget target);
     BackendPackInstallResult Finish(
         BackendPackInstallStatus status,
         std::string message,

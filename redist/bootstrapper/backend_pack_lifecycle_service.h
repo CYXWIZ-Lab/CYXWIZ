@@ -156,6 +156,11 @@ public:
         BackendPackArtifactSource& source);
     BackendPackLifecycleResult DeliverBase(
         const BackendPackDeliveryRequest& request);
+    BackendPackLifecycleResult DeliverBaseUpdate(
+        const BackendPackDeliveryRequest& request,
+        BackendPackArtifactSource& source);
+    BackendPackLifecycleResult DeliverBaseUpdate(
+        const BackendPackDeliveryRequest& request);
     BackendPackLifecycleResult Remove(
         std::string backend,
         std::string pack_id);
@@ -165,10 +170,16 @@ public:
     BackendPackLifecycleProgress GetProgress() const;
 
 private:
+    enum class DeliveryTarget {
+        OptionalPack,
+        FreshBase,
+        BaseUpdate
+    };
+
     BackendPackLifecycleResult DeliverInternal(
         const BackendPackDeliveryRequest& request,
         BackendPackArtifactSource* source,
-        bool base);
+        DeliveryTarget target);
     BackendPackLifecycleResult Finish(
         BackendPackLifecycleStatus status,
         std::string message,

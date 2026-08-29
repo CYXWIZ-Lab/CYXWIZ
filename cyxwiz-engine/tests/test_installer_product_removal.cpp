@@ -86,6 +86,7 @@ void TestRequiresStableBootstrapperHost() {
   const auto direct = cyxwiz::installer::InspectInstallerProductRemoval(
       product.runtime_root, false);
   Check(direct.installed && !direct.available &&
+            direct.requires_stable_host &&
             direct.message.find("through CyxWiz Installer") !=
                 std::string::npos,
         "Direct base-GUI launch must not offer an orphaned removal request");
@@ -93,6 +94,7 @@ void TestRequiresStableBootstrapperHost() {
   const auto hosted = cyxwiz::installer::InspectInstallerProductRemoval(
       product.runtime_root, true);
   Check(hosted.installed && hosted.available &&
+            !hosted.requires_stable_host &&
             hosted.install_root == product.root,
         "A complete stable-hosted installation must offer full removal");
 }

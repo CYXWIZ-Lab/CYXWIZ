@@ -18,6 +18,7 @@ enum class InstallerViewActionKind {
   UseInstallLocation,
   ApplyPlan,
   LaunchEngine,
+  OpenInstalledManager,
   RemoveProduct,
   Close
 };
@@ -44,6 +45,7 @@ struct InstallerViewState {
   BackendPackInstallerPlan pending_plan;
   InstallerRemovalViewState removal;
   int page = 0;
+  int requested_page = -1;
 };
 
 InstallerViewAction RenderInstallerView(

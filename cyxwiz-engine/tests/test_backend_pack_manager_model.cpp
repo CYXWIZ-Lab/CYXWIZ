@@ -502,6 +502,45 @@ void TestInstallLocation() {
         "least-privilege by default");
 }
 
+void TestMaintenanceBaseUpdatePlan() {
+  cyxwiz::BackendPackManagerRecord base;
+  base.backend = "cpu";
+  base.pack_id = "base-v2";
+  base.installed = true;
+  base.installed_pack_id = "base-v1";
+  base.update_available = true;
+  base.runtime_set_id = "set-v2";
+  base.catalog_support = cyxwiz::BackendPackCatalogSupport::Supported;
+  base.delivery_metadata_available = true;
+  base.download_size_bytes = 1000;
+
+  auto optional =
+      Pack("opencl-v2", cyxwiz::BackendPackCatalogSupport::Supported);
+  optional.runtime_set_id = "set-v2";
+  optional.companion_base_id = "base-v2";
+  optional.delivery_metadata_available = true;
+  optional.download_size_bytes = 250;
+
+  cyxwiz::BackendPackInstallerSelection selection;
+  selection.valid = true;
+  selection.pack_ids = {"opencl-v2"};
+  const auto plan = cyxwiz::BuildBackendPackInstallerPlan(
+      selection, std::vector{base, optional},
+      cyxwiz::CyxWizInstallerMode::Maintenance);
+  Check(plan.valid && !plan.install_base && plan.update_base &&
+            plan.base_pack_id == "base-v2" &&
+            plan.pack_ids == std::vector<std::string>{"opencl-v2"} &&
+            plan.download_size_bytes == 1250,
+        "Maintenance plan must update the signed base before compatible optional packs");
+
+  optional.companion_base_id = "base-v1";
+  const auto incompatible = cyxwiz::BuildBackendPackInstallerPlan(
+      selection, std::vector{base, optional},
+      cyxwiz::CyxWizInstallerMode::Maintenance);
+  Check(!incompatible.valid,
+        "Maintenance update must reject optional packs from the old base closure");
+}
+
 void TestInstallerProgressChannel() {
   const auto token = cyxwiz::installer::CreateInstallerProgressToken();
   Check(cyxwiz::installer::IsInstallerProgressToken(token) &&
@@ -525,6 +564,48 @@ void TestInstallerProgressChannel() {
   std::filesystem::remove_all(root, cleanup_error);
 }
 
+void TestInstallerCudaPrerequisite() {
+  using cyxwiz::installer::EvaluateInstallerCudaDriverProbe;
+  using cyxwiz::installer::InstallerCudaDriverProbe;
+
+  const auto missing =
+      EvaluateInstallerCudaDriverProbe(InstallerCudaDriverProbe{});
+  Check(!missing.driver_detected && !missing.device_available,
+        "CUDA prerequisite detection must distinguish a missing driver");
+
+  InstallerCudaDriverProbe incomplete;
+  incomplete.driver_library_found = true;
+  const auto incomplete_state =
+      EvaluateInstallerCudaDriverProbe(incomplete);
+  Check(incomplete_state.driver_detected &&
+            !incomplete_state.device_available &&
+            incomplete_state.message.find("incomplete") != std::string::npos,
+        "CUDA prerequisite detection must reject an incomplete driver API");
+
+  InstallerCudaDriverProbe initialized;
+  initialized.driver_library_found = true;
+  initialized.required_api_found = true;
+  initialized.initialization_status = 0;
+  const auto no_device = EvaluateInstallerCudaDriverProbe(initialized);
+  Check(no_device.driver_detected && !no_device.device_available,
+        "CUDA prerequisite detection must not treat a driver-only host as a device");
+
+  initialized.device_count = 2;
+  initialized.driver_api_version = 12060;
+  const auto ready = EvaluateInstallerCudaDriverProbe(initialized);
+  Check(ready.driver_detected && ready.device_available &&
+            ready.device_count == 2 && ready.driver_api_version == "12.6" &&
+            ready.message.find("app-local") != std::string::npos,
+        "CUDA prerequisite detection must report usable devices without trusting global runtime files");
+
+  const auto actual =
+      cyxwiz::installer::DetectInstallerCudaPrerequisite();
+  Check(!actual.message.empty() &&
+            (!actual.device_available ||
+             (actual.driver_detected && actual.device_count > 0)),
+        "Native CUDA prerequisite probing must return a self-consistent bounded result");
+}
+
 class RecordingInstallerPlatform final
     : public cyxwiz::installer::BackendPackInstallerPlatform {
 public:
@@ -541,6 +622,17 @@ public:
     calls.push_back("base:" + pack_id);
     if (observer)
       observer({"acquiring", 50, 100, 0, 0, "Downloading CPU Engine"});
+    return Result(pack_id);
+  }
+
+  cyxwiz::installer::InstallerOperationResult
+  UpdateBase(
+      const std::string &pack_id,
+      const cyxwiz::installer::InstallerOperationDetailObserver &observer)
+      override {
+    calls.push_back("update-base:" + pack_id);
+    if (observer)
+      observer({"activating", 0, 0, 0, 0, "Activating CPU Engine update"});
     return Result(pack_id);
   }
 
@@ -569,6 +661,11 @@ public:
   cyxwiz::installer::InstallerOperationResult LaunchEngine() override {
     calls.push_back("launch");
     return {true, true, "launched"};
+  }
+
+  cyxwiz::installer::InstallerOperationResult OpenInstalledManager() override {
+    calls.push_back("manager");
+    return {true, true, "manager opened"};
   }
 
   std::string PlatformName() const override { return "test"; }
@@ -609,9 +706,23 @@ void TestInstallerPlanExecution() {
               return item.total_bytes == 100 &&
                      item.overall_fraction > 0.0f &&
                      item.overall_fraction < 1.0f;
+            }) &&
+            std::any_of(progress.begin(), progress.end(), [](const auto &item) {
+              return item.stage == "acquiring" && item.phase_index == 3 &&
+                     item.phase_count == 8 &&
+                     item.phase_label == "Download package";
+            }) &&
+            std::any_of(progress.begin(), progress.end(), [](const auto &item) {
+              return item.stage == "extracting" && item.phase_index == 4 &&
+                     item.phase_count == 7 &&
+                     item.phase_label == "Extract package";
+            }) &&
+            std::any_of(progress.begin(), progress.end(), [](const auto &item) {
+              return item.stage == "removing" && item.phase_index == 1 &&
+                     item.phase_count == 1;
             }),
-        "Plan execution must report truthful steps and preserve operation "
-        "order");
+        "Plan execution must report truthful components, phases, and "
+        "operation order");
 
   RecordingInstallerPlatform failing;
   failing.failing_id = "cuda-v1";
@@ -624,6 +735,22 @@ void TestInstallerPlanExecution() {
         "changes");
 }
 
+void TestInstallerBaseUpdateExecution() {
+  cyxwiz::BackendPackInstallerPlan plan;
+  plan.update_base = true;
+  plan.base_pack_id = "base-v2";
+  plan.pack_ids = {"opencl-v2"};
+
+  RecordingInstallerPlatform platform;
+  const auto result =
+      cyxwiz::installer::ExecuteInstallerPlan(platform, plan);
+  Check(result.succeeded &&
+            platform.calls == std::vector<std::string>{
+                                  "update-base:base-v2",
+                                  "pack:opencl-v2"},
+        "Execution must activate the base update before its optional packs");
+}
+
 } // namespace
 
 int main() {
@@ -631,13 +758,16 @@ int main() {
   TestActionPolicy();
   TestInstallerPlan();
   TestFreshInstallerPlan();
+  TestMaintenanceBaseUpdatePlan();
   TestPackPlatformIdentity();
   TestCatalogAdapter();
   TestDisplayFormatting();
   TestInstallLocation();
   TestInstallerProgressChannel();
+  TestInstallerCudaPrerequisite();
   TestInstallerPackPresentation();
   TestInstallerPlanExecution();
+  TestInstallerBaseUpdateExecution();
   std::cout << "Backend pack manager model tests passed\n";
   return 0;
 }

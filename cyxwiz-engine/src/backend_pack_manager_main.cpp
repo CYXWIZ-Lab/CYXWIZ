@@ -1,5 +1,6 @@
 #include "core/backend_pack_manager_model.h"
 #include "installer/backend_pack_installer_platform.h"
+#include "installer/installer_frame_pacing.h"
 #include "installer/installer_operation.h"
 #include "installer/installer_product_removal.h"
 #include "installer/installer_theme.h"
@@ -311,7 +312,8 @@ int RunInstaller(const std::vector<std::string> &arguments,
   int requested_exit_code = 0;
 
   while (!glfwWindowShouldClose(window)) {
-    glfwPollEvents();
+    cyxwiz::installer::gui::WaitForInstallerFrame(
+        window, operation_running);
     if (operation_running && async_operation == AsyncOperation::InstallPlan &&
         operation.valid() &&
         operation.wait_for(std::chrono::milliseconds(0)) ==
@@ -398,6 +400,7 @@ int RunInstaller(const std::vector<std::string> &arguments,
                 parsed.product_removal_host &&
                     install_location.runtime_root == parsed.runtime_root);
         view_state.custom_selection.clear();
+        view_state.choice = cyxwiz::BackendPackInstallChoice::Recommended;
         view_state.install_location_dirty = false;
       }
       break;
@@ -417,6 +420,14 @@ int RunInstaller(const std::vector<std::string> &arguments,
       const auto launched = platform->LaunchEngine();
       operation_message = launched.message;
       view_state.engine_launched = launched.succeeded;
+      break;
+    }
+    case cyxwiz::installer::gui::InstallerViewActionKind::OpenInstalledManager: {
+      const auto opened = platform->OpenInstalledManager();
+      operation_message = opened.message;
+      if (opened.succeeded) {
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+      }
       break;
     }
     case cyxwiz::installer::gui::InstallerViewActionKind::RemoveProduct:

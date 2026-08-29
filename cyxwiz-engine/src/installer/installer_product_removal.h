@@ -10,6 +10,7 @@ namespace cyxwiz::installer {
 struct InstallerProductRemovalState {
   bool installed = false;
   bool available = false;
+  bool requires_stable_host = false;
   std::filesystem::path install_root;
   runtime::ProductInstallScope scope =
       runtime::ProductInstallScope::CurrentUser;

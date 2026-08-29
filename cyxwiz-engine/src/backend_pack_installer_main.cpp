@@ -6,6 +6,7 @@
 #include "backend_pack_metadata_cache.h"
 #include "backend_pack_platform.h"
 #include "backend_pack_state_service.h"
+#include "product_release_version.h"
 #include "product_registration.h"
 
 #include <cyxwiz/version.h>
@@ -41,6 +42,7 @@ struct Options {
     std::string deactivate_backend;
     std::string progress_token;
     bool base = false;
+    bool base_update = false;
     bool repair = false;
     bool offline = false;
     bool all_users = false;
@@ -129,6 +131,7 @@ bool ParseOptions(
     bool saw_metadata_root = false;
     bool saw_pack_id = false;
     bool saw_base_pack_id = false;
+    bool saw_base_update_pack_id = false;
     bool saw_deactivate_backend = false;
     bool saw_all_users = false;
     bool saw_progress_token = false;
@@ -169,6 +172,21 @@ bool ParseOptions(
             }
             output.base = true;
             saw_base_pack_id = true;
+        } else if (argument == L"--update-base-pack-id" &&
+                   !saw_base_update_pack_id && index + 1 < argc) {
+            const std::wstring value(argv[++index]);
+            if (!IsIdentifier(value)) {
+                error = "--update-base-pack-id must be a safe ASCII identifier";
+                return false;
+            }
+            output.pack_id.clear();
+            output.pack_id.reserve(value.size());
+            for (const wchar_t character : value) {
+                output.pack_id.push_back(static_cast<char>(character));
+            }
+            output.base = true;
+            output.base_update = true;
+            saw_base_update_pack_id = true;
         } else if (argument == L"--deactivate-backend" &&
                    !saw_deactivate_backend && index + 1 < argc) {
             const std::wstring value(argv[++index]);
@@ -194,11 +212,22 @@ bool ParseOptions(
         } else if (argument == L"--progress-token" &&
                    !saw_progress_token && index + 1 < argc) {
             const std::wstring value(argv[++index]);
-            output.progress_token.assign(value.begin(), value.end());
-            if (!cyxwiz::installer::IsInstallerProgressToken(
-                    output.progress_token)) {
+            const bool valid_token =
+                value.size() == 32 &&
+                std::all_of(
+                    value.begin(), value.end(), [](wchar_t character) {
+                        return (character >= L'0' && character <= L'9') ||
+                               (character >= L'a' && character <= L'f');
+                    });
+            if (!valid_token) {
                 error = "--progress-token must be a 32-character lowercase hexadecimal token";
                 return false;
+            }
+            output.progress_token.clear();
+            output.progress_token.reserve(value.size());
+            for (const wchar_t character : value) {
+                output.progress_token.push_back(
+                    static_cast<char>(character));
             }
             saw_progress_token = true;
         } else {
@@ -210,8 +239,9 @@ bool ParseOptions(
         (saw_metadata_root && !output.metadata_root.is_absolute()) ||
         static_cast<int>(saw_pack_id) +
                 static_cast<int>(saw_base_pack_id) +
+                static_cast<int>(saw_base_update_pack_id) +
                 static_cast<int>(saw_deactivate_backend) != 1 ||
-        (saw_base_pack_id && output.repair) ||
+        ((saw_base_pack_id || saw_base_update_pack_id) && output.repair) ||
         (saw_deactivate_backend && (output.repair || output.offline))) {
         error = "--runtime-root and exactly one pack operation are required";
         return false;
@@ -229,6 +259,7 @@ bool ParseOptions(
     bool saw_metadata_root = false;
     bool saw_pack_id = false;
     bool saw_base_pack_id = false;
+    bool saw_base_update_pack_id = false;
     bool saw_deactivate_backend = false;
     bool saw_all_users = false;
     bool saw_progress_token = false;
@@ -259,6 +290,16 @@ bool ParseOptions(
             }
             output.base = true;
             saw_base_pack_id = true;
+        } else if (argument == "--update-base-pack-id" &&
+                   !saw_base_update_pack_id && index + 1 < argc) {
+            output.pack_id = argv[++index];
+            if (!IsIdentifier(output.pack_id)) {
+                error = "--update-base-pack-id must be a safe ASCII identifier";
+                return false;
+            }
+            output.base = true;
+            output.base_update = true;
+            saw_base_update_pack_id = true;
         } else if (argument == "--deactivate-backend" &&
                    !saw_deactivate_backend && index + 1 < argc) {
             output.deactivate_backend = argv[++index];
@@ -293,8 +334,9 @@ bool ParseOptions(
         (saw_metadata_root && !output.metadata_root.is_absolute()) ||
         static_cast<int>(saw_pack_id) +
                 static_cast<int>(saw_base_pack_id) +
+                static_cast<int>(saw_base_update_pack_id) +
                 static_cast<int>(saw_deactivate_backend) != 1 ||
-        (saw_base_pack_id && output.repair) ||
+        ((saw_base_pack_id || saw_base_update_pack_id) && output.repair) ||
         (saw_deactivate_backend && (output.repair || output.offline))) {
         error = "--runtime-root and exactly one pack operation are required";
         return false;
@@ -460,24 +502,41 @@ int main(int argc, char** argv) {
     request.source = options.offline
         ? cyxwiz::runtime::BackendPackDeliverySource::OfflineSibling
         : cyxwiz::runtime::BackendPackDeliverySource::CatalogHttps;
-    const auto result = options.base
-        ? lifecycle.DeliverBase(request)
-        : lifecycle.Deliver(request);
+    const auto result = options.base_update
+        ? lifecycle.DeliverBaseUpdate(request)
+        : (options.base ? lifecycle.DeliverBase(request)
+                        : lifecycle.Deliver(request));
     std::cout << result.message << '\n';
     if (result.status == cyxwiz::runtime::
             BackendPackLifecycleStatus::InstalledAndActivated) {
         if (options.base) {
+            publish_progress(
+                "registering",
+                "Registering CyxWiz application shortcuts and launcher");
             cyxwiz::runtime::ProductRegistrationRequest registration;
             registration.install_root = options.runtime_root.parent_path();
             registration.runtime_root = options.runtime_root;
             registration.scope = options.all_users
                 ? cyxwiz::runtime::ProductInstallScope::AllUsers
                 : cyxwiz::runtime::ProductInstallScope::CurrentUser;
-            registration.product_version = ClientVersion();
+            std::string installed_version;
+            if (!cyxwiz::runtime::LoadProductReleaseVersion(
+                    result.installed_directory, installed_version, error)) {
+                const auto message =
+                    "Cannot register the activated CyxWiz release: " + error;
+                std::cerr << message << '\n';
+                publish_progress("failed", message);
+                return 3;
+            }
+            registration.product_version = std::move(installed_version);
             const auto registered =
                 cyxwiz::runtime::RegisterInstalledProduct(registration);
             std::cout << registered.message << '\n';
-            if (!registered.registered) return 3;
+            if (!registered.registered) {
+                publish_progress("failed", registered.message);
+                return 3;
+            }
+            publish_progress("complete", registered.message);
         }
         return 0;
     }

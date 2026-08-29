@@ -263,6 +263,29 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
     plan.install_base = true;
     plan.base_pack_id = base->pack_id;
     plan.download_size_bytes = base->download_size_bytes;
+  } else {
+    for (const auto &record : catalog_records) {
+      if (record.backend != "cpu" || !record.update_available)
+        continue;
+      if (base != nullptr) {
+        plan.message = "The signed catalog contains more than one CPU base "
+                       "update for this target";
+        return plan;
+      }
+      base = &record;
+    }
+    if (base) {
+      if (base->pack_id.empty() ||
+          base->catalog_support != BackendPackCatalogSupport::Supported ||
+          !base->delivery_metadata_available) {
+        plan.message = "The available CyxWiz Engine update is not "
+                       "deliverable from verified metadata";
+        return plan;
+      }
+      plan.update_base = true;
+      plan.base_pack_id = base->pack_id;
+      plan.download_size_bytes = base->download_size_bytes;
+    }
   }
   if (selection.deactivate_optional_backends) {
     std::set<std::string> active_backends;
@@ -313,6 +336,13 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
                       " signed optional backend pack(s)";
     }
     plan.message += "; every compute route requires local verification";
+  } else if (plan.update_base) {
+    plan.message = "Update the signed CyxWiz Engine/CPU base";
+    if (!plan.pack_ids.empty()) {
+      plan.message += " and " + std::to_string(plan.pack_ids.size()) +
+                      " compatible backend pack(s)";
+    }
+    plan.message += "; the new base activates CPU-only before optional packs";
   } else if (!plan.deactivate_backends.empty()) {
     plan.message = std::to_string(plan.deactivate_backends.size()) +
                    " optional backend route(s) will be deactivated; package "

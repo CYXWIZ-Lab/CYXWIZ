@@ -6,6 +6,40 @@
 namespace cyxwiz::installer {
 namespace {
 
+struct InstallerPhase {
+  std::size_t index = 0;
+  std::size_t count = 0;
+  const char *label = "";
+};
+
+InstallerPhase DescribePhase(const std::string &stage,
+                             bool include_registration) {
+  const std::size_t install_phase_count = include_registration ? 8 : 7;
+  if (stage == "verifying_catalog")
+    return {1, install_phase_count, "Verify catalog"};
+  if (stage == "verifying_manifest")
+    return {2, install_phase_count, "Verify package"};
+  if (stage == "acquiring")
+    return {3, install_phase_count, "Download package"};
+  if (stage == "extracting")
+    return {4, install_phase_count, "Extract package"};
+  if (stage == "installing")
+    return {5, install_phase_count, "Install files"};
+  if (stage == "qualifying")
+    return {6, install_phase_count, "Verify compatibility"};
+  if (stage == "activating")
+    return {7, install_phase_count, "Activate runtime"};
+  if (stage == "registering" && include_registration)
+    return {8, install_phase_count, "Register application"};
+  if (stage == "complete")
+    return {install_phase_count, install_phase_count,
+            include_registration ? "Finalize application"
+                                 : "Finalize package"};
+  if (stage == "removing")
+    return {1, 1, "Deactivate runtime"};
+  return {};
+}
+
 void AppendMessage(std::string &output, const std::string &message) {
   if (message.empty())
     return;
@@ -22,8 +56,12 @@ void Report(const InstallerPlanExecutionObserver &observer,
                                ? 0.0f
                                : static_cast<float>(completed_steps) /
                                      static_cast<float>(total_steps);
-    observer({completed_steps, total_steps, fraction, 0, 0, {},
-              std::move(activity)});
+    InstallerPlanExecutionProgress progress;
+    progress.completed_steps = completed_steps;
+    progress.total_steps = total_steps;
+    progress.overall_fraction = fraction;
+    progress.activity = std::move(activity);
+    observer(progress);
   }
 }
 
@@ -41,6 +79,7 @@ float DetailFraction(const InstallerHelperProgress &progress) {
   if (progress.stage == "installing") return 0.72f + 0.12f * inner;
   if (progress.stage == "qualifying") return 0.86f;
   if (progress.stage == "activating") return 0.95f;
+  if (progress.stage == "registering") return 0.98f;
   if (progress.stage == "removing") return 0.35f;
   if (progress.stage == "complete") return 1.0f;
   return 0.0f;
@@ -48,14 +87,26 @@ float DetailFraction(const InstallerHelperProgress &progress) {
 
 void ReportDetail(const InstallerPlanExecutionObserver &observer,
                   std::size_t completed_steps, std::size_t total_steps,
-                  const InstallerHelperProgress &detail) {
+                  const InstallerHelperProgress &detail,
+                  bool include_registration) {
   if (!observer || total_steps == 0) return;
   const float fraction = std::clamp(
       (static_cast<float>(completed_steps) + DetailFraction(detail)) /
           static_cast<float>(total_steps),
       0.0f, 1.0f);
-  observer({completed_steps, total_steps, fraction, detail.completed_bytes,
-            detail.total_bytes, detail.stage, detail.message});
+  const auto phase = DescribePhase(detail.stage, include_registration);
+  InstallerPlanExecutionProgress progress;
+  progress.completed_steps = completed_steps;
+  progress.total_steps = total_steps;
+  progress.phase_index = phase.index;
+  progress.phase_count = phase.count;
+  progress.overall_fraction = fraction;
+  progress.completed_bytes = detail.completed_bytes;
+  progress.total_bytes = detail.total_bytes;
+  progress.stage = detail.stage;
+  progress.phase_label = phase.label;
+  progress.activity = detail.message;
+  observer(progress);
 }
 
 } // namespace
@@ -65,6 +116,7 @@ InstallerPlanExecutionResult ExecuteInstallerPlan(
     const InstallerPlanExecutionObserver &observer) {
   InstallerPlanExecutionResult batch;
   const std::size_t total_steps = static_cast<std::size_t>(plan.install_base) +
+                                  static_cast<std::size_t>(plan.update_base) +
                                   plan.pack_ids.size() +
                                   plan.deactivate_backends.size();
   if (total_steps == 0) {
@@ -80,7 +132,21 @@ InstallerPlanExecutionResult ExecuteInstallerPlan(
     const auto result = platform.InstallBase(
         plan.base_pack_id,
         [&](const InstallerHelperProgress &detail) {
-          ReportDetail(observer, completed_steps, total_steps, detail);
+          ReportDetail(observer, completed_steps, total_steps, detail, true);
+        });
+    AppendMessage(batch.message, result.message);
+    if (!result.succeeded || !result.activated)
+      return batch;
+    ++completed_steps;
+  }
+
+  if (plan.update_base) {
+    Report(observer, completed_steps, total_steps,
+           "Updating and qualifying the CyxWiz Engine/CPU base");
+    const auto result = platform.UpdateBase(
+        plan.base_pack_id,
+        [&](const InstallerHelperProgress &detail) {
+          ReportDetail(observer, completed_steps, total_steps, detail, true);
         });
     AppendMessage(batch.message, result.message);
     if (!result.succeeded || !result.activated)
@@ -93,7 +159,7 @@ InstallerPlanExecutionResult ExecuteInstallerPlan(
            "Downloading, verifying, and qualifying " + pack_id);
     const auto result = platform.InstallOrUpdate(
         pack_id, [&](const InstallerHelperProgress &detail) {
-          ReportDetail(observer, completed_steps, total_steps, detail);
+          ReportDetail(observer, completed_steps, total_steps, detail, false);
         });
     AppendMessage(batch.message, result.message);
     if (!result.succeeded || !result.activated)
@@ -106,7 +172,7 @@ InstallerPlanExecutionResult ExecuteInstallerPlan(
            "Deactivating the " + backend + " route");
     const auto result = platform.DeactivateBackend(
         backend, [&](const InstallerHelperProgress &detail) {
-          ReportDetail(observer, completed_steps, total_steps, detail);
+          ReportDetail(observer, completed_steps, total_steps, detail, false);
         });
     AppendMessage(batch.message, result.message);
     if (!result.succeeded)

@@ -2,6 +2,7 @@
 
 #include "core/backend_pack_manager_model.h"
 #include "core/installer_verification_summary.h"
+#include "installer_cuda_prerequisite.h"
 #include "installer_progress_channel.h"
 
 #include <filesystem>
@@ -19,6 +20,7 @@ struct InstallerCatalogState {
     std::string message;
     std::vector<BackendPackManagerRecord> records;
     InstallerVerificationSummary verification;
+    InstallerCudaPrerequisiteState cuda_prerequisite;
 };
 
 struct InstallerOperationResult {
@@ -44,6 +46,9 @@ public:
     virtual InstallerOperationResult InstallBase(
         const std::string& pack_id,
         const InstallerOperationDetailObserver& observer = {}) = 0;
+    virtual InstallerOperationResult UpdateBase(
+        const std::string& pack_id,
+        const InstallerOperationDetailObserver& observer = {}) = 0;
     virtual InstallerOperationResult InstallOrUpdate(
         const std::string& pack_id,
         const InstallerOperationDetailObserver& observer = {}) = 0;
@@ -51,6 +56,7 @@ public:
         const std::string& backend,
         const InstallerOperationDetailObserver& observer = {}) = 0;
     virtual InstallerOperationResult LaunchEngine() = 0;
+    virtual InstallerOperationResult OpenInstalledManager() = 0;
     virtual std::string PlatformName() const = 0;
 };
 

@@ -38,6 +38,9 @@ public:
         Touch(
             root / "base" / "base-v1" /
             cyxwiz::runtime::CurrentEngineExecutableName());
+        Touch(
+            root / "base" / "base-v2" /
+            cyxwiz::runtime::CurrentEngineExecutableName());
         AddPack("opencl", "opencl-v1");
         AddPack("opencl", "opencl-v2");
         AddPack("cuda", "cuda-v1");
@@ -198,6 +201,40 @@ int main() {
     {
         Fixture fixture;
         cyxwiz::runtime::BackendPackStateService service(fixture.root);
+        const auto optional =
+            service.ActivateOptionalPack("opencl", "opencl-v1");
+        const auto updated = service.UpdateBase("set-v2", "base-v2");
+        failures += !Expect(
+            optional.status ==
+                    cyxwiz::runtime::BackendPackStateStatus::Completed &&
+                updated.status ==
+                    cyxwiz::runtime::BackendPackStateStatus::Completed &&
+                updated.current.has_value() &&
+                updated.current->runtime_set_id == "set-v2" &&
+                updated.current->base_pack_id == "base-v2" &&
+                updated.current->generation == 3 &&
+                updated.current->packs.empty() &&
+                std::filesystem::is_regular_file(
+                    fixture.root / "rollback" / "set-v2" /
+                    "previous-active-runtime.json"),
+            "a base update must activate the new runtime set CPU-only and retain the old closure");
+
+        const auto rolled_back = service.Rollback();
+        failures += !Expect(
+            rolled_back.status ==
+                    cyxwiz::runtime::BackendPackStateStatus::Completed &&
+                rolled_back.current.has_value() &&
+                rolled_back.current->runtime_set_id == "set-v1" &&
+                rolled_back.current->base_pack_id == "base-v1" &&
+                rolled_back.current->generation == 4 &&
+                FindPack(*rolled_back.current, "opencl") != nullptr &&
+                FindPack(*rolled_back.current, "opencl")->pack_id ==
+                    "opencl-v1",
+            "rollback must restore the complete pre-update runtime across runtime-set identities");
+    }
+    {
+        Fixture fixture;
+        cyxwiz::runtime::BackendPackStateService service(fixture.root);
         const std::string before = fixture.ActiveText();
         const auto rejected =
             service.ActivateOptionalPack("opencl", "missing-v1");
@@ -206,6 +243,14 @@ int main() {
                 cyxwiz::runtime::BackendPackStateStatus::InvalidRuntime &&
                 fixture.ActiveText() == before,
             "a missing pack closure must leave active state byte-for-byte unchanged");
+
+        const auto missing_base =
+            service.UpdateBase("set-v2", "missing-base-v2");
+        failures += !Expect(
+            missing_base.status ==
+                    cyxwiz::runtime::BackendPackStateStatus::InvalidRuntime &&
+                fixture.ActiveText() == before,
+            "a missing base update must leave active state byte-for-byte unchanged");
 
         cyxwiz::runtime::ActiveRuntimeState invalid;
         invalid.runtime_set_id = "set-v1";

@@ -181,29 +181,44 @@ bool BackendPackLifecycleService::ReadCatalogSnapshot(
 BackendPackLifecycleResult BackendPackLifecycleService::Deliver(
     const BackendPackDeliveryRequest& request,
     BackendPackArtifactSource& source) {
-    return DeliverInternal(request, &source, false);
+    return DeliverInternal(
+        request, &source, DeliveryTarget::OptionalPack);
 }
 
 BackendPackLifecycleResult BackendPackLifecycleService::Deliver(
     const BackendPackDeliveryRequest& request) {
-    return DeliverInternal(request, nullptr, false);
+    return DeliverInternal(
+        request, nullptr, DeliveryTarget::OptionalPack);
 }
 
 BackendPackLifecycleResult BackendPackLifecycleService::DeliverBase(
     const BackendPackDeliveryRequest& request,
     BackendPackArtifactSource& source) {
-    return DeliverInternal(request, &source, true);
+    return DeliverInternal(request, &source, DeliveryTarget::FreshBase);
 }
 
 BackendPackLifecycleResult BackendPackLifecycleService::DeliverBase(
     const BackendPackDeliveryRequest& request) {
-    return DeliverInternal(request, nullptr, true);
+    return DeliverInternal(request, nullptr, DeliveryTarget::FreshBase);
+}
+
+BackendPackLifecycleResult BackendPackLifecycleService::DeliverBaseUpdate(
+    const BackendPackDeliveryRequest& request,
+    BackendPackArtifactSource& source) {
+    return DeliverInternal(request, &source, DeliveryTarget::BaseUpdate);
+}
+
+BackendPackLifecycleResult BackendPackLifecycleService::DeliverBaseUpdate(
+    const BackendPackDeliveryRequest& request) {
+    return DeliverInternal(request, nullptr, DeliveryTarget::BaseUpdate);
 }
 
 BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     const BackendPackDeliveryRequest& request,
     BackendPackArtifactSource* source,
-    bool base) {
+    DeliveryTarget target) {
+    const bool base = target != DeliveryTarget::OptionalPack;
+    const bool updating_base = target == DeliveryTarget::BaseUpdate;
     std::unique_lock<std::mutex> operation_lock(
         operation_mutex_, std::try_to_lock);
     if (!operation_lock.owns_lock()) {
@@ -354,17 +369,20 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     if (base && request.repair) {
         return Finish(
             BackendPackLifecycleStatus::InvalidRequest,
-            "Fresh CPU-base delivery does not accept repair mode",
+            "CPU-base delivery does not accept repair mode",
             manifest.pack_id, manifest.backend);
     }
-    const auto installed = base
-        ? installer_.StageBase(
+    const auto installed = updating_base
+        ? installer_.StageBaseUpdate(
               payload, request.installation_disk_budget_bytes)
-        : (request.repair
+        : (base
+              ? installer_.StageBase(
+                    payload, request.installation_disk_budget_bytes)
+              : (request.repair
               ? installer_.StageRepair(
                     payload, request.installation_disk_budget_bytes)
               : installer_.StageInstallOrUpdate(
-                    payload, request.installation_disk_budget_bytes));
+                    payload, request.installation_disk_budget_bytes)));
     if (!IsTerminalInstallStatus(installed.status)) {
         return Finish(
             installed.status == BackendPackInstallStatus::Interrupted
@@ -384,22 +402,43 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     ActiveRuntimeState qualification_base;
     ActiveRuntimeState qualification_candidate;
     if (base) {
-        std::error_code active_error;
-        if (std::filesystem::exists(
-                runtime_root_ / "active-runtime.json", active_error) ||
-            active_error) {
-            return Finish(
-                BackendPackLifecycleStatus::InstallationFailure,
-                active_error
-                    ? "Cannot inspect runtime state before CPU qualification: " +
-                          active_error.message()
-                    : "An active runtime appeared before CPU qualification",
-                manifest.pack_id, manifest.backend,
-                installed.installed_directory);
+        if (updating_base) {
+            if (!LoadActiveRuntimeState(
+                    runtime_root_ / "active-runtime.json",
+                    qualification_base, error) ||
+                qualification_base.generation ==
+                    std::numeric_limits<std::uint64_t>::max()) {
+                return Finish(
+                    BackendPackLifecycleStatus::InstallationFailure,
+                    error.empty()
+                        ? "Active runtime identity cannot be advanced for the CPU-base update"
+                        : error,
+                    manifest.pack_id, manifest.backend,
+                    installed.installed_directory);
+            }
+            qualification_candidate.runtime_set_id =
+                manifest.runtime_set_id;
+            qualification_candidate.generation =
+                qualification_base.generation + 1;
+            qualification_candidate.base_pack_id = manifest.pack_id;
+        } else {
+            std::error_code active_error;
+            if (std::filesystem::exists(
+                    runtime_root_ / "active-runtime.json", active_error) ||
+                active_error) {
+                return Finish(
+                    BackendPackLifecycleStatus::InstallationFailure,
+                    active_error
+                        ? "Cannot inspect runtime state before CPU qualification: " +
+                              active_error.message()
+                        : "An active runtime appeared before CPU qualification",
+                    manifest.pack_id, manifest.backend,
+                    installed.installed_directory);
+            }
+            qualification_candidate.runtime_set_id = manifest.runtime_set_id;
+            qualification_candidate.generation = 1;
+            qualification_candidate.base_pack_id = manifest.pack_id;
         }
-        qualification_candidate.runtime_set_id = manifest.runtime_set_id;
-        qualification_candidate.generation = 1;
-        qualification_candidate.base_pack_id = manifest.pack_id;
     } else {
         if (!LoadActiveRuntimeState(
                 runtime_root_ / "active-runtime.json", qualification_base,
@@ -471,9 +510,15 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     ActiveRuntimeState current;
     std::error_code current_error;
     const bool runtime_changed = base
-        ? (std::filesystem::exists(
-               runtime_root_ / "active-runtime.json", current_error) ||
-           current_error)
+        ? (updating_base
+               ? (!LoadActiveRuntimeState(
+                      runtime_root_ / "active-runtime.json", current,
+                      error) ||
+                  !SameRuntimeState(qualification_base, current))
+               : (std::filesystem::exists(
+                      runtime_root_ / "active-runtime.json",
+                      current_error) ||
+                  current_error))
         : (!LoadActiveRuntimeState(
                runtime_root_ / "active-runtime.json", current, error) ||
            !SameRuntimeState(qualification_base, current));
@@ -505,7 +550,9 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             return Finish(
                 BackendPackLifecycleStatus::InstalledUnqualified,
                 qualification.message.empty()
-                    ? "CPU-base qualification failed; the complete base remains inactive"
+                    ? (updating_base
+                           ? "CPU-base update qualification failed; the previous runtime remains active"
+                           : "CPU-base qualification failed; the complete base remains inactive")
                     : qualification.message,
                 manifest.pack_id, manifest.backend,
                 installed.installed_directory, qualification);
@@ -541,7 +588,7 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             installed.installed_directory, qualification);
     }
 
-    if (base) {
+    if (target == DeliveryTarget::FreshBase) {
         SetStage(
             BackendPackLifecycleStage::Installing,
             "Publishing the verified stable product tools");
@@ -568,11 +615,14 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
              : "Activating the locally qualified backend pack");
     BackendPackStateService state_service(
         runtime_root_, execution_active_);
-    const auto activation = base
-        ? state_service.InitializeBase(
+    const auto activation = updating_base
+        ? state_service.UpdateBase(
               manifest.runtime_set_id, manifest.pack_id)
-        : state_service.ActivateOptionalPack(
-              manifest.backend, manifest.pack_id);
+        : (base
+              ? state_service.InitializeBase(
+                    manifest.runtime_set_id, manifest.pack_id)
+              : state_service.ActivateOptionalPack(
+                    manifest.backend, manifest.pack_id));
     if (activation.status != BackendPackStateStatus::Completed) {
         return Finish(
             BackendPackLifecycleStatus::ActivationFailure,
@@ -584,8 +634,11 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     return Finish(
         BackendPackLifecycleStatus::InstalledAndActivated,
         qualification.message.empty()
-            ? (base ? "CPU base installed, qualified, and activated"
+            ? (updating_base
+                   ? "CPU base update installed, qualified, and activated"
+                   : (base ? "CPU base installed, qualified, and activated"
                     : "Backend pack installed, qualified, and activated")
+              )
             : qualification.message,
         manifest.pack_id, manifest.backend,
         installed.installed_directory, qualification);

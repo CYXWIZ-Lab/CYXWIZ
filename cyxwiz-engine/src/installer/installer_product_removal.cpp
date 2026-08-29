@@ -47,6 +47,7 @@ InstallerProductRemovalState InspectInstallerProductRemoval(
     return state;
   }
   if (!stable_bootstrapper_host) {
+    state.requires_stable_host = true;
     state.message =
         "Open this installation through CyxWiz Installer to remove the product";
     return state;
