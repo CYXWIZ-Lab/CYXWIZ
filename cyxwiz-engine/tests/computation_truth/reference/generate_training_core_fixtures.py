@@ -268,6 +268,274 @@ def probability_loss_matrix() -> list[dict[str, Any]]:
     return cases
 
 
+def overlap_loss_matrix() -> list[dict[str, Any]]:
+    definitions = [
+        {
+            "name": "soft_dice_scalar_none",
+            "loss_type": "soft_dice",
+            "reduction": "none",
+            "smooth": 1.0,
+            "predictions": 0.8,
+            "targets": 1.0,
+        },
+        {
+            "name": "soft_dice_rank2_mean",
+            "loss_type": "soft_dice",
+            "reduction": "mean",
+            "smooth": 1.0,
+            "predictions": [[0.8, 0.2, 0.4], [0.1, 0.9, 0.6]],
+            "targets": [[1.0, 0.0, 0.0], [0.0, 1.0, 1.0]],
+        },
+        {
+            "name": "soft_dice_rank4_sum",
+            "loss_type": "soft_dice",
+            "reduction": "sum",
+            "smooth": 0.5,
+            "predictions": [
+                [[[0.9, 0.1], [0.4, 0.7]]],
+                [[[0.2, 0.8], [0.6, 0.3]]],
+            ],
+            "targets": [
+                [[[1.0, 0.0], [0.0, 1.0]]],
+                [[[0.0, 1.0], [1.0, 0.0]]],
+            ],
+        },
+        {
+            "name": "soft_dice_degenerate_zero_mask",
+            "loss_type": "soft_dice",
+            "reduction": "mean",
+            "smooth": 1.0,
+            "predictions": [[0.0, 0.0], [0.0, 0.0]],
+            "targets": [[0.0, 0.0], [0.0, 0.0]],
+        },
+        {
+            "name": "tversky_rank1_sum",
+            "loss_type": "tversky",
+            "reduction": "sum",
+            "smooth": 1.0,
+            "alpha": 0.3,
+            "beta": 0.7,
+            "predictions": [0.8, 0.2, 0.4, 0.9],
+            "targets": [1.0, 0.0, 0.0, 1.0],
+        },
+        {
+            "name": "tversky_rank3_none",
+            "loss_type": "tversky",
+            "reduction": "none",
+            "smooth": 0.25,
+            "alpha": 0.2,
+            "beta": 0.8,
+            "predictions": [
+                [[0.9, 0.1], [0.4, 0.7]],
+                [[0.2, 0.8], [0.6, 0.3]],
+            ],
+            "targets": [
+                [[1.0, 0.0], [0.0, 1.0]],
+                [[0.0, 1.0], [1.0, 0.0]],
+            ],
+        },
+        {
+            "name": "tversky_rank4_mean",
+            "loss_type": "tversky",
+            "reduction": "mean",
+            "smooth": 0.75,
+            "alpha": 0.6,
+            "beta": 0.4,
+            "predictions": [
+                [[[0.7, 0.3]], [[0.1, 0.9]]],
+                [[[0.4, 0.6]], [[0.8, 0.2]]],
+            ],
+            "targets": [
+                [[[1.0, 0.0]], [[0.0, 1.0]]],
+                [[[0.0, 1.0]], [[1.0, 0.0]]],
+            ],
+        },
+        {
+            "name": "tversky_degenerate_zero_mask",
+            "loss_type": "tversky",
+            "reduction": "none",
+            "smooth": 1.0,
+            "alpha": 0.3,
+            "beta": 0.7,
+            "predictions": [[0.0, 0.0], [0.0, 0.0]],
+            "targets": [[0.0, 0.0], [0.0, 0.0]],
+        },
+        {
+            "name": "jaccard_rank1_none",
+            "loss_type": "jaccard",
+            "reduction": "none",
+            "smooth": 1.0,
+            "predictions": [0.8, 0.2, 0.4, 0.9],
+            "targets": [1.0, 0.0, 0.0, 1.0],
+        },
+        {
+            "name": "jaccard_rank2_sum_zero_smooth",
+            "loss_type": "jaccard",
+            "reduction": "sum",
+            "smooth": 0.0,
+            "predictions": [[0.8, 0.2, 0.4], [0.1, 0.9, 0.6]],
+            "targets": [[1.0, 0.0, 0.0], [0.0, 1.0, 1.0]],
+        },
+        {
+            "name": "jaccard_rank4_mean",
+            "loss_type": "jaccard",
+            "reduction": "mean",
+            "smooth": 0.5,
+            "predictions": [
+                [[[0.9, 0.1], [0.4, 0.7]]],
+                [[[0.2, 0.8], [0.6, 0.3]]],
+            ],
+            "targets": [
+                [[[1.0, 0.0], [0.0, 1.0]]],
+                [[[0.0, 1.0], [1.0, 0.0]]],
+            ],
+        },
+        {
+            "name": "jaccard_degenerate_zero_mask",
+            "loss_type": "jaccard",
+            "reduction": "sum",
+            "smooth": 1.0,
+            "predictions": [[0.0, 0.0], [0.0, 0.0]],
+            "targets": [[0.0, 0.0], [0.0, 0.0]],
+        },
+    ]
+    cases: list[dict[str, Any]] = []
+    for definition in definitions:
+        predictions = torch.tensor(
+            definition["predictions"], dtype=torch.float32,
+            requires_grad=True,
+        )
+        targets = torch.tensor(definition["targets"], dtype=torch.float32)
+        rows = predictions.reshape(
+            predictions.shape[0] if predictions.ndim > 1 else 1, -1
+        )
+        target_rows = targets.reshape(rows.shape)
+        intersection = (rows * target_rows).sum(dim=1)
+        prediction_sum = rows.sum(dim=1)
+        target_sum = target_rows.sum(dim=1)
+        smooth = definition["smooth"]
+        loss_type = definition["loss_type"]
+        if loss_type == "soft_dice":
+            per_sample = 1.0 - (
+                (2.0 * intersection + smooth) /
+                (prediction_sum + target_sum + smooth)
+            )
+            operation = "pytorch_explicit_soft_dice_loss"
+        elif loss_type == "tversky":
+            false_positive = (rows * (1.0 - target_rows)).sum(dim=1)
+            false_negative = ((1.0 - rows) * target_rows).sum(dim=1)
+            per_sample = 1.0 - (
+                (intersection + smooth) /
+                (
+                    intersection +
+                    definition["alpha"] * false_positive +
+                    definition["beta"] * false_negative + smooth
+                )
+            )
+            operation = "pytorch_explicit_tversky_loss"
+        else:
+            union = prediction_sum + target_sum - intersection
+            per_sample = 1.0 - (intersection + smooth) / (union + smooth)
+            operation = "pytorch_explicit_jaccard_loss"
+        reduction = definition["reduction"]
+        if reduction == "mean":
+            loss = per_sample.mean()
+        elif reduction == "sum":
+            loss = per_sample.sum()
+        else:
+            loss = per_sample
+        (loss.sum() if reduction == "none" else loss).backward()
+        cases.append({
+            "name": definition["name"],
+            "operation": operation,
+            "loss_type": loss_type,
+            "dtype": "float32",
+            "reduction": reduction,
+            "smooth": smooth,
+            "alpha": definition.get("alpha", 0.5),
+            "beta": definition.get("beta", 0.5),
+            "tolerance": {"atol": 1.0e-5, "rtol": 1.0e-5},
+            "predictions": tensor_fixture(predictions),
+            "targets": tensor_fixture(targets),
+            "expected": {
+                "loss": tensor_fixture(
+                    loss.reshape(1) if loss.ndim == 0 else loss
+                ),
+                "prediction_gradient": tensor_fixture(predictions.grad),
+            },
+        })
+    return cases
+
+
+def overlap_linear_multibatch_sgd_case() -> dict[str, Any]:
+    model = torch.nn.Linear(3, 2, bias=True)
+    with torch.no_grad():
+        model.weight.copy_(torch.tensor(
+            [[0.15, -0.10, 0.20], [-0.05, 0.12, 0.08]],
+            dtype=torch.float32,
+        ))
+        model.bias.copy_(torch.tensor([0.40, 0.35], dtype=torch.float32))
+    initial = {
+        "weight": tensor_fixture(model.weight),
+        "bias": tensor_fixture(model.bias),
+    }
+    learning_rate = 0.03
+    smooth = 1.0
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    definitions = [
+        (
+            [[0.2, 0.4, 0.1], [0.5, 0.1, 0.3]],
+            [[1.0, 0.0], [0.0, 1.0]],
+        ),
+        (
+            [[0.1, 0.3, 0.6], [0.7, 0.2, 0.1], [0.4, 0.5, 0.2]],
+            [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
+        ),
+    ]
+    steps = []
+    for input_values, target_values in definitions:
+        input_tensor = torch.tensor(
+            input_values, dtype=torch.float32, requires_grad=True
+        )
+        targets = torch.tensor(target_values, dtype=torch.float32)
+        optimizer.zero_grad(set_to_none=True)
+        output = model(input_tensor)
+        output.retain_grad()
+        intersection = (output * targets).sum(dim=1)
+        per_sample = 1.0 - (
+            (2.0 * intersection + smooth) /
+            (output.sum(dim=1) + targets.sum(dim=1) + smooth)
+        )
+        loss = per_sample.mean()
+        loss.backward()
+        step = {
+            "input": tensor_fixture(input_tensor),
+            "targets": tensor_fixture(targets),
+            "expected": {
+                "output": tensor_fixture(output),
+                "loss": tensor_fixture(loss.reshape(1)),
+                "grad_output": tensor_fixture(output.grad),
+                "grad_input": tensor_fixture(input_tensor.grad),
+                "grad_weight": tensor_fixture(model.weight.grad),
+                "grad_bias": tensor_fixture(model.bias.grad),
+            },
+        }
+        optimizer.step()
+        step["expected"]["updated_weight"] = tensor_fixture(model.weight)
+        step["expected"]["updated_bias"] = tensor_fixture(model.bias)
+        steps.append(step)
+    return {
+        "operation": "PyTorch explicit SoftDice + nn.Linear + optim.SGD",
+        "dtype": "float32",
+        "reduction": "mean",
+        "smooth": smooth,
+        "learning_rate": learning_rate,
+        "initial": initial,
+        "steps": steps,
+        "tolerance": {"atol": 1.0e-5, "rtol": 1.0e-5},
+    }
+
+
 def elementwise_activation_matrix() -> list[dict[str, Any]]:
     """Forward/autograd truth at smooth, branch-boundary, and finite extremes."""
     definitions = [
@@ -3138,6 +3406,10 @@ def generate_fixture() -> dict[str, Any]:
             "cross_entropy_matrix_f32": cross_entropy_matrix(),
             "regression_loss_matrix_f32": regression_loss_matrix(),
             "probability_loss_matrix_f32": probability_loss_matrix(),
+            "overlap_loss_matrix_f32": overlap_loss_matrix(),
+            "overlap_linear_multibatch_sgd_f32": (
+                overlap_linear_multibatch_sgd_case()
+            ),
             "nll_loss_matrix_f32": nll_matrix(),
             "focal_loss_matrix_f32": focal_matrix(),
             "adam_family_multistep_f32": adam_family_multistep_cases(),

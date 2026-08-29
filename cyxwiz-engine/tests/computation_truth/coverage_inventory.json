@@ -461,13 +461,13 @@
       "owner": "cyxwiz-backend/include/cyxwiz/losses/probability.h",
       "implementation": ["cyxwiz-backend/src/algorithms/losses/probability_losses.cpp"],
       "callers": ["segmentation objectives"],
-      "contract": "Smoothing, alpha/beta, reduction and gradients follow the declared equations.",
-      "supported": "Float32 public loss configurations",
-      "oracle": "small independent PyTorch reference equations",
-      "tests": ["cyxwiz-tests:test_loss"],
-      "execution": "audit needed",
-      "status": "partial",
-      "gaps": ["fixture provenance", "empty/degenerate masks", "fallback/residency"]
+      "contract": "Smoothing, Tversky alpha/beta, reduction and full prediction gradients follow the declared equations; scalar and rank-1 inputs are one sample, while rank-2 through rank-4 reduce all non-batch dimensions per sample.",
+      "supported": "matching-shape non-empty Float32 scalar through rank-4 tensors; none, sum and mean reductions; finite non-negative smoothing and finite non-negative Tversky alpha/beta",
+      "oracle": "explicit PyTorch tensor equations with autograd",
+      "tests": ["cyxwiz-tests:[loss][overlap]", "test_computation_truth_tfidf_loss:overlap_loss_matrix_f32", "test_computation_truth_tfidf_loss:overlap_linear_multibatch_sgd_f32"],
+      "execution": "strict ArrayFire device path on CPU and every locally qualified CUDA/OpenCL route with no native fallback or compute-time host synchronization; two-batch Linear/SGD integration; forced strict rejection and compatible attributed fallback; direct forward/backward and validation contracts verified in a no-ArrayFire build",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LOSS-METRIC-001",

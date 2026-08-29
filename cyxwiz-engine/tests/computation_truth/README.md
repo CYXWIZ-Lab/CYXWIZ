@@ -80,6 +80,15 @@ The broad tracking ticket is:
   `1e-12` derivative floor while retaining its explicit configurable floor;
   BCEWithLogits validates positive finite `pos_weight`; KLDiv preserves
   PyTorch `log_target` and zero-target semantics.
+- Verifies SoftDice, Tversky, and Jaccard against explicit PyTorch tensor
+  equations and autograd across `none`/`sum`/`mean`, scalar through rank-4
+  tensors, configurable smoothing, Tversky alpha/beta, all-zero degenerate
+  masks with positive smoothing, forward values, and full prediction
+  gradients. Scalar and rank-1 inputs are one sample; rank-2 through rank-4
+  use dimension 0 as the batch and reduce all remaining dimensions per sample.
+  A separate two-batch SoftDice-to-Linear-to-SGD sequence proves the loss
+  gradient reaches parameter updates. Forced overlap fallback proves strict
+  rejection and compatible, attributed native execution.
 - Verifies `LinearLayer` forward output against a generated PyTorch linear fixture.
 - Verifies `LinearLayer` backward values:
   - gradient with respect to input
@@ -123,7 +132,7 @@ The broad tracking ticket is:
   explicit following graph module rather than a hidden DenseLayer property.
 - Rejects native fallback attempts and undeclared host synchronization; only
   bounded, attributed test-output readbacks are allowed.
-- Proves regression, probability, NLL, Focal, and every supported CrossEntropy rank use strict
+- Proves regression, probability, overlap, NLL, Focal, and every supported CrossEntropy rank use strict
   ArrayFire paths with no hidden native CPU computation on CPU and every
   locally qualified CUDA/OpenCL route. Forced regression fallback is
   separately tested for exact rejection/compatibility policy, reason code,
@@ -134,7 +143,8 @@ The broad tracking ticket is:
   rank-3 is reshaped on device and is not a hidden native CPU variant.
   Incompatible optional providers remain explicit device-selection skips.
 
-The elementwise-activation, Linear, regression-loss, CrossEntropy, NLL, Focal,
+The elementwise-activation, Linear, regression-loss, probability-loss,
+overlap-loss, CrossEntropy, NLL, Focal,
 Adam-family, SGD, adaptive-optimizer, LAMB, and weighted-sampler expectations come from the checked-in
 `fixtures/training_core_pytorch.json` fixture. Regenerate it with:
 

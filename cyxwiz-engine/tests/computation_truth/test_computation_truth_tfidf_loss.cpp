@@ -673,6 +673,156 @@ void TestProbabilityLossParity(const json& cases) {
     }
 }
 
+void TestOverlapLossParity(const json& cases) {
+    const auto& matrix = cases.at("overlap_loss_matrix_f32");
+    Check(matrix.is_array() && !matrix.empty(),
+          "overlap loss matrix fixture must be non-empty");
+    for (const auto& test_case : matrix) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("dtype", "") == "float32",
+              name + " dtype mismatch");
+        const auto prediction_values = ReadFloatValues(
+            test_case.at("predictions"), name + " predictions");
+        const auto target_values =
+            ReadFloatValues(test_case.at("targets"), name + " targets");
+        cyxwiz::Tensor predictions(
+            ReadShape(test_case.at("predictions"), name),
+            prediction_values.data(), cyxwiz::DataType::Float32);
+        cyxwiz::Tensor targets(
+            ReadShape(test_case.at("targets"), name), target_values.data(),
+            cyxwiz::DataType::Float32);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        predictions = cyxwiz::Tensor::FromSemanticArray(
+            predictions.GetSemanticArray(), predictions.Shape());
+        targets = cyxwiz::Tensor::FromSemanticArray(
+            targets.GetSemanticArray(), targets.Shape());
+#endif
+
+        const auto reduction = ParseReduction(
+            test_case.at("reduction").get<std::string>());
+        const float smooth = test_case.at("smooth").get<float>();
+        const std::string loss_type =
+            test_case.at("loss_type").get<std::string>();
+        std::unique_ptr<cyxwiz::Loss> loss;
+        std::string expected_operation;
+        if (loss_type == "soft_dice") {
+            loss = std::make_unique<cyxwiz::SoftDiceLoss>(
+                reduction, smooth);
+            expected_operation = "pytorch_explicit_soft_dice_loss";
+        } else if (loss_type == "tversky") {
+            loss = std::make_unique<cyxwiz::TverskyLoss>(
+                reduction,
+                test_case.at("alpha").get<float>(),
+                test_case.at("beta").get<float>(),
+                smooth);
+            expected_operation = "pytorch_explicit_tversky_loss";
+        } else {
+            Check(loss_type == "jaccard", name + " loss type mismatch");
+            loss = std::make_unique<cyxwiz::JaccardLoss>(
+                reduction, smooth);
+            expected_operation = "pytorch_explicit_jaccard_loss";
+        }
+        Check(test_case.value("operation", "") == expected_operation,
+              name + " operation mismatch");
+
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto actual_loss = loss->Forward(predictions, targets);
+        const auto actual_gradient = loss->Backward(predictions, targets);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              name + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              name + " materialized a tensor during compute");
+        CheckTensor(actual_loss, test_case.at("expected").at("loss"),
+                    ReadTolerance(test_case), name + " forward");
+        CheckTensor(actual_gradient,
+                    test_case.at("expected").at("prediction_gradient"),
+                    ReadTolerance(test_case), name + " backward");
+    }
+}
+
+void TestOverlapLinearMultiBatchUpdateParity(const json& cases) {
+    const auto& test_case = cases.at("overlap_linear_multibatch_sgd_f32");
+    Check(test_case.value("operation", "") ==
+              "PyTorch explicit SoftDice + nn.Linear + optim.SGD" &&
+              test_case.value("dtype", "") == "float32" &&
+              test_case.value("reduction", "") == "mean",
+          "overlap multi-batch fixture metadata mismatch");
+    const auto tolerance = ReadTolerance(test_case);
+    const auto weight_shape = ReadShape(
+        test_case.at("initial").at("weight"),
+        "overlap multi-batch initial weight");
+    cyxwiz::LinearLayer linear(weight_shape[1], weight_shape[0], true);
+    linear.SetParameters({
+        {"weight", FloatTensorFromFixture(
+                       test_case.at("initial").at("weight"),
+                       "overlap multi-batch initial weight")},
+        {"bias", FloatTensorFromFixture(
+                     test_case.at("initial").at("bias"),
+                     "overlap multi-batch initial bias")},
+    });
+    cyxwiz::SoftDiceLoss loss(
+        cyxwiz::Reduction::Mean, test_case.at("smooth").get<float>());
+    cyxwiz::SGDOptimizer optimizer(
+        test_case.at("learning_rate").get<double>());
+
+    size_t step_index = 0;
+    for (const auto& step : test_case.at("steps")) {
+        const std::string label =
+            "overlap multi-batch step " + std::to_string(step_index + 1);
+        const auto input = FloatTensorFromFixture(
+            step.at("input"), label + " input");
+        const auto targets = FloatTensorFromFixture(
+            step.at("targets"), label + " targets");
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto output = linear.Forward(input);
+        const auto actual_loss = loss.Forward(output, targets);
+        const auto grad_output = loss.Backward(output, targets);
+        const auto grad_input = linear.Backward(grad_output);
+        const auto gradients = linear.GetGradients();
+        auto parameters = linear.GetParameters();
+        optimizer.Step(parameters, gradients);
+        linear.SetParameters(parameters);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              label + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              label + " materialized a tensor during compute");
+
+        CheckTensor(output, step.at("expected").at("output"), tolerance,
+                    label + " output");
+        CheckTensor(actual_loss, step.at("expected").at("loss"), tolerance,
+                    label + " loss");
+        CheckTensor(grad_output, step.at("expected").at("grad_output"),
+                    tolerance, label + " loss gradient");
+        CheckTensor(grad_input, step.at("expected").at("grad_input"),
+                    tolerance, label + " input gradient");
+        CheckTensor(gradients.at("weight"),
+                    step.at("expected").at("grad_weight"), tolerance,
+                    label + " weight gradient");
+        CheckTensor(gradients.at("bias"),
+                    step.at("expected").at("grad_bias"), tolerance,
+                    label + " bias gradient");
+        CheckTensor(parameters.at("weight"),
+                    step.at("expected").at("updated_weight"), tolerance,
+                    label + " updated weight");
+        CheckTensor(parameters.at("bias"),
+                    step.at("expected").at("updated_bias"), tolerance,
+                    label + " updated bias");
+        ++step_index;
+        Check(optimizer.GetStepCount() == static_cast<int>(step_index),
+              label + " optimizer step count mismatch");
+    }
+}
+
 void TestCrossEntropyMatrixParity(const json& cases) {
     const auto& matrix = cases.at("cross_entropy_matrix_f32");
     Check(matrix.is_array() && !matrix.empty(),
@@ -1881,6 +2031,8 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
 
         TestRegressionLossParity(cases);
         TestProbabilityLossParity(cases);
+        TestOverlapLossParity(cases);
+        TestOverlapLinearMultiBatchUpdateParity(cases);
         TestCrossEntropyParity(cases);
         TestCrossEntropyMatrixParity(cases);
         TestNLLLossParity(cases);
@@ -1969,6 +2121,8 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
             const cyxwiz::ScopedExecutionDeviceContext bound_context(context);
             TestRegressionLossParity(cases);
             TestProbabilityLossParity(cases);
+            TestOverlapLossParity(cases);
+            TestOverlapLinearMultiBatchUpdateParity(cases);
             TestCrossEntropyParity(cases);
             TestCrossEntropyMatrixParity(cases);
             TestNLLLossParity(cases);

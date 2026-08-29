@@ -90,18 +90,12 @@ public:
 #if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
 using LossFactory = std::function<std::unique_ptr<cyxwiz::Loss>()>;
 
-void RequireRegressionLossFallbackContract(
+void RequireLossFallbackContract(
     const LossFactory& factory,
     const std::string& operation_name,
-    bool forward) {
-    const float prediction_values[] = {-2.5f, -0.5f, 0.0f, 0.75f, 3.0f, 1.0f};
-    const float target_values[] = {0.0f, -1.0f, 0.0f, 0.25f, 0.0f, -2.0f};
-    const auto make_predictions = [&]() {
-        return cyxwiz::Tensor(af::array(2, 3, prediction_values));
-    };
-    const auto make_targets = [&]() {
-        return cyxwiz::Tensor(af::array(2, 3, target_values));
-    };
+    bool forward,
+    const std::function<cyxwiz::Tensor()>& make_predictions,
+    const std::function<cyxwiz::Tensor()>& make_targets) {
     const auto invoke = [forward](cyxwiz::Loss& loss,
                                   const cyxwiz::Tensor& predictions,
                                   const cyxwiz::Tensor& targets) {
@@ -287,6 +281,16 @@ TEST_CASE("SmoothL1 beta zero is exactly L1", "[loss][regression]") {
 #if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
 TEST_CASE("Regression losses declare strict and compatible fallback truth",
           "[loss][regression][arrayfire][fallback]") {
+    const auto make_predictions = [] {
+        const float values[] = {
+            -2.5f, -0.5f, 0.0f, 0.75f, 3.0f, 1.0f};
+        return cyxwiz::Tensor(af::array(2, 3, values));
+    };
+    const auto make_targets = [] {
+        const float values[] = {
+            0.0f, -1.0f, 0.0f, 0.25f, 0.0f, -2.0f};
+        return cyxwiz::Tensor(af::array(2, 3, values));
+    };
     const std::vector<std::pair<LossFactory, std::string>> losses = {
         {[] { return std::make_unique<cyxwiz::MSELoss>(cyxwiz::Reduction::None); },
          "MSELoss"},
@@ -301,12 +305,14 @@ TEST_CASE("Regression losses declare strict and compatible fallback truth",
     };
     for (const auto& [factory, name] : losses) {
         DYNAMIC_SECTION(name << " forward") {
-            RequireRegressionLossFallbackContract(
-                factory, name + "::Forward", true);
+            RequireLossFallbackContract(
+                factory, name + "::Forward", true,
+                make_predictions, make_targets);
         }
         DYNAMIC_SECTION(name << " backward") {
-            RequireRegressionLossFallbackContract(
-                factory, name + "::Backward", false);
+            RequireLossFallbackContract(
+                factory, name + "::Backward", false,
+                make_predictions, make_targets);
         }
     }
 }
@@ -736,7 +742,127 @@ TEST_CASE("KL divergence computes backward values", "[loss]") {
     REQUIRE(grad.Data<float>()[2] == Catch::Approx(0.0f));
 }
 
-TEST_CASE("SoftDiceLoss computes forward and backward values", "[loss]") {
+TEST_CASE("Overlap loss parameters reject invalid domains",
+          "[loss][overlap]") {
+    REQUIRE_NOTHROW(cyxwiz::SoftDiceLoss(
+        cyxwiz::Reduction::Mean, 0.0f));
+    REQUIRE_THROWS_AS(
+        cyxwiz::SoftDiceLoss(cyxwiz::Reduction::Mean, -1.0f),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::SoftDiceLoss(
+            cyxwiz::Reduction::Mean,
+            std::numeric_limits<float>::infinity()),
+        std::invalid_argument);
+
+    REQUIRE_NOTHROW(cyxwiz::TverskyLoss(
+        cyxwiz::Reduction::Mean, 0.0f, 0.0f, 0.0f));
+    REQUIRE_THROWS_AS(
+        cyxwiz::TverskyLoss(
+            cyxwiz::Reduction::Mean, -0.1f, 0.5f, 1.0f),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::TverskyLoss(
+            cyxwiz::Reduction::Mean,
+            0.5f,
+            std::numeric_limits<float>::quiet_NaN(),
+            1.0f),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::TverskyLoss(
+            cyxwiz::Reduction::Mean, 0.5f, 0.5f, -1.0f),
+        std::invalid_argument);
+
+    REQUIRE_NOTHROW(cyxwiz::JaccardLoss(
+        cyxwiz::Reduction::Mean, 0.0f));
+    REQUIRE_THROWS_AS(
+        cyxwiz::JaccardLoss(cyxwiz::Reduction::Mean, -1.0f),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::JaccardLoss(
+            cyxwiz::Reduction::Mean,
+            std::numeric_limits<float>::quiet_NaN()),
+        std::invalid_argument);
+}
+
+TEST_CASE("Overlap losses validate shape dtype and emptiness before compute",
+          "[loss][overlap]") {
+    const float prediction_values[] = {0.25f, 0.75f};
+    const float short_target_values[] = {1.0f};
+    const int32_t integer_target_values[] = {1, 0};
+    const cyxwiz::Tensor predictions(
+        {2}, prediction_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor short_targets(
+        {1}, short_target_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor integer_targets(
+        {2}, integer_target_values, cyxwiz::DataType::Int32);
+    const cyxwiz::Tensor empty_predictions(
+        {0}, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor empty_targets(
+        {0}, cyxwiz::DataType::Float32);
+
+    cyxwiz::SoftDiceLoss dice;
+    cyxwiz::TverskyLoss tversky;
+    cyxwiz::JaccardLoss jaccard;
+    REQUIRE_THROWS_AS(
+        dice.Forward(predictions, short_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        dice.Backward(predictions, integer_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        tversky.Forward(empty_predictions, empty_targets),
+        std::runtime_error);
+    REQUIRE_THROWS_AS(
+        tversky.Backward(predictions, short_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        jaccard.Forward(predictions, integer_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        jaccard.Backward(empty_predictions, empty_targets),
+        std::runtime_error);
+}
+
+#if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
+TEST_CASE("Overlap losses declare strict and compatible fallback truth",
+          "[loss][overlap][arrayfire][fallback]") {
+    const auto make_device_tensor = [](const std::vector<float>& values) {
+        const cyxwiz::Tensor host(
+            {2, 2}, values.data(), cyxwiz::DataType::Float32);
+        return cyxwiz::Tensor::FromSemanticArray(
+            host.GetSemanticArray(), host.Shape());
+    };
+    const auto make_predictions = [make_device_tensor] {
+        return make_device_tensor({0.8f, 0.2f, 0.4f, 0.9f});
+    };
+    const auto make_targets = [make_device_tensor] {
+        return make_device_tensor({1.0f, 0.0f, 0.0f, 1.0f});
+    };
+    const std::vector<std::pair<LossFactory, std::string>> losses = {
+        {[] { return std::make_unique<cyxwiz::SoftDiceLoss>(
+                   cyxwiz::Reduction::None, 1.0f); },
+         "SoftDiceLoss"},
+        {[] { return std::make_unique<cyxwiz::TverskyLoss>(
+                   cyxwiz::Reduction::None, 0.3f, 0.7f, 1.0f); },
+         "TverskyLoss"},
+        {[] { return std::make_unique<cyxwiz::JaccardLoss>(
+                   cyxwiz::Reduction::None, 1.0f); },
+         "JaccardLoss"},
+    };
+    for (const auto& [factory, name] : losses) {
+        DYNAMIC_SECTION(name << " forward") {
+            RequireLossFallbackContract(
+                factory, name + "::Forward", true,
+                make_predictions, make_targets);
+        }
+        DYNAMIC_SECTION(name << " backward") {
+            RequireLossFallbackContract(
+                factory, name + "::Backward", false,
+                make_predictions, make_targets);
+        }
+    }
+}
+#endif
+
+TEST_CASE("SoftDiceLoss computes forward and backward values",
+          "[loss][overlap]") {
     float pred_values[] = {0.8f, 0.2f, 0.4f, 0.9f};
     float target_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
     cyxwiz::Tensor predictions({1, 4}, pred_values, cyxwiz::DataType::Float32);
@@ -766,7 +892,8 @@ TEST_CASE("SoftDiceLoss computes forward and backward values", "[loss]") {
             Catch::Approx(-((2.0f * denominator) - numerator) / denom_sq));
 }
 
-TEST_CASE("TverskyLoss computes forward and backward values", "[loss]") {
+TEST_CASE("TverskyLoss computes forward and backward values",
+          "[loss][overlap]") {
     float pred_values[] = {0.8f, 0.2f, 0.4f, 0.9f};
     float target_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
     cyxwiz::Tensor predictions({1, 4}, pred_values, cyxwiz::DataType::Float32);
@@ -806,7 +933,8 @@ TEST_CASE("TverskyLoss computes forward and backward values", "[loss]") {
                           denom_sq));
 }
 
-TEST_CASE("JaccardLoss computes forward and backward values", "[loss]") {
+TEST_CASE("JaccardLoss computes forward and backward values",
+          "[loss][overlap]") {
     float pred_values[] = {0.8f, 0.2f, 0.4f, 0.9f};
     float target_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
     cyxwiz::Tensor predictions({1, 4}, pred_values, cyxwiz::DataType::Float32);

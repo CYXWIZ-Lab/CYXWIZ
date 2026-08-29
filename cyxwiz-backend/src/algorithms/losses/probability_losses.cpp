@@ -44,6 +44,22 @@ void BCEWithLogitsLoss::SetPosWeight(float pos_weight) {
     pos_weight_ = pos_weight;
 }
 
+SoftDiceLoss::SoftDiceLoss(Reduction reduction, float smooth)
+    : Loss(reduction), smooth_(smooth) {
+    if (!std::isfinite(smooth_) || smooth_ < 0.0f) {
+        throw std::invalid_argument(
+            "SoftDiceLoss smooth must be finite and non-negative");
+    }
+}
+
+JaccardLoss::JaccardLoss(Reduction reduction, float smooth)
+    : Loss(reduction), smooth_(smooth) {
+    if (!std::isfinite(smooth_) || smooth_ < 0.0f) {
+        throw std::invalid_argument(
+            "JaccardLoss smooth must be finite and non-negative");
+    }
+}
+
 // ============================================================================
 // BCE Loss Implementation
 // ============================================================================
@@ -288,12 +304,87 @@ void ValidateSoftDiceInputs(const Tensor& predictions,
     }
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+af::array ReduceOverlapSamples(
+    const af::array& values,
+    const std::vector<size_t>& semantic_shape) {
+    if (semantic_shape.size() <= 1) {
+        af::array result = af::sum(af::flat(values));
+        result.eval();
+        return result;
+    }
+
+    af::array result = values;
+    for (int axis = static_cast<int>(semantic_shape.size()) - 1;
+         axis >= 1;
+         --axis) {
+        result = af::sum(result, axis);
+        result.eval();
+    }
+    return result;
+}
+
+af::array TileOverlapSamples(
+    const af::array& per_sample,
+    const std::vector<size_t>& semantic_shape) {
+    af::dim4 factors(1, 1, 1, 1);
+    if (semantic_shape.size() == 1) {
+        factors[0] = static_cast<dim_t>(semantic_shape[0]);
+    } else {
+        for (size_t axis = 1; axis < semantic_shape.size(); ++axis) {
+            factors[static_cast<unsigned>(axis)] =
+                static_cast<dim_t>(semantic_shape[axis]);
+        }
+    }
+    af::array result = af::tile(per_sample, factors);
+    result.eval();
+    return result;
+}
+
+Tensor WrapOverlapLoss(const af::array& per_sample,
+                       Reduction reduction,
+                       size_t batch) {
+    const af::array reduced = ApplyReduction(per_sample, reduction);
+    return Tensor::FromSemanticArray(
+        reduced,
+        reduction == Reduction::None
+            ? SoftDiceLossShape(batch)
+            : std::vector<size_t>{1});
+}
+#endif
+
 }  // namespace
 
 Tensor SoftDiceLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "SoftDiceLoss::Forward";
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
+        const af::array prediction_values = TensorToAf(predictions);
+        const af::array target_values = TensorToAf(targets);
+        const af::array intersection = ReduceOverlapSamples(
+            prediction_values * target_values, predictions.Shape());
+        const af::array prediction_sum = ReduceOverlapSamples(
+            prediction_values, predictions.Shape());
+        const af::array target_sum = ReduceOverlapSamples(
+            target_values, targets.Shape());
+        af::array per_sample = 1.0f -
+            (2.0f * intersection + smooth_) /
+                (prediction_sum + target_sum + smooth_);
+        per_sample.eval();
+        return WrapOverlapLoss(per_sample, reduction_, batch);
+    } catch (const af::exception& e) {
+        LogArrayFireLossFallbackOnce(
+            kOperation, e.what(), predictions, targets, reduction_);
+    }
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
     const float* pred = predictions.Data<float>();
     const float* target = targets.Data<float>();
@@ -332,9 +423,46 @@ Tensor SoftDiceLoss::Forward(const Tensor& predictions, const Tensor& targets) {
 }
 
 Tensor SoftDiceLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "SoftDiceLoss::Backward";
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
+        const af::array prediction_values = TensorToAf(predictions);
+        const af::array target_values = TensorToAf(targets);
+        const af::array intersection = ReduceOverlapSamples(
+            prediction_values * target_values, predictions.Shape());
+        const af::array prediction_sum = ReduceOverlapSamples(
+            prediction_values, predictions.Shape());
+        const af::array target_sum = ReduceOverlapSamples(
+            target_values, targets.Shape());
+        const af::array numerator = 2.0f * intersection + smooth_;
+        const af::array denominator =
+            prediction_sum + target_sum + smooth_;
+        const af::array numerator_tiled = TileOverlapSamples(
+            numerator, predictions.Shape());
+        const af::array denominator_tiled = TileOverlapSamples(
+            denominator, predictions.Shape());
+        af::array gradient =
+            -((2.0f * target_values * denominator_tiled) -
+              numerator_tiled) /
+            (denominator_tiled * denominator_tiled);
+        if (reduction_ == Reduction::Mean) {
+            gradient = gradient / static_cast<float>(batch);
+        }
+        gradient.eval();
+        return Tensor::FromSemanticArray(gradient, predictions.Shape());
+    } catch (const af::exception& e) {
+        LogArrayFireLossFallbackOnce(
+            kOperation, e.what(), predictions, targets, reduction_);
+    }
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
     const float* pred = predictions.Data<float>();
     const float* target = targets.Data<float>();
@@ -393,9 +521,38 @@ TverskyLoss::TverskyLoss(Reduction reduction,
 }
 
 Tensor TverskyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "TverskyLoss::Forward";
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
+        const af::array prediction_values = TensorToAf(predictions);
+        const af::array target_values = TensorToAf(targets);
+        const af::array true_positive = ReduceOverlapSamples(
+            prediction_values * target_values, predictions.Shape());
+        const af::array false_positive = ReduceOverlapSamples(
+            prediction_values * (1.0f - target_values),
+            predictions.Shape());
+        const af::array false_negative = ReduceOverlapSamples(
+            (1.0f - prediction_values) * target_values,
+            predictions.Shape());
+        af::array per_sample = 1.0f -
+            (true_positive + smooth_) /
+                (true_positive + alpha_ * false_positive +
+                 beta_ * false_negative + smooth_);
+        per_sample.eval();
+        return WrapOverlapLoss(per_sample, reduction_, batch);
+    } catch (const af::exception& e) {
+        LogArrayFireLossFallbackOnce(
+            kOperation, e.what(), predictions, targets, reduction_);
+    }
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
     const float* pred = predictions.Data<float>();
     const float* target = targets.Data<float>();
@@ -436,9 +593,50 @@ Tensor TverskyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
 }
 
 Tensor TverskyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "TverskyLoss::Backward";
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
+        const af::array prediction_values = TensorToAf(predictions);
+        const af::array target_values = TensorToAf(targets);
+        const af::array true_positive = ReduceOverlapSamples(
+            prediction_values * target_values, predictions.Shape());
+        const af::array false_positive = ReduceOverlapSamples(
+            prediction_values * (1.0f - target_values),
+            predictions.Shape());
+        const af::array false_negative = ReduceOverlapSamples(
+            (1.0f - prediction_values) * target_values,
+            predictions.Shape());
+        const af::array numerator = true_positive + smooth_;
+        const af::array denominator = true_positive +
+            alpha_ * false_positive + beta_ * false_negative + smooth_;
+        const af::array numerator_tiled = TileOverlapSamples(
+            numerator, predictions.Shape());
+        const af::array denominator_tiled = TileOverlapSamples(
+            denominator, predictions.Shape());
+        const af::array denominator_derivative =
+            alpha_ + (1.0f - alpha_ - beta_) * target_values;
+        af::array gradient =
+            -((target_values * denominator_tiled) -
+              (numerator_tiled * denominator_derivative)) /
+            (denominator_tiled * denominator_tiled);
+        if (reduction_ == Reduction::Mean) {
+            gradient = gradient / static_cast<float>(batch);
+        }
+        gradient.eval();
+        return Tensor::FromSemanticArray(gradient, predictions.Shape());
+    } catch (const af::exception& e) {
+        LogArrayFireLossFallbackOnce(
+            kOperation, e.what(), predictions, targets, reduction_);
+    }
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
     const float* pred = predictions.Data<float>();
     const float* target = targets.Data<float>();
@@ -484,9 +682,36 @@ Tensor TverskyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
 }
 
 Tensor JaccardLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "JaccardLoss::Forward";
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
+        const af::array prediction_values = TensorToAf(predictions);
+        const af::array target_values = TensorToAf(targets);
+        const af::array intersection = ReduceOverlapSamples(
+            prediction_values * target_values, predictions.Shape());
+        const af::array prediction_sum = ReduceOverlapSamples(
+            prediction_values, predictions.Shape());
+        const af::array target_sum = ReduceOverlapSamples(
+            target_values, targets.Shape());
+        const af::array numerator = intersection + smooth_;
+        const af::array denominator =
+            prediction_sum + target_sum - intersection + smooth_;
+        af::array per_sample = 1.0f - numerator / denominator;
+        per_sample.eval();
+        return WrapOverlapLoss(per_sample, reduction_, batch);
+    } catch (const af::exception& e) {
+        LogArrayFireLossFallbackOnce(
+            kOperation, e.what(), predictions, targets, reduction_);
+    }
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
     const float* pred = predictions.Data<float>();
     const float* target = targets.Data<float>();
@@ -527,9 +752,46 @@ Tensor JaccardLoss::Forward(const Tensor& predictions, const Tensor& targets) {
 }
 
 Tensor JaccardLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "JaccardLoss::Backward";
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
+        const af::array prediction_values = TensorToAf(predictions);
+        const af::array target_values = TensorToAf(targets);
+        const af::array intersection = ReduceOverlapSamples(
+            prediction_values * target_values, predictions.Shape());
+        const af::array prediction_sum = ReduceOverlapSamples(
+            prediction_values, predictions.Shape());
+        const af::array target_sum = ReduceOverlapSamples(
+            target_values, targets.Shape());
+        const af::array numerator = intersection + smooth_;
+        const af::array denominator =
+            prediction_sum + target_sum - intersection + smooth_;
+        const af::array numerator_tiled = TileOverlapSamples(
+            numerator, predictions.Shape());
+        const af::array denominator_tiled = TileOverlapSamples(
+            denominator, predictions.Shape());
+        af::array gradient =
+            -((target_values * denominator_tiled) -
+              (numerator_tiled * (1.0f - target_values))) /
+            (denominator_tiled * denominator_tiled);
+        if (reduction_ == Reduction::Mean) {
+            gradient = gradient / static_cast<float>(batch);
+        }
+        gradient.eval();
+        return Tensor::FromSemanticArray(gradient, predictions.Shape());
+    } catch (const af::exception& e) {
+        LogArrayFireLossFallbackOnce(
+            kOperation, e.what(), predictions, targets, reduction_);
+    }
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
     const float* pred = predictions.Data<float>();
     const float* target = targets.Data<float>();

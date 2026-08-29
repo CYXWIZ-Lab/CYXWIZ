@@ -49,8 +49,7 @@ private:
 class CYXWIZ_API SoftDiceLoss : public Loss {
 public:
     explicit SoftDiceLoss(Reduction reduction = Reduction::Mean,
-                          float smooth = 1.0f)
-        : Loss(reduction), smooth_(smooth) {}
+                          float smooth = 1.0f);
 
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
     Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
@@ -86,8 +85,7 @@ private:
 class CYXWIZ_API JaccardLoss : public Loss {
 public:
     explicit JaccardLoss(Reduction reduction = Reduction::Mean,
-                         float smooth = 1.0f)
-        : Loss(reduction), smooth_(smooth) {}
+                         float smooth = 1.0f);
 
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
     Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
