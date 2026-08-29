@@ -254,6 +254,26 @@ TEST_CASE("Softmax validates axis dtype and module backward state", "[activation
     REQUIRE_THROWS(module.Backward(wrong_shape_grad));
 }
 
+TEST_CASE("PReLU validates parameter and channel contracts", "[activation]") {
+    REQUIRE_THROWS(cyxwiz::PReLUActivation(0));
+
+    cyxwiz::PReLUActivation prelu(3);
+    float short_alpha_values[] = {0.1f, 0.2f};
+    cyxwiz::Tensor short_alpha(
+        {2}, short_alpha_values, cyxwiz::DataType::Float32);
+    REQUIRE_THROWS(prelu.SetAlpha(short_alpha));
+
+    int32_t integer_alpha_values[] = {1, 2, 3};
+    cyxwiz::Tensor integer_alpha(
+        {3}, integer_alpha_values, cyxwiz::DataType::Int32);
+    REQUIRE_THROWS(prelu.SetAlpha(integer_alpha));
+
+    float input_values[] = {1.0f, -2.0f, 3.0f, -4.0f};
+    cyxwiz::Tensor wrong_channels(
+        {2, 2}, input_values, cyxwiz::DataType::Float32);
+    REQUIRE_THROWS(prelu.Forward(wrong_channels));
+}
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 static bool HasArrayFireDeviceBackend() {
     try {

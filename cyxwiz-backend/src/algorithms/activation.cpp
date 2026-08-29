@@ -912,6 +912,10 @@ Tensor SELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 
 PReLUActivation::PReLUActivation(int num_parameters, float init)
     : num_parameters_(num_parameters) {
+    if (num_parameters_ <= 0 || !std::isfinite(init)) {
+        throw std::invalid_argument(
+            "PReLU requires a positive parameter count and finite initial value");
+    }
     // Initialize alpha with the init value
     alpha_ = Tensor({static_cast<size_t>(num_parameters)}, DataType::Float32);
     float* alpha_data = alpha_.MutableData<float>();
@@ -921,11 +925,28 @@ PReLUActivation::PReLUActivation(int num_parameters, float init)
     grad_alpha_ = Tensor::Zeros({static_cast<size_t>(num_parameters)});
 }
 
+void PReLUActivation::SetAlpha(const Tensor& alpha) {
+    if (alpha.GetDataType() != DataType::Float32 ||
+        alpha.Shape() != std::vector<size_t>{
+                             static_cast<size_t>(num_parameters_)}) {
+        throw std::invalid_argument(
+            "PReLU alpha must be Float32 with shape [num_parameters]");
+    }
+    alpha_ = alpha;
+}
+
 Tensor PReLUActivation::Forward(const Tensor& input) {
+    ValidateFloat32UnaryActivation(input, "PReLU");
+    if (num_parameters_ != 1 &&
+        (input.Shape().size() < 2 ||
+         input.Shape()[1] != static_cast<size_t>(num_parameters_))) {
+        throw std::invalid_argument(
+            "PReLU channel parameters must match input dimension 1");
+    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array x = TensorToAf(input);
-        af::array alpha = TensorToAf(alpha_);
+        af::array x = input.GetSemanticArray();
+        af::array alpha = alpha_.GetSemanticArray();
 
         // PReLU: max(0, x) + alpha * min(0, x)
         af::array positive = af::max(x, 0.0f);
@@ -952,7 +973,7 @@ Tensor PReLUActivation::Forward(const Tensor& input) {
             output = positive + alpha_bc * negative;
         }
 
-        return AfToTensor(output);
+        return Tensor::FromSemanticArray(output, input.Shape());
     } catch (const af::exception& e) {
         LogActivationFallbackOnce("PReLU::Forward", e.what(), input, "input");
     }
@@ -970,11 +991,18 @@ Tensor PReLUActivation::Forward(const Tensor& input) {
 }
 
 Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
+    ValidateFloat32ActivationBackward(grad_output, input, "PReLU");
+    if (num_parameters_ != 1 &&
+        (input.Shape().size() < 2 ||
+         input.Shape()[1] != static_cast<size_t>(num_parameters_))) {
+        throw std::invalid_argument(
+            "PReLU channel parameters must match input dimension 1");
+    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array grad = TensorToAf(grad_output);
-        af::array x = TensorToAf(input);
-        af::array alpha = TensorToAf(alpha_);
+        af::array grad = grad_output.GetSemanticArray();
+        af::array x = input.GetSemanticArray();
+        af::array alpha = alpha_.GetSemanticArray();
 
         // Gradient w.r.t input: 1 for x > 0, alpha for x <= 0
         af::array positive_mask = (x > 0).as(af::dtype::f32);
@@ -987,8 +1015,8 @@ Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input)
             // Gradient w.r.t alpha: sum of grad * min(0, x)
             af::array grad_alpha_arr =
                 af::sum(af::flat(grad * af::min(x, 0.0f)));
-            grad_alpha_ = AfToTensor(
-                af::moddims(grad_alpha_arr, af::dim4(1)));
+            grad_alpha_ = Tensor::FromSemanticArray(
+                af::moddims(grad_alpha_arr, af::dim4(1)), {1});
         } else {
             // Per-channel
             af::dim4 alpha_shape(1, 1, 1, 1);
@@ -1003,12 +1031,19 @@ Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input)
             // Gradient w.r.t alpha per channel
             af::array negative = af::min(x, 0.0f);
             af::array grad_times_neg = grad * negative;
-            // Sum over all dimensions except channel
-            af::array grad_alpha_arr = af::sum(af::sum(af::sum(grad_times_neg, 0), 2), 3);
-            grad_alpha_ = AfToTensor(af::moddims(grad_alpha_arr, af::dim4(num_parameters_)));
+            // Sum over every semantic dimension except channel dimension 1.
+            af::array grad_alpha_arr = grad_times_neg;
+            for (int dimension = 3; dimension >= 0; --dimension) {
+                if (dimension != 1) {
+                    grad_alpha_arr = af::sum(grad_alpha_arr, dimension);
+                }
+            }
+            grad_alpha_ = Tensor::FromSemanticArray(
+                af::moddims(grad_alpha_arr, af::dim4(num_parameters_)),
+                {static_cast<size_t>(num_parameters_)});
         }
 
-        return AfToTensor(grad_input);
+        return Tensor::FromSemanticArray(grad_input, input.Shape());
     } catch (const af::exception& e) {
         LogActivationFallbackOnce("PReLU::Backward", e.what(), grad_output, "grad_output");
     }

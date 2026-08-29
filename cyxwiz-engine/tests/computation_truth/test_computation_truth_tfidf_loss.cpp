@@ -848,6 +848,36 @@ void TestSoftmaxParity(const json& cases) {
     }
 }
 
+void TestPReLUParity(const json& cases) {
+    for (const auto& test_case : cases.at("prelu_forward_backward_f32")) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("operation", "") ==
+                  "torch.nn.functional.prelu" &&
+                  test_case.value("dtype", "") == "float32",
+              name + " PReLU fixture metadata mismatch");
+        cyxwiz::PReLUActivation activation(
+            test_case.at("num_parameters").get<int>());
+        activation.SetAlpha(FloatTensorFromFixture(
+            test_case.at("alpha"), name + " PReLU alpha"));
+        const auto input = FloatTensorFromFixture(
+            test_case.at("input"), name + " PReLU input");
+        const auto output = activation.Forward(input);
+        const auto grad_input = activation.Backward(
+            FloatTensorFromFixture(test_case.at("grad_output"),
+                                   name + " PReLU grad_output"),
+            input);
+        const auto tolerance = ReadTolerance(test_case);
+        CheckTensor(output, test_case.at("expected").at("output"), tolerance,
+                    name + " PReLU forward");
+        CheckTensor(grad_input,
+                    test_case.at("expected").at("grad_input"), tolerance,
+                    name + " PReLU input gradient");
+        CheckTensor(activation.GetAlphaGradient(),
+                    test_case.at("expected").at("grad_alpha"), tolerance,
+                    name + " PReLU alpha gradient");
+    }
+}
+
 void TestLinearMultiBatchUpdateParity(const json& cases) {
     const auto& test_case = cases.at("linear_multibatch_sgd_f32");
     Check(test_case.value("operation", "") ==
@@ -1537,6 +1567,7 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestCrossEntropyMatrixParity(cases);
         TestElementwiseActivationParity(cases);
         TestSoftmaxParity(cases);
+        TestPReLUParity(cases);
         TestLinearForwardBackwardParity(cases);
         TestLinearMultiBatchUpdateParity(cases);
         TestOptimizerMultiStepParity(cases);
@@ -1616,6 +1647,7 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
             const cyxwiz::ScopedExecutionDeviceContext bound_context(context);
             TestElementwiseActivationParity(cases);
             TestSoftmaxParity(cases);
+            TestPReLUParity(cases);
             TestLinearForwardBackwardParity(cases);
             TestLinearMultiBatchUpdateParity(cases);
             TestOptimizerMultiStepParity(cases);

@@ -241,6 +241,63 @@ def softmax_matrix() -> list[dict[str, Any]]:
     ]
 
 
+def prelu_case(
+    name: str,
+    input_values: list[Any],
+    alpha_values: list[float],
+    shape: list[int] | None = None,
+) -> dict[str, Any]:
+    input_tensor = torch.tensor(
+        input_values, dtype=torch.float32, requires_grad=True
+    )
+    if shape is not None:
+        input_tensor = input_tensor.reshape(shape).detach().requires_grad_(True)
+    alpha = torch.tensor(alpha_values, dtype=torch.float32, requires_grad=True)
+    grad_output = torch.linspace(
+        -1.5, 2.0, steps=input_tensor.numel(), dtype=torch.float32
+    ).reshape(input_tensor.shape)
+    output = functional.prelu(input_tensor, alpha)
+    grad_input, grad_alpha = torch.autograd.grad(
+        output, (input_tensor, alpha), grad_outputs=grad_output
+    )
+    return {
+        "name": name,
+        "operation": "torch.nn.functional.prelu",
+        "dtype": "float32",
+        "num_parameters": len(alpha_values),
+        "tolerance": {"atol": 2.0e-5, "rtol": 2.0e-5},
+        "input": tensor_fixture(input_tensor),
+        "alpha": tensor_fixture(alpha),
+        "grad_output": tensor_fixture(grad_output),
+        "expected": {
+            "output": tensor_fixture(output),
+            "grad_input": tensor_fixture(grad_input),
+            "grad_alpha": tensor_fixture(grad_alpha),
+        },
+    }
+
+
+def prelu_matrix() -> list[dict[str, Any]]:
+    return [
+        prelu_case(
+            "shared_rank2",
+            [[-3.0, 0.0, 2.0], [4.0, -5.0, -1.0e-6]],
+            [0.25],
+        ),
+        prelu_case(
+            "channel_rank2",
+            [[-3.0, 0.0, 2.0], [4.0, -5.0, -1.0e-6]],
+            [0.1, 0.2, 0.3],
+        ),
+        prelu_case(
+            "channel_rank4",
+            [float(value - 12) for value in range(24)],
+            [0.1, 0.2, 0.3],
+            [2, 3, 2, 2],
+        ),
+    ]
+
+
 def linear_case(
     name: str,
     input_values: list[Any],
@@ -2682,6 +2739,7 @@ def generate_fixture() -> dict[str, Any]:
             "elementwise_activation_forward_backward_f32":
                 elementwise_activation_matrix(),
             "softmax_forward_backward_f32": softmax_matrix(),
+            "prelu_forward_backward_f32": prelu_matrix(),
             "dropout_semantics_f32": dropout_semantics(),
             "flatten_forward_backward_f32": flatten_matrix(),
             "tensor_concat_f32": tensor_concat_matrix(),

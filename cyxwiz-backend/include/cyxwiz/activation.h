@@ -220,7 +220,7 @@ public:
 
     // Access learnable parameters
     Tensor GetAlpha() const { return alpha_; }
-    void SetAlpha(const Tensor& alpha) { alpha_ = alpha; }
+    void SetAlpha(const Tensor& alpha);
     Tensor GetAlphaGradient() const { return grad_alpha_; }
 
 private:

@@ -382,12 +382,12 @@
       "implementation": ["cyxwiz-backend/src/algorithms/activation.cpp"],
       "callers": ["activation modules"],
       "contract": "Input and alpha gradients match PyTorch with the declared scalar/channel parameter form.",
-      "supported": "public PReLU configuration",
-      "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_activations"],
-      "execution": "audit needed",
+      "supported": "Float32 shared-alpha rank domain and per-channel rank-2/rank-4 ArrayFire domain with channel dimension 1",
+      "oracle": "Generated PyTorch 2.10 forward/autograd fixtures",
+      "tests": ["cyxwiz-tests:test_activations", "test_computation_truth_tfidf_loss:prelu_forward_backward_f32"],
+      "execution": "strict ArrayFire-resident CPU, CUDA and OpenCL routes; non-ArrayFire native CPU implementation is shared-alpha only",
       "status": "partial",
-      "gaps": ["state/update fixture", "parameter-shape contract", "residency"]
+      "gaps": ["optimizer/module ownership for learned-alpha updates", "non-ArrayFire per-channel implementation and qualification", "process-isolated oneAPI PReLU qualification"]
     },
     {
       "id": "LOSS-REG-001",
