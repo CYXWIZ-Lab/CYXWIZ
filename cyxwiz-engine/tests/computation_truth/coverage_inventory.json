@@ -430,12 +430,12 @@
       "implementation": ["cyxwiz-backend/src/algorithms/losses/classification_losses.cpp"],
       "callers": ["classification objectives"],
       "contract": "Target indexing, weighting, focusing exponent, reduction and gradient match PyTorch/reference semantics.",
-      "supported": "public loss configurations",
-      "oracle": "PyTorch where available; explicit reference for unsupported API differences",
-      "tests": ["cyxwiz-tests:test_loss"],
-      "execution": "audit needed",
-      "status": "partial",
-      "gaps": ["deterministic fixtures", "gradient/reduction/extreme matrix", "fallback/residency"]
+      "supported": "Float32 class-last rank-1/2/3 predictions with Int32/Int64 class indices; none, sum and mean reductions; NLL ignore_index; non-negative finite Focal alpha/gamma",
+      "oracle": "PyTorch NLLLoss plus an explicit PyTorch-autograd focal equation",
+      "tests": ["cyxwiz-tests:[loss]", "test_computation_truth_tfidf_loss:nll_loss_matrix_f32", "test_computation_truth_tfidf_loss:focal_loss_matrix_f32"],
+      "execution": "strict ArrayFire device path on CPU and every locally qualified CUDA/OpenCL route with no native fallback or compute-time host synchronization; native CPU compatibility path verified in a no-ArrayFire build",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LOSS-PROB-001",

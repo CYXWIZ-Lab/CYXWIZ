@@ -584,8 +584,20 @@ void TestRegressionLossParity(const json& cases) {
                   g_host_sync_events->size() == host_sync_count_before,
               name + " materialized a tensor during compute");
 
-        CheckTensor(actual_loss, test_case.at("expected").at("loss"),
-                    ReadTolerance(test_case), name + " forward");
+        const auto& expected_loss = test_case.at("expected").at("loss");
+        if (expected_loss.value("non_finite", "") == "nan") {
+            Check(actual_loss.Shape() ==
+                      expected_loss.at("shape").get<std::vector<size_t>>(),
+                  name + " forward shape mismatch");
+            const cyxwiz::ScopedArrayFireHostSyncAttribution output_readback(
+                cyxwiz::ArrayFireHostSyncCategory::DebugSampleDump,
+                name + " non-finite forward readback");
+            Check(std::isnan(actual_loss.ReadData<float>()[0]),
+                  name + " forward expected NaN");
+        } else {
+            CheckTensor(actual_loss, expected_loss,
+                        ReadTolerance(test_case), name + " forward");
+        }
         CheckTensor(actual_gradient,
                     test_case.at("expected").at("prediction_gradient"),
                     ReadTolerance(test_case), name + " backward");
@@ -668,6 +680,123 @@ void TestCrossEntropyMatrixParity(const json& cases) {
         }
         CheckTensor(actual_gradient,
                     test_case.at("expected").at("logit_gradient"),
+                    ReadTolerance(test_case), name + " backward");
+    }
+}
+
+void TestNLLLossParity(const json& cases) {
+    const auto& matrix = cases.at("nll_loss_matrix_f32");
+    Check(matrix.is_array() && !matrix.empty(),
+          "NLL loss matrix fixture must be non-empty");
+    for (const auto& test_case : matrix) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("operation", "") ==
+                  "torch.nn.functional.nll_loss",
+              name + " operation mismatch");
+        Check(test_case.value("dtype", "") == "float32" &&
+                  test_case.value("target_dtype", "") == "int64",
+              name + " dtype mismatch");
+        const auto prediction_values = ReadFloatValues(
+            test_case.at("log_probabilities"), name + " log probabilities");
+        const auto target_values = ReadInt64Values(
+            test_case.at("targets"), name + " targets");
+        cyxwiz::Tensor predictions(
+            ReadShape(test_case.at("log_probabilities"), name),
+            prediction_values.data(), cyxwiz::DataType::Float32);
+        cyxwiz::Tensor targets(
+            ReadShape(test_case.at("targets"), name), target_values.data(),
+            cyxwiz::DataType::Int64);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        predictions = cyxwiz::Tensor::FromSemanticArray(
+            predictions.GetSemanticArray(), predictions.Shape());
+        targets = cyxwiz::Tensor::FromSemanticArray(
+            targets.GetSemanticArray(), targets.Shape());
+#endif
+
+        cyxwiz::NLLLoss loss(
+            ParseReduction(test_case.at("reduction").get<std::string>()),
+            test_case.at("ignore_index").get<int>());
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto actual_loss = loss.Forward(predictions, targets);
+        const auto actual_gradient = loss.Backward(predictions, targets);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              name + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              name + " materialized a tensor during compute");
+        const auto& expected_loss = test_case.at("expected").at("loss");
+        if (expected_loss.value("non_finite", "") == "nan") {
+            Check(actual_loss.Shape() ==
+                      expected_loss.at("shape").get<std::vector<size_t>>(),
+                  name + " forward shape mismatch");
+            const cyxwiz::ScopedArrayFireHostSyncAttribution output_readback(
+                cyxwiz::ArrayFireHostSyncCategory::DebugSampleDump,
+                name + " non-finite forward readback");
+            Check(std::isnan(actual_loss.ReadData<float>()[0]),
+                  name + " forward expected NaN");
+        } else {
+            CheckTensor(actual_loss, expected_loss,
+                        ReadTolerance(test_case), name + " forward");
+        }
+        CheckTensor(actual_gradient,
+                    test_case.at("expected").at("prediction_gradient"),
+                    ReadTolerance(test_case), name + " backward");
+    }
+}
+
+void TestFocalLossParity(const json& cases) {
+    const auto& matrix = cases.at("focal_loss_matrix_f32");
+    Check(matrix.is_array() && !matrix.empty(),
+          "Focal loss matrix fixture must be non-empty");
+    for (const auto& test_case : matrix) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("operation", "") ==
+                  "pytorch_explicit_focal_loss",
+              name + " operation mismatch");
+        Check(test_case.value("dtype", "") == "float32" &&
+                  test_case.value("target_dtype", "") == "int64",
+              name + " dtype mismatch");
+        const auto prediction_values =
+            ReadFloatValues(test_case.at("logits"), name + " logits");
+        const auto target_values =
+            ReadInt64Values(test_case.at("targets"), name + " targets");
+        cyxwiz::Tensor predictions(
+            ReadShape(test_case.at("logits"), name),
+            prediction_values.data(), cyxwiz::DataType::Float32);
+        cyxwiz::Tensor targets(
+            ReadShape(test_case.at("targets"), name), target_values.data(),
+            cyxwiz::DataType::Int64);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        predictions = cyxwiz::Tensor::FromSemanticArray(
+            predictions.GetSemanticArray(), predictions.Shape());
+        targets = cyxwiz::Tensor::FromSemanticArray(
+            targets.GetSemanticArray(), targets.Shape());
+#endif
+
+        cyxwiz::FocalLoss loss(
+            test_case.at("alpha").get<float>(),
+            test_case.at("gamma").get<float>(),
+            ParseReduction(test_case.at("reduction").get<std::string>()));
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto actual_loss = loss.Forward(predictions, targets);
+        const auto actual_gradient = loss.Backward(predictions, targets);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              name + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              name + " materialized a tensor during compute");
+        CheckTensor(actual_loss, test_case.at("expected").at("loss"),
+                    ReadTolerance(test_case), name + " forward");
+        CheckTensor(actual_gradient,
+                    test_case.at("expected").at("prediction_gradient"),
                     ReadTolerance(test_case), name + " backward");
     }
 }
@@ -1684,6 +1813,8 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestRegressionLossParity(cases);
         TestCrossEntropyParity(cases);
         TestCrossEntropyMatrixParity(cases);
+        TestNLLLossParity(cases);
+        TestFocalLossParity(cases);
         TestElementwiseActivationParity(cases);
         TestSoftmaxParity(cases);
         TestPReLUParity(cases);
@@ -1769,6 +1900,8 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
             TestRegressionLossParity(cases);
             TestCrossEntropyParity(cases);
             TestCrossEntropyMatrixParity(cases);
+            TestNLLLossParity(cases);
+            TestFocalLossParity(cases);
             TestElementwiseActivationParity(cases);
             TestSoftmaxParity(cases);
             TestPReLUParity(cases);

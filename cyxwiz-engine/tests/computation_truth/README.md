@@ -62,6 +62,17 @@ The broad tracking ticket is:
   `none`/`sum`/`mean`, class weights, ignored targets, label smoothing,
   extreme logits, all-ignored mean behavior, forward loss, and full logit
   gradients.
+- Verifies `NLLLoss` against generated PyTorch `nll_loss` fixtures for
+  class-last rank-1/2/3 log probabilities, Int64 class indices,
+  `none`/`sum`/`mean`, ignored and all-ignored targets, forward loss, and full
+  prediction gradients.
+- Verifies `FocalLoss` against an explicit PyTorch-autograd focal equation for
+  class-last rank-1/2/3 logits, `none`/`sum`/`mean`, gamma zero, extreme logits,
+  forward loss, and full prediction gradients. Alpha and gamma reject
+  non-finite or negative values, and backward recomputes from its supplied
+  logits rather than a stale same-shaped forward cache. The stable
+  extreme-logit equation is also exercised directly in a no-ArrayFire native
+  CPU build.
 - Verifies `LinearLayer` forward output against a generated PyTorch linear fixture.
 - Verifies `LinearLayer` backward values:
   - gradient with respect to input
@@ -105,7 +116,7 @@ The broad tracking ticket is:
   explicit following graph module rather than a hidden DenseLayer property.
 - Rejects native fallback attempts and undeclared host synchronization; only
   bounded, attributed test-output readbacks are allowed.
-- Proves regression losses and every supported CrossEntropy rank use strict
+- Proves regression, NLL, Focal, and every supported CrossEntropy rank use strict
   ArrayFire paths with no hidden native CPU computation on CPU and every
   locally qualified CUDA/OpenCL route. Forced regression fallback is
   separately tested for exact rejection/compatibility policy, reason code,
@@ -116,8 +127,8 @@ The broad tracking ticket is:
   rank-3 is reshaped on device and is not a hidden native CPU variant.
   Incompatible optional providers remain explicit device-selection skips.
 
-The elementwise-activation, Linear, regression-loss, CrossEntropy, Adam-family,
-SGD, adaptive-optimizer, LAMB, and weighted-sampler expectations come from the checked-in
+The elementwise-activation, Linear, regression-loss, CrossEntropy, NLL, Focal,
+Adam-family, SGD, adaptive-optimizer, LAMB, and weighted-sampler expectations come from the checked-in
 `fixtures/training_core_pytorch.json` fixture. Regenerate it with:
 
 ```powershell

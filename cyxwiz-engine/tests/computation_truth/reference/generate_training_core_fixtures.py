@@ -2018,6 +2018,207 @@ def cross_entropy_matrix() -> list[dict[str, Any]]:
     return cases
 
 
+def nll_case(
+    name: str,
+    log_probabilities: Any,
+    targets: Any,
+    reduction: str,
+    ignore_index: int = -100,
+) -> dict[str, Any]:
+    predictions = torch.tensor(
+        log_probabilities, dtype=torch.float32, requires_grad=True
+    )
+    target_tensor = torch.tensor(targets, dtype=torch.int64)
+    # CyxWiz classification tensors keep classes last. PyTorch NLL accepts
+    # classes in dimension 1 for rank-3 tensors, so adapt only the oracle.
+    oracle_predictions = (
+        predictions.movedim(-1, 1)
+        if predictions.ndim == 3
+        else predictions
+    )
+    loss = functional.nll_loss(
+        oracle_predictions,
+        target_tensor,
+        ignore_index=ignore_index,
+        reduction=reduction,
+    )
+    (loss.sum() if reduction == "none" else loss).backward()
+    return {
+        "name": name,
+        "operation": "torch.nn.functional.nll_loss",
+        "dtype": "float32",
+        "target_dtype": "int64",
+        "reduction": reduction,
+        "ignore_index": ignore_index,
+        "tolerance": {"atol": 1.0e-6, "rtol": 1.0e-6},
+        "log_probabilities": tensor_fixture(predictions),
+        "targets": tensor_fixture(target_tensor),
+        "expected": {
+            "loss": (
+                {
+                    "shape": list(
+                        (loss.reshape(1) if loss.ndim == 0 else loss).shape
+                    ),
+                    "non_finite": "nan",
+                }
+                if torch.isnan(loss).all()
+                else tensor_fixture(
+                    loss.reshape(1) if loss.ndim == 0 else loss
+                )
+            ),
+            "prediction_gradient": tensor_fixture(predictions.grad),
+        },
+    }
+
+
+def nll_matrix() -> list[dict[str, Any]]:
+    return [
+        nll_case(
+            "rank1_none",
+            [-0.40760595, -1.4076059, -2.407606],
+            0,
+            "none",
+        ),
+        nll_case(
+            "rank2_sum",
+            [
+                [-0.40760595, -1.4076059, -2.407606],
+                [-1.6802697, -0.68026966, -1.1802697],
+            ],
+            [2, 1],
+            "sum",
+        ),
+        nll_case(
+            "rank2_mean_ignored",
+            [
+                [-0.40760595, -1.4076059, -2.407606],
+                [-1.6802697, -0.68026966, -1.1802697],
+                [-2.407606, -1.4076059, -0.40760595],
+            ],
+            [0, -100, 2],
+            "mean",
+        ),
+        nll_case(
+            "rank3_class_last_none",
+            [
+                [
+                    [-0.40760595, -1.4076059, -2.407606],
+                    [-1.6802697, -0.68026966, -1.1802697],
+                ],
+                [
+                    [-2.407606, -1.4076059, -0.40760595],
+                    [-0.4643688, -2.4643688, -1.4643688],
+                ],
+            ],
+            [[0, 1], [2, -100]],
+            "none",
+        ),
+        nll_case(
+            "rank2_mean_all_ignored",
+            [
+                [-0.40760595, -1.4076059, -2.407606],
+                [-1.6802697, -0.68026966, -1.1802697],
+            ],
+            [-100, -100],
+            "mean",
+        ),
+    ]
+
+
+def focal_case(
+    name: str,
+    logits: Any,
+    targets: Any,
+    reduction: str,
+    alpha: float,
+    gamma: float,
+    tolerance: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    predictions = torch.tensor(logits, dtype=torch.float32, requires_grad=True)
+    target_tensor = torch.tensor(targets, dtype=torch.int64)
+    log_probabilities = functional.log_softmax(predictions, dim=-1)
+    probabilities = log_probabilities.exp()
+    gather_indices = target_tensor.reshape(-1, 1)
+    row_log_probabilities = log_probabilities.reshape(
+        -1, predictions.shape[-1]
+    )
+    row_probabilities = probabilities.reshape(-1, predictions.shape[-1])
+    log_pt = row_log_probabilities.gather(1, gather_indices).reshape(
+        target_tensor.shape if target_tensor.ndim > 0 else ()
+    )
+    pt = row_probabilities.gather(1, gather_indices).reshape(
+        target_tensor.shape if target_tensor.ndim > 0 else ()
+    )
+    per_sample_loss = -alpha * (1.0 - pt).pow(gamma) * log_pt
+    if reduction == "mean":
+        loss = per_sample_loss.mean()
+    elif reduction == "sum":
+        loss = per_sample_loss.sum()
+    else:
+        loss = per_sample_loss.reshape(1) if per_sample_loss.ndim == 0 else per_sample_loss
+    (loss.sum() if reduction == "none" else loss).backward()
+    return {
+        "name": name,
+        "operation": "pytorch_explicit_focal_loss",
+        "formula": "-alpha * (1 - softmax(logits)[target])^gamma * log_softmax(logits)[target]",
+        "dtype": "float32",
+        "target_dtype": "int64",
+        "reduction": reduction,
+        "alpha": alpha,
+        "gamma": gamma,
+        "tolerance": tolerance or {"atol": 1.0e-5, "rtol": 1.0e-5},
+        "logits": tensor_fixture(predictions),
+        "targets": tensor_fixture(target_tensor),
+        "expected": {
+            "loss": tensor_fixture(
+                loss.reshape(1) if loss.ndim == 0 else loss
+            ),
+            "prediction_gradient": tensor_fixture(predictions.grad),
+        },
+    }
+
+
+def focal_matrix() -> list[dict[str, Any]]:
+    return [
+        focal_case(
+            "rank1_none_gamma_zero",
+            [1.5, -0.25, 0.75],
+            1,
+            "none",
+            alpha=0.75,
+            gamma=0.0,
+        ),
+        focal_case(
+            "rank2_mean_gamma_two",
+            [[2.0, 0.0, -1.0], [0.5, 1.5, -0.5], [-1.0, 0.2, 2.2]],
+            [0, 0, 2],
+            "mean",
+            alpha=0.25,
+            gamma=2.0,
+        ),
+        focal_case(
+            "rank2_sum_extreme_logits",
+            [[80.0, -80.0, 0.0], [-60.0, 60.0, 0.0]],
+            [1, 1],
+            "sum",
+            alpha=0.5,
+            gamma=1.5,
+            tolerance={"atol": 1.0e-4, "rtol": 1.0e-5},
+        ),
+        focal_case(
+            "rank3_class_last_none",
+            [
+                [[2.0, 0.0, -1.0], [0.5, 1.5, -0.5]],
+                [[-1.0, 0.2, 2.2], [1.0, -0.5, 0.25]],
+            ],
+            [[0, 1], [2, 1]],
+            "none",
+            alpha=0.8,
+            gamma=2.0,
+        ),
+    ]
+
+
 def adam_family_multistep_cases() -> dict[str, Any]:
     gradients = [
         torch.tensor([0.25, -0.5, 0.125], dtype=torch.float32),
@@ -2757,6 +2958,8 @@ def generate_fixture() -> dict[str, Any]:
             "cross_entropy_index_mean_f32": cross_entropy_case(),
             "cross_entropy_matrix_f32": cross_entropy_matrix(),
             "regression_loss_matrix_f32": regression_loss_matrix(),
+            "nll_loss_matrix_f32": nll_matrix(),
+            "focal_loss_matrix_f32": focal_matrix(),
             "adam_family_multistep_f32": adam_family_multistep_cases(),
             "sgd_momentum_multistep_f32": sgd_momentum_multistep_case(),
             "adaptive_optimizer_multistep_f32":

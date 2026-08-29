@@ -788,6 +788,90 @@ TEST_CASE("Focal loss computes class-index backward values", "[loss]") {
     REQUIRE(data[5] == Catch::Approx(row1_scale * row1_probs[2]));
 }
 
+TEST_CASE("Focal loss parameters follow their numerical domain",
+          "[loss][classification]") {
+    REQUIRE_NOTHROW(cyxwiz::FocalLoss(
+        0.0f, 0.0f, cyxwiz::Reduction::Mean));
+    REQUIRE_THROWS_AS(
+        cyxwiz::FocalLoss(-0.1f, 2.0f, cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::FocalLoss(
+            0.25f, std::numeric_limits<float>::infinity(),
+            cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+
+    cyxwiz::FocalLoss focal;
+    REQUIRE_THROWS_AS(focal.SetAlpha(
+        std::numeric_limits<float>::quiet_NaN()), std::invalid_argument);
+    REQUIRE_THROWS_AS(focal.SetGamma(-1.0f), std::invalid_argument);
+    focal.SetAlpha(0.75f);
+    focal.SetGamma(1.5f);
+    REQUIRE(focal.GetAlpha() == Catch::Approx(0.75f));
+    REQUIRE(focal.GetGamma() == Catch::Approx(1.5f));
+}
+
+TEST_CASE("Focal loss remains finite for extreme logits",
+          "[loss][classification]") {
+    const float logit_values[] = {
+        80.0f, -80.0f, 0.0f,
+        -60.0f, 60.0f, 0.0f,
+    };
+    const int32_t target_values[] = {1, 1};
+    const cyxwiz::Tensor logits(
+        {2, 3}, logit_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor targets(
+        {2}, target_values, cyxwiz::DataType::Int32);
+    cyxwiz::FocalLoss focal(0.5f, 1.5f, cyxwiz::Reduction::Sum);
+
+    const cyxwiz::Tensor loss = focal.Forward(logits, targets);
+    const cyxwiz::Tensor gradient = focal.Backward(logits, targets);
+    REQUIRE(loss.Shape() == std::vector<size_t>{1});
+    REQUIRE(std::isfinite(loss.ReadData<float>()[0]));
+    REQUIRE(loss.ReadData<float>()[0] == Catch::Approx(80.0f).margin(1.0e-4f));
+    REQUIRE(gradient.Shape() == std::vector<size_t>{2, 3});
+    const float* values = gradient.ReadData<float>();
+    REQUIRE(values[0] == Catch::Approx(0.5f).margin(1.0e-5f));
+    REQUIRE(values[1] == Catch::Approx(-0.5f).margin(1.0e-5f));
+    REQUIRE(values[2] == Catch::Approx(0.0f).margin(1.0e-5f));
+    REQUIRE(values[3] == Catch::Approx(0.0f).margin(1.0e-5f));
+    REQUIRE(values[4] == Catch::Approx(0.0f).margin(1.0e-5f));
+    REQUIRE(values[5] == Catch::Approx(0.0f).margin(1.0e-5f));
+}
+
+TEST_CASE("Focal backward recomputes from the supplied logits",
+          "[loss][classification]") {
+    const float first_values[] = {
+        4.0f, -1.0f, 0.0f,
+        -2.0f, 3.0f, 1.0f,
+    };
+    const float second_values[] = {
+        -1.0f, 2.0f, 0.5f,
+        3.0f, -2.0f, 0.0f,
+    };
+    const int32_t target_values[] = {1, 0};
+    const cyxwiz::Tensor first(
+        {2, 3}, first_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor second(
+        {2, 3}, second_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor targets(
+        {2}, target_values, cyxwiz::DataType::Int32);
+
+    cyxwiz::FocalLoss reused(0.25f, 2.0f, cyxwiz::Reduction::Mean);
+    static_cast<void>(reused.Forward(first, targets));
+    const cyxwiz::Tensor actual = reused.Backward(second, targets);
+    cyxwiz::FocalLoss fresh(0.25f, 2.0f, cyxwiz::Reduction::Mean);
+    const cyxwiz::Tensor expected = fresh.Backward(second, targets);
+
+    REQUIRE(actual.Shape() == expected.Shape());
+    const float* actual_values = actual.ReadData<float>();
+    const float* expected_values = expected.ReadData<float>();
+    for (size_t index = 0; index < actual.NumElements(); ++index) {
+        REQUIRE(actual_values[index] ==
+                Catch::Approx(expected_values[index]).margin(1.0e-6f));
+    }
+}
+
 TEST_CASE("Cosine embedding loss computes forward reduction", "[loss]") {
     float x1_values[] = {1.0f, 0.0f, 1.0f, 0.0f};
     float x2_values[] = {1.0f, 0.0f, 1.0f, 0.0f};

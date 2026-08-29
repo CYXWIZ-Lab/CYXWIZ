@@ -3716,6 +3716,269 @@
         }
       }
     ],
+    "focal_loss_matrix_f32": [
+      {
+        "alpha": 0.75,
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              1.686325192451477
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              3
+            ],
+            "values": [
+              0.4556111693382263,
+              -0.6708266735076904,
+              0.21521547436714172
+            ]
+          }
+        },
+        "formula": "-alpha * (1 - softmax(logits)[target])^gamma * log_softmax(logits)[target]",
+        "gamma": 0.0,
+        "logits": {
+          "shape": [
+            3
+          ],
+          "values": [
+            1.5,
+            -0.25,
+            0.75
+          ]
+        },
+        "name": "rank1_none_gamma_zero",
+        "operation": "pytorch_explicit_focal_loss",
+        "reduction": "none",
+        "target_dtype": "int64",
+        "targets": {
+          "shape": [],
+          "values": [
+            1
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "alpha": 0.25,
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              0.06756070256233215
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              3,
+              3
+            ],
+            "values": [
+              -0.0009004361927509308,
+              0.0006582713103853166,
+              0.000242164489463903,
+              -0.06865347176790237,
+              0.06046978384256363,
+              0.008183695375919342,
+              0.0001840368058765307,
+              0.000611023569945246,
+              -0.0007950607687234879
+            ]
+          }
+        },
+        "formula": "-alpha * (1 - softmax(logits)[target])^gamma * log_softmax(logits)[target]",
+        "gamma": 2.0,
+        "logits": {
+          "shape": [
+            3,
+            3
+          ],
+          "values": [
+            2.0,
+            0.0,
+            -1.0,
+            0.5,
+            1.5,
+            -0.5,
+            -1.0,
+            0.20000000298023224,
+            2.200000047683716
+          ]
+        },
+        "name": "rank2_mean_gamma_two",
+        "operation": "pytorch_explicit_focal_loss",
+        "reduction": "mean",
+        "target_dtype": "int64",
+        "targets": {
+          "shape": [
+            3
+          ],
+          "values": [
+            0,
+            0,
+            2
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "alpha": 0.5,
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              80.0
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              0.5,
+              -0.5,
+              9.024256642924203e-36,
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "formula": "-alpha * (1 - softmax(logits)[target])^gamma * log_softmax(logits)[target]",
+        "gamma": 1.5,
+        "logits": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            80.0,
+            -80.0,
+            0.0,
+            -60.0,
+            60.0,
+            0.0
+          ]
+        },
+        "name": "rank2_sum_extreme_logits",
+        "operation": "pytorch_explicit_focal_loss",
+        "reduction": "sum",
+        "target_dtype": "int64",
+        "targets": {
+          "shape": [
+            2
+          ],
+          "values": [
+            1,
+            1
+          ]
+        },
+        "tolerance": {
+          "atol": 0.0001,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "alpha": 0.8,
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              0.0033154075499624014,
+              0.03654224053025246,
+              0.00290914555080235,
+              1.223462700843811
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              2,
+              3
+            ],
+            "values": [
+              -0.008644185960292816,
+              0.0063194045796990395,
+              0.00232477905228734,
+              0.057483311742544174,
+              -0.0786302238702774,
+              0.021146928891539574,
+              0.0017667533829808235,
+              0.005865826737135649,
+              -0.007632583379745483,
+              0.574529230594635,
+              -0.8459177017211914,
+              0.27138838171958923
+            ]
+          }
+        },
+        "formula": "-alpha * (1 - softmax(logits)[target])^gamma * log_softmax(logits)[target]",
+        "gamma": 2.0,
+        "logits": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            2.0,
+            0.0,
+            -1.0,
+            0.5,
+            1.5,
+            -0.5,
+            -1.0,
+            0.20000000298023224,
+            2.200000047683716,
+            1.0,
+            -0.5,
+            0.25
+          ]
+        },
+        "name": "rank3_class_last_none",
+        "operation": "pytorch_explicit_focal_loss",
+        "reduction": "none",
+        "target_dtype": "int64",
+        "targets": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            0,
+            1,
+            2,
+            1
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      }
+    ],
     "gradient_accumulation_linear_ce_sgd_f32": [
       {
         "class_weights": [],
@@ -5075,6 +5338,318 @@
         "rtol": 1e-05
       }
     },
+    "nll_loss_matrix_f32": [
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              0.40760594606399536
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              3
+            ],
+            "values": [
+              -1.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "log_probabilities": {
+          "shape": [
+            3
+          ],
+          "values": [
+            -0.40760594606399536,
+            -1.4076058864593506,
+            -2.4076058864593506
+          ]
+        },
+        "name": "rank1_none",
+        "operation": "torch.nn.functional.nll_loss",
+        "reduction": "none",
+        "target_dtype": "int64",
+        "targets": {
+          "shape": [],
+          "values": [
+            0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              3.0878756046295166
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              0.0,
+              0.0,
+              -1.0,
+              0.0,
+              -1.0,
+              0.0
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "log_probabilities": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -0.40760594606399536,
+            -1.4076058864593506,
+            -2.4076058864593506,
+            -1.680269718170166,
+            -0.6802696585655212,
+            -1.180269718170166
+          ]
+        },
+        "name": "rank2_sum",
+        "operation": "torch.nn.functional.nll_loss",
+        "reduction": "sum",
+        "target_dtype": "int64",
+        "targets": {
+          "shape": [
+            2
+          ],
+          "values": [
+            2,
+            1
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              0.40760594606399536
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              3,
+              3
+            ],
+            "values": [
+              -0.5,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              -0.5
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "log_probabilities": {
+          "shape": [
+            3,
+            3
+          ],
+          "values": [
+            -0.40760594606399536,
+            -1.4076058864593506,
+            -2.4076058864593506,
+            -1.680269718170166,
+            -0.6802696585655212,
+            -1.180269718170166,
+            -2.4076058864593506,
+            -1.4076058864593506,
+            -0.40760594606399536
+          ]
+        },
+        "name": "rank2_mean_ignored",
+        "operation": "torch.nn.functional.nll_loss",
+        "reduction": "mean",
+        "target_dtype": "int64",
+        "targets": {
+          "shape": [
+            3
+          ],
+          "values": [
+            0,
+            -100,
+            2
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              0.40760594606399536,
+              0.6802696585655212,
+              0.40760594606399536,
+              0.0
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              2,
+              3
+            ],
+            "values": [
+              -1.0,
+              0.0,
+              0.0,
+              0.0,
+              -1.0,
+              0.0,
+              0.0,
+              0.0,
+              -1.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "log_probabilities": {
+          "shape": [
+            2,
+            2,
+            3
+          ],
+          "values": [
+            -0.40760594606399536,
+            -1.4076058864593506,
+            -2.4076058864593506,
+            -1.680269718170166,
+            -0.6802696585655212,
+            -1.180269718170166,
+            -2.4076058864593506,
+            -1.4076058864593506,
+            -0.40760594606399536,
+            -0.4643687903881073,
+            -2.4643688201904297,
+            -1.4643688201904297
+          ]
+        },
+        "name": "rank3_class_last_none",
+        "operation": "torch.nn.functional.nll_loss",
+        "reduction": "none",
+        "target_dtype": "int64",
+        "targets": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            0,
+            1,
+            2,
+            -100
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "non_finite": "nan",
+            "shape": [
+              1
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "ignore_index": -100,
+        "log_probabilities": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -0.40760594606399536,
+            -1.4076058864593506,
+            -2.4076058864593506,
+            -1.680269718170166,
+            -0.6802696585655212,
+            -1.180269718170166
+          ]
+        },
+        "name": "rank2_mean_all_ignored",
+        "operation": "torch.nn.functional.nll_loss",
+        "reduction": "mean",
+        "target_dtype": "int64",
+        "targets": {
+          "shape": [
+            2
+          ],
+          "values": [
+            -100,
+            -100
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      }
+    ],
     "optimizer_lr_warmup_sequences": [
       {
         "base_learning_rate": 0.1,

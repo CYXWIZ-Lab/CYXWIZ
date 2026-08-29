@@ -66,13 +66,12 @@ public:
 
     float GetAlpha() const { return alpha_; }
     float GetGamma() const { return gamma_; }
-    void SetAlpha(float alpha) { alpha_ = alpha; }
-    void SetGamma(float gamma) { gamma_ = gamma; }
+    void SetAlpha(float alpha);
+    void SetGamma(float gamma);
 
 private:
     float alpha_;
     float gamma_;
-    Tensor cached_probs_;
 };
 
 } // namespace cyxwiz
