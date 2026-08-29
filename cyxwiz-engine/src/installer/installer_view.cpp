@@ -91,6 +91,44 @@ SelectedPackIds(const std::set<std::string> &selected) {
   return {selected.begin(), selected.end()};
 }
 
+void CenteredDisabledWrappedText(const char *text, float wrap_width,
+                                 float area_width) {
+  if (!text || *text == '\0')
+    return;
+  ImGui::PushStyleColor(ImGuiCol_Text,
+                        ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+  const char *line_start = text;
+  while (*line_start != '\0') {
+    while (*line_start == ' ')
+      ++line_start;
+    if (*line_start == '\0')
+      break;
+
+    const char *line_end = line_start;
+    const char *scan = line_start;
+    while (*scan != '\0') {
+      const char *word_end = scan;
+      while (*word_end != '\0' && *word_end != ' ')
+        ++word_end;
+      const float candidate_width =
+          ImGui::CalcTextSize(line_start, word_end).x;
+      if (line_end != line_start && candidate_width > wrap_width)
+        break;
+      line_end = word_end;
+      scan = word_end;
+      while (*scan == ' ')
+        ++scan;
+    }
+
+    const float line_width = ImGui::CalcTextSize(line_start, line_end).x;
+    ImGui::SetCursorPosX(std::max(ImGui::GetStyle().WindowPadding.x,
+                                  (area_width - line_width) * 0.5f));
+    ImGui::TextUnformatted(line_start, line_end);
+    line_start = line_end;
+  }
+  ImGui::PopStyleColor();
+}
+
 bool WorkloadCard(const char *id, const char *icon, const char *title,
                   const char *description, bool selected, bool enabled,
                   const ImVec2 &size) {
@@ -102,14 +140,20 @@ bool WorkloadCard(const char *id, const char *icon, const char *title,
                     ImGuiWindowFlags_NoScrollbar |
                         ImGuiWindowFlags_NoScrollWithMouse);
   ImGui::BeginDisabled(!enabled);
+  ImGui::Dummy(ImVec2(0.0f, 12.0f));
+  const auto &style = ImGui::GetStyle();
+  const float heading_width = ImGui::CalcTextSize(icon).x +
+                              style.ItemInnerSpacing.x +
+                              ImGui::CalcTextSize(title).x;
+  ImGui::SetCursorPosX(std::max(style.WindowPadding.x,
+                                (size.x - heading_width) * 0.5f));
   ImGui::TextColored(
       selected ? kAccent : ImGui::GetStyleColorVec4(ImGuiCol_Text), "%s", icon);
-  ImGui::SameLine();
+  ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
   ImGui::TextUnformatted(title);
-  ImGui::Spacing();
-  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + size.x - 26.0f);
-  ImGui::TextDisabled("%s", description);
-  ImGui::PopTextWrapPos();
+  ImGui::Dummy(ImVec2(0.0f, 8.0f));
+  const float description_width = std::max(1.0f, size.x - 38.0f);
+  CenteredDisabledWrappedText(description, description_width, size.x);
   const bool clicked = enabled && ImGui::IsWindowHovered() &&
                        ImGui::IsMouseClicked(ImGuiMouseButton_Left);
   ImGui::EndDisabled();
@@ -125,13 +169,19 @@ void RenderWorkloads(InstallerViewState &state,
   ImGui::Text("Choose an installation profile");
   ImGui::TextDisabled("The CPU Engine is always included. Optional backends "
                       "are activated only after local verification.");
-  ImGui::Spacing();
+  ImGui::Dummy(ImVec2(0.0f, 12.0f));
 
-  const bool custom_available = HasSelectableCustomBackendPack(catalog.records);
-  const float gap = ImGui::GetStyle().ItemSpacing.x;
-  const float card_width =
-      std::max(185.0f, (ImGui::GetContentRegionAvail().x - gap * 2.0f) / 3.0f);
-  const ImVec2 size(card_width, 112.0f);
+  constexpr float kWorkloadGutter = 14.0f;
+  constexpr float kCardGap = 14.0f;
+  const float available_width = ImGui::GetContentRegionAvail().x;
+  const float card_width = std::clamp(
+      (available_width - kWorkloadGutter * 2.0f - kCardGap) / 2.0f, 220.0f,
+      310.0f);
+  const float row_width = card_width * 2.0f + kCardGap;
+  const ImVec2 size(card_width, 128.0f);
+  ImGui::SetCursorPosX(
+      ImGui::GetCursorPosX() +
+      std::max(kWorkloadGutter, (available_width - row_width) * 0.5f));
   if (WorkloadCard("recommended", ICON_FA_GAUGE_HIGH, "Recommended",
                    "Best comparable verified configuration, or CPU when no "
                    "optional route qualifies.",
@@ -139,7 +189,7 @@ void RenderWorkloads(InstallerViewState &state,
                    !operation_running, size)) {
     state.choice = BackendPackInstallChoice::Recommended;
   }
-  ImGui::SameLine();
+  ImGui::SameLine(0.0f, kCardGap);
   if (WorkloadCard(
           "cpu", ICON_FA_MICROCHIP, "CPU only",
           "Smallest reliable installation for every supported machine.",
@@ -147,18 +197,7 @@ void RenderWorkloads(InstallerViewState &state,
           size)) {
     state.choice = BackendPackInstallChoice::CpuOnly;
   }
-  ImGui::SameLine();
-  if (WorkloadCard(
-          "custom", ICON_FA_CUBES, "Custom",
-          custom_available
-              ? "Choose CUDA, OpenCL, or oneAPI components yourself."
-              : "No optional pack is authorized by this signed catalog.",
-          state.choice == BackendPackInstallChoice::Custom,
-          custom_available && !operation_running, size)) {
-    state.choice = BackendPackInstallChoice::Custom;
-    state.requested_page = 1;
-  }
-  ImGui::Dummy(ImVec2(0.0f, 8.0f));
+  ImGui::Dummy(ImVec2(0.0f, 14.0f));
   ImGui::Text("What will be installed");
   for (const auto &record : catalog.records) {
     const bool included =
@@ -686,19 +725,12 @@ InstallerViewAction RenderInstallerView(
                            kColumnGap);
   ImGui::BeginChild("main-content", ImVec2(content_width, 0.0f));
   if (ImGui::BeginTabBar("installer-pages")) {
-    const auto workloads_flags = state.requested_page == 0
-                                     ? ImGuiTabItemFlags_SetSelected
-                                     : ImGuiTabItemFlags_None;
-    const auto components_flags = state.requested_page == 1
-                                      ? ImGuiTabItemFlags_SetSelected
-                                      : ImGuiTabItemFlags_None;
-    if (ImGui::BeginTabItem("Workloads", nullptr, workloads_flags)) {
+    if (ImGui::BeginTabItem("Workloads")) {
       state.page = 0;
       RenderWorkloads(state, catalog, operation_running);
       ImGui::EndTabItem();
     }
-    if (ImGui::BeginTabItem("Individual components", nullptr,
-                            components_flags)) {
+    if (ImGui::BeginTabItem("Individual components")) {
       state.page = 1;
       RenderComponents(state, catalog, operation_running);
       ImGui::EndTabItem();
@@ -716,7 +748,6 @@ InstallerViewAction RenderInstallerView(
       ImGui::EndTabItem();
     }
     ImGui::EndTabBar();
-    state.requested_page = -1;
   }
   ImGui::EndChild();
   ImGui::SameLine(0.0f, kColumnGap);

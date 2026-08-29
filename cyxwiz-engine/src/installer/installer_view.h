@@ -45,7 +45,6 @@ struct InstallerViewState {
   BackendPackInstallerPlan pending_plan;
   InstallerRemovalViewState removal;
   int page = 0;
-  int requested_page = -1;
 };
 
 InstallerViewAction RenderInstallerView(
