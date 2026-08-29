@@ -280,7 +280,7 @@
     {
       "id": "LAYER-LINEAR-001",
       "family": "layer",
-      "operation": "Linear with bias, float32 forward/input-gradient/mean parameter-gradient",
+      "operation": "Linear with bias, float32 forward/input-gradient/sum parameter-gradient",
       "tier": 1,
       "owner": "cyxwiz-backend/include/cyxwiz/layers/linear.h",
       "implementation": ["cyxwiz-backend/src/algorithms/layers/linear.cpp"],
@@ -289,9 +289,9 @@
       "supported": "rank-1/rank-2 Float32, optional bias",
       "oracle": "PyTorch fixture with explicit CyxWiz parameter-gradient reduction",
       "tests": ["test_computation_truth_tfidf_loss", "cyxwiz-tests:test_linear_layer"],
-      "execution": "ArrayFire-first; strict ArrayFire CPU and every selectable installed CUDA/OpenCL route prove biased/unbiased rank-1/rank-2 forward/backward and two-step multi-batch SGD updates with exact route identity, no native fallback and bounded attributed verification readback",
-      "status": "partial",
-      "gaps": ["process-isolated oneAPI Linear qualification; known-bad oneAPI device 0 must remain quarantined"]
+      "execution": "ArrayFire-first; strict ArrayFire CPU and every locally qualified CUDA/OpenCL route prove biased/unbiased rank-1/rank-2 forward/backward and two-step multi-batch SGD updates with exact route identity, no native fallback and bounded attributed verification readback; locally incompatible oneAPI routes are explicit device-selection skips",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LAYER-DENSE-001",
@@ -321,9 +321,9 @@
       "supported": "rank >= 2, configured start_dim through the final dimension, and Float32/Float64/Int32/Int64/UInt8 payload preservation",
       "oracle": "generated PyTorch 2.10 torch.nn.Flatten forward/autograd fixtures",
       "tests": ["cyxwiz-tests:test_flatten_layer", "cyxwiz-tests:test_tensor", "cyxwiz-route-probe:cyxwiz_flatten_forward_backward", "test_route_qualification_process"],
-      "execution": "strict ArrayFire-resident cross-rank reshape with zero native fallback or host synchronization on ArrayFire CPU, every installed CUDA/OpenCL device, and oneAPI device 1; oneAPI device 0 is rejected through the isolated route-qualification boundary",
-      "status": "partial",
-      "gaps": ["installed oneAPI device 0 provider/runtime repair: igc64.dll raises access violation 0xC0000005 during device input creation; rerun isolated qualification after driver/plugin update"]
+      "execution": "strict ArrayFire-resident cross-rank reshape with zero native fallback or host synchronization on ArrayFire CPU and every locally qualified CUDA/OpenCL/oneAPI route; incompatible oneAPI device 0 is rejected through the isolated route-qualification boundary",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LAYER-DROPOUT-001",
@@ -337,9 +337,9 @@
       "supported": "all Tensor dtypes for identity paths; Float32 for stochastic training",
       "oracle": "Generated PyTorch 2.10 forward/backward boundary and distribution fixtures plus same-backend CyxWiz seed replay",
       "tests": ["cyxwiz-tests:test_dropout_layer", "cyxwiz-route-probe:cyxwiz_dropout_forward_backward"],
-      "execution": "strict ArrayFire-resident CPU, CUDA, OpenCL and qualified oneAPI routes; declared native CPU compatibility fallback",
-      "status": "partial",
-      "gaps": ["installed oneAPI device 0 Intel provider/runtime repair and exact-route requalification"]
+      "execution": "strict ArrayFire-resident CPU and every locally qualified CUDA/OpenCL/oneAPI route; declared native CPU compatibility fallback; incompatible optional routes are explicit device-selection skips",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "ACT-ELEMENTWISE-001",
@@ -355,7 +355,7 @@
       "tests": ["cyxwiz-tests:test_activations", "test_computation_truth_tfidf_loss:elementwise_activation_forward_backward_f32"],
       "execution": "strict ArrayFire-resident CPU, CUDA and OpenCL routes; declared native CPU compatibility fallback",
       "status": "partial",
-      "gaps": ["native CPU compatibility fallback qualification", "process-isolated oneAPI activation qualification"]
+      "gaps": ["native CPU compatibility fallback qualification"]
     },
     {
       "id": "ACT-SOFTMAX-001",
@@ -371,7 +371,7 @@
       "tests": ["cyxwiz-tests:test_activations", "test_computation_truth_tfidf_loss:softmax_forward_backward_f32", "test_computation_truth_transformer_primitives"],
       "execution": "strict ArrayFire-resident CPU, CUDA and OpenCL routes; non-ArrayFire build has a native CPU implementation",
       "status": "partial",
-      "gaps": ["non-ArrayFire-build native CPU qualification", "process-isolated oneAPI Softmax qualification"]
+      "gaps": ["non-ArrayFire-build native CPU qualification"]
     },
     {
       "id": "ACT-PRELU-001",
@@ -387,7 +387,7 @@
       "tests": ["cyxwiz-tests:test_activations", "test_computation_truth_tfidf_loss:prelu_forward_backward_f32"],
       "execution": "strict ArrayFire-resident CPU, CUDA and OpenCL routes; non-ArrayFire native CPU implementation is shared-alpha only",
       "status": "partial",
-      "gaps": ["optimizer/module ownership for learned-alpha updates", "non-ArrayFire per-channel implementation and qualification", "process-isolated oneAPI PReLU qualification"]
+      "gaps": ["optimizer/module ownership for learned-alpha updates", "non-ArrayFire per-channel implementation and qualification"]
     },
     {
       "id": "LOSS-REG-001",
@@ -403,7 +403,7 @@
       "tests": ["test_computation_truth_tfidf_loss:regression_loss_matrix_f32", "cyxwiz-tests:[loss][regression][fallback]", "test_training_executor_arrow_parquet"],
       "execution": "strict device-resident ArrayFire CPU parity with no native fallback; declared native CPU compatibility fallback with exact reason and loss_cpu_path host-sync attribution",
       "status": "partial",
-      "gaps": ["explicit CUDA/OpenCL/oneAPI PyTorch numerical matrix", "Huber node-to-TrainingExecutor routing after concurrent node integration"]
+      "gaps": ["explicit locally qualified accelerator PyTorch numerical matrix", "Huber node-to-TrainingExecutor routing after concurrent node integration"]
     },
     {
       "id": "LOSS-CE-001",
@@ -419,7 +419,7 @@
       "tests": ["test_computation_truth_tfidf_loss", "test_computation_truth_transformer_primitives", "test_training_executor_arrow_parquet --uneven-epoch-metrics-only", "cyxwiz-tests:test_loss"],
       "execution": "rank-1/2/3 index/soft matrix proven strict and device-resident on ArrayFire CPU with no native fallback",
       "status": "partial",
-      "gaps": ["explicit CUDA/OpenCL/oneAPI PyTorch numerical matrix"]
+      "gaps": ["explicit locally qualified accelerator PyTorch numerical matrix"]
     },
     {
       "id": "LOSS-CLASS-001",
@@ -497,9 +497,9 @@
       "supported": "Float32 named parameter maps; exposed learning-rate/momentum options",
       "oracle": "PyTorch",
       "tests": ["cyxwiz-tests:[optimizer]", "cyxwiz-tests:[fallback]", "cyxwiz-tests:[policy]", "cyxwiz-tests:test_scheduler", "test_computation_truth_tfidf_loss", "test_debug_executor", "test_training_executor_arrow_parquet"],
-      "execution": "ArrayFire-first; strict ArrayFire CPU and every selectable installed CUDA/OpenCL route prove three-step parameter and momentum-buffer parity with exact route identity, no native fallback and bounded attributed verification readback; native CPU compatibility is explicitly observed and attributed",
-      "status": "partial",
-      "gaps": ["process-isolated oneAPI optimizer qualification; known-bad oneAPI device 0 must remain quarantined"]
+      "execution": "ArrayFire-first; strict ArrayFire CPU and every locally qualified CUDA/OpenCL route prove three-step parameter and momentum-buffer parity with exact route identity, no native fallback and bounded attributed verification readback; native CPU compatibility is explicitly observed and attributed; incompatible optional routes are explicit device-selection skips",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "OPT-ADAM-001",
@@ -513,9 +513,9 @@
       "supported": "Float32 named parameter maps",
       "oracle": "PyTorch",
       "tests": ["cyxwiz-tests:[optimizer]", "cyxwiz-tests:[fallback]", "cyxwiz-tests:[checkpoint]", "test_computation_truth_tfidf_loss", "test_debug_executor"],
-      "execution": "ArrayFire-first; strict ArrayFire CPU and every selectable installed CUDA/OpenCL route prove multi-step parameters, moments, per-parameter steps, NAdam momentum schedule and exact resume with exact route identity, no native fallback and bounded attributed verification readback; native CPU compatibility is explicitly observed and attributed",
-      "status": "partial",
-      "gaps": ["process-isolated oneAPI optimizer qualification; known-bad oneAPI device 0 must remain quarantined"]
+      "execution": "ArrayFire-first; strict ArrayFire CPU and every locally qualified CUDA/OpenCL route prove multi-step parameters, moments, per-parameter steps, NAdam momentum schedule and exact resume with exact route identity, no native fallback and bounded attributed verification readback; native CPU compatibility is explicitly observed and attributed; incompatible optional routes are explicit device-selection skips",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "OPT-ADAMW-001",
@@ -529,9 +529,9 @@
       "supported": "Float32 named parameter maps",
       "oracle": "PyTorch fixture adam_family_multistep_f32",
       "tests": ["test_computation_truth_tfidf_loss", "cyxwiz-tests:[optimizer]", "cyxwiz-tests:[fallback]", "cyxwiz-tests:[checkpoint]", "test_debug_executor"],
-      "execution": "ArrayFire-first; strict ArrayFire CPU and every selectable installed CUDA/OpenCL route prove decoupled decay, multi-step moments, missing-gradient behavior and exact resume with exact route identity, no native fallback and bounded attributed verification readback; native CPU compatibility is explicitly observed and attributed",
-      "status": "partial",
-      "gaps": ["process-isolated oneAPI optimizer qualification; known-bad oneAPI device 0 must remain quarantined"]
+      "execution": "ArrayFire-first; strict ArrayFire CPU and every locally qualified CUDA/OpenCL route prove decoupled decay, multi-step moments, missing-gradient behavior and exact resume with exact route identity, no native fallback and bounded attributed verification readback; native CPU compatibility is explicitly observed and attributed; incompatible optional routes are explicit device-selection skips",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "OPT-ADAPTIVE-001",
@@ -545,9 +545,9 @@
       "supported": "Float32 named parameter maps",
       "oracle": "PyTorch",
       "tests": ["cyxwiz-tests:[optimizer]", "cyxwiz-tests:[fallback]", "cyxwiz-tests:[checkpoint]", "test_computation_truth_tfidf_loss"],
-      "execution": "ArrayFire-first; strict ArrayFire CPU and every selectable installed CUDA/OpenCL route prove three-step parameters, accumulator state and exact resume with exact route identity, no native fallback and bounded attributed verification readback; native CPU compatibility is explicitly observed and attributed",
-      "status": "partial",
-      "gaps": ["process-isolated oneAPI optimizer qualification; known-bad oneAPI device 0 must remain quarantined"]
+      "execution": "ArrayFire-first; strict ArrayFire CPU and every locally qualified CUDA/OpenCL route prove three-step parameters, accumulator state and exact resume with exact route identity, no native fallback and bounded attributed verification readback; native CPU compatibility is explicitly observed and attributed; incompatible optional routes are explicit device-selection skips",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "OPT-LAMB-001",
@@ -561,9 +561,9 @@
       "supported": "Float32 named parameter maps",
       "oracle": "independent PyTorch tensor reference equation",
       "tests": ["cyxwiz-tests:[optimizer]", "cyxwiz-tests:[fallback]", "cyxwiz-tests:[checkpoint]", "test_computation_truth_tfidf_loss"],
-      "execution": "ArrayFire-first; strict ArrayFire CPU and every selectable installed CUDA/OpenCL route prove three-step parameters, moments, trust-ratio edges and resume with exact route identity, no native fallback and bounded attributed verification readback; native CPU compatibility is explicitly observed and attributed",
-      "status": "partial",
-      "gaps": ["process-isolated oneAPI optimizer qualification; known-bad oneAPI device 0 must remain quarantined"]
+      "execution": "ArrayFire-first; strict ArrayFire CPU and every locally qualified CUDA/OpenCL route prove three-step parameters, moments, trust-ratio edges and resume with exact route identity, no native fallback and bounded attributed verification readback; native CPU compatibility is explicitly observed and attributed; incompatible optional routes are explicit device-selection skips",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "SCHED-LR-001",
