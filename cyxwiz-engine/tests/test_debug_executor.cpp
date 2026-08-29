@@ -1773,6 +1773,20 @@ void TestWeightedLossConfigParams() {
     ExpectNear(smooth_loss->GetDelta(), 0.5f, 1e-6f,
                "SmoothL1Loss should preserve beta/delta");
 
+    auto huber_cfg = MakeTabularConfig();
+    huber_cfg.loss_type = gui::NodeType::HuberLoss;
+    huber_cfg.loss_params["beta"] = "0.5";
+    huber_cfg.loss_params["reduction"] = "sum";
+    auto huber_built = BuildSequentialFromConfig(huber_cfg);
+    ExpectTrue(huber_built.ok(), "Huber config should build");
+    auto* huber_loss = dynamic_cast<HuberLoss*>(huber_built.loss.get());
+    ExpectTrue(huber_loss != nullptr,
+               "Huber config must construct HuberLoss, not SmoothL1Loss");
+    ExpectTrue(huber_loss->GetReduction() == Reduction::Sum,
+               "HuberLoss should preserve reduction");
+    ExpectNear(huber_loss->GetDelta(), 0.5f, 1e-6f,
+               "HuberLoss should preserve delta");
+
     auto dice_cfg = MakeTabularConfig();
     dice_cfg.loss_type = gui::NodeType::SoftDiceLoss;
     dice_cfg.loss_params["smooth"] = "0.5";

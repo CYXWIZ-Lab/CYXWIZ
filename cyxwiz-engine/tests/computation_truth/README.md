@@ -106,11 +106,15 @@ The broad tracking ticket is:
 - Rejects native fallback attempts and undeclared host synchronization; only
   bounded, attributed test-output readbacks are allowed.
 - Proves regression losses and every supported CrossEntropy rank use strict
-  ArrayFire CPU paths with no hidden native CPU computation. Forced regression
-  fallback is separately tested for exact rejection/compatibility policy,
-  reason code, numerical parity, and `loss_cpu_path` host-sync attribution.
-- Proves every supported CrossEntropy rank uses the same strict ArrayFire CPU
-  path; rank-3 is reshaped on device and is not a hidden native CPU variant.
+  ArrayFire paths with no hidden native CPU computation on CPU and every
+  locally qualified CUDA/OpenCL route. Forced regression fallback is
+  separately tested for exact rejection/compatibility policy, reason code,
+  numerical parity, and `loss_cpu_path` host-sync attribution. GUI/compiled
+  Huber configuration constructs the distinct PyTorch-style `HuberLoss`; it
+  no longer aliases the differently scaled `SmoothL1Loss` equation.
+- Proves every supported CrossEntropy rank uses the same strict device path;
+  rank-3 is reshaped on device and is not a hidden native CPU variant.
+  Incompatible optional providers remain explicit device-selection skips.
 
 The elementwise-activation, Linear, regression-loss, CrossEntropy, Adam-family,
 SGD, adaptive-optimizer, LAMB, and weighted-sampler expectations come from the checked-in

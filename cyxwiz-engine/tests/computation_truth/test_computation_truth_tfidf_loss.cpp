@@ -1766,6 +1766,9 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
                 &RecordHostSyncEvent);
             const cyxwiz::ScopedActiveExecutionDeviceContext active_run;
             const cyxwiz::ScopedExecutionDeviceContext bound_context(context);
+            TestRegressionLossParity(cases);
+            TestCrossEntropyParity(cases);
+            TestCrossEntropyMatrixParity(cases);
             TestElementwiseActivationParity(cases);
             TestSoftmaxParity(cases);
             TestPReLUParity(cases);
