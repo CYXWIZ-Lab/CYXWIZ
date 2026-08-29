@@ -350,6 +350,113 @@ TEST_CASE("Binary losses compute backward values", "[loss]") {
             Catch::Approx(1.0f / (1.0f + std::exp(-2.0f))));
 }
 
+TEST_CASE("Probability loss parameters reject invalid domains",
+          "[loss][probability]") {
+    REQUIRE_NOTHROW(cyxwiz::BCELoss(
+        cyxwiz::Reduction::Mean, 1.0e-12f));
+    REQUIRE_THROWS_AS(
+        cyxwiz::BCELoss(cyxwiz::Reduction::Mean, 0.0f),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::BCELoss(
+            cyxwiz::Reduction::Mean,
+            std::numeric_limits<float>::infinity()),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::BCEWithLogitsLoss(cyxwiz::Reduction::Mean, 0.0f),
+        std::invalid_argument);
+
+    cyxwiz::BCEWithLogitsLoss weighted;
+    REQUIRE_THROWS_AS(
+        weighted.SetPosWeight(-1.0f), std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        weighted.SetPosWeight(
+            std::numeric_limits<float>::quiet_NaN()),
+        std::invalid_argument);
+    weighted.SetPosWeight(3.5f);
+    REQUIRE(weighted.GetPosWeight() == Catch::Approx(3.5f));
+}
+
+TEST_CASE("Probability losses validate shape and dtype before compute",
+          "[loss][probability]") {
+    const float prediction_values[] = {0.25f, 0.75f};
+    const float short_target_values[] = {1.0f};
+    const int32_t integer_target_values[] = {1, 0};
+    const cyxwiz::Tensor predictions(
+        {2}, prediction_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor short_targets(
+        {1}, short_target_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor integer_targets(
+        {2}, integer_target_values, cyxwiz::DataType::Int32);
+
+    cyxwiz::BCELoss bce;
+    cyxwiz::BCEWithLogitsLoss bce_logits;
+    cyxwiz::KLDivLoss kl_div;
+    REQUIRE_THROWS_AS(
+        bce.Forward(predictions, short_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        bce.Backward(predictions, integer_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        bce_logits.Forward(predictions, short_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        bce_logits.Backward(predictions, integer_targets),
+        std::runtime_error);
+    REQUIRE_THROWS_AS(
+        kl_div.Forward(predictions, short_targets), std::runtime_error);
+    REQUIRE_THROWS_AS(
+        kl_div.Backward(predictions, integer_targets), std::runtime_error);
+}
+
+TEST_CASE("BCE follows PyTorch boundary loss and gradient bounds",
+          "[loss][probability]") {
+    const float probability_values[] = {0.0f, 1.0f, 0.0f, 1.0f};
+    const float target_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
+    const cyxwiz::Tensor probabilities(
+        {4}, probability_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor targets(
+        {4}, target_values, cyxwiz::DataType::Float32);
+    cyxwiz::BCELoss bce(cyxwiz::Reduction::Mean);
+
+    const cyxwiz::Tensor loss = bce.Forward(probabilities, targets);
+    const cyxwiz::Tensor gradient = bce.Backward(probabilities, targets);
+    REQUIRE(loss.ReadData<float>()[0] ==
+            Catch::Approx(50.0f).margin(1.0e-5f));
+    REQUIRE(gradient.ReadData<float>()[0] ==
+            Catch::Approx(-2.5e11f).epsilon(1.0e-6f));
+    REQUIRE(gradient.ReadData<float>()[1] ==
+            Catch::Approx(2.5e11f).epsilon(1.0e-6f));
+    REQUIRE(gradient.ReadData<float>()[2] == Catch::Approx(0.0f));
+    REQUIRE(gradient.ReadData<float>()[3] == Catch::Approx(0.0f));
+
+    cyxwiz::BCELoss custom_bound(cyxwiz::Reduction::Mean, 0.1f);
+    const cyxwiz::Tensor custom_gradient =
+        custom_bound.Backward(probabilities, targets);
+    REQUIRE(custom_gradient.ReadData<float>()[0] == Catch::Approx(-2.5f));
+    REQUIRE(custom_gradient.ReadData<float>()[1] == Catch::Approx(2.5f));
+}
+
+TEST_CASE("KLDiv log targets preserve negative log probabilities",
+          "[loss][probability]") {
+    const float prediction_values[] = {-1.5f, -0.25f};
+    const float target_values[] = {-1.6094379f, -0.22314355f};
+    const cyxwiz::Tensor predictions(
+        {2}, prediction_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor targets(
+        {2}, target_values, cyxwiz::DataType::Float32);
+    cyxwiz::KLDivLoss kl_div(cyxwiz::Reduction::None, true);
+
+    const cyxwiz::Tensor loss = kl_div.Forward(predictions, targets);
+    const cyxwiz::Tensor gradient = kl_div.Backward(predictions, targets);
+    for (size_t index = 0; index < 2; ++index) {
+        const float probability = std::exp(target_values[index]);
+        REQUIRE(loss.ReadData<float>()[index] == Catch::Approx(
+            probability * (target_values[index] - prediction_values[index])
+        ).margin(1.0e-6f));
+        REQUIRE(gradient.ReadData<float>()[index] ==
+                Catch::Approx(-probability).margin(1.0e-6f));
+    }
+}
+
 TEST_CASE("Weighted BCEWithLogits matches the reference on every available backend",
           "[loss][arrayfire][device_switch][weighted_bce]") {
     const cyxwiz::Device* current = cyxwiz::Device::GetCurrentDevice();

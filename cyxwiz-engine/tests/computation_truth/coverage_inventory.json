@@ -446,12 +446,12 @@
       "implementation": ["cyxwiz-backend/src/algorithms/losses/probability_losses.cpp"],
       "callers": ["binary and probability objectives"],
       "contract": "Probability/logit interpretation, pos_weight, log_target, reduction and gradients match PyTorch with finite extreme behavior.",
-      "supported": "Float32 public loss configurations",
-      "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_loss"],
-      "execution": "audit needed",
-      "status": "partial",
-      "gaps": ["pos_weight denominator", "extreme logits", "all reductions", "fallback/residency"]
+      "supported": "matching-shape Float32 tensors; none, sum and mean reductions; PyTorch-compatible BCE boundary behavior with an optional positive derivative-denominator floor; positive finite scalar BCEWithLogits pos_weight; KLDiv probability and log-target forms",
+      "oracle": "PyTorch plus the declared configurable BCE derivative-denominator extension",
+      "tests": ["cyxwiz-tests:[loss][probability]", "test_computation_truth_tfidf_loss:probability_loss_matrix_f32"],
+      "execution": "strict ArrayFire device path on CPU and every locally qualified CUDA/OpenCL route with no native fallback or compute-time host synchronization; critical boundary equations verified in a no-ArrayFire build",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LOSS-OVERLAP-001",

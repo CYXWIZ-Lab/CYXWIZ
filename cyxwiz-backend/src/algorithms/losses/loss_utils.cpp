@@ -203,16 +203,21 @@ Tensor CpuHuberBackward(const Tensor& predictions,
     return grad;
 }
 
-Tensor CpuBCEForward(const Tensor& predictions, const Tensor& targets, float eps, Reduction reduction) {
+Tensor CpuBCEForward(const Tensor& predictions,
+                     const Tensor& targets,
+                     Reduction reduction) {
     ValidateFloat32Pair(predictions, targets, "BCE");
     const size_t count = predictions.NumElements();
     const float* pred = predictions.Data<float>();
     const float* target = targets.Data<float>();
     std::vector<float> losses(count);
     for (size_t i = 0; i < count; ++i) {
-        const float clamped = std::clamp(pred[i], eps, 1.0f - eps);
-        losses[i] = -(target[i] * std::log(clamped) +
-                      (1.0f - target[i]) * std::log(1.0f - clamped));
+        const float log_prediction =
+            std::max(std::log(pred[i]), -100.0f);
+        const float log_complement =
+            std::max(std::log(1.0f - pred[i]), -100.0f);
+        losses[i] = -(target[i] * log_prediction +
+                      (1.0f - target[i]) * log_complement);
     }
     return ApplyCpuReduction(predictions.Shape(), losses, reduction);
 }
@@ -226,8 +231,9 @@ Tensor CpuBCEBackward(const Tensor& predictions, const Tensor& targets, float ep
     const float* target = targets.Data<float>();
     float* out = grad.Data<float>();
     for (size_t i = 0; i < count; ++i) {
-        const float clamped = std::clamp(pred[i], eps, 1.0f - eps);
-        out[i] = ((clamped - target[i]) / (clamped * (1.0f - clamped) + eps)) * scale;
+        const float denominator =
+            std::max(pred[i] * (1.0f - pred[i]), eps);
+        out[i] = ((pred[i] - target[i]) / denominator) * scale;
     }
     return grad;
 }
@@ -291,11 +297,10 @@ Tensor CpuKLDivForward(const Tensor& predictions,
     const float* target = targets.Data<float>();
     std::vector<float> losses(count, 0.0f);
     for (size_t i = 0; i < count; ++i) {
-        if (target[i] <= 0.0f) {
-            continue;
-        }
         if (log_target) {
             losses[i] = std::exp(target[i]) * (target[i] - pred[i]);
+        } else if (target[i] == 0.0f) {
+            losses[i] = 0.0f;
         } else {
             losses[i] = target[i] * (std::log(target[i]) - pred[i]);
         }
@@ -314,10 +319,6 @@ Tensor CpuKLDivBackward(const Tensor& predictions,
     const float* target = targets.Data<float>();
     float* out = grad.Data<float>();
     for (size_t i = 0; i < count; ++i) {
-        if (target[i] <= 0.0f) {
-            out[i] = 0.0f;
-            continue;
-        }
         out[i] = (log_target ? -std::exp(target[i]) : -target[i]) * scale;
     }
     return grad;

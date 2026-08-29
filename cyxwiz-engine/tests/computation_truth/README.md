@@ -73,6 +73,13 @@ The broad tracking ticket is:
   logits rather than a stale same-shaped forward cache. The stable
   extreme-logit equation is also exercised directly in a no-ArrayFire native
   CPU build.
+- Verifies BCE, BCEWithLogits, and KLDiv against generated PyTorch fixtures
+  across `none`/`sum`/`mean`, scalar through rank-4 tensors, fractional and exact-boundary
+  probability targets, weighted and extreme logits, zero KL targets, and
+  negative log targets. BCE follows PyTorch's `-100` log cap and default
+  `1e-12` derivative floor while retaining its explicit configurable floor;
+  BCEWithLogits validates positive finite `pos_weight`; KLDiv preserves
+  PyTorch `log_target` and zero-target semantics.
 - Verifies `LinearLayer` forward output against a generated PyTorch linear fixture.
 - Verifies `LinearLayer` backward values:
   - gradient with respect to input
@@ -116,7 +123,7 @@ The broad tracking ticket is:
   explicit following graph module rather than a hidden DenseLayer property.
 - Rejects native fallback attempts and undeclared host synchronization; only
   bounded, attributed test-output readbacks are allowed.
-- Proves regression, NLL, Focal, and every supported CrossEntropy rank use strict
+- Proves regression, probability, NLL, Focal, and every supported CrossEntropy rank use strict
   ArrayFire paths with no hidden native CPU computation on CPU and every
   locally qualified CUDA/OpenCL route. Forced regression fallback is
   separately tested for exact rejection/compatibility policy, reason code,

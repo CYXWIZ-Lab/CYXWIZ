@@ -22,49 +22,74 @@ namespace cyxwiz {
 
 using namespace loss_detail;
 
+BCELoss::BCELoss(Reduction reduction, float denominator_epsilon)
+    : Loss(reduction), denominator_epsilon_(denominator_epsilon) {
+    if (!std::isfinite(denominator_epsilon_) ||
+        denominator_epsilon_ <= 0.0f) {
+        throw std::invalid_argument(
+            "BCELoss denominator epsilon must be finite and positive");
+    }
+}
+
+BCEWithLogitsLoss::BCEWithLogitsLoss(Reduction reduction, float pos_weight)
+    : Loss(reduction), pos_weight_(pos_weight) {
+    SetPosWeight(pos_weight);
+}
+
+void BCEWithLogitsLoss::SetPosWeight(float pos_weight) {
+    if (!std::isfinite(pos_weight) || pos_weight <= 0.0f) {
+        throw std::invalid_argument(
+            "BCEWithLogitsLoss pos_weight must be finite and positive");
+    }
+    pos_weight_ = pos_weight;
+}
+
 // ============================================================================
 // BCE Loss Implementation
 // ============================================================================
 
 Tensor BCELoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    ValidateFloat32Pair(predictions, targets, "BCE");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array pred = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
 
-        // Clamp predictions for numerical stability
-        af::array pred_clamped = af::clamp(pred, eps_, 1.0f - eps_);
-        pred_clamped.eval();
-
-        // BCE: -[target * log(pred) + (1 - target) * log(1 - pred)]
-        af::array loss = -(target * af::log(pred_clamped) +
-                          (1.0f - target) * af::log(1.0f - pred_clamped));
+        // PyTorch BCELoss clamps the logarithm to -100 while retaining the
+        // public probability value for its separately bounded derivative.
+        af::array log_prediction = af::max(af::log(pred), -100.0f);
+        af::array log_complement =
+            af::max(af::log(1.0f - pred), -100.0f);
+        af::array loss = -(target * log_prediction +
+                          (1.0f - target) * log_complement);
         loss.eval();
 
         loss = ApplyReduction(loss, reduction_);
 
-        return AfToTensor(loss);
+        return AfToTensor(
+            loss,
+            reduction_ == Reduction::None
+                ? predictions.Shape()
+                : std::vector<size_t>{1});
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
             "BCELoss::Forward", e.what(), predictions, targets, reduction_);
     }
 #endif
-    return CpuBCEForward(predictions, targets, eps_, reduction_);
+    return CpuBCEForward(predictions, targets, reduction_);
 }
 
 Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    ValidateFloat32Pair(predictions, targets, "BCE");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array pred = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
 
-        // Clamp predictions for numerical stability
-        af::array pred_clamped = af::clamp(pred, eps_, 1.0f - eps_);
-        pred_clamped.eval();
-
-        // Gradient: -target/pred + (1-target)/(1-pred)
-        //         = (pred - target) / (pred * (1 - pred))
-        af::array grad = (pred_clamped - target) / (pred_clamped * (1.0f - pred_clamped) + eps_);
+        // Match PyTorch's bounded BCE derivative denominator.
+        af::array denominator = af::max(
+            pred * (1.0f - pred), denominator_epsilon_);
+        af::array grad = (pred - target) / denominator;
         grad.eval();
 
         if (reduction_ == Reduction::Mean) {
@@ -78,7 +103,8 @@ Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
             "BCELoss::Backward", e.what(), predictions, targets, reduction_);
     }
 #endif
-    return CpuBCEBackward(predictions, targets, eps_, reduction_);
+    return CpuBCEBackward(
+        predictions, targets, denominator_epsilon_, reduction_);
 }
 
 // ============================================================================
@@ -86,6 +112,7 @@ Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
 // ============================================================================
 
 Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    ValidateFloat32Pair(predictions, targets, "BCEWithLogits");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array logits = TensorToAf(predictions);
@@ -105,7 +132,11 @@ Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targe
 
         loss = ApplyReduction(loss, reduction_);
 
-        return AfToTensor(loss);
+        return AfToTensor(
+            loss,
+            reduction_ == Reduction::None
+                ? predictions.Shape()
+                : std::vector<size_t>{1});
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
             "BCEWithLogitsLoss::Forward", e.what(), predictions, targets, reduction_);
@@ -115,6 +146,7 @@ Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targe
 }
 
 Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    ValidateFloat32Pair(predictions, targets, "BCEWithLogits");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array logits = TensorToAf(predictions);
@@ -147,6 +179,7 @@ Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targ
 // ============================================================================
 
 Tensor KLDivLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    ValidateFloat32Pair(predictions, targets, "KLDiv");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array log_pred = TensorToAf(predictions);  // Log probabilities
@@ -160,19 +193,21 @@ Tensor KLDivLoss::Forward(const Tensor& predictions, const Tensor& targets) {
             loss = target_prob * (target - log_pred);
         } else {
             // KL = target * (log(target) - pred)
-            // Avoid log(0) by adding small epsilon
-            af::array log_target = af::log(target + 1e-10f);
-            log_target.eval();
-            loss = target * (log_target - log_pred);
+            // xlogy semantics define the zero-target contribution as zero;
+            // negative targets remain NaN, matching PyTorch.
+            loss = af::select(
+                target == 0.0f,
+                0.0f,
+                target * (af::log(target) - log_pred));
         }
-        loss.eval();
-
-        // Only consider positive targets
-        loss = af::select(target > 0, loss, 0.0f);
         loss.eval();
         loss = ApplyReduction(loss, reduction_);
 
-        return AfToTensor(loss);
+        return AfToTensor(
+            loss,
+            reduction_ == Reduction::None
+                ? predictions.Shape()
+                : std::vector<size_t>{1});
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
             "KLDivLoss::Forward", e.what(), predictions, targets, reduction_);
@@ -182,6 +217,7 @@ Tensor KLDivLoss::Forward(const Tensor& predictions, const Tensor& targets) {
 }
 
 Tensor KLDivLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    ValidateFloat32Pair(predictions, targets, "KLDiv");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array log_pred = TensorToAf(predictions);
@@ -194,10 +230,6 @@ Tensor KLDivLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         } else {
             grad = -target;
         }
-        grad.eval();
-
-        // Only consider positive targets
-        grad = af::select(target > 0, grad, 0.0f);
         grad.eval();
 
         if (reduction_ == Reduction::Mean) {

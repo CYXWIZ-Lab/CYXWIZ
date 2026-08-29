@@ -89,6 +89,185 @@ def regression_loss_matrix() -> list[dict[str, Any]]:
     return cases
 
 
+def probability_loss_matrix() -> list[dict[str, Any]]:
+    definitions = [
+        {
+            "name": "bce_scalar_sum",
+            "loss_type": "bce",
+            "reduction": "sum",
+            "predictions": 0.25,
+            "targets": 1.0,
+        },
+        {
+            "name": "bce_rank2_none_fractional_targets",
+            "loss_type": "bce",
+            "reduction": "none",
+            "predictions": [[0.8, 0.2], [0.35, 0.65]],
+            "targets": [[1.0, 0.0], [0.25, 0.75]],
+        },
+        {
+            "name": "bce_boundary_mean",
+            "loss_type": "bce",
+            "reduction": "mean",
+            "predictions": [0.0, 1.0, 0.0, 1.0],
+            "targets": [1.0, 0.0, 0.0, 1.0],
+            "tolerance": {"atol": 1.0e-4, "rtol": 1.0e-6},
+        },
+        {
+            "name": "bce_rank3_sum",
+            "loss_type": "bce",
+            "reduction": "sum",
+            "predictions": [
+                [[0.1, 0.9], [0.3, 0.7]],
+                [[0.6, 0.4], [0.05, 0.95]],
+            ],
+            "targets": [
+                [[0.0, 1.0], [1.0, 0.0]],
+                [[0.25, 0.75], [0.0, 1.0]],
+            ],
+        },
+        {
+            "name": "bce_logits_rank2_none",
+            "loss_type": "bce_with_logits",
+            "reduction": "none",
+            "pos_weight": 1.0,
+            "predictions": [[2.0, 0.0, -1.0], [0.5, 1.5, -0.5]],
+            "targets": [[1.0, 0.0, 1.0], [0.25, 0.75, 0.5]],
+        },
+        {
+            "name": "bce_logits_fractional_mean_weighted",
+            "loss_type": "bce_with_logits",
+            "reduction": "mean",
+            "pos_weight": 4.0,
+            "predictions": [[0.0, 2.0], [-2.0, 0.5]],
+            "targets": [[1.0, 0.0], [0.25, 0.75]],
+        },
+        {
+            "name": "bce_logits_extreme_sum_weighted",
+            "loss_type": "bce_with_logits",
+            "reduction": "sum",
+            "pos_weight": 2.5,
+            "predictions": [-100.0, 100.0, 80.0, -80.0],
+            "targets": [1.0, 0.0, 1.0, 0.0],
+            "tolerance": {"atol": 1.0e-4, "rtol": 1.0e-6},
+        },
+        {
+            "name": "bce_logits_rank4_none",
+            "loss_type": "bce_with_logits",
+            "reduction": "none",
+            "pos_weight": 1.75,
+            "predictions": [[[[2.0, -1.0]], [[0.0, 0.5]]]],
+            "targets": [[[[1.0, 0.0]], [[0.25, 0.75]]]],
+        },
+        {
+            "name": "kl_probability_none_zero_target",
+            "loss_type": "kl_div",
+            "reduction": "none",
+            "log_target": False,
+            "predictions": [
+                [-1.6094379, -0.6931472, -1.2039728],
+                [-0.35667494, -2.3025851, -1.6094379],
+            ],
+            "targets": [[0.1, 0.7, 0.2], [0.0, 0.25, 0.75]],
+        },
+        {
+            "name": "kl_probability_mean",
+            "loss_type": "kl_div",
+            "reduction": "mean",
+            "log_target": False,
+            "predictions": [[-2.0, -0.5], [-1.0, -3.0]],
+            "targets": [[0.0, 1.0], [0.3, 0.7]],
+        },
+        {
+            "name": "kl_probability_rank3_sum",
+            "loss_type": "kl_div",
+            "reduction": "sum",
+            "log_target": False,
+            "predictions": [
+                [[-1.0, -2.0], [-0.5, -3.0]],
+                [[-2.5, -0.25], [-1.5, -0.75]],
+            ],
+            "targets": [
+                [[0.4, 0.6], [0.0, 1.0]],
+                [[0.25, 0.75], [0.8, 0.2]],
+            ],
+        },
+        {
+            "name": "kl_log_target_rank2_none",
+            "loss_type": "kl_div",
+            "reduction": "none",
+            "log_target": True,
+            "predictions": [[-1.5, -0.25], [-2.0, -0.75]],
+            "targets": [[-1.6094379, -0.22314355], [-0.6931472, -0.6931472]],
+        },
+        {
+            "name": "kl_log_target_extreme_mean",
+            "loss_type": "kl_div",
+            "reduction": "mean",
+            "log_target": True,
+            "predictions": [-3.0, -0.5, -2.0],
+            "targets": [-100.0, 0.0, -2.0],
+        },
+    ]
+    cases: list[dict[str, Any]] = []
+    for definition in definitions:
+        predictions = torch.tensor(
+            definition["predictions"], dtype=torch.float32,
+            requires_grad=True,
+        )
+        targets = torch.tensor(definition["targets"], dtype=torch.float32)
+        reduction = definition["reduction"]
+        loss_type = definition["loss_type"]
+        if loss_type == "bce":
+            loss = functional.binary_cross_entropy(
+                predictions, targets, reduction=reduction
+            )
+            operation = "torch.nn.functional.binary_cross_entropy"
+        elif loss_type == "bce_with_logits":
+            pos_weight = torch.tensor(
+                definition["pos_weight"], dtype=torch.float32
+            )
+            loss = functional.binary_cross_entropy_with_logits(
+                predictions,
+                targets,
+                pos_weight=pos_weight,
+                reduction=reduction,
+            )
+            operation = (
+                "torch.nn.functional.binary_cross_entropy_with_logits"
+            )
+        else:
+            loss = functional.kl_div(
+                predictions,
+                targets,
+                reduction=reduction,
+                log_target=definition["log_target"],
+            )
+            operation = "torch.nn.functional.kl_div"
+        (loss.sum() if reduction == "none" else loss).backward()
+        cases.append({
+            "name": definition["name"],
+            "operation": operation,
+            "loss_type": loss_type,
+            "dtype": "float32",
+            "reduction": reduction,
+            "pos_weight": definition.get("pos_weight", 1.0),
+            "log_target": definition.get("log_target", False),
+            "tolerance": definition.get(
+                "tolerance", {"atol": 1.0e-6, "rtol": 1.0e-6}
+            ),
+            "predictions": tensor_fixture(predictions),
+            "targets": tensor_fixture(targets),
+            "expected": {
+                "loss": tensor_fixture(
+                    loss.reshape(1) if loss.ndim == 0 else loss
+                ),
+                "prediction_gradient": tensor_fixture(predictions.grad),
+            },
+        })
+    return cases
+
+
 def elementwise_activation_matrix() -> list[dict[str, Any]]:
     """Forward/autograd truth at smooth, branch-boundary, and finite extremes."""
     definitions = [
@@ -2958,6 +3137,7 @@ def generate_fixture() -> dict[str, Any]:
             "cross_entropy_index_mean_f32": cross_entropy_case(),
             "cross_entropy_matrix_f32": cross_entropy_matrix(),
             "regression_loss_matrix_f32": regression_loss_matrix(),
+            "probability_loss_matrix_f32": probability_loss_matrix(),
             "nll_loss_matrix_f32": nll_matrix(),
             "focal_loss_matrix_f32": focal_matrix(),
             "adam_family_multistep_f32": adam_family_multistep_cases(),

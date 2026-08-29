@@ -6171,6 +6171,819 @@
         }
       }
     ],
+    "probability_loss_matrix_f32": [
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              1.3862943649291992
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [],
+            "values": [
+              -4.0
+            ]
+          }
+        },
+        "log_target": false,
+        "loss_type": "bce",
+        "name": "bce_scalar_sum",
+        "operation": "torch.nn.functional.binary_cross_entropy",
+        "pos_weight": 1.0,
+        "predictions": {
+          "shape": [],
+          "values": [
+            0.25
+          ]
+        },
+        "reduction": "sum",
+        "targets": {
+          "shape": [],
+          "values": [
+            1.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              0.2231435328722,
+              0.2231435477733612,
+              0.5855426788330078,
+              0.5855427384376526
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              -1.25,
+              1.2499998807907104,
+              0.4395604431629181,
+              -0.43956053256988525
+            ]
+          }
+        },
+        "log_target": false,
+        "loss_type": "bce",
+        "name": "bce_rank2_none_fractional_targets",
+        "operation": "torch.nn.functional.binary_cross_entropy",
+        "pos_weight": 1.0,
+        "predictions": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            0.800000011920929,
+            0.20000000298023224,
+            0.3499999940395355,
+            0.6499999761581421
+          ]
+        },
+        "reduction": "none",
+        "targets": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            1.0,
+            0.0,
+            0.25,
+            0.75
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              50.0
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              4
+            ],
+            "values": [
+              -249999998976.0,
+              249999998976.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "log_target": false,
+        "loss_type": "bce",
+        "name": "bce_boundary_mean",
+        "operation": "torch.nn.functional.binary_cross_entropy",
+        "pos_weight": 1.0,
+        "predictions": {
+          "shape": [
+            4
+          ],
+          "values": [
+            0.0,
+            1.0,
+            0.0,
+            1.0
+          ]
+        },
+        "reduction": "mean",
+        "targets": {
+          "shape": [
+            4
+          ],
+          "values": [
+            1.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "tolerance": {
+          "atol": 0.0001,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              4.351102352142334
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              2,
+              2
+            ],
+            "values": [
+              1.1111111640930176,
+              -1.1111111640930176,
+              -3.3333332538604736,
+              3.3333332538604736,
+              1.4583334922790527,
+              -1.4583332538604736,
+              1.0526316165924072,
+              -1.0526316165924072
+            ]
+          }
+        },
+        "log_target": false,
+        "loss_type": "bce",
+        "name": "bce_rank3_sum",
+        "operation": "torch.nn.functional.binary_cross_entropy",
+        "pos_weight": 1.0,
+        "predictions": {
+          "shape": [
+            2,
+            2,
+            2
+          ],
+          "values": [
+            0.10000000149011612,
+            0.8999999761581421,
+            0.30000001192092896,
+            0.699999988079071,
+            0.6000000238418579,
+            0.4000000059604645,
+            0.05000000074505806,
+            0.949999988079071
+          ]
+        },
+        "reduction": "sum",
+        "targets": {
+          "shape": [
+            2,
+            2,
+            2
+          ],
+          "values": [
+            0.0,
+            1.0,
+            1.0,
+            0.0,
+            0.25,
+            0.75,
+            0.0,
+            1.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              0.12692801654338837,
+              0.6931471824645996,
+              1.3132617473602295,
+              0.8490769863128662,
+              0.5764132738113403,
+              0.7240769863128662
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -0.11920297145843506,
+              0.5,
+              -0.7310585975646973,
+              0.372459352016449,
+              0.06757444143295288,
+              -0.12245932221412659
+            ]
+          }
+        },
+        "log_target": false,
+        "loss_type": "bce_with_logits",
+        "name": "bce_logits_rank2_none",
+        "operation": "torch.nn.functional.binary_cross_entropy_with_logits",
+        "pos_weight": 1.0,
+        "predictions": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            2.0,
+            0.0,
+            -1.0,
+            0.5,
+            1.5,
+            -0.5
+          ]
+        },
+        "reduction": "none",
+        "targets": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            1.0,
+            0.0,
+            1.0,
+            0.25,
+            0.75,
+            0.5
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              2.196847915649414
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              -0.5,
+              0.22019925713539124,
+              -0.19784872233867645,
+              -0.2442517876625061
+            ]
+          }
+        },
+        "log_target": false,
+        "loss_type": "bce_with_logits",
+        "name": "bce_logits_fractional_mean_weighted",
+        "operation": "torch.nn.functional.binary_cross_entropy_with_logits",
+        "pos_weight": 4.0,
+        "predictions": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            0.0,
+            2.0,
+            -2.0,
+            0.5
+          ]
+        },
+        "reduction": "mean",
+        "targets": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            1.0,
+            0.0,
+            0.25,
+            0.75
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              350.0
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              4
+            ],
+            "values": [
+              -2.5,
+              1.0,
+              0.0,
+              1.8048513285848406e-35
+            ]
+          }
+        },
+        "log_target": false,
+        "loss_type": "bce_with_logits",
+        "name": "bce_logits_extreme_sum_weighted",
+        "operation": "torch.nn.functional.binary_cross_entropy_with_logits",
+        "pos_weight": 2.5,
+        "predictions": {
+          "shape": [
+            4
+          ],
+          "values": [
+            -100.0,
+            100.0,
+            80.0,
+            -80.0
+          ]
+        },
+        "reduction": "sum",
+        "targets": {
+          "shape": [
+            4
+          ],
+          "values": [
+            1.0,
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "tolerance": {
+          "atol": 0.0001,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1,
+              2,
+              1,
+              2
+            ],
+            "values": [
+              0.22212402522563934,
+              0.3132617473602295,
+              0.8231122493743896,
+              0.8657453060150146
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              1,
+              2,
+              1,
+              2
+            ],
+            "values": [
+              -0.20860517024993896,
+              0.2689414322376251,
+              0.15625,
+              -0.33990728855133057
+            ]
+          }
+        },
+        "log_target": false,
+        "loss_type": "bce_with_logits",
+        "name": "bce_logits_rank4_none",
+        "operation": "torch.nn.functional.binary_cross_entropy_with_logits",
+        "pos_weight": 1.75,
+        "predictions": {
+          "shape": [
+            1,
+            2,
+            1,
+            2
+          ],
+          "values": [
+            2.0,
+            -1.0,
+            0.0,
+            0.5
+          ]
+        },
+        "reduction": "none",
+        "targets": {
+          "shape": [
+            1,
+            2,
+            1,
+            2
+          ],
+          "values": [
+            1.0,
+            0.0,
+            0.25,
+            0.75
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -0.06931471824645996,
+              0.2355305552482605,
+              -0.08109301328659058,
+              0.0,
+              0.2290726900100708,
+              0.9913169145584106
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              3
+            ],
+            "values": [
+              -0.10000000149011612,
+              -0.699999988079071,
+              -0.20000000298023224,
+              -0.0,
+              -0.25,
+              -0.75
+            ]
+          }
+        },
+        "log_target": false,
+        "loss_type": "kl_div",
+        "name": "kl_probability_none_zero_target",
+        "operation": "torch.nn.functional.kl_div",
+        "pos_weight": 1.0,
+        "predictions": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -1.6094379425048828,
+            -0.6931471824645996,
+            -1.2039728164672852,
+            -0.3566749393939972,
+            -2.3025851249694824,
+            -1.6094379425048828
+          ]
+        },
+        "reduction": "none",
+        "targets": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.10000000149011612,
+            0.699999988079071,
+            0.20000000298023224,
+            0.0,
+            0.25,
+            0.75
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              0.572283923625946
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              -0.0,
+              -0.25,
+              -0.07500000298023224,
+              -0.17499999701976776
+            ]
+          }
+        },
+        "log_target": false,
+        "loss_type": "kl_div",
+        "name": "kl_probability_mean",
+        "operation": "torch.nn.functional.kl_div",
+        "pos_weight": 1.0,
+        "predictions": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            -2.0,
+            -0.5,
+            -1.0,
+            -3.0
+          ]
+        },
+        "reduction": "mean",
+        "targets": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            0.0,
+            1.0,
+            0.30000001192092896,
+            0.699999988079071
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              5.0267510414123535
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              2,
+              2
+            ],
+            "values": [
+              -0.4000000059604645,
+              -0.6000000238418579,
+              -0.0,
+              -1.0,
+              -0.25,
+              -0.75,
+              -0.800000011920929,
+              -0.20000000298023224
+            ]
+          }
+        },
+        "log_target": false,
+        "loss_type": "kl_div",
+        "name": "kl_probability_rank3_sum",
+        "operation": "torch.nn.functional.kl_div",
+        "pos_weight": 1.0,
+        "predictions": {
+          "shape": [
+            2,
+            2,
+            2
+          ],
+          "values": [
+            -1.0,
+            -2.0,
+            -0.5,
+            -3.0,
+            -2.5,
+            -0.25,
+            -1.5,
+            -0.75
+          ]
+        },
+        "reduction": "sum",
+        "targets": {
+          "shape": [
+            2,
+            2,
+            2
+          ],
+          "values": [
+            0.4000000059604645,
+            0.6000000238418579,
+            0.0,
+            1.0,
+            0.25,
+            0.75,
+            0.800000011920929,
+            0.20000000298023224
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              -0.021887587383389473,
+              0.021485162898898125,
+              0.6534264087677002,
+              0.028426408767700195
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              2,
+              2
+            ],
+            "values": [
+              -0.19999998807907104,
+              -0.800000011920929,
+              -0.5,
+              -0.5
+            ]
+          }
+        },
+        "log_target": true,
+        "loss_type": "kl_div",
+        "name": "kl_log_target_rank2_none",
+        "operation": "torch.nn.functional.kl_div",
+        "pos_weight": 1.0,
+        "predictions": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            -1.5,
+            -0.25,
+            -2.0,
+            -0.75
+          ]
+        },
+        "reduction": "none",
+        "targets": {
+          "shape": [
+            2,
+            2
+          ],
+          "values": [
+            -1.6094379425048828,
+            -0.2231435477733612,
+            -0.6931471824645996,
+            -0.6931471824645996
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      },
+      {
+        "dtype": "float32",
+        "expected": {
+          "loss": {
+            "shape": [
+              1
+            ],
+            "values": [
+              0.1666666716337204
+            ]
+          },
+          "prediction_gradient": {
+            "shape": [
+              3
+            ],
+            "values": [
+              -1.2611686178923354e-44,
+              -0.3333333432674408,
+              -0.0451117604970932
+            ]
+          }
+        },
+        "log_target": true,
+        "loss_type": "kl_div",
+        "name": "kl_log_target_extreme_mean",
+        "operation": "torch.nn.functional.kl_div",
+        "pos_weight": 1.0,
+        "predictions": {
+          "shape": [
+            3
+          ],
+          "values": [
+            -3.0,
+            -0.5,
+            -2.0
+          ]
+        },
+        "reduction": "mean",
+        "targets": {
+          "shape": [
+            3
+          ],
+          "values": [
+            -100.0,
+            0.0,
+            -2.0
+          ]
+        },
+        "tolerance": {
+          "atol": 1e-06,
+          "rtol": 1e-06
+        }
+      }
+    ],
     "regression_loss_matrix_f32": [
       {
         "dtype": "float32",

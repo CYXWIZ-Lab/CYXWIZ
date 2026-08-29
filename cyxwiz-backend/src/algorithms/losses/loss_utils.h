@@ -42,7 +42,9 @@ Tensor CpuHuberBackward(const Tensor& predictions,
                         const Tensor& targets,
                         float delta,
                         Reduction reduction);
-Tensor CpuBCEForward(const Tensor& predictions, const Tensor& targets, float eps, Reduction reduction);
+Tensor CpuBCEForward(const Tensor& predictions,
+                     const Tensor& targets,
+                     Reduction reduction);
 Tensor CpuBCEBackward(const Tensor& predictions, const Tensor& targets, float eps, Reduction reduction);
 float CpuSigmoidValue(float x);
 Tensor CpuBCEWithLogitsForward(const Tensor& predictions,

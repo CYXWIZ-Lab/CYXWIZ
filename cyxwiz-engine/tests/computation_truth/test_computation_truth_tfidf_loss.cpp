@@ -604,6 +604,75 @@ void TestRegressionLossParity(const json& cases) {
     }
 }
 
+void TestProbabilityLossParity(const json& cases) {
+    const auto& matrix = cases.at("probability_loss_matrix_f32");
+    Check(matrix.is_array() && !matrix.empty(),
+          "probability loss matrix fixture must be non-empty");
+    for (const auto& test_case : matrix) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("dtype", "") == "float32",
+              name + " dtype mismatch");
+        const auto prediction_values = ReadFloatValues(
+            test_case.at("predictions"), name + " predictions");
+        const auto target_values =
+            ReadFloatValues(test_case.at("targets"), name + " targets");
+        cyxwiz::Tensor predictions(
+            ReadShape(test_case.at("predictions"), name),
+            prediction_values.data(), cyxwiz::DataType::Float32);
+        cyxwiz::Tensor targets(
+            ReadShape(test_case.at("targets"), name), target_values.data(),
+            cyxwiz::DataType::Float32);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        predictions = cyxwiz::Tensor::FromSemanticArray(
+            predictions.GetSemanticArray(), predictions.Shape());
+        targets = cyxwiz::Tensor::FromSemanticArray(
+            targets.GetSemanticArray(), targets.Shape());
+#endif
+
+        const auto reduction = ParseReduction(
+            test_case.at("reduction").get<std::string>());
+        const std::string loss_type =
+            test_case.at("loss_type").get<std::string>();
+        std::unique_ptr<cyxwiz::Loss> loss;
+        std::string expected_operation;
+        if (loss_type == "bce") {
+            loss = std::make_unique<cyxwiz::BCELoss>(reduction);
+            expected_operation =
+                "torch.nn.functional.binary_cross_entropy";
+        } else if (loss_type == "bce_with_logits") {
+            loss = std::make_unique<cyxwiz::BCEWithLogitsLoss>(
+                reduction, test_case.at("pos_weight").get<float>());
+            expected_operation =
+                "torch.nn.functional.binary_cross_entropy_with_logits";
+        } else {
+            Check(loss_type == "kl_div", name + " loss type mismatch");
+            loss = std::make_unique<cyxwiz::KLDivLoss>(
+                reduction, test_case.at("log_target").get<bool>());
+            expected_operation = "torch.nn.functional.kl_div";
+        }
+        Check(test_case.value("operation", "") == expected_operation,
+              name + " operation mismatch");
+
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto actual_loss = loss->Forward(predictions, targets);
+        const auto actual_gradient = loss->Backward(predictions, targets);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              name + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              name + " materialized a tensor during compute");
+        CheckTensor(actual_loss, test_case.at("expected").at("loss"),
+                    ReadTolerance(test_case), name + " forward");
+        CheckTensor(actual_gradient,
+                    test_case.at("expected").at("prediction_gradient"),
+                    ReadTolerance(test_case), name + " backward");
+    }
+}
+
 void TestCrossEntropyMatrixParity(const json& cases) {
     const auto& matrix = cases.at("cross_entropy_matrix_f32");
     Check(matrix.is_array() && !matrix.empty(),
@@ -1811,6 +1880,7 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
               "training-core truth test must forbid native CPU fallback");
 
         TestRegressionLossParity(cases);
+        TestProbabilityLossParity(cases);
         TestCrossEntropyParity(cases);
         TestCrossEntropyMatrixParity(cases);
         TestNLLLossParity(cases);
@@ -1898,6 +1968,7 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
             const cyxwiz::ScopedActiveExecutionDeviceContext active_run;
             const cyxwiz::ScopedExecutionDeviceContext bound_context(context);
             TestRegressionLossParity(cases);
+            TestProbabilityLossParity(cases);
             TestCrossEntropyParity(cases);
             TestCrossEntropyMatrixParity(cases);
             TestNLLLossParity(cases);
