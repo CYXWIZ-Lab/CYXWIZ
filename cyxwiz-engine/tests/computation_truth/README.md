@@ -71,8 +71,8 @@ The broad tracking ticket is:
   forward loss, and full prediction gradients. Alpha and gamma reject
   non-finite or negative values, and backward recomputes from its supplied
   logits rather than a stale same-shaped forward cache. The stable
-  extreme-logit equation is also exercised directly in a no-ArrayFire native
-  CPU build.
+  extreme-logit equation and ordinary class-index mean denominator are also
+  exercised directly in a no-ArrayFire native CPU build.
 - Verifies BCE, BCEWithLogits, and KLDiv against generated PyTorch fixtures
   across `none`/`sum`/`mean`, scalar through rank-4 tensors, fractional and exact-boundary
   probability targets, weighted and extreme logits, zero KL targets, and

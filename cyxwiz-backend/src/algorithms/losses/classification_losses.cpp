@@ -481,7 +481,7 @@ Tensor CpuFocalForward(const Tensor& predictions,
         losses[batch] =
             -alpha * std::pow(1.0f - pt, gamma) * log_pt;
     }
-    return ApplyClassReduction(losses, shape, reduction);
+    return ApplyClassReduction(losses, shape, reduction, shape.batch);
 }
 
 Tensor CpuFocalBackward(const Tensor& predictions,
