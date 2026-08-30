@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <limits>
 #include <sstream>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -341,7 +342,8 @@ BackendPackAcquisitionResult BackendPackArtifactAcquirer::Acquire(
     const std::filesystem::path& destination,
     std::uint64_t expected_size,
     std::string expected_sha256,
-    std::uint64_t disk_budget_bytes) {
+    std::uint64_t disk_budget_bytes,
+    BackendPackAcquisitionRetryPolicy retry) {
     std::unique_lock<std::mutex> acquisition_lock(
         acquisition_mutex_, std::try_to_lock);
     if (!acquisition_lock.owns_lock()) {
@@ -359,7 +361,10 @@ BackendPackAcquisitionResult BackendPackArtifactAcquirer::Acquire(
 
     if (destination.empty() || !destination.is_absolute() ||
         destination.filename().empty() ||
-        expected_size == 0 || !IsLowercaseSha256(expected_sha256)) {
+        expected_size == 0 || !IsLowercaseSha256(expected_sha256) ||
+        retry.maximum_attempts == 0 || retry.maximum_attempts > 5 ||
+        retry.backoff < std::chrono::milliseconds(0) ||
+        retry.backoff > std::chrono::seconds(30)) {
         return Finish(
             BackendPackAcquisitionStatus::InvalidRequest,
             "Artifact destination, byte size, and SHA-256 are required");
@@ -450,24 +455,52 @@ BackendPackAcquisitionResult BackendPackArtifactAcquirer::Acquire(
     }
     std::uint64_t completed = offset;
     std::string error;
-    const bool transferred = source.TransferFrom(
-        offset, expected_size,
-        [&](const char* bytes, std::size_t size, std::string& sink_error) {
-            if (size > expected_size - completed) {
-                sink_error = "Artifact source exceeded its signed byte size";
-                return false;
-            }
-            output.write(bytes, static_cast<std::streamsize>(size));
-            if (!output) {
-                sink_error = "Cannot write the partial artifact";
-                return false;
-            }
-            completed += size;
-            progress.completed_bytes = completed;
-            SetProgress(progress);
-            return !cancel_requested_.load();
-        },
-        [&] { return cancel_requested_.load(); }, error);
+    bool transferred = false;
+    std::size_t attempts = 0;
+    for (; attempts < retry.maximum_attempts; ++attempts) {
+        error.clear();
+        transferred = source.TransferFrom(
+            completed, expected_size,
+            [&](const char* bytes, std::size_t size,
+                std::string& sink_error) {
+                if (size > expected_size - completed) {
+                    sink_error =
+                        "Artifact source exceeded its signed byte size";
+                    return false;
+                }
+                output.write(bytes, static_cast<std::streamsize>(size));
+                if (!output) {
+                    sink_error = "Cannot write the partial artifact";
+                    return false;
+                }
+                completed += size;
+                progress.completed_bytes = completed;
+                SetProgress(progress);
+                return !cancel_requested_.load();
+            },
+            [&] { return cancel_requested_.load(); }, error);
+        if (transferred || cancel_requested_.load() || !output ||
+            attempts + 1 >= retry.maximum_attempts) {
+            break;
+        }
+        output.flush();
+        if (!output) break;
+        progress.message =
+            "Connection interrupted; retrying from " +
+            std::to_string(completed) + " downloaded bytes (attempt " +
+            std::to_string(attempts + 2) + " of " +
+            std::to_string(retry.maximum_attempts) + ")";
+        SetProgress(progress);
+        const auto delay = retry.backoff *
+            static_cast<std::chrono::milliseconds::rep>(attempts + 1);
+        auto waited = std::chrono::milliseconds(0);
+        while (waited < delay && !cancel_requested_.load()) {
+            const auto slice = std::min(
+                std::chrono::milliseconds(100), delay - waited);
+            std::this_thread::sleep_for(slice);
+            waited += slice;
+        }
+    }
     output.flush();
     const bool output_ok = static_cast<bool>(output);
     output.close();
@@ -476,7 +509,13 @@ BackendPackAcquisitionResult BackendPackArtifactAcquirer::Acquire(
             cancel_requested_.load()
                 ? BackendPackAcquisitionStatus::Interrupted
                 : BackendPackAcquisitionStatus::SourceFailure,
-            error.empty() ? "Artifact transfer failed" : error,
+            cancel_requested_.load()
+                ? (error.empty() ? "Artifact transfer cancelled" : error)
+                : "Artifact transfer failed after " +
+                      std::to_string(attempts + 1) +
+                      " attempt(s); the partial download is preserved for "
+                      "resume: " +
+                      (error.empty() ? "source unavailable" : error),
             {}, offset);
     }
     if (!output_ok || completed != expected_size) {

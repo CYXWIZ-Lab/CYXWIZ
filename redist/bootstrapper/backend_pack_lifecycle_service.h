@@ -48,9 +48,11 @@ struct BackendPackDeliveryRequest {
     std::uint64_t acquisition_disk_budget_bytes = 0;
     std::uint64_t extraction_disk_budget_bytes = 0;
     std::uint64_t installation_disk_budget_bytes = 0;
+    BackendPackAcquisitionRetryPolicy acquisition_retry;
     BackendPackDeliverySource source =
         BackendPackDeliverySource::CatalogHttps;
     bool repair = false;
+    bool discard_operation_data_on_cancel = false;
 };
 
 struct VerifiedBackendPackCatalogRecord {

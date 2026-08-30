@@ -3,6 +3,8 @@
 #include <cyxwiz/version.h>
 
 #include "backend_pack_platform.h"
+#include "installer_cancellation_channel.h"
+#include "installer_helper_session.h"
 
 #include <algorithm>
 #include <chrono>
@@ -10,6 +12,7 @@
 #include <cstdlib>
 #include <iomanip>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <thread>
@@ -37,6 +40,31 @@
 
 namespace cyxwiz::installer {
 namespace {
+
+using InstallerHelperStarted =
+    std::function<void(const std::string&)>;
+using InstallerHelperFinished =
+    std::function<void(const std::string&)>;
+
+class InstallerHelperControlScope {
+public:
+    InstallerHelperControlScope(
+        std::string token, const InstallerHelperStarted& started,
+        const InstallerHelperFinished& finished)
+        : token_(std::move(token)), finished_(finished) {
+        ClearInstallerCancellation(token_);
+        if (started) started(token_);
+    }
+
+    ~InstallerHelperControlScope() {
+        if (finished_) finished_(token_);
+        ClearInstallerCancellation(token_);
+    }
+
+private:
+    std::string token_;
+    InstallerHelperFinished finished_;
+};
 
 bool IsIdentifier(const std::string& value) {
     if (value.empty() || value.size() > 128 ||
@@ -143,6 +171,10 @@ int WaitForHelper(
     DWORD exit_code = 1;
     if (wait == WAIT_OBJECT_0 &&
         ::GetExitCodeProcess(process, &exit_code)) {
+        if (exit_code != 0 && previous.has_value() &&
+            previous->stage == "failed" && !previous->message.empty()) {
+            error = previous->message;
+        }
         ::CloseHandle(process);
         return exit_code <= static_cast<DWORD>(
                    std::numeric_limits<int>::max())
@@ -158,11 +190,16 @@ int RunHelper(
     const std::filesystem::path& runtime_root,
     const std::filesystem::path& metadata_root,
     bool elevate,
+    InstallerPackageSource package_source,
     const std::wstring& operation,
     const std::string& value,
     const InstallerOperationDetailObserver& observer,
+    const InstallerHelperStarted& started,
+    const InstallerHelperFinished& finished,
     std::string& error) {
     const auto progress_token = CreateInstallerProgressToken();
+    const InstallerHelperControlScope control(
+        progress_token, started, finished);
     const auto progress_path =
         InstallerProgressPath(runtime_root, progress_token);
     const std::wstring parameters =
@@ -172,6 +209,10 @@ int RunHelper(
             std::wstring(value.begin(), value.end())) +
         L" --progress-token " + QuoteWindowsArgument(
             std::wstring(progress_token.begin(), progress_token.end())) +
+        L" --parent-pid " +
+            std::to_wstring(CurrentInstallerProcessId()) +
+        (package_source == InstallerPackageSource::OfflineSibling
+             ? L" --offline" : L"") +
         (elevate ? L" --all-users" : L"");
     if (elevate) {
         SHELLEXECUTEINFOW execute{};
@@ -219,9 +260,12 @@ int RunHelper(
     const std::filesystem::path& runtime_root,
     const std::filesystem::path& metadata_root,
     bool elevate,
+    InstallerPackageSource package_source,
     const char* operation,
     const std::string& value,
     const InstallerOperationDetailObserver& observer,
+    const InstallerHelperStarted& started,
+    const InstallerHelperFinished& finished,
     std::string& error) {
     if (elevate && ::geteuid() != 0) {
         error =
@@ -233,12 +277,19 @@ int RunHelper(
     const auto metadata_text = metadata_root.string();
     const std::string operation_text(operation);
     const auto progress_token = CreateInstallerProgressToken();
+    const InstallerHelperControlScope control(
+        progress_token, started, finished);
     const auto progress_path =
         InstallerProgressPath(runtime_root, progress_token);
     std::vector<std::string> arguments{
         helper_text, "--runtime-root", root_text,
         "--metadata-root", metadata_text, operation_text, value,
         "--progress-token", progress_token};
+    arguments.emplace_back("--parent-pid");
+    arguments.emplace_back(std::to_string(CurrentInstallerProcessId()));
+    if (package_source == InstallerPackageSource::OfflineSibling) {
+        arguments.emplace_back("--offline");
+    }
     if (elevate) arguments.emplace_back("--all-users");
     std::vector<char*> native_arguments;
     native_arguments.reserve(arguments.size() + 1);
@@ -269,7 +320,12 @@ int RunHelper(
         error = "Waiting for the signed pack helper failed";
         return -1;
     }
-    return WEXITSTATUS(status);
+    const int exit_code = WEXITSTATUS(status);
+    if (exit_code != 0 && previous.has_value() &&
+        previous->stage == "failed" && !previous->message.empty()) {
+        error = previous->message;
+    }
+    return exit_code;
 }
 
 #endif
@@ -281,12 +337,28 @@ public:
         std::filesystem::path metadata_root,
         std::filesystem::path executable_directory,
         CyxWizInstallScope scope,
-        std::string catalog_url)
+        std::string catalog_url,
+        InstallerPackageSource package_source)
         : runtime_root_(std::move(runtime_root)),
           metadata_root_(std::move(metadata_root)),
           executable_directory_(std::move(executable_directory)),
           catalog_url_(std::move(catalog_url)),
+          package_source_(package_source),
           elevate_(scope == CyxWizInstallScope::AllUsers) {}
+
+    void BeginPlanExecution() override {
+        const std::scoped_lock lock(helper_mutex_);
+        plan_running_ = true;
+        cancellation_requested_ = false;
+        active_helper_token_.clear();
+    }
+
+    void EndPlanExecution() override {
+        const std::scoped_lock lock(helper_mutex_);
+        plan_running_ = false;
+        cancellation_requested_ = false;
+        active_helper_token_.clear();
+    }
 
     InstallerCatalogState Refresh() override {
         InstallerCatalogState state;
@@ -402,6 +474,7 @@ public:
             request, verifier, source);
         result.succeeded = refreshed.status ==
             runtime::BackendPackMetadataRefreshStatus::Refreshed;
+        if (result.succeeded) online_refresh_succeeded_ = true;
         result.message = refreshed.message;
         return result;
     }
@@ -423,12 +496,15 @@ public:
         std::string error;
         const int exit_code = RunHelper(
             helper, runtime_root_, CurrentCatalogRoot(), elevate_,
+            package_source_,
 #ifdef _WIN32
             L"--pack-id",
 #else
             "--pack-id",
 #endif
-            pack_id, observer, error);
+            pack_id, observer,
+            [this](const std::string& token) { BeginHelper(token); },
+            [this](const std::string& token) { FinishHelper(token); }, error);
         if (exit_code == 0) {
             result.succeeded = true;
             result.activated = true;
@@ -464,12 +540,15 @@ public:
         std::string error;
         const int exit_code = RunHelper(
             helper, runtime_root_, CurrentCatalogRoot(), elevate_,
+            package_source_,
 #ifdef _WIN32
             L"--base-pack-id",
 #else
             "--base-pack-id",
 #endif
-            pack_id, observer, error);
+            pack_id, observer,
+            [this](const std::string& token) { BeginHelper(token); },
+            [this](const std::string& token) { FinishHelper(token); }, error);
         if (exit_code == 0) {
             result.succeeded = true;
             result.activated = true;
@@ -510,12 +589,15 @@ public:
         std::string error;
         const int exit_code = RunHelper(
             helper, runtime_root_, CurrentCatalogRoot(), elevate_,
+            package_source_,
 #ifdef _WIN32
             L"--update-base-pack-id",
 #else
             "--update-base-pack-id",
 #endif
-            pack_id, observer, error);
+            pack_id, observer,
+            [this](const std::string& token) { BeginHelper(token); },
+            [this](const std::string& token) { FinishHelper(token); }, error);
         if (exit_code == 0) {
             result.succeeded = true;
             result.activated = true;
@@ -557,12 +639,15 @@ public:
         std::string error;
         const int exit_code = RunHelper(
             helper, runtime_root_, CurrentCatalogRoot(), elevate_,
+            package_source_,
 #ifdef _WIN32
             L"--deactivate-backend",
 #else
             "--deactivate-backend",
 #endif
-            backend, observer, error);
+            backend, observer,
+            [this](const std::string& token) { BeginHelper(token); },
+            [this](const std::string& token) { FinishHelper(token); }, error);
         if (exit_code == 0) {
             result.succeeded = true;
             result.message = backend +
@@ -573,6 +658,28 @@ public:
                       std::to_string(exit_code)
                 : std::move(error);
         }
+        return result;
+    }
+
+    InstallerOperationResult RequestCancellation() override {
+        InstallerOperationResult result;
+        const std::scoped_lock lock(helper_mutex_);
+        if (!plan_running_) {
+            result.message = "No installation operation is active";
+            return result;
+        }
+        cancellation_requested_ = true;
+        if (active_helper_token_.empty()) {
+            result.succeeded = true;
+            result.message =
+                "Cancellation requested; CyxWiz will stop before the next component";
+            return result;
+        }
+        result.succeeded =
+            RequestInstallerCancellation(active_helper_token_);
+        result.message = result.succeeded
+            ? "Cancellation requested; CyxWiz is stopping safely"
+            : "Cannot publish the cancellation request";
         return result;
     }
 
@@ -595,6 +702,19 @@ public:
     }
 
 private:
+    void BeginHelper(const std::string& token) {
+        const std::scoped_lock lock(helper_mutex_);
+        active_helper_token_ = token;
+        if (cancellation_requested_) {
+            RequestInstallerCancellation(active_helper_token_);
+        }
+    }
+
+    void FinishHelper(const std::string& token) {
+        const std::scoped_lock lock(helper_mutex_);
+        if (active_helper_token_ == token) active_helper_token_.clear();
+    }
+
     InstallerOperationResult LaunchStableBootstrapper(
         bool installer_mode) const {
         InstallerOperationResult result;
@@ -659,7 +779,15 @@ private:
         return result;
     }
     std::filesystem::path CurrentCatalogRoot() const {
+        if (package_source_ == InstallerPackageSource::OfflineSibling) {
+            return metadata_root_;
+        }
         std::error_code error;
+        const bool has_active_runtime = std::filesystem::is_regular_file(
+            runtime_root_ / "active-runtime.json", error);
+        if (error || (!has_active_runtime && !online_refresh_succeeded_)) {
+            return metadata_root_;
+        }
         const bool has_cached_catalog = std::filesystem::is_regular_file(
             runtime::BackendPackCurrentCatalogPath(runtime_root_), error);
         if (!error && has_cached_catalog && std::filesystem::is_regular_file(
@@ -674,7 +802,14 @@ private:
     std::filesystem::path metadata_root_;
     std::filesystem::path executable_directory_;
     std::string catalog_url_;
+    InstallerPackageSource package_source_ =
+        InstallerPackageSource::CatalogHttps;
+    bool online_refresh_succeeded_ = false;
     bool elevate_ = false;
+    std::mutex helper_mutex_;
+    bool plan_running_ = false;
+    bool cancellation_requested_ = false;
+    std::string active_helper_token_;
 };
 
 }  // namespace
@@ -685,10 +820,12 @@ CreateBackendPackInstallerPlatform(
     std::filesystem::path metadata_root,
     std::filesystem::path executable_directory,
     CyxWizInstallScope scope,
-    std::string catalog_url) {
+    std::string catalog_url,
+    InstallerPackageSource package_source) {
     return std::make_unique<DesktopInstallerPlatform>(
         std::move(runtime_root), std::move(metadata_root),
-        std::move(executable_directory), scope, std::move(catalog_url));
+        std::move(executable_directory), scope, std::move(catalog_url),
+        package_source);
 }
 
 std::filesystem::path DefaultCyxWizInstallRoot(

@@ -40,6 +40,8 @@ endif()
 
 add_executable(cyxwiz-backend-pack-installer
     "${_cyxwiz_installer_engine_dir}/src/backend_pack_installer_main.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_cancellation_channel.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_helper_session.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_progress_channel.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_qualification_adapter.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_service.cpp"
@@ -97,6 +99,8 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/installer_pack_presentation.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_operation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/installer/installer_cancellation_channel.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/installer/installer_helper_session.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_cuda_prerequisite.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_progress_channel.cpp"
     )
@@ -319,6 +323,8 @@ find_package(OpenGL REQUIRED)
 set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/backend_pack_manager_main.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/backend_pack_installer_platform.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_cancellation_channel.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_helper_session.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_cuda_prerequisite.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_frame_pacing.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_progress_channel.cpp"

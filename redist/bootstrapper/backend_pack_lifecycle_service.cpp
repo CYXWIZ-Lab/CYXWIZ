@@ -304,6 +304,23 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     }
     const auto artifact = runtime_root_ / "cache" / "artifacts" /
         manifest.pack_id / manifest.archive.file_name;
+    const auto discard_cancelled_operation =
+        [&](bool artifact_downloaded, bool installed_published) {
+            if (!request.discard_operation_data_on_cancel) return;
+            std::error_code cleanup_error;
+            auto partial = artifact;
+            partial += ".part";
+            std::filesystem::remove(partial, cleanup_error);
+            if (artifact_downloaded) {
+                cleanup_error.clear();
+                std::filesystem::remove(artifact, cleanup_error);
+            }
+            if (installed_published && !preexisting) {
+                cleanup_error.clear();
+                std::filesystem::remove_all(
+                    installed_directory, cleanup_error);
+            }
+        };
     std::unique_ptr<BackendPackArtifactSource> resolved_source;
     if (!source) {
         if (request.source == BackendPackDeliverySource::OfflineSibling) {
@@ -335,9 +352,12 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     }
     const auto acquired = acquirer_.Acquire(
         *source, artifact, manifest.archive.size, manifest.archive.sha256,
-        request.acquisition_disk_budget_bytes);
+        request.acquisition_disk_budget_bytes, request.acquisition_retry);
     if (acquired.status != BackendPackAcquisitionStatus::Downloaded &&
         acquired.status != BackendPackAcquisitionStatus::AlreadyPresent) {
+        if (acquired.status == BackendPackAcquisitionStatus::Interrupted) {
+            discard_cancelled_operation(false, false);
+        }
         return Finish(
             acquired.status == BackendPackAcquisitionStatus::Interrupted
                 ? BackendPackLifecycleStatus::Interrupted
@@ -345,6 +365,9 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             acquired.message, manifest.pack_id, manifest.backend);
     }
     if (cancel_requested_.load()) {
+        discard_cancelled_operation(
+            acquired.status == BackendPackAcquisitionStatus::Downloaded,
+            false);
         return Finish(
             BackendPackLifecycleStatus::Interrupted,
             "Backend-pack delivery cancelled after acquisition",
@@ -358,6 +381,11 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
         artifact, manifest, extraction,
         request.extraction_disk_budget_bytes);
     if (extracted.status != BackendPackExtractionStatus::Extracted) {
+        if (extracted.status == BackendPackExtractionStatus::Interrupted) {
+            discard_cancelled_operation(
+                acquired.status == BackendPackAcquisitionStatus::Downloaded,
+                false);
+        }
         return Finish(
             extracted.status == BackendPackExtractionStatus::Interrupted
                 ? BackendPackLifecycleStatus::Interrupted
@@ -384,6 +412,11 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
               : installer_.StageInstallOrUpdate(
                     payload, request.installation_disk_budget_bytes)));
     if (!IsTerminalInstallStatus(installed.status)) {
+        if (installed.status == BackendPackInstallStatus::Interrupted) {
+            discard_cancelled_operation(
+                acquired.status == BackendPackAcquisitionStatus::Downloaded,
+                true);
+        }
         return Finish(
             installed.status == BackendPackInstallStatus::Interrupted
                 ? BackendPackLifecycleStatus::Interrupted
@@ -392,6 +425,9 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             installed.installed_directory);
     }
     if (cancel_requested_.load()) {
+        discard_cancelled_operation(
+            acquired.status == BackendPackAcquisitionStatus::Downloaded,
+            true);
         return Finish(
             BackendPackLifecycleStatus::Interrupted,
             "Complete pack is installed but delivery was cancelled before qualification",
@@ -581,6 +617,9 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             qualification);
     }
     if (cancel_requested_.load()) {
+        discard_cancelled_operation(
+            acquired.status == BackendPackAcquisitionStatus::Downloaded,
+            true);
         return Finish(
             BackendPackLifecycleStatus::Interrupted,
             "Complete pack is qualified but activation was cancelled",
@@ -600,13 +639,9 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
                 stable_tools.message, manifest.pack_id, manifest.backend,
                 installed.installed_directory, qualification);
         }
-        if (cancel_requested_.load()) {
-            return Finish(
-                BackendPackLifecycleStatus::Interrupted,
-                "Verified stable tools are installed but base activation was cancelled",
-                manifest.pack_id, manifest.backend,
-                installed.installed_directory, qualification);
-        }
+        // Publishing stable tools is the base transaction's commit point.
+        // A cancellation observed before this point is cleaned up above; once
+        // publication succeeds, complete activation atomically.
     }
 
     SetStage(

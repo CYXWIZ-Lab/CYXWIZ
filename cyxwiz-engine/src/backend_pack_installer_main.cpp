@@ -1,5 +1,7 @@
 #include "core/backend_pack_qualification_adapter.h"
 #include "core/compute_runtime_paths.h"
+#include "installer/installer_cancellation_channel.h"
+#include "installer/installer_helper_session.h"
 #include "installer/installer_progress_channel.h"
 
 #include "backend_pack_lifecycle_service.h"
@@ -12,15 +14,18 @@
 #include <cyxwiz/version.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -41,6 +46,7 @@ struct Options {
     std::string pack_id;
     std::string deactivate_backend;
     std::string progress_token;
+    std::uint64_t parent_process_id = 0;
     bool base = false;
     bool base_update = false;
     bool repair = false;
@@ -66,6 +72,25 @@ bool IsIdentifier(const std::basic_string<Character>& value) {
                character == static_cast<Character>('_') ||
                character == static_cast<Character>('-');
     });
+}
+
+template <typename Character>
+bool ParseProcessId(std::basic_string_view<Character> value,
+                    std::uint64_t& output) {
+    if (value.empty()) return false;
+    std::uint64_t parsed = 0;
+    for (const Character character : value) {
+        if (character < static_cast<Character>('0') ||
+            character > static_cast<Character>('9')) return false;
+        parsed = parsed * 10U + static_cast<std::uint64_t>(
+            character - static_cast<Character>('0'));
+        if (parsed > static_cast<std::uint64_t>(
+                         std::numeric_limits<std::uint32_t>::max())) {
+            return false;
+        }
+    }
+    output = parsed;
+    return parsed != 0;
 }
 
 std::filesystem::path ExecutableDirectory() {
@@ -135,6 +160,7 @@ bool ParseOptions(
     bool saw_deactivate_backend = false;
     bool saw_all_users = false;
     bool saw_progress_token = false;
+    bool saw_parent_process_id = false;
     for (int index = 1; index < argc; ++index) {
         const std::wstring_view argument(argv[index]);
         if (argument == L"--runtime-root" && !saw_runtime_root &&
@@ -230,6 +256,15 @@ bool ParseOptions(
                     static_cast<char>(character));
             }
             saw_progress_token = true;
+        } else if (argument == L"--parent-pid" &&
+                   !saw_parent_process_id && index + 1 < argc) {
+            if (!ParseProcessId<wchar_t>(
+                    std::wstring_view(argv[++index]),
+                    output.parent_process_id)) {
+                error = "--parent-pid must be a positive process identity";
+                return false;
+            }
+            saw_parent_process_id = true;
         } else {
             error = "Unsupported, duplicate, or incomplete installer argument";
             return false;
@@ -263,6 +298,7 @@ bool ParseOptions(
     bool saw_deactivate_backend = false;
     bool saw_all_users = false;
     bool saw_progress_token = false;
+    bool saw_parent_process_id = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--runtime-root" && !saw_runtime_root &&
@@ -325,6 +361,15 @@ bool ParseOptions(
                 return false;
             }
             saw_progress_token = true;
+        } else if (argument == "--parent-pid" &&
+                   !saw_parent_process_id && index + 1 < argc) {
+            if (!ParseProcessId<char>(
+                    std::string_view(argv[++index]),
+                    output.parent_process_id)) {
+                error = "--parent-pid must be a positive process identity";
+                return false;
+            }
+            saw_parent_process_id = true;
         } else {
             error = "Unsupported, duplicate, or incomplete installer argument";
             return false;
@@ -375,6 +420,19 @@ int main(int argc, char** argv) {
             {std::move(stage), completed_bytes, total_bytes,
              component_index, component_count, std::move(message)});
     };
+    cyxwiz::installer::InstallerHelperSession helper_session;
+    if (!helper_session.Open(
+            options.runtime_root, options.parent_process_id, error)) {
+        publish_progress("failed", error);
+        std::cerr << "CyxWiz backend-pack installer: " << error << '\n';
+        return 75;
+    }
+    if (!cyxwiz::installer::CleanupAbandonedInstallerStaging(
+            options.runtime_root, options.pack_id, error)) {
+        publish_progress("failed", error);
+        std::cerr << "CyxWiz backend-pack installer: " << error << '\n';
+        return 1;
+    }
     if (!options.deactivate_backend.empty()) {
         publish_progress("removing", "Deactivating the selected backend");
         if (options.deactivate_backend != "cuda" &&
@@ -450,6 +508,8 @@ int main(int argc, char** argv) {
 
     auto qualification_service =
         std::make_shared<cyxwiz::RouteQualificationService>();
+    auto helper_cancel_requested =
+        std::make_shared<std::atomic<bool>>(false);
     cyxwiz::BackendPackQualificationAdapterOptions qualification_options;
     qualification_options.runtime_root = options.runtime_root;
     qualification_options.probe_executable = options.base
@@ -459,6 +519,10 @@ int main(int argc, char** argv) {
               cyxwiz::runtime::CurrentRouteProbeExecutableName();
     qualification_options.cache_path =
         cyxwiz::GetRouteQualificationCachePath();
+    qualification_options.should_cancel =
+        [helper_cancel_requested] {
+            return helper_cancel_requested->load();
+        };
     if (!options.base && !std::filesystem::is_regular_file(
             qualification_options.probe_executable)) {
         std::cerr << "Qualification helper is missing: "
@@ -489,6 +553,28 @@ int main(int argc, char** argv) {
                 progress.component_count);
         });
 
+    std::jthread cancellation_monitor;
+    if (!options.progress_token.empty() || options.parent_process_id != 0) {
+        cancellation_monitor = std::jthread(
+            [&lifecycle, &helper_session, qualification_service,
+             helper_cancel_requested, token = options.progress_token](
+                const std::stop_token stop) {
+                while (!stop.stop_requested()) {
+                    const bool requested = !token.empty() &&
+                        cyxwiz::installer::
+                            IsInstallerCancellationRequested(token);
+                    if (requested || helper_session.ParentExited()) {
+                        helper_cancel_requested->store(true);
+                        lifecycle.Cancel();
+                        qualification_service->Cancel();
+                        return;
+                    }
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(100));
+                }
+            });
+    }
+
     cyxwiz::runtime::BackendPackDeliveryRequest request;
     request.catalog_path =
         cyxwiz::runtime::BackendPackCurrentCatalogPath(
@@ -502,10 +588,21 @@ int main(int argc, char** argv) {
     request.source = options.offline
         ? cyxwiz::runtime::BackendPackDeliverySource::OfflineSibling
         : cyxwiz::runtime::BackendPackDeliverySource::CatalogHttps;
+    request.discard_operation_data_on_cancel = true;
+    if (!options.offline) {
+        request.acquisition_retry.maximum_attempts = 3;
+        request.acquisition_retry.backoff = std::chrono::seconds(1);
+    }
     const auto result = options.base_update
         ? lifecycle.DeliverBaseUpdate(request)
         : (options.base ? lifecycle.DeliverBase(request)
                         : lifecycle.Deliver(request));
+    cancellation_monitor.request_stop();
+    if (cancellation_monitor.joinable()) cancellation_monitor.join();
+    if (!options.progress_token.empty()) {
+        cyxwiz::installer::ClearInstallerCancellation(
+            options.progress_token);
+    }
     std::cout << result.message << '\n';
     if (result.status == cyxwiz::runtime::
             BackendPackLifecycleStatus::InstalledAndActivated) {
@@ -544,5 +641,6 @@ int main(int argc, char** argv) {
             BackendPackLifecycleStatus::InstalledUnqualified) {
         return 2;
     }
+    publish_progress("failed", result.message);
     return 1;
 }

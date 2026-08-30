@@ -111,7 +111,8 @@ InstallerCudaPrerequisiteState EvaluateInstallerCudaDriverProbe(
         state.message += " with driver API " + state.driver_api_version;
     }
     state.message +=
-        ". CyxWiz will keep its signed CUDA runtime pack app-local.";
+        ". The NVIDIA driver prerequisite is already satisfied; CyxWiz will "
+        "install only its signed app-local CUDA backend pack.";
     return state;
 }
 

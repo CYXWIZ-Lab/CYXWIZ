@@ -2,6 +2,8 @@
 #include "../src/core/backend_pack_manager_model.h"
 #include "../src/core/installer_pack_presentation.h"
 #include "../src/installer/installer_operation.h"
+#include "../src/installer/installer_cancellation_channel.h"
+#include "../src/installer/installer_helper_session.h"
 #include "../src/installer/installer_progress_channel.h"
 #include "backend_pack_platform.h"
 
@@ -560,6 +562,34 @@ void TestInstallerProgressChannel() {
             actual->total_bytes == expected.total_bytes &&
             actual->message == expected.message,
         "The GUI must read the exact helper progress snapshot");
+  Check(cyxwiz::installer::InstallerCancellationPath("../escape").empty() &&
+            cyxwiz::installer::RequestInstallerCancellation(token) &&
+            cyxwiz::installer::IsInstallerCancellationRequested(token),
+        "Cancellation requests must use the same bounded path-safe identity");
+  cyxwiz::installer::ClearInstallerCancellation(token);
+  Check(!cyxwiz::installer::IsInstallerCancellationRequested(token),
+        "Cancellation cleanup must remove the completed helper request");
+  std::string session_error;
+  {
+    cyxwiz::installer::InstallerHelperSession first;
+    cyxwiz::installer::InstallerHelperSession overlapping;
+    Check(first.Open(root, cyxwiz::installer::CurrentInstallerProcessId(),
+                     session_error) &&
+              !first.ParentExited() &&
+              !overlapping.Open(
+                  root, cyxwiz::installer::CurrentInstallerProcessId(),
+                  session_error) &&
+              session_error.find("still active") != std::string::npos,
+          "Only one helper may own an installation root at a time");
+  }
+  {
+    cyxwiz::installer::InstallerHelperSession after_release;
+    session_error.clear();
+    Check(after_release.Open(
+              root, cyxwiz::installer::CurrentInstallerProcessId(),
+              session_error),
+          "A completed helper must release the installation operation lock");
+  }
   std::error_code cleanup_error;
   std::filesystem::remove_all(root, cleanup_error);
 }
@@ -595,6 +625,8 @@ void TestInstallerCudaPrerequisite() {
   const auto ready = EvaluateInstallerCudaDriverProbe(initialized);
   Check(ready.driver_detected && ready.device_available &&
             ready.device_count == 2 && ready.driver_api_version == "12.6" &&
+            ready.message.find("prerequisite is already satisfied") !=
+                std::string::npos &&
             ready.message.find("app-local") != std::string::npos,
         "CUDA prerequisite detection must report usable devices without trusting global runtime files");
 
@@ -609,6 +641,8 @@ void TestInstallerCudaPrerequisite() {
 class RecordingInstallerPlatform final
     : public cyxwiz::installer::BackendPackInstallerPlatform {
 public:
+  void BeginPlanExecution() override { ++plan_begin_count; }
+  void EndPlanExecution() override { ++plan_end_count; }
   cyxwiz::installer::InstallerCatalogState Refresh() override { return {}; }
   cyxwiz::installer::InstallerCatalogRefreshResult RefreshOnline() override {
     return {true, "refreshed"};
@@ -663,6 +697,11 @@ public:
     return {true, true, "launched"};
   }
 
+  cyxwiz::installer::InstallerOperationResult RequestCancellation() override {
+    calls.push_back("cancel");
+    return {true, false, "cancellation requested"};
+  }
+
   cyxwiz::installer::InstallerOperationResult OpenInstalledManager() override {
     calls.push_back("manager");
     return {true, true, "manager opened"};
@@ -671,6 +710,8 @@ public:
   std::string PlatformName() const override { return "test"; }
 
   std::string failing_id;
+  int plan_begin_count = 0;
+  int plan_end_count = 0;
   std::vector<std::string> calls;
 
 private:
@@ -694,7 +735,8 @@ void TestInstallerPlanExecution() {
   const auto result = cyxwiz::installer::ExecuteInstallerPlan(
       platform, plan,
       [&](const auto &snapshot) { progress.push_back(snapshot); });
-  Check(result.succeeded &&
+  Check(result.succeeded && platform.plan_begin_count == 1 &&
+            platform.plan_end_count == 1 &&
             platform.calls ==
                 std::vector<std::string>{"base:base-v1", "pack:cuda-v1",
                                          "pack:opencl-v1",
@@ -727,7 +769,9 @@ void TestInstallerPlanExecution() {
   RecordingInstallerPlatform failing;
   failing.failing_id = "cuda-v1";
   const auto failed = cyxwiz::installer::ExecuteInstallerPlan(failing, plan);
-  Check(!failed.succeeded && failed.message.find("cuda-v1 failed") !=
+  Check(!failed.succeeded && failing.plan_begin_count == 1 &&
+            failing.plan_end_count == 1 &&
+            failed.message.find("cuda-v1 failed") !=
                                  std::string::npos &&
             failing.calls ==
                 std::vector<std::string>{"base:base-v1", "pack:cuda-v1"},

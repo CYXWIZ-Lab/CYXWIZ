@@ -17,6 +17,8 @@ enum class InstallerViewActionKind {
   RefreshCatalog,
   UseInstallLocation,
   ApplyPlan,
+  CancelOperation,
+  CancelAndClose,
   LaunchEngine,
   OpenInstalledManager,
   RemoveProduct,
@@ -41,6 +43,8 @@ struct InstallerViewState {
   bool launch_after_install = true;
   bool install_completed = false;
   bool engine_launched = false;
+  bool cancellation_requested = false;
+  bool close_confirmation_requested = false;
   std::string install_location_message;
   BackendPackInstallerPlan pending_plan;
   InstallerRemovalViewState removal;
@@ -52,6 +56,7 @@ InstallerViewAction RenderInstallerView(
     const CyxWizInstallLocation &install_location,
     const InstallerProductRemovalState &product_removal,
     const std::string &platform_name, bool operation_running,
+    bool operation_cancellable,
     const std::string &operation_message,
     const InstallerPlanExecutionProgress &operation_progress,
     const InstallerVisualAssets &assets);

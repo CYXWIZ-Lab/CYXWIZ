@@ -883,6 +883,36 @@ int main() {
                 std::string(BackendPackLifecycleStatusName(result.status)) +
                 ": " + result.message + ")");
     }
+    {
+        Fixture fixture;
+        BackendPackLifecycleService* active_service = nullptr;
+        BackendPackLifecycleService service(
+            fixture.runtime, fixture.Verifier(), [] { return false; }, {},
+            [&](const BackendPackLifecycleProgress& progress) {
+                if (active_service &&
+                    progress.stage == BackendPackLifecycleStage::Acquiring &&
+                    progress.completed_bytes > 0) {
+                    active_service->Cancel();
+                }
+            });
+        active_service = &service;
+        auto request = fixture.Request();
+        request.discard_operation_data_on_cancel = true;
+        OfflineBackendPackArtifactSource source(fixture.archive);
+        const auto result = service.Deliver(request, source);
+        const auto artifact = fixture.runtime / "cache" / "artifacts" /
+            "opencl-v1" / "opencl-v1.zip";
+        auto partial = artifact;
+        partial += ".part";
+        failures += !Expect(
+            result.status == BackendPackLifecycleStatus::Interrupted &&
+                !std::filesystem::exists(artifact) &&
+                !std::filesystem::exists(partial) &&
+                !std::filesystem::exists(
+                    fixture.runtime / "packs" / "opencl" / "opencl-v1") &&
+                fixture.Active().packs.empty(),
+            "explicit installer cancellation must discard partial, cached, staged, and unpublished pack data");
+    }
 
     if (failures == 0) {
         std::cout << "backend pack lifecycle service contract tests passed\n";

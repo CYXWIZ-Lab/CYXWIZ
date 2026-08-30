@@ -13,6 +13,11 @@
 
 namespace cyxwiz::installer {
 
+enum class InstallerPackageSource {
+    CatalogHttps,
+    OfflineSibling,
+};
+
 struct InstallerCatalogState {
     CyxWizInstallerMode mode = CyxWizInstallerMode::Maintenance;
     bool available = false;
@@ -41,6 +46,8 @@ class BackendPackInstallerPlatform {
 public:
     virtual ~BackendPackInstallerPlatform() = default;
 
+    virtual void BeginPlanExecution() = 0;
+    virtual void EndPlanExecution() = 0;
     virtual InstallerCatalogState Refresh() = 0;
     virtual InstallerCatalogRefreshResult RefreshOnline() = 0;
     virtual InstallerOperationResult InstallBase(
@@ -55,6 +62,7 @@ public:
     virtual InstallerOperationResult DeactivateBackend(
         const std::string& backend,
         const InstallerOperationDetailObserver& observer = {}) = 0;
+    virtual InstallerOperationResult RequestCancellation() = 0;
     virtual InstallerOperationResult LaunchEngine() = 0;
     virtual InstallerOperationResult OpenInstalledManager() = 0;
     virtual std::string PlatformName() const = 0;
@@ -66,7 +74,9 @@ CreateBackendPackInstallerPlatform(
     std::filesystem::path metadata_root,
     std::filesystem::path executable_directory,
     CyxWizInstallScope scope = CyxWizInstallScope::CurrentUser,
-    std::string catalog_url = {});
+    std::string catalog_url = {},
+    InstallerPackageSource package_source =
+        InstallerPackageSource::CatalogHttps);
 
 std::filesystem::path DefaultCyxWizInstallRoot(
     CyxWizInstallScope scope);

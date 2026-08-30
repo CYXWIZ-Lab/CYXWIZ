@@ -21,6 +21,7 @@ struct BackendPackQualificationAdapterOptions {
     std::chrono::milliseconds operation_timeout{20000};
     std::chrono::milliseconds discovery_timeout{20000};
     std::size_t output_limit_bytes = 64 * 1024;
+    RouteQualificationCancelCheck should_cancel;
 };
 
 using BackendPackRouteDiscovery = std::function<

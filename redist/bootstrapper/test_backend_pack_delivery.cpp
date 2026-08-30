@@ -87,6 +87,50 @@ private:
     std::uint64_t fail_after_;
 };
 
+class FlakyMemorySource final : public BackendPackArtifactSource {
+public:
+    explicit FlakyMemorySource(std::string bytes)
+        : bytes_(std::move(bytes)) {}
+
+    std::string Description() const override { return "memory:flaky"; }
+
+    bool TransferFrom(
+        std::uint64_t offset, std::uint64_t expected_size,
+        const BackendPackArtifactChunk& consume,
+        const BackendPackArtifactCancelCheck& cancelled,
+        std::string& error) override {
+        offsets.push_back(offset);
+        ++attempts;
+        if (expected_size != bytes_.size() || offset > bytes_.size()) {
+            error = "flaky source size mismatch";
+            return false;
+        }
+        std::uint64_t cursor = offset;
+        const auto first_limit = bytes_.size() / 2;
+        while (cursor < bytes_.size()) {
+            if (cancelled()) {
+                error = "flaky source cancelled";
+                return false;
+            }
+            if (attempts == 1 && cursor >= first_limit) {
+                error = "simulated transient network failure";
+                return false;
+            }
+            const auto size = static_cast<std::size_t>(
+                std::min<std::uint64_t>(65536, bytes_.size() - cursor));
+            if (!consume(bytes_.data() + cursor, size, error)) return false;
+            cursor += size;
+        }
+        return true;
+    }
+
+    std::size_t attempts = 0;
+    std::vector<std::uint64_t> offsets;
+
+private:
+    std::string bytes_;
+};
+
 struct ArchiveItem {
     std::string path;
     std::string bytes;
@@ -335,6 +379,33 @@ int main() {
             acquired.status == BackendPackAcquisitionStatus::Downloaded &&
                 acquired.resumed_bytes > 0,
             "cancelled acquisition could not be resumed")) return 1;
+
+    const auto retry_download = temporary.Path() / "retry-download.zip";
+    FlakyMemorySource flaky(bytes);
+    acquired = acquirer.Acquire(
+        flaky, retry_download, bytes.size(), digest, bytes.size(),
+        {3, std::chrono::milliseconds(0)});
+    if (!Expect(
+            acquired.status == BackendPackAcquisitionStatus::Downloaded &&
+                flaky.attempts == 2 && flaky.offsets.size() == 2 &&
+                flaky.offsets[1] > 0,
+            "transient source failure did not retry from downloaded bytes"))
+        return 1;
+
+    const auto failed_retry = temporary.Path() / "failed-retry.zip";
+    MemorySource unavailable(bytes, bytes.size() / 2);
+    acquired = acquirer.Acquire(
+        unavailable, failed_retry, bytes.size(), digest, bytes.size(),
+        {3, std::chrono::milliseconds(0)});
+    auto failed_partial = failed_retry;
+    failed_partial += ".part";
+    if (!Expect(
+            acquired.status == BackendPackAcquisitionStatus::SourceFailure &&
+                acquired.message.find("after 3 attempt") !=
+                    std::string::npos &&
+                std::filesystem::is_regular_file(failed_partial),
+            "exhausted network retries did not preserve resumable state"))
+        return 1;
 
     HttpsBackendPackArtifactSource insecure("http://example.test/pack.zip");
     acquired = acquirer.Acquire(

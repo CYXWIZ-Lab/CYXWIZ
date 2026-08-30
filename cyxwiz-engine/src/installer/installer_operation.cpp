@@ -114,6 +114,12 @@ void ReportDetail(const InstallerPlanExecutionObserver &observer,
 InstallerPlanExecutionResult ExecuteInstallerPlan(
     BackendPackInstallerPlatform &platform, const BackendPackInstallerPlan &plan,
     const InstallerPlanExecutionObserver &observer) {
+  platform.BeginPlanExecution();
+  struct PlanExecutionScope {
+    BackendPackInstallerPlatform &platform;
+    ~PlanExecutionScope() { platform.EndPlanExecution(); }
+  } plan_execution_scope{platform};
+
   InstallerPlanExecutionResult batch;
   const std::size_t total_steps = static_cast<std::size_t>(plan.install_base) +
                                   static_cast<std::size_t>(plan.update_base) +

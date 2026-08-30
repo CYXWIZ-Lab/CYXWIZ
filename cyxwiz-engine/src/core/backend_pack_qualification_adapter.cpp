@@ -132,13 +132,17 @@ runtime::BackendPackQualificationDecision QualifyCandidate(
     discovery.working_directory = resolved.base_directory;
     discovery.runtime_dll_directories = resolved.dll_directories;
     discovery.runtime_identity = *identity;
-    const auto routes = discover(discovery, {});
+    const auto routes = discover(discovery, options.should_cancel);
     if (routes.status != RouteProbeStatus::Passed || routes.routes.empty()) {
         return Failure(
             options.failure_policy,
             routes.message.empty()
                 ? "The staged backend exposed no qualifying routes"
                 : routes.message);
+    }
+    if (options.should_cancel && options.should_cancel()) {
+        return Failure(
+            options.failure_policy, "Staged route qualification cancelled");
     }
 
     RouteQualificationOptions qualification_options;

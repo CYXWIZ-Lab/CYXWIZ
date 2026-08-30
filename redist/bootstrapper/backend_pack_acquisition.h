@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -131,6 +132,11 @@ struct BackendPackAcquisitionResult {
 using BackendPackAcquisitionObserver =
     std::function<void(const BackendPackAcquisitionProgress&)>;
 
+struct BackendPackAcquisitionRetryPolicy {
+    std::size_t maximum_attempts = 1;
+    std::chrono::milliseconds backoff = std::chrono::milliseconds(0);
+};
+
 class BackendPackArtifactAcquirer {
 public:
     explicit BackendPackArtifactAcquirer(
@@ -141,7 +147,8 @@ public:
         const std::filesystem::path& destination,
         std::uint64_t expected_size,
         std::string expected_sha256,
-        std::uint64_t disk_budget_bytes);
+        std::uint64_t disk_budget_bytes,
+        BackendPackAcquisitionRetryPolicy retry = {});
     void Cancel();
     BackendPackAcquisitionProgress GetProgress() const;
 
