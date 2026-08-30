@@ -5,6 +5,7 @@
 #include <cyxwiz/activations/sigmoid.h>
 #include <cyxwiz/activations/tanh.h>
 #include <cyxwiz/memory_manager.h>
+#include <cyxwiz/optimizers/sgd.h>
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
 #include <nlohmann/json.hpp>
@@ -23,7 +24,7 @@ namespace {
 
 using json = nlohmann::json;
 
-json LoadElementwiseActivationFixture() {
+json LoadActivationFixture(const char* case_name) {
     std::ifstream stream(CYXWIZ_TRAINING_CORE_FIXTURE_PATH);
     REQUIRE(stream.is_open());
 
@@ -33,21 +34,7 @@ json LoadElementwiseActivationFixture() {
     REQUIRE(fixture.at("oracle").value("name", "") == "PyTorch");
     REQUIRE(fixture.at("oracle").value("device", "") == "cpu");
     REQUIRE(!fixture.at("oracle").value("version", "").empty());
-    return fixture.at("cases").at(
-        "elementwise_activation_forward_backward_f32");
-}
-
-json LoadSoftmaxFixture() {
-    std::ifstream stream(CYXWIZ_TRAINING_CORE_FIXTURE_PATH);
-    REQUIRE(stream.is_open());
-
-    json fixture;
-    stream >> fixture;
-    REQUIRE(fixture.value("schema_version", 0) == 1);
-    REQUIRE(fixture.at("oracle").value("name", "") == "PyTorch");
-    REQUIRE(fixture.at("oracle").value("device", "") == "cpu");
-    REQUIRE(!fixture.at("oracle").value("version", "").empty());
-    return fixture.at("cases").at("softmax_forward_backward_f32");
+    return fixture.at("cases").at(case_name);
 }
 
 cyxwiz::Tensor ActivationTensorFromFixture(const json& value) {
@@ -128,7 +115,8 @@ void CheckActivationTensor(const cyxwiz::Tensor& actual,
 
 TEST_CASE("Elementwise activations match PyTorch forward and autograd",
           "[activation][pytorch]") {
-    const auto cases = LoadElementwiseActivationFixture();
+    const auto cases = LoadActivationFixture(
+        "elementwise_activation_forward_backward_f32");
     REQUIRE(cases.is_array());
     REQUIRE(cases.size() == 10);
 
@@ -160,7 +148,8 @@ TEST_CASE("Elementwise activations match PyTorch forward and autograd",
 
 TEST_CASE("Softmax activation and module match PyTorch by axis",
           "[activation][pytorch][softmax]") {
-    const auto cases = LoadSoftmaxFixture();
+    const auto cases = LoadActivationFixture(
+        "softmax_forward_backward_f32");
     REQUIRE(cases.is_array());
     REQUIRE(cases.size() == 7);
 
@@ -196,6 +185,106 @@ TEST_CASE("Softmax activation and module match PyTorch by axis",
             module_output, expected.at("output"), tolerance);
         CheckActivationTensor(
             module_gradient, expected.at("grad_input"), tolerance);
+    }
+}
+
+TEST_CASE("PReLU activation matches PyTorch shared and channel parameters",
+          "[activation][pytorch][prelu]") {
+    const auto cases = LoadActivationFixture(
+        "prelu_forward_backward_f32");
+    REQUIRE(cases.is_array());
+    REQUIRE(cases.size() == 3);
+
+    for (const auto& test_case : cases) {
+        const std::string name = test_case.at("name").get<std::string>();
+        INFO("case=" << name);
+        REQUIRE(test_case.value("dtype", "") == "float32");
+        REQUIRE(test_case.value("operation", "") ==
+                "torch.nn.functional.prelu");
+
+        cyxwiz::PReLUActivation activation(
+            test_case.at("num_parameters").get<int>());
+        activation.SetAlpha(
+            ActivationTensorFromFixture(test_case.at("alpha")));
+        const auto input =
+            ActivationTensorFromFixture(test_case.at("input"));
+        const auto grad_output =
+            ActivationTensorFromFixture(test_case.at("grad_output"));
+        const auto output = activation.Forward(input);
+        const auto grad_input = activation.Backward(grad_output, input);
+
+        const auto& expected = test_case.at("expected");
+        const auto& tolerance = test_case.at("tolerance");
+        CheckActivationTensor(output, expected.at("output"), tolerance);
+        CheckActivationTensor(
+            grad_input, expected.at("grad_input"), tolerance);
+        CheckActivationTensor(
+            activation.GetAlphaGradient(),
+            expected.at("grad_alpha"),
+            tolerance);
+    }
+}
+
+TEST_CASE("PReLU module owns alpha through SequentialModel SGD",
+          "[activation][pytorch][prelu][optimizer]") {
+    const auto cases = LoadActivationFixture(
+        "prelu_forward_backward_f32");
+    const auto& test_case = cases.at(2);
+    REQUIRE(test_case.at("name").get<std::string>() == "channel_rank4");
+
+    const auto initial_alpha =
+        test_case.at("alpha").at("values").get<std::vector<float>>();
+    const auto expected_gradient = test_case.at("expected")
+        .at("grad_alpha").at("values").get<std::vector<float>>();
+    REQUIRE(initial_alpha.size() == expected_gradient.size());
+
+    cyxwiz::SequentialModel model;
+    model.Add<cyxwiz::PReLUModule>(
+        test_case.at("num_parameters").get<int>());
+    model.SetParameters({
+        {"layer0.alpha",
+         ActivationTensorFromFixture(test_case.at("alpha"))}
+    });
+
+    const auto input =
+        ActivationTensorFromFixture(test_case.at("input"));
+    const auto grad_output =
+        ActivationTensorFromFixture(test_case.at("grad_output"));
+    const auto output = model.Forward(input);
+    const auto grad_input = model.Backward(grad_output);
+    const auto& tolerance = test_case.at("tolerance");
+    CheckActivationTensor(
+        output, test_case.at("expected").at("output"), tolerance);
+    CheckActivationTensor(
+        grad_input, test_case.at("expected").at("grad_input"), tolerance);
+
+    const auto parameters = model.GetParameters();
+    const auto gradients = model.GetGradients();
+    REQUIRE(parameters.size() == 1);
+    REQUIRE(gradients.size() == 1);
+    REQUIRE(parameters.count("layer0.alpha") == 1);
+    REQUIRE(gradients.count("layer0.alpha") == 1);
+    CheckActivationTensor(
+        parameters.at("layer0.alpha"), test_case.at("alpha"), tolerance);
+    CheckActivationTensor(
+        gradients.at("layer0.alpha"),
+        test_case.at("expected").at("grad_alpha"),
+        tolerance);
+
+    constexpr double learning_rate = 0.05;
+    cyxwiz::SGDOptimizer optimizer(learning_rate);
+    model.UpdateParameters(&optimizer);
+    const auto updated = model.GetParameters();
+    REQUIRE(updated.size() == 1);
+    const auto& updated_alpha = updated.at("layer0.alpha");
+    REQUIRE(updated_alpha.Shape() ==
+            std::vector<size_t>{initial_alpha.size()});
+    const float* updated_values = updated_alpha.ReadData<float>();
+    for (size_t i = 0; i < initial_alpha.size(); ++i) {
+        const double expected = initial_alpha[i] -
+            learning_rate * expected_gradient[i];
+        CHECK(updated_values[i] ==
+              Catch::Approx(expected).margin(2.0e-5).epsilon(2.0e-5));
     }
 }
 

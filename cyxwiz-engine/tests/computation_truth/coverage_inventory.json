@@ -376,18 +376,18 @@
     {
       "id": "ACT-PRELU-001",
       "family": "activation",
-      "operation": "PReLU forward/input-gradient/learned-alpha gradient",
+      "operation": "PReLUActivation and production PReLUModule forward/input-gradient/learned-alpha gradient and update",
       "tier": 1,
-      "owner": "cyxwiz-backend/include/cyxwiz/activation.h",
-      "implementation": ["cyxwiz-backend/src/algorithms/activation.cpp"],
-      "callers": ["activation modules"],
-      "contract": "Input and alpha gradients match PyTorch with the declared scalar/channel parameter form.",
-      "supported": "Float32 shared-alpha rank domain and per-channel rank-2/rank-4 ArrayFire domain with channel dimension 1",
+      "owner": "cyxwiz-backend/include/cyxwiz/activation.h; cyxwiz-backend/include/cyxwiz/sequential.h",
+      "implementation": ["cyxwiz-backend/src/algorithms/activation.cpp", "cyxwiz-backend/src/algorithms/sequential/activation_modules.cpp"],
+      "callers": ["activation modules", "SequentialModel training and optimizer lifecycle"],
+      "contract": "Input and alpha gradients match PyTorch with the declared scalar/channel parameter form; learned alpha is exposed, updated, and written back through the production Module contract.",
+      "supported": "Float32 shared-alpha rank domain and per-channel rank-2/rank-4 ArrayFire and native CPU domains with channel dimension 1",
       "oracle": "Generated PyTorch 2.10 forward/autograd fixtures",
-      "tests": ["cyxwiz-tests:test_activations", "test_computation_truth_tfidf_loss:prelu_forward_backward_f32"],
-      "execution": "strict ArrayFire-resident CPU, CUDA and OpenCL routes; non-ArrayFire native CPU implementation is shared-alpha only",
-      "status": "partial",
-      "gaps": ["optimizer/module ownership for learned-alpha updates", "non-ArrayFire per-channel implementation and qualification"]
+      "tests": ["cyxwiz-tests:[activation][pytorch][prelu]", "cyxwiz-tests:test_activations", "test_computation_truth_tfidf_loss:prelu_forward_backward_f32"],
+      "execution": "strict ArrayFire-resident CPU, CUDA and OpenCL routes with no native fallback or undeclared host synchronization; the configured no-ArrayFire build runs the same generated fixture through shared and per-channel native CPU implementations; PReLUModule exposes alpha/gradient to SequentialModel and completes an SGD update/write-back",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "LOSS-REG-001",

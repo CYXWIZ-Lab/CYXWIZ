@@ -622,6 +622,26 @@ private:
 };
 
 /**
+ * @brief PReLU activation with optimizer-owned learned alpha parameters
+ */
+class CYXWIZ_API PReLUModule : public Module {
+public:
+    explicit PReLUModule(int num_parameters = 1, float init = 0.25f);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<PReLUActivation> activation_;
+    int num_parameters_;
+};
+
+/**
  * @brief Wrapper for Sigmoid activation
  */
 class CYXWIZ_API SigmoidModule : public Module {

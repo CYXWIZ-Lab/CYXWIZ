@@ -978,16 +978,25 @@ Tensor PReLUActivation::Forward(const Tensor& input) {
         LogActivationFallbackOnce("PReLU::Forward", e.what(), input, "input");
     }
 #endif
-    if (num_parameters_ != 1) {
-        throw std::runtime_error("PReLU CPU fallback only supports shared alpha");
-    }
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LayerCpuPath, "PReLU::Forward");
-    const Tensor& alpha = alpha_;
-    const float alpha_value = alpha.ReadData<float>()[0];
-    return CpuElementwiseActivationForward(input, "PReLU", [alpha_value](float x) {
-        return x > 0.0f ? x : alpha_value * x;
-    });
+    const auto& shape = input.Shape();
+    size_t channel_span = 1;
+    for (size_t dimension = 2; dimension < shape.size(); ++dimension) {
+        channel_span *= shape[dimension];
+    }
+
+    const float* alpha = alpha_.ReadData<float>();
+    const float* in = input.ReadData<float>();
+    Tensor output(shape, input.GetDataType());
+    float* out = output.MutableData<float>();
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        const size_t channel = num_parameters_ == 1
+            ? 0
+            : (i / channel_span) % shape[1];
+        out[i] = in[i] > 0.0f ? in[i] : alpha[channel] * in[i];
+    }
+    return output;
 }
 
 Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
@@ -1048,27 +1057,30 @@ Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input)
         LogActivationFallbackOnce("PReLU::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
-    if (num_parameters_ != 1) {
-        throw std::runtime_error("PReLU CPU fallback only supports shared alpha");
-    }
-
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LayerCpuPath, "PReLU::Backward");
-    ValidateFloat32ActivationBackward(grad_output, input, "PReLU");
-    const Tensor& alpha = alpha_;
-    const float alpha_value = alpha.ReadData<float>()[0];
+    const auto& shape = input.Shape();
+    size_t channel_span = 1;
+    for (size_t dimension = 2; dimension < shape.size(); ++dimension) {
+        channel_span *= shape[dimension];
+    }
+
+    const float* alpha = alpha_.ReadData<float>();
     Tensor grad_input(input.Shape(), input.GetDataType());
-    float grad_alpha_val = 0.0f;
+    grad_alpha_ = Tensor::Zeros({static_cast<size_t>(num_parameters_)});
+    float* grad_alpha = grad_alpha_.MutableData<float>();
     const float* grad = grad_output.ReadData<float>();
     const float* in = input.ReadData<float>();
     float* out = grad_input.MutableData<float>();
     for (size_t i = 0; i < input.NumElements(); ++i) {
-        out[i] = grad[i] * (in[i] > 0.0f ? 1.0f : alpha_value);
+        const size_t channel = num_parameters_ == 1
+            ? 0
+            : (i / channel_span) % shape[1];
+        out[i] = grad[i] * (in[i] > 0.0f ? 1.0f : alpha[channel]);
         if (in[i] < 0.0f) {
-            grad_alpha_val += grad[i] * in[i];
+            grad_alpha[channel] += grad[i] * in[i];
         }
     }
-    grad_alpha_.MutableData<float>()[0] = grad_alpha_val;
     return grad_input;
 }
 
