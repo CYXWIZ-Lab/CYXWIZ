@@ -591,3 +591,54 @@ TEST_CASE("Tensor-facing fallback helpers enforce strict policy before native co
             "ThrowIfArrayFireNativeCpuFallbackForbidden"));
     }
 }
+
+TEST_CASE("Host-vector model evaluation has one native execution owner",
+          "[arrayfire][classification_metrics][ownership][source_scan]") {
+    const fs::path repo_root = FindRepoRoot();
+    const std::vector<std::string> relative_paths = {
+        "cyxwiz-backend/src/algorithms/evaluation/classification_metrics.cpp",
+        "cyxwiz-backend/src/algorithms/evaluation/cross_validation.cpp",
+        "cyxwiz-backend/src/algorithms/evaluation/roc_pr_curves.cpp",
+        "cyxwiz-backend/src/algorithms/model_evaluation.cpp",
+    };
+    const std::vector<std::string> forbidden_needles = {
+        "CYXWIZ_HAS_ARRAYFIRE",
+        "arrayfire.h",
+        "af::",
+        "ArrayFireHostSyncCategory",
+        "LogEvaluationFallbackOnce",
+    };
+
+    std::vector<RawFallbackHit> unexpected_hits;
+    for (const auto& relative_path : relative_paths) {
+        const auto lines = ReadLines(repo_root / relative_path);
+        for (size_t line_index = 0; line_index < lines.size(); ++line_index) {
+            for (const auto& needle : forbidden_needles) {
+                if (lines[line_index].find(needle) != std::string::npos) {
+                    unexpected_hits.push_back(RawFallbackHit{
+                        relative_path,
+                        line_index + 1,
+                        needle,
+                        lines[line_index]});
+                }
+            }
+        }
+    }
+
+    INFO("Host-vector evaluation must not upload to a selected device or hide "
+         "a size-dependent native fallback:" + FormatHits(unexpected_hits));
+    REQUIRE(unexpected_hits.empty());
+
+    const auto forwarding_header = ReadLines(
+        repo_root / "cyxwiz-engine/src/core/model_evaluation.h");
+    REQUIRE(std::any_of(
+        forwarding_header.begin(), forwarding_header.end(),
+        [](const std::string& line) {
+            return line.find("#include <cyxwiz/model_evaluation.h>") !=
+                   std::string::npos;
+        }));
+    for (const auto& line : forwarding_header) {
+        CHECK(line.find("struct BinaryMetrics") == std::string::npos);
+        CHECK(line.find("class ModelEvaluation") == std::string::npos);
+    }
+}

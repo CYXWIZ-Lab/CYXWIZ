@@ -1,4 +1,4 @@
-// Prevent Windows min/max macros from interfering with std::numeric_limits and af::max/min
+// Prevent Windows min/max macros from interfering with numeric_limits.
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -6,20 +6,15 @@
 #endif
 
 #include "cyxwiz/model_evaluation.h"
-#include "../arrayfire_backend_utils.h"
-#include "../arrayfire_host_materialization.h"
+#include "classification_metric_contract.h"
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numeric>
 #include <spdlog/spdlog.h>
 #include <string>
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-#include <arrayfire.h>
-#endif
-
-// Ensure Windows min/max macros are undefined after all includes
 #ifdef _WIN32
 #ifdef min
 #undef min
@@ -31,506 +26,298 @@
 
 namespace cyxwiz {
 
-static bool CheckGPUAvailable() {
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    return IsCurrentArrayFireBackendGpu();
-#else
-    return false;
-#endif
-}
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-static void LogEvaluationFallbackOnce(
-    const char* operation_name,
-    const char* error_message,
-    size_t sample_count)
-{
-    const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
-    const std::string context = BuildArrayFireBackendFallbackContext(
-        "samples=" + std::to_string(sample_count));
-    if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
-        spdlog::warn("{}",
-            BuildArrayFireBackendFallbackMessage(
-                operation_name,
-                reason,
-                reason != BackendFallbackReason::CudaJitParamOverflow,
-                error_message,
-                context));
-    }
-}
-#endif
-
-std::vector<size_t> ModelEvaluation::ArgSort(const std::vector<double>& v, bool descending) {
-    std::vector<size_t> idx(v.size());
-    std::iota(idx.begin(), idx.end(), 0);
-
+std::vector<size_t> ModelEvaluation::ArgSort(
+    const std::vector<double>& values,
+    bool descending) {
+    std::vector<size_t> indices(values.size());
+    std::iota(indices.begin(), indices.end(), 0);
     if (descending) {
-        std::sort(idx.begin(), idx.end(), [&v](size_t i1, size_t i2) {
-            return v[i1] > v[i2];
-        });
+        std::stable_sort(
+            indices.begin(), indices.end(),
+            [&values](size_t lhs, size_t rhs) {
+                return values[lhs] > values[rhs];
+            });
     } else {
-        std::sort(idx.begin(), idx.end(), [&v](size_t i1, size_t i2) {
-            return v[i1] < v[i2];
-        });
+        std::stable_sort(
+            indices.begin(), indices.end(),
+            [&values](size_t lhs, size_t rhs) {
+                return values[lhs] < values[rhs];
+            });
     }
-    return idx;
+    return indices;
 }
 
 ROCCurveData ModelEvaluation::ComputeROC(
     const std::vector<int>& y_true,
     const std::vector<double>& y_scores) {
-
     ROCCurveData result;
+    if (!classification_metric_detail::ValidateBinaryScores(
+            y_true, y_scores, result.error_message)) {
+        return result;
+    }
 
-    if (y_true.size() != y_scores.size() || y_true.empty()) {
-        result.error_message = "Invalid input: sizes don't match or empty";
+    const size_t positive_count = static_cast<size_t>(
+        std::count(y_true.begin(), y_true.end(), 1));
+    const size_t negative_count = y_true.size() - positive_count;
+    if (positive_count == 0 || negative_count == 0) {
+        result.error_message =
+            "ROC requires both positive and negative target samples";
         return result;
     }
 
     try {
-        int n = static_cast<int>(y_true.size());
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (CheckGPUAvailable() && n > 1000) {
-            try {
-                // Use ArrayFire for efficient computation
-                af::array af_labels(n, y_true.data());
-                af::array af_scores(n, y_scores.data());
-
-                // Sort by scores descending
-                af::array sorted_scores, sort_idx;
-                af::sort(sorted_scores, sort_idx, af_scores, 0, false);  // descending
-                sorted_scores.eval();
-                sort_idx.eval();
-
-                // Reorder labels by sorted indices
-                af::array sorted_labels = af_labels(sort_idx);
-                sorted_labels.eval();
-
-                // Count positives and negatives
-                af::array positive_mask = af_labels == 1;
-                positive_mask.eval();
-                int n_pos = static_cast<int>(af::sum<int>(positive_mask));
-                int n_neg = n - n_pos;
-
-                if (n_pos == 0 || n_neg == 0) {
-                    result.error_message = "Need both positive and negative samples";
-                    return result;
-                }
-
-                // Compute cumulative sums for TPR and FPR
-                af::array is_pos = (sorted_labels == 1).as(f64);
-                is_pos.eval();
-                af::array is_neg = (sorted_labels == 0).as(f64);
-                is_neg.eval();
-
-                af::array cum_tp = af::accum(is_pos);
-                cum_tp.eval();
-                af::array cum_fp = af::accum(is_neg);
-                cum_fp.eval();
-
-                // Convert to host
-                std::vector<double> cum_tp_host(n), cum_fp_host(n), scores_host(n);
-                MaterializeArrayFireToHost(
-                    cum_tp,
-                    cum_tp_host.data(),
-                    ArrayFireHostSyncCategory::AlgorithmCpuPath,
-                    "ModelEvaluation::ROCCurve::CumulativeTruePositives",
-                    "arrayfire_native");
-                MaterializeArrayFireToHost(
-                    cum_fp,
-                    cum_fp_host.data(),
-                    ArrayFireHostSyncCategory::AlgorithmCpuPath,
-                    "ModelEvaluation::ROCCurve::CumulativeFalsePositives",
-                    "arrayfire_native");
-                MaterializeArrayFireToHost(
-                    sorted_scores,
-                    scores_host.data(),
-                    ArrayFireHostSyncCategory::OutputMaterialization,
-                    "ModelEvaluation::ROCCurve::SortedScores",
-                    "arrayfire_native");
-
-                // Build ROC curve with unique thresholds
-                result.fpr.reserve(n + 2);
-                result.tpr.reserve(n + 2);
-                result.thresholds.reserve(n + 2);
-
-                // Start point (0, 0)
-                result.fpr.push_back(0.0);
-                result.tpr.push_back(0.0);
-                result.thresholds.push_back(scores_host[0] + 1.0);  // Above max score
-
-                double prev_score = scores_host[0] + 1.0;
-                for (int i = 0; i < n; ++i) {
-                    double score = scores_host[i];
-                    if (score != prev_score) {
-                        result.fpr.push_back(cum_fp_host[i > 0 ? i - 1 : 0] / n_neg);
-                        result.tpr.push_back(cum_tp_host[i > 0 ? i - 1 : 0] / n_pos);
-                        result.thresholds.push_back(score);
-                    }
-                    prev_score = score;
-                }
-
-                // End point (1, 1)
-                result.fpr.push_back(1.0);
-                result.tpr.push_back(1.0);
-                result.thresholds.push_back(scores_host.back() - 1.0);  // Below min score
-
-                // Compute AUC using trapezoidal rule
-                result.auc = ComputeAUC(result.fpr, result.tpr);
-
-                result.success = true;
-                spdlog::debug("ROC curve computed (GPU): {} points, AUC={:.4f}", result.fpr.size(), result.auc);
-                return result;
-
-            } catch (const af::exception& e) {
-                LogEvaluationFallbackOnce("ModelEvaluation::ComputeROC", e.what(), y_true.size());
-            }
-        }
-#endif
-
-        // CPU fallback - sort indices by scores
-        auto sorted_idx = ArgSort(y_scores, true);  // descending
-
-        // Count positives and negatives
-        int n_pos = 0, n_neg = 0;
-        for (int label : y_true) {
-            if (label == 1) n_pos++;
-            else n_neg++;
-        }
-
-        if (n_pos == 0 || n_neg == 0) {
-            result.error_message = "Need both positive and negative samples";
-            return result;
-        }
-
-        // Build ROC curve
-        result.fpr.reserve(n + 2);
-        result.tpr.reserve(n + 2);
-        result.thresholds.reserve(n + 2);
-
+        const auto sorted_indices = ArgSort(y_scores, true);
+        result.fpr.reserve(y_true.size() + 1);
+        result.tpr.reserve(y_true.size() + 1);
+        result.thresholds.reserve(y_true.size() + 1);
         result.fpr.push_back(0.0);
         result.tpr.push_back(0.0);
-        result.thresholds.push_back(y_scores[sorted_idx[0]] + 1.0);
+        result.thresholds.push_back(
+            std::numeric_limits<double>::infinity());
 
-        int cum_tp = 0, cum_fp = 0;
-        double prev_score = y_scores[sorted_idx[0]] + 1.0;
+        size_t true_positive = 0;
+        size_t false_positive = 0;
+        size_t position = 0;
+        while (position < sorted_indices.size()) {
+            const double threshold = y_scores[sorted_indices[position]];
+            do {
+                if (y_true[sorted_indices[position]] == 1) {
+                    ++true_positive;
+                } else {
+                    ++false_positive;
+                }
+                ++position;
+            } while (
+                position < sorted_indices.size() &&
+                y_scores[sorted_indices[position]] == threshold);
 
-        for (int i = 0; i < n; ++i) {
-            size_t idx = sorted_idx[i];
-            double score = y_scores[idx];
-
-            if (score != prev_score) {
-                result.fpr.push_back(static_cast<double>(cum_fp) / n_neg);
-                result.tpr.push_back(static_cast<double>(cum_tp) / n_pos);
-                result.thresholds.push_back(score);
-            }
-
-            if (y_true[idx] == 1) cum_tp++;
-            else cum_fp++;
-
-            prev_score = score;
+            result.fpr.push_back(
+                static_cast<double>(false_positive) / negative_count);
+            result.tpr.push_back(
+                static_cast<double>(true_positive) / positive_count);
+            result.thresholds.push_back(threshold);
         }
 
-        result.fpr.push_back(1.0);
-        result.tpr.push_back(1.0);
-        result.thresholds.push_back(y_scores[sorted_idx.back()] - 1.0);
-
         result.auc = ComputeAUC(result.fpr, result.tpr);
-
+        if (!std::isfinite(result.auc)) {
+            result.error_message = "ROC integration produced an invalid AUC";
+            return result;
+        }
         result.success = true;
-        spdlog::debug("ROC curve computed (CPU): {} points, AUC={:.4f}", result.fpr.size(), result.auc);
-
-    } catch (const std::exception& e) {
-        result.error_message = std::string("Exception: ") + e.what();
-        spdlog::error("ComputeROC failed: {}", e.what());
+        spdlog::debug(
+            "ROC curve computed (native host): {} points, AUC={:.4f}",
+            result.fpr.size(), result.auc);
+    } catch (const std::exception& error) {
+        result.error_message = std::string("Exception: ") + error.what();
+        spdlog::error("ComputeROC failed: {}", error.what());
     }
-
     return result;
 }
 
 ROCCurveData ModelEvaluation::ComputeMulticlassROC(
     const std::vector<int>& y_true,
     const std::vector<std::vector<double>>& y_scores) {
-
     ROCCurveData result;
-
-    if (y_true.empty() || y_scores.empty() || y_true.size() != y_scores.size()) {
-        result.error_message = "Invalid input";
+    size_t class_count = 0;
+    if (!classification_metric_detail::ValidateMulticlassScores(
+            y_true, y_scores, class_count, result.error_message)) {
         return result;
     }
 
     try {
-        // Find number of classes
-        int n_classes = static_cast<int>(y_scores[0].size());
-
-        result.class_fpr.resize(n_classes);
-        result.class_tpr.resize(n_classes);
-        result.class_auc.resize(n_classes);
-
-        // Compute one-vs-rest ROC for each class
-        for (int c = 0; c < n_classes; ++c) {
-            // Binary labels for this class
+        result.class_fpr.resize(class_count);
+        result.class_tpr.resize(class_count);
+        result.class_thresholds.resize(class_count);
+        result.class_auc.resize(class_count);
+        for (size_t class_index = 0;
+             class_index < class_count;
+             ++class_index) {
             std::vector<int> binary_labels(y_true.size());
             std::vector<double> class_scores(y_true.size());
-
-            for (size_t i = 0; i < y_true.size(); ++i) {
-                binary_labels[i] = (y_true[i] == c) ? 1 : 0;
-                class_scores[i] = y_scores[i][c];
+            for (size_t sample = 0; sample < y_true.size(); ++sample) {
+                binary_labels[sample] =
+                    y_true[sample] == static_cast<int>(class_index) ? 1 : 0;
+                class_scores[sample] = y_scores[sample][class_index];
             }
 
-            auto class_roc = ComputeROC(binary_labels, class_scores);
-            if (class_roc.success) {
-                result.class_fpr[c] = class_roc.fpr;
-                result.class_tpr[c] = class_roc.tpr;
-                result.class_auc[c] = class_roc.auc;
+            const auto class_roc = ComputeROC(binary_labels, class_scores);
+            if (!class_roc.success) {
+                result.error_message =
+                    "Class " + std::to_string(class_index) + ": " +
+                    class_roc.error_message;
+                return result;
             }
+            result.class_fpr[class_index] = class_roc.fpr;
+            result.class_tpr[class_index] = class_roc.tpr;
+            result.class_thresholds[class_index] = class_roc.thresholds;
+            result.class_auc[class_index] = class_roc.auc;
         }
 
-        // Macro-average AUC
-        result.auc = std::accumulate(result.class_auc.begin(), result.class_auc.end(), 0.0) / n_classes;
-
+        result.auc = std::accumulate(
+            result.class_auc.begin(), result.class_auc.end(), 0.0) /
+            static_cast<double>(class_count);
         result.success = true;
-
-    } catch (const std::exception& e) {
-        result.error_message = std::string("Exception: ") + e.what();
+    } catch (const std::exception& error) {
+        result.error_message = std::string("Exception: ") + error.what();
     }
-
     return result;
 }
 
 PRCurveData ModelEvaluation::ComputePRCurve(
     const std::vector<int>& y_true,
     const std::vector<double>& y_scores) {
-
     PRCurveData result;
+    if (!classification_metric_detail::ValidateBinaryScores(
+            y_true, y_scores, result.error_message)) {
+        return result;
+    }
 
-    if (y_true.size() != y_scores.size() || y_true.empty()) {
-        result.error_message = "Invalid input";
+    const size_t positive_count = static_cast<size_t>(
+        std::count(y_true.begin(), y_true.end(), 1));
+    if (positive_count == 0) {
+        result.error_message =
+            "Precision-recall requires at least one positive target sample";
         return result;
     }
 
     try {
-        int n = static_cast<int>(y_true.size());
+        const auto sorted_indices = ArgSort(y_scores, true);
+        std::vector<double> descending_precision;
+        std::vector<double> descending_recall;
+        std::vector<double> descending_thresholds;
+        descending_precision.reserve(y_true.size());
+        descending_recall.reserve(y_true.size());
+        descending_thresholds.reserve(y_true.size());
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-        if (CheckGPUAvailable() && n > 1000) {
-            try {
-                // Use ArrayFire for efficient sorting
-                af::array af_labels(n, y_true.data());
-                af::array af_scores(n, y_scores.data());
-
-                // Sort by scores descending
-                af::array sorted_scores, sort_idx;
-                af::sort(sorted_scores, sort_idx, af_scores, 0, false);
-                sorted_scores.eval();
-                sort_idx.eval();
-
-                af::array sorted_labels = af_labels(sort_idx);
-                sorted_labels.eval();
-
-                // Count total positives
-                af::array positive_mask = af_labels == 1;
-                positive_mask.eval();
-                int n_pos = static_cast<int>(af::sum<int>(positive_mask));
-
-                if (n_pos == 0) {
-                    result.error_message = "No positive samples";
-                    return result;
+        size_t true_positive = 0;
+        size_t predicted_positive = 0;
+        double previous_recall = 0.0;
+        size_t position = 0;
+        while (position < sorted_indices.size()) {
+            const double threshold = y_scores[sorted_indices[position]];
+            do {
+                if (y_true[sorted_indices[position]] == 1) {
+                    ++true_positive;
                 }
+                ++predicted_positive;
+                ++position;
+            } while (
+                position < sorted_indices.size() &&
+                y_scores[sorted_indices[position]] == threshold);
 
-                // Compute cumulative TP and total predictions
-                af::array is_pos = (sorted_labels == 1).as(f64);
-                is_pos.eval();
-                af::array cum_tp = af::accum(is_pos);
-                cum_tp.eval();
-                af::array total_pred = af::range(af::dim4(n), 0, f64) + 1.0;
-                total_pred.eval();
-
-                // Precision = cum_tp / total_pred
-                // Recall = cum_tp / n_pos
-                af::array precision_arr = cum_tp / total_pred;
-                precision_arr.eval();
-                af::array recall_arr = cum_tp / static_cast<double>(n_pos);
-                recall_arr.eval();
-
-                // Convert to host
-                std::vector<double> precision_host(n), recall_host(n), scores_host(n);
-                MaterializeArrayFireToHost(
-                    precision_arr,
-                    precision_host.data(),
-                    ArrayFireHostSyncCategory::AlgorithmCpuPath,
-                    "ModelEvaluation::PrecisionRecallCurve::Precision",
-                    "arrayfire_native");
-                MaterializeArrayFireToHost(
-                    recall_arr,
-                    recall_host.data(),
-                    ArrayFireHostSyncCategory::AlgorithmCpuPath,
-                    "ModelEvaluation::PrecisionRecallCurve::Recall",
-                    "arrayfire_native");
-                MaterializeArrayFireToHost(
-                    sorted_scores,
-                    scores_host.data(),
-                    ArrayFireHostSyncCategory::OutputMaterialization,
-                    "ModelEvaluation::PrecisionRecallCurve::SortedScores",
-                    "arrayfire_native");
-
-                // Build PR curve with unique thresholds
-                result.precision.reserve(n + 1);
-                result.recall.reserve(n + 1);
-                result.thresholds.reserve(n + 1);
-
-                // Start point (recall=0, precision=1)
-                result.recall.push_back(0.0);
-                result.precision.push_back(1.0);
-                result.thresholds.push_back(scores_host[0] + 1.0);
-
-                double prev_score = scores_host[0] + 1.0;
-                for (int i = 0; i < n; ++i) {
-                    double score = scores_host[i];
-                    if (score != prev_score || i == n - 1) {
-                        result.recall.push_back(recall_host[i]);
-                        result.precision.push_back(precision_host[i]);
-                        result.thresholds.push_back(score);
-                    }
-                    prev_score = score;
-                }
-
-                // Compute average precision (area under PR curve)
-                result.average_precision = 0.0;
-                for (size_t i = 1; i < result.recall.size(); ++i) {
-                    double delta_recall = result.recall[i] - result.recall[i - 1];
-                    result.average_precision += result.precision[i] * delta_recall;
-                }
-
-                result.success = true;
-                spdlog::debug("PR curve computed (GPU): {} points, AP={:.4f}", result.precision.size(), result.average_precision);
-                return result;
-
-            } catch (const af::exception& e) {
-                LogEvaluationFallbackOnce("ModelEvaluation::ComputePRCurve", e.what(), y_true.size());
-            }
-        }
-#endif
-
-        // CPU fallback
-        auto sorted_idx = ArgSort(y_scores, true);
-
-        // Count total positives
-        int n_pos = 0;
-        for (int label : y_true) {
-            if (label == 1) n_pos++;
+            const double precision =
+                static_cast<double>(true_positive) / predicted_positive;
+            const double recall =
+                static_cast<double>(true_positive) / positive_count;
+            descending_precision.push_back(precision);
+            descending_recall.push_back(recall);
+            descending_thresholds.push_back(threshold);
+            result.average_precision +=
+                precision * (recall - previous_recall);
+            previous_recall = recall;
         }
 
-        if (n_pos == 0) {
-            result.error_message = "No positive samples";
-            return result;
-        }
-
-        result.precision.reserve(n + 1);
-        result.recall.reserve(n + 1);
-        result.thresholds.reserve(n + 1);
-
-        result.recall.push_back(0.0);
+        result.precision.assign(
+            descending_precision.rbegin(), descending_precision.rend());
+        result.recall.assign(
+            descending_recall.rbegin(), descending_recall.rend());
+        result.thresholds.assign(
+            descending_thresholds.rbegin(), descending_thresholds.rend());
         result.precision.push_back(1.0);
-        result.thresholds.push_back(y_scores[sorted_idx[0]] + 1.0);
-
-        int cum_tp = 0;
-        double prev_score = y_scores[sorted_idx[0]] + 1.0;
-
-        for (int i = 0; i < n; ++i) {
-            size_t idx = sorted_idx[i];
-            double score = y_scores[idx];
-
-            if (y_true[idx] == 1) cum_tp++;
-
-            if (score != prev_score || i == n - 1) {
-                result.recall.push_back(static_cast<double>(cum_tp) / n_pos);
-                result.precision.push_back(static_cast<double>(cum_tp) / (i + 1));
-                result.thresholds.push_back(score);
-            }
-
-            prev_score = score;
-        }
-
-        // Compute average precision
-        result.average_precision = 0.0;
-        for (size_t i = 1; i < result.recall.size(); ++i) {
-            double delta_recall = result.recall[i] - result.recall[i - 1];
-            result.average_precision += result.precision[i] * delta_recall;
-        }
-
+        result.recall.push_back(0.0);
         result.success = true;
-        spdlog::debug("PR curve computed (CPU): {} points, AP={:.4f}", result.precision.size(), result.average_precision);
-
-    } catch (const std::exception& e) {
-        result.error_message = std::string("Exception: ") + e.what();
+        spdlog::debug(
+            "PR curve computed (native host): {} points, AP={:.4f}",
+            result.precision.size(), result.average_precision);
+    } catch (const std::exception& error) {
+        result.error_message = std::string("Exception: ") + error.what();
     }
-
     return result;
 }
 
 PRCurveData ModelEvaluation::ComputeMulticlassPRCurve(
     const std::vector<int>& y_true,
     const std::vector<std::vector<double>>& y_scores) {
-
     PRCurveData result;
-
-    if (y_true.empty() || y_scores.empty()) {
-        result.error_message = "Invalid input";
+    size_t class_count = 0;
+    if (!classification_metric_detail::ValidateMulticlassScores(
+            y_true, y_scores, class_count, result.error_message)) {
         return result;
     }
 
     try {
-        int n_classes = static_cast<int>(y_scores[0].size());
-
-        result.class_precision.resize(n_classes);
-        result.class_recall.resize(n_classes);
-        result.class_ap.resize(n_classes);
-
-        for (int c = 0; c < n_classes; ++c) {
+        result.class_precision.resize(class_count);
+        result.class_recall.resize(class_count);
+        result.class_thresholds.resize(class_count);
+        result.class_ap.resize(class_count);
+        for (size_t class_index = 0;
+             class_index < class_count;
+             ++class_index) {
             std::vector<int> binary_labels(y_true.size());
             std::vector<double> class_scores(y_true.size());
-
-            for (size_t i = 0; i < y_true.size(); ++i) {
-                binary_labels[i] = (y_true[i] == c) ? 1 : 0;
-                class_scores[i] = y_scores[i][c];
+            for (size_t sample = 0; sample < y_true.size(); ++sample) {
+                binary_labels[sample] =
+                    y_true[sample] == static_cast<int>(class_index) ? 1 : 0;
+                class_scores[sample] = y_scores[sample][class_index];
             }
 
-            auto class_pr = ComputePRCurve(binary_labels, class_scores);
-            if (class_pr.success) {
-                result.class_precision[c] = class_pr.precision;
-                result.class_recall[c] = class_pr.recall;
-                result.class_ap[c] = class_pr.average_precision;
+            const auto class_pr =
+                ComputePRCurve(binary_labels, class_scores);
+            if (!class_pr.success) {
+                result.error_message =
+                    "Class " + std::to_string(class_index) + ": " +
+                    class_pr.error_message;
+                return result;
             }
+            result.class_precision[class_index] = class_pr.precision;
+            result.class_recall[class_index] = class_pr.recall;
+            result.class_thresholds[class_index] = class_pr.thresholds;
+            result.class_ap[class_index] = class_pr.average_precision;
         }
 
-        // Mean AP
-        result.average_precision = std::accumulate(result.class_ap.begin(), result.class_ap.end(), 0.0) / n_classes;
-
+        result.average_precision = std::accumulate(
+            result.class_ap.begin(), result.class_ap.end(), 0.0) /
+            static_cast<double>(class_count);
         result.success = true;
-
-    } catch (const std::exception& e) {
-        result.error_message = std::string("Exception: ") + e.what();
+    } catch (const std::exception& error) {
+        result.error_message = std::string("Exception: ") + error.what();
     }
-
     return result;
 }
 
 double ModelEvaluation::ComputeAUC(
     const std::vector<double>& x,
     const std::vector<double>& y) {
-
     if (x.size() != y.size() || x.size() < 2) {
-        return 0.0;
+        return std::numeric_limits<double>::quiet_NaN();
     }
 
-    // Trapezoidal rule
-    double auc = 0.0;
-    for (size_t i = 1; i < x.size(); ++i) {
-        auc += (x[i] - x[i - 1]) * (y[i] + y[i - 1]) / 2.0;
+    bool nondecreasing = true;
+    bool nonincreasing = true;
+    for (size_t index = 0; index < x.size(); ++index) {
+        if (!std::isfinite(x[index]) || !std::isfinite(y[index])) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+        if (index == 0) {
+            continue;
+        }
+        nondecreasing = nondecreasing && x[index] >= x[index - 1];
+        nonincreasing = nonincreasing && x[index] <= x[index - 1];
     }
-    return std::abs(auc);  // Ensure positive
+    if (!nondecreasing && !nonincreasing) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    long double area = 0.0L;
+    for (size_t index = 1; index < x.size(); ++index) {
+        area += static_cast<long double>(x[index] - x[index - 1]) *
+                static_cast<long double>(y[index] + y[index - 1]) /
+                2.0L;
+    }
+    if (nonincreasing && !nondecreasing) {
+        area = -area;
+    }
+    return static_cast<double>(area);
 }
 
 } // namespace cyxwiz

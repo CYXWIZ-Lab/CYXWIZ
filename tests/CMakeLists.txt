@@ -69,9 +69,12 @@ set_source_files_properties(unit/test_scheduler.cpp PROPERTIES
 set(CYXWIZ_REGRESSION_METRICS_FIXTURE_PATH
     "${CMAKE_SOURCE_DIR}/cyxwiz-engine/tests/computation_truth/fixtures/regression_metrics_sklearn.json"
 )
+set(CYXWIZ_CLASSIFICATION_METRICS_FIXTURE_PATH
+    "${CMAKE_SOURCE_DIR}/cyxwiz-engine/tests/computation_truth/fixtures/classification_metrics_sklearn_pytorch.json"
+)
 set_source_files_properties(unit/test_model_evaluation.cpp PROPERTIES
     COMPILE_DEFINITIONS
-        "CYXWIZ_REGRESSION_METRICS_FIXTURE_PATH=\"${CYXWIZ_REGRESSION_METRICS_FIXTURE_PATH}\""
+        "CYXWIZ_REGRESSION_METRICS_FIXTURE_PATH=\"${CYXWIZ_REGRESSION_METRICS_FIXTURE_PATH}\";CYXWIZ_CLASSIFICATION_METRICS_FIXTURE_PATH=\"${CYXWIZ_CLASSIFICATION_METRICS_FIXTURE_PATH}\""
 )
 set_source_files_properties(unit/test_flatten_layer.cpp PROPERTIES
     COMPILE_DEFINITIONS

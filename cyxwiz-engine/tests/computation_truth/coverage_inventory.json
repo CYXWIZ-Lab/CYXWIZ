@@ -588,14 +588,14 @@
       "tier": 1,
       "owner": "cyxwiz-backend/include/cyxwiz/model_evaluation.h",
       "implementation": ["cyxwiz-backend/src/algorithms/evaluation", "cyxwiz-backend/src/algorithms/model_evaluation.cpp"],
-      "callers": ["evaluation UI", "training reports"],
+      "callers": ["evaluation UI", "Python bindings", "training reports"],
       "contract": "Thresholding, class decisions, denominators, averaging and curve integration match sklearn/PyTorch reference behavior.",
       "supported": "binary and multiclass vector inputs",
       "oracle": "scikit-learn; PyTorch for logits-to-decision adaptation",
-      "tests": ["test_metric_learning_metrics", "test_training_batcher_setup", "test_training_executor_arrow_parquet --uneven-epoch-metrics-only", "test_training_executor_arrow_parquet --gradient-accumulation-parity-only"],
-      "execution": "training classification decisions accumulate device-resident correct/valid counts with bounded reporting readback; broader evaluation remains host-vector",
-      "status": "partial",
-      "gaps": ["complete sklearn fixtures", "broader device-side evaluation accumulation contract"]
+      "tests": ["cyxwiz-tests:[classification_metrics]", "cyxwiz-tests:[classification_metrics][ownership][source_scan]", "test_training_batcher_setup", "test_training_executor_arrow_parquet --uneven-epoch-metrics-only", "test_training_executor_arrow_parquet --gradient-accumulation-parity-only"],
+      "execution": "bounded native C++ host-vector evaluation/reporting with no device upload or fallback; training classification decisions accumulate device-resident correct/valid counts with bounded reporting readback",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "METRIC-REG-001",

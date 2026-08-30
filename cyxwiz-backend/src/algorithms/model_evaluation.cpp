@@ -1,4 +1,4 @@
-// Prevent Windows min/max macros from interfering with std::numeric_limits and af::max/min
+// Prevent Windows min/max macros from interfering with std::numeric_limits.
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -13,10 +13,6 @@
 #include <cmath>
 #include <limits>
 #include <set>
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-#include <arrayfire.h>
-#endif
 
 // Ensure Windows min/max macros are undefined after all includes
 #ifdef _WIN32
