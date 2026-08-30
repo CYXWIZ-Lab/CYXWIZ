@@ -88,7 +88,11 @@ Tensor Upsample2DLayer::Backward(const Tensor& grad_output) {
         throw std::runtime_error("Upsample2D backward gradient shape mismatch");
     }
 
-    Tensor grad_input = Tensor::Zeros(input_shape, DataType::Float32);
+    // This primitive executes its backward formula on native CPU. Construct
+    // the host tensor with the semantic shape so trailing singleton channel
+    // and batch dimensions are preserved; Tensor::Zeros may round-trip
+    // through ArrayFire and collapse those dimensions.
+    Tensor grad_input(input_shape, DataType::Float32);
     const float* grad_data = grad_output.Data<float>();
     float* grad_input_data = grad_input.Data<float>();
 

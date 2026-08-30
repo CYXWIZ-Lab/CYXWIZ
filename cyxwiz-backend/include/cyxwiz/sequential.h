@@ -8,6 +8,7 @@
 #include "layers/linear.h"
 #include "layers/convolution.h"
 #include "layers/pooling.h"
+#include "layers/upsampling.h"
 #include "layers/normalization.h"
 #include "layers/attention.h"
 #include "activations/relu.h"
@@ -232,6 +233,79 @@ private:
     int stride_;
     int padding_;
     bool use_bias_;
+};
+
+/**
+ * @brief SequentialModel ownership adapter for ConvTranspose2DLayer.
+ *
+ * Preserves the existing `[H,W,C,N]` Tensor contract and native formulas.
+ * Studio remains blocked until the primitive is ArrayFire-first and has the
+ * complete Part F numerical, residency, fallback, and ModelBuilder evidence.
+ */
+class CYXWIZ_API ConvTranspose2DModule : public Module {
+public:
+    ConvTranspose2DModule(int in_channels, int out_channels, int kernel_size,
+                          int stride = 1, int padding = 0,
+                          int output_padding = 0, bool use_bias = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<ConvTranspose2DLayer> layer_;
+    int in_channels_;
+    int out_channels_;
+    int kernel_size_;
+    int stride_;
+    int padding_;
+    int output_padding_;
+    bool use_bias_;
+};
+
+/**
+ * @brief Parameter-free SequentialModel adapter for Upsample2DLayer.
+ *
+ * Studio remains blocked while nearest and bilinear execution are native
+ * CPU-only and lack the complete Part F residency and fallback evidence.
+ */
+class CYXWIZ_API Upsample2DModule : public Module {
+public:
+    explicit Upsample2DModule(
+        int scale_factor = 2,
+        UpsampleMode mode = UpsampleMode::Nearest);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<Upsample2DLayer> layer_;
+    int scale_factor_;
+    UpsampleMode mode_;
+};
+
+/**
+ * @brief Parameter-free SequentialModel adapter for PixelShuffleLayer.
+ *
+ * Studio remains blocked while the depth-to-space primitive is native
+ * CPU-only and lacks the complete Part F residency and fallback evidence.
+ */
+class CYXWIZ_API PixelShuffleModule : public Module {
+public:
+    explicit PixelShuffleModule(int upscale_factor);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<PixelShuffleLayer> layer_;
+    int upscale_factor_;
 };
 
 /**
@@ -969,6 +1043,61 @@ private:
     std::vector<int> normalized_shape_;
     float eps_;
     bool elementwise_affine_;
+};
+
+/**
+ * @brief SequentialModel ownership adapter for native 4D GroupNormLayer.
+ *
+ * Preserves the existing `[H,W,C,N]` contract. Studio remains blocked until
+ * the primitive is ArrayFire-first and has full numerical, residency,
+ * fallback, ModelBuilder, and multi-batch training evidence.
+ */
+class CYXWIZ_API GroupNormModule : public Module {
+public:
+    GroupNormModule(int num_groups, int num_channels,
+                    float eps = 1e-5f, bool affine = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return affine_; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<GroupNormLayer> layer_;
+    int num_groups_;
+    int num_channels_;
+    float eps_;
+    bool affine_;
+};
+
+/**
+ * @brief SequentialModel ownership adapter for native 4D InstanceNorm2DLayer.
+ *
+ * Preserves the existing `[H,W,C,N]` contract. Studio remains blocked until
+ * the primitive is ArrayFire-first and has full numerical, residency,
+ * fallback, ModelBuilder, and multi-batch training evidence.
+ */
+class CYXWIZ_API InstanceNorm2DModule : public Module {
+public:
+    InstanceNorm2DModule(int num_features, float eps = 1e-5f,
+                         bool affine = false);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return affine_; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<InstanceNorm2DLayer> layer_;
+    int num_features_;
+    float eps_;
+    bool affine_;
 };
 
 /**

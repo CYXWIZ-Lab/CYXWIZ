@@ -140,6 +140,7 @@ set(BACKEND_SOURCES
     src/algorithms/sequential/attention_modules.cpp
     src/algorithms/sequential/transformer_modules.cpp
     src/algorithms/sequential/normalization_modules.cpp
+    src/algorithms/sequential/spatial_normalization_modules.cpp
     src/algorithms/sequential/model_io.cpp
     src/algorithms/scheduler.cpp
     src/algorithms/clustering.cpp
