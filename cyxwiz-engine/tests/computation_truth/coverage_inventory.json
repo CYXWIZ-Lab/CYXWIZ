@@ -352,10 +352,10 @@
       "contract": "Forward and analytical input gradient match the corresponding PyTorch operation, including boundary points and finite extremes.",
       "supported": "Float32 public activation domain",
       "oracle": "Generated PyTorch 2.10 forward/autograd fixtures",
-      "tests": ["cyxwiz-tests:test_activations", "test_computation_truth_tfidf_loss:elementwise_activation_forward_backward_f32"],
-      "execution": "strict ArrayFire-resident CPU, CUDA and OpenCL routes; declared native CPU compatibility fallback",
-      "status": "partial",
-      "gaps": ["native CPU compatibility fallback qualification"]
+      "tests": ["cyxwiz-tests:[activation][pytorch]", "cyxwiz-tests:test_activations", "test_computation_truth_tfidf_loss:elementwise_activation_forward_backward_f32"],
+      "execution": "strict ArrayFire-resident CPU, CUDA and OpenCL routes with no native fallback or undeclared host synchronization; the configured no-ArrayFire build runs the same generated PyTorch fixture through the native CPU compatibility implementations; incompatible optional routes are explicit device-selection skips",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "ACT-SOFTMAX-001",

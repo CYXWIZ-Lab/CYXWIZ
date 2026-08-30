@@ -7,12 +7,143 @@
 #include <cyxwiz/memory_manager.h>
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
+#include <nlohmann/json.hpp>
 #include <cmath>
+#include <fstream>
+#include <memory>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
 #endif
+
+namespace {
+
+using json = nlohmann::json;
+
+json LoadElementwiseActivationFixture() {
+    std::ifstream stream(CYXWIZ_TRAINING_CORE_FIXTURE_PATH);
+    REQUIRE(stream.is_open());
+
+    json fixture;
+    stream >> fixture;
+    REQUIRE(fixture.value("schema_version", 0) == 1);
+    REQUIRE(fixture.at("oracle").value("name", "") == "PyTorch");
+    REQUIRE(fixture.at("oracle").value("device", "") == "cpu");
+    REQUIRE(!fixture.at("oracle").value("version", "").empty());
+    return fixture.at("cases").at(
+        "elementwise_activation_forward_backward_f32");
+}
+
+cyxwiz::Tensor ActivationTensorFromFixture(const json& value) {
+    const auto shape = value.at("shape").get<std::vector<size_t>>();
+    const auto values = value.at("values").get<std::vector<float>>();
+    size_t element_count = 1;
+    for (size_t dimension : shape) {
+        element_count *= dimension;
+    }
+    REQUIRE(element_count == values.size());
+    return cyxwiz::Tensor(
+        shape, values.data(), cyxwiz::DataType::Float32);
+}
+
+std::unique_ptr<cyxwiz::Activation> CreateFixtureActivation(
+    const json& test_case) {
+    const std::string name = test_case.at("name").get<std::string>();
+    if (name == "relu") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::ReLU);
+    }
+    if (name == "leaky_relu") {
+        return cyxwiz::CreateActivation(
+            cyxwiz::ActivationType::LeakyReLU,
+            test_case.at("parameters").at("alpha").get<float>());
+    }
+    if (name == "elu") {
+        return cyxwiz::CreateActivation(
+            cyxwiz::ActivationType::ELU,
+            test_case.at("parameters").at("alpha").get<float>());
+    }
+    if (name == "gelu_tanh") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::GELU);
+    }
+    if (name == "silu") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::SiLU);
+    }
+    if (name == "sigmoid") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::Sigmoid);
+    }
+    if (name == "tanh") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::Tanh);
+    }
+    if (name == "mish") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::Mish);
+    }
+    if (name == "hardswish") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::Hardswish);
+    }
+    if (name == "selu") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::SELU);
+    }
+    throw std::invalid_argument("unsupported activation fixture: " + name);
+}
+
+void CheckActivationTensor(const cyxwiz::Tensor& actual,
+                           const json& expected,
+                           const json& tolerance) {
+    const auto expected_shape =
+        expected.at("shape").get<std::vector<size_t>>();
+    const auto expected_values =
+        expected.at("values").get<std::vector<float>>();
+    REQUIRE(actual.Shape() == expected_shape);
+    REQUIRE(actual.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(actual.NumElements() == expected_values.size());
+
+    const double absolute = tolerance.at("atol").get<double>();
+    const double relative = tolerance.at("rtol").get<double>();
+    const float* actual_values = actual.ReadData<float>();
+    for (size_t i = 0; i < expected_values.size(); ++i) {
+        CHECK(actual_values[i] ==
+              Catch::Approx(expected_values[i])
+                  .margin(absolute)
+                  .epsilon(relative));
+    }
+}
+
+} // namespace
+
+TEST_CASE("Elementwise activations match PyTorch forward and autograd",
+          "[activation][pytorch]") {
+    const auto cases = LoadElementwiseActivationFixture();
+    REQUIRE(cases.is_array());
+    REQUIRE(cases.size() == 10);
+
+    for (const auto& test_case : cases) {
+        const std::string name = test_case.at("name").get<std::string>();
+        INFO("case=" << name);
+        REQUIRE(test_case.value("dtype", "") == "float32");
+        REQUIRE(test_case.value("operation", "").rfind("torch.", 0) == 0);
+        REQUIRE(test_case.at("coverage").size() == 4);
+
+        auto activation = CreateFixtureActivation(test_case);
+        const auto input =
+            ActivationTensorFromFixture(test_case.at("input"));
+        const auto grad_output =
+            ActivationTensorFromFixture(test_case.at("grad_output"));
+        const auto output = activation->Forward(input);
+        const auto grad_input = activation->Backward(grad_output, input);
+
+        CheckActivationTensor(
+            output,
+            test_case.at("expected").at("output"),
+            test_case.at("tolerance"));
+        CheckActivationTensor(
+            grad_input,
+            test_case.at("expected").at("grad_input"),
+            test_case.at("tolerance"));
+    }
+}
 
 TEST_CASE("Standalone activations compute forward values", "[activation]") {
     float values[] = {-1.0f, 0.0f, 2.0f};

@@ -175,9 +175,11 @@ to Hardswish's `-3`/`3` boundaries, and finite extremes through `+/-100`.
 Strict execution on ArrayFire CPU and every selectable installed CUDA/OpenCL
 route permits no native fallback or compute-time host synchronization. Mish
 uses a stable softplus/sigmoid formulation and SELU bounds the inactive
-exponential branch so finite extremes remain finite on accelerators. Native
-CPU compatibility fallback qualification remains an explicit gap; locally
-incompatible optional accelerators are explicit route-selection skips.
+exponential branch so finite extremes remain finite on accelerators. The
+backend `[activation][pytorch]` test consumes the same generated matrix in
+Debug, Release, and the configured no-ArrayFire build, qualifying the exact
+native CPU implementations used by compatibility fallback. Locally
+incompatible optional accelerators remain explicit route-selection skips.
 
 The Softmax matrix uses PyTorch forward and autograd Jacobian-vector products
 for rank-1 through rank-4 inputs; axis `0`, axis `1`, axis `2`, and negative

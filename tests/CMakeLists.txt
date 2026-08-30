@@ -66,6 +66,10 @@ set_source_files_properties(unit/test_scheduler.cpp PROPERTIES
     COMPILE_DEFINITIONS
         "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
 )
+set_source_files_properties(unit/test_activations.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
 set(CYXWIZ_REGRESSION_METRICS_FIXTURE_PATH
     "${CMAKE_SOURCE_DIR}/cyxwiz-engine/tests/computation_truth/fixtures/regression_metrics_sklearn.json"
 )
