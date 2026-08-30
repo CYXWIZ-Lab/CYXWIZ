@@ -198,6 +198,7 @@ set(ENGINE_SOURCES
     src/core/graph_topology_utils.cpp
     src/core/training_batcher_setup.cpp
     src/core/classification_decision.cpp
+    src/core/training_scheduler_controller.cpp
     src/core/sequence_arrow_batcher.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
@@ -3685,6 +3686,7 @@ set_target_properties(test_console_session_model PROPERTIES
 # ===== TrainingExecutor test and benchmark runtime =====
 set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     src/core/training_executor.cpp
+    src/core/training_scheduler_controller.cpp
     src/core/regression_target_transform.cpp
     src/core/preprocessing_state.cpp
     src/core/training_batcher_setup.cpp
@@ -3765,6 +3767,15 @@ add_custom_target(copy_test_training_executor_arrow_parquet_fixture
 add_dependencies(test_training_executor_arrow_parquet
     copy_test_training_executor_arrow_parquet_fixture
 )
+
+# ===== Test: Training scheduler cadence/state/checkpoint lifecycle =====
+add_executable(test_training_scheduler_lifecycle
+    tests/test_training_scheduler_lifecycle.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
+    src/core/checkpoint_manifest.cpp
+    src/core/checkpoint_payload_io.cpp
+)
+configure_training_executor_harness(test_training_scheduler_lifecycle)
 
 # ===== Test: TrainingManager Session Orchestration =====
 add_executable(test_training_manager_session

@@ -7,6 +7,7 @@
 #include "parquet_backed_dataset.h"
 #include "data_registry.h"
 #include "arrow_dataset.h"
+#include "training_scheduler_controller.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/optimizer.h>
 #include <cyxwiz/sequential.h>
@@ -38,6 +39,8 @@ struct TrainingMetrics {
     int current_batch = 0;
     int total_batches = 0;
     int optimizer_step_count = 0;
+    int scheduler_step_count = 0;
+    double learning_rate = 0.0;
     size_t train_sample_count = 0;
     size_t val_sample_count = 0;
     size_t test_sample_count = 0;
@@ -103,6 +106,9 @@ struct TrainingMetrics {
     std::vector<float> val_accuracy_history;
     std::vector<float> val_mae_history;
     std::vector<float> val_rmse_history;
+    // Post-step learning rates, one entry per scheduler advance. The initial
+    // rate is reported separately by learning_rate before the first advance.
+    std::vector<double> learning_rate_history;
 };
 
 struct ObjectiveEvaluationMetrics {
@@ -262,6 +268,29 @@ public:
      */
     std::unique_ptr<Optimizer> ReleaseOptimizer() { return std::move(optimizer_); }
 
+    /**
+     * Configure a fresh scheduler before Train(). Graph/node compilation may
+     * call this boundary without taking ownership of runtime cadence.
+     */
+    bool ConfigureScheduler(
+        TrainingSchedulerSpec specification,
+        std::string& error);
+
+    /** Configure a scheduler and restore exact scheduler lifecycle state. */
+    bool ConfigureScheduler(
+        TrainingSchedulerSpec specification,
+        TrainingSchedulerResumeState resume_state,
+        std::string& error);
+
+    std::optional<TrainingSchedulerResumeState>
+    ExportSchedulerResumeState(std::string& error) const;
+
+    const LRScheduler* GetScheduler() const {
+        return scheduler_controller_
+            ? scheduler_controller_->GetScheduler()
+            : nullptr;
+    }
+
 private:
     struct SequenceEvaluationMetrics {
         float loss = 0.0f;
@@ -304,6 +333,9 @@ private:
     std::unique_ptr<IExecutableModel> model_;
     std::unique_ptr<Optimizer> optimizer_;
     std::unique_ptr<Loss> loss_;  // Unified loss function (MSE, CrossEntropy, BCE, etc.)
+    std::optional<TrainingSchedulerSpec> scheduler_specification_;
+    std::optional<TrainingSchedulerResumeState> scheduler_resume_state_;
+    std::unique_ptr<TrainingSchedulerController> scheduler_controller_;
 
     // Internal training methods
 
@@ -399,6 +431,9 @@ private:
         const Tensor* device_gradient_weight,
         bool force_step
     );
+
+    void ApplySchedulerAdvance(
+        const TrainingSchedulerAdvanceResult& result);
 
     /**
      * Apply preprocessing to batch data

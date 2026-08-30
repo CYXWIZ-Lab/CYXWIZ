@@ -670,6 +670,66 @@ TrainingExecutor::~TrainingExecutor() {
     Stop();
 }
 
+bool TrainingExecutor::ConfigureScheduler(
+    TrainingSchedulerSpec specification,
+    std::string& error) {
+    error.clear();
+    if (is_training_.load()) {
+        error = "cannot configure a scheduler while training is active";
+        return false;
+    }
+    if (!ValidateTrainingSchedulerSpec(specification, error)) {
+        return false;
+    }
+
+    scheduler_specification_ = std::move(specification);
+    scheduler_resume_state_.reset();
+    scheduler_controller_.reset();
+    return true;
+}
+
+bool TrainingExecutor::ConfigureScheduler(
+    TrainingSchedulerSpec specification,
+    TrainingSchedulerResumeState resume_state,
+    std::string& error) {
+    error.clear();
+    if (is_training_.load()) {
+        error = "cannot configure a scheduler while training is active";
+        return false;
+    }
+    if (!ValidateTrainingSchedulerSpec(specification, error)) {
+        return false;
+    }
+    if (resume_state.completed_epochs < 0 ||
+        resume_state.completed_optimizer_steps < 0) {
+        error = "scheduler resume cursors cannot be negative";
+        return false;
+    }
+    if (resume_state.scheduler_state.scheduler_type.empty()) {
+        error = "scheduler resume requires a populated backend scheduler state";
+        return false;
+    }
+
+    scheduler_specification_ = std::move(specification);
+    scheduler_resume_state_ = std::move(resume_state);
+    scheduler_controller_.reset();
+    return true;
+}
+
+std::optional<TrainingSchedulerResumeState>
+TrainingExecutor::ExportSchedulerResumeState(std::string& error) const {
+    error.clear();
+    if (!scheduler_controller_) {
+        error = "training executor has no initialized scheduler";
+        return std::nullopt;
+    }
+    TrainingSchedulerResumeState state;
+    if (!scheduler_controller_->ExportResumeState(state, error)) {
+        return std::nullopt;
+    }
+    return state;
+}
+
 bool TrainingExecutor::Initialize(int /*batch_size*/) {
     std::string target_transform_error;
     if (!ResolveRegressionTargetTransform(
@@ -740,6 +800,30 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
     model_ = std::move(built.model);
     loss_ = std::move(built.loss);
     optimizer_ = std::move(built.optimizer);
+    scheduler_controller_.reset();
+    if (scheduler_specification_.has_value()) {
+        scheduler_controller_ =
+            std::make_unique<TrainingSchedulerController>(
+                *scheduler_specification_);
+        std::string scheduler_error;
+        if (!scheduler_controller_->Attach(
+                *optimizer_, scheduler_resume_state_, scheduler_error)) {
+            spdlog::error(
+                "TrainingExecutor: scheduler initialization failed: {}",
+                scheduler_error);
+            scheduler_controller_.reset();
+            return false;
+        }
+        spdlog::info(
+            "TrainingExecutor: initialized {} scheduler with {} cadence at "
+            "epoch_cursor={} optimizer_step_cursor={} lr={:.9g}",
+            scheduler_controller_->GetScheduler()->GetName(),
+            TrainingSchedulerCadenceName(
+                scheduler_controller_->GetCadence()),
+            scheduler_controller_->GetCompletedEpochs(),
+            scheduler_controller_->GetCompletedOptimizerSteps(),
+            scheduler_controller_->GetScheduler()->GetLR());
+    }
     return true;
 }
 
@@ -901,7 +985,10 @@ void TrainingExecutor::Train(
         LogTrainingBackendPlacementPlan(config_);
 
     // Setup metrics
-    UpdateMetrics([epochs](TrainingMetrics& m) {
+    const double initial_learning_rate = optimizer_
+        ? optimizer_->GetLearningRate()
+        : static_cast<double>(config_.learning_rate);
+    UpdateMetrics([epochs, initial_learning_rate](TrainingMetrics& m) {
         m.total_epochs = epochs;
         m.current_epoch = 0;
         m.last_executed_epoch = 0;
@@ -920,6 +1007,9 @@ void TrainingExecutor::Train(
         m.val_accuracy_history.clear();
         m.has_validation_metrics = false;
         m.optimizer_step_count = 0;
+        m.scheduler_step_count = 0;
+        m.learning_rate = initial_learning_rate;
+        m.learning_rate_history.clear();
         m.has_test_metrics = false;
         m.train_token_accuracy = 0.0f;
         m.val_token_accuracy = 0.0f;
@@ -1144,7 +1234,9 @@ void TrainingExecutor::Train(
     {
         cyxwiz::plugin::TrainingContext ctx;
         ctx.total_epochs = epochs;
-        ctx.learning_rate = config_.learning_rate;
+        ctx.learning_rate = optimizer_
+            ? static_cast<float>(optimizer_->GetLearningRate())
+            : config_.learning_rate;
         cyxwiz::plugin::PluginTrainingHookManager::Instance().NotifyTrainingStart(ctx);
     }
 
@@ -1181,6 +1273,7 @@ void TrainingExecutor::Train(
     gradient_accumulation_device_weight_initialized_ = false;
 
     std::unique_ptr<CheckpointManager> checkpoint_manager;
+    std::optional<TrainingSchedulerResumeState> best_scheduler_state;
     float best_val_loss = std::numeric_limits<float>::infinity();
     int epochs_without_improvement = 0;
     const int early_stopping_patience = std::max(0, config_.early_stopping_patience);
@@ -1218,7 +1311,9 @@ void TrainingExecutor::Train(
             cyxwiz::plugin::TrainingContext stop_ctx;
             stop_ctx.current_epoch = epoch;
             stop_ctx.total_epochs = epochs;
-            stop_ctx.learning_rate = config_.learning_rate;
+            stop_ctx.learning_rate = optimizer_
+                ? static_cast<float>(optimizer_->GetLearningRate())
+                : config_.learning_rate;
             if (cyxwiz::plugin::PluginTrainingHookManager::Instance().ShouldStopEarly(stop_ctx)) {
                 spdlog::info("TrainingExecutor: Plugin requested early stop");
                 terminal_status = "early_stopped";
@@ -1245,7 +1340,9 @@ void TrainingExecutor::Train(
             cyxwiz::plugin::TrainingContext ctx;
             ctx.current_epoch = epoch;
             ctx.total_epochs = epochs;
-            ctx.learning_rate = config_.learning_rate;
+            ctx.learning_rate = optimizer_
+                ? static_cast<float>(optimizer_->GetLearningRate())
+                : config_.learning_rate;
             cyxwiz::plugin::PluginTrainingHookManager::Instance().NotifyEpochStart(ctx);
         }
 
@@ -1342,6 +1439,19 @@ void TrainingExecutor::Train(
         });
         CrashRunRecorder::Instance().UpdateLastExecutedEpoch(epoch);
 
+        if (scheduler_controller_) {
+            const std::optional<float> scheduler_validation_loss =
+                validation_ran_this_epoch &&
+                        current.val_sample_count > 0 &&
+                        std::isfinite(current.val_loss)
+                    ? std::optional<float>(current.val_loss)
+                    : std::nullopt;
+            ApplySchedulerAdvance(
+                scheduler_controller_->OnEpochCompleted(
+                    scheduler_validation_loss));
+            current = GetMetrics();
+        }
+
         // Epoch callback
         if (epoch_cb) {
             epoch_cb(epoch, current.train_loss, current.train_accuracy,
@@ -1399,6 +1509,20 @@ void TrainingExecutor::Train(
                                 optimizer_.get(),
                                 current,
                                 current.val_loss)) {
+                            if (scheduler_controller_) {
+                                TrainingSchedulerResumeState scheduler_state;
+                                std::string scheduler_error;
+                                if (!scheduler_controller_->ExportResumeState(
+                                        scheduler_state,
+                                        scheduler_error)) {
+                                    throw std::runtime_error(
+                                        "TrainingExecutor: best checkpoint "
+                                        "scheduler state export failed: " +
+                                        scheduler_error);
+                                }
+                                best_scheduler_state =
+                                    std::move(scheduler_state);
+                            }
                             TrainingTraceCollector::Instance()
                                 .RecordCheckpointSaved(
                                     epoch,
@@ -1452,7 +1576,9 @@ void TrainingExecutor::Train(
             ctx.val_accuracy = validation_ran_this_epoch
                 ? current.val_accuracy
                 : -1.0f;
-            ctx.learning_rate = config_.learning_rate;
+            ctx.learning_rate = optimizer_
+                ? static_cast<float>(optimizer_->GetLearningRate())
+                : config_.learning_rate;
             cyxwiz::plugin::PluginTrainingHookManager::Instance().NotifyEpochEnd(ctx);
         }
 
@@ -1525,6 +1651,19 @@ void TrainingExecutor::Train(
                                                               "best");
             }
             if (restored) {
+                if (scheduler_controller_ && best_scheduler_state) {
+                    std::string scheduler_error;
+                    if (!scheduler_controller_->Restore(
+                            *best_scheduler_state,
+                            scheduler_error)) {
+                        throw std::runtime_error(
+                            "TrainingExecutor: best checkpoint scheduler "
+                            "restore failed: " + scheduler_error);
+                    }
+                }
+                const double active_learning_rate = optimizer_
+                    ? optimizer_->GetLearningRate()
+                    : static_cast<double>(config_.learning_rate);
                 final_metrics.checkpoint_used = best_checkpoint;
                 final_metrics.restored_checkpoint_epoch = restored->epoch;
                 final_metrics.restored_checkpoint_step = restored->global_step;
@@ -1536,6 +1675,7 @@ void TrainingExecutor::Train(
                     m.restored_checkpoint_step = restored->global_step;
                     m.active_model_provenance =
                         "restored_best_checkpoint";
+                    m.learning_rate = active_learning_rate;
                     m.terminal_status = terminal_status;
                     m.terminal_reason = terminal_reason;
                     m.status_message = std::string(
@@ -1657,7 +1797,9 @@ void TrainingExecutor::Train(
         ctx.train_accuracy = final_metrics.train_accuracy;
         ctx.val_loss = final_metrics.val_loss;
         ctx.val_accuracy = final_metrics.val_accuracy;
-        ctx.learning_rate = config_.learning_rate;
+        ctx.learning_rate = optimizer_
+            ? static_cast<float>(optimizer_->GetLearningRate())
+            : config_.learning_rate;
         cyxwiz::plugin::PluginTrainingHookManager::Instance().NotifyTrainingEnd(ctx);
     }
 
@@ -2277,6 +2419,10 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
     UpdateMetrics([](TrainingMetrics& m) {
         ++m.optimizer_step_count;
     });
+    if (scheduler_controller_) {
+        ApplySchedulerAdvance(
+            scheduler_controller_->OnOptimizerStep());
+    }
 
     gradient_accumulator_.clear();
     gradient_accumulated_batches_ = 0;
@@ -2284,6 +2430,44 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
     gradient_accumulation_device_weight_ = Tensor();
     gradient_accumulation_device_weight_initialized_ = false;
     return true;
+}
+
+void TrainingExecutor::ApplySchedulerAdvance(
+    const TrainingSchedulerAdvanceResult& result) {
+    if (!result.ok) {
+        throw std::runtime_error(
+            "TrainingExecutor: scheduler lifecycle failed: " +
+            result.error);
+    }
+    if (!result.stepped) {
+        return;
+    }
+
+    UpdateMetrics([&](TrainingMetrics& metrics) {
+        ++metrics.scheduler_step_count;
+        metrics.learning_rate = result.learning_rate;
+        metrics.learning_rate_history.push_back(result.learning_rate);
+    });
+
+    const auto* scheduler = scheduler_controller_
+        ? scheduler_controller_->GetScheduler()
+        : nullptr;
+    const std::string scheduler_name = scheduler
+        ? scheduler->GetName()
+        : "unknown";
+    const auto cadence = scheduler_controller_
+        ? scheduler_controller_->GetCadence()
+        : TrainingSchedulerCadence::CompletedEpoch;
+    TrainingTraceCollector::Instance().RecordRuntimeEvent(
+        "TrainingScheduler.Advance",
+        fmt::format(
+            "scheduler={} cadence={} completed_epochs={} "
+            "completed_optimizer_steps={} learning_rate={:.9g}",
+            scheduler_name,
+            TrainingSchedulerCadenceName(cadence),
+            result.completed_epochs,
+            result.completed_optimizer_steps,
+            result.learning_rate));
 }
 
 void TrainingExecutor::Stop() {

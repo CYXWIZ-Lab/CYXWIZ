@@ -359,15 +359,32 @@ cosine, and disabled warmup learning rates together with the parameter value at
 every SGD update. Initial/reset rates, patience, absolute thresholds, the
 minimum LR floor, warmup progress, OneCycle final-divisor semantics, and
 PyTorch-compatible overstep rejection are checked. These schedulers are backend
-host-control primitives; graph scheduler nodes remain blocked until
-TrainingExecutor owns their update cadence, run state, and checkpoint
-restoration.
+host-control primitives. `TrainingSchedulerController` now gives
+`TrainingExecutor` a typed opt-in boundary that owns their real runtime cadence:
+StepLR, ExponentialLR, CosineAnnealingLR, and LinearWarmupLR advance after a
+fully completed epoch; ReduceLROnPlateau advances only after a completed epoch
+that produced a finite validation loss from at least one validation sample;
+OneCycleLR advances only after an actual optimizer update, including a forced
+final partial accumulation flush.
+Graph scheduler nodes remain blocked until GraphCompiler and the node-owning
+work bind saved generic property values into this boundary.
 
 Each `LRScheduler` also exports/imports a typed, transactional state envelope.
 The scheduler tests resume every PyTorch LR sequence from a midpoint and reject
 schema, type, configuration, and non-finite state drift without mutating the
 active scheduler. Checkpoint v2 can persist that envelope as its reserved
 `scheduler_state` payload and verifies the archive hash before import.
+
+The executor lifecycle boundary keeps absolute completed-epoch and
+optimizer-update cursors beside that backend envelope, rejects incomplete or
+mismatched resume state, and restores an in-memory scheduler snapshot when the
+same executor restores its best model. `test_training_scheduler_lifecycle`
+checks every scheduler-family binding, exact StepLR continuation through a
+hash-verified v2 scheduler payload, validation-only plateau cadence, OneCycleLR
+cadence after partial accumulation flushes, trace/metric reconciliation, and
+best-checkpoint cursor restoration on strict ArrayFire CPU with no native
+fallback. The legacy version 1 best-model checkpoint remains a warm-start
+artifact and is not reclassified as an exact persisted training resume.
 
 The optimizer-owning `LRWarmup` wrapper persists its warmup configuration,
 step cursor, and complete wrapped optimizer envelope together. Its v2

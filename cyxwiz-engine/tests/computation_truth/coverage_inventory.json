@@ -571,15 +571,15 @@
       "operation": "StepLR, ExponentialLR, CosineAnnealingLR, ReduceLROnPlateau, LinearWarmupLR, OneCycleLR and LRWarmup",
       "tier": 1,
       "owner": "cyxwiz-backend/include/cyxwiz/scheduler.h",
-      "implementation": ["cyxwiz-backend/src/algorithms/scheduler.cpp", "cyxwiz-backend/src/algorithms/optimizers/lr_warmup.cpp", "cyxwiz-engine/src/core/checkpoint_payload_io.cpp"],
-      "callers": ["public backend API; engine scheduler nodes are explicitly unsupported"],
-      "contract": "Learning-rate sequence, epoch/step ordering, reset, plateau patience and warmup boundaries match the declared PyTorch semantics.",
+      "implementation": ["cyxwiz-backend/src/algorithms/scheduler.cpp", "cyxwiz-backend/src/algorithms/optimizers/lr_warmup.cpp", "cyxwiz-engine/src/core/checkpoint_payload_io.cpp", "cyxwiz-engine/src/core/training_scheduler_controller.cpp", "cyxwiz-engine/src/core/training_executor.cpp"],
+      "callers": ["public backend API", "typed opt-in TrainingExecutor lifecycle boundary; graph scheduler nodes remain explicitly unsupported pending GraphCompiler binding"],
+      "contract": "Learning-rate sequence, optimizer-before-scheduler ordering, reset, plateau patience and warmup boundaries match the declared PyTorch semantics; epoch schedulers advance after each fully completed epoch, ReduceLROnPlateau advances only on completed epochs with finite validation loss from at least one validation sample, and OneCycleLR advances only after a real optimizer update including a final partial accumulation flush; backend state and absolute epoch/update cursors restore transactionally.",
       "supported": "public scheduler configurations",
       "oracle": "PyTorch",
-      "tests": ["cyxwiz-tests:test_scheduler", "test_debug_executor"],
-      "execution": "host control state; parameter updates remain backend-resident",
-      "status": "partial",
-      "gaps": ["TrainingExecutor cadence/state/checkpoint ownership"]
+      "tests": ["cyxwiz-tests:test_scheduler", "test_debug_executor", "test_training_scheduler_lifecycle"],
+      "execution": "host control state owned by TrainingSchedulerController at real TrainingExecutor optimizer-update and completed-epoch boundaries; parameter updates remain backend-resident; strict ArrayFire CPU lifecycle trace proves exact route identity and zero native fallback; hash-verified checkpoint v2 persists backend scheduler state while absolute lifecycle cursors accompany it at the executor boundary",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "METRIC-CLASS-001",
