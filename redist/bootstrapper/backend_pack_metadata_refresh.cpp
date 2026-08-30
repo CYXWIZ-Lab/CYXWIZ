@@ -4,6 +4,7 @@
 #include "backend_pack_acquisition.h"
 #include "backend_pack_lifecycle_service.h"
 #include "backend_pack_metadata_cache.h"
+#include "backend_pack_metadata_limits.h"
 
 #include <chrono>
 #include <fstream>
@@ -12,8 +13,6 @@
 
 namespace cyxwiz::runtime {
 namespace {
-
-constexpr std::uint64_t kMaximumMetadataBytes = 16U * 1024U * 1024U;
 
 class RemoveRefreshStaging {
 public:
@@ -78,7 +77,7 @@ bool HttpsBackendPackMetadataSource::Fetch(
     std::uint64_t maximum_bytes,
     std::string& error) {
     if (!destination.is_absolute() || maximum_bytes == 0 ||
-        maximum_bytes > kMaximumMetadataBytes) {
+        maximum_bytes > kMaximumBackendPackMetadataBytes) {
         error = "Absolute metadata destination and a valid byte bound are required";
         return false;
     }
@@ -160,7 +159,7 @@ BackendPackMetadataRefreshResult RefreshBackendPackMetadata(
         staging_root / "trust" / "trusted-keys.json";
     if (!PublishRegularFileAtomic(
             request.trusted_keys_path, staged_trusted_keys,
-            kMaximumMetadataBytes, error)) {
+            kMaximumBackendPackMetadataBytes, error)) {
         return Finish(
             BackendPackMetadataRefreshStatus::PublicationFailure,
             "Cannot stage the trusted signing keys: " + error);
@@ -170,7 +169,7 @@ BackendPackMetadataRefreshResult RefreshBackendPackMetadata(
     snapshot.catalog_path = staging_root / "catalogs" / "current.json";
     if (!source.Fetch(
             request.catalog_url, snapshot.catalog_path,
-            kMaximumMetadataBytes, error)) {
+            kMaximumBackendPackMetadataBytes, error)) {
         return Finish(
             BackendPackMetadataRefreshStatus::SourceFailure,
             "Cannot download the signed catalog: " + error);
@@ -199,7 +198,7 @@ BackendPackMetadataRefreshResult RefreshBackendPackMetadata(
         }
         if (!source.Fetch(
                 entry.manifest_url, record.manifest_path,
-                kMaximumMetadataBytes, error)) {
+                kMaximumBackendPackMetadataBytes, error)) {
             return Finish(
                 BackendPackMetadataRefreshStatus::SourceFailure,
                 "Cannot download signed manifest for " + entry.pack_id +

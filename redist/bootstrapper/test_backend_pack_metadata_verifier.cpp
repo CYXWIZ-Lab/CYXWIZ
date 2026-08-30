@@ -1,4 +1,5 @@
 #include "backend_pack_metadata_verifier.h"
+#include "backend_pack_metadata_limits.h"
 
 #include <openssl/evp.h>
 
@@ -339,6 +340,49 @@ int main() {
                 base_manifest_path, base_catalog.packs.front(),
                 base_manifest, error),
             "optional-pack verification accepted a base manifest")) {
+        return 1;
+    }
+
+    auto large_body = Manifest(pack_key)["signed"];
+    auto& large_components = large_body["components"];
+    for (std::uint64_t index = 0; index < 18000; ++index) {
+        large_components.push_back({
+            {"path", "python/site-packages/package_" +
+                 std::to_string(index) +
+                 "/module_with_a_bounded_inventory_name.py"},
+            {"size", std::uint64_t{1}},
+            {"sha256", "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"},
+            {"source", "python"},
+            {"executable", false}});
+    }
+    const auto large_manifest_path = temporary.Path() / "large-manifest.json";
+    const auto large_catalog_path = temporary.Path() / "large-catalog.json";
+    const auto large_manifest_bytes = WriteJson(
+        large_manifest_path,
+        Envelope(
+            "cyxwiz-backend-pack-manifest", std::move(large_body),
+            "pack-2026", pack_key));
+    if (!Expect(
+            large_manifest_bytes.size() > 4U * 1024U * 1024U &&
+                large_manifest_bytes.size() <=
+                    kMaximumBackendPackMetadataBytes,
+            "large manifest does not exercise the shared metadata bound")) {
+        return 1;
+    }
+    WriteJson(
+        large_catalog_path,
+        Catalog(catalog_key, Sha256(large_manifest_bytes)));
+    VerifiedBackendPackCatalog large_catalog;
+    if (!Expect(
+            verifier.VerifyCatalog(
+                large_catalog_path, "2026-08-14T12:00:00Z",
+                large_catalog, error),
+            error.c_str()) ||
+        !Expect(
+            verifier.VerifyManifest(
+                large_manifest_path, large_catalog.packs.front(),
+                manifest, error),
+            error.c_str())) {
         return 1;
     }
 

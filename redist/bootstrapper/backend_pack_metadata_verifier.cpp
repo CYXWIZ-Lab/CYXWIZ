@@ -1,5 +1,6 @@
 #include "backend_pack_metadata_verifier.h"
 #include "backend_pack_hash.h"
+#include "backend_pack_metadata_limits.h"
 #include "backend_pack_path.h"
 
 #include <openssl/evp.h>
@@ -18,8 +19,6 @@ namespace cyxwiz::runtime {
 namespace {
 
 using Json = nlohmann::json;
-
-constexpr std::uintmax_t kMaximumMetadataBytes = 4U * 1024U * 1024U;
 
 bool IsIdentifier(const std::string& value) {
     if (value.empty() || value.size() > 128 ||
@@ -91,8 +90,9 @@ bool ReadDocument(
         return false;
     }
     const auto size = std::filesystem::file_size(path, filesystem_error);
-    if (filesystem_error || size == 0 || size > kMaximumMetadataBytes) {
-        error = "Signed metadata is missing, empty, or exceeds 4 MiB";
+    if (filesystem_error || size == 0 ||
+        size > kMaximumBackendPackMetadataBytes) {
+        error = "Signed metadata is missing, empty, or exceeds 16 MiB";
         return false;
     }
     std::ifstream stream(path, std::ios::binary);
@@ -507,7 +507,7 @@ std::optional<BackendPackTrustStore> BackendPackTrustStore::Load(
 std::optional<BackendPackTrustStore> BackendPackTrustStore::LoadJson(
     std::string_view bytes,
     std::string& error) {
-    if (bytes.empty() || bytes.size() > kMaximumMetadataBytes) {
+    if (bytes.empty() || bytes.size() > kMaximumBackendPackTrustBytes) {
         error = "Embedded trust metadata is empty or exceeds 4 MiB";
         return std::nullopt;
     }

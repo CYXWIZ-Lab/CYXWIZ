@@ -206,6 +206,29 @@ int RunInstaller(const std::vector<std::string> &arguments,
         !cyxwiz::HasSelectableCustomBackendPack(smoke_catalog.records)) {
       std::cerr << "CyxWiz installer package smoke failed: "
                 << smoke_catalog.message << '\n';
+      for (const auto &record : smoke_catalog.records) {
+        std::cerr << "  pack=" << record.pack_id
+                  << " backend="
+                  << (record.backend.empty() ? "unknown" : record.backend)
+                  << " metadata="
+                  << (record.delivery_metadata_available ? "verified"
+                                                         : "unavailable")
+                  << " catalog_support="
+                  << static_cast<int>(record.catalog_support);
+        if (record.compatibility) {
+          std::cerr << " eligibility="
+                    << static_cast<int>(record.compatibility->eligibility)
+                    << " recommendation="
+                    << static_cast<int>(
+                           record.compatibility->install_recommendation)
+                    << " rule="
+                    << static_cast<int>(record.compatibility->rule);
+        }
+        if (!record.delivery_metadata_error.empty()) {
+          std::cerr << " error='" << record.delivery_metadata_error << "'";
+        }
+        std::cerr << '\n';
+      }
       return 1;
     }
     std::cout << "CyxWiz installer package smoke passed: "
