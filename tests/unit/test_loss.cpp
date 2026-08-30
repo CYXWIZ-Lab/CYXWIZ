@@ -1,13 +1,13 @@
+#include "algorithms/arrayfire_backend_utils.h"
+#include <algorithm>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
-#include "algorithms/arrayfire_backend_utils.h"
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
 #include <cyxwiz/device.h>
 #include <cyxwiz/loss.h>
 #include <cyxwiz/tensor.h>
-#include <algorithm>
-#include <cstdlib>
-#include <cstdint>
-#include <cmath>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -1213,3 +1213,129 @@ TEST_CASE("Contrastive loss computes x1 gradients", "[loss]") {
     REQUIRE(data[2] == Catch::Approx(0.0f));
     REQUIRE(data[3] == Catch::Approx(0.5f));
 }
+
+TEST_CASE("Metric-learning losses validate parameters and inputs before compute",
+          "[loss][metric-learning]") {
+    REQUIRE_THROWS_AS(cyxwiz::CosineEmbeddingLoss(1.1f, cyxwiz::Reduction::Mean),
+                      std::invalid_argument);
+    REQUIRE_THROWS_AS(cyxwiz::TripletLoss(0.0f, cyxwiz::TripletLoss::DistanceType::Euclidean,
+                                          cyxwiz::Reduction::Mean),
+                      std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        cyxwiz::ContrastiveLoss(std::numeric_limits<float>::quiet_NaN(), cyxwiz::Reduction::Mean),
+        std::invalid_argument);
+
+    const float embedding_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
+    const float invalid_cosine_labels[] = {1.0f, 0.5f};
+    const float invalid_contrastive_labels[] = {0.0f, -1.0f};
+    const cyxwiz::Tensor embeddings({2, 2}, embedding_values, cyxwiz::DataType::Float32);
+
+    cyxwiz::CosineEmbeddingLoss cosine;
+    cosine.SetLabels(cyxwiz::Tensor({2}, invalid_cosine_labels, cyxwiz::DataType::Float32));
+    REQUIRE_THROWS_AS(cosine.Forward(embeddings, embeddings), std::runtime_error);
+
+    cyxwiz::ContrastiveLoss contrastive;
+    contrastive.SetLabels(
+        cyxwiz::Tensor({2}, invalid_contrastive_labels, cyxwiz::DataType::Float32));
+    REQUIRE_THROWS_AS(contrastive.Backward(embeddings, embeddings), std::runtime_error);
+
+    cyxwiz::TripletLoss triplet;
+    REQUIRE_THROWS_AS(triplet.Forward(embeddings, embeddings), std::runtime_error);
+    triplet.SetNegative(embeddings);
+    const cyxwiz::Tensor rank_one({4}, embedding_values, cyxwiz::DataType::Float32);
+    REQUIRE_THROWS_AS(triplet.Backward(rank_one, rank_one), std::runtime_error);
+}
+
+TEST_CASE("Metric-learning backward recomputes from supplied tensors", "[loss][metric-learning]") {
+    const float first_values[] = {1.0f, 0.0f, 0.0f, 1.0f};
+    const float second_values[] = {0.2f, 0.8f, 0.7f, -0.1f};
+    const float partner_values[] = {0.0f, 1.0f, -0.4f, 0.6f};
+    const float negative_values[] = {-0.5f, 0.3f, 0.9f, 0.2f};
+    const float pair_labels[] = {0.0f, 1.0f};
+    const cyxwiz::Tensor first({2, 2}, first_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor second({2, 2}, second_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor partner({2, 2}, partner_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor negative({2, 2}, negative_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor labels({2}, pair_labels, cyxwiz::DataType::Float32);
+
+    cyxwiz::ContrastiveLoss reused_contrastive(1.5f, cyxwiz::Reduction::Mean);
+    reused_contrastive.SetLabels(labels);
+    static_cast<void>(reused_contrastive.Forward(first, partner));
+    const auto actual_contrastive = reused_contrastive.Backward(second, partner);
+    cyxwiz::ContrastiveLoss fresh_contrastive(1.5f, cyxwiz::Reduction::Mean);
+    fresh_contrastive.SetLabels(labels);
+    const auto expected_contrastive = fresh_contrastive.Backward(second, partner);
+
+    cyxwiz::TripletLoss reused_triplet(0.75f, cyxwiz::TripletLoss::DistanceType::Cosine,
+                                       cyxwiz::Reduction::Mean);
+    reused_triplet.SetNegative(negative);
+    static_cast<void>(reused_triplet.Forward(first, partner));
+    const auto actual_triplet = reused_triplet.BackwardAll(second, partner);
+    cyxwiz::TripletLoss fresh_triplet(0.75f, cyxwiz::TripletLoss::DistanceType::Cosine,
+                                      cyxwiz::Reduction::Mean);
+    fresh_triplet.SetNegative(negative);
+    const auto expected_triplet = fresh_triplet.BackwardAll(second, partner);
+
+    const auto require_equal = [](const cyxwiz::Tensor& actual, const cyxwiz::Tensor& expected) {
+        REQUIRE(actual.Shape() == expected.Shape());
+        const float* actual_values = actual.ReadData<float>();
+        const float* expected_values = expected.ReadData<float>();
+        for (size_t index = 0; index < actual.NumElements(); ++index) {
+            REQUIRE(actual_values[index] == Catch::Approx(expected_values[index]).margin(1.0e-6f));
+        }
+    };
+    require_equal(actual_contrastive, expected_contrastive);
+    require_equal(actual_triplet.anchor, expected_triplet.anchor);
+    require_equal(actual_triplet.positive, expected_triplet.positive);
+    require_equal(actual_triplet.negative, expected_triplet.negative);
+}
+
+#if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
+TEST_CASE("Metric-learning losses declare strict and compatible fallback truth",
+          "[loss][metric-learning][arrayfire][fallback]") {
+    const auto make_device_tensor = [](const std::vector<float>& values) {
+        const cyxwiz::Tensor host({2, 2}, values.data(), cyxwiz::DataType::Float32);
+        return cyxwiz::Tensor::FromSemanticArray(host.GetSemanticArray(), host.Shape());
+    };
+    const auto make_first = [make_device_tensor] {
+        return make_device_tensor({1.0f, 0.0f, 0.2f, 0.8f});
+    };
+    const auto make_second = [make_device_tensor] {
+        return make_device_tensor({0.0f, 1.0f, 0.7f, 0.1f});
+    };
+    const std::vector<std::pair<LossFactory, std::string>> losses = {
+        {[] {
+             const float values[] = {1.0f, -1.0f};
+             auto loss =
+                 std::make_unique<cyxwiz::CosineEmbeddingLoss>(0.2f, cyxwiz::Reduction::None);
+             loss->SetLabels(cyxwiz::Tensor({2}, values, cyxwiz::DataType::Float32));
+             return loss;
+         },
+         "CosineEmbeddingLoss"},
+        {[] {
+             const float values[] = {-0.5f, 0.3f, 0.9f, 0.2f};
+             auto loss = std::make_unique<cyxwiz::TripletLoss>(
+                 1.0f, cyxwiz::TripletLoss::DistanceType::Euclidean, cyxwiz::Reduction::None);
+             loss->SetNegative(cyxwiz::Tensor({2, 2}, values, cyxwiz::DataType::Float32));
+             return loss;
+         },
+         "TripletLoss"},
+        {[] {
+             const float values[] = {0.0f, 1.0f};
+             auto loss = std::make_unique<cyxwiz::ContrastiveLoss>(1.5f, cyxwiz::Reduction::None);
+             loss->SetLabels(cyxwiz::Tensor({2}, values, cyxwiz::DataType::Float32));
+             return loss;
+         },
+         "ContrastiveLoss"},
+    };
+    for (const auto& [factory, name] : losses) {
+        DYNAMIC_SECTION(name << " forward") {
+            RequireLossFallbackContract(factory, name + "::Forward", true, make_first, make_second);
+        }
+        DYNAMIC_SECTION(name << " backward") {
+            RequireLossFallbackContract(factory, name + "::Backward", false, make_first,
+                                        make_second);
+        }
+    }
+}
+#endif

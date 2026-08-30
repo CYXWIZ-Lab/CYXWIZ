@@ -1,17 +1,18 @@
-#include "../../src/core/node_executors/tfidf_vectorizer_operator.h"
-#include "../../src/core/materialization_memory_guard.h"
 #include "../../src/core/execution_device_context.h"
-
-#include <cyxwiz/cyxwiz.h>
+#include "../../src/core/materialization_memory_guard.h"
+#include "../../src/core/metric_learning_training_step.h"
+#include "../../src/core/node_executors/tfidf_vectorizer_operator.h"
 #include <cyxwiz/activation.h>
+#include <cyxwiz/cyxwiz.h>
 #include <cyxwiz/layers/dense.h>
 #include <cyxwiz/layers/linear.h>
 #include <cyxwiz/loss.h>
-#include <cyxwiz/sequential.h>
-#include <cyxwiz/optimizers/adaptive.h>
+#include <cyxwiz/losses/metric_learning.h>
 #include <cyxwiz/optimizers/adam.h>
+#include <cyxwiz/optimizers/adaptive.h>
 #include <cyxwiz/optimizers/lamb.h>
 #include <cyxwiz/optimizers/sgd.h>
+#include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
 
 #include "algorithms/arrayfire_backend_utils.h"
@@ -743,6 +744,164 @@ void TestOverlapLossParity(const json& cases) {
                     test_case.at("expected").at("prediction_gradient"),
                     ReadTolerance(test_case), name + " backward");
     }
+}
+
+void TestMetricLearningLossParity(const json& cases) {
+    const auto& matrix = cases.at("metric_learning_loss_matrix_f32");
+    Check(matrix.is_array() && matrix.size() == 12,
+          "metric-learning loss matrix fixture must contain 12 cases");
+    for (const auto& test_case : matrix) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("dtype", "") == "float32", name + " dtype mismatch");
+        const auto reduction = ParseReduction(test_case.at("reduction").get<std::string>());
+        const float margin = test_case.at("margin").get<float>();
+        const std::string loss_type = test_case.at("loss_type").get<std::string>();
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+
+        cyxwiz::Tensor actual_loss;
+        cyxwiz::Tensor actual_first_gradient;
+        cyxwiz::Tensor actual_second_gradient;
+        cyxwiz::Tensor actual_third_gradient;
+        if (loss_type == "cosine_embedding" || loss_type == "contrastive") {
+            const auto x1 = FloatTensorFromFixture(test_case.at("x1"), name + " x1");
+            const auto x2 = FloatTensorFromFixture(test_case.at("x2"), name + " x2");
+            const auto labels = FloatTensorFromFixture(test_case.at("labels"), name + " labels");
+            if (loss_type == "cosine_embedding") {
+                Check(test_case.value("operation", "") ==
+                          "torch.nn.functional.cosine_embedding_loss",
+                      name + " operation mismatch");
+                cyxwiz::CosineEmbeddingLoss loss(margin, reduction);
+                loss.SetLabels(labels);
+                actual_loss = loss.Forward(x1, x2);
+                actual_first_gradient = loss.Backward(x1, x2);
+                cyxwiz::CosineEmbeddingLoss swapped(margin, reduction);
+                swapped.SetLabels(labels);
+                actual_second_gradient = swapped.Backward(x2, x1);
+            } else {
+                Check(test_case.value("operation", "") == "pytorch_explicit_contrastive_loss",
+                      name + " operation mismatch");
+                cyxwiz::ContrastiveLoss loss(margin, reduction);
+                loss.SetLabels(labels);
+                actual_loss = loss.Forward(x1, x2);
+                actual_first_gradient = loss.Backward(x1, x2);
+                cyxwiz::ContrastiveLoss swapped(margin, reduction);
+                swapped.SetLabels(labels);
+                actual_second_gradient = swapped.Backward(x2, x1);
+            }
+        } else {
+            Check(loss_type == "triplet", name + " loss type mismatch");
+            const auto anchor = FloatTensorFromFixture(test_case.at("anchor"), name + " anchor");
+            const auto positive =
+                FloatTensorFromFixture(test_case.at("positive"), name + " positive");
+            const auto negative =
+                FloatTensorFromFixture(test_case.at("negative"), name + " negative");
+            const std::string distance_type = test_case.at("distance_type").get<std::string>();
+            const auto backend_distance = distance_type == "euclidean"
+                                              ? cyxwiz::TripletLoss::DistanceType::Euclidean
+                                              : cyxwiz::TripletLoss::DistanceType::Cosine;
+            Check(test_case.value("operation", "") ==
+                      (distance_type == "euclidean"
+                           ? "torch.nn.functional.triplet_margin_loss"
+                           : "pytorch_explicit_smooth_cosine_triplet_loss"),
+                  name + " operation mismatch");
+            cyxwiz::TripletLoss loss(margin, backend_distance, reduction);
+            loss.SetNegative(negative);
+            actual_loss = loss.Forward(anchor, positive);
+            const auto gradients = loss.BackwardAll(anchor, positive);
+            actual_first_gradient = gradients.anchor;
+            actual_second_gradient = gradients.positive;
+            actual_third_gradient = gradients.negative;
+        }
+
+        Check(g_fallback_events == nullptr || g_fallback_events->size() == fallback_count_before,
+              name + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr || g_host_sync_events->size() == host_sync_count_before,
+              name + " materialized a tensor during compute");
+        const auto tolerance = ReadTolerance(test_case);
+        CheckTensor(actual_loss, test_case.at("expected").at("loss"), tolerance, name + " forward");
+        if (loss_type == "triplet") {
+            CheckTensor(actual_first_gradient, test_case.at("expected").at("anchor_gradient"),
+                        tolerance, name + " anchor backward");
+            CheckTensor(actual_second_gradient, test_case.at("expected").at("positive_gradient"),
+                        tolerance, name + " positive backward");
+            CheckTensor(actual_third_gradient, test_case.at("expected").at("negative_gradient"),
+                        tolerance, name + " negative backward");
+        } else {
+            CheckTensor(actual_first_gradient, test_case.at("expected").at("x1_gradient"),
+                        tolerance, name + " x1 backward");
+            CheckTensor(actual_second_gradient, test_case.at("expected").at("x2_gradient"),
+                        tolerance, name + " x2 backward");
+        }
+    }
+}
+
+void TestMetricPairLinearMultiBatchUpdateParity(const json& cases) {
+    const auto& test_case = cases.at("metric_pair_linear_multibatch_sgd_f32");
+    Check(test_case.value("operation", "") ==
+                  "PyTorch explicit contrastive + shared nn.Linear + optim.SGD" &&
+              test_case.value("dtype", "") == "float32" &&
+              test_case.value("loss_type", "") == "contrastive" &&
+              test_case.value("reduction", "") == "mean",
+          "metric pair multi-batch fixture metadata mismatch");
+    const auto tolerance = ReadTolerance(test_case);
+    auto model = std::make_unique<cyxwiz::SequentialModel>();
+    model->Add<cyxwiz::LinearModule>(2, 2, true);
+    cyxwiz::SharedEncoderRuntime runtime(
+        std::make_unique<cyxwiz::SequentialExecutableModel>(std::move(model)));
+    runtime.SetParameters({
+        {"layer0.weight", FloatTensorFromFixture(test_case.at("initial").at("weight"),
+                                                 "metric pair initial weight")},
+        {"layer0.bias",
+         FloatTensorFromFixture(test_case.at("initial").at("bias"), "metric pair initial bias")},
+    });
+    cyxwiz::SGDOptimizer optimizer(test_case.at("learning_rate").get<double>());
+    cyxwiz::PairMetricTrainingStepConfig config;
+    config.loss_kind = cyxwiz::MetricLearningPairLossKind::Contrastive;
+    config.margin = test_case.at("margin").get<float>();
+    config.reduction = cyxwiz::Reduction::Mean;
+    config.update_parameters = true;
+
+    size_t step_index = 0;
+    for (const auto& step : test_case.at("steps")) {
+        const std::string label = "metric pair multi-batch step " + std::to_string(step_index + 1);
+        cyxwiz::PairBatch batch;
+        batch.input_a = FloatTensorFromFixture(step.at("input_a"), label + " input_a");
+        batch.input_b = FloatTensorFromFixture(step.at("input_b"), label + " input_b");
+        batch.pair_label = FloatTensorFromFixture(step.at("labels"), label + " labels");
+        batch.size = batch.input_a.Shape()[0];
+
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto result = cyxwiz::RunPairMetricTrainingStep(runtime, batch, config, &optimizer);
+        const auto parameters = runtime.GetParameters();
+        Check(g_fallback_events == nullptr || g_fallback_events->size() == fallback_count_before,
+              label + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr || g_host_sync_events->size() == host_sync_count_before,
+              label + " materialized a tensor during compute");
+
+        CheckTensor(result.embeddings.embedding_a, step.at("expected").at("embedding_a"), tolerance,
+                    label + " embedding_a");
+        CheckTensor(result.embeddings.embedding_b, step.at("expected").at("embedding_b"), tolerance,
+                    label + " embedding_b");
+        CheckTensor(result.loss, step.at("expected").at("loss"), tolerance, label + " loss");
+        CheckTensor(result.input_gradients.input_a, step.at("expected").at("grad_input_a"),
+                    tolerance, label + " input_a gradient");
+        CheckTensor(result.input_gradients.input_b, step.at("expected").at("grad_input_b"),
+                    tolerance, label + " input_b gradient");
+        CheckTensor(parameters.at("layer0.weight"), step.at("expected").at("updated_weight"),
+                    tolerance, label + " updated weight");
+        CheckTensor(parameters.at("layer0.bias"), step.at("expected").at("updated_bias"), tolerance,
+                    label + " updated bias");
+        ++step_index;
+        Check(optimizer.GetStepCount() == static_cast<int>(step_index),
+              label + " optimizer step count mismatch");
+    }
+    Check(step_index == 2, "metric pair multi-batch fixture must contain two update steps");
 }
 
 void TestOverlapLinearMultiBatchUpdateParity(const json& cases) {
@@ -1837,15 +1996,15 @@ void TestLambMultiStepParity(const json& cases) {
     Check(test_case.value("zero_grad_contract", "") ==
               "clears gradients without resetting optimizer state",
           "LAMB zero_grad fixture contract mismatch");
-    const auto& hyper = test_case.at("hyperparameters");
+    const auto& lamb_hyper = test_case.at("hyperparameters");
     const auto tolerance = ReadTolerance(test_case);
-    const auto make_optimizer = [&hyper]() {
+    const auto make_optimizer = [&lamb_hyper]() {
         return std::make_unique<cyxwiz::LAMBOptimizer>(
-            hyper.at("learning_rate").get<double>(),
-            hyper.at("beta1").get<double>(),
-            hyper.at("beta2").get<double>(),
-            hyper.at("epsilon").get<double>(),
-            hyper.at("weight_decay").get<double>());
+            lamb_hyper.at("learning_rate").get<double>(),
+            lamb_hyper.at("beta1").get<double>(),
+            lamb_hyper.at("beta2").get<double>(),
+            lamb_hyper.at("epsilon").get<double>(),
+            lamb_hyper.at("weight_decay").get<double>());
     };
 
     const auto initial = ReadFloatValues(
@@ -1949,10 +2108,10 @@ void TestLambMultiStepParity(const json& cases) {
                            cyxwiz::DataType::Float32)},
         };
         cyxwiz::LAMBOptimizer edge_optimizer(
-            hyper.at("learning_rate").get<double>(),
-            hyper.at("beta1").get<double>(),
-            hyper.at("beta2").get<double>(),
-            hyper.at("epsilon").get<double>(),
+            lamb_hyper.at("learning_rate").get<double>(),
+            lamb_hyper.at("beta1").get<double>(),
+            lamb_hyper.at("beta2").get<double>(),
+            lamb_hyper.at("epsilon").get<double>(),
             edge.at("weight_decay").get<double>());
         edge_optimizer.Step(edge_parameters, edge_gradients);
         CheckTensor(edge_parameters.at("weight"),
@@ -2032,6 +2191,8 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestRegressionLossParity(cases);
         TestProbabilityLossParity(cases);
         TestOverlapLossParity(cases);
+        TestMetricLearningLossParity(cases);
+        TestMetricPairLinearMultiBatchUpdateParity(cases);
         TestOverlapLinearMultiBatchUpdateParity(cases);
         TestCrossEntropyParity(cases);
         TestCrossEntropyMatrixParity(cases);
@@ -2122,6 +2283,8 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
             TestRegressionLossParity(cases);
             TestProbabilityLossParity(cases);
             TestOverlapLossParity(cases);
+            TestMetricLearningLossParity(cases);
+            TestMetricPairLinearMultiBatchUpdateParity(cases);
             TestOverlapLinearMultiBatchUpdateParity(cases);
             TestCrossEntropyParity(cases);
             TestCrossEntropyMatrixParity(cases);

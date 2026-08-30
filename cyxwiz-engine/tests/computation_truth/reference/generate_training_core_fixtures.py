@@ -467,6 +467,321 @@ def overlap_loss_matrix() -> list[dict[str, Any]]:
     return cases
 
 
+def metric_learning_loss_matrix() -> list[dict[str, Any]]:
+    definitions = [
+        {
+            "name": "cosine_embedding_mixed_none",
+            "loss_type": "cosine_embedding",
+            "reduction": "none",
+            "margin": 0.2,
+            "x1": [[1.0, 0.5, -0.2], [0.2, 0.9, 0.1], [1.0, 0.0, 0.0]],
+            "x2": [[0.8, 0.3, -0.4], [0.7, 0.1, 0.2], [-1.0, 0.0, 0.0]],
+            "labels": [1.0, -1.0, -1.0],
+        },
+        {
+            "name": "cosine_embedding_zero_mean",
+            "loss_type": "cosine_embedding",
+            "reduction": "mean",
+            "margin": -0.1,
+            "x1": [[0.0, 0.0], [0.3, -0.4]],
+            "x2": [[0.0, 0.0], [-0.2, 0.7]],
+            "labels": [1.0, -1.0],
+        },
+        {
+            "name": "cosine_embedding_similar_sum",
+            "loss_type": "cosine_embedding",
+            "reduction": "sum",
+            "margin": 0.0,
+            "x1": [[0.1, 0.3, -0.5, 0.7]],
+            "x2": [[0.6, -0.2, -0.1, 0.4]],
+            "labels": [1.0],
+        },
+        {
+            "name": "contrastive_mixed_none",
+            "loss_type": "contrastive",
+            "reduction": "none",
+            "margin": 1.5,
+            "x1": [[1.0, 0.0], [0.0, 0.0], [2.0, 1.0]],
+            "x2": [[0.5, 0.0], [0.4, 0.3], [0.0, 1.0]],
+            "labels": [0.0, 1.0, 1.0],
+        },
+        {
+            "name": "contrastive_zero_distance_mean",
+            "loss_type": "contrastive",
+            "reduction": "mean",
+            "margin": 2.0,
+            "x1": [[0.0, 0.0, 0.0], [0.5, -0.2, 0.4]],
+            "x2": [[0.0, 0.0, 0.0], [0.1, 0.2, -0.3]],
+            "labels": [1.0, 0.0],
+        },
+        {
+            "name": "contrastive_boundary_sum",
+            "loss_type": "contrastive",
+            "reduction": "sum",
+            "margin": 1.0,
+            "x1": [[1.0, 0.0], [0.25, -0.5]],
+            "x2": [[0.0, 0.0], [-0.25, 0.5]],
+            "labels": [1.0, 0.0],
+        },
+        {
+            "name": "triplet_euclidean_mixed_none",
+            "loss_type": "triplet",
+            "distance_type": "euclidean",
+            "reduction": "none",
+            "margin": 1.0,
+            "anchor": [[0.0, 0.0, 0.0], [1.0, 0.5, -0.5], [0.2, 0.4, 0.6]],
+            "positive": [[0.4, 0.0, 0.0], [1.1, 0.4, -0.4], [0.3, 0.5, 0.7]],
+            "negative": [[1.0, 0.0, 0.0], [-1.0, -1.0, 0.0], [0.25, 0.45, 0.65]],
+        },
+        {
+            "name": "triplet_euclidean_coincident_mean",
+            "loss_type": "triplet",
+            "distance_type": "euclidean",
+            "reduction": "mean",
+            "margin": 2.0,
+            "anchor": [[0.0, 0.0], [0.5, -0.5]],
+            "positive": [[0.0, 0.0], [0.5, -0.5]],
+            "negative": [[1.0, 0.0], [0.0, -0.5]],
+        },
+        {
+            "name": "triplet_euclidean_sum",
+            "loss_type": "triplet",
+            "distance_type": "euclidean",
+            "reduction": "sum",
+            "margin": 0.75,
+            "anchor": [[0.2, -0.1, 0.4, 0.8]],
+            "positive": [[0.3, 0.0, 0.2, 0.7]],
+            "negative": [[-0.4, 0.5, 0.9, -0.2]],
+        },
+        {
+            "name": "triplet_cosine_mixed_none",
+            "loss_type": "triplet",
+            "distance_type": "cosine",
+            "reduction": "none",
+            "margin": 0.4,
+            "anchor": [[1.0, 0.2, -0.3], [0.1, 0.9, 0.2], [0.7, -0.1, 0.4]],
+            "positive": [[0.8, 0.1, -0.2], [0.0, 0.8, 0.3], [-0.6, 0.2, 0.1]],
+            "negative": [[-0.2, 0.8, 0.1], [0.2, 0.7, 0.4], [0.6, -0.2, 0.5]],
+        },
+        {
+            "name": "triplet_cosine_zero_mean",
+            "loss_type": "triplet",
+            "distance_type": "cosine",
+            "reduction": "mean",
+            "margin": 0.5,
+            "anchor": [[0.0, 0.0], [0.4, -0.3]],
+            "positive": [[0.0, 0.0], [0.3, -0.2]],
+            "negative": [[0.2, 0.1], [-0.4, 0.5]],
+        },
+        {
+            "name": "triplet_cosine_sum",
+            "loss_type": "triplet",
+            "distance_type": "cosine",
+            "reduction": "sum",
+            "margin": 0.25,
+            "anchor": [[0.5, -0.2, 0.1, 0.6]],
+            "positive": [[0.4, -0.1, 0.2, 0.7]],
+            "negative": [[-0.3, 0.8, -0.2, 0.1]],
+        },
+    ]
+    cases: list[dict[str, Any]] = []
+    for definition in definitions:
+        reduction = definition["reduction"]
+        margin = definition["margin"]
+        loss_type = definition["loss_type"]
+        case = {
+            "name": definition["name"],
+            "loss_type": loss_type,
+            "dtype": "float32",
+            "reduction": reduction,
+            "margin": margin,
+            "tolerance": {"atol": 2.0e-5, "rtol": 2.0e-5},
+        }
+        if loss_type in {"cosine_embedding", "contrastive"}:
+            x1 = torch.tensor(
+                definition["x1"], dtype=torch.float32, requires_grad=True
+            )
+            x2 = torch.tensor(
+                definition["x2"], dtype=torch.float32, requires_grad=True
+            )
+            labels = torch.tensor(definition["labels"], dtype=torch.float32)
+            if loss_type == "cosine_embedding":
+                loss = functional.cosine_embedding_loss(
+                    x1, x2, labels, margin=margin, reduction=reduction
+                )
+                case["operation"] = "torch.nn.functional.cosine_embedding_loss"
+            else:
+                distances = torch.linalg.vector_norm(x1 - x2, dim=1)
+                per_sample = (
+                    (1.0 - labels) * distances.square() +
+                    labels * torch.relu(margin - distances).square()
+                )
+                loss = (
+                    per_sample.mean() if reduction == "mean" else
+                    per_sample.sum() if reduction == "sum" else
+                    per_sample
+                )
+                case["operation"] = "pytorch_explicit_contrastive_loss"
+            (loss.sum() if reduction == "none" else loss).backward()
+            case.update({
+                "x1": tensor_fixture(x1),
+                "x2": tensor_fixture(x2),
+                "labels": tensor_fixture(labels),
+                "expected": {
+                    "loss": tensor_fixture(
+                        loss.reshape(1) if loss.ndim == 0 else loss
+                    ),
+                    "x1_gradient": tensor_fixture(x1.grad),
+                    "x2_gradient": tensor_fixture(x2.grad),
+                },
+            })
+        else:
+            anchor = torch.tensor(
+                definition["anchor"], dtype=torch.float32,
+                requires_grad=True,
+            )
+            positive = torch.tensor(
+                definition["positive"], dtype=torch.float32,
+                requires_grad=True,
+            )
+            negative = torch.tensor(
+                definition["negative"], dtype=torch.float32,
+                requires_grad=True,
+            )
+            distance_type = definition["distance_type"]
+            if distance_type == "euclidean":
+                loss = functional.triplet_margin_loss(
+                    anchor, positive, negative, margin=margin, p=2.0,
+                    eps=1.0e-6, swap=False, reduction=reduction,
+                )
+                case["operation"] = "torch.nn.functional.triplet_margin_loss"
+            else:
+                def smooth_cosine_distance(
+                    left: torch.Tensor, right: torch.Tensor
+                ) -> torch.Tensor:
+                    left_norm = torch.sqrt(
+                        left.square().sum(dim=1) + 1.0e-8
+                    )
+                    right_norm = torch.sqrt(
+                        right.square().sum(dim=1) + 1.0e-8
+                    )
+                    return 1.0 - (
+                        (left * right).sum(dim=1) /
+                        (left_norm * right_norm)
+                    )
+
+                per_sample = torch.relu(
+                    smooth_cosine_distance(anchor, positive) -
+                    smooth_cosine_distance(anchor, negative) + margin
+                )
+                loss = (
+                    per_sample.mean() if reduction == "mean" else
+                    per_sample.sum() if reduction == "sum" else
+                    per_sample
+                )
+                case["operation"] = "pytorch_explicit_smooth_cosine_triplet_loss"
+            (loss.sum() if reduction == "none" else loss).backward()
+            case.update({
+                "distance_type": distance_type,
+                "anchor": tensor_fixture(anchor),
+                "positive": tensor_fixture(positive),
+                "negative": tensor_fixture(negative),
+                "expected": {
+                    "loss": tensor_fixture(
+                        loss.reshape(1) if loss.ndim == 0 else loss
+                    ),
+                    "anchor_gradient": tensor_fixture(anchor.grad),
+                    "positive_gradient": tensor_fixture(positive.grad),
+                    "negative_gradient": tensor_fixture(negative.grad),
+                },
+            })
+        cases.append(case)
+    return cases
+
+
+def metric_pair_linear_multibatch_sgd_case() -> dict[str, Any]:
+    model = torch.nn.Linear(2, 2, bias=True)
+    with torch.no_grad():
+        model.weight.copy_(torch.tensor(
+            [[0.35, -0.20], [0.10, 0.45]], dtype=torch.float32
+        ))
+        model.bias.copy_(torch.tensor([0.05, -0.15], dtype=torch.float32))
+    initial = {
+        "weight": tensor_fixture(model.weight),
+        "bias": tensor_fixture(model.bias),
+    }
+    learning_rate = 0.04
+    margin = 1.25
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    definitions = [
+        {
+            "input_a": [[1.0, 0.0], [0.2, 0.8]],
+            "input_b": [[0.8, 0.1], [-0.4, 0.6]],
+            "labels": [0.0, 1.0],
+        },
+        {
+            "input_a": [[0.5, -0.3], [0.1, 0.9], [-0.7, 0.4]],
+            "input_b": [[-0.2, 0.6], [0.0, 0.7], [0.8, -0.1]],
+            "labels": [1.0, 0.0, 1.0],
+        },
+    ]
+    steps = []
+    for definition in definitions:
+        input_a = torch.tensor(
+            definition["input_a"], dtype=torch.float32, requires_grad=True
+        )
+        input_b = torch.tensor(
+            definition["input_b"], dtype=torch.float32, requires_grad=True
+        )
+        labels = torch.tensor(definition["labels"], dtype=torch.float32)
+        optimizer.zero_grad(set_to_none=True)
+        embedding_a = model(input_a)
+        embedding_b = model(input_b)
+        embedding_a.retain_grad()
+        embedding_b.retain_grad()
+        distances = torch.linalg.vector_norm(
+            embedding_a - embedding_b, dim=1
+        )
+        loss = (
+            (1.0 - labels) * distances.square() +
+            labels * torch.relu(margin - distances).square()
+        ).mean()
+        loss.backward()
+        step = {
+            "input_a": tensor_fixture(input_a),
+            "input_b": tensor_fixture(input_b),
+            "labels": tensor_fixture(labels),
+            "expected": {
+                "embedding_a": tensor_fixture(embedding_a),
+                "embedding_b": tensor_fixture(embedding_b),
+                "loss": tensor_fixture(loss.reshape(1)),
+                "grad_embedding_a": tensor_fixture(embedding_a.grad),
+                "grad_embedding_b": tensor_fixture(embedding_b.grad),
+                "grad_input_a": tensor_fixture(input_a.grad),
+                "grad_input_b": tensor_fixture(input_b.grad),
+                "grad_weight": tensor_fixture(model.weight.grad),
+                "grad_bias": tensor_fixture(model.bias.grad),
+            },
+        }
+        optimizer.step()
+        step["expected"]["updated_weight"] = tensor_fixture(model.weight)
+        step["expected"]["updated_bias"] = tensor_fixture(model.bias)
+        steps.append(step)
+    return {
+        "operation": (
+            "PyTorch explicit contrastive + shared nn.Linear + optim.SGD"
+        ),
+        "dtype": "float32",
+        "loss_type": "contrastive",
+        "reduction": "mean",
+        "margin": margin,
+        "learning_rate": learning_rate,
+        "tolerance": {"atol": 2.0e-5, "rtol": 2.0e-5},
+        "initial": initial,
+        "steps": steps,
+    }
+
+
 def overlap_linear_multibatch_sgd_case() -> dict[str, Any]:
     model = torch.nn.Linear(3, 2, bias=True)
     with torch.no_grad():
@@ -3407,6 +3722,12 @@ def generate_fixture() -> dict[str, Any]:
             "regression_loss_matrix_f32": regression_loss_matrix(),
             "probability_loss_matrix_f32": probability_loss_matrix(),
             "overlap_loss_matrix_f32": overlap_loss_matrix(),
+            "metric_learning_loss_matrix_f32": (
+                metric_learning_loss_matrix()
+            ),
+            "metric_pair_linear_multibatch_sgd_f32": (
+                metric_pair_linear_multibatch_sgd_case()
+            ),
             "overlap_linear_multibatch_sgd_f32": (
                 overlap_linear_multibatch_sgd_case()
             ),

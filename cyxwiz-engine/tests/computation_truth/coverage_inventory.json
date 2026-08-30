@@ -478,12 +478,12 @@
       "implementation": ["cyxwiz-backend/src/algorithms/losses/metric_learning_losses.cpp"],
       "callers": ["metric-learning training"],
       "contract": "Distance, label, margin, reduction and gradients match the declared PyTorch variants.",
-      "supported": "public metric-learning configurations",
-      "oracle": "PyTorch",
-      "tests": ["test_metric_learning_losses", "test_metric_learning_training_step"],
-      "execution": "audit needed",
-      "status": "partial",
-      "gaps": ["fixture provenance", "complete gradients", "fallback/residency"]
+      "supported": "Float32 non-empty rank-2 embeddings; CosineEmbedding labels in {-1,+1}; Contrastive labels in {0,1}; Euclidean and smoothed-cosine Triplet; None/Mean/Sum reductions",
+      "oracle": "PyTorch 2.10 nn.CosineEmbeddingLoss, nn.TripletMarginLoss, and explicit autograd equations for CyxWiz contrastive and smoothed-cosine triplet variants",
+      "tests": ["test_computation_truth_tfidf_loss", "cyxwiz-tests:[metric-learning]", "test_metric_learning_losses", "test_metric_learning_training_step", "cyxwiz-tests:[source_scan]"],
+      "execution": "forward and every embedding-branch gradient proven against checked-in PyTorch fixtures on strict ArrayFire CPU and every locally qualified CUDA/OpenCL route with exact identity, zero native fallback, and bounded attributed verification readback; a two-batch shared-Linear Contrastive-to-SGD sequence proves parameter updates; forced failures prove strict rejection and compatible attributed native CPU fallback; locally incompatible oneAPI is an explicit device-selection skip",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "OPT-SGD-001",

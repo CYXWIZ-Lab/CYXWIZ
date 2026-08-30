@@ -1582,6 +1582,7 @@ set_target_properties(test_text_tokenizer_operator PROPERTIES
 # ===== Test: Computation Truth - TF-IDF + Loss Parity =====
 add_executable(test_computation_truth_tfidf_loss
     tests/computation_truth/test_computation_truth_tfidf_loss.cpp
+    src/core/executable_model.cpp
     src/core/preprocessing_state.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
 )

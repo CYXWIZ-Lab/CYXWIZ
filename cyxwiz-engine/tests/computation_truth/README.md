@@ -89,6 +89,16 @@ The broad tracking ticket is:
   A separate two-batch SoftDice-to-Linear-to-SGD sequence proves the loss
   gradient reaches parameter updates. Forced overlap fallback proves strict
   rejection and compatible, attributed native execution.
+- Verifies CosineEmbedding, Contrastive, and Euclidean/smoothed-cosine Triplet
+  forward values and every embedding-branch gradient against generated
+  PyTorch 2.10 fixtures across `none`/`mean`/`sum`, including zero vectors,
+  coincident embeddings, inactive margins, and exact label conventions. A
+  two-batch shared-Linear Contrastive-to-SGD sequence proves device-resident
+  gradient accumulation and parameter updates. Strict ArrayFire CPU and every
+  locally qualified CUDA/OpenCL route run with exact identity and zero native
+  fallback; forced failures separately prove strict rejection and compatible,
+  attributed native CPU execution. Incompatible oneAPI remains an explicit
+  device-selection skip rather than a global blocker.
 - Verifies `LinearLayer` forward output against a generated PyTorch linear fixture.
 - Verifies `LinearLayer` backward values:
   - gradient with respect to input
