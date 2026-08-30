@@ -368,10 +368,10 @@
       "contract": "Stable normalization and Jacobian-vector product match PyTorch for the selected axis.",
       "supported": "Float32 public rank/axis domain",
       "oracle": "Generated PyTorch 2.10 forward/autograd fixtures",
-      "tests": ["cyxwiz-tests:test_activations", "test_computation_truth_tfidf_loss:softmax_forward_backward_f32", "test_computation_truth_transformer_primitives"],
-      "execution": "strict ArrayFire-resident CPU, CUDA and OpenCL routes; non-ArrayFire build has a native CPU implementation",
-      "status": "partial",
-      "gaps": ["non-ArrayFire-build native CPU qualification"]
+      "tests": ["cyxwiz-tests:[activation][pytorch][softmax]", "cyxwiz-tests:test_activations", "test_computation_truth_tfidf_loss:softmax_forward_backward_f32", "test_computation_truth_transformer_primitives"],
+      "execution": "strict ArrayFire-resident CPU, CUDA and OpenCL routes with no native fallback or undeclared host synchronization; the configured no-ArrayFire build runs the same generated PyTorch fixture through both the standalone and module native CPU compatibility implementations; incompatible optional routes are explicit device-selection skips",
+      "status": "covered",
+      "gaps": []
     },
     {
       "id": "ACT-PRELU-001",

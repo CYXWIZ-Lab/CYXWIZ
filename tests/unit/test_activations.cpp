@@ -37,6 +37,19 @@ json LoadElementwiseActivationFixture() {
         "elementwise_activation_forward_backward_f32");
 }
 
+json LoadSoftmaxFixture() {
+    std::ifstream stream(CYXWIZ_TRAINING_CORE_FIXTURE_PATH);
+    REQUIRE(stream.is_open());
+
+    json fixture;
+    stream >> fixture;
+    REQUIRE(fixture.value("schema_version", 0) == 1);
+    REQUIRE(fixture.at("oracle").value("name", "") == "PyTorch");
+    REQUIRE(fixture.at("oracle").value("device", "") == "cpu");
+    REQUIRE(!fixture.at("oracle").value("version", "").empty());
+    return fixture.at("cases").at("softmax_forward_backward_f32");
+}
+
 cyxwiz::Tensor ActivationTensorFromFixture(const json& value) {
     const auto shape = value.at("shape").get<std::vector<size_t>>();
     const auto values = value.at("values").get<std::vector<float>>();
@@ -142,6 +155,47 @@ TEST_CASE("Elementwise activations match PyTorch forward and autograd",
             grad_input,
             test_case.at("expected").at("grad_input"),
             test_case.at("tolerance"));
+    }
+}
+
+TEST_CASE("Softmax activation and module match PyTorch by axis",
+          "[activation][pytorch][softmax]") {
+    const auto cases = LoadSoftmaxFixture();
+    REQUIRE(cases.is_array());
+    REQUIRE(cases.size() == 7);
+
+    for (const auto& test_case : cases) {
+        const std::string name = test_case.at("name").get<std::string>();
+        INFO("case=" << name);
+        REQUIRE(test_case.value("dtype", "") == "float32");
+        REQUIRE(test_case.value("operation", "") ==
+                "torch.nn.functional.softmax");
+        const int axis = test_case.at("axis").get<int>();
+        const auto input =
+            ActivationTensorFromFixture(test_case.at("input"));
+        const auto grad_output =
+            ActivationTensorFromFixture(test_case.at("grad_output"));
+
+        cyxwiz::SoftmaxActivation activation(axis);
+        const auto activation_output = activation.Forward(input);
+        cyxwiz::SoftmaxActivation backward_activation(axis);
+        const auto activation_gradient =
+            backward_activation.Backward(grad_output, input);
+
+        cyxwiz::SoftmaxModule module(axis);
+        const auto module_output = module.Forward(input);
+        const auto module_gradient = module.Backward(grad_output);
+
+        const auto& expected = test_case.at("expected");
+        const auto& tolerance = test_case.at("tolerance");
+        CheckActivationTensor(
+            activation_output, expected.at("output"), tolerance);
+        CheckActivationTensor(
+            activation_gradient, expected.at("grad_input"), tolerance);
+        CheckActivationTensor(
+            module_output, expected.at("output"), tolerance);
+        CheckActivationTensor(
+            module_gradient, expected.at("grad_input"), tolerance);
     }
 }
 

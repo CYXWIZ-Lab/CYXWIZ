@@ -190,8 +190,10 @@ models. Standalone backward derives its result from the supplied input and does
 not trust a same-shaped stale forward cache. The module normalizes its configured
 positive or negative axis instead of hard-coding the rank-2 class axis, and
 rejects invalid dtype, axis, shape, and backward-before-forward state. The same
-strict qualified-route residency rules apply; non-ArrayFire-build CPU
-qualification remains an explicit gap.
+strict qualified-route residency rules apply. The backend
+`[activation][pytorch][softmax]` test consumes the same generated matrix in
+Debug, Release, and the configured no-ArrayFire build, qualifying both native
+CPU compatibility implementations without adding a second oracle.
 
 The PReLU matrix covers shared alpha plus per-channel rank-2 and rank-4 forms
 against PyTorch forward, input-gradient, and alpha-gradient truth. Channel
