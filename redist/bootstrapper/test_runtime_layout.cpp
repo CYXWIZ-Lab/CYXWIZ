@@ -64,6 +64,16 @@ int RunBootstrapper(
     const std::filesystem::path& bootstrapper,
     const std::filesystem::path& runtime_root,
     bool installer = false) {
+    const auto output_path = runtime_root / "bootstrapper-test-output.txt";
+    SECURITY_ATTRIBUTES security{
+        sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+    const HANDLE output = ::CreateFileW(
+        output_path.c_str(), GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, &security, CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (output == INVALID_HANDLE_VALUE) {
+        return -1;
+    }
     std::wstring command = L"\"" + bootstrapper.native() +
                            L"\" --runtime-root \"" + runtime_root.native() + L"\"";
     if (installer) command += L" --installer";
@@ -71,12 +81,18 @@ int RunBootstrapper(
     mutable_command.push_back(L'\0');
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = ::GetStdHandle(STD_INPUT_HANDLE);
+    startup.hStdOutput = output;
+    startup.hStdError = output;
     PROCESS_INFORMATION process{};
     if (!::CreateProcessW(
             bootstrapper.c_str(), mutable_command.data(), nullptr, nullptr,
-            FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) {
+            TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) {
+        ::CloseHandle(output);
         return -1;
     }
+    ::CloseHandle(output);
     ::CloseHandle(process.hThread);
     ::WaitForSingleObject(process.hProcess, 30000);
     DWORD exit_code = 999;
@@ -207,6 +223,10 @@ int main() {
             exit_code == 0,
             "launcher must start a child with isolated runtime environment; exit=" +
                 std::to_string(exit_code));
+        failures += !Expect(
+            ReadText(fixture.root / "bootstrapper-test-output.txt").find(
+                "runtime_child_output_forwarded") != std::string::npos,
+            "launcher must forward redirected child output to its caller");
         const auto diagnostic = ReadText(fixture.root / "bootstrapper.log");
         failures += !Expect(
             diagnostic.find("launched runtime_set=set-v1") != std::string::npos &&

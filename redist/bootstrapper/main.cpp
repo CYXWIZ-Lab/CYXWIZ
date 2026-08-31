@@ -72,6 +72,73 @@ std::wstring RestrictedPath(
     return value;
 }
 
+bool IsValidHandle(HANDLE handle) {
+    return handle != nullptr && handle != INVALID_HANDLE_VALUE;
+}
+
+class ChildStandardHandles {
+public:
+    ChildStandardHandles() = default;
+    ChildStandardHandles(const ChildStandardHandles&) = delete;
+    ChildStandardHandles& operator=(const ChildStandardHandles&) = delete;
+
+    ~ChildStandardHandles() {
+        for (const HANDLE handle : {input_, output_, error_}) {
+            if (IsValidHandle(handle)) {
+                ::CloseHandle(handle);
+            }
+        }
+    }
+
+    bool Configure(STARTUPINFOW& startup, std::string& error) {
+        if (!DuplicateOrOpenNull(
+                STD_INPUT_HANDLE, GENERIC_READ, input_, error) ||
+            !DuplicateOrOpenNull(
+                STD_OUTPUT_HANDLE, GENERIC_WRITE, output_, error) ||
+            !DuplicateOrOpenNull(
+                STD_ERROR_HANDLE, GENERIC_WRITE, error_, error)) {
+            return false;
+        }
+        startup.dwFlags |= STARTF_USESTDHANDLES;
+        startup.hStdInput = input_;
+        startup.hStdOutput = output_;
+        startup.hStdError = error_;
+        return true;
+    }
+
+private:
+    static bool DuplicateOrOpenNull(
+        DWORD standard_handle,
+        DWORD fallback_access,
+        HANDLE& output,
+        std::string& error) {
+        const HANDLE source = ::GetStdHandle(standard_handle);
+        if (IsValidHandle(source)) {
+            if (::DuplicateHandle(
+                    ::GetCurrentProcess(), source, ::GetCurrentProcess(),
+                    &output, 0, TRUE, DUPLICATE_SAME_ACCESS)) {
+                return true;
+            }
+        } else {
+            SECURITY_ATTRIBUTES security{
+                sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+            output = ::CreateFileW(
+                L"NUL", fallback_access, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (IsValidHandle(output)) {
+                return true;
+            }
+        }
+        error = "cannot prepare inherited standard handles; Win32 error " +
+            std::to_string(::GetLastError());
+        return false;
+    }
+
+    HANDLE input_ = nullptr;
+    HANDLE output_ = nullptr;
+    HANDLE error_ = nullptr;
+};
+
 int Fail(const std::filesystem::path& runtime_root, const std::string& message) {
     cyxwiz::runtime::AppendBootstrapDiagnostic(runtime_root, "launch failed: " + message);
     std::cerr << "CyxWiz launch failed: " << message << '\n';
@@ -249,10 +316,17 @@ int wmain(int argc, wchar_t** argv) {
 
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
+    ChildStandardHandles standard_handles;
+    if (!standard_handles.Configure(startup, error)) {
+        return Fail(runtime.runtime_root, error);
+    }
     PROCESS_INFORMATION process{};
+    // Preserve the caller's standard streams so command-line verification and
+    // diagnostics emitted by the Engine remain observable through this stable
+    // launcher. The bootstrapper owns no other inheritable handles here.
     const BOOL created = ::CreateProcessW(
         launched_executable.c_str(), mutable_command.data(), nullptr, nullptr,
-        FALSE, 0, nullptr, runtime.base_directory.c_str(), &startup, &process);
+        TRUE, 0, nullptr, runtime.base_directory.c_str(), &startup, &process);
     if (!created) {
         return Fail(runtime.runtime_root,
                     "CreateProcessW failed for the active base; Win32 error " +

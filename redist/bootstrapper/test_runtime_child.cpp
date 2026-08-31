@@ -53,5 +53,6 @@ int main() {
         std::cerr << "child could not configure restricted DLL search: " << error << '\n';
         return 4;
     }
+    std::cout << "runtime_child_output_forwarded\n";
     return 0;
 }
