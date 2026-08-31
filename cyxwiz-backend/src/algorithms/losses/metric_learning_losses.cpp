@@ -76,7 +76,7 @@ EmbeddingPairShape ValidateEmbeddingPair(const Tensor& x1, const Tensor& x2, con
     return {shape[0], shape[1]};
 }
 
-const float* ValidateEmbeddingLabels(const Tensor& labels, size_t batch, const char* name) {
+void ValidateEmbeddingLabelShape(const Tensor& labels, size_t batch, const char* name) {
     if (labels.GetDataType() != DataType::Float32) {
         throw std::runtime_error(std::string(name) + " labels must be Float32");
     }
@@ -87,30 +87,39 @@ const float* ValidateEmbeddingLabels(const Tensor& labels, size_t batch, const c
         throw std::runtime_error(std::string(name) +
                                  " labels must have shape [batch] or [batch, 1]");
     }
-    return labels.Data<float>();
+}
+
+const float* ValidateCosineEmbeddingLabelValues(const Tensor& labels, size_t batch) {
+    const float* values = labels.ReadData<float>();
+    for (size_t row = 0; row < batch; ++row) {
+        if (values[row] != 1.0f && values[row] != -1.0f) {
+            throw std::runtime_error("CosineEmbeddingLoss labels must be exactly +1 or -1");
+        }
+    }
+    return values;
+}
+
+const float* ValidateContrastiveLabelValues(const Tensor& labels, size_t batch) {
+    const float* values = labels.ReadData<float>();
+    for (size_t row = 0; row < batch; ++row) {
+        if (values[row] != 0.0f && values[row] != 1.0f) {
+            throw std::runtime_error("ContrastiveLoss labels must be exactly 0 or 1");
+        }
+    }
+    return values;
 }
 
 EmbeddingPairShape ValidateCosineEmbeddingInputs(const Tensor& x1, const Tensor& x2,
                                                  const Tensor& labels) {
     const EmbeddingPairShape shape = ValidateEmbeddingPair(x1, x2, "CosineEmbeddingLoss");
-    const float* values = ValidateEmbeddingLabels(labels, shape.batch, "CosineEmbeddingLoss");
-    for (size_t row = 0; row < shape.batch; ++row) {
-        if (values[row] != 1.0f && values[row] != -1.0f) {
-            throw std::runtime_error("CosineEmbeddingLoss labels must be exactly +1 or -1");
-        }
-    }
+    ValidateEmbeddingLabelShape(labels, shape.batch, "CosineEmbeddingLoss");
     return shape;
 }
 
 EmbeddingPairShape ValidateContrastiveInputs(const Tensor& x1, const Tensor& x2,
                                              const Tensor& labels) {
     const EmbeddingPairShape shape = ValidateEmbeddingPair(x1, x2, "ContrastiveLoss");
-    const float* values = ValidateEmbeddingLabels(labels, shape.batch, "ContrastiveLoss");
-    for (size_t row = 0; row < shape.batch; ++row) {
-        if (values[row] != 0.0f && values[row] != 1.0f) {
-            throw std::runtime_error("ContrastiveLoss labels must be exactly 0 or 1");
-        }
-    }
+    ValidateEmbeddingLabelShape(labels, shape.batch, "ContrastiveLoss");
     return shape;
 }
 
@@ -127,9 +136,9 @@ Tensor CpuCosineEmbeddingForward(const Tensor& x1,
                                  float margin,
                                  Reduction reduction) {
     const EmbeddingPairShape shape = ValidateCosineEmbeddingInputs(x1, x2, labels);
-    const float* label_data = labels.Data<float>();
-    const float* a = x1.Data<float>();
-    const float* b = x2.Data<float>();
+    const float* label_data = ValidateCosineEmbeddingLabelValues(labels, shape.batch);
+    const float* a = x1.ReadData<float>();
+    const float* b = x2.ReadData<float>();
 
     std::vector<float> losses(shape.batch, 0.0f);
     for (size_t batch = 0; batch < shape.batch; ++batch) {
@@ -156,12 +165,12 @@ Tensor CpuCosineEmbeddingBackward(const Tensor& x1,
                                   float margin,
                                   Reduction reduction) {
     const EmbeddingPairShape shape = ValidateCosineEmbeddingInputs(x1, x2, labels);
-    const float* label_data = labels.Data<float>();
-    const float* a = x1.Data<float>();
-    const float* b = x2.Data<float>();
+    const float* label_data = ValidateCosineEmbeddingLabelValues(labels, shape.batch);
+    const float* a = x1.ReadData<float>();
+    const float* b = x2.ReadData<float>();
 
     Tensor grad(x1.Shape(), DataType::Float32);
-    float* out = grad.Data<float>();
+    float* out = grad.MutableData<float>();
     for (size_t batch = 0; batch < shape.batch; ++batch) {
         const size_t base = batch * shape.dim;
         float dot = 0.0f;
@@ -202,9 +211,9 @@ Tensor CpuTripletForward(const Tensor& anchor,
                          Reduction reduction) {
     const EmbeddingPairShape shape = ValidateTripletInputs(anchor, positive, negative);
 
-    const float* a = anchor.Data<float>();
-    const float* p = positive.Data<float>();
-    const float* n = negative.Data<float>();
+    const float* a = anchor.ReadData<float>();
+    const float* p = positive.ReadData<float>();
+    const float* n = negative.ReadData<float>();
     std::vector<float> dist_ap(shape.batch, 0.0f);
     std::vector<float> dist_an(shape.batch, 0.0f);
     std::vector<float> losses(shape.batch, 0.0f);
@@ -255,12 +264,12 @@ TripletLossGradients CpuTripletBackwardAll(const Tensor& anchor,
     TripletLossGradients gradients{Tensor(anchor.Shape(), DataType::Float32),
                                    Tensor(anchor.Shape(), DataType::Float32),
                                    Tensor(anchor.Shape(), DataType::Float32)};
-    float* grad_anchor = gradients.anchor.Data<float>();
-    float* grad_positive = gradients.positive.Data<float>();
-    float* grad_negative = gradients.negative.Data<float>();
-    const float* a = anchor.Data<float>();
-    const float* p = positive.Data<float>();
-    const float* n = negative.Data<float>();
+    float* grad_anchor = gradients.anchor.MutableData<float>();
+    float* grad_positive = gradients.positive.MutableData<float>();
+    float* grad_negative = gradients.negative.MutableData<float>();
+    const float* a = anchor.ReadData<float>();
+    const float* p = positive.ReadData<float>();
+    const float* n = negative.ReadData<float>();
     const float reduction_scale = reduction == Reduction::Mean && shape.batch > 0
                                       ? 1.0f / static_cast<float>(shape.batch)
                                       : 1.0f;
@@ -343,9 +352,9 @@ Tensor CpuContrastiveForward(const Tensor& x1,
                              float margin,
                              Reduction reduction) {
     const EmbeddingPairShape shape = ValidateContrastiveInputs(x1, x2, labels);
-    const float* label_data = labels.Data<float>();
-    const float* a = x1.Data<float>();
-    const float* b = x2.Data<float>();
+    const float* label_data = ValidateContrastiveLabelValues(labels, shape.batch);
+    const float* a = x1.ReadData<float>();
+    const float* b = x2.ReadData<float>();
     std::vector<float> distances(shape.batch, 0.0f);
     std::vector<float> losses(shape.batch, 0.0f);
 
@@ -371,12 +380,12 @@ Tensor CpuContrastiveBackward(const Tensor& x1,
                               float margin,
                               Reduction reduction) {
     const EmbeddingPairShape shape = ValidateContrastiveInputs(x1, x2, labels);
-    const float* label_data = labels.Data<float>();
+    const float* label_data = ValidateContrastiveLabelValues(labels, shape.batch);
 
     Tensor grad(x1.Shape(), DataType::Float32);
-    float* out = grad.Data<float>();
-    const float* a = x1.Data<float>();
-    const float* b = x2.Data<float>();
+    float* out = grad.MutableData<float>();
+    const float* a = x1.ReadData<float>();
+    const float* b = x2.ReadData<float>();
     const float reduction_scale = reduction == Reduction::Mean && shape.batch > 0
                                       ? 1.0f / static_cast<float>(shape.batch)
                                       : 1.0f;
@@ -443,11 +452,16 @@ void ContrastiveLoss::SetMargin(float margin) {
 
 Tensor CosineEmbeddingLoss::Forward(const Tensor& x1, const Tensor& x2) {
     constexpr const char* kOperation = "CosineEmbeddingLoss::Forward";
-    ValidateCosineEmbeddingInputs(x1, x2, labels_);
+    const EmbeddingPairShape shape = ValidateCosineEmbeddingInputs(x1, x2, labels_);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     const bool use_native_cpu = PrepareLossNativeCpuFallback(kOperation, x1, x2, reduction_);
     if (!use_native_cpu)
         try {
+        {
+            const ScopedArrayFireHostSyncAttribution validation(
+                ArrayFireHostSyncCategory::LossInputValidation, kOperation);
+            ValidateCosineEmbeddingLabelValues(labels_, shape.batch);
+        }
         af::array a1 = TensorToAf(x1);
         af::array a2 = TensorToAf(x2);
         af::array labels = af::flat(TensorToAf(labels_));
@@ -485,6 +499,11 @@ Tensor CosineEmbeddingLoss::Backward(const Tensor& x1, const Tensor& x2) {
     const bool use_native_cpu = PrepareLossNativeCpuFallback(kOperation, x1, x2, reduction_);
     if (!use_native_cpu)
         try {
+        {
+            const ScopedArrayFireHostSyncAttribution validation(
+                ArrayFireHostSyncCategory::LossInputValidation, kOperation);
+            ValidateCosineEmbeddingLabelValues(labels_, shape.batch);
+        }
         af::array a1 = TensorToAf(x1);
         af::array a2 = TensorToAf(x2);
         af::array labels = af::flat(TensorToAf(labels_));
@@ -676,11 +695,16 @@ TripletLossGradients TripletLoss::BackwardAll(const Tensor& anchor, const Tensor
 
 Tensor ContrastiveLoss::Forward(const Tensor& x1, const Tensor& x2) {
     constexpr const char* kOperation = "ContrastiveLoss::Forward";
-    ValidateContrastiveInputs(x1, x2, labels_);
+    const EmbeddingPairShape shape = ValidateContrastiveInputs(x1, x2, labels_);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     const bool use_native_cpu = PrepareLossNativeCpuFallback(kOperation, x1, x2, reduction_);
     if (!use_native_cpu)
         try {
+        {
+            const ScopedArrayFireHostSyncAttribution validation(
+                ArrayFireHostSyncCategory::LossInputValidation, kOperation);
+            ValidateContrastiveLabelValues(labels_, shape.batch);
+        }
         af::array a1 = TensorToAf(x1);
         af::array a2 = TensorToAf(x2);
         af::array labels = af::flat(TensorToAf(labels_));
@@ -714,6 +738,11 @@ Tensor ContrastiveLoss::Backward(const Tensor& x1, const Tensor& x2) {
     const bool use_native_cpu = PrepareLossNativeCpuFallback(kOperation, x1, x2, reduction_);
     if (!use_native_cpu)
         try {
+        {
+            const ScopedArrayFireHostSyncAttribution validation(
+                ArrayFireHostSyncCategory::LossInputValidation, kOperation);
+            ValidateContrastiveLabelValues(labels_, shape.batch);
+        }
         af::array a1 = TensorToAf(x1);
         af::array a2 = TensorToAf(x2);
         af::array labels = af::flat(TensorToAf(labels_));

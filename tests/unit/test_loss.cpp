@@ -1334,37 +1334,36 @@ TEST_CASE("Metric-learning backward recomputes from supplied tensors", "[loss][m
 #if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
 TEST_CASE("Metric-learning losses declare strict and compatible fallback truth",
           "[loss][metric-learning][arrayfire][fallback]") {
-    const auto make_device_tensor = [](const std::vector<float>& values) {
-        const cyxwiz::Tensor host({2, 2}, values.data(), cyxwiz::DataType::Float32);
+    const auto make_device_tensor = [](const std::vector<size_t>& shape,
+                                       const std::vector<float>& values) {
+        const cyxwiz::Tensor host(shape, values.data(), cyxwiz::DataType::Float32);
         return cyxwiz::Tensor::FromSemanticArray(host.GetSemanticArray(), host.Shape());
     };
     const auto make_first = [make_device_tensor] {
-        return make_device_tensor({1.0f, 0.0f, 0.2f, 0.8f});
+        return make_device_tensor({2, 2}, {1.0f, 0.0f, 0.2f, 0.8f});
     };
     const auto make_second = [make_device_tensor] {
-        return make_device_tensor({0.0f, 1.0f, 0.7f, 0.1f});
+        return make_device_tensor({2, 2}, {0.0f, 1.0f, 0.7f, 0.1f});
     };
     const std::vector<std::pair<LossFactory, std::string>> losses = {
-        {[] {
-             const float values[] = {1.0f, -1.0f};
+        {[make_device_tensor] {
              auto loss =
-                 std::make_unique<cyxwiz::CosineEmbeddingLoss>(0.2f, cyxwiz::Reduction::None);
-             loss->SetLabels(cyxwiz::Tensor({2}, values, cyxwiz::DataType::Float32));
+                  std::make_unique<cyxwiz::CosineEmbeddingLoss>(0.2f, cyxwiz::Reduction::None);
+             loss->SetLabels(make_device_tensor({2}, {1.0f, -1.0f}));
              return loss;
          },
          "CosineEmbeddingLoss"},
-        {[] {
-             const float values[] = {-0.5f, 0.3f, 0.9f, 0.2f};
+        {[make_device_tensor] {
              auto loss = std::make_unique<cyxwiz::TripletLoss>(
                  1.0f, cyxwiz::TripletLoss::DistanceType::Euclidean, cyxwiz::Reduction::None);
-             loss->SetNegative(cyxwiz::Tensor({2, 2}, values, cyxwiz::DataType::Float32));
+             loss->SetNegative(
+                 make_device_tensor({2, 2}, {-0.5f, 0.3f, 0.9f, 0.2f}));
              return loss;
          },
          "TripletLoss"},
-        {[] {
-             const float values[] = {0.0f, 1.0f};
+        {[make_device_tensor] {
              auto loss = std::make_unique<cyxwiz::ContrastiveLoss>(1.5f, cyxwiz::Reduction::None);
-             loss->SetLabels(cyxwiz::Tensor({2}, values, cyxwiz::DataType::Float32));
+             loss->SetLabels(make_device_tensor({2}, {0.0f, 1.0f}));
              return loss;
          },
          "ContrastiveLoss"},
@@ -1376,6 +1375,73 @@ TEST_CASE("Metric-learning losses declare strict and compatible fallback truth",
         DYNAMIC_SECTION(name << " backward") {
             RequireLossFallbackContract(factory, name + "::Backward", false, make_first,
                                         make_second);
+        }
+    }
+}
+
+TEST_CASE("Metric-learning device label validation is explicitly attributed",
+          "[loss][metric-learning][arrayfire][residency]") {
+    const auto make_device_tensor = [](const std::vector<size_t>& shape,
+                                       const std::vector<float>& values) {
+        const cyxwiz::Tensor host(shape, values.data(), cyxwiz::DataType::Float32);
+        return cyxwiz::Tensor::FromSemanticArray(host.GetSemanticArray(), host.Shape());
+    };
+    const auto make_first = [make_device_tensor] {
+        return make_device_tensor({2, 2}, {1.0f, 0.0f, 0.2f, 0.8f});
+    };
+    const auto make_second = [make_device_tensor] {
+        return make_device_tensor({2, 2}, {0.0f, 1.0f, 0.7f, 0.1f});
+    };
+    const std::vector<std::pair<LossFactory, std::string>> losses = {
+        {[make_device_tensor] {
+             auto loss =
+                 std::make_unique<cyxwiz::CosineEmbeddingLoss>(0.2f, cyxwiz::Reduction::None);
+             loss->SetLabels(make_device_tensor({2}, {1.0f, -1.0f}));
+             return loss;
+         },
+         "CosineEmbeddingLoss"},
+        {[make_device_tensor] {
+             auto loss =
+                 std::make_unique<cyxwiz::ContrastiveLoss>(1.5f, cyxwiz::Reduction::None);
+             loss->SetLabels(make_device_tensor({2}, {0.0f, 1.0f}));
+             return loss;
+         },
+         "ContrastiveLoss"},
+    };
+
+    for (const auto& [factory, name] : losses) {
+        for (const bool forward : {true, false}) {
+            DYNAMIC_SECTION(name << (forward ? " forward" : " backward")) {
+                std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent> fallback_events;
+                std::vector<cyxwiz::ArrayFireHostSyncEvent> host_sync_events;
+                cyxwiz::Tensor result;
+                {
+                    const ScopedLossEventCapture capture(fallback_events, host_sync_events);
+                    const cyxwiz::ScopedArrayFireFallbackPolicy strict(
+                        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+                    const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
+                        &CaptureLossFallback);
+                    const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
+                        &CaptureLossHostSync);
+                    auto loss = factory();
+                    const auto first = make_first();
+                    const auto second = make_second();
+                    result = forward ? loss->Forward(first, second)
+                                     : loss->Backward(first, second);
+                }
+
+                REQUIRE(fallback_events.empty());
+                REQUIRE(result.Shape() ==
+                        (forward ? std::vector<size_t>{2}
+                                 : std::vector<size_t>{2, 2}));
+                REQUIRE(host_sync_events.size() == 1);
+                const auto& event = host_sync_events.front();
+                REQUIRE(event.attribution_category == "loss_input_validation");
+                REQUIRE(event.attribution_operation ==
+                        name + (forward ? "::Forward" : "::Backward"));
+                REQUIRE(event.tensor_shape == std::vector<size_t>{2});
+                REQUIRE(event.bytes == 2 * sizeof(float));
+            }
         }
     }
 }

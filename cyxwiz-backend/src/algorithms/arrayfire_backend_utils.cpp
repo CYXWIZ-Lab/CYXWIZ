@@ -146,6 +146,8 @@ const char* ArrayFireHostSyncCategoryName(
             return "optimizer_cpu_path";
         case ArrayFireHostSyncCategory::LossCpuPath:
             return "loss_cpu_path";
+        case ArrayFireHostSyncCategory::LossInputValidation:
+            return "loss_input_validation";
         case ArrayFireHostSyncCategory::CheckpointOutput:
             return "checkpoint_output";
         case ArrayFireHostSyncCategory::AlgorithmCpuPath:

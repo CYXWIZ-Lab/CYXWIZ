@@ -39,6 +39,7 @@ enum class ArrayFireHostSyncCategory {
     AlgorithmCpuPath,
     OutputMaterialization,
     LossCpuPath,
+    LossInputValidation,
 };
 
 struct ArrayFireHostSyncAttribution {
