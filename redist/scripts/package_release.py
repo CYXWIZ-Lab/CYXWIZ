@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import zipfile
@@ -29,6 +30,10 @@ from backend_pack_target import (  # noqa: E402
     BackendPackTarget,
     BackendPackTargetError,
     detect_backend_pack_target,
+)
+from macho_runtime_closure import (  # noqa: E402
+    MachOClosureError,
+    close_macos_runtime,
 )
 from python_runtime_package import copy_python_runtime  # noqa: E402
 
@@ -326,12 +331,18 @@ def dynamic_library_matches(build: Path, suffix: str) -> list[Path]:
     return sorted(path for path in build.glob(f"*{suffix}*") if path.is_file())
 
 
+def build_library_directories(paths: PackagePaths) -> tuple[Path, ...]:
+    candidates = (paths.build, paths.build.parent / "lib")
+    return tuple(dict.fromkeys(path.resolve() for path in candidates if path.is_dir()))
+
+
 def backend_runtime(paths: PackagePaths, lib_suffix: str) -> Path:
     names = [f"cyxwiz-backend{lib_suffix}", f"libcyxwiz-backend{lib_suffix}"]
-    for name in names:
-        candidate = paths.build / name
-        if candidate.is_file():
-            return candidate
+    for directory in build_library_directories(paths):
+        for name in names:
+            candidate = directory / name
+            if candidate.is_file():
+                return candidate
     raise PackageError(f"Missing CyxWiz backend runtime in {paths.build}")
 
 
@@ -393,7 +404,7 @@ def copy_build_payload(
             "detached product-removal finalizer",
         ),
     ]
-    backend_runtime(paths, lib_suffix)
+    backend = backend_runtime(paths, lib_suffix)
     require_directory(paths.resources, "Engine resources")
 
     copy_file(engine, stage / engine.name)
@@ -401,6 +412,8 @@ def copy_build_payload(
     copy_file(installer, stage / installer.name)
     for helper in helpers:
         copy_file(helper, stage / helper.name)
+    if backend.parent.resolve() != paths.build.resolve():
+        copy_file(backend, stage / backend.name)
     for library in dynamic_library_matches(paths.build, lib_suffix):
         if re.fullmatch(r"python\d+\.dll", library.name, re.IGNORECASE):
             continue
@@ -505,8 +518,21 @@ def package_arrayfire_base(
         )
 
     licenses = arrayfire_root / "LICENSES"
-    require_directory(licenses, "ArrayFire licenses")
-    copy_tree(licenses, stage / "THIRD_PARTY_LICENSES" / "ArrayFire")
+    license_destination = stage / "THIRD_PARTY_LICENSES" / "ArrayFire"
+    if licenses.is_dir():
+        copy_tree(licenses, license_destination)
+    else:
+        license_file = next(
+            (
+                candidate
+                for candidate in (arrayfire_root / "LICENSE", arrayfire_root / "LICENSE.txt")
+                if candidate.is_file()
+            ),
+            None,
+        )
+        if license_file is None:
+            raise PackageError(f"Missing ArrayFire licenses below {arrayfire_root}")
+        copy_file(license_file, license_destination / license_file.name)
     return arrayfire_version(arrayfire_root)
 
 
@@ -710,7 +736,7 @@ def sha256_file(path: Path) -> str:
 
 
 def create_deterministic_zip(stage: Path, destination: Path) -> Path:
-    """Create stable Windows pack bytes from sorted content and fixed metadata."""
+    """Create stable pack bytes from sorted content and fixed metadata."""
     # Level 6 is zlib's balanced default. Level 9 made the 1 GiB production
     # base take tens of minutes to publish without a material distribution-size
     # benefit; determinism comes from fixed ordering/metadata, not level 9.
@@ -727,7 +753,18 @@ def create_deterministic_zip(stage: Path, destination: Path) -> Path:
             info = zipfile.ZipInfo(relative, date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.create_system = 3
-            executable = path.suffix.lower() in (".exe", ".dll", ".pyd", ".so", ".dylib")
+            executable = (
+                bool(path.stat().st_mode & stat.S_IXUSR)
+                or path.suffix.lower() in (".exe", ".dll", ".pyd", ".so", ".dylib")
+                or path.name in {
+                    "cyxwiz-engine",
+                    "cyxwiz-installer",
+                    "cyxwiz-backend-pack-installer",
+                    "cyxwiz-runtime-bootstrapper",
+                    "cyxwiz-product-removal-finalizer",
+                    "cyxwiz-route-probe",
+                }
+            )
             info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
             archive.writestr(
                 info,
@@ -869,6 +906,16 @@ def create_archive(stage: Path, output_root: Path, package_name: str, system: st
     return archive
 
 
+def macos_runtime_search_roots(
+    paths: PackagePaths, arrayfire_root: Path
+) -> tuple[Path, ...]:
+    roots = [*build_library_directories(paths), arrayfire_library_dir(arrayfire_root)]
+    roots.extend(
+        sorted((paths.root / "build" / "vcpkg_installed").glob("*-osx/lib"))
+    )
+    return tuple(dict.fromkeys(path.resolve() for path in roots if path.is_dir()))
+
+
 def build_split_artifact(
     args: argparse.Namespace,
     paths: PackagePaths,
@@ -880,8 +927,10 @@ def build_split_artifact(
     system: str,
     version: str,
 ) -> tuple[Path, Path | None]:
-    if system != "windows":
-        raise PackageError("Base/backend-pack artifacts are currently validated only on Windows")
+    if system not in ("windows", "darwin"):
+        raise PackageError("Base/backend-pack artifacts are not yet validated on this platform")
+    if system == "darwin" and args.profile != "base":
+        raise PackageError("Optional backend packs are not yet qualified on macOS")
     pack_version = validate_release_version(args.pack_version, "pack")
     arrayfire_root = (args.arrayfire_dir or Path(os.environ.get("ARRAYFIRE_DIR", r"C:\Program Files\ArrayFire\v3"))).resolve()
     require_directory(arrayfire_root, "ArrayFire root")
@@ -902,24 +951,57 @@ def build_split_artifact(
         safe_clean(stage, paths.output_root)
         copy_build_payload(paths, stage, "full", system, exe_suffix, lib_suffix)
 
-        python_root = (args.python_dir or Path(os.environ.get("PYTHON_EMBED", r"C:\Python312-embed"))).resolve()
-        require_directory(python_root, "bundled Python runtime")
-        validate_windows_embedded_python(python_root)
-        full_python_version = validate_python_version(python_version(python_root, args.python_version))
-        python_license = next(
-            (path for path in (python_root / "LICENSE.txt", python_root / "LICENSE") if path.is_file()),
-            None,
-        )
-        if python_license is None:
-            raise PackageError(f"Missing bundled Python license in {python_root}")
-
-        intel_notices = args.intel_runtime_license_dir or os.environ.get("INTEL_RUNTIME_LICENSE_DIR")
-        if intel_notices is None:
-            raise PackageError("Pass --intel-runtime-license-dir for the CPU base MKL notices")
-        intel_notices_path = validate_intel_runtime_notices(Path(intel_notices).resolve(), ())
         package_arrayfire_base(arrayfire_root, stage, lib_suffix)
-        copy_python_runtime(python_root, stage / "python")
-        copy_runtime_notices(stage, intel_notices_path, None)
+        runtime_versions: dict[str, str] = {
+            "arrayfire": af_version,
+            "cyxwiz": version,
+            "python_scripting": "disabled",
+        }
+        python_description = (
+            "Python scripting is excluded from this CPU qualification build."
+        )
+        if system == "windows":
+            python_root = (
+                args.python_dir
+                or Path(os.environ.get("PYTHON_EMBED", r"C:\Python312-embed"))
+            ).resolve()
+            require_directory(python_root, "bundled Python runtime")
+            validate_windows_embedded_python(python_root)
+            full_python_version = validate_python_version(
+                python_version(python_root, args.python_version)
+            )
+            python_license = next(
+                (
+                    path
+                    for path in (python_root / "LICENSE.txt", python_root / "LICENSE")
+                    if path.is_file()
+                ),
+                None,
+            )
+            if python_license is None:
+                raise PackageError(f"Missing bundled Python license in {python_root}")
+            intel_notices = (
+                args.intel_runtime_license_dir
+                or os.environ.get("INTEL_RUNTIME_LICENSE_DIR")
+            )
+            if intel_notices is None:
+                raise PackageError(
+                    "Pass --intel-runtime-license-dir for the CPU base MKL notices"
+                )
+            intel_notices_path = validate_intel_runtime_notices(
+                Path(intel_notices).resolve(), ()
+            )
+            copy_python_runtime(python_root, stage / "python")
+            copy_runtime_notices(stage, intel_notices_path, None)
+            runtime_versions["python"] = full_python_version
+            python_description = f"Bundled Python {full_python_version} runtime."
+        else:
+            try:
+                close_macos_runtime(
+                    stage, macos_runtime_search_roots(paths, arrayfire_root)
+                )
+            except MachOClosureError as error:
+                raise PackageError(str(error)) from error
         render_readme(
             paths.templates / "README_BASE.md",
             stage / "README.md",
@@ -928,11 +1010,12 @@ def build_split_artifact(
                 "PLATFORM": platform_name,
                 "BACKENDS": "cpu base",
                 "ARRAYFIRE_VERSION": af_version,
+                "PYTHON_RUNTIME": python_description,
+                "BOOTSTRAPPER": f"cyxwiz-runtime-bootstrapper{exe_suffix}",
             },
         )
-        # Ensure the detected embedded ABI participates in the staged content.
         (stage / "RUNTIME_VERSIONS.json").write_text(
-            json.dumps({"arrayfire": af_version, "cyxwiz": version, "python": full_python_version}, indent=2) + "\n",
+            json.dumps(runtime_versions, indent=2) + "\n",
             encoding="utf-8",
         )
         backend = "cpu"

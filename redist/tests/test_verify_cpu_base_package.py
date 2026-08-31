@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+import stat
 import zipfile
+from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "verify_cpu_base_package.py"
@@ -18,6 +21,23 @@ SPEC.loader.exec_module(verify_cpu_base_package)
 
 
 class CpuBasePackageVerifierTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "Windows does not expose POSIX execute modes")
+    def test_safe_extract_restores_native_executable_mode(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-cpu-base-") as temporary:
+            root = Path(temporary)
+            archive = root / "native.zip"
+            info = zipfile.ZipInfo("cyxwiz-runtime-bootstrapper")
+            info.create_system = 3
+            info.external_attr = 0o755 << 16
+            with zipfile.ZipFile(archive, "w") as package:
+                package.writestr(info, b"native")
+
+            destination = root / "extracted"
+            verify_cpu_base_package.safe_extract(archive, destination)
+
+            mode = (destination / info.filename).stat().st_mode
+            self.assertTrue(mode & stat.S_IXUSR)
+
     def test_unsigned_ci_manifest_is_structurally_validated(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cyxwiz-cpu-base-") as temporary:
             root = Path(temporary)
@@ -135,6 +155,30 @@ class CpuBasePackageVerifierTests(unittest.TestCase):
                 verify_cpu_base_package.CpuBaseSmokeError, "outside CPU base"
             ):
                 verify_cpu_base_package.audit_runtime_modules(output, base)
+
+    def test_macos_audit_rejects_any_non_system_absolute_dependency(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-cpu-base-") as temporary:
+            base = Path(temporary) / "base"
+            runtime = base / "arrayfire" / "lib"
+            runtime.mkdir(parents=True)
+            for name in ("libaf.dylib", "libafcpu.dylib"):
+                (runtime / name).write_bytes(b"\xcf\xfa\xed\xfe" + b"fixture")
+            output = (
+                f"{runtime / 'libaf.dylib'}:\n"
+                "\t/Applications/vendor/lib/libvendor.dylib "
+                "(compatibility version 1.0.0, current version 1.0.0)\n"
+            )
+            completed = verify_cpu_base_package.subprocess.CompletedProcess(
+                args=["otool"], returncode=0, stdout=output
+            )
+
+            with mock.patch.object(
+                verify_cpu_base_package.subprocess, "run", return_value=completed
+            ), self.assertRaisesRegex(
+                verify_cpu_base_package.CpuBaseSmokeError,
+                "non-system absolute dependency",
+            ):
+                verify_cpu_base_package.audit_macos_dependencies(base)
 
 
 if __name__ == "__main__":

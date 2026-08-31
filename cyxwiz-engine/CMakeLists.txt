@@ -505,8 +505,6 @@ set(ENGINE_SOURCES
     src/data/data_table.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
-    src/scripting/scripting_engine.cpp
-    src/scripting/python_sandbox.cpp
     src/scripting/debugger.cpp
     src/scripting/startup_script_manager.cpp
     src/scripting/cell_manager.cpp
@@ -565,8 +563,21 @@ set(ENGINE_SOURCES
     src/plotting/test_data_generator.cpp
     src/plotting/plot_3d_generator.cpp
     src/plotting/backends/implot_backend.cpp
-    src/plotting/backends/matplotlib_backend.cpp
 )
+
+if(CYXWIZ_HAS_PYTHON)
+    list(APPEND ENGINE_SOURCES
+        src/plotting/backends/matplotlib_backend.cpp
+        src/scripting/scripting_engine.cpp
+        src/scripting/python_sandbox.cpp
+    )
+else()
+    list(APPEND ENGINE_SOURCES
+        src/plotting/backends/matplotlib_backend_stub.cpp
+        src/scripting/scripting_engine_stub.cpp
+        src/scripting/python_sandbox_stub.cpp
+    )
+endif()
 
 set(ENGINE_HEADERS
     src/application.h
@@ -906,7 +917,6 @@ target_link_libraries(cyxwiz-engine PRIVATE
     fmt::fmt
     spdlog::spdlog
     nlohmann_json::nlohmann_json
-    pybind11::embed
     httplib::httplib
     OpenSSL::SSL
     OpenSSL::Crypto
@@ -940,6 +950,7 @@ endif()
 
 # Python scripting support (controlled by CYXWIZ_HAS_PYTHON from root CMakeLists.txt)
 if(CYXWIZ_HAS_PYTHON)
+    target_link_libraries(cyxwiz-engine PRIVATE pybind11::embed)
     target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_PYTHON)
     message(STATUS "Engine: Python scripting support enabled")
 endif()

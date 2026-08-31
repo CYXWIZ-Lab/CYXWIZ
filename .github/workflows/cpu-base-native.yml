@@ -1,4 +1,4 @@
-name: Windows CPU Base Native
+name: CPU Base Native
 
 on:
   workflow_dispatch:
@@ -13,6 +13,7 @@ on:
       - "redist/scripts/backend_pack_contract.py"
       - "redist/scripts/backend_pack_target.py"
       - "redist/scripts/package_release.py"
+      - "redist/scripts/macho_runtime_closure.py"
       - "redist/scripts/python_runtime_package.py"
       - "redist/scripts/prepare_pack_support_promotion.py"
       - "redist/scripts/verify_cpu_base_package.py"
@@ -20,6 +21,7 @@ on:
       - "redist/tests/test_backend_pack_contract.py"
       - "redist/tests/test_backend_pack_target.py"
       - "redist/tests/test_package_release.py"
+      - "redist/tests/test_macho_runtime_closure.py"
       - "redist/tests/test_python_runtime_package.py"
       - "redist/tests/test_verify_cpu_base_package.py"
       - "tests/smoke/test_oneapi_operation_probe.cpp"
@@ -39,6 +41,7 @@ on:
       - "redist/scripts/backend_pack_contract.py"
       - "redist/scripts/backend_pack_target.py"
       - "redist/scripts/package_release.py"
+      - "redist/scripts/macho_runtime_closure.py"
       - "redist/scripts/python_runtime_package.py"
       - "redist/scripts/prepare_pack_support_promotion.py"
       - "redist/scripts/verify_cpu_base_package.py"
@@ -46,6 +49,7 @@ on:
       - "redist/tests/test_backend_pack_contract.py"
       - "redist/tests/test_backend_pack_target.py"
       - "redist/tests/test_package_release.py"
+      - "redist/tests/test_macho_runtime_closure.py"
       - "redist/tests/test_python_runtime_package.py"
       - "redist/tests/test_verify_cpu_base_package.py"
       - "tests/smoke/test_oneapi_operation_probe.cpp"
@@ -197,6 +201,121 @@ jobs:
           path: cpu-base-artifact/
           if-no-files-found: error
 
+  build-macos-intel:
+    name: Build macOS Intel CPU base
+    runs-on: macos-15-intel
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run native package contracts
+        run: >-
+          python -B -m unittest
+          redist.tests.test_backend_pack_target
+          redist.tests.test_macho_runtime_closure
+          redist.tests.test_package_release
+
+      - name: Install macOS build dependencies
+        run: >-
+          brew install arrayfire autoconf automake bison cmake libtool ninja
+          pkg-config python@3.12
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@v4
+        with:
+          path: vcpkg-binary-cache
+          key: cpu-base-macos-intel-vcpkg-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            cpu-base-macos-intel-vcpkg-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-
+
+      - name: Prepare vcpkg binary cache
+        run: mkdir -p vcpkg-binary-cache
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Use CI vcpkg manifest
+        run: cp vcpkg-ci.json vcpkg.json
+
+      - name: Setup vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          cd vcpkg
+          git checkout 594ad8871e1e8e45f8e626c015fd611163430207
+          ./bootstrap-vcpkg.sh
+          echo "VCPKG_ROOT=$PWD" >> "$GITHUB_ENV"
+
+      - name: Configure Release CPU build
+        run: |
+          arrayfire_config="$(find "$(brew --prefix arrayfire)" -name ArrayFireConfig.cmake -print -quit)"
+          test -n "$arrayfire_config"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_OVERLAY_PORTS="$GITHUB_WORKSPACE/vcpkg-ports" \
+            -DPYBIND11_FINDPYTHON=ON \
+            -DPython_EXECUTABLE="$(brew --prefix python@3.12)/bin/python3.12" \
+            -DArrayFire_DIR="$(dirname "$arrayfire_config")" \
+            -DCYXWIZ_BUILD_ENGINE=ON \
+            -DCYXWIZ_BUILD_SERVER_NODE=OFF \
+            -DCYXWIZ_BUILD_TESTS=OFF \
+            -DCYXWIZ_BUILD_TUI=OFF \
+            -DCYXWIZ_ENABLE_PYTHON=OFF \
+            -DCYXWIZ_ENABLE_ONNX=OFF \
+            -DCYXWIZ_ENABLE_GGUF=OFF \
+            -DCYXWIZ_ENABLE_PYTORCH=OFF \
+            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF \
+            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF \
+            -DCYXWIZ_ENABLE_CUDA=OFF \
+            -DCYXWIZ_ENABLE_OPENCL=OFF
+
+      - name: Save vcpkg binary cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg-binary-cache
+          key: cpu-base-macos-intel-vcpkg-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Build production CPU-base targets
+        run: >-
+          cmake --build build --parallel
+          --target cyxwiz-engine cyxwiz-installer
+          cyxwiz-backend-pack-installer cyxwiz-runtime-bootstrapper
+          cyxwiz-product-removal-finalizer
+          cyxwiz-route-probe
+
+      - name: Normalize ArrayFire redistribution input
+        run: |
+          arrayfire_prefix="$(brew --prefix arrayfire)"
+          mkdir -p deps/arrayfire/LICENSES
+          cp -R "$arrayfire_prefix/include" deps/arrayfire/
+          cp -R "$arrayfire_prefix/lib" deps/arrayfire/
+          license_file="$(find "$arrayfire_prefix" -maxdepth 3 -type f -iname 'license*' -print -quit)"
+          test -n "$license_file"
+          cp "$license_file" deps/arrayfire/LICENSES/
+
+      - name: Build deterministic macOS Intel CPU-base artifact
+        run: |
+          python redist/scripts/package_release.py base \
+            --version 0.2.0 \
+            --pack-version 1 \
+            --build-dir build/bin \
+            --arrayfire-dir deps/arrayfire \
+            --generated-utc 2026-08-20T00:00:00Z
+          mkdir -p cpu-base-artifact
+          cp redist/output/cyxwiz-base-0.2.0-1-macos-x86_64.zip* \
+            cpu-base-artifact/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-macos-intel-cpu-base
+          path: cpu-base-artifact/
+          if-no-files-found: error
+
   clean-runner-smoke:
     name: Fresh Windows CPU execution
     needs: build
@@ -230,4 +349,38 @@ jobs:
         with:
           name: cyxwiz-cpu-base-evidence-windows-x64
           path: clean-machine-evidence/windows-x64-cpu-base.json
+          if-no-files-found: error
+
+  clean-runner-smoke-macos-intel:
+    name: Fresh macOS Intel CPU execution
+    needs: build-macos-intel
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cyxwiz-macos-intel-cpu-base
+          path: cpu-base-artifact
+
+      - name: Run CPU-base evidence contract
+        run: >-
+          python -m unittest
+          redist.tests.test_verify_cpu_base_package
+
+      - name: Install and verify on fresh runner
+        run: |
+          python redist/scripts/verify_cpu_base_package.py \
+            cpu-base-artifact/cyxwiz-base-0.2.0-1-macos-x86_64.zip \
+            --manifest cpu-base-artifact/cyxwiz-base-0.2.0-1-macos-x86_64.zip.manifest.json \
+            --install-root cpu-base-install \
+            --artifact-id macos-intel-cpu-base \
+            --evidence clean-machine-evidence/macos-intel-cpu-base.json
+
+      - name: Upload clean-machine CPU evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-cpu-base-evidence-macos-intel
+          path: clean-machine-evidence/macos-intel-cpu-base.json
           if-no-files-found: error

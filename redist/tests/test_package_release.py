@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -269,6 +270,21 @@ class PackageReleaseTests(unittest.TestCase):
     def test_archive_version_cannot_escape_output_root(self) -> None:
         with self.assertRaisesRegex(package_release.PackageError, "Invalid CyxWiz"):
             package_release.validate_release_version("../release", "CyxWiz")
+
+    def test_deterministic_zip_preserves_extensionless_executable_mode(self) -> None:
+        stage = self.root / "executable-stage"
+        stage.mkdir()
+        executable = stage / "cyxwiz-runtime-bootstrapper"
+        executable.write_bytes(b"native")
+        executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+
+        archive = package_release.create_deterministic_zip(
+            stage, self.root / "native.zip"
+        )
+
+        with package_release.zipfile.ZipFile(archive) as package:
+            mode = package.getinfo(executable.name).external_attr >> 16
+        self.assertTrue(mode & stat.S_IXUSR)
 
     def test_base_profile_emits_cpu_only_deterministic_artifact(self) -> None:
         arrayfire = self.create_arrayfire(opencl=True)

@@ -376,6 +376,9 @@ bool ResolveRuntimeState(
     }
     output.dll_directories.push_back(output.base_directory);
     AddDirectoryIfPresent(
+        canonical_root, output.base_directory / "lib",
+        output.dll_directories);
+    AddDirectoryIfPresent(
         canonical_root,
         output.base_directory / "arrayfire" /
             CurrentArrayFireLibraryDirectoryName(),
