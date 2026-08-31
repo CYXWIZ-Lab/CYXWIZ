@@ -48,7 +48,6 @@ const std::vector<LegacyTensorDataOwner>& LegacyTensorDataInventory() {
         {"cyxwiz-backend/src/algorithms/layers/conv2d.cpp", 10, "compatibility_compute", "Conv2D layer"},
         {"cyxwiz-backend/src/algorithms/layers/gru.cpp", 20, "compatibility_compute", "GRU layer"},
         {"cyxwiz-backend/src/algorithms/layers/gru_backward.cpp", 7, "compatibility_compute", "GRU backward"},
-        {"cyxwiz-backend/src/algorithms/layers/linear.cpp", 21, "compatibility_compute", "Linear layer"},
         {"cyxwiz-backend/src/algorithms/layers/lstm.cpp", 35, "compatibility_compute", "LSTM layer"},
         {"cyxwiz-backend/src/algorithms/layers/lstm_backward.cpp", 11, "compatibility_compute", "LSTM backward"},
         {"cyxwiz-backend/src/algorithms/layers/lstm_direction_helpers.cpp", 26, "compatibility_compute", "LSTM direction kernels"},
