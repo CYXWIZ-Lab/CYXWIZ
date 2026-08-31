@@ -32,7 +32,8 @@ public:
             root / "base" / "base-v1" /
             cyxwiz::runtime::CurrentEngineExecutableName());
         Touch(root / "packs" / "opencl" / "opencl-v1" /
-              "runtime" / "afopencl.dll");
+              "runtime" /
+              cyxwiz::runtime::CurrentArrayFireBackendPluginName("opencl"));
         Save(ActiveWithOpenCl(1), root / "active-runtime.json");
     }
 

@@ -39,7 +39,9 @@ public:
             cyxwiz::runtime::CurrentEngineExecutableName());
         source = root.parent_path() /
             (root.filename().string() + "-source");
-        Touch(source / "runtime" / "afopencl.dll");
+        Touch(
+            source / "runtime" /
+            cyxwiz::runtime::CurrentArrayFireBackendPluginName("opencl"));
         Touch(source / "THIRD_PARTY_LICENSES" / "ArrayFire" /
               "LICENSE.txt");
 
@@ -68,7 +70,9 @@ public:
         payload.pack_id = "opencl-v1";
         payload.source_directory = source;
         payload.components = {
-            {"runtime/afopencl.dll", 1, kZeroByteSha256},
+            {cyxwiz::runtime::CurrentArrayFireBackendPluginRelativePath(
+                 "opencl"),
+             1, kZeroByteSha256},
             {"THIRD_PARTY_LICENSES/ArrayFire/LICENSE.txt", 1,
              kZeroByteSha256}};
         return payload;
@@ -165,7 +169,9 @@ int main() {
         failures += !Expect(
             std::filesystem::is_regular_file(
                 fixture.root / "packs" / "opencl" / "opencl-v1" /
-                "runtime" / "afopencl.dll"),
+                "runtime" /
+                    cyxwiz::runtime::CurrentArrayFireBackendPluginName(
+                        "opencl")),
             "activation must reference a complete versioned pack directory");
         failures += !Expect(
             !progress.empty() &&
@@ -218,7 +224,9 @@ int main() {
     {
         Fixture fixture;
         Fixture::Touch(
-            fixture.source / "runtime" / "afopencl.dll", 'x');
+            fixture.source / "runtime" /
+                cyxwiz::runtime::CurrentArrayFireBackendPluginName("opencl"),
+            'x');
         const auto before = fixture.Active();
         cyxwiz::runtime::BackendPackInstaller installer(fixture.root);
         const auto result = installer.InstallOrUpdate(fixture.Payload(), 1024);
@@ -279,7 +287,9 @@ int main() {
             failures += !Expect(
                 std::filesystem::is_regular_file(
                     fixture.root / "packs" / "opencl" / "opencl-v1" /
-                    "runtime" / "afopencl.dll"),
+                    "runtime" /
+                        cyxwiz::runtime::CurrentArrayFireBackendPluginName(
+                            "opencl")),
                 "post-publication interruption may leave only a complete inactive pack");
         }
     }
@@ -301,7 +311,9 @@ int main() {
             installer.InstallOrUpdate(fixture.Payload(), 1024);
         Fixture::Touch(
             fixture.root / "packs" / "opencl" / "opencl-v1" /
-                "runtime" / "afopencl.dll",
+                "runtime" /
+                    cyxwiz::runtime::CurrentArrayFireBackendPluginName(
+                        "opencl"),
             'x');
         const auto repaired = installer.Repair(fixture.Payload(), 1024);
         const auto active = fixture.Active();
@@ -324,10 +336,14 @@ int main() {
         failures += !Expect(
             std::filesystem::file_size(
                 fixture.root / "packs" / "opencl" / "opencl-v1" /
-                "runtime" / "afopencl.dll") == 1 &&
+                "runtime" /
+                    cyxwiz::runtime::CurrentArrayFireBackendPluginName(
+                        "opencl")) == 1 &&
                 Fixture::ReadByte(
                     fixture.root / "packs" / "opencl" / "opencl-v1" /
-                    "runtime" / "afopencl.dll") == '\0' &&
+                    "runtime" /
+                        cyxwiz::runtime::CurrentArrayFireBackendPluginName(
+                            "opencl")) == '\0' &&
                 installer.GetProgress().stage ==
                     cyxwiz::runtime::BackendPackInstallStage::Complete,
             "repair must publish the exact verified payload and terminal progress");
@@ -341,7 +357,8 @@ int main() {
         initial.InstallOrUpdate(fixture.Payload(), 1024);
         const auto installed_file =
             fixture.root / "packs" / "opencl" / "opencl-v1" /
-            "runtime" / "afopencl.dll";
+            "runtime" /
+            cyxwiz::runtime::CurrentArrayFireBackendPluginName("opencl");
         Fixture::Touch(installed_file, 'x');
         cyxwiz::runtime::BackendPackInstaller repair(
             fixture.root, [] { return false; }, {},

@@ -1,5 +1,6 @@
 #include "backend_pack_metadata_verifier.h"
 #include "backend_pack_metadata_limits.h"
+#include "backend_pack_platform.h"
 
 #include <openssl/evp.h>
 
@@ -170,7 +171,7 @@ Json Manifest(const KeyPair& pack_key) {
             {"training_scope", Json::array({"dense"})},
             {"support_status", "supported"}}},
         {"components", Json::array({{
-            {"path", "runtime/afopencl.dll"},
+            {"path", CurrentArrayFireBackendPluginRelativePath("opencl")},
             {"size", std::uint64_t{1}},
             {"sha256", "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"},
             {"source", "arrayfire"},

@@ -1,6 +1,7 @@
 #include "backend_pack_acquisition.h"
 #include "backend_pack_archive_extractor.h"
 #include "backend_pack_hash.h"
+#include "backend_pack_platform.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -430,10 +431,11 @@ int main() {
             "insecure online source URL was accepted")) return 1;
 
     const std::vector<ArchiveItem> valid_items = {
-        {"runtime/afopencl.dll", "plugin"},
+        {CurrentArrayFireBackendPluginRelativePath("opencl"), "plugin"},
         {"THIRD_PARTY_LICENSES/ArrayFire/LICENSE.txt", "license"}};
     const std::vector<VerifiedPackComponent> valid_components = {
-        {"runtime/afopencl.dll", 6, Hash("plugin")},
+        {CurrentArrayFireBackendPluginRelativePath("opencl"), 6,
+         Hash("plugin")},
         {"THIRD_PARTY_LICENSES/ArrayFire/LICENSE.txt", 7, Hash("license")}};
     const auto valid_archive =
         temporary.Path() / "valid" / "opencl-v1.zip";
@@ -448,7 +450,8 @@ int main() {
             extracted.message) ||
         !Expect(
             std::filesystem::is_regular_file(
-                extracted.extracted_directory / "runtime" / "afopencl.dll"),
+                extracted.extracted_directory / "runtime" /
+                    CurrentArrayFireBackendPluginName("opencl")),
             "valid component was not extracted")) return 1;
 
     const auto extra_archive =
@@ -484,11 +487,14 @@ int main() {
     const auto link_archive =
         temporary.Path() / "link" / "opencl-v1.zip";
     if (!Expect(
-            WriteZip(link_archive, {{"runtime/afopencl.dll", "", true}}),
+            WriteZip(
+                link_archive,
+                {{CurrentArrayFireBackendPluginRelativePath("opencl"), "",
+                  true}}),
             "cannot create link ZIP fixture")) return 1;
     manifest = Manifest(
         link_archive,
-        {{"runtime/afopencl.dll", 0, Hash("")}});
+        {{CurrentArrayFireBackendPluginRelativePath("opencl"), 0, Hash("")}});
     const auto link_destination = temporary.Path() / "extract-link";
     extracted = extractor.Extract(
         link_archive, manifest, link_destination, 1024);
@@ -518,11 +524,14 @@ int main() {
         temporary.Path() / "cancel" / "opencl-v1.zip";
     const std::string large(2 * 1024 * 1024, 'x');
     if (!Expect(
-            WriteZip(cancel_archive, {{"runtime/afopencl.dll", large}}),
+            WriteZip(
+                cancel_archive,
+                {{CurrentArrayFireBackendPluginRelativePath("opencl"), large}}),
             "cannot create cancellation ZIP fixture")) return 1;
     manifest = Manifest(
         cancel_archive,
-        {{"runtime/afopencl.dll", large.size(), Hash(large)}});
+        {{CurrentArrayFireBackendPluginRelativePath("opencl"), large.size(),
+          Hash(large)}});
     BackendPackArchiveExtractor* cancelling_extractor = nullptr;
     BackendPackArchiveExtractor cancellation(
         [&](const BackendPackExtractionProgress& progress) {

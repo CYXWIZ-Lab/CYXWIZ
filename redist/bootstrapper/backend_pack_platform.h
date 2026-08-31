@@ -78,6 +78,11 @@ inline std::string CurrentArrayFireBackendPluginName(
 #endif
 }
 
+inline std::string CurrentArrayFireBackendPluginRelativePath(
+    std::string_view backend) {
+    return "runtime/" + CurrentArrayFireBackendPluginName(backend);
+}
+
 constexpr std::string_view CurrentProductRemovalFinalizerExecutableName() {
 #ifdef _WIN32
     return "cyxwiz-product-removal-finalizer.exe";

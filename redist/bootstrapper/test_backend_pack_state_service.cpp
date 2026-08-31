@@ -63,7 +63,7 @@ public:
 
     void AddPack(const std::string& backend, const std::string& pack_id) {
         Touch(root / "packs" / backend / pack_id / "runtime" /
-              ("af" + backend + ".dll"));
+              cyxwiz::runtime::CurrentArrayFireBackendPluginName(backend));
     }
 
     static void Touch(const std::filesystem::path& path) {

@@ -41,7 +41,9 @@ public:
             cyxwiz::runtime::CurrentEngineExecutableName());
         source = root.parent_path() /
             (root.filename().string() + "-source");
-        Touch(source / "runtime" / "afopencl.dll");
+        Touch(
+            source / "runtime" /
+            cyxwiz::runtime::CurrentArrayFireBackendPluginName("opencl"));
         Touch(source / "THIRD_PARTY_LICENSES" / "ArrayFire" /
               "LICENSE.txt");
         Active({});
@@ -61,7 +63,9 @@ public:
         payload.pack_id = "opencl-v1";
         payload.source_directory = source;
         payload.components = {
-            {"runtime/afopencl.dll", 1, kZeroByteSha256},
+            {cyxwiz::runtime::CurrentArrayFireBackendPluginRelativePath(
+                 "opencl"),
+             1, kZeroByteSha256},
             {"THIRD_PARTY_LICENSES/ArrayFire/LICENSE.txt", 1,
              kZeroByteSha256}};
         return payload;
@@ -165,7 +169,9 @@ int main() {
         Fixture fixture;
         const auto target =
             fixture.root / "packs" / "opencl" / "opencl-v1";
-        Fixture::Touch(target / "runtime" / "afopencl.dll");
+        Fixture::Touch(
+            target / "runtime" /
+            cyxwiz::runtime::CurrentArrayFireBackendPluginName("opencl"));
         auto rollback = fixture.Active();
         rollback.packs.push_back({"opencl", "opencl-v1"});
         std::string error;

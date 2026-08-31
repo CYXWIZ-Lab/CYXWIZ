@@ -114,7 +114,7 @@ Json Envelope(
 bool WriteZip(
     const std::filesystem::path& path,
     const std::vector<std::string>& entries = {
-        "runtime/afopencl.dll",
+        CurrentArrayFireBackendPluginRelativePath("opencl"),
         "THIRD_PARTY_LICENSES/ArrayFire/LICENSE.txt"}) {
     std::filesystem::create_directories(path.parent_path());
     archive* writer = archive_write_new();
@@ -215,7 +215,8 @@ public:
                 {"training_scope", Json::array({"dense"})},
                 {"support_status", support}}},
             {"components", Json::array({{
-                {"path", "runtime/afopencl.dll"}, {"size", std::uint64_t{1}},
+                {"path", CurrentArrayFireBackendPluginRelativePath("opencl")},
+                {"size", std::uint64_t{1}},
                 {"sha256", kZeroByteSha256}, {"source", "arrayfire"},
                 {"executable", true}}, {
                 {"path", "THIRD_PARTY_LICENSES/ArrayFire/LICENSE.txt"},
@@ -918,7 +919,8 @@ int main() {
         OfflineBackendPackArtifactSource source(fixture.archive);
         const auto installed = service.Deliver(fixture.Request(), source);
         const auto installed_file = fixture.runtime / "packs" / "opencl" /
-            "opencl-v1" / "runtime" / "afopencl.dll";
+            "opencl-v1" / "runtime" /
+            CurrentArrayFireBackendPluginName("opencl");
         std::ofstream(installed_file, std::ios::binary | std::ios::trunc)
             .put('x');
         auto repair_request = fixture.Request();
