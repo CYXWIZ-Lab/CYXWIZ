@@ -218,7 +218,7 @@ jobs:
       - name: Install macOS build dependencies
         run: >-
           brew install arrayfire autoconf automake bison cmake libtool ninja
-          pkg-config python@3.12
+          pkg-config
 
       - name: Restore vcpkg binary cache
         uses: actions/cache/restore@v4
@@ -258,7 +258,7 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_OVERLAY_PORTS="$GITHUB_WORKSPACE/vcpkg-ports" \
             -DPYBIND11_FINDPYTHON=ON \
-            -DPython_EXECUTABLE="$(brew --prefix python@3.12)/bin/python3.12" \
+            -DPython_EXECUTABLE="$(command -v python3)" \
             -DArrayFire_DIR="$(dirname "$arrayfire_config")" \
             -DCYXWIZ_BUILD_ENGINE=ON \
             -DCYXWIZ_BUILD_SERVER_NODE=OFF \
