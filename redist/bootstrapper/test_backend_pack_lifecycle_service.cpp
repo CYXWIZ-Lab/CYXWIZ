@@ -512,6 +512,10 @@ int main() {
         Fixture fixture;
         fixture.PrepareBase();
         bool saw_candidate = false;
+        bool used_acquisition_verified_archive = false;
+        bool verified_components_during_extraction = false;
+        bool adopted_verified_private_extraction = false;
+        bool repeated_staged_component_hashes = false;
         BackendPackLifecycleService service(
             fixture.runtime, fixture.Verifier(), [] { return false; },
             [&](const auto& manifest, const auto& installed,
@@ -526,6 +530,23 @@ int main() {
                 return BackendPackQualificationDecision{
                     BackendPackQualificationDisposition::Qualified,
                     "CPU base qualified"};
+            },
+            [&](const BackendPackLifecycleProgress& progress) {
+                used_acquisition_verified_archive =
+                    used_acquisition_verified_archive ||
+                    progress.message ==
+                        "Using archive identity verified during acquisition";
+                verified_components_during_extraction =
+                    verified_components_during_extraction ||
+                    progress.message ==
+                        "Signed component hashes verified during extraction";
+                adopted_verified_private_extraction =
+                    adopted_verified_private_extraction ||
+                    progress.message ==
+                        "Adopting private extraction into versioned staging";
+                repeated_staged_component_hashes =
+                    repeated_staged_component_hashes ||
+                    progress.message == "Verifying staged component hashes";
             });
         auto request = fixture.Request();
         request.pack_id = "base-v1";
@@ -550,8 +571,11 @@ int main() {
                 Fixture::ReadByte(
                     fixture.root /
                     std::string(CurrentProductRemovalFinalizerExecutableName())) ==
-                    '\0',
-            "fresh base delivery must verify, stage, publish stable tools, qualify, and initialize generation 1");
+                    '\0' && used_acquisition_verified_archive &&
+                verified_components_during_extraction &&
+                adopted_verified_private_extraction &&
+                !repeated_staged_component_hashes,
+            "fresh base delivery must hash components once during extraction, adopt the verified private payload, publish stable tools, qualify, and initialize generation 1");
     }
     {
         Fixture fixture;
@@ -751,6 +775,60 @@ int main() {
                 ": " + rollback.message + ", removal=" +
                 BackendPackLifecycleStatusName(removal.status) + ": " +
                 removal.message + ")");
+    }
+    {
+        Fixture fixture;
+        bool qualification_called = false;
+        bool qualifying_stage_seen = false;
+        BackendPackLifecycleService service(
+            fixture.runtime, fixture.Verifier(), [] { return false; },
+            [&](const auto&, const auto&, const auto&) {
+                qualification_called = true;
+                return BackendPackQualificationDecision{
+                    BackendPackQualificationDisposition::Qualified,
+                    "unexpected qualification"};
+            },
+            [&](const BackendPackLifecycleProgress& progress) {
+                qualifying_stage_seen = qualifying_stage_seen ||
+                    progress.stage == BackendPackLifecycleStage::Qualifying;
+            });
+        auto request = fixture.Request();
+        request.route_verification =
+            BackendPackRouteVerificationPolicy::DeferredToEngine;
+        request.discard_artifact_on_success = true;
+        OfflineBackendPackArtifactSource source(fixture.archive);
+        const auto result = service.Deliver(request, source);
+        failures += !Expect(
+            result.status ==
+                    BackendPackLifecycleStatus::InstalledAndActivated &&
+                !qualification_called && !qualifying_stage_seen &&
+                !result.qualification.has_value() &&
+                fixture.Active().generation == 2 &&
+                HasPack(fixture.Active()) &&
+                !std::filesystem::exists(
+                    fixture.runtime / "cache" / "artifacts" /
+                    "opencl-v1") &&
+                result.message.find("CyxWiz Engine Devices") !=
+                    std::string::npos,
+            "deferred installer delivery must activate only integrity-verified files without running route qualification and discard its verified archive cache");
+    }
+    {
+        Fixture fixture;
+        BackendPackLifecycleService service(
+            fixture.runtime, fixture.Verifier(), [] { return false; });
+        auto request = fixture.Request();
+        request.repair = true;
+        request.route_verification =
+            BackendPackRouteVerificationPolicy::DeferredToEngine;
+        OfflineBackendPackArtifactSource source(fixture.archive);
+        const auto result = service.Deliver(request, source);
+        failures += !Expect(
+            result.status == BackendPackLifecycleStatus::InvalidRequest &&
+                fixture.Active().generation == 1 &&
+                fixture.Active().packs.empty() &&
+                !std::filesystem::exists(
+                    fixture.runtime / "cache" / "artifacts"),
+            "repair must reject deferred route verification before acquiring package data");
     }
     {
         Fixture fixture;

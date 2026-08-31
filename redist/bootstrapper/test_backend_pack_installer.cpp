@@ -186,6 +186,37 @@ int main() {
     }
     {
         Fixture fixture;
+        cyxwiz::runtime::BackendPackInstaller* active_installer = nullptr;
+        std::vector<cyxwiz::runtime::BackendPackInstallProgress> progress;
+        cyxwiz::runtime::BackendPackInstaller installer(
+            fixture.root, [] { return false; },
+            [&](const auto& value) {
+                progress.push_back(value);
+                if (value.stage ==
+                        cyxwiz::runtime::BackendPackInstallStage::Validating &&
+                    value.completed_bytes > 0 && active_installer) {
+                    active_installer->Cancel();
+                }
+            });
+        active_installer = &installer;
+        const auto result = installer.InstallOrUpdate(fixture.Payload(), 1024);
+        failures += !Expect(
+            result.status ==
+                    cyxwiz::runtime::BackendPackInstallStatus::Interrupted &&
+                fixture.Active().generation == 1 &&
+                fixture.Active().packs.empty() &&
+                std::any_of(
+                    progress.begin(), progress.end(), [](const auto& value) {
+                        return value.stage ==
+                                   cyxwiz::runtime::BackendPackInstallStage::
+                                       Validating &&
+                               value.component_index > 0 &&
+                               value.completed_bytes > 0;
+                    }),
+            "hash validation must expose file progress and honor cancellation before publication");
+    }
+    {
+        Fixture fixture;
         Fixture::Touch(
             fixture.source / "runtime" / "afopencl.dll", 'x');
         const auto before = fixture.Active();

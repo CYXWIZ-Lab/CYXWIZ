@@ -243,6 +243,13 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             "Runtime root, signed metadata paths, time, and pack ID are required",
             request.pack_id);
     }
+    if (request.repair && request.route_verification ==
+            BackendPackRouteVerificationPolicy::DeferredToEngine) {
+        return Finish(
+            BackendPackLifecycleStatus::InvalidRequest,
+            "Repair requires route verification before activation",
+            request.pack_id);
+    }
 
     VerifiedBackendPackCatalog catalog;
     std::string error;
@@ -377,7 +384,7 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     const auto extraction = runtime_root_ / "staging" / "delivery" /
         (manifest.pack_id + "-" + std::to_string(
             std::chrono::steady_clock::now().time_since_epoch().count()));
-    const auto extracted = extractor_.Extract(
+    const auto extracted = extractor_.ExtractAcquiredArtifact(
         artifact, manifest, extraction,
         request.extraction_disk_budget_bytes);
     if (extracted.status != BackendPackExtractionStatus::Extracted) {
@@ -400,17 +407,17 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             "CPU-base delivery does not accept repair mode",
             manifest.pack_id, manifest.backend);
     }
-    const auto installed = updating_base
-        ? installer_.StageBaseUpdate(
-              payload, request.installation_disk_budget_bytes)
+    const auto install_action = updating_base
+        ? BackendPackInstaller::PrivateExtractionAction::UpdateBase
         : (base
-              ? installer_.StageBase(
-                    payload, request.installation_disk_budget_bytes)
+              ? BackendPackInstaller::PrivateExtractionAction::InstallFreshBase
               : (request.repair
-              ? installer_.StageRepair(
-                    payload, request.installation_disk_budget_bytes)
-              : installer_.StageInstallOrUpdate(
-                    payload, request.installation_disk_budget_bytes)));
+                    ? BackendPackInstaller::PrivateExtractionAction::
+                          RepairOptionalPack
+                    : BackendPackInstaller::PrivateExtractionAction::
+                          InstallOptionalPack));
+    const auto installed = installer_.AdoptVerifiedPrivateExtraction(
+        payload, request.installation_disk_budget_bytes, install_action);
     if (!IsTerminalInstallStatus(installed.status)) {
         if (installed.status == BackendPackInstallStatus::Interrupted) {
             discard_cancelled_operation(
@@ -424,15 +431,117 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             installed.message, manifest.pack_id, manifest.backend,
             installed.installed_directory);
     }
+    const bool verification_deferred = request.route_verification ==
+        BackendPackRouteVerificationPolicy::DeferredToEngine;
     if (cancel_requested_.load()) {
         discard_cancelled_operation(
             acquired.status == BackendPackAcquisitionStatus::Downloaded,
             true);
         return Finish(
             BackendPackLifecycleStatus::Interrupted,
-            "Complete pack is installed but delivery was cancelled before qualification",
+            verification_deferred
+                ? "Complete pack is installed but delivery was cancelled before activation"
+                : "Complete pack is installed but delivery was cancelled before qualification",
             manifest.pack_id, manifest.backend,
             installed.installed_directory);
+    }
+
+    const auto activate_installed = [&] (
+        std::optional<BackendPackQualificationDecision> qualification,
+        bool deferred) -> BackendPackLifecycleResult {
+        if (target == DeliveryTarget::FreshBase) {
+            SetStage(
+                BackendPackLifecycleStage::Activating,
+                "Publishing the verified stable product tools before activation");
+            const auto stable_tools = PublishVerifiedBaseStableTools(
+                manifest, installed.installed_directory, runtime_root_);
+            if (!stable_tools.published) {
+                return Finish(
+                    BackendPackLifecycleStatus::InstallationFailure,
+                    stable_tools.message, manifest.pack_id, manifest.backend,
+                    installed.installed_directory, qualification);
+            }
+            // Publishing stable tools is the base transaction's commit point.
+            // A cancellation observed before this point is cleaned up above;
+            // once publication succeeds, complete activation atomically.
+        }
+
+        SetStage(
+            BackendPackLifecycleStage::Activating,
+            deferred
+                ? (base ? "Activating the verified CPU base; route verification is deferred to CyxWiz Engine"
+                        : "Making the verified backend pack available to CyxWiz Engine")
+                : (base ? "Activating the locally qualified CPU base"
+                        : "Activating the locally qualified backend pack"));
+        BackendPackStateService state_service(
+            runtime_root_, execution_active_);
+        const auto activation = updating_base
+            ? state_service.UpdateBase(
+                  manifest.runtime_set_id, manifest.pack_id)
+            : (base
+                  ? state_service.InitializeBase(
+                        manifest.runtime_set_id, manifest.pack_id)
+                  : state_service.ActivateOptionalPack(
+                        manifest.backend, manifest.pack_id));
+        if (activation.status != BackendPackStateStatus::Completed) {
+            return Finish(
+                BackendPackLifecycleStatus::ActivationFailure,
+                std::string(deferred ? "Verified component" : "Qualified component") +
+                    " remains installed but activation failed: " +
+                    activation.message,
+                manifest.pack_id, manifest.backend,
+                installed.installed_directory, qualification);
+        }
+
+        std::string message;
+        if (deferred) {
+            message = updating_base
+                ? "CPU base update installed and activated; verify compute routes in CyxWiz Engine Devices"
+                : (base
+                      ? "CPU base installed and activated; verify compute routes in CyxWiz Engine Devices"
+                      : "Backend pack installed and available; verify it in CyxWiz Engine Devices before use");
+        } else if (qualification.has_value() &&
+                   !qualification->message.empty()) {
+            message = qualification->message;
+        } else {
+            message = updating_base
+                ? "CPU base update installed, qualified, and activated"
+                : (base
+                      ? "CPU base installed, qualified, and activated"
+                      : "Backend pack installed, qualified, and activated");
+        }
+        if (request.discard_artifact_on_success) {
+            std::error_code cleanup_error;
+            std::filesystem::remove(artifact, cleanup_error);
+            if (cleanup_error) {
+                message += "; the verified package cache could not be removed: " +
+                    cleanup_error.message();
+            } else {
+                // Pack identities own separate cache directories. Remove the
+                // directory only when it is now empty; never recurse here.
+                std::error_code directory_error;
+                std::filesystem::remove(
+                    artifact.parent_path(), directory_error);
+            }
+        }
+        return Finish(
+            BackendPackLifecycleStatus::InstalledAndActivated,
+            std::move(message), manifest.pack_id, manifest.backend,
+            installed.installed_directory, std::move(qualification));
+    };
+
+    if (verification_deferred) {
+        if (catalog_entry->support_status ==
+                BackendPackSupportStatus::Diagnostic ||
+            manifest.compatibility.support_status ==
+                BackendPackSupportStatus::Diagnostic) {
+            return Finish(
+                BackendPackLifecycleStatus::InstalledUnqualified,
+                "Diagnostic pack was installed but cannot be activated for normal use",
+                manifest.pack_id, manifest.backend,
+                installed.installed_directory);
+        }
+        return activate_installed(std::nullopt, true);
     }
 
     ActiveRuntimeState qualification_base;
@@ -627,56 +736,7 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             installed.installed_directory, qualification);
     }
 
-    if (target == DeliveryTarget::FreshBase) {
-        SetStage(
-            BackendPackLifecycleStage::Installing,
-            "Publishing the verified stable product tools");
-        const auto stable_tools = PublishVerifiedBaseStableTools(
-            manifest, installed.installed_directory, runtime_root_);
-        if (!stable_tools.published) {
-            return Finish(
-                BackendPackLifecycleStatus::InstallationFailure,
-                stable_tools.message, manifest.pack_id, manifest.backend,
-                installed.installed_directory, qualification);
-        }
-        // Publishing stable tools is the base transaction's commit point.
-        // A cancellation observed before this point is cleaned up above; once
-        // publication succeeds, complete activation atomically.
-    }
-
-    SetStage(
-        BackendPackLifecycleStage::Activating,
-        base ? "Activating the locally qualified CPU base"
-             : "Activating the locally qualified backend pack");
-    BackendPackStateService state_service(
-        runtime_root_, execution_active_);
-    const auto activation = updating_base
-        ? state_service.UpdateBase(
-              manifest.runtime_set_id, manifest.pack_id)
-        : (base
-              ? state_service.InitializeBase(
-                    manifest.runtime_set_id, manifest.pack_id)
-              : state_service.ActivateOptionalPack(
-                    manifest.backend, manifest.pack_id));
-    if (activation.status != BackendPackStateStatus::Completed) {
-        return Finish(
-            BackendPackLifecycleStatus::ActivationFailure,
-            "Qualified component remains installed but activation failed: " +
-                activation.message,
-            manifest.pack_id, manifest.backend,
-            installed.installed_directory, qualification);
-    }
-    return Finish(
-        BackendPackLifecycleStatus::InstalledAndActivated,
-        qualification.message.empty()
-            ? (updating_base
-                   ? "CPU base update installed, qualified, and activated"
-                   : (base ? "CPU base installed, qualified, and activated"
-                    : "Backend pack installed, qualified, and activated")
-              )
-            : qualification.message,
-        manifest.pack_id, manifest.backend,
-        installed.installed_directory, qualification);
+    return activate_installed(qualification, false);
 }
 
 BackendPackLifecycleResult BackendPackLifecycleService::Remove(

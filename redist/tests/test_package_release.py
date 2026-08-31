@@ -126,6 +126,15 @@ class PackageReleaseTests(unittest.TestCase):
         for name in ("python.exe", "python312.dll", "python312.zip", "python312._pth"):
             (root / name).write_bytes(name.encode("ascii"))
         (root / "LICENSE.txt").write_text("python license", encoding="ascii")
+        package = root / "Lib" / "site-packages" / "demo"
+        package.mkdir(parents=True)
+        (package / "runtime.py").write_text("value = 1\n", encoding="ascii")
+        tests = package / "tests"
+        tests.mkdir()
+        (tests / "test_runtime.py").write_text("test", encoding="ascii")
+        cache = package / "__pycache__"
+        cache.mkdir()
+        (cache / "runtime.cpython-312.pyc").write_bytes(b"cache")
         return root
 
     def create_runtime_licenses(self) -> Path:
@@ -285,6 +294,15 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertTrue((stage / "arrayfire" / "bin" / "af.dll").is_file())
         self.assertTrue((stage / "arrayfire" / "bin" / "afcpu.dll").is_file())
         self.assertTrue((stage / "cyxwiz-product-removal-finalizer.exe").is_file())
+        self.assertTrue(
+            (stage / "python" / "Lib" / "site-packages" / "demo" / "runtime.py").is_file()
+        )
+        self.assertFalse(
+            (stage / "python" / "Lib" / "site-packages" / "demo" / "tests").exists()
+        )
+        self.assertFalse(
+            (stage / "python" / "Lib" / "site-packages" / "demo" / "__pycache__").exists()
+        )
         self.assertFalse((stage / "arrayfire" / "bin" / "afopencl.dll").exists())
         self.assertFalse((stage / "start_cyxwiz.bat").exists())
         manifest = json.loads(

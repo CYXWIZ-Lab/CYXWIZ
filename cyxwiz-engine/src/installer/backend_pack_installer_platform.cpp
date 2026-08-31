@@ -191,6 +191,7 @@ int RunHelper(
     const std::filesystem::path& metadata_root,
     bool elevate,
     InstallerPackageSource package_source,
+    bool defer_route_verification,
     const std::wstring& operation,
     const std::string& value,
     const InstallerOperationDetailObserver& observer,
@@ -213,6 +214,8 @@ int RunHelper(
             std::to_wstring(CurrentInstallerProcessId()) +
         (package_source == InstallerPackageSource::OfflineSibling
              ? L" --offline" : L"") +
+        (defer_route_verification
+             ? L" --defer-route-verification" : L"") +
         (elevate ? L" --all-users" : L"");
     if (elevate) {
         SHELLEXECUTEINFOW execute{};
@@ -261,6 +264,7 @@ int RunHelper(
     const std::filesystem::path& metadata_root,
     bool elevate,
     InstallerPackageSource package_source,
+    bool defer_route_verification,
     const char* operation,
     const std::string& value,
     const InstallerOperationDetailObserver& observer,
@@ -289,6 +293,9 @@ int RunHelper(
     arguments.emplace_back(std::to_string(CurrentInstallerProcessId()));
     if (package_source == InstallerPackageSource::OfflineSibling) {
         arguments.emplace_back("--offline");
+    }
+    if (defer_route_verification) {
+        arguments.emplace_back("--defer-route-verification");
     }
     if (elevate) arguments.emplace_back("--all-users");
     std::vector<char*> native_arguments;
@@ -496,7 +503,7 @@ public:
         std::string error;
         const int exit_code = RunHelper(
             helper, runtime_root_, CurrentCatalogRoot(), elevate_,
-            package_source_,
+            package_source_, true,
 #ifdef _WIN32
             L"--pack-id",
 #else
@@ -509,7 +516,7 @@ public:
             result.succeeded = true;
             result.activated = true;
             result.message =
-                pack_id + " was installed, qualified, and activated";
+                pack_id + " was installed and made available; verify it in CyxWiz Engine Devices before use";
         } else if (exit_code == 2) {
             result.succeeded = true;
             result.message = pack_id +
@@ -540,7 +547,7 @@ public:
         std::string error;
         const int exit_code = RunHelper(
             helper, runtime_root_, CurrentCatalogRoot(), elevate_,
-            package_source_,
+            package_source_, true,
 #ifdef _WIN32
             L"--base-pack-id",
 #else
@@ -553,7 +560,7 @@ public:
             result.succeeded = true;
             result.activated = true;
             result.message =
-                pack_id + " was installed, CPU-qualified, and activated";
+                pack_id + " was installed and activated; compute-route verification is available in CyxWiz Engine Devices";
         } else if (exit_code == 3) {
             result.succeeded = true;
             result.activated = true;
@@ -589,7 +596,7 @@ public:
         std::string error;
         const int exit_code = RunHelper(
             helper, runtime_root_, CurrentCatalogRoot(), elevate_,
-            package_source_,
+            package_source_, true,
 #ifdef _WIN32
             L"--update-base-pack-id",
 #else
@@ -602,7 +609,7 @@ public:
             result.succeeded = true;
             result.activated = true;
             result.message = pack_id +
-                " was installed, CPU-qualified, and activated as the current Engine";
+                " was installed and activated as the current Engine; verify compute routes in Devices";
         } else if (exit_code == 3) {
             result.succeeded = true;
             result.activated = true;
@@ -639,7 +646,7 @@ public:
         std::string error;
         const int exit_code = RunHelper(
             helper, runtime_root_, CurrentCatalogRoot(), elevate_,
-            package_source_,
+            InstallerPackageSource::CatalogHttps, false,
 #ifdef _WIN32
             L"--deactivate-backend",
 #else
@@ -655,6 +662,48 @@ public:
         } else {
             result.message = error.empty()
                 ? "Backend deactivation failed with helper exit code " +
+                      std::to_string(exit_code)
+                : std::move(error);
+        }
+        return result;
+    }
+
+    InstallerOperationResult RemovePack(
+        const std::string& pack_id,
+        const InstallerOperationDetailObserver& observer) override {
+        InstallerOperationResult result;
+        if (!IsIdentifier(pack_id)) {
+            result.message = "The optional component identity is invalid";
+            return result;
+        }
+        const auto helper = HelperPath(executable_directory_);
+        if (!std::filesystem::is_regular_file(helper)) {
+            result.message =
+                "The signed component-removal helper is missing";
+            return result;
+        }
+        std::string error;
+        const int exit_code = RunHelper(
+            helper, runtime_root_, CurrentCatalogRoot(), elevate_,
+            InstallerPackageSource::CatalogHttps, false,
+#ifdef _WIN32
+            L"--remove-pack-id",
+#else
+            "--remove-pack-id",
+#endif
+            pack_id, observer,
+            [this](const std::string& token) { BeginHelper(token); },
+            [this](const std::string& token) { FinishHelper(token); }, error);
+        if (exit_code == 0) {
+            result.succeeded = true;
+            result.message = pack_id + " was uninstalled";
+        } else if (exit_code == 3) {
+            result.succeeded = true;
+            result.message = pack_id +
+                " was deactivated; file cleanup will finish when no process holds it";
+        } else {
+            result.message = error.empty()
+                ? "Component uninstall failed with helper exit code " +
                       std::to_string(exit_code)
                 : std::move(error);
         }
@@ -727,7 +776,7 @@ private:
         }
 #ifdef _WIN32
         std::wstring command = QuoteWindowsArgument(launcher.native());
-        if (installer_mode) command += L" --installer";
+        if (installer_mode) command += L" --installer --open-uninstall";
         std::vector<wchar_t> mutable_command(command.begin(), command.end());
         mutable_command.push_back(L'\0');
         STARTUPINFOW startup{};
@@ -756,7 +805,7 @@ private:
                 ::chdir(launcher.parent_path().c_str());
                 if (installer_mode) {
                     ::execl(launcher.c_str(), launcher.c_str(),
-                            "--installer", nullptr);
+                            "--installer", "--open-uninstall", nullptr);
                 } else {
                     ::execl(launcher.c_str(), launcher.c_str(), nullptr);
                 }
@@ -774,7 +823,7 @@ private:
         result.succeeded = true;
         result.activated = true;
         result.message = installer_mode
-            ? "Installed CyxWiz manager opened"
+            ? "Installed CyxWiz uninstall confirmation opened"
             : "CyxWiz launched";
         return result;
     }

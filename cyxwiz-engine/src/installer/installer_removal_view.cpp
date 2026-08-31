@@ -18,7 +18,7 @@ InstallerRemovalViewAction RenderInstallerRemovalControl(
   InstallerRemovalViewAction action = InstallerRemovalViewAction::None;
   if (removal.requires_stable_host) {
     ImGui::BeginDisabled(operation_running);
-    if (ImGui::Button("Open installed manager to uninstall",
+    if (ImGui::Button(ICON_FA_TRASH " Uninstall CyxWiz",
                       ImVec2(-1.0f, 34.0f))) {
       action = InstallerRemovalViewAction::OpenInstalledManager;
     }
@@ -27,6 +27,11 @@ InstallerRemovalViewAction RenderInstallerRemovalControl(
       ImGui::TextDisabled("%s", removal.message.c_str());
     }
     return action;
+  }
+  if (view_state.open_requested) {
+    view_state.open_requested = false;
+    view_state.acknowledged = false;
+    ImGui::OpenPopup("Remove CyxWiz");
   }
   ImGui::BeginDisabled(operation_running || !removal.available);
   if (ImGui::Button(ICON_FA_TRASH " Uninstall CyxWiz",
@@ -44,7 +49,7 @@ InstallerRemovalViewAction RenderInstallerRemovalControl(
                               ImGuiWindowFlags_AlwaysAutoResize)) {
     return action;
   }
-  ImGui::TextColored(kDanger, "%s Uninstall this CyxWiz installation?",
+  ImGui::TextColored(kDanger, "%s Uninstall all CyxWiz components?",
                      ICON_FA_TRIANGLE_EXCLAMATION);
   ImGui::TextWrapped(
       "The Engine, Installer, CPU runtime, and every installed backend pack "
@@ -56,13 +61,16 @@ InstallerRemovalViewAction RenderInstallerRemovalControl(
   ImGui::Spacing();
   ImGui::TextWrapped(
       "Projects and datasets stored outside this folder are not removed.");
+  ImGui::TextWrapped(
+      "The installed manager will close so its files can be removed. A "
+      "windowless finalizer completes cleanup in the background.");
   ImGui::Checkbox("I understand that this cannot be undone",
                   &view_state.acknowledged);
   ImGui::BeginDisabled(!view_state.acknowledged || operation_running);
   ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.12f, 0.17f, 1.0f));
   ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                         ImVec4(0.76f, 0.16f, 0.22f, 1.0f));
-  if (ImGui::Button("Uninstall", ImVec2(175.0f, 36.0f))) {
+  if (ImGui::Button("Uninstall all and close", ImVec2(210.0f, 36.0f))) {
     action = InstallerRemovalViewAction::RemoveProduct;
     ImGui::CloseCurrentPopup();
   }

@@ -62,6 +62,9 @@ public:
     virtual InstallerOperationResult DeactivateBackend(
         const std::string& backend,
         const InstallerOperationDetailObserver& observer = {}) = 0;
+    virtual InstallerOperationResult RemovePack(
+        const std::string& pack_id,
+        const InstallerOperationDetailObserver& observer = {}) = 0;
     virtual InstallerOperationResult RequestCancellation() = 0;
     virtual InstallerOperationResult LaunchEngine() = 0;
     virtual InstallerOperationResult OpenInstalledManager() = 0;

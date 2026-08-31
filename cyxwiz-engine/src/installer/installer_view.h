@@ -45,6 +45,8 @@ struct InstallerViewState {
   bool engine_launched = false;
   bool cancellation_requested = false;
   bool close_confirmation_requested = false;
+  bool pack_removal_confirmation_requested = false;
+  std::string pending_pack_removal_id;
   std::string install_location_message;
   BackendPackInstallerPlan pending_plan;
   InstallerRemovalViewState removal;

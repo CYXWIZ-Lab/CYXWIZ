@@ -99,6 +99,7 @@ struct BackendPackInstallerPlan {
   bool update_base = false;
   std::string base_pack_id;
   std::vector<std::string> pack_ids;
+  std::vector<std::string> remove_pack_ids;
   std::vector<std::string> deactivate_backends;
   std::uint64_t download_size_bytes = 0;
   std::string message;

@@ -12,6 +12,7 @@
 namespace cyxwiz::runtime {
 
 struct VerifiedInstallerBundle;
+class BackendPackLifecycleService;
 
 enum class BackendPackExtractionStage {
     Idle,
@@ -74,6 +75,23 @@ public:
     BackendPackExtractionProgress GetProgress() const;
 
 private:
+    enum class ArchiveIdentityMode {
+        Verify,
+        AcquirerVerified
+    };
+
+    friend class BackendPackLifecycleService;
+    BackendPackExtractionResult ExtractAcquiredArtifact(
+        const std::filesystem::path& archive_path,
+        const VerifiedBackendPackManifest& manifest,
+        const std::filesystem::path& destination,
+        std::uint64_t disk_budget_bytes);
+    BackendPackExtractionResult ExtractInternal(
+        const std::filesystem::path& archive_path,
+        const VerifiedBackendPackManifest& manifest,
+        const std::filesystem::path& destination,
+        std::uint64_t disk_budget_bytes,
+        ArchiveIdentityMode identity_mode);
     BackendPackExtractionResult Finish(
         BackendPackExtractionStatus status,
         std::string message,

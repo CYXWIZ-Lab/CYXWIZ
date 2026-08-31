@@ -40,6 +40,11 @@ enum class BackendPackDeliverySource {
     OfflineSibling
 };
 
+enum class BackendPackRouteVerificationPolicy {
+    RequiredBeforeActivation,
+    DeferredToEngine
+};
+
 struct BackendPackDeliveryRequest {
     std::filesystem::path catalog_path;
     std::filesystem::path manifest_path;
@@ -51,8 +56,11 @@ struct BackendPackDeliveryRequest {
     BackendPackAcquisitionRetryPolicy acquisition_retry;
     BackendPackDeliverySource source =
         BackendPackDeliverySource::CatalogHttps;
+    BackendPackRouteVerificationPolicy route_verification =
+        BackendPackRouteVerificationPolicy::RequiredBeforeActivation;
     bool repair = false;
     bool discard_operation_data_on_cancel = false;
+    bool discard_artifact_on_success = false;
 };
 
 struct VerifiedBackendPackCatalogRecord {

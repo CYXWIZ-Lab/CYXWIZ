@@ -282,7 +282,11 @@ int main() {
     const auto download = temporary.Path() / "downloads" / "pack.zip";
 
     MemorySource interrupted(bytes, 128 * 1024);
-    BackendPackArtifactAcquirer acquirer;
+    std::vector<BackendPackAcquisitionProgress> acquisition_progress;
+    BackendPackArtifactAcquirer acquirer(
+        [&](const auto& progress) {
+            acquisition_progress.push_back(progress);
+        });
     auto acquired = acquirer.Acquire(
         interrupted, download, bytes.size(), digest, bytes.size());
     if (!Expect(
@@ -350,7 +354,17 @@ int main() {
         offline, offline_copy, bytes.size(), digest, bytes.size());
     if (!Expect(
             acquired.status == BackendPackAcquisitionStatus::Downloaded,
-            "offline source did not use the shared acquisition path")) return 1;
+            "offline source did not use the shared acquisition path") ||
+        !Expect(
+            std::any_of(
+                acquisition_progress.begin(), acquisition_progress.end(),
+                [](const auto& progress) {
+                    return progress.message ==
+                        "Artifact hash verified during transfer";
+                }),
+            "fresh acquisition reread the completed artifact instead of hashing transferred bytes")) {
+        return 1;
+    }
 
     const auto cancel_download = temporary.Path() / "cancel-download.zip";
     BackendPackArtifactAcquirer* cancelling_acquirer = nullptr;

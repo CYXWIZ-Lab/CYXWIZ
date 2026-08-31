@@ -26,6 +26,7 @@ from backend_pack_contract import (  # noqa: E402
     canonical_json_bytes,
     validate_pack_manifest,
 )
+from python_runtime_package import copy_python_runtime  # noqa: E402
 
 
 SUPPORTED_BACKENDS = ("cpu", "cuda", "oneapi", "opencl")
@@ -710,8 +711,17 @@ def sha256_file(path: Path) -> str:
 
 def create_deterministic_zip(stage: Path, destination: Path) -> Path:
     """Create stable Windows pack bytes from sorted content and fixed metadata."""
+    # Level 6 is zlib's balanced default. Level 9 made the 1 GiB production
+    # base take tens of minutes to publish without a material distribution-size
+    # benefit; determinism comes from fixed ordering/metadata, not level 9.
+    compression_level = 6
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+    with zipfile.ZipFile(
+        destination,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=compression_level,
+    ) as archive:
         for path in sorted(item for item in stage.rglob("*") if item.is_file()):
             relative = path.relative_to(stage).as_posix()
             info = zipfile.ZipInfo(relative, date_time=(1980, 1, 1, 0, 0, 0))
@@ -719,7 +729,12 @@ def create_deterministic_zip(stage: Path, destination: Path) -> Path:
             info.create_system = 3
             executable = path.suffix.lower() in (".exe", ".dll", ".pyd", ".so", ".dylib")
             info.external_attr = ((0o755 if executable else 0o644) & 0xFFFF) << 16
-            archive.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+            archive.writestr(
+                info,
+                path.read_bytes(),
+                compress_type=zipfile.ZIP_DEFLATED,
+                compresslevel=compression_level,
+            )
     return destination
 
 
@@ -898,7 +913,7 @@ def build_split_artifact(
             raise PackageError("Pass --intel-runtime-license-dir for the CPU base MKL notices")
         intel_notices_path = validate_intel_runtime_notices(Path(intel_notices).resolve(), ())
         package_arrayfire_base(arrayfire_root, stage, lib_suffix)
-        copy_tree(python_root, stage / "python")
+        copy_python_runtime(python_root, stage / "python")
         copy_runtime_notices(stage, intel_notices_path, None)
         render_readme(
             paths.templates / "README_BASE.md",
@@ -1054,7 +1069,7 @@ def build_package(args: argparse.Namespace, script: Path | None = None) -> tuple
         assert intel_notices is not None
         versions["arrayfire"] = package_arrayfire(arrayfire_root, stage, backends, lib_suffix)
         versions["python"] = full_python_version
-        copy_tree(python_root, stage / "python")
+        copy_python_runtime(python_root, stage / "python")
         copy_runtime_notices(stage, intel_notices, nvidia_notices)
 
     create_launcher(stage, args.profile, system)

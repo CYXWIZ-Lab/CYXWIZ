@@ -1,11 +1,13 @@
 #include "backend_pack_acquisition.h"
 #include "backend_pack_hash.h"
 #include "backend_pack_path.h"
+#include "backend_pack_progress_cadence.h"
 
 #include <algorithm>
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <thread>
 #include <utility>
@@ -111,7 +113,8 @@ bool VerifyArtifact(
     const std::filesystem::path& path,
     std::uint64_t expected_size,
     const std::string& expected_sha256,
-    std::string& error) {
+    std::string& error,
+    const Sha256FileProgress& hash_progress = {}) {
     if (!IsRegularNonLink(path, error)) return false;
     std::error_code filesystem_error;
     const auto size = std::filesystem::file_size(path, filesystem_error);
@@ -120,7 +123,7 @@ bool VerifyArtifact(
         return false;
     }
     std::string digest;
-    if (!Sha256File(path, digest, error)) return false;
+    if (!Sha256File(path, digest, error, hash_progress)) return false;
     if (digest != expected_sha256) {
         error = "Artifact SHA-256 differs from signed metadata";
         return false;
@@ -456,7 +459,11 @@ BackendPackAcquisitionResult BackendPackArtifactAcquirer::Acquire(
     std::uint64_t completed = offset;
     std::string error;
     bool transferred = false;
+    bool transfer_hash_failed = false;
+    std::optional<Sha256Stream> transfer_hash;
+    if (offset == 0) transfer_hash.emplace();
     std::size_t attempts = 0;
+    BackendPackProgressCadence transfer_cadence;
     for (; attempts < retry.maximum_attempts; ++attempts) {
         error.clear();
         transferred = source.TransferFrom(
@@ -473,13 +480,19 @@ BackendPackAcquisitionResult BackendPackArtifactAcquirer::Acquire(
                     sink_error = "Cannot write the partial artifact";
                     return false;
                 }
+                if (transfer_hash && !transfer_hash->Update(
+                        std::string_view(bytes, size), sink_error)) {
+                    transfer_hash_failed = true;
+                    return false;
+                }
                 completed += size;
                 progress.completed_bytes = completed;
-                SetProgress(progress);
+                if (transfer_cadence.ShouldPublish()) SetProgress(progress);
                 return !cancel_requested_.load();
             },
             [&] { return cancel_requested_.load(); }, error);
-        if (transferred || cancel_requested_.load() || !output ||
+        if (transferred || transfer_hash_failed ||
+            cancel_requested_.load() || !output ||
             attempts + 1 >= retry.maximum_attempts) {
             break;
         }
@@ -504,6 +517,14 @@ BackendPackAcquisitionResult BackendPackArtifactAcquirer::Acquire(
     output.flush();
     const bool output_ok = static_cast<bool>(output);
     output.close();
+    if (transfer_hash_failed) {
+        std::filesystem::remove(partial, filesystem_error);
+        return Finish(
+            BackendPackAcquisitionStatus::IntegrityFailure,
+            error.empty() ? "Cannot calculate transferred artifact hash"
+                          : error,
+            {}, offset);
+    }
     if (!transferred) {
         return Finish(
             cancel_requested_.load()
@@ -529,13 +550,54 @@ BackendPackAcquisitionResult BackendPackArtifactAcquirer::Acquire(
     }
 
     progress.stage = BackendPackAcquisitionStage::Verifying;
+    progress.completed_bytes = 0;
     progress.message = "Verifying completed artifact hash";
     SetProgress(progress);
-    if (!VerifyArtifact(partial, expected_size, expected_sha256, error)) {
-        std::filesystem::remove(partial, filesystem_error);
-        return Finish(
-            BackendPackAcquisitionStatus::IntegrityFailure, error, {}, offset);
+    BackendPackProgressCadence verification_cadence;
+    if (transfer_hash) {
+        std::string digest;
+        if (!transfer_hash->Finish(digest, error) ||
+            digest != expected_sha256) {
+            std::filesystem::remove(partial, filesystem_error);
+            return Finish(
+                BackendPackAcquisitionStatus::IntegrityFailure,
+                error.empty()
+                    ? "Artifact SHA-256 differs from signed metadata"
+                    : error,
+                {}, offset);
+        }
+        progress.completed_bytes = expected_size;
+        progress.message = "Artifact hash verified during transfer";
+        SetProgress(progress);
+        if (cancel_requested_.load()) {
+            return Finish(
+                BackendPackAcquisitionStatus::Interrupted,
+                "Artifact verification cancelled", {}, offset);
+        }
+    } else {
+        const auto publish_hash_progress =
+            [&](std::uint64_t completed_bytes) {
+                progress.completed_bytes = completed_bytes;
+                if (verification_cadence.ShouldPublish()) {
+                    SetProgress(progress);
+                }
+                return !cancel_requested_.load();
+            };
+        if (!VerifyArtifact(
+                partial, expected_size, expected_sha256, error,
+                publish_hash_progress)) {
+            if (cancel_requested_.load()) {
+                return Finish(
+                    BackendPackAcquisitionStatus::Interrupted,
+                    "Artifact verification cancelled", {}, offset);
+            }
+            std::filesystem::remove(partial, filesystem_error);
+            return Finish(
+                BackendPackAcquisitionStatus::IntegrityFailure, error, {},
+                offset);
+        }
     }
+    if (verification_cadence.ShouldPublish(true)) SetProgress(progress);
     progress.stage = BackendPackAcquisitionStage::Publishing;
     progress.message = "Publishing verified artifact atomically";
     SetProgress(progress);

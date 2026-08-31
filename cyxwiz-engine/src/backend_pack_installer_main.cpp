@@ -5,6 +5,7 @@
 #include "installer/installer_progress_channel.h"
 
 #include "backend_pack_lifecycle_service.h"
+#include "backend_pack_remover.h"
 #include "backend_pack_metadata_cache.h"
 #include "backend_pack_platform.h"
 #include "backend_pack_state_service.h"
@@ -26,6 +27,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -34,7 +36,9 @@
 #include <windows.h>
 #elif defined(__APPLE__)
 #include <mach-o/dyld.h>
+#include <sys/resource.h>
 #else
+#include <sys/resource.h>
 #include <unistd.h>
 #endif
 
@@ -49,9 +53,52 @@ struct Options {
     std::uint64_t parent_process_id = 0;
     bool base = false;
     bool base_update = false;
+    bool remove_pack = false;
     bool repair = false;
+    bool defer_route_verification = false;
     bool offline = false;
     bool all_users = false;
+};
+
+void ApplyBackgroundInstallerPriority() {
+#ifdef _WIN32
+    // This executable performs CPU- and I/O-heavy verified package work only.
+    // Keep the interactive desktop responsive while that work is in flight.
+    (void)::SetPriorityClass(::GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+    (void)::SetThreadPriority(
+        ::GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
+#else
+    // The helper is a dedicated short-lived process, so restoration is not
+    // required when lowering the priority of its installation thread.
+    (void)::setpriority(PRIO_PROCESS, 0, 5);
+#endif
+}
+
+class CancellationMonitor {
+public:
+    CancellationMonitor() = default;
+    CancellationMonitor(const CancellationMonitor&) = delete;
+    CancellationMonitor& operator=(const CancellationMonitor&) = delete;
+
+    ~CancellationMonitor() { Stop(); }
+
+    template <typename Function>
+    void Start(Function&& function) {
+        worker_ = std::thread(std::forward<Function>(function));
+    }
+
+    [[nodiscard]] bool StopRequested() const noexcept {
+        return stop_requested_.load(std::memory_order_relaxed);
+    }
+
+    void Stop() noexcept {
+        stop_requested_.store(true, std::memory_order_relaxed);
+        if (worker_.joinable()) worker_.join();
+    }
+
+private:
+    std::atomic<bool> stop_requested_{false};
+    std::thread worker_;
 };
 
 template <typename Character>
@@ -93,39 +140,6 @@ bool ParseProcessId(std::basic_string_view<Character> value,
     return parsed != 0;
 }
 
-std::filesystem::path ExecutableDirectory() {
-#ifdef _WIN32
-    std::vector<wchar_t> buffer(32768);
-    const DWORD length = ::GetModuleFileNameW(
-        nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-    if (length == 0 || length >= buffer.size()) return {};
-    return std::filesystem::path(
-        std::wstring(buffer.data(), length)).parent_path();
-#elif defined(__APPLE__)
-    std::uint32_t size = 0;
-    ::_NSGetExecutablePath(nullptr, &size);
-    std::vector<char> buffer(size);
-    if (size == 0 || ::_NSGetExecutablePath(buffer.data(), &size) != 0) {
-        return {};
-    }
-    std::error_code error;
-    const auto executable = std::filesystem::weakly_canonical(
-        std::filesystem::path(buffer.data()), error);
-    return error ? std::filesystem::path{} : executable.parent_path();
-#else
-    std::vector<char> buffer(4096);
-    const auto length = ::readlink(
-        "/proc/self/exe", buffer.data(), buffer.size());
-    if (length <= 0 ||
-        static_cast<std::size_t>(length) >= buffer.size()) {
-        return {};
-    }
-    return std::filesystem::path(
-        std::string(buffer.data(), static_cast<std::size_t>(length)))
-        .parent_path();
-#endif
-}
-
 std::string CurrentUtc() {
     const auto value = std::chrono::system_clock::to_time_t(
         std::chrono::system_clock::now());
@@ -157,10 +171,12 @@ bool ParseOptions(
     bool saw_pack_id = false;
     bool saw_base_pack_id = false;
     bool saw_base_update_pack_id = false;
+    bool saw_remove_pack_id = false;
     bool saw_deactivate_backend = false;
     bool saw_all_users = false;
     bool saw_progress_token = false;
     bool saw_parent_process_id = false;
+    bool saw_defer_route_verification = false;
     for (int index = 1; index < argc; ++index) {
         const std::wstring_view argument(argv[index]);
         if (argument == L"--runtime-root" && !saw_runtime_root &&
@@ -228,8 +244,26 @@ bool ParseOptions(
                     static_cast<char>(character));
             }
             saw_deactivate_backend = true;
+        } else if (argument == L"--remove-pack-id" &&
+                   !saw_remove_pack_id && index + 1 < argc) {
+            const std::wstring value(argv[++index]);
+            if (!IsIdentifier(value)) {
+                error = "--remove-pack-id must be a safe ASCII identifier";
+                return false;
+            }
+            output.pack_id.clear();
+            output.pack_id.reserve(value.size());
+            for (const wchar_t character : value) {
+                output.pack_id.push_back(static_cast<char>(character));
+            }
+            output.remove_pack = true;
+            saw_remove_pack_id = true;
         } else if (argument == L"--repair" && !output.repair) {
             output.repair = true;
+        } else if (argument == L"--defer-route-verification" &&
+                   !saw_defer_route_verification) {
+            output.defer_route_verification = true;
+            saw_defer_route_verification = true;
         } else if (argument == L"--offline" && !output.offline) {
             output.offline = true;
         } else if (argument == L"--all-users" && !saw_all_users) {
@@ -275,9 +309,13 @@ bool ParseOptions(
         static_cast<int>(saw_pack_id) +
                 static_cast<int>(saw_base_pack_id) +
                 static_cast<int>(saw_base_update_pack_id) +
+                static_cast<int>(saw_remove_pack_id) +
                 static_cast<int>(saw_deactivate_backend) != 1 ||
         ((saw_base_pack_id || saw_base_update_pack_id) && output.repair) ||
-        (saw_deactivate_backend && (output.repair || output.offline))) {
+        (output.defer_route_verification &&
+         (output.repair || saw_deactivate_backend || saw_remove_pack_id)) ||
+        ((saw_deactivate_backend || saw_remove_pack_id) &&
+         (output.repair || output.offline))) {
         error = "--runtime-root and exactly one pack operation are required";
         return false;
     }
@@ -295,10 +333,12 @@ bool ParseOptions(
     bool saw_pack_id = false;
     bool saw_base_pack_id = false;
     bool saw_base_update_pack_id = false;
+    bool saw_remove_pack_id = false;
     bool saw_deactivate_backend = false;
     bool saw_all_users = false;
     bool saw_progress_token = false;
     bool saw_parent_process_id = false;
+    bool saw_defer_route_verification = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--runtime-root" && !saw_runtime_root &&
@@ -345,8 +385,21 @@ bool ParseOptions(
                 return false;
             }
             saw_deactivate_backend = true;
+        } else if (argument == "--remove-pack-id" &&
+                   !saw_remove_pack_id && index + 1 < argc) {
+            output.pack_id = argv[++index];
+            if (!IsIdentifier(output.pack_id)) {
+                error = "--remove-pack-id must be a safe ASCII identifier";
+                return false;
+            }
+            output.remove_pack = true;
+            saw_remove_pack_id = true;
         } else if (argument == "--repair" && !output.repair) {
             output.repair = true;
+        } else if (argument == "--defer-route-verification" &&
+                   !saw_defer_route_verification) {
+            output.defer_route_verification = true;
+            saw_defer_route_verification = true;
         } else if (argument == "--offline" && !output.offline) {
             output.offline = true;
         } else if (argument == "--all-users" && !saw_all_users) {
@@ -380,9 +433,13 @@ bool ParseOptions(
         static_cast<int>(saw_pack_id) +
                 static_cast<int>(saw_base_pack_id) +
                 static_cast<int>(saw_base_update_pack_id) +
+                static_cast<int>(saw_remove_pack_id) +
                 static_cast<int>(saw_deactivate_backend) != 1 ||
         ((saw_base_pack_id || saw_base_update_pack_id) && output.repair) ||
-        (saw_deactivate_backend && (output.repair || output.offline))) {
+        (output.defer_route_verification &&
+         (output.repair || saw_deactivate_backend || saw_remove_pack_id)) ||
+        ((saw_deactivate_backend || saw_remove_pack_id) &&
+         (output.repair || output.offline))) {
         error = "--runtime-root and exactly one pack operation are required";
         return false;
     }
@@ -404,6 +461,7 @@ int main(int argc, char** argv) {
         std::cerr << "CyxWiz backend-pack installer: " << error << '\n';
         return 78;
     }
+    ApplyBackgroundInstallerPriority();
     const auto progress_path = options.progress_token.empty()
         ? std::filesystem::path{}
         : cyxwiz::installer::InstallerProgressPath(
@@ -471,10 +529,85 @@ int main(int argc, char** argv) {
                 cyxwiz::runtime::BackendPackStateStatus::Completed
             ? 0 : 1;
     }
-    const auto executable_directory = ExecutableDirectory();
-    if (executable_directory.empty()) {
-        std::cerr << "Cannot resolve the installer executable directory\n";
-        return 78;
+    if (options.remove_pack) {
+        cyxwiz::runtime::ActiveRuntimeState active;
+        if (!cyxwiz::runtime::LoadActiveRuntimeState(
+                options.runtime_root / "active-runtime.json", active,
+                error)) {
+            const auto message =
+                "Cannot load the packaged runtime for component removal: " +
+                error;
+            publish_progress("failed", message);
+            std::cerr << message << '\n';
+            return 1;
+        }
+        const auto selected = std::find_if(
+            active.packs.begin(), active.packs.end(),
+            [&](const auto& pack) { return pack.pack_id == options.pack_id; });
+        if (selected == active.packs.end()) {
+            const auto message =
+                "The selected optional component is not installed and active";
+            publish_progress("failed", message);
+            std::cerr << message << '\n';
+            return 1;
+        }
+        cyxwiz::runtime::BackendPackRemover remover(
+            options.runtime_root, {},
+            [&](const cyxwiz::runtime::BackendPackRemovalProgress& progress) {
+                publish_progress(
+                    "removing", progress.message, 0, 0, 0, 0);
+            });
+        CancellationMonitor cancellation_monitor;
+        if (!options.progress_token.empty() ||
+            options.parent_process_id != 0) {
+            cancellation_monitor.Start(
+                [&remover, &helper_session, &cancellation_monitor,
+                 token = options.progress_token] {
+                    while (!cancellation_monitor.StopRequested()) {
+                        const bool requested = !token.empty() &&
+                            cyxwiz::installer::
+                                IsInstallerCancellationRequested(token);
+                        if (requested || helper_session.ParentExited()) {
+                            remover.Cancel();
+                            return;
+                        }
+                        std::this_thread::sleep_for(
+                            std::chrono::milliseconds(100));
+                    }
+                });
+        }
+        const auto result = remover.Remove(
+            selected->backend, options.pack_id);
+        cancellation_monitor.Stop();
+        if (!options.progress_token.empty()) {
+            cyxwiz::installer::ClearInstallerCancellation(
+                options.progress_token);
+        }
+        const bool removed =
+            result.status == cyxwiz::runtime::BackendPackRemovalStatus::Removed ||
+            result.status ==
+                cyxwiz::runtime::BackendPackRemovalStatus::AlreadyAbsent;
+        if (removed) {
+            std::error_code cleanup_error;
+            std::filesystem::remove_all(
+                options.runtime_root / "cache" / "artifacts" /
+                    options.pack_id,
+                cleanup_error);
+            const auto message = cleanup_error
+                ? result.message +
+                      "; the downloaded package cache could not be removed: " +
+                      cleanup_error.message()
+                : result.message;
+            publish_progress(cleanup_error ? "failed" : "complete", message);
+            std::cout << message << '\n';
+            return cleanup_error ? 3 : 0;
+        }
+        const bool cleanup_pending = result.status ==
+            cyxwiz::runtime::BackendPackRemovalStatus::CleanupPending;
+        publish_progress(cleanup_pending ? "complete" : "failed",
+                         result.message);
+        std::cout << result.message << '\n';
+        return cleanup_pending ? 3 : 1;
     }
     auto trust = cyxwiz::runtime::BackendPackTrustStore::Load(
         options.metadata_root / "trust" / "trusted-keys.json", error);
@@ -506,28 +639,52 @@ int main(int argc, char** argv) {
         }
     }
 
-    auto qualification_service =
-        std::make_shared<cyxwiz::RouteQualificationService>();
+    std::shared_ptr<cyxwiz::RouteQualificationService>
+        qualification_service;
     auto helper_cancel_requested =
         std::make_shared<std::atomic<bool>>(false);
-    cyxwiz::BackendPackQualificationAdapterOptions qualification_options;
-    qualification_options.runtime_root = options.runtime_root;
-    qualification_options.probe_executable = options.base
-        ? options.runtime_root / "base" / options.pack_id /
-              cyxwiz::runtime::CurrentRouteProbeExecutableName()
-        : executable_directory /
-              cyxwiz::runtime::CurrentRouteProbeExecutableName();
-    qualification_options.cache_path =
-        cyxwiz::GetRouteQualificationCachePath();
-    qualification_options.should_cancel =
-        [helper_cancel_requested] {
-            return helper_cancel_requested->load();
-        };
-    if (!options.base && !std::filesystem::is_regular_file(
-            qualification_options.probe_executable)) {
-        std::cerr << "Qualification helper is missing: "
-                  << qualification_options.probe_executable.string() << '\n';
-        return 78;
+    cyxwiz::runtime::BackendPackQualificationHook qualification_hook;
+    if (!options.defer_route_verification) {
+        qualification_service =
+            std::make_shared<cyxwiz::RouteQualificationService>();
+        cyxwiz::BackendPackQualificationAdapterOptions qualification_options;
+        qualification_options.runtime_root = options.runtime_root;
+        if (options.base) {
+            qualification_options.probe_executable =
+                options.runtime_root / "base" / options.pack_id /
+                cyxwiz::runtime::CurrentRouteProbeExecutableName();
+        } else {
+            cyxwiz::runtime::ActiveRuntimeState active;
+            if (!cyxwiz::runtime::LoadActiveRuntimeState(
+                    options.runtime_root / "active-runtime.json", active,
+                    error) || active.base_pack_id.empty()) {
+                const auto message =
+                    "Cannot resolve the activated CPU-base qualification probe: " +
+                    error;
+                publish_progress("failed", message);
+                std::cerr << message << '\n';
+                return 1;
+            }
+            qualification_options.probe_executable =
+                options.runtime_root / "base" / active.base_pack_id /
+                cyxwiz::runtime::CurrentRouteProbeExecutableName();
+        }
+        qualification_options.cache_path =
+            cyxwiz::GetRouteQualificationCachePath();
+        qualification_options.should_cancel =
+            [helper_cancel_requested] {
+                return helper_cancel_requested->load();
+            };
+        if (!options.base && !std::filesystem::is_regular_file(
+                qualification_options.probe_executable)) {
+            const auto message = "The activated CPU-base qualification helper "
+                "is missing: " + qualification_options.probe_executable.string();
+            publish_progress("failed", message);
+            std::cerr << message << '\n';
+            return 78;
+        }
+        qualification_hook = cyxwiz::CreateBackendPackQualificationHook(
+            qualification_service, std::move(qualification_options));
     }
 
     auto verifier = cyxwiz::runtime::BackendPackMetadataVerifier(
@@ -537,8 +694,7 @@ int main(int argc, char** argv) {
     cyxwiz::runtime::BackendPackLifecycleService lifecycle(
         options.runtime_root, std::move(verifier),
         cyxwiz::runtime::BackendPackExecutionActiveCheck{},
-        cyxwiz::CreateBackendPackQualificationHook(
-            qualification_service, std::move(qualification_options)),
+        std::move(qualification_hook),
         [publish_progress](
             const cyxwiz::runtime::BackendPackLifecycleProgress& progress) {
             std::cout
@@ -553,20 +709,22 @@ int main(int argc, char** argv) {
                 progress.component_count);
         });
 
-    std::jthread cancellation_monitor;
+    CancellationMonitor cancellation_monitor;
     if (!options.progress_token.empty() || options.parent_process_id != 0) {
-        cancellation_monitor = std::jthread(
+        cancellation_monitor.Start(
             [&lifecycle, &helper_session, qualification_service,
-             helper_cancel_requested, token = options.progress_token](
-                const std::stop_token stop) {
-                while (!stop.stop_requested()) {
+             helper_cancel_requested, &cancellation_monitor,
+             token = options.progress_token] {
+                while (!cancellation_monitor.StopRequested()) {
                     const bool requested = !token.empty() &&
                         cyxwiz::installer::
                             IsInstallerCancellationRequested(token);
                     if (requested || helper_session.ParentExited()) {
                         helper_cancel_requested->store(true);
                         lifecycle.Cancel();
-                        qualification_service->Cancel();
+                        if (qualification_service) {
+                            qualification_service->Cancel();
+                        }
                         return;
                     }
                     std::this_thread::sleep_for(
@@ -585,10 +743,16 @@ int main(int argc, char** argv) {
     request.current_utc = CurrentUtc();
     request.pack_id = options.pack_id;
     request.repair = options.repair;
+    request.route_verification = options.defer_route_verification
+        ? cyxwiz::runtime::BackendPackRouteVerificationPolicy::
+              DeferredToEngine
+        : cyxwiz::runtime::BackendPackRouteVerificationPolicy::
+              RequiredBeforeActivation;
     request.source = options.offline
         ? cyxwiz::runtime::BackendPackDeliverySource::OfflineSibling
         : cyxwiz::runtime::BackendPackDeliverySource::CatalogHttps;
     request.discard_operation_data_on_cancel = true;
+    request.discard_artifact_on_success = true;
     if (!options.offline) {
         request.acquisition_retry.maximum_attempts = 3;
         request.acquisition_retry.backoff = std::chrono::seconds(1);
@@ -597,8 +761,7 @@ int main(int argc, char** argv) {
         ? lifecycle.DeliverBaseUpdate(request)
         : (options.base ? lifecycle.DeliverBase(request)
                         : lifecycle.Deliver(request));
-    cancellation_monitor.request_stop();
-    if (cancellation_monitor.joinable()) cancellation_monitor.join();
+    cancellation_monitor.Stop();
     if (!options.progress_token.empty()) {
         cyxwiz::installer::ClearInstallerCancellation(
             options.progress_token);

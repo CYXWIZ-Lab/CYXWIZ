@@ -234,15 +234,19 @@ void RenderComponents(InstallerViewState &state,
     ImGui::PushID(record.pack_id.c_str());
     ImGui::PushStyleColor(ImGuiCol_ChildBg,
                           ImVec4(0.055f, 0.115f, 0.19f, 1.0f));
-    const float component_height =
-        record.backend == "cuda" ? 184.0f : 154.0f;
+    const float component_height = record.backend == "cuda"
+                                       ? (record.installed ? 222.0f : 184.0f)
+                                       : (record.installed ? 192.0f : 154.0f);
     ImGui::BeginChild("component", ImVec2(0.0f, component_height),
                       ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
     const bool selectable = IsBackendPackSelectableForInstaller(record);
     const auto presentation = BuildInstallerPackPresentation(record);
     bool selected = record.backend == "cpu" ||
+                    (record.installed && !record.update_available) ||
                     state.custom_selection.contains(record.pack_id);
-    ImGui::BeginDisabled(!selectable || operation_running);
+    const bool can_select = selectable &&
+                            (!record.installed || record.update_available);
+    ImGui::BeginDisabled(!can_select || operation_running);
     if (ImGui::Checkbox("##selected", &selected)) {
       state.choice = BackendPackInstallChoice::Custom;
       if (selected)
@@ -289,6 +293,20 @@ void RenderComponents(InstallerViewState &state,
     }
     if (!record.delivery_metadata_error.empty()) {
       ImGui::TextColored(kDanger, "%s", record.delivery_metadata_error.c_str());
+    }
+    if (record.installed && record.backend != "cpu" &&
+        !record.update_available) {
+      ImGui::BeginDisabled(operation_running);
+      if (ImGui::Button(ICON_FA_TRASH " Uninstall component",
+                        ImVec2(190.0f, 30.0f))) {
+        state.pending_pack_removal_id = record.installed_pack_id;
+        state.pack_removal_confirmation_requested = true;
+      }
+      ImGui::EndDisabled();
+    } else if (record.update_available) {
+      ImGui::TextColored(
+          kWarning,
+          "Select this component to review and install its signed update.");
     }
     ImGui::Unindent(29.0f);
     ImGui::EndChild();
@@ -338,6 +356,45 @@ void RenderComponents(InstallerViewState &state,
     ImGui::PopStyleColor();
     ImGui::PopID();
   }
+}
+
+void RenderPackRemovalConfirmation(InstallerViewState &state,
+                                   bool operation_running,
+                                   InstallerViewAction &action) {
+  if (state.pack_removal_confirmation_requested) {
+    ImGui::OpenPopup("Uninstall backend component");
+    state.pack_removal_confirmation_requested = false;
+  }
+  ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_Appearing);
+  if (!ImGui::BeginPopupModal("Uninstall backend component", nullptr,
+                              ImGuiWindowFlags_AlwaysAutoResize)) {
+    return;
+  }
+  ImGui::TextWrapped(
+      "CyxWiz will deactivate this compute route, remove its versioned "
+      "package files, and clear its downloaded package cache.");
+  ImGui::Spacing();
+  ImGui::TextDisabled("Component: %s",
+                      state.pending_pack_removal_id.c_str());
+  ImGui::Spacing();
+  ImGui::BeginDisabled(operation_running ||
+                       state.pending_pack_removal_id.empty());
+  if (ImGui::Button("Uninstall", ImVec2(175.0f, 36.0f))) {
+    action.kind = InstallerViewActionKind::ApplyPlan;
+    action.plan.valid = true;
+    action.plan.remove_pack_ids = {state.pending_pack_removal_id};
+    state.custom_selection.erase(state.pending_pack_removal_id);
+    state.choice = BackendPackInstallChoice::Custom;
+    state.pending_pack_removal_id.clear();
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndDisabled();
+  ImGui::SameLine();
+  if (ImGui::Button("Keep component", ImVec2(175.0f, 36.0f))) {
+    state.pending_pack_removal_id.clear();
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndPopup();
 }
 
 void RenderLocation(InstallerViewState &state,
@@ -547,16 +604,21 @@ void RenderSummary(InstallerViewState &state,
         operation_progress.overall_fraction, 0.0f, 1.0f);
     std::string progress_label = "Preparing";
     if (operation_progress.total_steps != 0) {
-      const auto current_step =
-          std::min(operation_progress.completed_steps + 1,
-                   operation_progress.total_steps);
       progress_label = std::to_string(
                            static_cast<int>(progress * 100.0f)) +
-                       "%  |  Component " + std::to_string(current_step) +
-                       " of " + std::to_string(operation_progress.total_steps);
+                       "% overall";
     }
     ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f),
                        progress_label.c_str());
+    if (operation_progress.package_count != 0) {
+      std::string package_text =
+          "Package " + std::to_string(operation_progress.package_index) +
+          " of " + std::to_string(operation_progress.package_count);
+      if (!operation_progress.package_id.empty()) {
+        package_text += ": " + operation_progress.package_id;
+      }
+      ImGui::TextWrapped("%s", package_text.c_str());
+    }
     if (operation_progress.phase_count != 0) {
       std::string phase_text =
           "Phase " + std::to_string(operation_progress.phase_index) +
@@ -576,6 +638,11 @@ void RenderSummary(InstallerViewState &state,
           FormatBackendPackByteSize(operation_progress.total_bytes);
       ImGui::TextDisabled("%s / %s", completed.c_str(), total.c_str());
     }
+    if (operation_progress.component_count != 0) {
+      ImGui::TextDisabled(
+          "Files: %zu of %zu", operation_progress.component_index,
+          operation_progress.component_count);
+    }
     if (!operation_progress.activity.empty()) {
       ImGui::TextWrapped("%s", operation_progress.activity.c_str());
     }
@@ -593,49 +660,50 @@ void RenderSummary(InstallerViewState &state,
                          install_location.valid && !operation_running;
   const bool maintenance =
       catalog.mode == CyxWizInstallerMode::Maintenance;
-  const float footer_height = maintenance ? 166.0f : 116.0f;
+  const bool show_launch = maintenance || state.install_completed;
+  const float footer_height = maintenance
+                                  ? (has_changes ? 228.0f : 184.0f)
+                                  : (state.install_completed ? 160.0f
+                                                             : 116.0f);
   ImGui::SetCursorPosY(std::max(
       ImGui::GetCursorPosY(), ImGui::GetWindowHeight() - footer_height));
   if (state.install_completed) {
     ImGui::TextColored(kSuccess, "%s Installation complete",
                        ICON_FA_CIRCLE_CHECK);
-    ImGui::BeginDisabled(operation_running || state.engine_launched);
+  }
+  if (show_launch) {
+    ImGui::BeginDisabled(operation_running);
     if (ImGui::Button(
-            state.engine_launched ? "CyxWiz is running"
-                                  : "Launch CyxWiz",
+            state.engine_launched ? "Launch CyxWiz again" : "Launch CyxWiz",
             ImVec2(-1.0f, 38.0f))) {
       action.kind = InstallerViewActionKind::LaunchEngine;
     }
     ImGui::EndDisabled();
-  } else {
-    if (operation_running && operation_cancellable) {
-      ImGui::BeginDisabled(state.cancellation_requested);
-      constexpr float kCancellationButtonWidth = 210.0f;
-      const float cancellation_offset = std::max(
-          0.0f,
-          (ImGui::GetContentRegionAvail().x - kCancellationButtonWidth) *
-              0.5f);
-      ImGui::SetCursorPosX(ImGui::GetCursorPosX() + cancellation_offset);
-      if (ImGui::Button(
-              state.cancellation_requested
-                  ? "Cancelling safely..."
-                  : "Cancel installation",
-              ImVec2(kCancellationButtonWidth, 38.0f))) {
-        action.kind = InstallerViewActionKind::CancelOperation;
-      }
-      ImGui::EndDisabled();
-    } else {
-      ImGui::BeginDisabled(!can_apply);
-      const char *review_label = plan.update_base
-                                     ? ICON_FA_DOWNLOAD " Review & update"
-                                     : ICON_FA_DOWNLOAD " Review & install";
-      if (ImGui::Button(review_label,
-                        ImVec2(-1.0f, 38.0f))) {
-        state.pending_plan = plan;
-        state.review_requested = true;
-      }
-      ImGui::EndDisabled();
+  }
+  if (operation_running && operation_cancellable) {
+    ImGui::BeginDisabled(state.cancellation_requested);
+    constexpr float kCancellationButtonWidth = 210.0f;
+    const float cancellation_offset = std::max(
+        0.0f,
+        (ImGui::GetContentRegionAvail().x - kCancellationButtonWidth) * 0.5f);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + cancellation_offset);
+    if (ImGui::Button(
+            state.cancellation_requested ? "Cancelling safely..."
+                                         : "Cancel installation",
+            ImVec2(kCancellationButtonWidth, 38.0f))) {
+      action.kind = InstallerViewActionKind::CancelOperation;
     }
+    ImGui::EndDisabled();
+  } else if (has_changes) {
+    ImGui::BeginDisabled(!can_apply);
+    const char *review_label = plan.update_base
+                                   ? ICON_FA_DOWNLOAD " Review & update"
+                                   : ICON_FA_DOWNLOAD " Review & install";
+    if (ImGui::Button(review_label, ImVec2(-1.0f, 38.0f))) {
+      state.pending_plan = plan;
+      state.review_requested = true;
+    }
+    ImGui::EndDisabled();
   }
   if (maintenance) {
     const auto removal_action = RenderInstallerRemovalControl(
@@ -709,7 +777,7 @@ void RenderReviewPopup(InstallerViewState &state,
         "The previous complete runtime remains available for rollback.");
   }
   if (!state.pending_plan.pack_ids.empty()) {
-    ImGui::Text("Download and locally qualify:");
+    ImGui::Text("Acquire and locally qualify:");
     bool installs_cuda = false;
     for (const auto &pack_id : state.pending_plan.pack_ids) {
       ImGui::BulletText("%s", pack_id.c_str());
@@ -736,9 +804,9 @@ void RenderReviewPopup(InstallerViewState &state,
   }
   const auto size =
       FormatBackendPackByteSize(state.pending_plan.download_size_bytes);
-  ImGui::Text("Download: %s", state.pending_plan.download_size_bytes == 0
-                                  ? "None"
-                                  : size.c_str());
+  ImGui::Text("Package data: %s",
+              state.pending_plan.download_size_bytes == 0 ? "None"
+                                                          : size.c_str());
   ImGui::TextDisabled(
       "A package that fails verification or qualification remains inactive.");
   ImGui::Checkbox("Launch CyxWiz when installation completes",
@@ -828,6 +896,7 @@ InstallerViewAction RenderInstallerView(
   }
   RenderReviewPopup(state, catalog, install_location, operation_running,
                     action);
+  RenderPackRemovalConfirmation(state, operation_running, action);
   RenderCloseConfirmation(state, operation_cancellable, action);
   ImGui::End();
   return action;

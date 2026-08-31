@@ -1,6 +1,7 @@
 #include "backend_pack_archive_extractor.h"
 #include "backend_pack_hash.h"
 #include "backend_pack_path.h"
+#include "backend_pack_progress_cadence.h"
 #include "installer_bundle_verifier.h"
 
 #ifndef NOMINMAX
@@ -100,6 +101,28 @@ BackendPackExtractionResult BackendPackArchiveExtractor::Extract(
     const VerifiedBackendPackManifest& manifest,
     const std::filesystem::path& destination,
     std::uint64_t disk_budget_bytes) {
+    return ExtractInternal(
+        archive_path, manifest, destination, disk_budget_bytes,
+        ArchiveIdentityMode::Verify);
+}
+
+BackendPackExtractionResult
+BackendPackArchiveExtractor::ExtractAcquiredArtifact(
+    const std::filesystem::path& archive_path,
+    const VerifiedBackendPackManifest& manifest,
+    const std::filesystem::path& destination,
+    std::uint64_t disk_budget_bytes) {
+    return ExtractInternal(
+        archive_path, manifest, destination, disk_budget_bytes,
+        ArchiveIdentityMode::AcquirerVerified);
+}
+
+BackendPackExtractionResult BackendPackArchiveExtractor::ExtractInternal(
+    const std::filesystem::path& archive_path,
+    const VerifiedBackendPackManifest& manifest,
+    const std::filesystem::path& destination,
+    std::uint64_t disk_budget_bytes,
+    ArchiveIdentityMode identity_mode) {
     std::unique_lock<std::mutex> extraction_lock(
         extraction_mutex_, std::try_to_lock);
     if (!extraction_lock.owns_lock()) {
@@ -139,13 +162,39 @@ BackendPackExtractionResult BackendPackArchiveExtractor::Extract(
             "Archive file is missing, linked, or differs from signed size");
     }
     std::string error;
-    std::string archive_digest;
-    if (!Sha256File(archive_path, archive_digest, error) ||
-        archive_digest != manifest.archive.sha256) {
-        return Finish(
-            BackendPackExtractionStatus::IntegrityFailure,
-            error.empty() ? "Archive SHA-256 differs from signed metadata" :
-                            error);
+    progress.completed_bytes = 0;
+    progress.total_bytes = manifest.archive.size;
+    if (identity_mode == ArchiveIdentityMode::Verify) {
+        std::string archive_digest;
+        progress.message = "Validating signed archive hash";
+        SetProgress(progress);
+        BackendPackProgressCadence archive_hash_cadence;
+        const auto publish_archive_hash = [&](std::uint64_t completed_bytes) {
+            progress.completed_bytes = completed_bytes;
+            if (archive_hash_cadence.ShouldPublish()) SetProgress(progress);
+            return !cancel_requested_.load();
+        };
+        if (!Sha256File(
+                archive_path, archive_digest, error,
+                publish_archive_hash)) {
+            if (cancel_requested_.load()) {
+                return Finish(
+                    BackendPackExtractionStatus::Interrupted,
+                    "Archive validation cancelled");
+            }
+            return Finish(
+                BackendPackExtractionStatus::IntegrityFailure, error);
+        }
+        if (archive_digest != manifest.archive.sha256) {
+            return Finish(
+                BackendPackExtractionStatus::IntegrityFailure,
+                "Archive SHA-256 differs from signed metadata");
+        }
+    } else {
+        progress.completed_bytes = manifest.archive.size;
+        progress.message =
+            "Using archive identity verified during acquisition";
+        SetProgress(progress);
     }
 
     std::uint64_t total_bytes = 0;
@@ -165,6 +214,7 @@ BackendPackExtractionResult BackendPackArchiveExtractor::Extract(
         }
         total_bytes += component.size;
     }
+    progress.completed_bytes = 0;
     progress.total_bytes = total_bytes;
     SetProgress(progress);
     if (disk_budget_bytes > 0 && total_bytes > disk_budget_bytes) {
@@ -222,6 +272,7 @@ BackendPackExtractionResult BackendPackArchiveExtractor::Extract(
     progress.stage = BackendPackExtractionStage::Extracting;
     progress.message = "Extracting exact signed component inventory";
     SetProgress(progress);
+    BackendPackProgressCadence extraction_cadence;
     std::set<std::string> observed;
     archive_entry* entry = nullptr;
     for (;;) {
@@ -272,6 +323,7 @@ BackendPackExtractionResult BackendPackArchiveExtractor::Extract(
                 BackendPackExtractionStatus::FilesystemFailure,
                 "Cannot create extracted component file");
         }
+        Sha256Stream component_hash;
         std::uint64_t written = 0;
         for (;;) {
             const void* block = nullptr;
@@ -290,14 +342,20 @@ BackendPackExtractionResult BackendPackArchiveExtractor::Extract(
             output.write(
                 static_cast<const char*>(block),
                 static_cast<std::streamsize>(block_size));
-            if (!output) {
+            if (!output || !component_hash.Update(
+                    std::string_view(
+                        static_cast<const char*>(block), block_size),
+                    error)) {
                 return Finish(
-                    BackendPackExtractionStatus::FilesystemFailure,
-                    "Cannot write extracted component data");
+                    output
+                        ? BackendPackExtractionStatus::IntegrityFailure
+                        : BackendPackExtractionStatus::FilesystemFailure,
+                    output ? error
+                           : "Cannot write extracted component data");
             }
             written += block_size;
             progress.completed_bytes += block_size;
-            SetProgress(progress);
+            if (extraction_cadence.ShouldPublish()) SetProgress(progress);
             if (cancel_requested_.load()) {
                 return Finish(
                     BackendPackExtractionStatus::Interrupted,
@@ -310,9 +368,19 @@ BackendPackExtractionResult BackendPackArchiveExtractor::Extract(
                 BackendPackExtractionStatus::IntegrityFailure,
                 "Extracted component differs from signed byte size");
         }
+        std::string digest;
+        if (!component_hash.Finish(digest, error) ||
+            digest != expected_entry->second->sha256) {
+            return Finish(
+                BackendPackExtractionStatus::IntegrityFailure,
+                error.empty()
+                    ? "Extracted component SHA-256 differs from signed metadata"
+                    : error);
+        }
         ++progress.component_index;
-        SetProgress(progress);
+        if (extraction_cadence.ShouldPublish()) SetProgress(progress);
     }
+    if (extraction_cadence.ShouldPublish(true)) SetProgress(progress);
     if (observed.size() != expected.size()) {
         return Finish(
             BackendPackExtractionStatus::IntegrityFailure,
@@ -320,22 +388,10 @@ BackendPackExtractionResult BackendPackArchiveExtractor::Extract(
     }
 
     progress.stage = BackendPackExtractionStage::Verifying;
-    progress.message = "Verifying every extracted component hash";
+    progress.message = "Signed component hashes verified during extraction";
+    progress.component_index = progress.component_count;
+    progress.completed_bytes = total_bytes;
     SetProgress(progress);
-    for (const auto& [folded, component] : expected) {
-        (void)folded;
-        const auto path =
-            destination /
-            BackendPackNativeRelativePath(component->relative_path);
-        std::string digest;
-        if (!Sha256File(path, digest, error) || digest != component->sha256) {
-            return Finish(
-                BackendPackExtractionStatus::IntegrityFailure,
-                error.empty()
-                    ? "Extracted component SHA-256 differs from signed metadata"
-                    : error);
-        }
-    }
     cleanup.Keep();
     return Finish(
         BackendPackExtractionStatus::Extracted,

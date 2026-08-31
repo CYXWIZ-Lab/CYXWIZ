@@ -14,6 +14,8 @@
 
 namespace cyxwiz::runtime {
 
+class BackendPackLifecycleService;
+
 enum class BackendPackInstallStage {
     Idle,
     Validating,
@@ -103,18 +105,38 @@ public:
     BackendPackInstallProgress GetProgress() const;
 
 private:
+    friend class BackendPackLifecycleService;
+
+    enum class PrivateExtractionAction {
+        InstallOptionalPack,
+        RepairOptionalPack,
+        InstallFreshBase,
+        UpdateBase
+    };
+
     enum class InstallTarget {
         OptionalPack,
         FreshBase,
         BaseUpdate
     };
 
+    enum class PayloadStagingMode {
+        Copy,
+        AdoptVerifiedPrivateExtraction
+    };
+
+    BackendPackInstallResult AdoptVerifiedPrivateExtraction(
+        const VerifiedBackendPackPayload& payload,
+        std::uint64_t disk_budget_bytes,
+        PrivateExtractionAction action);
+
     BackendPackInstallResult Apply(
         const VerifiedBackendPackPayload& payload,
         std::uint64_t disk_budget_bytes,
         bool repair,
         bool activate,
-        InstallTarget target);
+        InstallTarget target,
+        PayloadStagingMode staging_mode = PayloadStagingMode::Copy);
     BackendPackInstallResult Finish(
         BackendPackInstallStatus status,
         std::string message,

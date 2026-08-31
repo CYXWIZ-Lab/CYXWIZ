@@ -3,7 +3,9 @@
 #include "installer/installer_frame_pacing.h"
 #include "installer/installer_operation.h"
 #include "installer/installer_product_removal.h"
+#include "installer/installer_progress_channel.h"
 #include "installer/installer_theme.h"
+#include "installer/installer_transaction_journal.h"
 #include "installer/installer_view.h"
 #include "product_removal_protocol.h"
 
@@ -26,6 +28,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -60,6 +63,7 @@ struct Arguments {
   cyxwiz::installer::InstallerPackageSource package_source =
       cyxwiz::installer::InstallerPackageSource::CatalogHttps;
   bool product_removal_host = false;
+  bool open_product_removal = false;
   bool package_smoke = false;
 };
 
@@ -86,6 +90,7 @@ bool ParseArguments(const std::vector<std::string> &values,
   bool catalog_url_seen = false;
   bool offline_seen = false;
   bool product_removal_host_seen = false;
+  bool open_product_removal_seen = false;
   bool package_smoke_seen = false;
   for (std::size_t index = 1; index < values.size(); ++index) {
     if (values[index] == "--runtime-root" && !runtime_seen &&
@@ -115,6 +120,10 @@ bool ParseArguments(const std::vector<std::string> &values,
                !product_removal_host_seen) {
       output.product_removal_host = true;
       product_removal_host_seen = true;
+    } else if (values[index] == "--open-uninstall" &&
+               !open_product_removal_seen) {
+      output.open_product_removal = true;
+      open_product_removal_seen = true;
     } else if (values[index] == "--package-smoke" && !package_smoke_seen) {
       output.package_smoke = true;
       package_smoke_seen = true;
@@ -126,12 +135,17 @@ bool ParseArguments(const std::vector<std::string> &values,
   if (output.package_smoke &&
       (runtime_seen || metadata_seen || selection_seen || catalog_url_seen ||
        offline_seen || product_removal_host_seen ||
+       open_product_removal_seen ||
        output.scope == cyxwiz::CyxWizInstallScope::AllUsers)) {
     error = "--package-smoke cannot be combined with installer arguments";
     return false;
   }
   if (offline_seen && !metadata_seen) {
     error = "--offline requires an explicit --metadata-root";
+    return false;
+  }
+  if (output.open_product_removal && !output.product_removal_host) {
+    error = "--open-uninstall requires the installed maintenance host";
     return false;
   }
   if (!runtime_seen && output.scope == cyxwiz::CyxWizInstallScope::AllUsers) {
@@ -269,6 +283,8 @@ int RunInstaller(const std::vector<std::string> &arguments,
       install_location.scope, parsed.catalog_url, parsed.package_source);
   auto catalog = platform->Refresh();
   cyxwiz::installer::gui::InstallerViewState view_state;
+  view_state.removal.open_requested =
+      parsed.open_product_removal && product_removal.available;
   const auto initial_install_path = PathText(install_location.install_root);
   if (initial_install_path.size() >= view_state.install_path_text.size()) {
     ShowFatal("The installation location is too long");
@@ -340,6 +356,10 @@ int RunInstaller(const std::vector<std::string> &arguments,
   bool operation_running = false;
   bool launch_when_complete = false;
   bool close_when_complete = false;
+  std::optional<cyxwiz::installer::InstallerTransactionRecord>
+      active_transaction;
+  const auto transaction_journal_path =
+      cyxwiz::installer::DefaultInstallerTransactionJournalPath();
   AsyncOperation async_operation = AsyncOperation::None;
   std::string operation_message;
   if (!visual_warning.empty())
@@ -358,10 +378,30 @@ int RunInstaller(const std::vector<std::string> &arguments,
         operation.wait_for(std::chrono::milliseconds(0)) ==
             std::future_status::ready) {
       const auto result = operation.get();
+      const bool cancellation_requested =
+          view_state.cancellation_requested;
       operation_running = false;
       async_operation = AsyncOperation::None;
       view_state.cancellation_requested = false;
       operation_message = result.message;
+      if (active_transaction) {
+        active_transaction->completed_utc =
+            cyxwiz::installer::CurrentInstallerTransactionUtc();
+        active_transaction->status = result.succeeded
+                                         ? "succeeded"
+                                         : (cancellation_requested
+                                                ? "cancelled"
+                                                : "failed");
+        active_transaction->message = result.message;
+        std::string journal_error;
+        if (!cyxwiz::installer::WriteInstallerTransactionJournal(
+                transaction_journal_path, *active_transaction,
+                journal_error)) {
+          if (!operation_message.empty()) operation_message += '\n';
+          operation_message += "Installer journal warning: " + journal_error;
+        }
+        active_transaction.reset();
+      }
       catalog = platform->Refresh();
       product_removal = cyxwiz::installer::InspectInstallerProductRemoval(
           install_location.runtime_root,
@@ -456,6 +496,24 @@ int RunInstaller(const std::vector<std::string> &arguments,
       view_state.install_completed = false;
       view_state.engine_launched = false;
       view_state.cancellation_requested = false;
+      active_transaction.emplace();
+      active_transaction->transaction_id =
+          cyxwiz::installer::CreateInstallerProgressToken();
+      active_transaction->started_utc =
+          cyxwiz::installer::CurrentInstallerTransactionUtc();
+      active_transaction->status = "running";
+      active_transaction->message = "Installation operation started";
+      active_transaction->runtime_root = install_location.runtime_root;
+      active_transaction->scope = install_location.scope;
+      active_transaction->plan = action.plan;
+      {
+        std::string journal_error;
+        if (!cyxwiz::installer::WriteInstallerTransactionJournal(
+                transaction_journal_path, *active_transaction,
+                journal_error)) {
+          operation_message = "Installer journal warning: " + journal_error;
+        }
+      }
       launch_when_complete = action.launch_after_install;
       shared_progress = std::make_shared<SharedInstallProgress>();
       shared_progress->value.activity = "Preparing installation changes";

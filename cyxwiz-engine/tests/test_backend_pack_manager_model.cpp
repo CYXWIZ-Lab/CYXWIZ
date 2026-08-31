@@ -5,11 +5,14 @@
 #include "../src/installer/installer_cancellation_channel.h"
 #include "../src/installer/installer_helper_session.h"
 #include "../src/installer/installer_progress_channel.h"
+#include "../src/installer/installer_transaction_journal.h"
 #include "backend_pack_platform.h"
 
 #include <algorithm>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -594,6 +597,54 @@ void TestInstallerProgressChannel() {
   std::filesystem::remove_all(root, cleanup_error);
 }
 
+void TestInstallerTransactionJournal() {
+  const auto token = cyxwiz::installer::CreateInstallerProgressToken();
+  const auto root = std::filesystem::temp_directory_path() /
+                    ("cyxwiz-journal-test-" + token);
+  const auto path = root / "state" / "last-transaction.json";
+
+  cyxwiz::installer::InstallerTransactionRecord record;
+  record.transaction_id = token;
+  record.started_utc = "2026-08-30T12:00:00Z";
+  record.status = "running";
+  record.message = "Installation operation started";
+  record.runtime_root = root / "runtime";
+  record.scope = cyxwiz::CyxWizInstallScope::AllUsers;
+  record.plan.valid = true;
+  record.plan.install_base = true;
+  record.plan.base_pack_id = "base-v1";
+  record.plan.pack_ids = {"cuda-v1"};
+  record.plan.remove_pack_ids = {"opencl-v0"};
+
+  std::string error;
+  Check(cyxwiz::installer::WriteInstallerTransactionJournal(
+            path, record, error) &&
+            std::filesystem::is_regular_file(path),
+        "The installer must persist a bounded running transaction receipt");
+
+  record.completed_utc = "2026-08-30T12:01:00Z";
+  record.status = "succeeded";
+  record.message = "Installation completed";
+  Check(cyxwiz::installer::WriteInstallerTransactionJournal(
+            path, record, error),
+        "The installer must atomically replace the running receipt with its terminal result");
+
+  std::ifstream input(path, std::ios::binary);
+  const std::string contents((std::istreambuf_iterator<char>(input)),
+                             std::istreambuf_iterator<char>());
+  Check(contents.find("\"status\": \"succeeded\"") !=
+                std::string::npos &&
+            contents.find("\"scope\": \"all_users\"") !=
+                std::string::npos &&
+            contents.find("cuda-v1") != std::string::npos &&
+            contents.find("opencl-v0") != std::string::npos &&
+            !std::filesystem::exists(path.string() + ".next"),
+        "The terminal receipt must preserve the requested install and removal plan without a partial side file");
+
+  std::error_code cleanup_error;
+  std::filesystem::remove_all(root, cleanup_error);
+}
+
 void TestInstallerCudaPrerequisite() {
   using cyxwiz::installer::EvaluateInstallerCudaDriverProbe;
   using cyxwiz::installer::InstallerCudaDriverProbe;
@@ -654,8 +705,10 @@ public:
       const cyxwiz::installer::InstallerOperationDetailObserver &observer)
       override {
     calls.push_back("base:" + pack_id);
-    if (observer)
+    if (observer) {
       observer({"acquiring", 50, 100, 0, 0, "Downloading CPU Engine"});
+      observer({"registering", 0, 0, 0, 0, "Registering CPU Engine"});
+    }
     return Result(pack_id);
   }
 
@@ -676,8 +729,12 @@ public:
       const cyxwiz::installer::InstallerOperationDetailObserver &observer)
       override {
     calls.push_back("pack:" + pack_id);
-    if (observer)
+    if (observer) {
       observer({"extracting", 75, 100, 3, 4, "Extracting backend"});
+      observer({"installing", 100, 100, 4, 4,
+                "Adopting verified backend"});
+      observer({"activating", 0, 0, 0, 0, "Activating backend"});
+    }
     return Result(pack_id);
   }
 
@@ -690,6 +747,17 @@ public:
     if (observer)
       observer({"removing", 0, 0, 0, 0, "Deactivating backend"});
     return Result(backend);
+  }
+
+  cyxwiz::installer::InstallerOperationResult
+  RemovePack(
+      const std::string &pack_id,
+      const cyxwiz::installer::InstallerOperationDetailObserver &observer)
+      override {
+    calls.push_back("remove:" + pack_id);
+    if (observer)
+      observer({"removing", 0, 0, 0, 0, "Uninstalling backend pack"});
+    return Result(pack_id);
   }
 
   cyxwiz::installer::InstallerOperationResult LaunchEngine() override {
@@ -728,6 +796,7 @@ void TestInstallerPlanExecution() {
   plan.install_base = true;
   plan.base_pack_id = "base-v1";
   plan.pack_ids = {"cuda-v1", "opencl-v1"};
+  plan.remove_pack_ids = {"old-cuda-v0"};
   plan.deactivate_backends = {"oneapi"};
 
   RecordingInstallerPlatform platform;
@@ -740,9 +809,10 @@ void TestInstallerPlanExecution() {
             platform.calls ==
                 std::vector<std::string>{"base:base-v1", "pack:cuda-v1",
                                          "pack:opencl-v1",
-                                         "deactivate:oneapi"} &&
-            !progress.empty() && progress.back().completed_steps == 4 &&
-            progress.back().total_steps == 4 &&
+                                         "deactivate:oneapi",
+                                         "remove:old-cuda-v0"} &&
+            !progress.empty() && progress.back().completed_steps == 5 &&
+            progress.back().total_steps == 5 &&
             progress.back().overall_fraction == 1.0f &&
             std::any_of(progress.begin(), progress.end(), [](const auto &item) {
               return item.total_bytes == 100 &&
@@ -751,13 +821,34 @@ void TestInstallerPlanExecution() {
             }) &&
             std::any_of(progress.begin(), progress.end(), [](const auto &item) {
               return item.stage == "acquiring" && item.phase_index == 3 &&
-                     item.phase_count == 8 &&
-                     item.phase_label == "Download package";
+                     item.phase_count == 6 &&
+                     item.phase_label == "Acquire package" &&
+                     item.package_index == 1 && item.package_count == 3 &&
+                     item.package_id == "base-v1";
             }) &&
             std::any_of(progress.begin(), progress.end(), [](const auto &item) {
               return item.stage == "extracting" && item.phase_index == 4 &&
-                     item.phase_count == 7 &&
-                     item.phase_label == "Extract package";
+                     item.phase_count == 6 &&
+                     item.phase_label == "Extract and verify package files" &&
+                     item.package_index >= 2 && item.package_count == 3 &&
+                     !item.package_id.empty() &&
+                     item.component_index == 3 &&
+                     item.component_count == 4;
+            }) &&
+            std::any_of(progress.begin(), progress.end(), [](const auto &item) {
+              return item.stage == "installing" && item.phase_index == 4 &&
+                     item.phase_count == 6 &&
+                     item.phase_label == "Extract and verify package files";
+            }) &&
+            std::any_of(progress.begin(), progress.end(), [](const auto &item) {
+              return item.stage == "activating" && item.phase_index == 5 &&
+                     item.phase_count == 6 &&
+                     item.phase_label == "Activate runtime";
+            }) &&
+            std::any_of(progress.begin(), progress.end(), [](const auto &item) {
+              return item.stage == "registering" && item.phase_index == 6 &&
+                     item.phase_count == 6 &&
+                     item.phase_label == "Register application";
             }) &&
             std::any_of(progress.begin(), progress.end(), [](const auto &item) {
               return item.stage == "removing" && item.phase_index == 1 &&
@@ -808,6 +899,7 @@ int main() {
   TestDisplayFormatting();
   TestInstallLocation();
   TestInstallerProgressChannel();
+  TestInstallerTransactionJournal();
   TestInstallerCudaPrerequisite();
   TestInstallerPackPresentation();
   TestInstallerPlanExecution();

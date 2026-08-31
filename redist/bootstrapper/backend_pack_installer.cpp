@@ -1,6 +1,7 @@
 #include "backend_pack_installer.h"
 #include "backend_pack_hash.h"
 #include "backend_pack_path.h"
+#include "backend_pack_progress_cadence.h"
 #include "runtime_mutation_gate.h"
 
 #include <algorithm>
@@ -38,10 +39,31 @@ bool IsWithin(
            *relative.begin() != "..";
 }
 
+bool IsPrivateDeliveryExtraction(
+    const std::filesystem::path& runtime_root,
+    const std::filesystem::path& source,
+    std::string& error) {
+    std::error_code filesystem_error;
+    const auto delivery_root = std::filesystem::weakly_canonical(
+        runtime_root / "staging" / "delivery", filesystem_error);
+    if (filesystem_error) {
+        error = "Cannot resolve the private delivery staging root";
+        return false;
+    }
+    const auto canonical_source =
+        std::filesystem::canonical(source, filesystem_error);
+    if (filesystem_error || !IsWithin(delivery_root, canonical_source)) {
+        error = "Private extraction is outside the delivery staging root";
+        return false;
+    }
+    return true;
+}
+
 bool ValidateFile(
     const std::filesystem::path& path,
     const VerifiedPackComponent& component,
-    std::string& error) {
+    std::string& error,
+    const Sha256FileProgress& hash_progress = {}) {
     std::error_code filesystem_error;
     const auto status = std::filesystem::symlink_status(path, filesystem_error);
     if (filesystem_error || !std::filesystem::is_regular_file(status) ||
@@ -57,7 +79,7 @@ bool ValidateFile(
         return false;
     }
     std::string digest;
-    if (!Sha256File(path, digest, error)) return false;
+    if (!Sha256File(path, digest, error, hash_progress)) return false;
     if (digest != component.sha256) {
         error = "Component SHA-256 differs from signed metadata: " +
                 component.relative_path;
@@ -166,12 +188,44 @@ BackendPackInstallResult BackendPackInstaller::StageRepair(
         InstallTarget::OptionalPack);
 }
 
+BackendPackInstallResult BackendPackInstaller::AdoptVerifiedPrivateExtraction(
+    const VerifiedBackendPackPayload& payload,
+    std::uint64_t disk_budget_bytes,
+    PrivateExtractionAction action) {
+    switch (action) {
+        case PrivateExtractionAction::InstallOptionalPack:
+            return Apply(
+                payload, disk_budget_bytes, false, false,
+                InstallTarget::OptionalPack,
+                PayloadStagingMode::AdoptVerifiedPrivateExtraction);
+        case PrivateExtractionAction::RepairOptionalPack:
+            return Apply(
+                payload, disk_budget_bytes, true, false,
+                InstallTarget::OptionalPack,
+                PayloadStagingMode::AdoptVerifiedPrivateExtraction);
+        case PrivateExtractionAction::InstallFreshBase:
+            return Apply(
+                payload, disk_budget_bytes, false, false,
+                InstallTarget::FreshBase,
+                PayloadStagingMode::AdoptVerifiedPrivateExtraction);
+        case PrivateExtractionAction::UpdateBase:
+            return Apply(
+                payload, disk_budget_bytes, false, false,
+                InstallTarget::BaseUpdate,
+                PayloadStagingMode::AdoptVerifiedPrivateExtraction);
+    }
+    return Finish(
+        BackendPackInstallStatus::InvalidRequest,
+        "Private extraction action is invalid");
+}
+
 BackendPackInstallResult BackendPackInstaller::Apply(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes,
     bool repair,
     bool activate,
-    InstallTarget target) {
+    InstallTarget target,
+    PayloadStagingMode staging_mode) {
     const bool base = target != InstallTarget::OptionalPack;
     std::unique_lock<std::mutex> install_lock(
         install_mutex_, std::try_to_lock);
@@ -260,23 +314,64 @@ BackendPackInstallResult BackendPackInstaller::Apply(
             "Pack payload exceeds the approved disk budget");
     }
     std::error_code filesystem_error;
-    const auto disk = std::filesystem::space(runtime_root_, filesystem_error);
-    if (filesystem_error || disk.available < total_bytes) {
-        return Finish(
-            BackendPackInstallStatus::DiskBudgetExceeded,
-            "Insufficient free space for the staged pack payload");
+    if (staging_mode == PayloadStagingMode::Copy) {
+        const auto disk =
+            std::filesystem::space(runtime_root_, filesystem_error);
+        if (filesystem_error || disk.available < total_bytes) {
+            return Finish(
+                BackendPackInstallStatus::DiskBudgetExceeded,
+                "Insufficient free space for the staged pack payload");
+        }
+    } else if (!IsPrivateDeliveryExtraction(
+                   runtime_root_, payload.source_directory, error)) {
+        return Finish(BackendPackInstallStatus::InvalidRequest, error);
     }
     if (!EnumerateExactPayload(
             payload.source_directory, expected_paths, error)) {
         return Finish(BackendPackInstallStatus::IntegrityFailure, error);
     }
-    for (const auto& component : payload.components) {
-        if (!ValidateFile(
-                payload.source_directory /
-                    BackendPackNativeRelativePath(component.relative_path),
-                component, error)) {
-            return Finish(BackendPackInstallStatus::IntegrityFailure, error);
+    if (staging_mode == PayloadStagingMode::Copy) {
+        progress.message = "Validating extracted component hashes";
+        progress.component_index = 0;
+        progress.completed_bytes = 0;
+        SetProgress(progress);
+        BackendPackProgressCadence validation_cadence;
+        for (std::size_t index = 0; index < payload.components.size();
+             ++index) {
+            const auto& component = payload.components[index];
+            const auto completed_before = progress.completed_bytes;
+            const auto publish_hash_progress = [&](std::uint64_t file_bytes) {
+                progress.component_index = index + 1;
+                progress.completed_bytes = completed_before + file_bytes;
+                if (validation_cadence.ShouldPublish()) {
+                    SetProgress(progress);
+                }
+                return !cancel_requested_.load();
+            };
+            if (!ValidateFile(
+                    payload.source_directory /
+                        BackendPackNativeRelativePath(
+                            component.relative_path),
+                    component, error, publish_hash_progress)) {
+                return cancel_requested_.load()
+                    ? Finish(
+                          BackendPackInstallStatus::Interrupted,
+                          "Pack installation cancelled during payload validation")
+                    : Finish(
+                          BackendPackInstallStatus::IntegrityFailure, error);
+            }
+            progress.component_index = index + 1;
+            progress.completed_bytes = completed_before + component.size;
+            if (validation_cadence.ShouldPublish(
+                    progress.component_index == progress.component_count)) {
+                SetProgress(progress);
+            }
         }
+    } else {
+        progress.message = "Validated private extraction inventory";
+        progress.component_index = progress.component_count;
+        progress.completed_bytes = total_bytes;
+        SetProgress(progress);
     }
     if (checkpoint_ &&
         !checkpoint_(BackendPackInstallCheckpoint::AfterValidation)) {
@@ -338,7 +433,7 @@ BackendPackInstallResult BackendPackInstaller::Apply(
             (payload.pack_id + "-" + std::to_string(
                 std::chrono::steady_clock::now().time_since_epoch().count()));
         const auto staged_payload = staging_root / "payload";
-        std::filesystem::create_directories(staged_payload, filesystem_error);
+        std::filesystem::create_directories(staging_root, filesystem_error);
         if (filesystem_error) {
             return Finish(
                 BackendPackInstallStatus::FilesystemFailure,
@@ -346,32 +441,78 @@ BackendPackInstallResult BackendPackInstaller::Apply(
                     filesystem_error.message());
         }
         progress.stage = BackendPackInstallStage::Copying;
-        progress.message = "Copying verified components into staging";
+        progress.message = staging_mode == PayloadStagingMode::Copy
+            ? "Copying verified components into staging"
+            : "Adopting private extraction into versioned staging";
+        progress.component_index = 0;
+        progress.completed_bytes = 0;
         SetProgress(progress);
-        for (std::size_t index = 0; index < payload.components.size(); ++index) {
+        if (staging_mode ==
+            PayloadStagingMode::AdoptVerifiedPrivateExtraction) {
             if (cancel_requested_.load()) {
                 std::filesystem::remove_all(staging_root, filesystem_error);
                 return Finish(
                     BackendPackInstallStatus::Interrupted,
                     "Pack installation cancelled");
             }
-            const auto& component = payload.components[index];
-            const auto relative =
-                BackendPackNativeRelativePath(component.relative_path);
-            const auto staged_component = staged_payload / relative;
-            std::filesystem::create_directories(
-                staged_component.parent_path(), filesystem_error);
-            if (filesystem_error || !std::filesystem::copy_file(
-                    payload.source_directory / relative, staged_component,
-                    std::filesystem::copy_options::none, filesystem_error)) {
+            std::filesystem::rename(
+                payload.source_directory, staged_payload, filesystem_error);
+            if (filesystem_error) {
+                const auto rename_error = filesystem_error.message();
                 std::filesystem::remove_all(staging_root, filesystem_error);
                 return Finish(
                     BackendPackInstallStatus::FilesystemFailure,
-                    "Cannot copy a verified pack component into staging");
+                    "Cannot atomically adopt the private extraction: " +
+                        rename_error);
             }
-            progress.component_index = index + 1;
-            progress.completed_bytes += component.size;
+            progress.component_index = progress.component_count;
+            progress.completed_bytes = total_bytes;
             SetProgress(progress);
+        } else {
+            std::filesystem::create_directories(
+                staged_payload, filesystem_error);
+            if (filesystem_error) {
+                std::filesystem::remove_all(staging_root, filesystem_error);
+                return Finish(
+                    BackendPackInstallStatus::FilesystemFailure,
+                    "Cannot create payload staging directory: " +
+                        filesystem_error.message());
+            }
+            BackendPackProgressCadence copy_cadence;
+            for (std::size_t index = 0; index < payload.components.size();
+                 ++index) {
+                if (cancel_requested_.load()) {
+                    std::filesystem::remove_all(
+                        staging_root, filesystem_error);
+                    return Finish(
+                        BackendPackInstallStatus::Interrupted,
+                        "Pack installation cancelled");
+                }
+                const auto& component = payload.components[index];
+                const auto relative =
+                    BackendPackNativeRelativePath(component.relative_path);
+                const auto staged_component = staged_payload / relative;
+                std::filesystem::create_directories(
+                    staged_component.parent_path(), filesystem_error);
+                if (filesystem_error || !std::filesystem::copy_file(
+                        payload.source_directory / relative,
+                        staged_component,
+                        std::filesystem::copy_options::none,
+                        filesystem_error)) {
+                    std::filesystem::remove_all(
+                        staging_root, filesystem_error);
+                    return Finish(
+                        BackendPackInstallStatus::FilesystemFailure,
+                        "Cannot copy a verified pack component into staging");
+                }
+                progress.component_index = index + 1;
+                progress.completed_bytes += component.size;
+                if (copy_cadence.ShouldPublish(
+                        progress.component_index ==
+                            progress.component_count)) {
+                    SetProgress(progress);
+                }
+            }
         }
         if (checkpoint_ &&
             !checkpoint_(BackendPackInstallCheckpoint::AfterCopy)) {
@@ -381,17 +522,47 @@ BackendPackInstallResult BackendPackInstaller::Apply(
                 "Pack installation interrupted after staging");
         }
 
-        progress.stage = BackendPackInstallStage::Verifying;
-        progress.message = "Verifying staged component hashes";
-        SetProgress(progress);
-        for (const auto& component : payload.components) {
-            if (!ValidateFile(
-                    staged_payload /
-                        BackendPackNativeRelativePath(component.relative_path),
-                    component, error)) {
-                std::filesystem::remove_all(staging_root, filesystem_error);
-                return Finish(
-                    BackendPackInstallStatus::IntegrityFailure, error);
+        if (staging_mode == PayloadStagingMode::Copy) {
+            progress.stage = BackendPackInstallStage::Verifying;
+            progress.message = "Verifying staged component hashes";
+            progress.component_index = 0;
+            progress.completed_bytes = 0;
+            SetProgress(progress);
+            BackendPackProgressCadence verification_cadence;
+            for (std::size_t index = 0; index < payload.components.size();
+                 ++index) {
+                const auto& component = payload.components[index];
+                const auto completed_before = progress.completed_bytes;
+                const auto publish_hash_progress =
+                    [&](std::uint64_t file_bytes) {
+                        progress.component_index = index + 1;
+                        progress.completed_bytes =
+                            completed_before + file_bytes;
+                        if (verification_cadence.ShouldPublish()) {
+                            SetProgress(progress);
+                        }
+                        return !cancel_requested_.load();
+                    };
+                if (!ValidateFile(
+                        staged_payload / BackendPackNativeRelativePath(
+                            component.relative_path),
+                        component, error, publish_hash_progress)) {
+                    std::filesystem::remove_all(
+                        staging_root, filesystem_error);
+                    if (cancel_requested_.load()) {
+                        return Finish(
+                            BackendPackInstallStatus::Interrupted,
+                            "Pack installation cancelled during staged verification");
+                    }
+                    return Finish(
+                        BackendPackInstallStatus::IntegrityFailure, error);
+                }
+                progress.component_index = index + 1;
+                progress.completed_bytes = completed_before + component.size;
+                if (verification_cadence.ShouldPublish(
+                        progress.component_index == progress.component_count)) {
+                    SetProgress(progress);
+                }
             }
         }
         if (checkpoint_ &&

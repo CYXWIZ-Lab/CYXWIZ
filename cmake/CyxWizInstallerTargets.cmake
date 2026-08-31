@@ -66,6 +66,17 @@ if(WIN32)
     target_link_libraries(cyxwiz-backend-pack-installer PRIVATE
         advapi32 ole32 shell32
     )
+    if(MSVC)
+        # The pack worker is an internal process controlled by the graphical
+        # installer. Keep its wmain argument contract without allocating or
+        # flashing a console window when Windows starts it directly.
+        set_target_properties(cyxwiz-backend-pack-installer PROPERTIES
+            WIN32_EXECUTABLE TRUE
+        )
+        target_link_options(cyxwiz-backend-pack-installer PRIVATE
+            /ENTRY:wmainCRTStartup
+        )
+    endif()
 endif()
 set_target_properties(cyxwiz-backend-pack-installer PROPERTIES
     CXX_STANDARD 20
@@ -103,6 +114,7 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_helper_session.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_cuda_prerequisite.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_progress_channel.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/installer/installer_transaction_journal.cpp"
     )
     target_include_directories(test_backend_pack_manager_model PRIVATE
         "${_cyxwiz_installer_engine_dir}/src"
@@ -328,6 +340,7 @@ set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_cuda_prerequisite.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_frame_pacing.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_progress_channel.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_transaction_journal.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_theme.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_view.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_operation.cpp"

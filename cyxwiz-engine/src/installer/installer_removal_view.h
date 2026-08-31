@@ -6,6 +6,7 @@ namespace cyxwiz::installer::gui {
 
 struct InstallerRemovalViewState {
   bool acknowledged = false;
+  bool open_requested = false;
 };
 
 enum class InstallerRemovalViewAction {

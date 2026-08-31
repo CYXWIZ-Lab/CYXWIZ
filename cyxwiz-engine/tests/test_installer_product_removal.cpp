@@ -87,7 +87,7 @@ void TestRequiresStableBootstrapperHost() {
       product.runtime_root, false);
   Check(direct.installed && !direct.available &&
             direct.requires_stable_host &&
-            direct.message.find("through CyxWiz Installer") !=
+            direct.message.find("installed maintenance host") !=
                 std::string::npos,
         "Direct base-GUI launch must not offer an orphaned removal request");
 

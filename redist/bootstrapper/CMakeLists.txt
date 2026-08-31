@@ -115,6 +115,16 @@ set_target_properties(cyxwiz-runtime-bootstrapper PROPERTIES
     CXX_STANDARD 20
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+if(MSVC)
+    # This stable launcher is user-facing only through the Engine/Installer
+    # GUIs. Preserve wmain parsing while preventing a console flash.
+    set_target_properties(cyxwiz-runtime-bootstrapper PROPERTIES
+        WIN32_EXECUTABLE TRUE
+    )
+    target_link_options(cyxwiz-runtime-bootstrapper PRIVATE
+        /ENTRY:wmainCRTStartup
+    )
+endif()
 if(NOT CYXWIZ_BUILD_INSTALLER_ONLY)
     install(TARGETS cyxwiz-runtime-bootstrapper RUNTIME DESTINATION .)
 endif()
@@ -241,6 +251,16 @@ set_target_properties(cyxwiz-product-removal-finalizer PROPERTIES
     CXX_STANDARD 20
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+if(MSVC)
+    # Removal is reported through the graphical manager and its bounded result
+    # file. The detached finalizer must never present a CLI window.
+    set_target_properties(cyxwiz-product-removal-finalizer PROPERTIES
+        WIN32_EXECUTABLE TRUE
+    )
+    target_link_options(cyxwiz-product-removal-finalizer PRIVATE
+        /ENTRY:wmainCRTStartup
+    )
+endif()
 if(MSVC)
     set_property(TARGET cyxwiz-product-removal-finalizer PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
