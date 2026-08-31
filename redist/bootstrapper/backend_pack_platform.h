@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <string_view>
 
 namespace cyxwiz::runtime {
@@ -55,6 +56,25 @@ constexpr std::string_view CurrentRuntimeBootstrapperExecutableName() {
     return "cyxwiz-runtime-bootstrapper.exe";
 #else
     return "cyxwiz-runtime-bootstrapper";
+#endif
+}
+
+constexpr std::string_view CurrentArrayFireLibraryDirectoryName() {
+#ifdef _WIN32
+    return "bin";
+#else
+    return "lib";
+#endif
+}
+
+inline std::string CurrentArrayFireBackendPluginName(
+    std::string_view backend) {
+#ifdef _WIN32
+    return "af" + std::string(backend) + ".dll";
+#elif defined(__APPLE__)
+    return "libaf" + std::string(backend) + ".dylib";
+#else
+    return "libaf" + std::string(backend) + ".so";
 #endif
 }
 

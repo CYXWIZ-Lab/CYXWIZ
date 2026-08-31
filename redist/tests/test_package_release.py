@@ -310,6 +310,11 @@ class PackageReleaseTests(unittest.TestCase):
         )
         self.assertEqual("base", manifest["signed"]["pack_kind"])
         self.assertEqual("cpu", manifest["signed"]["backend"])
+        self.assertEqual("win64", manifest["signed"]["platform"])
+        self.assertEqual("x86_64", manifest["signed"]["architecture"])
+        self.assertTrue(
+            manifest["signed"]["pack_id"].endswith("-win64-x86_64")
+        )
         self.assertEqual([], manifest["signatures"])
         self.assertTrue(archive.with_suffix(".zip.signed.json").is_file())
 

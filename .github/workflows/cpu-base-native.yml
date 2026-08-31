@@ -11,12 +11,14 @@ on:
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
       - "redist/scripts/backend_pack_contract.py"
+      - "redist/scripts/backend_pack_target.py"
       - "redist/scripts/package_release.py"
       - "redist/scripts/python_runtime_package.py"
       - "redist/scripts/prepare_pack_support_promotion.py"
       - "redist/scripts/verify_cpu_base_package.py"
       - "redist/templates/README_BASE.md"
       - "redist/tests/test_backend_pack_contract.py"
+      - "redist/tests/test_backend_pack_target.py"
       - "redist/tests/test_package_release.py"
       - "redist/tests/test_python_runtime_package.py"
       - "redist/tests/test_verify_cpu_base_package.py"
@@ -35,12 +37,14 @@ on:
       - "cyxwiz-engine/**"
       - "redist/bootstrapper/**"
       - "redist/scripts/backend_pack_contract.py"
+      - "redist/scripts/backend_pack_target.py"
       - "redist/scripts/package_release.py"
       - "redist/scripts/python_runtime_package.py"
       - "redist/scripts/prepare_pack_support_promotion.py"
       - "redist/scripts/verify_cpu_base_package.py"
       - "redist/templates/README_BASE.md"
       - "redist/tests/test_backend_pack_contract.py"
+      - "redist/tests/test_backend_pack_target.py"
       - "redist/tests/test_package_release.py"
       - "redist/tests/test_python_runtime_package.py"
       - "redist/tests/test_verify_cpu_base_package.py"
@@ -66,6 +70,12 @@ jobs:
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
+
+      - name: Run release package contracts
+        run: >-
+          python -B -m unittest
+          redist.tests.test_backend_pack_target
+          redist.tests.test_package_release
 
       - name: Restore vcpkg binary cache
         uses: actions/cache/restore@v4
@@ -178,7 +188,7 @@ jobs:
             --intel-runtime-license-dir deps/intel `
             --generated-utc 2026-08-20T00:00:00Z
           New-Item -ItemType Directory -Force cpu-base-artifact | Out-Null
-          Copy-Item redist/output/cyxwiz-base-0.2.0-1-win64.zip* `
+          Copy-Item redist/output/cyxwiz-base-0.2.0-1-win64-x86_64.zip* `
             cpu-base-artifact/
 
       - uses: actions/upload-artifact@v4
@@ -209,8 +219,8 @@ jobs:
         shell: pwsh
         run: |
           python redist/scripts/verify_cpu_base_package.py `
-            cpu-base-artifact/cyxwiz-base-0.2.0-1-win64.zip `
-            --manifest cpu-base-artifact/cyxwiz-base-0.2.0-1-win64.zip.manifest.json `
+            cpu-base-artifact/cyxwiz-base-0.2.0-1-win64-x86_64.zip `
+            --manifest cpu-base-artifact/cyxwiz-base-0.2.0-1-win64-x86_64.zip.manifest.json `
             --install-root cpu-base-install `
             --artifact-id windows-x64-cpu-base `
             --evidence clean-machine-evidence/windows-x64-cpu-base.json

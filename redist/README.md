@@ -440,8 +440,8 @@ that candidate through the same explicit signing step:
 
 ```batch
 py -3 redist\scripts\prepare_pack_support_promotion.py ^
-  redist\output\diagnostic\cyxwiz-base-0.2.0-1-win64.zip.manifest.json ^
-  --output redist\output\supported\cyxwiz-base-0.2.0-1-win64.zip.manifest.json
+  redist\output\diagnostic\cyxwiz-base-0.2.0-1-win64-x86_64.zip.manifest.json ^
+  --output redist\output\supported\cyxwiz-base-0.2.0-1-win64-x86_64.zip.manifest.json
 ```
 
 The promotion tool accepts only a well-formed signed diagnostic manifest whose
@@ -455,7 +455,7 @@ beside it, assemble the exact hosted and installer-bootstrap repository:
 
 ```bat
 py -3 redist\scripts\prepare_backend_pack_repository.py ^
-  --manifest redist\output\cyxwiz-base-0.2.0-1-win64.zip.manifest.json ^
+  --manifest redist\output\cyxwiz-base-0.2.0-1-win64-x86_64.zip.manifest.json ^
   --manifest redist\output\cyxwiz-af-opencl-3.10.0-1-win64.zip.manifest.json ^
   --trust-root D:\release-trust\trusted-keys.json ^
   --catalog-private-key D:\release-secrets\catalog-ed25519.pem ^

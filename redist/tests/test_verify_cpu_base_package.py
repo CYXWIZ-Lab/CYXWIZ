@@ -25,13 +25,13 @@ class CpuBasePackageVerifierTests(unittest.TestCase):
             with zipfile.ZipFile(archive, "w") as package:
                 package.writestr("payload.txt", "payload")
             signed = {
-                "pack_id": "cyxwiz-base-0.2.0-1-win64",
+                "pack_id": "cyxwiz-base-0.2.0-1-win64-x86_64",
                 "pack_kind": "base",
                 "backend": "cpu",
                 "package_version": "1",
                 "platform": "win64",
                 "architecture": "x86_64",
-                "runtime_set_id": "arrayfire-3.10.0-win64-v1",
+                "runtime_set_id": "arrayfire-3.10.0-win64-x86_64-v1",
                 "cyxwiz_release": {"minimum": "0.2.0", "maximum": "0.2.0"},
                 "arrayfire": {"version": "3.10.0", "abi": "arrayfire-3.10"},
                 "companion_base_id": None,

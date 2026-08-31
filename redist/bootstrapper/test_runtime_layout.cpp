@@ -41,7 +41,9 @@ public:
         const auto directory = root / "packs" / "opencl" / "opencl-v1" / "runtime";
         std::filesystem::create_directories(directory);
         if (plugin) {
-            Touch(directory / "afopencl.dll");
+            Touch(
+                directory /
+                cyxwiz::runtime::CurrentArrayFireBackendPluginName("opencl"));
         }
     }
 
@@ -167,7 +169,9 @@ int main() {
         std::string error;
         failures += !Expect(
             !cyxwiz::runtime::ResolveActiveRuntime(fixture.root, runtime, error) &&
-                error.find("afopencl.dll") != std::string::npos,
+                error.find(
+                    cyxwiz::runtime::CurrentArrayFireBackendPluginName(
+                        "opencl")) != std::string::npos,
             "missing selected plugin must report its exact closure failure");
     }
     {

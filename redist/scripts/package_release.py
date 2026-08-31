@@ -8,7 +8,6 @@ import datetime as dt
 import hashlib
 import json
 import os
-import platform
 import re
 import shutil
 import subprocess
@@ -25,6 +24,11 @@ if str(SCRIPT_DIR) not in sys.path:
 from backend_pack_contract import (  # noqa: E402
     canonical_json_bytes,
     validate_pack_manifest,
+)
+from backend_pack_target import (  # noqa: E402
+    BackendPackTarget,
+    BackendPackTargetError,
+    detect_backend_pack_target,
 )
 from python_runtime_package import copy_python_runtime  # noqa: E402
 
@@ -118,15 +122,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def host_platform() -> tuple[str, str, str]:
-    system = platform.system().lower()
-    if system == "windows":
-        return "win64", ".exe", ".dll"
-    if system == "linux":
-        return "linux64", "", ".so"
-    if system == "darwin":
-        return "macos", "", ".dylib"
-    raise PackageError(f"Unsupported packaging host: {platform.system()}")
+def host_target() -> BackendPackTarget:
+    try:
+        return detect_backend_pack_target()
+    except BackendPackTargetError as error:
+        raise PackageError(str(error)) from error
 
 
 def default_paths(script: Path, args: argparse.Namespace) -> PackagePaths:
@@ -789,6 +789,7 @@ def write_pack_contract(
     backend: str,
     pack_version: str,
     platform_name: str,
+    architecture: str,
     runtime_set_id: str,
     cyxwiz_version: str,
     af_version: str,
@@ -821,7 +822,7 @@ def write_pack_contract(
         "backend": backend,
         "package_version": pack_version,
         "platform": platform_name,
-        "architecture": "x86_64",
+        "architecture": architecture,
         "runtime_set_id": runtime_set_id,
         "cyxwiz_release": {"minimum": cyxwiz_version, "maximum": cyxwiz_version},
         "arrayfire": {"version": af_version, "abi": arrayfire_abi(af_version)},
@@ -872,6 +873,8 @@ def build_split_artifact(
     args: argparse.Namespace,
     paths: PackagePaths,
     platform_name: str,
+    architecture: str,
+    artifact_suffix: str,
     exe_suffix: str,
     lib_suffix: str,
     system: str,
@@ -885,14 +888,16 @@ def build_split_artifact(
     af_version = arrayfire_version(arrayfire_root)
     if af_version == "unknown":
         raise PackageError("Split artifacts require an exact ArrayFire version")
-    runtime_set_id = args.runtime_set_id or f"arrayfire-{af_version}-{platform_name}-v{pack_version}"
+    runtime_set_id = args.runtime_set_id or (
+        f"arrayfire-{af_version}-{artifact_suffix}-v{pack_version}"
+    )
     validate_release_version(runtime_set_id, "runtime set")
     timestamp = generated_utc(args.generated_utc)
 
     if args.profile == "base":
         if args.backend:
             raise PackageError("The base profile does not accept --backend")
-        pack_id = f"cyxwiz-base-{version}-{pack_version}-{platform_name}"
+        pack_id = f"cyxwiz-base-{version}-{pack_version}-{artifact_suffix}"
         stage = paths.output_root / "staging" / pack_id
         safe_clean(stage, paths.output_root)
         copy_build_payload(paths, stage, "full", system, exe_suffix, lib_suffix)
@@ -937,8 +942,12 @@ def build_split_artifact(
         if not args.backend:
             raise PackageError("The pack profile requires exactly one --backend")
         backend = args.backend
-        pack_id = f"cyxwiz-af-{backend}-{af_version}-{pack_version}-{platform_name}"
-        companion_base_id = args.base_pack_id or f"cyxwiz-base-{version}-{pack_version}-{platform_name}"
+        pack_id = (
+            f"cyxwiz-af-{backend}-{af_version}-{pack_version}-{artifact_suffix}"
+        )
+        companion_base_id = args.base_pack_id or (
+            f"cyxwiz-base-{version}-{pack_version}-{artifact_suffix}"
+        )
         validate_release_version(companion_base_id, "base pack")
         stage = paths.output_root / "staging" / pack_id
         safe_clean(stage, paths.output_root)
@@ -973,6 +982,7 @@ def build_split_artifact(
         backend=backend,
         pack_version=pack_version,
         platform_name=platform_name,
+        architecture=architecture,
         runtime_set_id=runtime_set_id,
         cyxwiz_version=version,
         af_version=af_version,
@@ -987,14 +997,19 @@ def build_split_artifact(
 def build_package(args: argparse.Namespace, script: Path | None = None) -> tuple[Path, Path | None]:
     script = script or Path(__file__)
     paths = default_paths(script, args)
-    platform_name, exe_suffix, lib_suffix = host_platform()
-    system = platform.system().lower()
+    target = host_target()
+    platform_name = target.platform
+    exe_suffix = target.executable_suffix
+    lib_suffix = target.library_suffix
+    system = target.system
     version = validate_release_version(args.version or infer_cyxwiz_version(paths.root), "CyxWiz")
     if args.profile in ("base", "pack"):
         return build_split_artifact(
             args,
             paths,
             platform_name,
+            target.architecture,
+            target.artifact_suffix,
             exe_suffix,
             lib_suffix,
             system,

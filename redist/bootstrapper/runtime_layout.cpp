@@ -376,7 +376,9 @@ bool ResolveRuntimeState(
     }
     output.dll_directories.push_back(output.base_directory);
     AddDirectoryIfPresent(
-        canonical_root, output.base_directory / "arrayfire" / "bin",
+        canonical_root,
+        output.base_directory / "arrayfire" /
+            CurrentArrayFireLibraryDirectoryName(),
         output.dll_directories);
     AddDirectoryIfPresent(
         canonical_root, output.base_directory / "python",
@@ -402,7 +404,8 @@ bool ResolveRuntimeState(
         std::filesystem::path plugin;
         if (!ResolveContainedFile(
                 canonical_root,
-                runtime_directory / ("af" + pack.backend + ".dll"),
+                runtime_directory /
+                    CurrentArrayFireBackendPluginName(pack.backend),
                 "active " + pack.backend + " plugin", plugin, error)) {
             return false;
         }

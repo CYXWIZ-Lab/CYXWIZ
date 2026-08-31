@@ -31,6 +31,24 @@ public:
                "\"packs\":[]}";
     }
 
+    void WriteState(const std::string& packs) const {
+        std::ofstream(root / "active-runtime.json", std::ios::binary)
+            << "{\"schema_version\":1,\"runtime_set_id\":\"set-v1\","
+               "\"generation\":1,\"base_pack_id\":\"base-v1\","
+               "\"packs\":" << packs << "}";
+    }
+
+    void AddOpenClPack() const {
+        const auto runtime =
+            root / "packs" / "opencl" / "opencl-v1" / "runtime";
+        std::filesystem::create_directories(runtime);
+        std::ofstream(
+            runtime /
+                cyxwiz::runtime::CurrentArrayFireBackendPluginName("opencl"),
+            std::ios::binary)
+            .put('\0');
+    }
+
     ~Fixture() {
         std::error_code error;
         std::filesystem::remove_all(root, error);
@@ -105,6 +123,30 @@ int main() {
     const auto bootstrapper = binary_directory /
         cyxwiz::runtime::CurrentRuntimeBootstrapperExecutableName();
     const auto child = binary_directory / "test_runtime_bootstrapper_child";
+    {
+        Fixture fixture;
+        const auto base = fixture.root / "base" / "base-v1";
+        std::filesystem::create_directories(
+            base / "arrayfire" /
+            cyxwiz::runtime::CurrentArrayFireLibraryDirectoryName());
+        fixture.AddOpenClPack();
+        fixture.WriteState(
+            "[{\"backend\":\"opencl\",\"pack_id\":\"opencl-v1\"}]");
+        std::ofstream(
+            base / cyxwiz::runtime::CurrentEngineExecutableName(),
+            std::ios::binary)
+            .put('\0');
+
+        cyxwiz::runtime::ActiveRuntime runtime;
+        std::string error;
+        failures += !Expect(
+            cyxwiz::runtime::ResolveActiveRuntime(
+                fixture.root, runtime, error),
+            "POSIX ArrayFire library and plugin names must resolve: " + error);
+        failures += !Expect(
+            runtime.dll_directories.size() == 3,
+            "POSIX runtime must include base, ArrayFire, and optional-pack libraries");
+    }
     {
         Fixture fixture;
         const auto base = fixture.root / "base" / "base-v1";
