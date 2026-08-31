@@ -148,6 +148,10 @@ const char* ArrayFireHostSyncCategoryName(
             return "loss_cpu_path";
         case ArrayFireHostSyncCategory::LossInputValidation:
             return "loss_input_validation";
+        case ArrayFireHostSyncCategory::MetricCpuPath:
+            return "metric_cpu_path";
+        case ArrayFireHostSyncCategory::MetricInputValidation:
+            return "metric_input_validation";
         case ArrayFireHostSyncCategory::CheckpointOutput:
             return "checkpoint_output";
         case ArrayFireHostSyncCategory::AlgorithmCpuPath:

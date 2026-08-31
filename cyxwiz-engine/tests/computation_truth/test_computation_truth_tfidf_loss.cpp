@@ -1,5 +1,6 @@
 #include "../../src/core/execution_device_context.h"
 #include "../../src/core/materialization_memory_guard.h"
+#include "../../src/core/metric_learning_metrics.h"
 #include "../../src/core/metric_learning_training_step.h"
 #include "../../src/core/node_executors/tfidf_vectorizer_operator.h"
 #include <cyxwiz/activation.h>
@@ -54,6 +55,24 @@ void RecordHostSyncEvent(const cyxwiz::ArrayFireHostSyncEvent& event) {
     if (g_host_sync_events != nullptr) {
         g_host_sync_events->push_back(event);
     }
+}
+
+bool IsDeclaredMetricReadback(
+    const cyxwiz::ArrayFireHostSyncEvent& event) {
+    if (event.attribution_category == "metric_input_validation") {
+        return event.attribution_operation ==
+                   "MetricLearning::PairDistance::LabelValidation" &&
+               event.bytes == sizeof(uint32_t);
+    }
+    if (event.attribution_category != "metric_scalar_readback") {
+        return false;
+    }
+    return (event.attribution_operation ==
+                "MetricLearning::PairDistance" &&
+            event.bytes == 5 * sizeof(float)) ||
+           (event.attribution_operation ==
+                "MetricLearning::Retrieval" &&
+            event.bytes == 3 * sizeof(float));
 }
 
 void Check(bool condition, const std::string& message) {
@@ -144,6 +163,13 @@ std::vector<int64_t> ReadInt64Values(const json& tensor_fixture,
                                      const std::string& context) {
     ReadShape(tensor_fixture, context);
     return tensor_fixture.at("values").get<std::vector<int64_t>>();
+}
+
+cyxwiz::Tensor Int64TensorFromFixture(const json& tensor_fixture,
+                                      const std::string& context) {
+    const auto values = ReadInt64Values(tensor_fixture, context);
+    return cyxwiz::Tensor(ReadShape(tensor_fixture, context), values.data(),
+                          cyxwiz::DataType::Int64);
 }
 
 void CheckTensor(const cyxwiz::Tensor& actual,
@@ -835,6 +861,135 @@ void TestMetricLearningLossParity(const json& cases) {
             CheckTensor(actual_second_gradient, test_case.at("expected").at("x2_gradient"),
                         tolerance, name + " x2 backward");
         }
+    }
+}
+
+void TestMetricLearningMetricParity(const json& cases) {
+    const auto& matrix = cases.at("metric_learning_metric_matrix_f32");
+    const auto& pair_cases = matrix.at("pair_cases");
+    const auto& retrieval_cases = matrix.at("retrieval_cases");
+    Check(pair_cases.is_array() && pair_cases.size() == 2,
+          "metric-learning pair metric fixture must contain two cases");
+    Check(retrieval_cases.is_array() && retrieval_cases.size() == 2,
+          "metric-learning retrieval fixture must contain two cases");
+
+    for (const auto& test_case : pair_cases) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("dtype", "") == "float32" &&
+                  test_case.value("operation", "") ==
+                      "torch.linalg.vector_norm + threshold agreement",
+              name + " metric fixture metadata mismatch");
+        const std::string convention_name =
+            test_case.at("convention").get<std::string>();
+        const auto convention =
+            convention_name == "contrastive_zero_similar"
+                ? cyxwiz::MetricLearningLabelConvention::
+                      ContrastiveZeroSimilarOneDissimilar
+                : cyxwiz::MetricLearningLabelConvention::
+                      CosineOneSimilarNegativeOneDissimilar;
+        Check(convention_name == "contrastive_zero_similar" ||
+                  convention_name == "cosine_one_similar",
+              name + " metric fixture convention mismatch");
+        const size_t fallback_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto result = cyxwiz::ComputePairDistanceMetrics(
+            FloatTensorFromFixture(test_case.at("left"), name + " left"),
+            FloatTensorFromFixture(test_case.at("right"), name + " right"),
+            FloatTensorFromFixture(test_case.at("labels"), name + " labels"),
+            convention,
+            test_case.at("threshold").get<double>());
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_before,
+              name + " metric attempted native CPU fallback");
+        Check(g_host_sync_events != nullptr &&
+                  g_host_sync_events->size() == host_sync_before + 2,
+              name + " metric must perform two bounded readbacks");
+        Check(IsDeclaredMetricReadback(
+                  g_host_sync_events->at(host_sync_before)) &&
+                  g_host_sync_events->at(host_sync_before)
+                          .attribution_category ==
+                      "metric_input_validation",
+              name + " metric label validation readback mismatch");
+        Check(IsDeclaredMetricReadback(
+                  g_host_sync_events->at(host_sync_before + 1)) &&
+                  g_host_sync_events->at(host_sync_before + 1)
+                          .attribution_operation ==
+                      "MetricLearning::PairDistance",
+              name + " metric aggregate readback mismatch");
+
+        const auto& expected = test_case.at("expected");
+        const auto tolerance = ReadTolerance(test_case);
+        Check(result.pair_count ==
+                  expected.at("pair_count").get<size_t>() &&
+                  result.positive_count ==
+                      expected.at("positive_count").get<size_t>() &&
+                  result.negative_count ==
+                      expected.at("negative_count").get<size_t>(),
+              name + " metric counts mismatch");
+        CheckNear(static_cast<float>(result.accuracy),
+                  expected.at("accuracy").get<float>(),
+                  tolerance,
+                  name + " metric accuracy");
+        CheckNear(static_cast<float>(result.positive_distance_mean),
+                  expected.at("positive_distance_mean").get<float>(),
+                  tolerance,
+                  name + " metric positive distance mean");
+        CheckNear(static_cast<float>(result.negative_distance_mean),
+                  expected.at("negative_distance_mean").get<float>(),
+                  tolerance,
+                  name + " metric negative distance mean");
+    }
+
+    for (const auto& test_case : retrieval_cases) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("dtype", "") == "float32" &&
+                  test_case.value("class_id_dtype", "") == "int64" &&
+                  test_case.value("operation", "") ==
+                      "torch.cdist + stable argsort retrieval ranks",
+              name + " retrieval fixture metadata mismatch");
+        const size_t fallback_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto result = cyxwiz::ComputeRetrievalMetrics(
+            FloatTensorFromFixture(
+                test_case.at("embeddings"), name + " embeddings"),
+            Int64TensorFromFixture(
+                test_case.at("class_ids"), name + " class IDs"),
+            test_case.at("k").get<size_t>());
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_before,
+              name + " retrieval attempted native CPU fallback");
+        Check(g_host_sync_events != nullptr &&
+                  g_host_sync_events->size() == host_sync_before + 1 &&
+                  IsDeclaredMetricReadback(
+                      g_host_sync_events->at(host_sync_before)) &&
+                  g_host_sync_events->at(host_sync_before)
+                          .attribution_operation ==
+                      "MetricLearning::Retrieval",
+              name + " retrieval aggregate readback mismatch");
+
+        const auto& expected = test_case.at("expected");
+        const auto tolerance = ReadTolerance(test_case);
+        Check(result.query_count ==
+                  expected.at("query_count").get<size_t>() &&
+                  result.k == expected.at("effective_k").get<size_t>(),
+              name + " retrieval count/k mismatch");
+        CheckNear(static_cast<float>(result.recall_at_k),
+                  expected.at("recall_at_k").get<float>(),
+                  tolerance,
+                  name + " retrieval recall@k");
+        CheckNear(static_cast<float>(result.mean_reciprocal_rank),
+                  expected.at("mean_reciprocal_rank").get<float>(),
+                  tolerance,
+                  name + " retrieval MRR");
+        CheckNear(
+            static_cast<float>(result.nearest_neighbor_class_agreement),
+            expected.at("nearest_neighbor_class_agreement").get<float>(),
+            tolerance,
+            name + " retrieval nearest-neighbor agreement");
     }
 }
 
@@ -2192,6 +2347,7 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
         TestProbabilityLossParity(cases);
         TestOverlapLossParity(cases);
         TestMetricLearningLossParity(cases);
+        TestMetricLearningMetricParity(cases);
         TestMetricPairLinearMultiBatchUpdateParity(cases);
         TestOverlapLinearMultiBatchUpdateParity(cases);
         TestCrossEntropyParity(cases);
@@ -2215,7 +2371,8 @@ void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
     for (const auto& event : host_sync_events) {
         Check(event.selected_backend == "cpu",
               "host-sync evidence must retain ArrayFire CPU identity");
-        Check(event.attribution_category == "debug_sample_dump",
+        Check(event.attribution_category == "debug_sample_dump" ||
+                  IsDeclaredMetricReadback(event),
               "training-core compute performed an undeclared host sync: " +
                   event.attribution_category + " operation=" +
                   event.operation_name);
@@ -2284,6 +2441,7 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
             TestProbabilityLossParity(cases);
             TestOverlapLossParity(cases);
             TestMetricLearningLossParity(cases);
+            TestMetricLearningMetricParity(cases);
             TestMetricPairLinearMultiBatchUpdateParity(cases);
             TestOverlapLinearMultiBatchUpdateParity(cases);
             TestCrossEntropyParity(cases);
@@ -2309,8 +2467,9 @@ void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
             Check(event.selected_backend == backend,
                   "accelerator training-core readback lost backend identity for " +
                       route);
-            Check(event.attribution_category == "debug_sample_dump" &&
-                      event.bytes <= 4096,
+            Check((event.attribution_category == "debug_sample_dump" &&
+                       event.bytes <= 4096) ||
+                      IsDeclaredMetricReadback(event),
                   "accelerator training-core performed an undeclared host sync for " +
                       route + ": " + event.attribution_category +
                       " operation=" + event.operation_name);

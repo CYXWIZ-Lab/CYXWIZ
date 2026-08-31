@@ -1,5 +1,7 @@
 #include "core/metric_learning_inference_outputs.h"
 
+#include "algorithms/arrayfire_backend_utils.h"
+
 #include <nlohmann/json.hpp>
 
 #include <cmath>
@@ -9,7 +11,21 @@
 #include <string>
 #include <vector>
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#endif
+
 namespace {
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+std::vector<cyxwiz::ArrayFireHostSyncEvent>* g_host_sync_events = nullptr;
+
+void CaptureHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
+    if (g_host_sync_events != nullptr) {
+        g_host_sync_events->push_back(event);
+    }
+}
+#endif
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -39,6 +55,22 @@ cyxwiz::Tensor IntTensor(const std::vector<size_t>& shape,
                          const std::vector<int64_t>& values) {
     return cyxwiz::Tensor(shape, values.data(), cyxwiz::DataType::Int64);
 }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+cyxwiz::Tensor DeviceFloatTensor(const std::vector<size_t>& shape,
+                                 const std::vector<float>& values) {
+    const auto host = FloatTensor(shape, values);
+    return cyxwiz::Tensor::FromSemanticArray(
+        host.GetSemanticArray(), host.Shape());
+}
+
+cyxwiz::Tensor DeviceIntTensor(const std::vector<size_t>& shape,
+                               const std::vector<int64_t>& values) {
+    const auto host = IntTensor(shape, values);
+    return cyxwiz::Tensor::FromSemanticArray(
+        host.GetSemanticArray(), host.Shape());
+}
+#endif
 
 void TestEmbeddingOutputResponse() {
     const auto embeddings = FloatTensor({2, 2, 2}, {
@@ -245,6 +277,63 @@ void TestOutputValidation() {
           "cosine pair score should reject zero vectors");
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+void TestDeviceOutputMaterializationAttribution() {
+    if (!cyxwiz::IsCurrentArrayFireBackendAvailable()) {
+        std::cout << "SKIP: ArrayFire output attribution unavailable\n";
+        return;
+    }
+
+    const auto embeddings =
+        DeviceFloatTensor({2, 2}, {1.0f, 2.0f, 3.0f, 4.0f});
+    const auto sample_ids = DeviceIntTensor({2}, {10, 20});
+    const auto class_ids = DeviceIntTensor({2}, {1, 2});
+    std::vector<cyxwiz::ArrayFireHostSyncEvent> events;
+    g_host_sync_events = &events;
+    {
+        const cyxwiz::ScopedArrayFireHostSyncObserver observer(
+            &CaptureHostSync);
+        (void)cyxwiz::BuildEmbeddingOutputResponse(
+            embeddings, sample_ids, class_ids);
+    }
+    g_host_sync_events = nullptr;
+    Check(events.size() == 3,
+          "embedding output should materialize exactly three tensors");
+    for (const auto& event : events) {
+        Check(event.attribution_category == "output_materialization" &&
+                  event.attribution_operation ==
+                      "MetricLearning::EmbeddingOutput",
+              "embedding output reads must be attributed");
+    }
+
+    const auto left = DeviceFloatTensor({2, 2}, {
+        0.0f, 0.0f,
+        1.0f, 1.0f,
+    });
+    const auto right = DeviceFloatTensor({2, 2}, {
+        3.0f, 4.0f,
+        1.0f, 3.0f,
+    });
+    events.clear();
+    g_host_sync_events = &events;
+    {
+        const cyxwiz::ScopedArrayFireHostSyncObserver observer(
+            &CaptureHostSync);
+        (void)cyxwiz::BuildPairScoreOutputResponse(
+            left, right, cyxwiz::PairScoreMode::EuclideanDistance);
+    }
+    g_host_sync_events = nullptr;
+    Check(events.size() == 2,
+          "pair output should materialize exactly two embedding tensors");
+    for (const auto& event : events) {
+        Check(event.attribution_category == "output_materialization" &&
+                  event.attribution_operation ==
+                      "MetricLearning::PairScoreOutput",
+              "pair output reads must be attributed");
+    }
+}
+#endif
+
 }  // namespace
 
 int main() {
@@ -254,6 +343,9 @@ int main() {
     TestScoreModeParsing();
     TestOutputJsonContracts();
     TestOutputValidation();
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    TestDeviceOutputMaterializationAttribution();
+#endif
     std::cout << "Metric-learning inference outputs passed\n";
     return 0;
 }

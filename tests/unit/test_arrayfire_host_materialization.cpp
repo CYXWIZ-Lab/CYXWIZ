@@ -131,6 +131,12 @@ TEST_CASE("Shared ArrayFire host boundary reports complete attribution",
     CHECK(std::string(cyxwiz::ArrayFireHostSyncCategoryName(
               cyxwiz::ArrayFireHostSyncCategory::LossInputValidation)) ==
           "loss_input_validation");
+    CHECK(std::string(cyxwiz::ArrayFireHostSyncCategoryName(
+              cyxwiz::ArrayFireHostSyncCategory::MetricCpuPath)) ==
+          "metric_cpu_path");
+    CHECK(std::string(cyxwiz::ArrayFireHostSyncCategoryName(
+              cyxwiz::ArrayFireHostSyncCategory::MetricInputValidation)) ==
+          "metric_input_validation");
     g_observer_calls = 0;
     g_observed_event = {};
     std::vector<float> output(6, 0.0f);

@@ -3,6 +3,8 @@
 #include "metric_learning_batch.h"
 #include "metric_learning_metrics.h"
 
+#include "algorithms/arrayfire_backend_utils.h"
+
 #include <nlohmann/json.hpp>
 
 #include <cmath>
@@ -102,6 +104,9 @@ inline EmbeddingOutputResponse BuildEmbeddingOutputResponse(
     const Tensor& embeddings,
     const Tensor& sample_ids = Tensor(),
     const Tensor& class_ids = Tensor()) {
+    const ScopedArrayFireHostSyncAttribution output_attribution(
+        ArrayFireHostSyncCategory::OutputMaterialization,
+        "MetricLearning::EmbeddingOutput");
     const auto& shape = embeddings.Shape();
     const auto sample_shape = PerSampleEmbeddingShape(embeddings);
     const size_t batch_size = shape[0];
@@ -189,6 +194,9 @@ inline PairScoreOutputResponse BuildPairScoreOutputResponse(
     const Tensor& sample_id_b = Tensor(),
     const Tensor& class_id_a = Tensor(),
     const Tensor& class_id_b = Tensor()) {
+    const ScopedArrayFireHostSyncAttribution output_attribution(
+        ArrayFireHostSyncCategory::OutputMaterialization,
+        "MetricLearning::PairScoreOutput");
     if (embedding_a.Shape() != embedding_b.Shape()) {
         throw std::invalid_argument(
             "PairScoreOutput embeddings must have identical shapes");

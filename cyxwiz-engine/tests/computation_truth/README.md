@@ -100,6 +100,16 @@ The broad tracking ticket is:
   fallback; forced failures separately prove strict rejection and compatible,
   attributed native CPU execution. Incompatible oneAPI remains an explicit
   device-selection skip rather than a global blocker.
+- Verifies metric-learning pair-distance accuracy/means and retrieval
+  Recall@k, mean reciprocal rank, and nearest-neighbor class agreement against
+  generated PyTorch 2.10 vector-norm/cdist fixtures. Rank-2 and rank-3 cases
+  cover both pair-label conventions and stable candidate-index tie ordering.
+  Distance, decision, aggregation, and ranking remain ArrayFire-resident on
+  strict CPU and every locally qualified CUDA/OpenCL route; only one pair-label
+  validation scalar and the bounded result scalars cross to host with exact
+  attribution. Forced failures prove strict rejection before host access and
+  compatible `metric_cpu_path` execution. Inference JSON materialization is a
+  separate, explicitly attributed output boundary.
 - Verifies `LinearLayer` forward output against a generated PyTorch linear fixture.
 - Verifies `LinearLayer` backward values:
   - gradient with respect to input
@@ -155,7 +165,7 @@ The broad tracking ticket is:
   Incompatible optional providers remain explicit device-selection skips.
 
 The elementwise-activation, Linear, regression-loss, probability-loss,
-overlap-loss, CrossEntropy, NLL, Focal,
+overlap-loss, metric-learning loss/metric, CrossEntropy, NLL, Focal,
 Adam-family, SGD, adaptive-optimizer, LAMB, and weighted-sampler expectations come from the checked-in
 `fixtures/training_core_pytorch.json` fixture. Regenerate it with:
 

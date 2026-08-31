@@ -6489,6 +6489,239 @@
         }
       }
     ],
+    "metric_learning_metric_matrix_f32": {
+      "pair_cases": [
+        {
+          "convention": "contrastive_zero_similar",
+          "dtype": "float32",
+          "expected": {
+            "accuracy": 1.0,
+            "negative_count": 2,
+            "negative_distance_mean": 2.0,
+            "pair_count": 4,
+            "positive_count": 2,
+            "positive_distance_mean": 0.15000002458691597
+          },
+          "labels": {
+            "shape": [
+              4
+            ],
+            "values": [
+              0.0,
+              1.0,
+              0.0,
+              1.0
+            ]
+          },
+          "left": {
+            "shape": [
+              4,
+              2
+            ],
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              2.0,
+              2.0
+            ]
+          },
+          "name": "contrastive_pair_rank2",
+          "operation": "torch.linalg.vector_norm + threshold agreement",
+          "right": {
+            "shape": [
+              4,
+              2
+            ],
+            "values": [
+              0.10000000149011612,
+              0.0,
+              2.0,
+              0.0,
+              1.2000000476837158,
+              1.0,
+              2.0,
+              4.0
+            ]
+          },
+          "threshold": 0.5,
+          "tolerance": {
+            "atol": 2e-06,
+            "rtol": 2e-06
+          }
+        },
+        {
+          "convention": "cosine_one_similar",
+          "dtype": "float32",
+          "expected": {
+            "accuracy": 1.0,
+            "negative_count": 1,
+            "negative_distance_mean": 2.0,
+            "pair_count": 3,
+            "positive_count": 2,
+            "positive_distance_mean": 0.625
+          },
+          "labels": {
+            "shape": [
+              3
+            ],
+            "values": [
+              1.0,
+              1.0,
+              -1.0
+            ]
+          },
+          "left": {
+            "shape": [
+              3,
+              2,
+              2
+            ],
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              -1.0,
+              0.0,
+              1.0,
+              0.0
+            ]
+          },
+          "name": "cosine_convention_pair_rank3",
+          "operation": "torch.linalg.vector_norm + threshold agreement",
+          "right": {
+            "shape": [
+              3,
+              2,
+              2
+            ],
+            "values": [
+              0.25,
+              0.0,
+              0.0,
+              0.0,
+              2.0,
+              1.0,
+              1.0,
+              1.0,
+              -3.0,
+              0.0,
+              1.0,
+              0.0
+            ]
+          },
+          "threshold": 1.0,
+          "tolerance": {
+            "atol": 2e-06,
+            "rtol": 2e-06
+          }
+        }
+      ],
+      "retrieval_cases": [
+        {
+          "class_id_dtype": "int64",
+          "class_ids": {
+            "shape": [
+              5
+            ],
+            "values": [
+              1,
+              1,
+              2,
+              2,
+              3
+            ]
+          },
+          "dtype": "float32",
+          "embeddings": {
+            "shape": [
+              5,
+              2
+            ],
+            "values": [
+              0.0,
+              0.0,
+              0.10000000149011612,
+              0.0,
+              5.0,
+              5.0,
+              5.099999904632568,
+              5.0,
+              0.0,
+              5.0
+            ]
+          },
+          "expected": {
+            "effective_k": 1,
+            "mean_reciprocal_rank": 0.8,
+            "nearest_neighbor_class_agreement": 0.8,
+            "query_count": 5,
+            "recall_at_k": 0.8
+          },
+          "k": 1,
+          "name": "retrieval_rank2_k1",
+          "operation": "torch.cdist + stable argsort retrieval ranks",
+          "tolerance": {
+            "atol": 2e-06,
+            "rtol": 2e-06
+          }
+        },
+        {
+          "class_id_dtype": "int64",
+          "class_ids": {
+            "shape": [
+              4
+            ],
+            "values": [
+              1,
+              2,
+              1,
+              2
+            ]
+          },
+          "dtype": "float32",
+          "embeddings": {
+            "shape": [
+              4,
+              1,
+              2
+            ],
+            "values": [
+              0.0,
+              0.0,
+              1.0,
+              0.0,
+              -1.0,
+              0.0,
+              3.0,
+              0.0
+            ]
+          },
+          "expected": {
+            "effective_k": 3,
+            "mean_reciprocal_rank": 0.7083333333333333,
+            "nearest_neighbor_class_agreement": 0.5,
+            "query_count": 4,
+            "recall_at_k": 1.0
+          },
+          "k": 3,
+          "name": "retrieval_rank3_stable_ties",
+          "operation": "torch.cdist + stable argsort retrieval ranks",
+          "tolerance": {
+            "atol": 2e-06,
+            "rtol": 2e-06
+          }
+        }
+      ]
+    },
     "metric_pair_linear_multibatch_sgd_f32": {
       "dtype": "float32",
       "initial": {

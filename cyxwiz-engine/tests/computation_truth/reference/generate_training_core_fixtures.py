@@ -699,6 +699,165 @@ def metric_learning_loss_matrix() -> list[dict[str, Any]]:
     return cases
 
 
+def metric_learning_metric_matrix() -> dict[str, list[dict[str, Any]]]:
+    pair_definitions = [
+        {
+            "name": "contrastive_pair_rank2",
+            "convention": "contrastive_zero_similar",
+            "threshold": 0.5,
+            "left": [
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [1.0, 1.0],
+                [2.0, 2.0],
+            ],
+            "right": [
+                [0.1, 0.0],
+                [2.0, 0.0],
+                [1.2, 1.0],
+                [2.0, 4.0],
+            ],
+            "labels": [0.0, 1.0, 0.0, 1.0],
+        },
+        {
+            "name": "cosine_convention_pair_rank3",
+            "convention": "cosine_one_similar",
+            "threshold": 1.0,
+            "left": [
+                [[0.0, 0.0], [0.0, 0.0]],
+                [[1.0, 1.0], [1.0, 1.0]],
+                [[-1.0, 0.0], [1.0, 0.0]],
+            ],
+            "right": [
+                [[0.25, 0.0], [0.0, 0.0]],
+                [[2.0, 1.0], [1.0, 1.0]],
+                [[-3.0, 0.0], [1.0, 0.0]],
+            ],
+            "labels": [1.0, 1.0, -1.0],
+        },
+    ]
+    pair_cases: list[dict[str, Any]] = []
+    for definition in pair_definitions:
+        left = torch.tensor(definition["left"], dtype=torch.float32)
+        right = torch.tensor(definition["right"], dtype=torch.float32)
+        labels = torch.tensor(definition["labels"], dtype=torch.float32)
+        distances = torch.linalg.vector_norm(
+            (left - right).flatten(start_dim=1), dim=1
+        )
+        if definition["convention"] == "contrastive_zero_similar":
+            similar = labels == 0.0
+        else:
+            similar = labels == 1.0
+        predicted_similar = distances <= definition["threshold"]
+        positive = distances[similar]
+        negative = distances[~similar]
+        pair_cases.append({
+            "name": definition["name"],
+            "operation": "torch.linalg.vector_norm + threshold agreement",
+            "dtype": "float32",
+            "convention": definition["convention"],
+            "threshold": definition["threshold"],
+            "tolerance": {"atol": 2.0e-6, "rtol": 2.0e-6},
+            "left": tensor_fixture(left),
+            "right": tensor_fixture(right),
+            "labels": tensor_fixture(labels),
+            "expected": {
+                "pair_count": int(left.shape[0]),
+                "accuracy": float(
+                    (predicted_similar == similar).to(torch.float64).mean()
+                ),
+                "positive_count": int(similar.sum()),
+                "negative_count": int((~similar).sum()),
+                "positive_distance_mean": (
+                    float(positive.to(torch.float64).mean())
+                    if positive.numel() else 0.0
+                ),
+                "negative_distance_mean": (
+                    float(negative.to(torch.float64).mean())
+                    if negative.numel() else 0.0
+                ),
+            },
+        })
+
+    retrieval_definitions = [
+        {
+            "name": "retrieval_rank2_k1",
+            "embeddings": [
+                [0.0, 0.0],
+                [0.1, 0.0],
+                [5.0, 5.0],
+                [5.1, 5.0],
+                [0.0, 5.0],
+            ],
+            "class_ids": [1, 1, 2, 2, 3],
+            "k": 1,
+        },
+        {
+            "name": "retrieval_rank3_stable_ties",
+            "embeddings": [
+                [[0.0, 0.0]],
+                [[1.0, 0.0]],
+                [[-1.0, 0.0]],
+                [[3.0, 0.0]],
+            ],
+            "class_ids": [1, 2, 1, 2],
+            "k": 3,
+        },
+    ]
+    retrieval_cases: list[dict[str, Any]] = []
+    for definition in retrieval_definitions:
+        embeddings = torch.tensor(
+            definition["embeddings"], dtype=torch.float32
+        )
+        class_ids = torch.tensor(definition["class_ids"], dtype=torch.int64)
+        flattened = embeddings.flatten(start_dim=1)
+        distances = torch.cdist(flattened, flattened, p=2.0)
+        sample_count = embeddings.shape[0]
+        effective_k = min(definition["k"], sample_count - 1)
+        recall_hits = 0
+        reciprocal_rank_sum = 0.0
+        nearest_match_sum = 0
+        for query in range(sample_count):
+            order = torch.argsort(distances[query], stable=True).tolist()
+            order = [candidate for candidate in order if candidate != query]
+            first_relevant_rank = 0
+            for rank, candidate in enumerate(order, start=1):
+                if class_ids[candidate] == class_ids[query]:
+                    first_relevant_rank = rank
+                    break
+            if 0 < first_relevant_rank <= effective_k:
+                recall_hits += 1
+            if first_relevant_rank > 0:
+                reciprocal_rank_sum += 1.0 / first_relevant_rank
+            if order and class_ids[order[0]] == class_ids[query]:
+                nearest_match_sum += 1
+        retrieval_cases.append({
+            "name": definition["name"],
+            "operation": "torch.cdist + stable argsort retrieval ranks",
+            "dtype": "float32",
+            "class_id_dtype": "int64",
+            "k": definition["k"],
+            "tolerance": {"atol": 2.0e-6, "rtol": 2.0e-6},
+            "embeddings": tensor_fixture(embeddings),
+            "class_ids": tensor_fixture(class_ids),
+            "expected": {
+                "query_count": sample_count,
+                "effective_k": effective_k,
+                "recall_at_k": recall_hits / sample_count,
+                "mean_reciprocal_rank": (
+                    reciprocal_rank_sum / sample_count
+                ),
+                "nearest_neighbor_class_agreement": (
+                    nearest_match_sum / sample_count
+                ),
+            },
+        })
+    return {
+        "pair_cases": pair_cases,
+        "retrieval_cases": retrieval_cases,
+    }
+
+
 def metric_pair_linear_multibatch_sgd_case() -> dict[str, Any]:
     model = torch.nn.Linear(2, 2, bias=True)
     with torch.no_grad():
@@ -3724,6 +3883,9 @@ def generate_fixture() -> dict[str, Any]:
             "overlap_loss_matrix_f32": overlap_loss_matrix(),
             "metric_learning_loss_matrix_f32": (
                 metric_learning_loss_matrix()
+            ),
+            "metric_learning_metric_matrix_f32": (
+                metric_learning_metric_matrix()
             ),
             "metric_pair_linear_multibatch_sgd_f32": (
                 metric_pair_linear_multibatch_sgd_case()

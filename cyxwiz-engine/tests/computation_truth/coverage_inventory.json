@@ -582,6 +582,22 @@
       "gaps": []
     },
     {
+      "id": "METRIC-LEARNING-001",
+      "family": "metric",
+      "operation": "pair-distance accuracy/means and retrieval Recall@k/MRR/nearest-neighbor class agreement",
+      "tier": 1,
+      "owner": "cyxwiz-engine/src/core/metric_learning_metrics.h",
+      "implementation": ["cyxwiz-engine/src/core/metric_learning_metrics.cpp"],
+      "callers": ["metric-learning evaluation", "metric-learning inference reporting"],
+      "contract": "Pair distances, label conventions, threshold decisions, Recall@k, reciprocal rank, nearest-neighbor class agreement, and deterministic candidate-index tie ordering match the declared PyTorch reference equations.",
+      "supported": "non-empty Float32 rank-2 through rank-4 embeddings; Float32 pair labels under contrastive or cosine conventions; Int64, Int32, or exact finite integer Float32 retrieval class IDs; k >= 1 with effective k capped at batch-1",
+      "oracle": "PyTorch 2.10 torch.linalg.vector_norm, torch.cdist, and stable argsort",
+      "tests": ["test_computation_truth_tfidf_loss:metric_learning_metric_matrix_f32", "test_metric_learning_metrics", "test_metric_learning_inference_outputs", "test_ml_primitive_coverage_matrix", "cyxwiz-tests:[source_scan]"],
+      "execution": "ArrayFire-first distance, decision, aggregation, and ranking computation on strict ArrayFire CPU and every locally qualified CUDA/OpenCL route; pair labels and Float32 class IDs use bounded attributed validation scalars, while five pair or three retrieval result scalars cross to host with exact attribution; forced failures prove strict rejection before host access and compatible metric_cpu_path fallback; output serialization is separately attributed",
+      "status": "covered",
+      "gaps": []
+    },
+    {
       "id": "METRIC-CLASS-001",
       "family": "metric",
       "operation": "confusion matrix, classification report, binary metrics, ROC/AUC and PR/AP",

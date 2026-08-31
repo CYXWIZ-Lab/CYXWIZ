@@ -200,6 +200,7 @@ set(ENGINE_SOURCES
     src/core/classification_decision.cpp
     src/core/training_scheduler_controller.cpp
     src/core/sequence_arrow_batcher.cpp
+    src/core/metric_learning_metrics.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/executable_model.cpp
@@ -1376,6 +1377,7 @@ set_target_properties(test_metric_learning_shared_encoder_contracts PROPERTIES
 # ===== Test: Metric-Learning Metrics =====
 add_executable(test_metric_learning_metrics
     tests/test_metric_learning_metrics.cpp
+    src/core/metric_learning_metrics.cpp
 )
 
 target_include_directories(test_metric_learning_metrics PRIVATE
@@ -1400,6 +1402,7 @@ set_target_properties(test_metric_learning_metrics PROPERTIES
 # ===== Test: Metric-Learning Inference Outputs =====
 add_executable(test_metric_learning_inference_outputs
     tests/test_metric_learning_inference_outputs.cpp
+    src/core/metric_learning_metrics.cpp
 )
 
 target_include_directories(test_metric_learning_inference_outputs PRIVATE
@@ -1473,6 +1476,7 @@ set_target_properties(test_metric_learning_losses PROPERTIES
 # ===== Test: ML Primitive CPU/GPU Coverage Matrix =====
 add_executable(test_ml_primitive_coverage_matrix
     tests/test_ml_primitive_coverage_matrix.cpp
+    src/core/metric_learning_metrics.cpp
 )
 
 target_include_directories(test_ml_primitive_coverage_matrix PRIVATE
@@ -1584,6 +1588,7 @@ set_target_properties(test_text_tokenizer_operator PROPERTIES
 add_executable(test_computation_truth_tfidf_loss
     tests/computation_truth/test_computation_truth_tfidf_loss.cpp
     src/core/executable_model.cpp
+    src/core/metric_learning_metrics.cpp
     src/core/preprocessing_state.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
 )
