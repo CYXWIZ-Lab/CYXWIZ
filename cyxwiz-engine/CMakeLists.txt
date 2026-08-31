@@ -13,7 +13,9 @@ find_package(Stb REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(pybind11 CONFIG REQUIRED)
+if(CYXWIZ_HAS_PYTHON)
+    find_package(pybind11 CONFIG REQUIRED)
+endif()
 find_package(httplib CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 
@@ -1160,6 +1162,7 @@ set_target_properties(test_python_requirements PROPERTIES
 )
 
 # ===== Test: Sandbox Timeout =====
+if(CYXWIZ_HAS_PYTHON)
 add_executable(test_sandbox_timeout
     tests/test_sandbox_timeout.cpp
     src/scripting/python_engine.cpp
@@ -1188,6 +1191,7 @@ endif()
 set_target_properties(test_sandbox_timeout PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+endif()
 
 # ===== Test: OpenCV Integration =====
 add_executable(test_opencv_integration
