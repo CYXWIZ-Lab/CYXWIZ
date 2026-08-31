@@ -302,8 +302,11 @@ target_include_directories(cyxwiz-backend PUBLIC
 
 # Link libraries
 target_link_libraries(cyxwiz-backend PUBLIC
-    fmt::fmt
+    # Keep spdlog before its fmt dependency. Apple's static linker retains the
+    # first duplicate archive, so the inverse order can leave fmt symbols used
+    # by spdlog unresolved even though both imported targets are present.
     spdlog::spdlog
+    fmt::fmt
     nlohmann_json::nlohmann_json
     cyxwiz-protocol
 )
