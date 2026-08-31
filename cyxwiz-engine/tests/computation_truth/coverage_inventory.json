@@ -35,7 +35,7 @@
       "tests": ["cyxwiz-tests:[tensor]", "cyxwiz-tests:[tensor_host_access]", "cyxwiz-tests:[source_scan]", "cyxwiz-tests:[linear][pytorch][route]", "test_training_executor_arrow_parquet"],
       "execution": "explicit ReadData/MutableData ownership covers host ingress/output, serialization, selected native CPU and host bucket transport; exact residual source inventory isolates compatibility compute from NCCL device transport",
       "status": "partial",
-      "gaps": ["26 reviewed legacy Data-access files remain: 25 compatibility-compute owners with 379 calls and one NCCL device-transport owner with 6 calls"]
+      "gaps": ["25 reviewed legacy Data-access files remain: 24 compatibility-compute owners with 365 calls and one NCCL device-transport owner with 6 calls"]
     },
     {
       "id": "TENSOR-LAYOUT-001",
@@ -259,7 +259,7 @@
       "tests": ["cyxwiz-tests:[fallback]", "cyxwiz-tests:[policy]", "cyxwiz-tests:[source_scan]", "cyxwiz-tests:[tensor_host_access]", "test_computation_truth_tfidf_loss", "test_training_executor_arrow_parquet"],
       "execution": "observed compatibility boundary plus exact reviewed residual inventory; explicit host/serialization/selected-CPU aliases have been removed",
       "status": "partial",
-      "gaps": ["migrate or explicitly guard the 28 inventoried compatibility-compute files; give NCCL transport a real Tensor device-pointer contract"]
+      "gaps": ["migrate or explicitly guard the 24 inventoried compatibility-compute files; give NCCL transport a real Tensor device-pointer contract"]
     },
     {
       "id": "EXEC-SYNC-001",
@@ -448,8 +448,8 @@
       "contract": "Probability/logit interpretation, pos_weight, log_target, reduction and gradients match PyTorch with finite extreme behavior.",
       "supported": "matching-shape Float32 tensors; none, sum and mean reductions; PyTorch-compatible BCE boundary behavior with an optional positive derivative-denominator floor; positive finite scalar BCEWithLogits pos_weight; KLDiv probability and log-target forms",
       "oracle": "PyTorch plus the declared configurable BCE derivative-denominator extension",
-      "tests": ["cyxwiz-tests:[loss][probability]", "test_computation_truth_tfidf_loss:probability_loss_matrix_f32"],
-      "execution": "strict ArrayFire device path on CPU and every locally qualified CUDA/OpenCL route with no native fallback or compute-time host synchronization; critical boundary equations verified in a no-ArrayFire build",
+      "tests": ["cyxwiz-tests:[loss][probability]", "cyxwiz-tests:[loss][probability][arrayfire][fallback]", "test_computation_truth_tfidf_loss:probability_loss_matrix_f32"],
+      "execution": "strict ArrayFire device path on CPU and every locally qualified CUDA/OpenCL route with no native fallback or compute-time host synchronization; forced and unavailable native compatibility paths record an exact reason, reject before compute under strict policy, attribute host synchronization to loss_cpu_path and match ArrayFire numerically; critical boundary equations verified in a no-ArrayFire build",
       "status": "covered",
       "gaps": []
     },

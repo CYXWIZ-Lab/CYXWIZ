@@ -208,8 +208,8 @@ Tensor CpuBCEForward(const Tensor& predictions,
                      Reduction reduction) {
     ValidateFloat32Pair(predictions, targets, "BCE");
     const size_t count = predictions.NumElements();
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     std::vector<float> losses(count);
     for (size_t i = 0; i < count; ++i) {
         const float log_prediction =
@@ -227,9 +227,9 @@ Tensor CpuBCEBackward(const Tensor& predictions, const Tensor& targets, float ep
     Tensor grad(predictions.Shape(), DataType::Float32);
     const size_t count = predictions.NumElements();
     const float scale = reduction == Reduction::Mean && count > 0 ? 1.0f / static_cast<float>(count) : 1.0f;
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
-    float* out = grad.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
+    float* out = grad.MutableData<float>();
     for (size_t i = 0; i < count; ++i) {
         const float denominator =
             std::max(pred[i] * (1.0f - pred[i]), eps);
@@ -252,8 +252,8 @@ Tensor CpuBCEWithLogitsForward(const Tensor& predictions,
                                float pos_weight) {
     ValidateFloat32Pair(predictions, targets, "BCEWithLogits");
     const size_t count = predictions.NumElements();
-    const float* logits = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* logits = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     std::vector<float> losses(count);
     for (size_t i = 0; i < count; ++i) {
         const float logit = logits[i];
@@ -274,9 +274,9 @@ Tensor CpuBCEWithLogitsBackward(const Tensor& predictions,
     Tensor grad(predictions.Shape(), DataType::Float32);
     const size_t count = predictions.NumElements();
     const float scale = reduction == Reduction::Mean && count > 0 ? 1.0f / static_cast<float>(count) : 1.0f;
-    const float* logits = predictions.Data<float>();
-    const float* target = targets.Data<float>();
-    float* out = grad.Data<float>();
+    const float* logits = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
+    float* out = grad.MutableData<float>();
     for (size_t i = 0; i < count; ++i) {
         const float log_weight = 1.0f + (pos_weight - 1.0f) * target[i];
         out[i] =
@@ -293,8 +293,8 @@ Tensor CpuKLDivForward(const Tensor& predictions,
                        Reduction reduction) {
     ValidateFloat32Pair(predictions, targets, "KLDiv");
     const size_t count = predictions.NumElements();
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     std::vector<float> losses(count, 0.0f);
     for (size_t i = 0; i < count; ++i) {
         if (log_target) {
@@ -316,8 +316,8 @@ Tensor CpuKLDivBackward(const Tensor& predictions,
     Tensor grad(predictions.Shape(), DataType::Float32);
     const size_t count = predictions.NumElements();
     const float scale = reduction == Reduction::Mean && count > 0 ? 1.0f / static_cast<float>(count) : 1.0f;
-    const float* target = targets.Data<float>();
-    float* out = grad.Data<float>();
+    const float* target = targets.ReadData<float>();
+    float* out = grad.MutableData<float>();
     for (size_t i = 0; i < count; ++i) {
         out[i] = (log_target ? -std::exp(target[i]) : -target[i]) * scale;
     }

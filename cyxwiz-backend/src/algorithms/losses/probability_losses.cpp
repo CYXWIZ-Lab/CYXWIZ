@@ -22,6 +22,17 @@ namespace cyxwiz {
 
 using namespace loss_detail;
 
+namespace {
+
+template <typename CpuFunction>
+Tensor RunNativeCpuLoss(const char* operation_name, CpuFunction&& compute) {
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LossCpuPath, operation_name);
+    return compute();
+}
+
+}  // namespace
+
 BCELoss::BCELoss(Reduction reduction, float denominator_epsilon)
     : Loss(reduction), denominator_epsilon_(denominator_epsilon) {
     if (!std::isfinite(denominator_epsilon_) ||
@@ -65,9 +76,12 @@ JaccardLoss::JaccardLoss(Reduction reduction, float smooth)
 // ============================================================================
 
 Tensor BCELoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "BCELoss::Forward";
     ValidateFloat32Pair(predictions, targets, "BCE");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
         af::array pred = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
 
@@ -89,16 +103,21 @@ Tensor BCELoss::Forward(const Tensor& predictions, const Tensor& targets) {
                 : std::vector<size_t>{1});
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "BCELoss::Forward", e.what(), predictions, targets, reduction_);
+            kOperation, e.what(), predictions, targets, reduction_);
     }
 #endif
-    return CpuBCEForward(predictions, targets, reduction_);
+    return RunNativeCpuLoss(kOperation, [&] {
+        return CpuBCEForward(predictions, targets, reduction_);
+    });
 }
 
 Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "BCELoss::Backward";
     ValidateFloat32Pair(predictions, targets, "BCE");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
         af::array pred = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
 
@@ -116,11 +135,13 @@ Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
         return AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "BCELoss::Backward", e.what(), predictions, targets, reduction_);
+            kOperation, e.what(), predictions, targets, reduction_);
     }
 #endif
-    return CpuBCEBackward(
-        predictions, targets, denominator_epsilon_, reduction_);
+    return RunNativeCpuLoss(kOperation, [&] {
+        return CpuBCEBackward(
+            predictions, targets, denominator_epsilon_, reduction_);
+    });
 }
 
 // ============================================================================
@@ -128,9 +149,12 @@ Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
 // ============================================================================
 
 Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "BCEWithLogitsLoss::Forward";
     ValidateFloat32Pair(predictions, targets, "BCEWithLogits");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
         af::array logits = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
 
@@ -155,16 +179,22 @@ Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targe
                 : std::vector<size_t>{1});
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "BCEWithLogitsLoss::Forward", e.what(), predictions, targets, reduction_);
+            kOperation, e.what(), predictions, targets, reduction_);
     }
 #endif
-    return CpuBCEWithLogitsForward(predictions, targets, reduction_, pos_weight_);
+    return RunNativeCpuLoss(kOperation, [&] {
+        return CpuBCEWithLogitsForward(
+            predictions, targets, reduction_, pos_weight_);
+    });
 }
 
 Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "BCEWithLogitsLoss::Backward";
     ValidateFloat32Pair(predictions, targets, "BCEWithLogits");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
         af::array logits = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
 
@@ -184,10 +214,13 @@ Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targ
         return AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "BCEWithLogitsLoss::Backward", e.what(), predictions, targets, reduction_);
+            kOperation, e.what(), predictions, targets, reduction_);
     }
 #endif
-    return CpuBCEWithLogitsBackward(predictions, targets, reduction_, pos_weight_);
+    return RunNativeCpuLoss(kOperation, [&] {
+        return CpuBCEWithLogitsBackward(
+            predictions, targets, reduction_, pos_weight_);
+    });
 }
 
 // ============================================================================
@@ -195,9 +228,12 @@ Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targ
 // ============================================================================
 
 Tensor KLDivLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "KLDivLoss::Forward";
     ValidateFloat32Pair(predictions, targets, "KLDiv");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
         af::array log_pred = TensorToAf(predictions);  // Log probabilities
         af::array target = TensorToAf(targets);        // Probabilities or log probabilities
 
@@ -226,16 +262,22 @@ Tensor KLDivLoss::Forward(const Tensor& predictions, const Tensor& targets) {
                 : std::vector<size_t>{1});
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "KLDivLoss::Forward", e.what(), predictions, targets, reduction_);
+            kOperation, e.what(), predictions, targets, reduction_);
     }
 #endif
-    return CpuKLDivForward(predictions, targets, log_target_, reduction_);
+    return RunNativeCpuLoss(kOperation, [&] {
+        return CpuKLDivForward(
+            predictions, targets, log_target_, reduction_);
+    });
 }
 
 Tensor KLDivLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "KLDivLoss::Backward";
     ValidateFloat32Pair(predictions, targets, "KLDiv");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
         af::array log_pred = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
 
@@ -256,10 +298,13 @@ Tensor KLDivLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         return AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "KLDivLoss::Backward", e.what(), predictions, targets, reduction_);
+            kOperation, e.what(), predictions, targets, reduction_);
     }
 #endif
-    return CpuKLDivBackward(predictions, targets, log_target_, reduction_);
+    return RunNativeCpuLoss(kOperation, [&] {
+        return CpuKLDivBackward(
+            predictions, targets, log_target_, reduction_);
+    });
 }
 
 // ============================================================================

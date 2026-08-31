@@ -54,7 +54,6 @@ const std::vector<LegacyTensorDataOwner>& LegacyTensorDataInventory() {
         {"cyxwiz-backend/src/algorithms/layers/normalization.cpp", 39, "compatibility_compute", "normalization layers"},
         {"cyxwiz-backend/src/algorithms/layers/transformer_layers.cpp", 56, "compatibility_compute", "transformer layers"},
         {"cyxwiz-backend/src/algorithms/layers/upsampling.cpp", 8, "compatibility_compute", "upsampling layers"},
-        {"cyxwiz-backend/src/algorithms/losses/loss_utils.cpp", 14, "compatibility_compute", "remaining non-regression loss compatibility kernels"},
         {"cyxwiz-backend/src/algorithms/losses/metric_learning_losses.cpp", 24, "compatibility_compute", "metric-learning losses"},
         {"cyxwiz-backend/src/algorithms/model_interpretability.cpp", 10, "compatibility_compute", "model interpretability"},
         {"cyxwiz-backend/src/algorithms/sequential/feedforward_modules.cpp", 11, "compatibility_compute", "feed-forward modules"},

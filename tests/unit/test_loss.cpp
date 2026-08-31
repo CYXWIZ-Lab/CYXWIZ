@@ -413,6 +413,47 @@ TEST_CASE("Probability losses validate shape and dtype before compute",
         kl_div.Backward(predictions, integer_targets), std::runtime_error);
 }
 
+#if defined(CYXWIZ_HAS_ARRAYFIRE) && !defined(NDEBUG)
+TEST_CASE("Probability losses declare strict and compatible fallback truth",
+          "[loss][probability][arrayfire][fallback]") {
+    const auto make_device_tensor = [](const std::vector<float>& values) {
+        const cyxwiz::Tensor host(
+            {2, 2}, values.data(), cyxwiz::DataType::Float32);
+        return cyxwiz::Tensor::FromSemanticArray(
+            host.GetSemanticArray(), host.Shape());
+    };
+    const auto make_predictions = [make_device_tensor] {
+        return make_device_tensor({0.8f, 0.2f, 0.4f, 0.9f});
+    };
+    const auto make_targets = [make_device_tensor] {
+        return make_device_tensor({0.7f, 0.3f, 0.2f, 0.8f});
+    };
+    const std::vector<std::pair<LossFactory, std::string>> losses = {
+        {[] { return std::make_unique<cyxwiz::BCELoss>(
+                   cyxwiz::Reduction::None); },
+         "BCELoss"},
+        {[] { return std::make_unique<cyxwiz::BCEWithLogitsLoss>(
+                   cyxwiz::Reduction::None, 2.0f); },
+         "BCEWithLogitsLoss"},
+        {[] { return std::make_unique<cyxwiz::KLDivLoss>(
+                   cyxwiz::Reduction::None, false); },
+         "KLDivLoss"},
+    };
+    for (const auto& [factory, name] : losses) {
+        DYNAMIC_SECTION(name << " forward") {
+            RequireLossFallbackContract(
+                factory, name + "::Forward", true,
+                make_predictions, make_targets);
+        }
+        DYNAMIC_SECTION(name << " backward") {
+            RequireLossFallbackContract(
+                factory, name + "::Backward", false,
+                make_predictions, make_targets);
+        }
+    }
+}
+#endif
+
 TEST_CASE("BCE follows PyTorch boundary loss and gradient bounds",
           "[loss][probability]") {
     const float probability_values[] = {0.0f, 1.0f, 0.0f, 1.0f};
