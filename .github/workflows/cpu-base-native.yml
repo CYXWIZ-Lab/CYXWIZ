@@ -216,9 +216,10 @@ jobs:
           redist.tests.test_package_release.PackageReleaseTests.test_deterministic_zip_preserves_extensionless_executable_mode
 
       - name: Install macOS build dependencies
-        run: >-
-          brew install arrayfire autoconf automake bison cmake libtool ninja
-          pkg-config
+        run: |
+          brew install arrayfire autoconf autoconf-archive automake bison \
+            cmake libtool ninja pkg-config
+          echo "$(brew --prefix libtool)/libexec/gnubin" >> "$GITHUB_PATH"
 
       - name: Restore vcpkg binary cache
         uses: actions/cache/restore@v4
