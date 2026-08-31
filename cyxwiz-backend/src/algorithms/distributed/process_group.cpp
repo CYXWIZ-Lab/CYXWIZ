@@ -183,7 +183,7 @@ void ProcessGroup::ReduceScatter(Tensor& tensor, ReduceOp op) {
     size_t offset = GetRank() * chunk_size;
     std::vector<float> my_chunk(chunk_size);
 
-    const float* src = tensor.Data<float>();
+    const float* src = tensor.ReadData<float>();
     std::copy(src + offset, src + offset + chunk_size, my_chunk.begin());
 
     // Resize tensor to chunk size

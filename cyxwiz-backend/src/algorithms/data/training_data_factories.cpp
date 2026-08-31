@@ -40,8 +40,8 @@ TrainingDataLoader CreateTrainingDataLoader(const Tensor& data,
         size_t Size() const override { return num_samples_; }
 
         std::pair<std::vector<float>, int> GetItem(size_t index) const override {
-            const float* data_ptr = data_.Data<float>();
-            const int32_t* label_ptr = labels_.Data<int32_t>();
+            const float* data_ptr = data_.ReadData<float>();
+            const int32_t* label_ptr = labels_.ReadData<int32_t>();
 
             size_t offset = index * sample_size_;
             std::vector<float> sample(data_ptr + offset, data_ptr + offset + sample_size_);

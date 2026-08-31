@@ -39,7 +39,7 @@ void DistributedTrainer::SaveCheckpoint(const std::string& path) {
 
         size_t data_size = tensor.NumElements();
         file.write(reinterpret_cast<const char*>(&data_size), sizeof(data_size));
-        file.write(reinterpret_cast<const char*>(tensor.Data<float>()),
+        file.write(reinterpret_cast<const char*>(tensor.ReadData<float>()),
                    data_size * sizeof(float));
     }
 
@@ -72,7 +72,7 @@ void DistributedTrainer::LoadCheckpoint(const std::string& path) {
 
         std::vector<size_t> shape = {data_size};
         Tensor tensor(shape);
-        file.read(reinterpret_cast<char*>(tensor.Data<float>()),
+        file.read(reinterpret_cast<char*>(tensor.MutableData<float>()),
                   data_size * sizeof(float));
 
         params[name] = std::move(tensor);

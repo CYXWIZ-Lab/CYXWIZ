@@ -122,7 +122,7 @@ inline EmbeddingOutputResponse BuildEmbeddingOutputResponse(
     response.embedding_shape = sample_shape;
     response.records.reserve(batch_size);
 
-    const float* data = embeddings.Data<float>();
+    const float* data = embeddings.ReadData<float>();
     for (size_t row = 0; row < batch_size; ++row) {
         EmbeddingOutputRecord record;
         record.embedding.assign(data + row * dim, data + (row + 1) * dim);
@@ -144,8 +144,8 @@ inline double CosineSimilarityRow(const Tensor& left,
                                   const Tensor& right,
                                   size_t row,
                                   size_t dim) {
-    const float* left_data = left.Data<float>();
-    const float* right_data = right.Data<float>();
+    const float* left_data = left.ReadData<float>();
+    const float* right_data = right.ReadData<float>();
     const size_t offset = row * dim;
     double dot = 0.0;
     double left_norm = 0.0;

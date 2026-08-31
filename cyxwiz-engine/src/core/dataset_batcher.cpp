@@ -170,7 +170,7 @@ Batch DatasetBatcher::GetNextBatch() {
     // Apply old normalization if enabled (DEPRECATED - use preprocessing instead)
     if (normalize_ && !preprocessing_enabled_) {
         size_t num_elements = batch.data.NumElements();
-        float* data_ptr = batch.data.Data<float>();
+        const float* data_ptr = batch.data.ReadData<float>();
         std::vector<float> data_vec(data_ptr, data_ptr + num_elements);
         NormalizeData(data_vec);
         batch.data = VectorToTensor(data_vec, data_shape);
@@ -248,7 +248,7 @@ Tensor DatasetBatcher::VectorToTensor(const std::vector<float>& data, const std:
     Tensor tensor(shape, DataType::Float32);
 
     // Copy data to tensor
-    float* tensor_data = tensor.Data<float>();
+    float* tensor_data = tensor.MutableData<float>();
     std::memcpy(tensor_data, data.data(), data.size() * sizeof(float));
 
     return tensor;
@@ -258,7 +258,7 @@ Tensor DatasetBatcher::LabelsToOneHot(const std::vector<int>& labels) {
     std::vector<size_t> shape = {labels.size(), num_classes_};
     Tensor tensor(shape, DataType::Float32);
 
-    float* data = tensor.Data<float>();
+    float* data = tensor.MutableData<float>();
     std::memset(data, 0, labels.size() * num_classes_ * sizeof(float));
 
     for (size_t i = 0; i < labels.size(); ++i) {
@@ -275,7 +275,7 @@ Tensor DatasetBatcher::LabelsToTensor(const std::vector<int>& labels) {
     std::vector<size_t> shape = {labels.size()};
     Tensor tensor(shape, DataType::Int32);
 
-    int* data = tensor.Data<int>();
+    int* data = tensor.MutableData<int>();
     std::memcpy(data, labels.data(), labels.size() * sizeof(int));
 
     return tensor;

@@ -51,7 +51,7 @@ inline void ValidatePairLossInputs(const Tensor& embedding_a,
         throw std::invalid_argument(
             "metric-learning pair loss labels must be [batch] or [batch, 1]");
     }
-    const float* label_data = labels.Data<float>();
+    const float* label_data = labels.ReadData<float>();
     for (size_t row = 0; row < pair_count; ++row) {
         if (!IsValidMetricLearningLabel(
                 convention, static_cast<double>(label_data[row]))) {

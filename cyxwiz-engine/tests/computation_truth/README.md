@@ -260,9 +260,15 @@ reads do not synchronize again. `MutableData` records the required readback,
 invalidates the old device value, and the next semantic device access rebuilds
 the changed value without another device-to-host transfer. The source scan now
 rejects typed and untyped compatibility `Data` calls in its guarded training
-manifest, including the sequence training step. The wider legacy algorithm
-surface remains named in the ledger for incremental compatibility-access
-classification rather than being claimed complete.
+manifest, including the sequence training step. Dataset ingress, selected CPU
+collectives, host bucket transport, checkpoint/model serialization, model
+import/export, language output selection, metric output/label validation, and
+sequence input canonicalization also use explicit `ReadData` or `MutableData`
+ownership. The remaining exact inventory is 29 files and 435 calls: 28
+compatibility-compute owners (429 calls) plus the six-call NCCL transport owner.
+NCCL remains separate because it needs an actual device-pointer contract after
+`EnsureOnDevice`; changing it to a host accessor would preserve the wrong
+transport semantics. Those residuals remain named rather than claimed complete.
 
 `cyxwiz-tests "[tensor_layout]"` proves semantic ArrayFire layout round trips
 for ranks 1 through 4 and all five Tensor dtypes. The matrix checks logical

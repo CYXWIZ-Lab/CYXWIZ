@@ -155,7 +155,7 @@ void DistributedDataParallel::FuseGradientsToBuckets() {
             }
 
             // Copy gradient data into bucket buffer
-            const float* src = grad.Data<float>();
+            const float* src = grad.ReadData<float>();
             std::copy(src, src + size, bucket.buffer.begin() + offset);
         }
     }
@@ -205,7 +205,7 @@ std::map<std::string, Tensor> DistributedDataParallel::SyncGradients() {
         process_group_->AllReduce(bucket_tensor, ReduceOp::AVERAGE);
 
         // Copy back to bucket buffer (in case tensor made a copy)
-        const float* reduced_data = bucket_tensor.Data<float>();
+        const float* reduced_data = bucket_tensor.ReadData<float>();
         std::copy(reduced_data, reduced_data + bucket.total_elements,
                   bucket.buffer.begin());
     }

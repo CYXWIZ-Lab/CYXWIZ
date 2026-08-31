@@ -157,7 +157,7 @@ Batch ImageDatasetBatcher::GetNextBatch() {
                 static_cast<size_t>(channels_)};
             Tensor img_tensor(shape, pixels.data(), DataType::Float32);
             Tensor transformed = transform_->Apply(img_tensor);
-            const float* tdata = transformed.Data<float>();
+            const float* tdata = transformed.ReadData<float>();
             size_t tcount = transformed.NumElements();
             pixels.assign(tdata, tdata + tcount);
         }

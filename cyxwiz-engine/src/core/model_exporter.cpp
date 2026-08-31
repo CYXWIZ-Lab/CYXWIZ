@@ -1092,7 +1092,7 @@ ExportResult ModelExporter::ExportONNX(
 
             // Set raw data
             size_t num_bytes = tensor.NumBytes();
-            initializer->set_raw_data(tensor.Data(), num_bytes);
+            initializer->set_raw_data(tensor.ReadData(), num_bytes);
 
             result.num_parameters += static_cast<int>(tensor.NumElements());
             result.total_tensor_bytes += num_bytes;
@@ -1358,7 +1358,7 @@ ExportResult ModelExporter::ExportSafetensors(
 
         // Write tensor data in order
         for (const auto& [name, tensor] : ordered_tensors) {
-            file.write(static_cast<const char*>(tensor->Data()), tensor->NumBytes());
+            file.write(static_cast<const char*>(tensor->ReadData()), tensor->NumBytes());
             result.total_tensor_bytes += tensor->NumBytes();
         }
 
@@ -1500,7 +1500,7 @@ std::vector<uint8_t> ModelExporter::TensorToBytes(const Tensor& tensor) {
     size_t num_bytes = tensor.NumBytes();
     std::vector<uint8_t> bytes(num_bytes);
 
-    const void* data = tensor.Data();
+    const void* data = tensor.ReadData();
     if (data && num_bytes > 0) {
         std::memcpy(bytes.data(), data, num_bytes);
     }

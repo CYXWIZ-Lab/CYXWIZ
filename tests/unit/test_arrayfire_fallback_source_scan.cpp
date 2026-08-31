@@ -36,16 +36,11 @@ struct LegacyTensorDataOwner {
 const std::vector<LegacyTensorDataOwner>& LegacyTensorDataInventory() {
     // This is a bounded migration inventory, not a permanent allow-list.
     // "compatibility_compute" rows must either become ArrayFire-first or gain
-    // an explicit observed fallback boundary. The other dispositions are
-    // host-owned APIs that still need conversion to ReadData/MutableData.
+    // an explicit observed fallback boundary. The remaining transport row
+    // requires dedicated device-pointer ownership rather than a host accessor.
     static const std::vector<LegacyTensorDataOwner> inventory = {
-        {"cyxwiz-backend/src/algorithms/data/training_data_factories.cpp", 2, "explicit_host_boundary", "dataset adapter"},
-        {"cyxwiz-backend/src/algorithms/distributed/cpu_backend.cpp", 5, "selected_native_cpu_backend", "CPU process group"},
-        {"cyxwiz-backend/src/algorithms/distributed/ddp.cpp", 2, "transport_boundary", "DDP bucket transport"},
         {"cyxwiz-backend/src/algorithms/distributed/distributed_trainer.cpp", 10, "compatibility_compute", "legacy distributed trainer"},
-        {"cyxwiz-backend/src/algorithms/distributed/distributed_trainer_checkpoint.cpp", 2, "explicit_host_boundary", "distributed checkpoint serialization"},
         {"cyxwiz-backend/src/algorithms/distributed/nccl_backend.cpp", 6, "transport_boundary", "NCCL transport"},
-        {"cyxwiz-backend/src/algorithms/distributed/process_group.cpp", 1, "transport_boundary", "process-group transport"},
         {"cyxwiz-backend/src/algorithms/feature_importance.cpp", 3, "compatibility_compute", "feature importance"},
         {"cyxwiz-backend/src/algorithms/layers/batch_norm.cpp", 15, "compatibility_compute", "BatchNorm layer"},
         {"cyxwiz-backend/src/algorithms/layers/conv_transpose2d.cpp", 10, "compatibility_compute", "ConvTranspose2D layer"},
@@ -66,21 +61,10 @@ const std::vector<LegacyTensorDataOwner>& LegacyTensorDataInventory() {
         {"cyxwiz-backend/src/algorithms/losses/probability_losses.cpp", 15, "compatibility_compute", "probability losses"},
         {"cyxwiz-backend/src/algorithms/model_interpretability.cpp", 10, "compatibility_compute", "model interpretability"},
         {"cyxwiz-backend/src/algorithms/sequential/feedforward_modules.cpp", 11, "compatibility_compute", "feed-forward modules"},
-        {"cyxwiz-backend/src/algorithms/sequential/model_io.cpp", 2, "explicit_host_boundary", "model serialization"},
         {"cyxwiz-backend/src/algorithms/sequential/normalization_modules.cpp", 21, "compatibility_compute", "normalization modules"},
         {"cyxwiz-backend/src/algorithms/sequential/recurrent_modules.cpp", 15, "compatibility_compute", "recurrent modules"},
-        {"cyxwiz-engine/src/core/checkpoint_payload_io.cpp", 2, "explicit_host_boundary", "checkpoint serialization"},
-        {"cyxwiz-engine/src/core/dataset_batcher.cpp", 4, "explicit_host_boundary", "dataset ingress"},
         {"cyxwiz-engine/src/core/graph_executable_model.cpp", 8, "compatibility_compute", "graph executable model"},
-        {"cyxwiz-engine/src/core/image_dataset_batcher.cpp", 1, "explicit_host_boundary", "image transform ingress"},
-        {"cyxwiz-engine/src/core/language_model_generation.cpp", 1, "explicit_host_boundary", "token selection output"},
-        {"cyxwiz-engine/src/core/language_model_training.cpp", 1, "explicit_host_boundary", "validation token output"},
-        {"cyxwiz-engine/src/core/metric_learning_inference_outputs.h", 3, "explicit_host_boundary", "inference output materialization"},
-        {"cyxwiz-engine/src/core/metric_learning_losses.h", 1, "explicit_host_boundary", "metric-learning label convention validation"},
         {"cyxwiz-engine/src/core/metric_learning_metrics.h", 7, "compatibility_compute", "metric-learning metrics"},
-        {"cyxwiz-engine/src/core/model_exporter.cpp", 3, "explicit_host_boundary", "model export"},
-        {"cyxwiz-engine/src/core/model_importer.cpp", 1, "explicit_host_boundary", "model import"},
-        {"cyxwiz-engine/src/core/sequence_model_input.h", 11, "explicit_host_boundary", "sequence input canonicalization"},
         {"cyxwiz-engine/src/core/sequence_tag_metrics.h", 3, "compatibility_compute", "sequence metrics"},
         {"cyxwiz-engine/src/core/smoke_run_executor.cpp", 2, "compatibility_compute", "smoke-run metrics"},
         {"cyxwiz-engine/src/core/test_executor.cpp", 3, "compatibility_compute", "test evaluation"},
@@ -541,8 +525,6 @@ TEST_CASE("Legacy Tensor Data compatibility access has exact reviewed ownership"
 
     const std::set<std::string> valid_dispositions = {
         "compatibility_compute",
-        "explicit_host_boundary",
-        "selected_native_cpu_backend",
         "transport_boundary",
     };
     std::map<std::string, size_t> expected;

@@ -187,7 +187,7 @@ bool WriteArchiveAtomic(
                      static_cast<std::streamsize>(header_bytes.size()));
         for (const auto& [name, tensor] : tensors) {
             (void)name;
-            output.write(static_cast<const char*>(tensor.Data()),
+            output.write(static_cast<const char*>(tensor.ReadData()),
                          static_cast<std::streamsize>(tensor.NumBytes()));
         }
         output.flush();
@@ -323,7 +323,7 @@ bool ReadArchive(
                 return false;
             }
             Tensor tensor(shape, type);
-            input.read(static_cast<char*>(tensor.Data()),
+            input.read(static_cast<char*>(tensor.MutableData()),
                        static_cast<std::streamsize>(declared_bytes));
             if (!input.good() || !archive.tensors.emplace(name, std::move(tensor)).second) {
                 error = "checkpoint payload tensor data is truncated or duplicated";

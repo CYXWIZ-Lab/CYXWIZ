@@ -33,9 +33,9 @@
       "supported": "all Tensor dtypes",
       "oracle": "engine ownership and host-sync trace contract",
       "tests": ["cyxwiz-tests:[tensor]", "cyxwiz-tests:[tensor_host_access]", "cyxwiz-tests:[source_scan]", "test_training_executor_arrow_parquet"],
-      "execution": "exact source inventory distinguishes compatibility compute from explicit host, transport and selected-native-backend ownership",
+      "execution": "explicit ReadData/MutableData ownership covers host ingress/output, serialization, selected native CPU and host bucket transport; exact residual source inventory isolates compatibility compute from NCCL device transport",
       "status": "partial",
-      "gaps": ["47 reviewed legacy Data-access files remain: 31 compatibility-compute owners and 16 explicit host, transport or selected-native-backend owners"]
+      "gaps": ["29 reviewed legacy Data-access files remain: 28 compatibility-compute owners with 429 calls and one NCCL device-transport owner with 6 calls"]
     },
     {
       "id": "TENSOR-LAYOUT-001",
@@ -257,9 +257,9 @@
       "supported": "declared compatibility gaps only",
       "oracle": "engine execution contract",
       "tests": ["cyxwiz-tests:[fallback]", "cyxwiz-tests:[policy]", "cyxwiz-tests:[source_scan]", "cyxwiz-tests:[tensor_host_access]", "test_computation_truth_tfidf_loss", "test_training_executor_arrow_parquet"],
-      "execution": "observed compatibility boundary plus exact reviewed legacy-access ownership inventory",
+      "execution": "observed compatibility boundary plus exact reviewed residual inventory; explicit host/serialization/selected-CPU aliases have been removed",
       "status": "partial",
-      "gaps": ["migrate or explicitly guard the 31 inventoried compatibility-compute files that still use legacy Tensor Data access"]
+      "gaps": ["migrate or explicitly guard the 28 inventoried compatibility-compute files; give NCCL transport a real Tensor device-pointer contract"]
     },
     {
       "id": "EXEC-SYNC-001",
