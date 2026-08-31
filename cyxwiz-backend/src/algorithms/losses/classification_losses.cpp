@@ -126,9 +126,9 @@ void ValidateClassIndexTargets(const Tensor& targets, const ClassAxisShape& shap
 
 int64_t ClassIndexAt(const Tensor& targets, size_t index) {
     if (targets.GetDataType() == DataType::Int32) {
-        return static_cast<int64_t>(targets.Data<int32_t>()[index]);
+        return static_cast<int64_t>(targets.ReadData<int32_t>()[index]);
     }
-    return targets.Data<int64_t>()[index];
+    return targets.ReadData<int64_t>()[index];
 }
 
 void ValidateClassIndex(int64_t class_index, size_t classes, const char* name) {
@@ -187,8 +187,8 @@ Tensor CpuSoftmaxRows(const Tensor& predictions,
                       const ClassAxisShape& shape,
                       std::vector<float>* log_probabilities = nullptr) {
     Tensor softmax(predictions.Shape(), DataType::Float32);
-    const float* pred = predictions.Data<float>();
-    float* out = softmax.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    float* out = softmax.MutableData<float>();
     if (log_probabilities != nullptr) {
         log_probabilities->resize(predictions.NumElements());
     }
@@ -230,7 +230,7 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
         *cached_softmax = softmax;
     }
 
-    const float* pred = predictions.Data<float>();
+    const float* pred = predictions.ReadData<float>();
     std::vector<float> losses(shape.batch, 0.0f);
     size_t mean_count = shape.batch;
     float mean_denominator = 0.0f;
@@ -287,7 +287,7 @@ Tensor CpuCrossEntropyForward(const Tensor& predictions,
         }
     } else {
         ValidateFloat32Pair(predictions, targets, "CrossEntropy");
-        const float* target = targets.Data<float>();
+        const float* target = targets.ReadData<float>();
         for (size_t batch = 0; batch < shape.batch; ++batch) {
             const size_t base = batch * shape.classes;
             float max_value = pred[base];
@@ -327,8 +327,8 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
                          : CpuSoftmaxRows(predictions, shape);
 
     Tensor grad(predictions.Shape(), DataType::Float32);
-    const float* probs = softmax.Data<float>();
-    float* out = grad.Data<float>();
+    const float* probs = softmax.ReadData<float>();
+    float* out = grad.MutableData<float>();
     std::fill(out, out + predictions.NumElements(), 0.0f);
     size_t mean_count = shape.batch;
     float mean_denominator = 0.0f;
@@ -368,7 +368,7 @@ Tensor CpuCrossEntropyBackward(const Tensor& predictions,
         }
     } else {
         ValidateFloat32Pair(predictions, targets, "CrossEntropy");
-        const float* target = targets.Data<float>();
+        const float* target = targets.ReadData<float>();
         for (size_t batch = 0; batch < shape.batch; ++batch) {
             const size_t base = batch * shape.classes;
             float weighted_target_sum = 0.0f;
@@ -412,7 +412,7 @@ Tensor CpuNLLForward(const Tensor& predictions,
     const ClassAxisShape shape = ValidateClassAxisPredictions(predictions, "NLL");
     ValidateClassIndexTargets(targets, shape, "NLL");
 
-    const float* log_probs = predictions.Data<float>();
+    const float* log_probs = predictions.ReadData<float>();
     std::vector<float> losses(shape.batch, 0.0f);
     size_t mean_count = 0;
     for (size_t batch = 0; batch < shape.batch; ++batch) {
@@ -435,7 +435,7 @@ Tensor CpuNLLBackward(const Tensor& predictions,
     ValidateClassIndexTargets(targets, shape, "NLL");
 
     Tensor grad = Tensor::Zeros(predictions.Shape(), DataType::Float32);
-    float* out = grad.Data<float>();
+    float* out = grad.MutableData<float>();
     size_t mean_count = 0;
     for (size_t batch = 0; batch < shape.batch; ++batch) {
         const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
@@ -469,7 +469,7 @@ Tensor CpuFocalForward(const Tensor& predictions,
 
     std::vector<float> log_probabilities;
     Tensor probs = CpuSoftmaxRows(predictions, shape, &log_probabilities);
-    const float* prob_data = probs.Data<float>();
+    const float* prob_data = probs.ReadData<float>();
     std::vector<float> losses(shape.batch, 0.0f);
     for (size_t batch = 0; batch < shape.batch; ++batch) {
         const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
@@ -496,8 +496,8 @@ Tensor CpuFocalBackward(const Tensor& predictions,
     Tensor probs = CpuSoftmaxRows(predictions, shape, &log_probabilities);
 
     Tensor grad(predictions.Shape(), DataType::Float32);
-    const float* prob_data = probs.Data<float>();
-    float* out = grad.Data<float>();
+    const float* prob_data = probs.ReadData<float>();
+    float* out = grad.MutableData<float>();
 
     for (size_t batch = 0; batch < shape.batch; ++batch) {
         const int64_t class_index = ClassIndexAt(targets, shape.batched ? batch : 0);
