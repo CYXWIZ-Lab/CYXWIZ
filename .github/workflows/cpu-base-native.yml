@@ -251,7 +251,7 @@ jobs:
 
       - name: Configure Release CPU build
         run: |
-          arrayfire_config="$(find "$(brew --prefix arrayfire)" -name ArrayFireConfig.cmake -print -quit)"
+          arrayfire_config="$(find -H "$(brew --prefix arrayfire)" -name ArrayFireConfig.cmake -print -quit)"
           test -n "$arrayfire_config"
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -294,7 +294,7 @@ jobs:
           mkdir -p deps/arrayfire/LICENSES
           cp -R "$arrayfire_prefix/include" deps/arrayfire/
           cp -R "$arrayfire_prefix/lib" deps/arrayfire/
-          license_file="$(find "$arrayfire_prefix" -maxdepth 3 -type f -iname 'license*' -print -quit)"
+          license_file="$(find -H "$arrayfire_prefix" -maxdepth 3 -type f -iname 'license*' -print -quit)"
           test -n "$license_file"
           cp "$license_file" deps/arrayfire/LICENSES/
 
