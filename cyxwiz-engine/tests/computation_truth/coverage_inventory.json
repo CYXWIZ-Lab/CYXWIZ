@@ -35,7 +35,7 @@
       "tests": ["cyxwiz-tests:[tensor]", "cyxwiz-tests:[tensor_host_access]", "cyxwiz-tests:[source_scan]", "cyxwiz-tests:[linear][pytorch][route]", "test_training_executor_arrow_parquet"],
       "execution": "explicit ReadData/MutableData ownership covers host ingress/output, serialization, selected native CPU and host bucket transport; exact residual source inventory isolates compatibility compute from NCCL device transport",
       "status": "partial",
-      "gaps": ["27 reviewed legacy Data-access files remain: 26 compatibility-compute owners with 394 calls and one NCCL device-transport owner with 6 calls"]
+      "gaps": ["26 reviewed legacy Data-access files remain: 25 compatibility-compute owners with 379 calls and one NCCL device-transport owner with 6 calls"]
     },
     {
       "id": "TENSOR-LAYOUT-001",

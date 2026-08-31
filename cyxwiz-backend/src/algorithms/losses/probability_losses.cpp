@@ -386,8 +386,8 @@ Tensor SoftDiceLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     std::vector<float> per_sample(batch, 0.0f);
 
     for (size_t b = 0; b < batch; ++b) {
@@ -464,10 +464,10 @@ Tensor SoftDiceLoss::Backward(const Tensor& predictions, const Tensor& targets) 
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     Tensor grad(predictions.Shape(), DataType::Float32);
-    float* out = grad.Data<float>();
+    float* out = grad.MutableData<float>();
 
     for (size_t b = 0; b < batch; ++b) {
         const size_t base = b * sample_size;
@@ -554,8 +554,8 @@ Tensor TverskyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     std::vector<float> per_sample(batch, 0.0f);
 
     for (size_t b = 0; b < batch; ++b) {
@@ -638,10 +638,10 @@ Tensor TverskyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     Tensor grad(predictions.Shape(), DataType::Float32);
-    float* out = grad.Data<float>();
+    float* out = grad.MutableData<float>();
 
     for (size_t b = 0; b < batch; ++b) {
         const size_t base = b * sample_size;
@@ -713,8 +713,8 @@ Tensor JaccardLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     std::vector<float> per_sample(batch, 0.0f);
 
     for (size_t b = 0; b < batch; ++b) {
@@ -793,10 +793,10 @@ Tensor JaccardLoss::Backward(const Tensor& predictions, const Tensor& targets) {
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     Tensor grad(predictions.Shape(), DataType::Float32);
-    float* out = grad.Data<float>();
+    float* out = grad.MutableData<float>();
 
     for (size_t b = 0; b < batch; ++b) {
         const size_t base = b * sample_size;
