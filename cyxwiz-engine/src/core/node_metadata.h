@@ -29,6 +29,21 @@ struct PortDefinition {
     PinType type = PinType::Tensor;
     bool required = true;
     std::string description;
+    bool variadic = false;
+    int min_connections = 0;
+    int max_connections = 1;
+};
+
+/**
+ * Declares who consumes a persisted node parameter.
+ *
+ * Runtime is the default contract: compiler, loader, materializer, executor,
+ * training, or export code consumes the value. UiOnly must be selected for a
+ * field that intentionally controls only an editor, dialog, or visualization.
+ */
+enum class ParameterConsumption {
+    Runtime,
+    UiOnly,
 };
 
 /**
@@ -45,6 +60,18 @@ struct ParameterDefinition {
     std::string group;          // Optional UI grouping label
     bool required = false;
     bool advanced = false;
+    ParameterConsumption consumption = ParameterConsumption::Runtime;
+};
+
+/**
+ * Selects the single Properties editing surface for a node.
+ * Automatic uses metadata when parameters exist and the narrow fallback
+ * surface otherwise. Dialog and Custom are explicit ownership exceptions.
+ */
+enum class NodePropertiesEditor {
+    Automatic,
+    Dialog,
+    Custom,
 };
 
 /**
@@ -90,6 +117,7 @@ struct NodeMetadata {
     int user_votes = 0;         // For template nodes (feature requests)
     std::string badge;          // Optional badge text (e.g., "Coming Soon", "Beta")
     std::vector<SupportAxisDefinition> support_axes;
+    NodePropertiesEditor properties_editor = NodePropertiesEditor::Automatic;
 
     // Helper methods
     bool IsTemplate() const { return status == NodeImplementationStatus::Template; }
@@ -138,6 +166,9 @@ inline void ApplyStaticNodeMetadataContract(const NodeMetadata& metadata,
         pin.is_input = is_input;
         pin.description = port.description;
         pin.is_required = port.required;
+        pin.is_variadic = port.variadic;
+        pin.min_connections = port.min_connections;
+        pin.max_connections = port.max_connections;
         pins.push_back(pin);
     };
 

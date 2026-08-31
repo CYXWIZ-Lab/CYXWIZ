@@ -166,32 +166,28 @@ void NodeEditor::InitializeSearchableNodes() {
     auto& reg = cyxwiz::NodeMetadataRegistry::Instance();
     if (!reg.IsInitialized()) reg.Initialize();
 
-    // Walk every registered node. include_templates=true so the JSON
-    // template entries under resources/node_templates/*.json show up
-    // with the "Coming Soon" status — the click handler at line 595
-    // short-circuits on status == Template so they display in the
-    // dropdown but can't actually be added to the graph.
-    for (const auto& cat : reg.GetCategories()) {
-        for (const auto* meta : reg.GetByCategory(cat, /*include_templates=*/true)) {
-            if (!meta) continue;
-            SearchableNode node;
-            node.type = meta->type;
-            node.name = meta->name;
-            node.category = cyxwiz::GetCategoryDisplayName(cat);
-            node.keywords = join_keywords(meta->keywords);
-            node.status = to_gui_status(meta->status);
-            node.description = meta->brief_description;
-            node.tooltip = meta->help_text;
-            node.support_blocked = cyxwiz::IsNodeSupportBlocked(*meta);
-            if (const auto* support_state = FindSupportAxis(meta, "Support State")) {
-                node.support_state = support_state->value;
-            }
-            node.support_reason = FirstSupportBlockReason(meta);
-            if (node.support_blocked && !node.support_reason.empty()) {
-                node.tooltip = node.support_reason;
-            }
-            all_searchable_nodes_.push_back(std::move(node));
+    // Walk the registry directly so this surface cannot omit a category or
+    // maintain a second node-type list. Templates stay visible but are
+    // disabled by the click handler below.
+    for (const auto* meta : reg.GetAllMetadata()) {
+        if (!meta) continue;
+        SearchableNode node;
+        node.type = meta->type;
+        node.name = meta->name;
+        node.category = cyxwiz::GetCategoryDisplayName(meta->category);
+        node.keywords = join_keywords(meta->keywords);
+        node.status = to_gui_status(meta->status);
+        node.description = meta->brief_description;
+        node.tooltip = meta->help_text;
+        node.support_blocked = cyxwiz::IsNodeSupportBlocked(*meta);
+        if (const auto* support_state = FindSupportAxis(meta, "Support State")) {
+            node.support_state = support_state->value;
         }
+        node.support_reason = FirstSupportBlockReason(meta);
+        if (node.support_blocked && !node.support_reason.empty()) {
+            node.tooltip = node.support_reason;
+        }
+        all_searchable_nodes_.push_back(std::move(node));
     }
 
 

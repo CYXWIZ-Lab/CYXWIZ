@@ -232,10 +232,6 @@ void DataOutputDialog::Apply() {
     node_->parameters["file_path"] = file_path_;
     const char* types[] = {"csv", "parquet"};
     node_->parameters["file_type"] = types[output_type_];
-    node_->parameters["overwrite"] = overwrite_ ? "true" : "false";
-    node_->parameters["include_header"] = include_header_ ? "true" : "false";
-    const char* compressions[] = {"none", "gzip", "snappy", "zstd"};
-    node_->parameters["compression"] = compressions[compression_];
     node_->parameters["configured"] = "true";
 
     if (strlen(file_path_) > 0) {
@@ -256,10 +252,6 @@ void DataOutputDialog::RenderContent() {
     if (ImGui::BeginTabBar("DataOutputTabs")) {
         if (ImGui::BeginTabItem("Settings")) {
             RenderSettingsTab();
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Advanced")) {
-            RenderAdvancedTab();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -302,45 +294,6 @@ void DataOutputDialog::RenderSettingsTab() {
         has_changes_ = true;
     }
 
-    if (output_type_ == 0) {
-        if (ImGui::Checkbox("Include header", &include_header_)) {
-            has_changes_ = true;
-        }
-    }
-
-    if (ImGui::Checkbox("Overwrite existing", &overwrite_)) {
-        has_changes_ = true;
-    }
-}
-
-void DataOutputDialog::RenderAdvancedTab() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Compression");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    const char* compressions[] = {"None", "gzip", "Snappy", "zstd"};
-    ImGui::Text("Compression:");
-    ImGui::SameLine(100);
-    ImGui::SetNextItemWidth(100);
-    if (ImGui::Combo("##compression", &compression_, compressions, 4)) {
-        has_changes_ = true;
-    }
-
-    ImGui::Spacing();
-    ImGui::TextColored(accent, "Encoding");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    const char* encodings[] = {"UTF-8", "UTF-8 with BOM", "ASCII", "ISO-8859-1"};
-    static int out_encoding = 0;
-    ImGui::Text("Encoding:");
-    ImGui::SameLine(100);
-    ImGui::SetNextItemWidth(120);
-    ImGui::Combo("##outencoding", &out_encoding, encodings, 4);
 }
 
 // ==================== DataConvertDialog ====================

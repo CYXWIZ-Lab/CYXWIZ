@@ -560,13 +560,9 @@ protected:
 
 private:
     void RenderSettingsTab();
-    void RenderAdvancedTab();
 
     char file_path_[512] = {};
     int output_type_ = 0;
-    bool overwrite_ = false;
-    bool include_header_ = true;
-    int compression_ = 0;
 };
 
 /**
@@ -659,7 +655,7 @@ private:
     int balance_mode_index_ = 0;
     char balance_target_[32] = "max";
     int balance_seed_ = 42;
-    bool pin_memory_requested_ = false;
+    bool pin_memory_requested_ = false;  // Read-only legacy compatibility state.
     bool save_best_checkpoint_ = true;
     int early_stopping_patience_ = 5;
     char checkpoint_dir_[512] = "";

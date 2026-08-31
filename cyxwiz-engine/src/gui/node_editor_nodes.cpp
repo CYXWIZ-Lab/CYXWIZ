@@ -1,8 +1,6 @@
 #include "node_editor.h"
 #include "properties.h"
-#include "visualization/visualization_nodes.h"
 #include "../core/node_metadata_registry.h"
-#include "../core/worker_defaults.h"
 #include "../plugin/registries/plugin_node_registry.h"
 #include "../core/data_registry.h"
 #include <imgui.h>
@@ -344,6 +342,7 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
     }
 }
 
+#ifndef CYXWIZ_NODE_FACTORY_ONLY
 void NodeEditor::AddNode(NodeType type, const std::string& name) {
     if (!CanAddNodeToGraph(type)) {
         spdlog::warn("Blocked graph add for unsupported node '{}' (type={})",
@@ -368,8 +367,17 @@ bool NodeEditor::CanAddNodeToGraph(NodeType type) const {
     // exists; catalogued nodes must obey central support truth.
     return metadata == nullptr || cyxwiz::CanAddNodeToGraph(*metadata);
 }
+#endif
 
-MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
+MLNode NodeEditor::CreateNodeWithIds(NodeType type,
+                                     const std::string& name,
+                                     int& next_node_id,
+                                     int& next_pin_id) {
+    // Preserve the established switch body while making cursor ownership
+    // explicit for deterministic, GUI-free contract validation.
+    int& next_node_id_ = next_node_id;
+    int& next_pin_id_ = next_pin_id;
+
     MLNode node;
     node.id = next_node_id_++;
     node.type = type;
@@ -505,70 +513,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         case NodeType::DataLoader: {
-            // DataLoader node - training-loop hyperparameters and batching.
-            // New nodes consume the resolved Dataset partition contract from
-            // DataSplit/Partition Policy and expose the model-facing batched
-            // tensor/label boundary. Legacy saved graphs may still have raw
-            // Data/Labels inputs; graph loading preserves those pins.
-
-            NodePin partitions_in;
-            partitions_in.id = next_pin_id_++;
-            partitions_in.type = PinType::Dataset;
-            partitions_in.name = "Partitions";
-            partitions_in.is_input = true;
-            partitions_in.description =
-                "Resolved Train/Validation/Test Dataset partition set from "
-                "Data Split. DataLoader turns those partitions into runtime "
-                "batchers.";
-            node.inputs.push_back(partitions_in);
-
-            // Output 1: Batched data tensor -> first model/preprocessing layer
-            NodePin data_out;
-            data_out.id = next_pin_id_++;
-            data_out.type = PinType::Tensor;
-            data_out.name = "Data";
-            data_out.is_input = false;
-            data_out.description =
-                "Batched training feature tensor of shape [batch_size, ...]. "
-                "Connect to preprocessing or the model's first layer. "
-                "Validation/Test batchers are created by runtime from the same "
-                "Partitions contract.";
-            node.outputs.push_back(data_out);
-
-            // Output 2: Batched labels -> loss function's Targets pin
-            NodePin labels_out;
-            labels_out.id = next_pin_id_++;
-            labels_out.type = PinType::Labels;
-            labels_out.name = "Labels";
-            labels_out.is_input = false;
-            labels_out.is_required = false;
-            labels_out.description =
-                "Batched training label tensor, row-aligned with Data. Connect "
-                "to the loss node's Targets pin when the graph explicitly routes "
-                "labels.";
-            node.outputs.push_back(labels_out);
-
-            // Training-loop hyperparameters. DataLoader owns ALL the
-            // "how do I iterate training data" knobs (epochs included).
-            // Optimizer node owns gradient-update knobs (lr, momentum, betas).
-            node.parameters["epochs"] = "10";
-            node.parameters["batch_size"] = "32";
-            node.parameters["grad_accum_steps"] = "1";  // simulate larger effective batch
-            node.parameters["shuffle"] = "true";
-            node.parameters["drop_last"] = "false";
-            node.parameters["seed"] = "42";             // reproducibility
-            node.parameters["balance_classes"] = "false";
-            node.parameters["balance_mode"] = "none";   // none, oversample, undersample, weighted_sampler
-            node.parameters["balance_target"] = "max";  // max, median, min, or numeric count
-            node.parameters["balance_seed"] = "42";
-            node.parameters["num_workers"] = std::to_string(cyxwiz::GetDefaultNumWorkers());
-            node.parameters["prefetch_factor"] = "2";
-            node.parameters["pin_memory"] = "false";    // serialized compatibility; unsupported by current batchers
-            node.parameters["log_interval"] = "10";     // report metrics/logs every N batches
-            node.parameters["validation_freq"] = "1";   // validate every N epochs
-            node.parameters["save_best_checkpoint"] = "true";
-            node.parameters["early_stopping_patience"] = "5";
-            node.parameters["checkpoint_dir"] = "";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -742,61 +687,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         case NodeType::DataSplit: {
-            // DataSplit node - role-aware partition policy over Dataset assets.
-            // Legacy saved graphs may still contain Tensor/Labels Train/Val/Test
-            // pins; new nodes expose the truthful Dataset-oriented contract.
-            NodePin train_in;
-            train_in.id = next_pin_id_++;
-            train_in.type = PinType::Dataset;
-            train_in.name = "Training Dataset";
-            train_in.is_input = true;
-            train_in.description =
-                "Required Dataset asset used as the Training source. Missing "
-                "Validation/Test roles are derived from this source according "
-                "to the split policy.";
-            node.inputs.push_back(train_in);
-
-            NodePin validation_in;
-            validation_in.id = next_pin_id_++;
-            validation_in.type = PinType::Dataset;
-            validation_in.name = "Validation Dataset";
-            validation_in.is_input = true;
-            validation_in.is_required = false;
-            validation_in.description =
-                "Optional externally supplied Validation/Dev source. When "
-                "connected or assigned by role metadata, it is preserved and "
-                "not re-split from Training.";
-            node.inputs.push_back(validation_in);
-
-            NodePin test_in;
-            test_in.id = next_pin_id_++;
-            test_in.type = PinType::Dataset;
-            test_in.name = "Test Dataset";
-            test_in.is_input = true;
-            test_in.is_required = false;
-            test_in.description =
-                "Optional externally supplied held-out Test source. When "
-                "connected or assigned by role metadata, it is preserved for "
-                "final evaluation and never mixed into Training.";
-            node.inputs.push_back(test_in);
-
-            NodePin partitions_out;
-            partitions_out.id = next_pin_id_++;
-            partitions_out.type = PinType::Dataset;
-            partitions_out.name = "Partitions";
-            partitions_out.is_input = false;
-            partitions_out.description =
-                "Resolved Train/Validation/Test partition set plus manifest "
-                "identity. Data Loader consumes this contract to create runtime "
-                "batchers.";
-            node.outputs.push_back(partitions_out);
-
-            // Parameters
-            node.parameters["train_ratio"] = "0.8";
-            node.parameters["val_ratio"] = "0.1";
-            node.parameters["test_ratio"] = "0.1";
-            node.parameters["stratified"] = "true";
-            node.parameters["seed"] = "42";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -828,60 +719,12 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         case NodeType::Normalize: {
-            // Normalize node
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            input_pin.description =
-                "Batched feature tensor to normalize with fixed configured "
-                "statistics. In the current runtime boundary, place after "
-                "DataLoader. Learned train-fit normalization remains a "
-                "separate role-aware pipeline step.";
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            output_pin.description =
-                "Same shape as Input, with each feature centered and "
-                "scaled by the configured mean/std.";
-            node.outputs.push_back(output_pin);
-
-            node.parameters["mean"] = "0.0";
-            node.parameters["std"] = "1.0";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         case NodeType::OneHotEncode: {
-            // OneHotEncode node
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Labels;
-            input_pin.name = "Labels";
-            input_pin.is_input = true;
-            input_pin.description =
-                "Integer class indices [batch] in the range "
-                "[0, num_classes). Wire from DataLoader.Labels when your "
-                "loss expects one-hot labels instead of class indices.";
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "OneHot";
-            output_pin.is_input = false;
-            output_pin.description =
-                "Float tensor [batch, num_classes] with a single 1 per "
-                "row at the index column. Note the type changes from "
-                "Labels (orange) to Tensor (blue) — feed into MSE/BCE "
-                "rather than CrossEntropy.";
-            node.outputs.push_back(output_pin);
-
-            node.parameters["num_classes"] = "10";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -1008,49 +851,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::Add:
         case NodeType::Multiply:
         case NodeType::Average: {
-            // Multi-input merge operations with variadic support
-            // Two inputs by default, but can accept more
-
-            NodePin input1;
-            input1.id = next_pin_id_++;
-            input1.type = PinType::Tensor;
-            input1.name = "Input 1";
-            input1.is_input = true;
-            input1.is_variadic = false;  // First input is always required
-            input1.is_required = true;
-            node.inputs.push_back(input1);
-
-            NodePin input2;
-            input2.id = next_pin_id_++;
-            input2.type = PinType::Tensor;
-            input2.name = "Input 2";
-            input2.is_input = true;
-            input2.is_variadic = false;  // Second input required for merge
-            input2.is_required = true;
-            node.inputs.push_back(input2);
-
-            // Third input is optional/variadic for N-way merges
-            NodePin input3;
-            input3.id = next_pin_id_++;
-            input3.type = PinType::Tensor;
-            input3.name = "Input 3+";
-            input3.is_input = true;
-            input3.is_variadic = true;
-            input3.is_required = false;
-            input3.min_connections = 0;
-            input3.max_connections = PIN_UNLIMITED;  // Accept any number
-            node.inputs.push_back(input3);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            if (node.type == NodeType::Concatenate) {
-                node.parameters["dim"] = "1";
-            }
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -1224,45 +1025,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         // ========== Text Processing Nodes ==========
 
         case NodeType::TextTokenizer: {
-            NodePin in;
-            in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
-            in.name = "Text Data";
-            in.is_input = true;
-            node.inputs.push_back(in);
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Token IDs";
-            out.is_input = false;
-            node.outputs.push_back(out);
-            // Fix B canonical params read by TextTokenizerOperator.
-            // text_col + label_col are required when this node runs as
-            // a real Cat-1 operator on an Arrow source. The legacy
-            // GraphCompiler config-extractor path reads
-            // tokenizer_type/max_length/lowercase/min_word_freq/
-            // max_vocab_size; both views coexist (extractor ignores
-            // text_col/label_col, operator ignores padding/truncation
-            // since it always pads + truncates).
-            node.parameters["text_col"] = "";
-            node.parameters["label_col"] = "";
-            node.parameters["tokenizer_type"] = "1"; // 0=Whitespace, 1=Word, 2=Character
-            node.parameters["max_length"] = "256";
-            node.parameters["lowercase"] = "true";
-            node.parameters["min_word_freq"] = "2";
-            node.parameters["max_vocab_size"] = "10000";
-            node.parameters["vocab_file"] = "";
-            node.parameters["source_csv"] = "";
-            node.parameters["pad_value"] = "0";
-            node.parameters["vocab_build_if_missing"] = "false";
-            // Legacy fields for back-compat with the existing extractor.
-            // Operator implicitly sets both to true regardless.
-            node.parameters["padding"] = "true";
-            node.parameters["truncation"] = "true";
-            // Legacy alias — extractor reads `min_freq`, operator reads
-            // `min_word_freq`; keep both pointing at the same value
-            // until the extractor is deleted in a future commit.
-            node.parameters["min_freq"] = "2";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -1765,62 +1528,14 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         // ========== Audio Processing Nodes ==========
 
         case NodeType::AudioInput: {
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Waveform";
-            out.is_input = false;
-            node.outputs.push_back(out);
-            NodePin labels_out;
-            labels_out.id = next_pin_id_++;
-            labels_out.type = PinType::Labels;
-            labels_out.name = "Labels";
-            labels_out.is_input = false;
-            node.outputs.push_back(labels_out);
-            node.parameters["sample_rate"] = "16000";
-            node.parameters["duration_ms"] = "3000";
-            node.parameters["dataset_path"] = "";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         case NodeType::Spectrogram:
-        case NodeType::MelSpectrogram: {
-            NodePin in;
-            in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
-            in.name = "Waveform";
-            in.is_input = true;
-            node.inputs.push_back(in);
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Spectrogram";
-            out.is_input = false;
-            node.outputs.push_back(out);
-            node.parameters["n_fft"] = "512";
-            node.parameters["hop_length"] = "256";
-            if (type == NodeType::MelSpectrogram) {
-                node.parameters["n_mels"] = "128";
-            }
-            node.parameters["log_scale"] = "true";
-            break;
-        }
-
+        case NodeType::MelSpectrogram:
         case NodeType::MFCC: {
-            NodePin in;
-            in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
-            in.name = "Waveform";
-            in.is_input = true;
-            node.inputs.push_back(in);
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "MFCC";
-            out.is_input = false;
-            node.outputs.push_back(out);
-            node.parameters["n_mfcc"] = "13";
-            node.parameters["n_fft"] = "512";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -2082,24 +1797,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         case NodeType::DataOutput: {
-            // Universal Data Output node - smart dialog for export
-            // Supports: CSV, Parquet
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            // Core parameters (set by DataOutputDialog)
-            node.parameters["file_path"] = "";
-            node.parameters["file_type"] = "csv";  // csv, parquet
-            node.parameters["configured"] = "false";  // Triggers dialog on first use
-
-            // Export options
-            node.parameters["overwrite"] = "true";
-            node.parameters["include_header"] = "true";
-            node.parameters["compression"] = "none";  // none, gzip, snappy, zstd
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -2128,41 +1826,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         case NodeType::DataConvert: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            input_pin.description =
-                "Optional input table. If connected, it replaces the configured input path.";
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Output";
-            output_pin.is_input = false;
-            output_pin.description =
-                "Converted dataset artifact that downstream nodes can reuse.";
-            node.outputs.push_back(output_pin);
-
-            node.parameters["input_path"] = "";
-            node.parameters["input_format"] = "auto";
-            node.parameters["output_path"] = "";
-            node.parameters["output_format"] = "auto";
-            node.parameters["delimiter"] = "auto";
-            node.parameters["decimal_point"] = ".";
-            node.parameters["header"] = "true";
-            node.parameters["allow_newlines_in_values"] = "true";
-            node.parameters["skip_rows"] = "0";
-            node.parameters["compression"] = "snappy";
-            node.parameters["row_group_size"] = "1048576";
-            node.parameters["overwrite"] = "false";
-            node.parameters["create_parent_dirs"] = "true";
-            node.parameters["write_manifest"] = "true";
-            node.parameters["configured"] = "false";
-            node.parameters["status"] = "Not run";
-            node.parameters["rows_written"] = "0";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -2246,158 +1910,34 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::ExportParquet:
         case NodeType::ExportJSON:
         case NodeType::ExportExcel: {
-            // Export nodes - save dataset to file
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            node.parameters["file_path"] = "";
-            if (node.type == NodeType::ExportCSV) {
-                node.parameters["delimiter"] = ",";
-                node.parameters["header"] = "true";
-            }
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         // ========== KNIME-Style Table Manipulation Nodes ==========
 
         case NodeType::TableSplitter: {
-            // Table Splitter - 1 input, 2 outputs (Top, Bottom)
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Table";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin top_output;
-            top_output.id = next_pin_id_++;
-            top_output.type = PinType::Dataset;
-            top_output.name = "Top";
-            top_output.is_input = false;
-            node.outputs.push_back(top_output);
-
-            NodePin bottom_output;
-            bottom_output.id = next_pin_id_++;
-            bottom_output.type = PinType::Dataset;
-            bottom_output.name = "Bottom";
-            bottom_output.is_input = false;
-            node.outputs.push_back(bottom_output);
-
-            node.parameters["split_row"] = "0";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         case NodeType::CellExtractor: {
-            // Cell Extractor - 1 input, 2 outputs (Value, Table passthrough)
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Table";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin value_output;
-            value_output.id = next_pin_id_++;
-            value_output.type = PinType::Tensor;
-            value_output.name = "Value";
-            value_output.is_input = false;
-            node.outputs.push_back(value_output);
-
-            NodePin table_output;
-            table_output.id = next_pin_id_++;
-            table_output.type = PinType::Dataset;
-            table_output.name = "Table";
-            table_output.is_input = false;
-            node.outputs.push_back(table_output);
-
-            node.parameters["row"] = "0";
-            node.parameters["column"] = "";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         case NodeType::CellUpdater: {
-            // Cell Updater - 2 inputs (Table, Value), 1 output
-            NodePin table_input;
-            table_input.id = next_pin_id_++;
-            table_input.type = PinType::Dataset;
-            table_input.name = "Table";
-            table_input.is_input = true;
-            node.inputs.push_back(table_input);
-
-            NodePin value_input;
-            value_input.id = next_pin_id_++;
-            value_input.type = PinType::Tensor;
-            value_input.name = "Value";
-            value_input.is_input = true;
-            node.inputs.push_back(value_input);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Table";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["row"] = "0";
-            node.parameters["column"] = "";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         case NodeType::RowAppender: {
-            // Row Appender (Concatenate) - 2 inputs (Top, Bottom), 1 output
-            NodePin top_input;
-            top_input.id = next_pin_id_++;
-            top_input.type = PinType::Dataset;
-            top_input.name = "Top";
-            top_input.is_input = true;
-            node.inputs.push_back(top_input);
-
-            NodePin bottom_input;
-            bottom_input.id = next_pin_id_++;
-            bottom_input.type = PinType::Dataset;
-            bottom_input.name = "Bottom";
-            bottom_input.is_input = true;
-            node.inputs.push_back(bottom_input);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Table";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["match_columns"] = "true";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
         case NodeType::ColumnAppender: {
-            // Column Appender - 2 inputs (Left, Right), 1 output
-            NodePin left_input;
-            left_input.id = next_pin_id_++;
-            left_input.type = PinType::Dataset;
-            left_input.name = "Left";
-            left_input.is_input = true;
-            node.inputs.push_back(left_input);
-
-            NodePin right_input;
-            right_input.id = next_pin_id_++;
-            right_input.type = PinType::Dataset;
-            right_input.name = "Right";
-            right_input.is_input = true;
-            node.inputs.push_back(right_input);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Table";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["suffix"] = "_right";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -2407,20 +1947,7 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         case NodeType::StringManipulation:
         case NodeType::MathFormula:
         case NodeType::RuleEngine: {
-            // Single input Dataset, single output Dataset
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Table";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Table";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -3073,143 +2600,57 @@ MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
         }
 
         // ===== Phase 4: Utility Nodes =====
-        case NodeType::CalculatorNode: {
-            NodePin input_a;
-            input_a.id = next_pin_id_++;
-            input_a.type = PinType::Tensor;
-            input_a.name = "A";
-            input_a.is_input = true;
-            node.inputs.push_back(input_a);
-
-            NodePin input_b;
-            input_b.id = next_pin_id_++;
-            input_b.type = PinType::Tensor;
-            input_b.name = "B";
-            input_b.is_input = true;
-            input_b.is_required = false;
-            node.inputs.push_back(input_b);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Result";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["expression"] = "A + B";
-            break;
-        }
-
-        case NodeType::UnitConverter: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Value";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Converted";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["from_unit"] = "meters";
-            node.parameters["to_unit"] = "feet";
-            break;
-        }
-
-        case NodeType::RegexTester: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Text";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin matches_out;
-            matches_out.id = next_pin_id_++;
-            matches_out.type = PinType::Dataset;
-            matches_out.name = "Matches";
-            matches_out.is_input = false;
-            node.outputs.push_back(matches_out);
-
-            node.parameters["pattern"] = "";
-            node.parameters["flags"] = "";
-            break;
-        }
-
-        case NodeType::JSONPathExtractor: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "JSON";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Extracted";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["path"] = "$.data";
-            break;
-        }
-
+        case NodeType::CalculatorNode:
+        case NodeType::UnitConverter:
+        case NodeType::RegexTester:
+        case NodeType::JSONPathExtractor:
         case NodeType::DataProfiler: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin report_out;
-            report_out.id = next_pin_id_++;
-            report_out.type = PinType::Dataset;
-            report_out.name = "Profile";
-            report_out.is_input = false;
-            node.outputs.push_back(report_out);
-
-            node.parameters["include_correlations"] = "true";
-            node.parameters["include_histograms"] = "true";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
-        // Visualization nodes are defined in their own translation unit
-        // (cyxwiz-engine/src/gui/visualization/) to keep this already-huge
-        // factory file from owning the chart framework too. New chart
-        // types register themselves by adding a case here that delegates
-        // to the corresponding Populate* function.
         case NodeType::BarChart: {
-            visualization::PopulateBarChartNode(node, next_pin_id_);
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
-        default:
-            // Default: input and output pins
-            NodePin input_pin;
+        default: {
+            auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+            registry.Initialize();
+            if (registry.GetMetadata(type) != nullptr) {
+                // Registered built-ins use the central contract even before a
+                // specialized creation case is added. Unknown/dynamic plugin
+                // nodes retain the compatibility Tensor fallback below.
+                PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
+                break;
+            }
+
+            NodePin input_pin{};
             input_pin.id = next_pin_id_++;
             input_pin.type = PinType::Tensor;
             input_pin.name = "Input";
             input_pin.is_input = true;
             node.inputs.push_back(input_pin);
 
-            NodePin output_pin;
+            NodePin output_pin{};
             output_pin.id = next_pin_id_++;
             output_pin.type = PinType::Tensor;
             output_pin.name = "Output";
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
             break;
+        }
     }
 
     return node;
 }
 
+MLNode NodeEditor::CreateNode(NodeType type, const std::string& name) {
+    return CreateNodeWithIds(
+        type, name, next_node_id_, next_pin_id_);
+}
+
+#ifndef CYXWIZ_NODE_FACTORY_ONLY
 // Helper: if this node owns a dataset (DataInput / DatasetInput with a
 // non-empty dataset_name parameter), drop it from every registry so the
 // next graph rebuild doesn't see a stale entry under the same name.
@@ -3841,5 +3282,6 @@ unsigned int NodeEditor::GetNodeColor(NodeType type) {
             return IM_COL32(127, 140, 141, 255);
     }
 }
+#endif
 
 } // namespace gui

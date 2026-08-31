@@ -334,7 +334,8 @@ std::optional<gui::NodeType> ResolveMetadataNodeTypeForRuntimeName(
 bool ShouldAuditRuntimeParametersAgainstMetadata(
     cyxwiz::NodeMetadataRegistry& metadata,
     const char* legacy_type_name,
-    const cyxwiz::NodeMetadata*& out_meta) {
+    const cyxwiz::NodeMetadata*& out_meta,
+    bool metadata_renderer_only = true) {
     if (const auto* alias =
             cyxwiz::ResolvePipelineLegacyAliasDecision(
                 legacy_type_name ? legacy_type_name : "")) {
@@ -356,23 +357,25 @@ bool ShouldAuditRuntimeParametersAgainstMetadata(
         return false;
     }
 
-    return gui::properties_contract::ClassifyPanelContractPath(
+    return !metadata_renderer_only ||
+           gui::properties_contract::ClassifyPanelContractPath(
                out_meta->type, out_meta) ==
-           gui::properties_contract::PanelContractPath::MetadataRenderer;
+               gui::properties_contract::PanelContractPath::MetadataRenderer;
 }
 
 void CheckMetadataHasRuntimeParameter(
     cyxwiz::NodeMetadataRegistry& metadata,
     const char* legacy_type_name,
     const char* parameter_name,
-    const char* capability_kind) {
+    const char* capability_kind,
+    bool metadata_renderer_only = true) {
     Check(parameter_name != nullptr && std::string(parameter_name).size() > 1,
           std::string("runtime parameter name is too weak: ") +
               (legacy_type_name ? legacy_type_name : "(null)"));
 
     const cyxwiz::NodeMetadata* meta = nullptr;
     if (!ShouldAuditRuntimeParametersAgainstMetadata(
-            metadata, legacy_type_name, meta)) {
+            metadata, legacy_type_name, meta, metadata_renderer_only)) {
         return;
     }
 
@@ -381,6 +384,12 @@ void CheckMetadataHasRuntimeParameter(
               capability_kind + " runtime parameter " +
               legacy_type_name + "." + parameter_name +
               " in " + TypeId(meta->type));
+    const auto* parameter = FindParameter(meta, parameter_name);
+    Check(parameter == nullptr ||
+              parameter->consumption ==
+                  cyxwiz::ParameterConsumption::Runtime,
+          std::string("runtime capability points at a UI-only parameter: ") +
+              legacy_type_name + "." + parameter_name);
 }
 
 bool IsBoolAllowedValues(const std::vector<const char*>& values) {
@@ -435,12 +444,23 @@ void CheckMetadataAllowedParameterShape(
                       "or bool: ") +
               capability.legacy_type_name + "." + capability.parameter_name +
               " metadata type " + param->type);
+    std::set<std::string> runtime_values;
     for (const char* value : capability.allowed_values) {
-        Check(value != nullptr && ContainsString(param->enum_values, value),
+        Check(value != nullptr && runtime_values.insert(value).second,
+              std::string("runtime allowed-value capability has a null or "
+                          "duplicate value: ") +
+                  capability.legacy_type_name + "." +
+                  capability.parameter_name);
+        Check(ContainsString(param->enum_values, value),
               std::string("metadata enum is missing runtime allowed value: ") +
                   capability.legacy_type_name + "." +
                   capability.parameter_name + "=" + (value ? value : "(null)"));
     }
+    Check(param->enum_values.size() == runtime_values.size(),
+          std::string("metadata enum advertises values not accepted by "
+                      "runtime: ") +
+              capability.legacy_type_name + "." +
+              capability.parameter_name);
     Check(param->default_value.empty() ||
               param->default_value == capability.default_value,
           std::string("metadata enum default drifts from runtime: ") +
@@ -478,6 +498,36 @@ void CheckMetadataIntegerParameterShape(
           std::string("metadata integer parameter has wrong renderer type: ") +
               capability.legacy_type_name + "." + capability.parameter_name +
               " metadata type " + param->type);
+
+    if (!capability.comma_separated && !param->default_value.empty()) {
+        try {
+            std::size_t consumed = 0;
+            const int64_t default_value =
+                std::stoll(param->default_value, &consumed);
+            Check(consumed == param->default_value.size(),
+                  std::string("metadata integer default is not strict: ") +
+                      capability.legacy_type_name + "." +
+                      capability.parameter_name);
+            Check(default_value >= capability.minimum,
+                  std::string("metadata integer default is below the runtime "
+                              "minimum: ") +
+                      capability.legacy_type_name + "." +
+                      capability.parameter_name);
+            Check(std::find(capability.forbidden_values.begin(),
+                            capability.forbidden_values.end(),
+                            default_value) ==
+                      capability.forbidden_values.end(),
+                  std::string("metadata integer default is runtime-forbidden: ") +
+                      capability.legacy_type_name + "." +
+                      capability.parameter_name);
+        } catch (const std::exception&) {
+            Check(false,
+                  std::string("metadata integer default cannot be parsed: ") +
+                      capability.legacy_type_name + "." +
+                      capability.parameter_name + "=" +
+                      param->default_value);
+        }
+    }
 }
 
 void CheckMetadataFloatParameterShape(
@@ -504,6 +554,46 @@ void CheckMetadataFloatParameterShape(
           std::string("metadata float parameter has wrong renderer type: ") +
               capability.legacy_type_name + "." + capability.parameter_name +
               " metadata type " + param->type);
+
+    if (!param->default_value.empty()) {
+        try {
+            std::size_t consumed = 0;
+            const double default_value =
+                std::stod(param->default_value, &consumed);
+            Check(consumed == param->default_value.size() &&
+                      std::isfinite(default_value),
+                  std::string("metadata float default is not a finite strict "
+                              "number: ") +
+                      capability.legacy_type_name + "." +
+                      capability.parameter_name);
+            if (capability.minimum.has_value()) {
+                const bool valid_minimum = capability.minimum_inclusive
+                                               ? default_value >= *capability.minimum
+                                               : default_value > *capability.minimum;
+                Check(valid_minimum,
+                      std::string("metadata float default violates the runtime "
+                                  "minimum: ") +
+                          capability.legacy_type_name + "." +
+                          capability.parameter_name);
+            }
+            if (capability.maximum.has_value()) {
+                const bool valid_maximum = capability.maximum_inclusive
+                                               ? default_value <= *capability.maximum
+                                               : default_value < *capability.maximum;
+                Check(valid_maximum,
+                      std::string("metadata float default violates the runtime "
+                                  "maximum: ") +
+                          capability.legacy_type_name + "." +
+                          capability.parameter_name);
+            }
+        } catch (const std::exception&) {
+            Check(false,
+                  std::string("metadata float default cannot be parsed: ") +
+                      capability.legacy_type_name + "." +
+                      capability.parameter_name + "=" +
+                      param->default_value);
+        }
+    }
 }
 
 void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
@@ -522,13 +612,14 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
                   TypeId(type));
     }
 
-    std::set<gui::NodeType> seen;
     std::vector<std::string> implemented_nodes_missing_contract;
     std::vector<std::string> implemented_params_with_bad_schema;
     std::size_t dialog_only_count = 0;
-    std::size_t custom_sequence_count = 0;
+    std::size_t custom_editor_count = 0;
     std::size_t metadata_rendered_count = 0;
     std::size_t custom_fallback_count = 0;
+    std::size_t ui_only_parameter_count = 0;
+    std::set<std::string> ui_only_parameters;
     const std::vector<std::string> generated_help_prefixes = {
         "Product support:",
         "Runtime support:",
@@ -538,74 +629,86 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
         "Workflow lane:",
     };
 
-    for (const auto category : metadata.GetCategories()) {
-        for (const auto* meta : metadata.GetByCategory(category, true)) {
-            if (!meta || !seen.insert(meta->type).second) {
-                continue;
-            }
+    const auto all_metadata = metadata.GetAllMetadata();
+    for (const auto* meta : all_metadata) {
+        if (!meta) continue;
 
-            for (const auto& prefix : generated_help_prefixes) {
-                Check(meta->help_text.find(prefix) == std::string::npos,
-                      "authored help must not contain generated support text: " +
-                          meta->name + " -> " + prefix);
-            }
+        for (const auto& prefix : generated_help_prefixes) {
+            Check(meta->help_text.find(prefix) == std::string::npos,
+                  "authored help must not contain generated support text: " +
+                      meta->name + " -> " + prefix);
+        }
 
-            std::set<std::string> param_names;
-            for (const auto& param : meta->parameters) {
-                if (param.name.empty() ||
-                    !param_names.insert(param.name).second ||
-                    !IsSupportedPropertiesParameterType(param.type)) {
-                    implemented_params_with_bad_schema.push_back(
-                        meta->name + "(" + TypeId(meta->type) + "):" +
-                        param.name + ":" + param.type);
-                }
+        std::set<std::string> param_names;
+        const auto panel_path =
+            gui::properties_contract::ClassifyPanelContractPath(
+                meta->type, meta);
+        for (const auto& param : meta->parameters) {
+            if (param.name.empty() ||
+                !param_names.insert(param.name).second ||
+                !IsSupportedPropertiesParameterType(param.type)) {
+                implemented_params_with_bad_schema.push_back(
+                    meta->name + "(" + TypeId(meta->type) + "):" +
+                    param.name + ":" + param.type);
             }
+            if (param.consumption ==
+                cyxwiz::ParameterConsumption::UiOnly) {
+                ++ui_only_parameter_count;
+                ui_only_parameters.insert(
+                    TypeId(meta->type) + "." + param.name);
+                Check(!param.required,
+                      "UI-only parameter must not be runtime-required: " +
+                          TypeId(meta->type) + "." + param.name);
+                Check(panel_path ==
+                          gui::properties_contract::PanelContractPath::DialogOnly ||
+                          panel_path ==
+                              gui::properties_contract::PanelContractPath::CustomEditor,
+                      "UI-only parameter requires an explicit dialog/custom owner: " +
+                          TypeId(meta->type) + "." + param.name);
+            }
+        }
 
-            if (meta->status != cyxwiz::NodeImplementationStatus::Implemented) {
-                continue;
-            }
+        if (meta->status != cyxwiz::NodeImplementationStatus::Implemented) {
+            continue;
+        }
 
-            const auto panel_path =
-                gui::properties_contract::ClassifyPanelContractPath(
-                    meta->type, meta);
-            switch (panel_path) {
-                case gui::properties_contract::PanelContractPath::DialogOnly:
-                    ++dialog_only_count;
-                    Check(gui::properties_contract::IsDialogOnlyPropertiesNode(meta->type),
-                          "dialog-only property path should be explicit: " +
-                              TypeId(meta->type));
-                    break;
-                case gui::properties_contract::PanelContractPath::CustomSequenceEditor:
-                    ++custom_sequence_count;
-                    Check(gui::properties_contract::IsCustomSequencePropertiesNode(meta->type),
-                          "custom sequence property path should be explicit: " +
-                              TypeId(meta->type));
-                    break;
-                case gui::properties_contract::PanelContractPath::MetadataRenderer:
-                    ++metadata_rendered_count;
-                    Check(!meta->parameters.empty(),
-                          "metadata-rendered property path requires parameters: " +
-                              TypeId(meta->type));
-                    break;
-                case gui::properties_contract::PanelContractPath::CustomFallbackEditor:
-                    ++custom_fallback_count;
-                    break;
-            }
+        switch (panel_path) {
+            case gui::properties_contract::PanelContractPath::DialogOnly:
+                ++dialog_only_count;
+                Check(gui::properties_contract::IsDialogOnlyPropertiesNode(meta),
+                      "dialog-only property path should be explicit: " +
+                          TypeId(meta->type));
+                break;
+            case gui::properties_contract::PanelContractPath::CustomEditor:
+                ++custom_editor_count;
+                Check(gui::properties_contract::IsCustomPropertiesNode(meta),
+                      "custom property path should be explicit: " +
+                          TypeId(meta->type));
+                break;
+            case gui::properties_contract::PanelContractPath::MetadataRenderer:
+                ++metadata_rendered_count;
+                Check(!meta->parameters.empty(),
+                      "metadata-rendered property path requires parameters: " +
+                          TypeId(meta->type));
+                break;
+            case gui::properties_contract::PanelContractPath::CustomFallbackEditor:
+                ++custom_fallback_count;
+                break;
+        }
 
-            const bool has_contract_anchor =
-                !meta->parameters.empty() ||
-                !meta->inputs.empty() ||
-                !meta->outputs.empty() ||
-                !meta->support_axes.empty() ||
-                gui::properties_truth::HasSpecializedTruthCoverage(meta->type);
-            if (!has_contract_anchor) {
-                implemented_nodes_missing_contract.push_back(
-                    meta->name + "(" + TypeId(meta->type) + ")");
-            }
+        const bool has_contract_anchor =
+            !meta->parameters.empty() ||
+            !meta->inputs.empty() ||
+            !meta->outputs.empty() ||
+            !meta->support_axes.empty() ||
+            gui::properties_truth::HasSpecializedTruthCoverage(meta->type);
+        if (!has_contract_anchor) {
+            implemented_nodes_missing_contract.push_back(
+                meta->name + "(" + TypeId(meta->type) + ")");
         }
     }
 
-    Check(seen.size() == metadata.GetNodeCount(),
+    Check(all_metadata.size() == metadata.GetNodeCount(),
           "property truth inventory should visit every metadata node");
     Check(implemented_params_with_bad_schema.empty(),
           "implemented metadata parameters should use unique names and "
@@ -621,12 +724,28 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
                    : implemented_nodes_missing_contract.front()));
     Check(dialog_only_count > 0,
           "property inventory should classify dialog-only nodes");
-    Check(custom_sequence_count > 0,
-          "property inventory should classify custom sequence nodes");
+    Check(custom_editor_count > 0,
+          "property inventory should classify custom-editor nodes");
     Check(metadata_rendered_count > 0,
           "property inventory should classify metadata-rendered nodes");
     Check(custom_fallback_count > 0,
           "property inventory should classify custom fallback nodes");
+    Check(ui_only_parameter_count > 0,
+          "property inventory should contain explicit UI-only parameters");
+    const std::set<std::string> expected_ui_only_parameters = {
+        TypeId(gui::NodeType::DataInput) + ".configured",
+        TypeId(gui::NodeType::DataOutput) + ".configured",
+        TypeId(gui::NodeType::DataConvert) + ".configured",
+        TypeId(gui::NodeType::DataConvert) + ".status",
+        TypeId(gui::NodeType::DataConvert) + ".rows_written",
+        TypeId(gui::NodeType::Embedding) + ".init_mode",
+        TypeId(gui::NodeType::Embedding) + ".output_weights_file",
+        TypeId(gui::NodeType::TextTokenizer) + ".source_csv",
+        TypeId(gui::NodeType::SignalScope) + ".window_size",
+        TypeId(gui::NodeType::SignalScope) + ".auto_scale",
+    };
+    Check(ui_only_parameters == expected_ui_only_parameters,
+          "UI-only parameter exceptions changed without an ownership audit");
 
     const std::vector<gui::NodeType> expected_specialized = {
         gui::NodeType::DataInput,
@@ -732,8 +851,13 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
     Check(gui::properties_contract::ClassifyPanelContractPath(
               gui::NodeType::NERSequenceBuilder,
               metadata.GetMetadata(gui::NodeType::NERSequenceBuilder)) ==
-              gui::properties_contract::PanelContractPath::CustomSequenceEditor,
+              gui::properties_contract::PanelContractPath::CustomEditor,
           "NERSequenceBuilder should use the custom sequence editor");
+    Check(gui::properties_contract::ClassifyPanelContractPath(
+              gui::NodeType::SignalScope,
+              metadata.GetMetadata(gui::NodeType::SignalScope)) ==
+              gui::properties_contract::PanelContractPath::CustomEditor,
+          "SignalScope should reach its live custom editor");
     Check(gui::properties_contract::ClassifyPanelContractPath(
               gui::NodeType::DataLoader,
               metadata.GetMetadata(gui::NodeType::DataLoader)) ==
@@ -751,6 +875,8 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
     Check(HasOutputType(data_loader, "Data", gui::PinType::Tensor) &&
               HasOutputType(data_loader, "Labels", gui::PinType::Labels),
           "DataLoader must expose model-facing batched Data/Labels outputs");
+    Check(!HasParameter(data_loader, "pin_memory"),
+          "unsupported pin_memory must remain legacy-load truth, not a new-node control");
     Check(gui::properties_contract::ClassifyPanelContractPath(
               gui::NodeType::ReLU,
               metadata.GetMetadata(gui::NodeType::ReLU)) ==
@@ -839,6 +965,10 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
     Check(!HasParameter(dense, "activation"),
           "Dense metadata should not expose inline activation because "
           "ModelBuilder requires explicit activation nodes");
+    const auto* text_clean = metadata.GetMetadata(gui::NodeType::TextCleanNode);
+    Check(text_clean != nullptr &&
+              !HasParameter(text_clean, "remove_stopwords"),
+          "unsupported stopword removal must not be advertised on new Text Clean nodes");
 
     for (const auto& capability :
          cyxwiz::GetPipelineRequiredParameterRuntimeCapabilities()) {
@@ -847,7 +977,8 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
                 metadata,
                 capability.legacy_type_name,
                 parameter,
-                "required");
+                "required",
+                false);
         }
     }
 
@@ -2681,169 +2812,10 @@ void CheckClassicalTreeMigrationGuard() {
 }
 
 void CheckStaticCreationAdapter(cyxwiz::NodeMetadataRegistry& metadata) {
-    for (const auto type : {
-             gui::NodeType::Dense,
-             gui::NodeType::MultiHeadAttention,
-             gui::NodeType::TransformerEncoder,
-             gui::NodeType::TransformerDecoder,
-             gui::NodeType::PositionalEncoding,
-             gui::NodeType::StandardScaler,
-             gui::NodeType::MinMaxScaler,
-             gui::NodeType::RobustScaler,
-             gui::NodeType::LabelEncoder,
-             gui::NodeType::OrdinalEncoder,
-             gui::NodeType::TargetEncoder,
-             gui::NodeType::OutlierDetector,
-             gui::NodeType::DataValidator,
-             gui::NodeType::SampleRows,
-             gui::NodeType::ValueCounts,
-             gui::NodeType::DescribeStats,
-             gui::NodeType::CorrelationMatrix,
-             gui::NodeType::RegressionMetricsNode,
-             gui::NodeType::ClassificationMetricsNode,
-             gui::NodeType::ConfusionMatrixNode,
-             gui::NodeType::ROCCurveNode,
-             gui::NodeType::PRCurveNode,
-             gui::NodeType::FFTNode,
-             gui::NodeType::FilterDesigner,
-             gui::NodeType::Convolution1D,
-             gui::NodeType::TFIDFVectorizer,
-             gui::NodeType::CountVectorizer,
-             gui::NodeType::SentimentAnalyzer,
-             gui::NodeType::FilterRows,
-             gui::NodeType::SelectColumns,
-             gui::NodeType::SortRows,
-             gui::NodeType::GroupByAggregate,
-             gui::NodeType::FillMissingValues,
-             gui::NodeType::RemoveDuplicateRows,
-             gui::NodeType::RenameColumns,
-             gui::NodeType::JoinTables,
-             gui::NodeType::KMeansCluster,
-             gui::NodeType::DBSCANCluster,
-             gui::NodeType::HierarchicalCluster,
-             gui::NodeType::GMMCluster,
-             gui::NodeType::PCANode,
-             gui::NodeType::LinearRegressionNode,
-             gui::NodeType::PolynomialRegressionNode,
-             gui::NodeType::DecisionTreeClassifier,
-             gui::NodeType::RandomForestClassifier,
-             gui::NodeType::GradientBoostingClassifier,
-             gui::NodeType::TreeModelPredictor,
-             gui::NodeType::RegressionModelPredictor,
-             gui::NodeType::SVMClassifier,
-             gui::NodeType::KNNClassifier,
-             gui::NodeType::NaiveBayesClassifier,
-             gui::NodeType::LogisticRegressionNode,
-             gui::NodeType::StepLR,
-             gui::NodeType::CosineAnnealing,
-             gui::NodeType::ReduceOnPlateau,
-             gui::NodeType::ExponentialLR,
-             gui::NodeType::WarmupScheduler,
-             gui::NodeType::L1Regularization,
-             gui::NodeType::L2Regularization,
-             gui::NodeType::ElasticNet,
-             gui::NodeType::PairDatasetBuilder,
-             gui::NodeType::TripletDatasetBuilder,
-             gui::NodeType::SharedEncoder,
-             gui::NodeType::SiameseBranch,
-             gui::NodeType::ContrastiveLoss,
-             gui::NodeType::CosineEmbeddingLoss,
-             gui::NodeType::TripletLoss,
-             gui::NodeType::PairMetrics,
-             gui::NodeType::RetrievalMetrics,
-             gui::NodeType::EmbeddingOutput,
-             gui::NodeType::PairScoreOutput,
-              gui::NodeType::Lambda,
-              gui::NodeType::Identity,
-              gui::NodeType::Parameter,
-             gui::NodeType::DataInput,
-             gui::NodeType::Conv1D,
-             gui::NodeType::Conv2D,
-             gui::NodeType::Conv3D,
-             gui::NodeType::DepthwiseConv2D,
-             gui::NodeType::MaxPool2D,
-             gui::NodeType::AvgPool2D,
-             gui::NodeType::GlobalMaxPool,
-             gui::NodeType::GlobalAvgPool,
-             gui::NodeType::AdaptiveAvgPool,
-             gui::NodeType::ConvTranspose2D,
-             gui::NodeType::Upsample,
-             gui::NodeType::PixelShuffle,
-             gui::NodeType::ReLU,
-             gui::NodeType::Sigmoid,
-             gui::NodeType::Tanh,
-             gui::NodeType::Softmax,
-             gui::NodeType::LeakyReLU,
-             gui::NodeType::ELU,
-             gui::NodeType::GELU,
-             gui::NodeType::Swish,
-             gui::NodeType::Mish,
-             gui::NodeType::Dropout,
-             gui::NodeType::BatchNorm,
-             gui::NodeType::LayerNorm,
-             gui::NodeType::GroupNorm,
-             gui::NodeType::InstanceNorm,
-             gui::NodeType::SelfAttention,
-             gui::NodeType::CrossAttention,
-             gui::NodeType::LinearAttention,
-             gui::NodeType::RNN,
-             gui::NodeType::Bidirectional,
-             gui::NodeType::LSTM,
-             gui::NodeType::GRU,
-             gui::NodeType::Embedding,
-             gui::NodeType::TimeDistributed,
-             gui::NodeType::Flatten,
-             gui::NodeType::Reshape,
-             gui::NodeType::View,
-             gui::NodeType::Permute,
-             gui::NodeType::Squeeze,
-             gui::NodeType::Unsqueeze,
-             gui::NodeType::TensorBroadcastTo,
-             gui::NodeType::TensorExpand,
-             gui::NodeType::TensorIndexSelect,
-             gui::NodeType::TensorSum,
-             gui::NodeType::TensorMean,
-             gui::NodeType::TensorMax,
-             gui::NodeType::TensorMin,
-             gui::NodeType::TensorProd,
-             gui::NodeType::TensorVar,
-             gui::NodeType::TensorStd,
-             gui::NodeType::TensorPow,
-             gui::NodeType::TensorSqrt,
-             gui::NodeType::TensorExp,
-             gui::NodeType::TensorLog,
-             gui::NodeType::TensorAbs,
-             gui::NodeType::TensorSign,
-             gui::NodeType::TensorClip,
-             gui::NodeType::TensorDot,
-             gui::NodeType::TensorBatchMatMul,
-             gui::NodeType::TensorCompare,
-             gui::NodeType::TensorLogicalMask,
-             gui::NodeType::MSELoss,
-             gui::NodeType::CrossEntropyLoss,
-             gui::NodeType::FocalLoss,
-             gui::NodeType::SoftDiceLoss,
-             gui::NodeType::TverskyLoss,
-             gui::NodeType::JaccardLoss,
-             gui::NodeType::BCELoss,
-             gui::NodeType::BCEWithLogits,
-             gui::NodeType::L1Loss,
-             gui::NodeType::SmoothL1Loss,
-             gui::NodeType::HuberLoss,
-             gui::NodeType::NLLLoss,
-             gui::NodeType::SGD,
-             gui::NodeType::Adam,
-             gui::NodeType::AdamW,
-             gui::NodeType::RMSprop,
-             gui::NodeType::Adagrad,
-             gui::NodeType::NAdam,
-             gui::NodeType::Output,
-         }) {
-        const auto* meta = metadata.GetMetadata(type);
+    for (const auto* meta : metadata.GetAllMetadata()) {
         Check(meta != nullptr,
-              "creation-adapter reference metadata should exist: " +
-                  TypeId(type));
-
+              "creation-adapter traversal returned null metadata");
+        const auto type = meta->type;
         gui::MLNode created;
         created.type = type;
         int next_pin_id = 100;
@@ -5678,6 +5650,14 @@ int main() {
     Check(std::string(cyxwiz::PipelineTrainingSupportRoleName(
               cyxwiz::PipelineTrainingSupportRole::Optimizer)) == "optimizer",
           "training role name for optimizer is stable");
+    Check(std::string(cyxwiz::PipelineTrainingSupportRoleName(
+              cyxwiz::PipelineTrainingSupportRole::DataSource)) ==
+              "data_source",
+          "training role name for data source is stable");
+    Check(std::string(cyxwiz::PipelineTrainingSupportRoleName(
+              cyxwiz::PipelineTrainingSupportRole::Preprocessing)) ==
+              "preprocessing",
+          "training role name for preprocessing is stable");
     Check(std::string(cyxwiz::PipelineTrainingSupportRoleName(
               cyxwiz::PipelineTrainingSupportRole::TrainingControl)) ==
               "training_control",

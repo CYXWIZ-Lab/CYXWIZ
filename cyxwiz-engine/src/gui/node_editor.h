@@ -1080,6 +1080,14 @@ public:
     // Made public so PatternBrowser can use it via callback
     MLNode CreateNode(NodeType type, const std::string& name);
 
+    // Deterministic node factory used by CreateNode and registry contract
+    // gates. Keeping the ID cursors explicit lets non-GUI callers exercise
+    // the exact production dispatch without constructing ImGui/ImNodes state.
+    static MLNode CreateNodeWithIds(NodeType type,
+                                    const std::string& name,
+                                    int& next_node_id,
+                                    int& next_pin_id);
+
     // Unified Canvas Phase 1: Get category for a node type
     static NodeCategory GetCategoryForNodeType(NodeType type);
 

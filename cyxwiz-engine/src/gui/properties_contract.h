@@ -10,13 +10,13 @@ namespace gui::properties_contract {
 
 enum class PanelContractPath {
     DialogOnly,
-    CustomSequenceEditor,
+    CustomEditor,
     MetadataRenderer,
     CustomFallbackEditor
 };
 
-bool IsDialogOnlyPropertiesNode(NodeType type);
-bool IsCustomSequencePropertiesNode(NodeType type);
+bool IsDialogOnlyPropertiesNode(const cyxwiz::NodeMetadata* metadata);
+bool IsCustomPropertiesNode(const cyxwiz::NodeMetadata* metadata);
 PanelContractPath ClassifyPanelContractPath(
     NodeType type,
     const cyxwiz::NodeMetadata* metadata);

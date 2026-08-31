@@ -286,6 +286,7 @@ set(ENGINE_SOURCES
     src/gui/node_editor_connection.cpp
     src/gui/node_editor_context_menu.cpp
     src/gui/node_editor_io.cpp
+    src/gui/node_type_import_registry.cpp
     src/gui/node_editor_nodes.cpp
     src/gui/node_editor_validation.cpp
     src/gui/node_editor_shape_inference.cpp
@@ -334,7 +335,6 @@ set(ENGINE_SOURCES
     src/gui/loaders/image_loader.cpp
     src/gui/loaders/tabular_loader.cpp
     src/gui/loaders/text_loader.cpp
-    src/gui/visualization/visualization_nodes.cpp
     src/gui/visualization/bar_chart_dialog.cpp
     src/gui/panels/toolbar.cpp
     src/gui/panels/toolbar_search.cpp
@@ -2050,6 +2050,48 @@ set_target_properties(test_pipeline_operator_metadata PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Registry-Wide Node Contract Gates =====
+add_executable(test_node_contract_gates
+    tests/test_node_contract_gates.cpp
+    tests/node_contract_inventory.cpp
+    src/gui/node_type_import_registry.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/gui/node_editor_nodes.cpp
+    src/gui/properties_contract.cpp
+    src/plugin/registries/plugin_node_registry.cpp
+)
+
+target_include_directories(test_node_contract_gates PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imnodes
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+
+target_link_libraries(test_node_contract_gates PRIVATE
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_node_contract_gates PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+        CYXWIZ_NODE_FACTORY_ONLY
+    )
+else()
+    target_compile_definitions(test_node_contract_gates PRIVATE
+        CYXWIZ_NODE_FACTORY_ONLY
+    )
+endif()
+
+set_target_properties(test_node_contract_gates PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Built-in scalar simulation runtime contract =====
 add_executable(test_graph_executor_simulation
     tests/test_graph_executor_simulation.cpp
@@ -2363,6 +2405,7 @@ set_target_properties(test_data_studio_execution_plan PROPERTIES
 add_executable(test_pattern_template_guard
     tests/test_pattern_template_guard.cpp
     src/gui/patterns/pattern_library.cpp
+    src/gui/node_type_import_registry.cpp
     src/core/node_metadata_registry.cpp
     src/core/pipeline_runtime_capabilities.cpp
 )

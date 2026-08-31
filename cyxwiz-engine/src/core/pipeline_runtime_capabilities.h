@@ -19,12 +19,21 @@ struct PipelineOperatorRuntimeCapability {
     gui::NodeType node_type;
 };
 
+enum class PipelineBackendPrimitiveEvidence {
+    NotApplicable,
+    ProvenNodePrimitive,
+    RelatedHelperOnly,
+    Missing,
+};
+
 struct PipelineFailClosedRuntimeCapability {
     const char* legacy_type_name;
     const char* reason;
     std::optional<gui::NodeType> node_type = std::nullopt;
     std::optional<gui::NodeType> metadata_node_type = std::nullopt;
     bool blocks_metadata_status = true;
+    PipelineBackendPrimitiveEvidence primitive_evidence =
+        PipelineBackendPrimitiveEvidence::NotApplicable;
 };
 
 enum class PipelineLegacyAliasDecision {
@@ -88,6 +97,8 @@ struct PipelineFloatParameterRuntimeCapability {
 struct PipelineUnsupportedTrainingNodeCapability {
     gui::NodeType node_type;
     const char* reason;
+    PipelineBackendPrimitiveEvidence primitive_evidence =
+        PipelineBackendPrimitiveEvidence::NotApplicable;
 };
 
 struct PipelineSupportedTrainingNodeCapability {
@@ -102,6 +113,8 @@ enum class PipelineTrainingSupportRole {
     Optimizer,
     TrainingControl,
     TrainingWorkflow,
+    DataSource,
+    Preprocessing,
 };
 
 struct PipelineSupportedTrainingRoleCapability {
@@ -123,6 +136,8 @@ struct PipelineTrainingBackendSupport {
     bool compile_supported = true;
     bool training_supported = true;
     const char* reason = nullptr;
+    PipelineBackendPrimitiveEvidence primitive_evidence =
+        PipelineBackendPrimitiveEvidence::NotApplicable;
 };
 
 enum class PipelineStorageBackend {
@@ -189,6 +204,8 @@ struct PipelineRuntimeSupport {
     std::vector<PipelineFloatParameterRuntimeCapability> float_parameters;
     PipelineRuntimeImplementationOwner implementation_owner =
         PipelineRuntimeImplementationOwner::Unknown;
+    PipelineBackendPrimitiveEvidence primitive_evidence =
+        PipelineBackendPrimitiveEvidence::NotApplicable;
 };
 
 // Canonicalize saved/runtime parameter aliases without advertising them in
@@ -268,6 +285,9 @@ const char* PipelineMaterializerStorageSupportName(
 
 const char* PipelineTrainingBackendSupportModeName(
     PipelineTrainingBackendSupportMode mode);
+
+const char* PipelineBackendPrimitiveEvidenceName(
+    PipelineBackendPrimitiveEvidence evidence);
 
 const char* PipelineTrainingSupportRoleName(PipelineTrainingSupportRole role);
 

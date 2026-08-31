@@ -47,6 +47,17 @@ public:
     std::vector<const NodeMetadata*> GetByCategory(NodeCategory category, bool include_templates = false) const;
 
     /**
+     * Get every registered node exactly once, ordered by its stable numeric
+     * NodeType identity. This is the registry-derived traversal for audits,
+     * generated inventories, and UI surfaces that must not maintain a second
+     * list of node types.
+     *
+     * Returned pointers remain owned by the registry and must not be retained
+     * across later RegisterNode() calls.
+     */
+    std::vector<const NodeMetadata*> GetAllMetadata() const;
+
+    /**
      * Search nodes by query string (matches name, keywords, description)
      * @param query Search query (case-insensitive)
      * @param include_templates Include template nodes in results

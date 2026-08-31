@@ -4,42 +4,27 @@
 
 namespace gui::properties_contract {
 
-bool IsDialogOnlyPropertiesNode(NodeType type) {
-    switch (type) {
-        case NodeType::DataInput:
-        case NodeType::DataOutput:
-        case NodeType::DataConvert:
-        case NodeType::TextTokenizer:
-        case NodeType::TextVocabulary:
-        case NodeType::TextPadding:
-        case NodeType::Embedding:
-            return true;
-        default:
-            return false;
-    }
+bool IsDialogOnlyPropertiesNode(const cyxwiz::NodeMetadata* metadata) {
+    return metadata &&
+           metadata->properties_editor ==
+               cyxwiz::NodePropertiesEditor::Dialog;
 }
 
-bool IsCustomSequencePropertiesNode(NodeType type) {
-    switch (type) {
-        case NodeType::NERSequenceBuilder:
-        case NodeType::TokenVocabulary:
-        case NodeType::POSVocabulary:
-        case NodeType::NERTagVocabulary:
-        case NodeType::SequenceTagOutput:
-            return true;
-        default:
-            return false;
-    }
+bool IsCustomPropertiesNode(const cyxwiz::NodeMetadata* metadata) {
+    return metadata &&
+           metadata->properties_editor ==
+               cyxwiz::NodePropertiesEditor::Custom;
 }
 
 PanelContractPath ClassifyPanelContractPath(
     NodeType type,
     const cyxwiz::NodeMetadata* metadata) {
-    if (IsDialogOnlyPropertiesNode(type)) {
+    (void)type;
+    if (IsDialogOnlyPropertiesNode(metadata)) {
         return PanelContractPath::DialogOnly;
     }
-    if (IsCustomSequencePropertiesNode(type)) {
-        return PanelContractPath::CustomSequenceEditor;
+    if (IsCustomPropertiesNode(metadata)) {
+        return PanelContractPath::CustomEditor;
     }
     if (metadata && !metadata->parameters.empty()) {
         return PanelContractPath::MetadataRenderer;
@@ -51,8 +36,8 @@ const char* PanelContractPathName(PanelContractPath path) {
     switch (path) {
         case PanelContractPath::DialogOnly:
             return "dialog_only";
-        case PanelContractPath::CustomSequenceEditor:
-            return "custom_sequence_editor";
+        case PanelContractPath::CustomEditor:
+            return "custom_editor";
         case PanelContractPath::MetadataRenderer:
             return "metadata_renderer";
         case PanelContractPath::CustomFallbackEditor:

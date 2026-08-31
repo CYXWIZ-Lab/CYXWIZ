@@ -360,27 +360,38 @@ const std::vector<PipelineFailClosedRuntimeCapability>&
 GetPipelineFailClosedRuntimeCapabilities() {
     static const std::vector<PipelineFailClosedRuntimeCapability> capabilities = {
         {"TSNENode", "legacy t-SNE graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::TSNENode},
+         gui::NodeType::TSNENode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"UMAPNode", "legacy UMAP graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::UMAPNode},
+         gui::NodeType::UMAPNode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"SVMClassifier", "legacy SVM graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::SVMClassifier},
+         gui::NodeType::SVMClassifier, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::Missing},
         {"KNNClassifier", "legacy KNN graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::KNNClassifier},
+         gui::NodeType::KNNClassifier, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::Missing},
         {"NaiveBayesClassifier", "legacy Naive Bayes graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::NaiveBayesClassifier},
+         gui::NodeType::NaiveBayesClassifier, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::Missing},
         {"LogisticRegressionNode", "legacy logistic-regression graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::LogisticRegressionNode},
+         gui::NodeType::LogisticRegressionNode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::Missing},
         {"SVMRegressor", "legacy SVM regressor graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::SVMRegressor},
+         gui::NodeType::SVMRegressor, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::Missing},
         {"LearningCurvesNode", "learning-curve graph execution is not implemented in PipelineExecutor",
-         gui::NodeType::LearningCurvesNode},
+         gui::NodeType::LearningCurvesNode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"FeatureImportanceNode", "feature-importance graph execution is not implemented in PipelineExecutor",
-         gui::NodeType::FeatureImportanceNode},
+         gui::NodeType::FeatureImportanceNode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"CrossValidationNode", "cross-validation graph execution is not implemented in PipelineExecutor",
-         gui::NodeType::CrossValidationNode},
+         gui::NodeType::CrossValidationNode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"VisualizeData", "visualization rendering is UI-only and is not implemented in PipelineExecutor",
-         gui::NodeType::VisualizeData},
+         gui::NodeType::VisualizeData, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
         {"Normalize", "Normalize is a training preprocessing contract node; PipelineExecutor tensor normalization is not implemented",
          gui::NodeType::Normalize, std::nullopt, false},
         {"OneHotEncode", "OneHotEncode is a training preprocessing contract node; PipelineExecutor label one-hot encoding is not implemented",
@@ -450,9 +461,11 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"Constant", "Constant belongs to the GraphExecutor scalar simulation lane; PipelineExecutor does not execute simulation sources",
          gui::NodeType::Constant, std::nullopt, false},
         {"Lambda", "Lambda has no expression evaluator, model layer, PipelineExecutor operator, or sandboxed execution owner",
-         gui::NodeType::Lambda},
+         gui::NodeType::Lambda, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::Missing},
         {"Parameter", "Parameter has no model-registration, initialization, gradient, optimizer, checkpoint, or graph execution owner",
-         gui::NodeType::Parameter},
+         gui::NodeType::Parameter, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::Missing},
         {"Reshape", "Reshape is a tensor graph utility node; PipelineExecutor tensor shape execution is not implemented",
          gui::NodeType::Reshape, std::nullopt, false},
         {"View", "View is a tensor graph utility node; PipelineExecutor tensor shape execution is not implemented",
@@ -460,7 +473,8 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"Permute", "Permute is a tensor graph utility node; PipelineExecutor tensor shape execution is not implemented",
          gui::NodeType::Permute, std::nullopt, false},
         {"Split", "Split is a tensor graph utility node; PipelineExecutor tensor split execution is not implemented",
-         gui::NodeType::Split, std::nullopt, false},
+         gui::NodeType::Split, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"Squeeze", "Squeeze is a tensor graph utility node; PipelineExecutor tensor shape execution is not implemented",
          gui::NodeType::Squeeze, std::nullopt, false},
         {"Unsqueeze", "Unsqueeze is a tensor graph utility node; PipelineExecutor tensor shape execution is not implemented",
@@ -496,7 +510,8 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"TensorDot", "TensorDot is a tensor graph operation node; PipelineExecutor tensor operation execution is not implemented",
          gui::NodeType::TensorDot, std::nullopt, false},
         {"TensorBatchMatMul", "TensorBatchMatMul is a tensor graph operation node; PipelineExecutor tensor operation execution is not implemented",
-         gui::NodeType::TensorBatchMatMul, std::nullopt, false},
+         gui::NodeType::TensorBatchMatMul, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"TensorBroadcastTo", "TensorBroadcastTo is a tensor graph operation node; PipelineExecutor tensor operation execution is not implemented",
          gui::NodeType::TensorBroadcastTo, std::nullopt, false},
         {"TensorExpand", "TensorExpand is a tensor graph operation node; PipelineExecutor tensor operation execution is not implemented",
@@ -519,57 +534,81 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::SignalScope, std::nullopt, false},
         {"TrainTestSplit", "legacy TrainTestSplit graph execution is not implemented; old passthrough behavior is disabled"},
         {"ImagePreprocessor", "legacy ImagePreprocessor graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::ImagePreprocessor},
+         gui::NodeType::ImagePreprocessor, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"QualityAnalyzer", "legacy QualityAnalyzer graph execution is not implemented; old passthrough behavior is disabled",
-         gui::NodeType::QualityAnalyzer},
+         gui::NodeType::QualityAnalyzer, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"ImageFolderDataset", "legacy ImageFolderDataset graph execution is not implemented; placeholder metadata creation is disabled",
-         gui::NodeType::ImageFolderDataset},
+         gui::NodeType::ImageFolderDataset, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"MNISTDataset", "legacy MNISTDataset graph execution is not implemented; placeholder metadata creation is disabled",
-         gui::NodeType::MNISTDataset},
+         gui::NodeType::MNISTDataset, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"CIFAR10Dataset", "legacy CIFAR10Dataset graph execution is not implemented; placeholder metadata creation is disabled",
-         gui::NodeType::CIFAR10Dataset},
+         gui::NodeType::CIFAR10Dataset, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"HuggingFaceDataset", "legacy HuggingFaceDataset graph execution is not implemented; placeholder metadata creation is disabled",
-         gui::NodeType::HuggingFaceDataset},
+         gui::NodeType::HuggingFaceDataset, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"KaggleDataset", "legacy KaggleDataset graph execution is not implemented; placeholder metadata creation is disabled",
-         gui::NodeType::KaggleDataset},
+         gui::NodeType::KaggleDataset, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"AugmentationPreset", "legacy AugmentationPreset graph execution is not implemented",
-         gui::NodeType::AugmentationPreset},
+         gui::NodeType::AugmentationPreset, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"GeometricTransform", "legacy GeometricTransform graph execution is not implemented",
-         gui::NodeType::GeometricTransform},
+         gui::NodeType::GeometricTransform, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"ColorTransform", "legacy ColorTransform graph execution is not implemented",
-         gui::NodeType::ColorTransform},
+         gui::NodeType::ColorTransform, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"MorphologyTransform", "legacy MorphologyTransform graph execution is not implemented",
-         gui::NodeType::MorphologyTransform},
+         gui::NodeType::MorphologyTransform, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"AdvancedAugment", "legacy AdvancedAugment graph execution is not implemented",
-         gui::NodeType::AdvancedAugment},
+         gui::NodeType::AdvancedAugment, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"IFFTNode", "legacy IFFT graph execution is not implemented",
-         gui::NodeType::IFFTNode},
+         gui::NodeType::IFFTNode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"WaveletTransform", "legacy WaveletTransform graph execution is not implemented",
-         gui::NodeType::WaveletTransform},
+         gui::NodeType::WaveletTransform, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"WordEmbeddings", "word-embedding graph execution is not implemented in PipelineExecutor",
-         gui::NodeType::WordEmbeddings},
+         gui::NodeType::WordEmbeddings, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"NamedEntityRecognizer", "NER graph execution is not implemented in PipelineExecutor",
-         gui::NodeType::NamedEntityRecognizer},
+         gui::NodeType::NamedEntityRecognizer, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
         {"DNNModelLoad", "DNN model loading is not implemented in PipelineExecutor",
-         gui::NodeType::DNNModelLoad},
+         gui::NodeType::DNNModelLoad, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"DNNDetect", "DNN object detection is not implemented in PipelineExecutor",
-         gui::NodeType::DNNDetect},
+         gui::NodeType::DNNDetect, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"PretrainedYOLO", "pretrained YOLO execution is not implemented in PipelineExecutor",
-         gui::NodeType::PretrainedYOLO},
+         gui::NodeType::PretrainedYOLO, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"GymEnvironment", "RL environment graph execution is not implemented in PipelineExecutor",
-         gui::NodeType::GymEnvironment},
+         gui::NodeType::GymEnvironment, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"ReplayBuffer", "RL replay-buffer graph execution is not implemented in PipelineExecutor",
-         gui::NodeType::ReplayBufferNode},
+         gui::NodeType::ReplayBufferNode, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"PolicyNetwork", "RL policy-network graph execution is not implemented in PipelineExecutor",
          gui::NodeType::PolicyNetwork},
         {"ValueNetwork", "RL value-network graph execution is not implemented in PipelineExecutor",
          gui::NodeType::ValueNetwork},
         {"TableSplitter", "legacy TableSplitter needs pin-aware multi-output routing; PipelineExecutor can only carry one dataset per node",
-         gui::NodeType::TableSplitter},
+         gui::NodeType::TableSplitter, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
         {"ExportSQL", "SQL database export is not implemented in PipelineExecutor; fake success is disabled",
-         gui::NodeType::ExportSQL},
+         gui::NodeType::ExportSQL, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::Missing},
         {"ExportExcel", "legacy ExportExcel graph execution is not implemented; fake success is disabled",
-         gui::NodeType::ExportExcel},
+         gui::NodeType::ExportExcel, std::nullopt, true,
+         PipelineBackendPrimitiveEvidence::Missing},
         {"ExcelInput", "Excel input loading is not implemented; use DataInput with csv, parquet, feather, arrow, or ipc until a real Excel Arrow loader exists",
          gui::NodeType::ExcelFile},
         {"JSONFile", "JSON file loading is not implemented in PipelineExecutor; use a supported tabular file type until a real JSON Arrow loader exists",
@@ -989,9 +1028,7 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"GradientBoostingClassifier", "min_samples_leaf", 1, false},
         {"TimeSeriesDecomposition", "period", 2, false},
         {"ACFNode", "max_lag", -1, false, {0}},
-        {"ACFNode", "lags", -1, false, {0}},
         {"PACFNode", "max_lag", -1, false, {0}},
-        {"PACFNode", "lags", -1, false, {0}},
         {"StationarityTest", "max_lags", -1, false},
         {"SeasonalityDetector", "min_period", 2, false},
     };
@@ -1014,7 +1051,9 @@ GetPipelineFloatParameterRuntimeCapabilities() {
         {"DBSCANCluster", "eps", 0.0, std::nullopt, false},
         {"FFTNode", "sample_rate", 0.0, std::nullopt, false},
         {"FilterDesigner", "cutoff", 0.0, std::nullopt, false},
-        {"FilterDesigner", "cutoff_high", 0.0, std::nullopt, false},
+        // Zero is the inactive sentinel for lowpass/highpass. Band filters
+        // impose the stronger cutoff_high > cutoff relation during validation.
+        {"FilterDesigner", "cutoff_high", 0.0, std::nullopt},
         {"FilterDesigner", "sample_rate", 0.0, std::nullopt, false},
     };
     return capabilities;
@@ -1024,47 +1063,68 @@ const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedSequentialModelLayerCapabilities() {
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
         {gui::NodeType::Conv1D,
-         "has a native CPU backend primitive and direct SequentialModel adapter but is not supported by ModelBuilder and has no production ArrayFire execution contract"},
+         "has a native CPU backend primitive and direct SequentialModel adapter but is not supported by ModelBuilder and has no production ArrayFire execution contract",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::Conv2D,
-         "has a backend primitive and direct SequentialModel adapter but is not supported by ModelBuilder; its native CPU forward/backward formulas do not establish a production ArrayFire execution contract"},
+         "has a backend primitive and direct SequentialModel adapter but is not supported by ModelBuilder; its native CPU forward/backward formulas do not establish a production ArrayFire execution contract",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::Conv3D,
-         "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path"},
+         "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path",
+         PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::DepthwiseConv2D,
-         "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path"},
+         "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path",
+         PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::MaxPool2D,
-         "has a backend primitive and direct SequentialModel adapter but is not constructed by ModelBuilder; its backward path and native fallback lack complete padding, residency, and strict-fallback evidence"},
+         "has a backend primitive and direct SequentialModel adapter but is not constructed by ModelBuilder; its backward path and native fallback lack complete padding, residency, and strict-fallback evidence",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::AvgPool2D,
-         "has a backend primitive and direct SequentialModel adapter but is not constructed by ModelBuilder; its backward path and native fallback lack complete padding, residency, and strict-fallback evidence"},
+         "has a backend primitive and direct SequentialModel adapter but is not constructed by ModelBuilder; its backward path and native fallback lack complete padding, residency, and strict-fallback evidence",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::GlobalMaxPool,
-         "has a compiler sketch but no backend layer or ModelBuilder/SequentialModel execution path"},
+         "has a compiler sketch but no backend layer or ModelBuilder/SequentialModel execution path",
+         PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::GlobalAvgPool,
-         "has a native CPU backend primitive and direct SequentialModel adapter but is not constructed by ModelBuilder and has no production ArrayFire execution contract"},
+         "has a native CPU backend primitive and direct SequentialModel adapter but is not constructed by ModelBuilder and has no production ArrayFire execution contract",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::AdaptiveAvgPool,
-         "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path"},
+         "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path",
+         PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::ConvTranspose2D,
-         "has a native backend primitive, compiler sketch, and direct SequentialModel adapter but is not constructed by ModelBuilder and lacks a production ArrayFire execution contract"},
+         "has a native backend primitive, compiler sketch, and direct SequentialModel adapter but is not constructed by ModelBuilder and lacks a production ArrayFire execution contract",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::Upsample,
-         "has native nearest/bilinear backend primitives, a compiler sketch, and a direct SequentialModel adapter but is not constructed by ModelBuilder or ArrayFire-first"},
+         "has native nearest/bilinear backend primitives, a compiler sketch, and a direct SequentialModel adapter but is not constructed by ModelBuilder or ArrayFire-first",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::PixelShuffle,
-         "has a native depth-to-space backend primitive, compiler sketch, and direct SequentialModel adapter but is not constructed by ModelBuilder or ArrayFire-first"},
+         "has a native depth-to-space backend primitive, compiler sketch, and direct SequentialModel adapter but is not constructed by ModelBuilder or ArrayFire-first",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::PolicyNetwork,
-         "sketches reinforcement-learning policy training but is not supported by ModelBuilder/SequentialModel yet"},
+         "sketches reinforcement-learning policy training but is not supported by ModelBuilder/SequentialModel yet",
+         PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::ValueNetwork,
-         "sketches reinforcement-learning value training but is not supported by ModelBuilder/SequentialModel yet"},
+         "sketches reinforcement-learning value training but is not supported by ModelBuilder/SequentialModel yet",
+         PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::GroupNorm,
-         "has a native Float32 [H,W,C,N] backend primitive and direct SequentialModel adapter but no ModelBuilder owner or production ArrayFire-first execution contract"},
+         "has a native Float32 [H,W,C,N] backend primitive and direct SequentialModel adapter but no ModelBuilder owner or production ArrayFire-first execution contract",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::InstanceNorm,
-         "has a native Float32 [H,W,C,N] backend primitive and direct SequentialModel adapter but no ModelBuilder owner or production ArrayFire-first execution contract"},
+         "has a native Float32 [H,W,C,N] backend primitive and direct SequentialModel adapter but no ModelBuilder owner or production ArrayFire-first execution contract",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::SelfAttention,
-         "retains a legacy explicit Query/Key/Value graph contract but has no distinct GraphCompiler/ModelBuilder execution owner; use Multi-Head Attention for supported unary self-attention"},
+         "retains a legacy explicit Query/Key/Value graph contract but has no distinct GraphCompiler/ModelBuilder execution owner; use Multi-Head Attention for supported unary self-attention",
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
         {gui::NodeType::CrossAttention,
-         "the backend attention primitive can compute Query/Key/Value attention, but Studio has no graph-level multi-input CrossAttention owner or gradient/output contract"},
+         "the backend attention primitive can compute Query/Key/Value attention, but Studio has no graph-level multi-input CrossAttention owner or gradient/output contract",
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
         {gui::NodeType::LinearAttention,
-         "has neither a backend linear-attention primitive nor a GraphCompiler/ModelBuilder execution owner"},
+         "has neither a backend linear-attention primitive nor a GraphCompiler/ModelBuilder execution owner",
+         PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::RNN,
-         "has no backend simple-RNN layer, Python binding, ModelBuilder/SequentialModel module, or training owner and must not be substituted with GRU"},
+         "has no backend simple-RNN layer, Python binding, ModelBuilder/SequentialModel module, or training owner and must not be substituted with GRU",
+         PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::Bidirectional,
-         "has no contract for binding an inner recurrent layer and is not constructed by GraphCompiler, ModelBuilder, or SequentialModel; bidirectional execution must be configured and validated on a concrete recurrent node"},
+         "has no contract for binding an inner recurrent layer and is not constructed by GraphCompiler, ModelBuilder, or SequentialModel; bidirectional execution must be configured and validated on a concrete recurrent node",
+         PipelineBackendPrimitiveEvidence::Missing},
     };
     return capabilities;
 }
@@ -1073,21 +1133,29 @@ const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedTrainingControlCapabilities() {
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
         {gui::NodeType::StepLR,
-         "has a backend scheduler primitive, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint it yet"},
+         "has a backend scheduler primitive, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint it yet",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::CosineAnnealing,
-         "has a backend scheduler primitive, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint it yet"},
+         "has a backend scheduler primitive, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint it yet",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::ReduceOnPlateau,
-         "has a backend scheduler primitive, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint it yet"},
+         "has a backend scheduler primitive, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint it yet",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::ExponentialLR,
-         "has a backend scheduler primitive, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint it yet"},
+         "has a backend scheduler primitive, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint it yet",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::WarmupScheduler,
-         "has backend warmup primitives, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint one for this node yet"},
+         "has backend warmup primitives, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint one for this node yet",
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::L1Regularization,
-         "has no Engine owner that reads model parameters, computes a differentiable L1 penalty, and adds it to the selected training loss"},
+         "has no Engine owner that reads model parameters, computes a differentiable L1 penalty, and adds it to the selected training loss",
+         PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::L2Regularization,
-         "has no Engine owner that reads model parameters, computes a differentiable L2 penalty, and adds it to the selected training loss; AdamW weight decay is separate"},
+         "has no Engine owner that reads model parameters, computes a differentiable L2 penalty, and adds it to the selected training loss; AdamW weight decay is separate",
+         PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::ElasticNet,
-         "has no Engine owner that reads model parameters, combines differentiable L1/L2 penalties, and adds the result to the selected training loss"},
+         "has no Engine owner that reads model parameters, combines differentiable L1/L2 penalties, and adds the result to the selected training loss",
+         PipelineBackendPrimitiveEvidence::Missing},
     };
     return capabilities;
 }
@@ -1106,67 +1174,48 @@ GetPipelineUnsupportedTrainingWorkflowCapabilities() {
         "has inference response packaging helpers, but visual graph/runtime routing from a shared encoder to this output is not implemented";
 
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::PairDatasetBuilder, kDatasetReason},
-        {gui::NodeType::TripletDatasetBuilder, kDatasetReason},
-        {gui::NodeType::SharedEncoder, kSharedEncoderReason},
-        {gui::NodeType::SiameseBranch, kSharedEncoderReason},
-        {gui::NodeType::ContrastiveLoss, kLossReason},
-        {gui::NodeType::CosineEmbeddingLoss, kLossReason},
-        {gui::NodeType::TripletLoss, kLossReason},
-        {gui::NodeType::PairMetrics, kMetricsReason},
-        {gui::NodeType::RetrievalMetrics, kMetricsReason},
-        {gui::NodeType::EmbeddingOutput, kOutputReason},
-        {gui::NodeType::PairScoreOutput, kOutputReason},
+        {gui::NodeType::PairDatasetBuilder, kDatasetReason,
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
+        {gui::NodeType::TripletDatasetBuilder, kDatasetReason,
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
+        {gui::NodeType::SharedEncoder, kSharedEncoderReason,
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
+        {gui::NodeType::SiameseBranch, kSharedEncoderReason,
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
+        {gui::NodeType::ContrastiveLoss, kLossReason,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {gui::NodeType::CosineEmbeddingLoss, kLossReason,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {gui::NodeType::TripletLoss, kLossReason,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {gui::NodeType::PairMetrics, kMetricsReason,
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
+        {gui::NodeType::RetrievalMetrics, kMetricsReason,
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
+        {gui::NodeType::EmbeddingOutput, kOutputReason,
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
+        {gui::NodeType::PairScoreOutput, kOutputReason,
+         PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
     };
     return capabilities;
 }
 
 const std::vector<PipelineSupportedTrainingNodeCapability>&
 GetPipelineSupportedTrainingBackendCapabilities() {
-    static const std::vector<PipelineSupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::Dense,
-         "compiled by GraphCompiler and executed by TrainingExecutor"},
-        {gui::NodeType::Dropout,
-         "compiled by GraphCompiler and executed by TrainingExecutor"},
-        {gui::NodeType::BatchNorm,
-         "compiled by GraphCompiler and executed by TrainingExecutor"},
-        {gui::NodeType::LayerNorm,
-         "compiled by GraphCompiler and executed by TrainingExecutor through a CPU-backed SequentialModel module"},
-        {gui::NodeType::MultiHeadAttention,
-         "compiled by GraphCompiler and executed by TrainingExecutor as CPU-backed self-attention"},
-        {gui::NodeType::LSTM,
-         "compiled by GraphCompiler and executed by TrainingExecutor"},
-        {gui::NodeType::GRU,
-         "compiled by GraphCompiler and executed by TrainingExecutor"},
-        {gui::NodeType::Embedding,
-         "compiled by GraphCompiler and executed by TrainingExecutor"},
-        {gui::NodeType::TransformerEncoder,
-         "compiled by GraphCompiler and executed by TrainingExecutor"},
-        {gui::NodeType::PositionalEncoding,
-         "compiled by GraphCompiler and executed by TrainingExecutor"},
-        {gui::NodeType::TransformerDecoder,
-         "compiled by GraphCompiler and executed by TrainingExecutor for tested causal language-model stacks"},
-        {gui::NodeType::TimeDistributed,
-         "compiled by GraphCompiler and executed by TrainingExecutor as a per-timestep dense projection"},
-        {gui::NodeType::ReLU,
-         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
-        {gui::NodeType::LeakyReLU,
-         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
-        {gui::NodeType::ELU,
-         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
-        {gui::NodeType::GELU,
-         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
-        {gui::NodeType::Swish,
-         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
-        {gui::NodeType::Mish,
-         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
-        {gui::NodeType::Sigmoid,
-         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
-        {gui::NodeType::Tanh,
-         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
-        {gui::NodeType::Softmax,
-         "compiled by GraphCompiler and executed by TrainingExecutor as an ArrayFire-first activation"},
-    };
+    static const std::vector<PipelineSupportedTrainingNodeCapability>
+        capabilities = [] {
+            std::vector<PipelineSupportedTrainingNodeCapability> result;
+            const auto& roles = GetPipelineSupportedTrainingRoleCapabilities();
+            result.reserve(roles.size());
+            for (const auto& role : roles) {
+                if (role.role != PipelineTrainingSupportRole::ModelLayer &&
+                    role.role != PipelineTrainingSupportRole::Activation) {
+                    continue;
+                }
+                result.push_back({role.node_type, role.reason});
+            }
+            return result;
+        }();
     return capabilities;
 }
 
@@ -1197,6 +1246,64 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled as a trainable causal decoder layer for tested language-model stacks"},
         {gui::NodeType::Flatten, PipelineTrainingSupportRole::ModelLayer,
          "compiled and built as a shape-preserving model layer"},
+        {gui::NodeType::Reshape, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a resolved tensor reshape layer"},
+        {gui::NodeType::View, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a resolved tensor view layer"},
+        {gui::NodeType::Permute, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor dimension permutation layer"},
+        {gui::NodeType::Squeeze, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a resolved singleton-dimension removal layer"},
+        {gui::NodeType::Unsqueeze, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a resolved singleton-dimension insertion layer"},
+        {gui::NodeType::TensorBroadcastTo, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor broadcast layer"},
+        {gui::NodeType::TensorExpand, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a materialized tensor expansion layer"},
+        {gui::NodeType::TensorIndexSelect, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an indexed tensor selection layer"},
+        {gui::NodeType::TensorSum, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor reduction layer"},
+        {gui::NodeType::TensorMean, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor reduction layer"},
+        {gui::NodeType::TensorMax, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor reduction layer"},
+        {gui::NodeType::TensorMin, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor reduction layer"},
+        {gui::NodeType::TensorProd, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor reduction layer"},
+        {gui::NodeType::TensorVar, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor reduction layer"},
+        {gui::NodeType::TensorStd, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as a tensor reduction layer"},
+        {gui::NodeType::TensorPow, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an elementwise tensor layer"},
+        {gui::NodeType::TensorSqrt, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an elementwise tensor layer"},
+        {gui::NodeType::TensorExp, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an elementwise tensor layer"},
+        {gui::NodeType::TensorLog, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an elementwise tensor layer"},
+        {gui::NodeType::TensorAbs, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an elementwise tensor layer"},
+        {gui::NodeType::TensorSign, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an elementwise tensor layer"},
+        {gui::NodeType::TensorClip, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and built as an elementwise tensor layer"},
+        {gui::NodeType::Concatenate, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-in tensor layer"},
+        {gui::NodeType::Add, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-in tensor layer"},
+        {gui::NodeType::Multiply, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-in tensor layer"},
+        {gui::NodeType::Average, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-in tensor layer"},
+        {gui::NodeType::TensorDot, PipelineTrainingSupportRole::ModelLayer,
+         "compiled and executed as a graph fan-in tensor layer"},
+        {gui::NodeType::TensorCompare, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a scalar tensor mask or graph fan-in comparison layer"},
+        {gui::NodeType::TensorLogicalMask, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a unary tensor mask or graph fan-in logical layer"},
         {gui::NodeType::TimeDistributed, PipelineTrainingSupportRole::ModelLayer,
          "compiled and built as a per-timestep dense projection"},
 
@@ -1256,6 +1363,28 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled into training optimizer configuration"},
         {gui::NodeType::NAdam, PipelineTrainingSupportRole::Optimizer,
          "compiled into training optimizer configuration"},
+
+        {gui::NodeType::Normalize, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training preprocessing configuration"},
+        {gui::NodeType::OneHotEncode, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training label preprocessing configuration"},
+        {gui::NodeType::AudioInput, PipelineTrainingSupportRole::DataSource,
+         "compiled as the source contract for the training audio batcher"},
+        {gui::NodeType::Spectrogram, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training audio feature configuration"},
+        {gui::NodeType::MelSpectrogram, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training mel-feature configuration"},
+        {gui::NodeType::MFCC, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the training MFCC feature configuration"},
+        {gui::NodeType::DataInput, PipelineTrainingSupportRole::DataSource,
+         "compiled as the configured project dataset source for training"},
+
+        {gui::NodeType::DataLoader, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into batching, epoch, balancing, and checkpoint controls"},
+        {gui::NodeType::DataSplit, PipelineTrainingSupportRole::TrainingControl,
+         "compiled into train, validation, and held-out test partition policy"},
+        {gui::NodeType::Output, PipelineTrainingSupportRole::TrainingControl,
+         "compiled as a terminal training-graph marker without adding a module"},
     };
     return capabilities;
 }
@@ -1344,6 +1473,7 @@ PipelineRuntimeSupport ResolvePipelineRuntimeSupport(const std::string& legacy_t
             support.metadata_node_type = fail_closed_it->node_type;
         }
         support.implementation_owner = PipelineRuntimeImplementationOwner::None;
+        support.primitive_evidence = fail_closed_it->primitive_evidence;
         return with_validation_axes(std::move(support));
     }
 
@@ -1482,6 +1612,21 @@ const char* PipelineTrainingBackendSupportModeName(
     return "unknown";
 }
 
+const char* PipelineBackendPrimitiveEvidenceName(
+    PipelineBackendPrimitiveEvidence evidence) {
+    switch (evidence) {
+    case PipelineBackendPrimitiveEvidence::NotApplicable:
+        return "not_applicable";
+    case PipelineBackendPrimitiveEvidence::ProvenNodePrimitive:
+        return "proven_node_primitive";
+    case PipelineBackendPrimitiveEvidence::RelatedHelperOnly:
+        return "related_helper_only";
+    case PipelineBackendPrimitiveEvidence::Missing:
+        return "missing";
+    }
+    return "not_applicable";
+}
+
 const char* PipelineTrainingSupportRoleName(PipelineTrainingSupportRole role) {
     switch (role) {
     case PipelineTrainingSupportRole::ModelLayer:
@@ -1492,6 +1637,10 @@ const char* PipelineTrainingSupportRoleName(PipelineTrainingSupportRole role) {
         return "loss";
     case PipelineTrainingSupportRole::Optimizer:
         return "optimizer";
+    case PipelineTrainingSupportRole::DataSource:
+        return "data_source";
+    case PipelineTrainingSupportRole::Preprocessing:
+        return "preprocessing";
     case PipelineTrainingSupportRole::TrainingControl:
         return "training_control";
     case PipelineTrainingSupportRole::TrainingWorkflow:
@@ -1788,7 +1937,8 @@ ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
         return {PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer,
                 false,
                 false,
-                layer_it->reason};
+                layer_it->reason,
+                layer_it->primitive_evidence};
     }
 
     const auto& control_capabilities =
@@ -1803,7 +1953,8 @@ ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
         return {PipelineTrainingBackendSupportMode::UnsupportedTrainingControl,
                 false,
                 false,
-                control_it->reason};
+                control_it->reason,
+                control_it->primitive_evidence};
     }
 
     const auto& workflow_capabilities =
@@ -1818,7 +1969,8 @@ ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
         return {PipelineTrainingBackendSupportMode::UnsupportedTrainingWorkflow,
                 false,
                 false,
-                workflow_it->reason};
+                workflow_it->reason,
+                workflow_it->primitive_evidence};
     }
 
     const auto& supported_capabilities =
