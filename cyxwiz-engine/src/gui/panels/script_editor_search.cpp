@@ -388,7 +388,6 @@ bool ScriptEditorPanel::Replace(const std::string& search_text, const std::strin
             // Replace the selection
             editor.Delete();
 
-            auto cursor = editor.GetCursorPosition();
             editor.InsertText(replace_text);
 
             tabs_[active_tab_index_]->is_modified = true;

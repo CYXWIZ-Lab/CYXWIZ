@@ -226,11 +226,9 @@ void NormalizationPanel::RenderResults() {
     if (n_cols > 0 && ImGui::BeginTable("TransData", n_cols + 1, ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollX)) {
         ImGui::TableSetupColumn("Row");
 
-        int col_idx = 0;
         for (size_t i = 0; i < selected_columns_.size(); ++i) {
             if (selected_columns_[i]) {
                 ImGui::TableSetupColumn(column_names_[i].c_str());
-                col_idx++;
             }
         }
         ImGui::TableHeadersRow();

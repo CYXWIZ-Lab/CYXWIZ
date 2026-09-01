@@ -43,7 +43,11 @@ bool LaunchAssetInFileBrowser(const std::string& absolute_path, bool is_director
 #elif defined(__APPLE__)
     const pid_t pid = fork();
     if (pid == 0) {
-        execlp("open", "open", "-R", absolute_path.c_str(), static_cast<char*>(nullptr));
+        if (is_directory) {
+            execlp("open", "open", absolute_path.c_str(), static_cast<char*>(nullptr));
+        } else {
+            execlp("open", "open", "-R", absolute_path.c_str(), static_cast<char*>(nullptr));
+        }
         _exit(127);
     }
     int status = 0;
@@ -1776,4 +1780,3 @@ void AssetBrowserPanel::RenderDatasetPreview() {
 }
 
 } // namespace cyxwiz
-

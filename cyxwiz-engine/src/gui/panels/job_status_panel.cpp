@@ -28,7 +28,6 @@ JobStatusPanel::JobStatusPanel()
     , show_all_jobs_(false)  // Only show P2P jobs by default
     , show_completed_jobs_(true)
     , max_displayed_jobs_(20)
-    , submit_job_dialog_open_(false)
 {
     model_definition_input_[0] = '\0';
     dataset_uri_input_[0] = '\0';

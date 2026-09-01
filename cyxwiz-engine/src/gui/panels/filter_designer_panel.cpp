@@ -398,6 +398,7 @@ void FilterDesignerPanel::RenderSignalFiltering() {
         case FilterType::Bandpass: type_name = "Bandpass"; break;
         case FilterType::Bandstop: type_name = "Bandstop"; break;
     }
+    ImGui::TextDisabled("%s response", type_name);
 
     if (filter_type_ == FilterType::Lowpass) {
         ImGui::BulletText("%.1f Hz: %s", test_freq1_,

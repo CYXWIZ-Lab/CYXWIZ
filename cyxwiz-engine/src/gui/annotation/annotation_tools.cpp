@@ -104,7 +104,7 @@ void AnnotationMask::DrawRect(int x, int y, int w, int h, AnnotationLabel label,
     }
 }
 
-void AnnotationMask::FloodFill(int x, int y, AnnotationLabel label, float tolerance) {
+void AnnotationMask::FloodFill(int x, int y, AnnotationLabel label) {
     if (x < 0 || x >= width_ || y < 0 || y >= height_) return;
 
     AnnotationLabel target = Get(x, y);
@@ -243,7 +243,7 @@ void RectangleSelectTool::OnMouseUp(float x, float y, MouseButton button) {
     }
 }
 
-void RectangleSelectTool::OnMouseMove(float x, float y, bool dragging) {
+void RectangleSelectTool::OnMouseMove(float x, float y, bool) {
     if (is_drawing_) {
         float x1 = std::min(start_point_.x, x);
         float y1 = std::min(start_point_.y, y);
@@ -307,11 +307,11 @@ void BrushTool::OnMouseDown(float x, float y, MouseButton button) {
     }
 }
 
-void BrushTool::OnMouseUp(float x, float y, MouseButton button) {
+void BrushTool::OnMouseUp(float, float, MouseButton) {
     is_painting_ = false;
 }
 
-void BrushTool::OnMouseMove(float x, float y, bool dragging) {
+void BrushTool::OnMouseMove(float x, float y, bool) {
     cursor_pos_ = {x, y};
 
     if (is_painting_) {
@@ -404,11 +404,11 @@ void PointMarkerTool::OnMouseDown(float x, float y, MouseButton button) {
     }
 }
 
-void PointMarkerTool::OnMouseUp(float x, float y, MouseButton button) {
+void PointMarkerTool::OnMouseUp(float, float, MouseButton) {
     // Nothing special on mouse up
 }
 
-void PointMarkerTool::OnMouseMove(float x, float y, bool dragging) {
+void PointMarkerTool::OnMouseMove(float x, float y, bool) {
     cursor_pos_ = {x, y};
 
     // Highlight nearest marker
@@ -519,11 +519,11 @@ void PolygonTool::OnMouseDown(float x, float y, MouseButton button) {
     }
 }
 
-void PolygonTool::OnMouseUp(float x, float y, MouseButton button) {
+void PolygonTool::OnMouseUp(float, float, MouseButton) {
     // Nothing special
 }
 
-void PolygonTool::OnMouseMove(float x, float y, bool dragging) {
+void PolygonTool::OnMouseMove(float x, float y, bool) {
     cursor_pos_ = {x, y};
 }
 

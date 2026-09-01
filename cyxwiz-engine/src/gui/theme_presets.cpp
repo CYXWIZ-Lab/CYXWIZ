@@ -22,8 +22,6 @@ void Theme::ApplyCyxWizDark() {
     ImVec4 accent_hover  = ImVec4(0.30f, 0.65f, 0.95f, 1.00f);   // Hover state
     ImVec4 accent_active = ImVec4(0.15f, 0.45f, 0.75f, 1.00f);   // Active state
     ImVec4 success       = ImVec4(0.20f, 0.70f, 0.40f, 1.00f);   // Green success
-    ImVec4 warning       = ImVec4(0.90f, 0.70f, 0.20f, 1.00f);   // Yellow warning
-    ImVec4 error_col     = ImVec4(0.85f, 0.30f, 0.30f, 1.00f);   // Red error
 
     // Text
     colors[ImGuiCol_Text]                   = text;
@@ -686,9 +684,6 @@ void Theme::ApplyDracula() {
     ImVec4 pink          = ImVec4(1.00f, 0.47f, 0.78f, 1.00f);  // #ff79c6
     ImVec4 cyan          = ImVec4(0.55f, 0.91f, 0.99f, 1.00f);  // #8be9fd
     ImVec4 green         = ImVec4(0.31f, 0.98f, 0.48f, 1.00f);  // #50fa7b
-    ImVec4 yellow        = ImVec4(0.95f, 0.98f, 0.55f, 1.00f);  // #f1fa8c
-    ImVec4 orange        = ImVec4(1.00f, 0.72f, 0.42f, 1.00f);  // #ffb86c
-    ImVec4 red           = ImVec4(1.00f, 0.33f, 0.33f, 1.00f);  // #ff5555
 
     // Text
     colors[ImGuiCol_Text]                   = text;
@@ -815,10 +810,6 @@ void Theme::ApplyOneDarkPro() {
     ImVec4 blue          = ImVec4(0.38f, 0.69f, 0.94f, 1.00f);  // #61afef (PRIMARY)
     ImVec4 cyan          = ImVec4(0.34f, 0.71f, 0.76f, 1.00f);  // #56b6c2
     ImVec4 green         = ImVec4(0.60f, 0.76f, 0.47f, 1.00f);  // #98c379
-    ImVec4 yellow        = ImVec4(0.90f, 0.75f, 0.48f, 1.00f);  // #e5c07b
-    ImVec4 orange        = ImVec4(0.82f, 0.60f, 0.40f, 1.00f);  // #d19a66
-    ImVec4 red           = ImVec4(0.88f, 0.42f, 0.46f, 1.00f);  // #e06c75
-    ImVec4 purple        = ImVec4(0.78f, 0.47f, 0.86f, 1.00f);  // #c678dd
 
     // Text
     colors[ImGuiCol_Text]                   = text;
@@ -946,11 +937,7 @@ void Theme::ApplyNord() {
     ImVec4 frost_cyan    = ImVec4(0.56f, 0.74f, 0.73f, 1.00f);  // #8fbcbb
     ImVec4 frost_light   = ImVec4(0.51f, 0.63f, 0.76f, 1.00f);  // #81a1c1
     ImVec4 frost_deep    = ImVec4(0.37f, 0.51f, 0.67f, 1.00f);  // #5e81ac
-    ImVec4 aurora_red    = ImVec4(0.75f, 0.38f, 0.42f, 1.00f);  // #bf616a
-    ImVec4 aurora_orange = ImVec4(0.82f, 0.53f, 0.44f, 1.00f);  // #d08770
-    ImVec4 aurora_yellow = ImVec4(0.92f, 0.80f, 0.55f, 1.00f);  // #ebcb8b
     ImVec4 aurora_green  = ImVec4(0.64f, 0.75f, 0.55f, 1.00f);  // #a3be8c
-    ImVec4 aurora_purple = ImVec4(0.71f, 0.56f, 0.68f, 1.00f);  // #b48ead
 
     // Text
     colors[ImGuiCol_Text]                   = text;
@@ -1072,9 +1059,7 @@ void Theme::ApplyCatppuccinMocha() {
     ImVec4 mantle        = ImVec4(0.09f, 0.09f, 0.15f, 1.00f);  // #181825
     ImVec4 crust         = ImVec4(0.07f, 0.07f, 0.11f, 1.00f);  // #11111b
     ImVec4 text          = ImVec4(0.80f, 0.84f, 0.96f, 1.00f);  // #cdd6f4
-    ImVec4 subtext1      = ImVec4(0.73f, 0.76f, 0.87f, 1.00f);  // #bac2de
     ImVec4 subtext0      = ImVec4(0.65f, 0.68f, 0.78f, 1.00f);  // #a6adc8
-    ImVec4 overlay2      = ImVec4(0.58f, 0.60f, 0.69f, 1.00f);  // #9399b2
     ImVec4 overlay1      = ImVec4(0.47f, 0.49f, 0.58f, 1.00f);  // #7f849c
     ImVec4 surface2      = ImVec4(0.36f, 0.38f, 0.46f, 1.00f);  // #585b70
     ImVec4 surface1      = ImVec4(0.28f, 0.30f, 0.38f, 1.00f);  // #45475a
@@ -1086,8 +1071,6 @@ void Theme::ApplyCatppuccinMocha() {
     ImVec4 lavender      = ImVec4(0.71f, 0.75f, 1.00f, 1.00f);  // #b4befe
     ImVec4 mauve         = ImVec4(0.80f, 0.65f, 0.97f, 1.00f);  // #cba6f7
     ImVec4 pink          = ImVec4(0.96f, 0.76f, 0.90f, 1.00f);  // #f5c2e7
-    ImVec4 red           = ImVec4(0.95f, 0.55f, 0.66f, 1.00f);  // #f38ba8
-    ImVec4 peach         = ImVec4(0.98f, 0.70f, 0.53f, 1.00f);  // #fab387
     ImVec4 yellow        = ImVec4(0.98f, 0.89f, 0.69f, 1.00f);  // #f9e2af
     ImVec4 green         = ImVec4(0.65f, 0.89f, 0.63f, 1.00f);  // #a6e3a1
     ImVec4 teal          = ImVec4(0.58f, 0.89f, 0.84f, 1.00f);  // #94e2d5
@@ -1221,7 +1204,6 @@ void Theme::ApplyCyxOSAqua() {
     ImVec4 accent_purple = ImVec4(0.34f, 0.34f, 0.84f, 1.00f);  // #5856D6
     ImVec4 success       = ImVec4(0.20f, 0.78f, 0.35f, 1.00f);  // #34C759
     ImVec4 warning       = ImVec4(1.00f, 0.58f, 0.00f, 1.00f);  // #FF9500
-    ImVec4 error         = ImVec4(1.00f, 0.23f, 0.19f, 1.00f);  // #FF3B30
 
     // Text
     colors[ImGuiCol_Text]                   = text_primary;
@@ -1355,7 +1337,6 @@ void Theme::ApplyCyxOSFluent() {
     ImVec4 accent_light  = ImVec4(0.38f, 0.80f, 1.00f, 1.00f);  // #60CDFF
     ImVec4 success       = ImVec4(0.42f, 0.80f, 0.37f, 1.00f);  // #6CCB5F
     ImVec4 warning       = ImVec4(0.99f, 0.88f, 0.00f, 1.00f);  // #FCE100
-    ImVec4 error         = ImVec4(0.91f, 0.07f, 0.14f, 1.00f);  // #E81123
 
     // Text
     colors[ImGuiCol_Text]                   = text_primary;
@@ -1489,10 +1470,8 @@ void Theme::ApplyCyxOSCoder() {
     ImVec4 accent_blue   = ImVec4(0.54f, 0.71f, 0.98f, 1.00f);  // #89B4FA
     ImVec4 accent_pink   = ImVec4(0.96f, 0.76f, 0.91f, 1.00f);  // #F5C2E7
     ImVec4 string_green  = ImVec4(0.65f, 0.89f, 0.63f, 1.00f);  // #A6E3A1
-    ImVec4 number_orange = ImVec4(0.98f, 0.70f, 0.53f, 1.00f);  // #FAB387
     ImVec4 keyword_purple= ImVec4(0.80f, 0.65f, 0.97f, 1.00f);  // #CBA6F7
     ImVec4 function_cyan = ImVec4(0.54f, 0.86f, 0.92f, 1.00f);  // #89DCEB
-    ImVec4 error_red     = ImVec4(0.95f, 0.55f, 0.66f, 1.00f);  // #F38BA8
     ImVec4 warning_yellow= ImVec4(0.98f, 0.89f, 0.69f, 1.00f);  // #F9E2AF
 
     // Text
@@ -1627,7 +1606,6 @@ void Theme::ApplyCyxOSOffice() {
     ImVec4 accent_light  = ImVec4(0.23f, 0.51f, 0.96f, 1.00f);  // #3B82F6
     ImVec4 success       = ImVec4(0.06f, 0.72f, 0.51f, 1.00f);  // #10B981
     ImVec4 warning       = ImVec4(0.96f, 0.62f, 0.04f, 1.00f);  // #F59E0B
-    ImVec4 error         = ImVec4(0.94f, 0.27f, 0.27f, 1.00f);  // #EF4444
 
     // Text
     colors[ImGuiCol_Text]                   = text_primary;
@@ -1756,7 +1734,6 @@ void Theme::ApplyCyxOSTuiClassic() {
     ImVec4 green_glow    = ImVec4(0.00f, 1.00f, 0.00f, 1.00f);  // #00FF00
     ImVec4 green_border  = ImVec4(0.10f, 0.30f, 0.10f, 1.00f);  // #1A4D1A
     ImVec4 warning       = ImVec4(0.80f, 1.00f, 0.20f, 1.00f);  // #CCFF33
-    ImVec4 error         = ImVec4(1.00f, 0.20f, 0.20f, 1.00f);  // #FF3333
 
     // Text
     colors[ImGuiCol_Text]                   = green_primary;
@@ -1885,7 +1862,6 @@ void Theme::ApplyCyxOSTuiMatrix() {
     ImVec4 green_bright  = ImVec4(0.50f, 1.00f, 0.00f, 1.00f);  // #7FFF00
     ImVec4 green_border  = ImVec4(0.00f, 0.20f, 0.00f, 1.00f);  // #003300
     ImVec4 warning       = ImVec4(0.68f, 1.00f, 0.18f, 1.00f);  // #ADFF2F
-    ImVec4 error         = ImVec4(1.00f, 0.00f, 0.00f, 1.00f);  // #FF0000
 
     // Text
     colors[ImGuiCol_Text]                   = green_matrix;
@@ -2014,7 +1990,6 @@ void Theme::ApplyCyxOSTuiAmber() {
     ImVec4 amber_bright  = ImVec4(1.00f, 0.75f, 0.00f, 1.00f);  // #FFC000
     ImVec4 amber_border  = ImVec4(0.30f, 0.22f, 0.00f, 1.00f);  // #4D3800
     ImVec4 warning       = ImVec4(1.00f, 0.88f, 0.00f, 1.00f);  // #FFE000
-    ImVec4 error         = ImVec4(1.00f, 0.25f, 0.00f, 1.00f);  // #FF4000
 
     // Text
     colors[ImGuiCol_Text]                   = amber_primary;

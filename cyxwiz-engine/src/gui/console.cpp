@@ -1713,7 +1713,7 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
 #endif
       },
       nullptr, // progress callback
-      [console_ptr](bool success, const std::string &error) {
+      [](bool success, const std::string &error) {
         if (!success && !error.empty()) {
           spdlog::error("Pip command task failed: {}", error);
         }

@@ -315,17 +315,11 @@ void NodeEditor::PasteClipboard() {
         node_id_map[old_id] = new_node.id;
         nodes_.push_back(new_node);
 
-        // Position the new node with offset
-        ImVec2 old_pos = ImNodes::GetNodeGridSpacePos(old_id);
-        // If we can't get old position (node doesn't exist), use a default
-        ImVec2 new_pos(old_pos.x + paste_offset_.x, old_pos.y + paste_offset_.y);
-
         // For pasted nodes, we need to set position after they're added
         // ImNodes requires the node to exist first, so we'll set it in the next frame
         // For now, use a simple offset from screen center
-        ImVec2 canvas_origin = ImNodes::GetNodeEditorSpacePos(0);
-        new_pos = ImVec2(paste_offset_.x + nodes_.size() * 10.0f,
-                         paste_offset_.y + nodes_.size() * 10.0f);
+        const ImVec2 new_pos(paste_offset_.x + nodes_.size() * 10.0f,
+                             paste_offset_.y + nodes_.size() * 10.0f);
 
         ImNodes::SetNodeGridSpacePos(new_node.id, new_pos);
         ImNodes::SelectNode(new_node.id);

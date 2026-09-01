@@ -442,8 +442,4 @@ void CalculatorPanel::InsertFunction(const std::string& func) {
     strcat(expression_buffer_, insert_text.c_str());
 }
 
-void CalculatorPanel::InsertConstant(const std::string& name, double value) {
-    strcat(expression_buffer_, name.c_str());
-}
-
 } // namespace cyxwiz

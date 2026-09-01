@@ -198,6 +198,7 @@ void ModelSummaryPanel::RenderSummaryStats() {
     card_id = 0;  // Reset each frame
     auto DrawCard = [&](const char* title, const char* value, const char* icon, ImVec4 accent_color) {
         ImGui::PushID(card_id++);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, card_bg);
         ImGui::BeginChild("##card", ImVec2(card_width, card_height), true);
         ImGui::PushStyleColor(ImGuiCol_Text, accent_color);
         ImGui::Text("%s", icon);
@@ -209,6 +210,7 @@ void ModelSummaryPanel::RenderSummaryStats() {
         ImGui::Text("%s", value);
         ImGui::SetWindowFontScale(1.0f);
         ImGui::EndChild();
+        ImGui::PopStyleColor();
         ImGui::PopID();
     };
 

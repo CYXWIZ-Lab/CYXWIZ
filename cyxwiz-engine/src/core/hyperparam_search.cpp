@@ -479,13 +479,4 @@ HyperparamSearch::SampleBayesian() {
     return SampleRandom();
 }
 
-void HyperparamSearch::ApplyParameters(
-    const std::map<std::string, float>& params,
-    const std::map<std::string, std::string>& categorical_params)
-{
-    // TODO: Apply parameters to training configuration
-    // This will map parameter names like "learning_rate", "batch_size", etc.
-    // to the actual TrainingConfiguration struct
-}
-
 } // namespace cyxwiz

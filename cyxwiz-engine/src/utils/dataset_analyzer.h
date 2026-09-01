@@ -134,17 +134,13 @@ public:
     /**
      * Detect outliers using IQR method
      * @param images Vector of image data
-     * @param labels Vector of labels
-     * @param width Image width
-     * @param height Image height
      * @param channels Number of channels
      * @param iqr_multiplier IQR multiplier for outlier threshold (default 1.5)
      * @return Outlier information
      */
     static OutlierInfo DetectOutliers(
         const std::vector<std::vector<float>>& images,
-        const std::vector<int>& labels,
-        int width, int height, int channels,
+        int channels,
         float iqr_multiplier = 1.5f
     );
 

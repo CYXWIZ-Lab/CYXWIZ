@@ -1012,11 +1012,17 @@ ExportResult ModelExporter::ExportONNX(
     result.output_path = output_path;
 
 #ifndef CYXWIZ_HAS_ONNX_EXPORT
+    result.num_layers = static_cast<int>(model.Size());
     result.success = false;
     result.error_message = errors::FormatError(
         errors::Serialization::ExportFormatNotCompiled,
-        "ONNX export support not compiled. Build with CYXWIZ_ENABLE_ONNX=ON and ensure onnx package is installed.");
+        "ONNX export support not compiled. Requested opset " +
+            std::to_string(options.onnx_opset_version) +
+            ". Build with CYXWIZ_ENABLE_ONNX=ON and ensure the onnx package is installed.");
     last_error_ = result.error_message;
+    if (progress_cb) {
+        progress_cb(0, 1, result.error_message);
+    }
     return result;
 #else
     try {

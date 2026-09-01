@@ -135,11 +135,6 @@ void NodeEditor::GenerateCodeForFramework(CodeFramework framework) {
         return;
     }
 
-    // Copy graph data for thread safety
-    std::vector<MLNode> nodes_copy = nodes_;
-    std::vector<NodeLink> links_copy = links_;
-    size_t total_nodes = sorted_ids.size();
-
     // Determine framework name
     std::string framework_name;
     switch (framework) {
@@ -160,7 +155,7 @@ void NodeEditor::GenerateCodeForFramework(CodeFramework framework) {
     // Run code generation async
     cyxwiz::AsyncTaskManager::Instance().RunAsync(
         "Generate " + framework_name + " Code",
-        [this, framework, sorted_ids, nodes_copy, total_nodes, result, fw_name](cyxwiz::LambdaTask& task) {
+        [this, framework, sorted_ids, result, fw_name](cyxwiz::LambdaTask& task) {
             task.ReportProgress(0.0f, "Starting code generation...");
 
             std::string code;

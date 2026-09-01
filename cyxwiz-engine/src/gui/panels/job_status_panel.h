@@ -101,7 +101,6 @@ private:
     // Job submission UI
     char model_definition_input_[256];
     char dataset_uri_input_[256];
-    bool submit_job_dialog_open_;
 
     // Training metrics history per job (for graphs)
     std::map<std::string, MetricHistory> job_metrics_;

@@ -119,7 +119,6 @@ private:
     bool visible_ = true;
     std::string search_query_;
     bool focus_search_next_frame_ = false;  // Focus search bar on next frame
-    bool studio_section_expanded_ = true;   // CyxWiz Studio section state
 
     // Navigation state (breadcrumb)
     bool showing_all_in_category_ = false;

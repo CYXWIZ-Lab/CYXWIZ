@@ -159,7 +159,12 @@ void KMeansPanel::RenderParameters() {
             cancel_requested_ = true;
         }
 
-        ImGui::Text("Computing... Iteration %d", progress_iteration_.load());
+        const int progress_total = progress_total_.load();
+        if (progress_total > 0) {
+            ImGui::Text("Computing... %d / %d", progress_iteration_.load(), progress_total);
+        } else {
+            ImGui::Text("Computing... Iteration %d", progress_iteration_.load());
+        }
         ImGui::Text("Inertia: %.4f", progress_inertia_.load());
     }
 
@@ -496,6 +501,9 @@ void KMeansPanel::RunClustering() {
     // Start clustering in background thread
     is_computing_ = true;
     cancel_requested_ = false;
+    progress_iteration_ = 0;
+    progress_total_ = max_iter_;
+    progress_inertia_ = 0.0;
     status_message_ = "Computing...";
 
     if (compute_thread_.joinable()) {
@@ -535,6 +543,9 @@ void KMeansPanel::RunElbowAnalysis() {
 
     is_computing_ = true;
     cancel_requested_ = false;
+    progress_iteration_ = 0;
+    progress_total_ = elbow_k_max_ - elbow_k_min_ + 1;
+    progress_inertia_ = 0.0;
     status_message_ = "Running elbow analysis...";
 
     if (compute_thread_.joinable()) {
@@ -548,6 +559,7 @@ void KMeansPanel::RunElbowAnalysis() {
             elbow_k_max_,
             [this](int current, int total) {
                 progress_iteration_ = current;
+                progress_total_ = total;
             }
         );
 

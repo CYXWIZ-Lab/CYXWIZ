@@ -294,6 +294,7 @@ set(ENGINE_SOURCES
     src/gui/node_editor_nodes.cpp
     src/gui/node_editor_validation.cpp
     src/gui/node_editor_shape_inference.cpp
+    src/gui/tensor_shape_inference_contract.cpp
     src/gui/node_editor_skip.cpp
     src/gui/node_editor_add_search.cpp
     src/gui/node_editor_icons.cpp
@@ -4345,7 +4346,6 @@ if(CYXWIZ_ENABLE_ASAN)
 
     message(STATUS "ASan memory test enabled - run test_asan_memory to verify")
 endif()
-
 
 
 

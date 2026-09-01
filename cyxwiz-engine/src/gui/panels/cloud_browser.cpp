@@ -205,7 +205,7 @@ void CloudBrowserPanel::RenderPublicDatasetsTab() {
     RenderPublicDatasetTable(filtered_public_datasets_);
 }
 
-void CloudBrowserPanel::RenderDatasetTable(const std::vector<network::CloudDatasetInfo>& datasets, bool is_public) {
+void CloudBrowserPanel::RenderDatasetTable(const std::vector<network::CloudDatasetInfo>& datasets) {
     ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                             ImGuiTableFlags_Sortable | ImGuiTableFlags_Resizable |
                             ImGuiTableFlags_ScrollY;
@@ -239,7 +239,7 @@ void CloudBrowserPanel::RenderDatasetTable(const std::vector<network::CloudDatas
             if (ImGui::Selectable(ds.name.c_str(), is_selected,
                                    ImGuiSelectableFlags_SpanAllColumns)) {
                 selected_index_ = static_cast<int>(i);
-                selected_dataset_ = const_cast<network::CloudDatasetInfo*>(&filtered_datasets_[i]);
+                selected_dataset_ = &datasets[i];
 
                 // Double-click to use dataset
                 if (ImGui::IsMouseDoubleClicked(0)) {
@@ -252,7 +252,7 @@ void CloudBrowserPanel::RenderDatasetTable(const std::vector<network::CloudDatas
             // Context menu
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                 selected_index_ = static_cast<int>(i);
-                selected_dataset_ = const_cast<network::CloudDatasetInfo*>(&filtered_datasets_[i]);
+                selected_dataset_ = &datasets[i];
                 ImGui::OpenPopup("DatasetContextMenu");
             }
 
@@ -309,13 +309,13 @@ void CloudBrowserPanel::RenderPublicDatasetTable(const std::vector<network::Publ
             if (ImGui::Selectable(ds.name.c_str(), is_selected,
                                    ImGuiSelectableFlags_SpanAllColumns)) {
                 selected_public_index_ = static_cast<int>(i);
-                selected_public_dataset_ = const_cast<network::PublicDatasetInfo*>(&filtered_public_datasets_[i]);
+                selected_public_dataset_ = &datasets[i];
             }
 
             // Context menu
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                 selected_public_index_ = static_cast<int>(i);
-                selected_public_dataset_ = const_cast<network::PublicDatasetInfo*>(&filtered_public_datasets_[i]);
+                selected_public_dataset_ = &datasets[i];
                 ImGui::OpenPopup("PublicDatasetContextMenu");
             }
 

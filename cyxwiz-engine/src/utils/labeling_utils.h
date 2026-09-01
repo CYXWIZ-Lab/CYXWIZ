@@ -99,19 +99,13 @@ public:
      * @param width Image width
      * @param height Image height
      * @param channels Number of channels (3 for RGB)
-     * @param mode "fast" or "quality"
-     * @param base_k Base k for initial segmentation
-     * @param inc_k Increment for k
-     * @param sigma Gaussian blur sigma
+     * This build uses a fixed multi-scale sliding-window fallback because
+     * OpenCV ximgproc selective search is not linked.
      * @return Vector of region proposals
      */
     static std::vector<RegionProposal> SelectiveSearch(
         const std::vector<float>& image_data,
-        int width, int height, int channels,
-        const std::string& mode = "fast",
-        int base_k = 150,
-        int inc_k = 150,
-        float sigma = 0.8f
+        int width, int height, int channels
     );
 
     /**
@@ -121,16 +115,14 @@ public:
      * @param height Image height
      * @param channels Number of channels
      * @param max_boxes Maximum number of proposals
-     * @param alpha Step size of sliding window
-     * @param beta NMS threshold
+     * This build uses a contour-based fallback because OpenCV ximgproc
+     * EdgeBoxes is not linked.
      * @return Vector of region proposals
      */
     static std::vector<RegionProposal> EdgeBoxes(
         const std::vector<float>& image_data,
         int width, int height, int channels,
-        int max_boxes = 100,
-        float alpha = 0.65f,
-        float beta = 0.75f
+        int max_boxes = 100
     );
 
     /**

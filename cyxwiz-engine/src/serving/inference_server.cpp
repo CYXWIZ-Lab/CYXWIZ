@@ -102,9 +102,6 @@ bool InferenceServer::Start(int port) {
 
     impl_->server.Post("/predict", [this](const httplib::Request& req, httplib::Response& res) {
         auto start = std::chrono::high_resolution_clock::now();
-        int status_code = 200;
-        bool success = true;
-        std::string error_msg;
 
         try {
             if (!model_) {
@@ -182,10 +179,6 @@ bool InferenceServer::Start(int port) {
             UpdateMetrics(latency, true);
 
         } catch (const std::exception& e) {
-            success = false;
-            status_code = 400;
-            error_msg = e.what();
-
             json response;
             response["error"] = e.what();
             res.status = 400;

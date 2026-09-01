@@ -90,12 +90,17 @@ void ImPlotBackend::BeginPlot(const char* title) {
     }
 
     // Set up axis flags
-    ImPlotAxisFlags axis_flags = 0;
+    ImPlotAxisFlags x_axis_flags = 0;
+    ImPlotAxisFlags y_axis_flags = 0;
     if (!show_grid_) {
-        axis_flags |= ImPlotAxisFlags_NoGridLines;
+        x_axis_flags |= ImPlotAxisFlags_NoGridLines;
+        y_axis_flags |= ImPlotAxisFlags_NoGridLines;
     }
     if (state_->x_auto_fit) {
-        axis_flags |= ImPlotAxisFlags_AutoFit;
+        x_axis_flags |= ImPlotAxisFlags_AutoFit;
+    }
+    if (state_->y_auto_fit) {
+        y_axis_flags |= ImPlotAxisFlags_AutoFit;
     }
 
     // Begin plot
@@ -105,13 +110,14 @@ void ImPlotBackend::BeginPlot(const char* title) {
                          plot_flags)) {
         state_->in_plot = true;
 
-        // Set axis labels
-        if (!state_->x_label.empty()) {
-            ImPlot::SetupAxis(ImAxis_X1, state_->x_label.c_str());
-        }
-        if (!state_->y_label.empty()) {
-            ImPlot::SetupAxis(ImAxis_Y1, state_->y_label.c_str());
-        }
+        ImPlot::SetupAxis(
+            ImAxis_X1,
+            state_->x_label.empty() ? nullptr : state_->x_label.c_str(),
+            x_axis_flags);
+        ImPlot::SetupAxis(
+            ImAxis_Y1,
+            state_->y_label.empty() ? nullptr : state_->y_label.c_str(),
+            y_axis_flags);
 
         // Set axis limits if not auto-fit
         if (!state_->x_auto_fit) {

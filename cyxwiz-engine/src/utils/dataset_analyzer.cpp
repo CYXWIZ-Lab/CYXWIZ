@@ -208,7 +208,7 @@ DatasetAnalytics DatasetAnalyzer::ComputeAnalytics(
         if (progress_callback) {
             progress_callback(0.9f, "Detecting outliers...");
         }
-        analytics.outliers = DetectOutliers(images, sampled_labels, width, height, channels);
+        analytics.outliers = DetectOutliers(images, channels);
 
         if (progress_callback) {
             progress_callback(1.0f, "Analytics complete!");
@@ -335,8 +335,7 @@ DimensionStatistics DatasetAnalyzer::ComputeDimensionStats(
 
 OutlierInfo DatasetAnalyzer::DetectOutliers(
     const std::vector<std::vector<float>>& images,
-    const std::vector<int>& labels,
-    int width, int height, int channels,
+    int channels,
     float iqr_multiplier
 ) {
     OutlierInfo outliers;

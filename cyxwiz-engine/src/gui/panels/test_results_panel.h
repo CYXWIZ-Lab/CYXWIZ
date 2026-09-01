@@ -39,9 +39,6 @@ private:
     int selected_tab_ = 0;
 
     // Display options
-    bool show_percentages_ = true;
-    bool show_absolute_ = false;
-    int selected_class_ = -1;
     char filter_text_[256] = {0};
 
     // Confusion matrix display options

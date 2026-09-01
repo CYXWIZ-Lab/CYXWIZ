@@ -205,24 +205,6 @@ void RLTrainingExecutor::TrainingLoop() {
         reset_ctx.sim_time = 0.0f;
         reset_ctx.dt = 0.002f;
 
-        // Get initial observation
-        auto get_obs = [&]() -> std::vector<float> {
-            plugin::PluginNodeEvalContext ctx;
-            ctx.node_type_name = "ObservationFilter";
-            ctx.parameters["include_qpos"] = config_.include_qpos ? "true" : "false";
-            ctx.parameters["include_qvel"] = config_.include_qvel ? "true" : "false";
-            ctx.parameters["include_sensors"] = config_.include_sensors ? "true" : "false";
-            ctx.parameters["normalize"] = config_.normalize_obs ? "true" : "false";
-            auto r = provider->EvaluateNode(ctx);
-            if (r.success) {
-                auto it = r.output_values.find("obs");
-                if (it != r.output_values.end() &&
-                    std::holds_alternative<std::vector<float>>(it->second))
-                    return std::get<std::vector<float>>(it->second);
-            }
-            return std::vector<float>(obs_dim, 0.0f);
-        };
-
         auto compute_reward = [&]() -> float {
             plugin::PluginNodeEvalContext ctx;
             ctx.node_type_name = "RewardFunction";

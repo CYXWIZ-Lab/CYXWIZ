@@ -51,7 +51,7 @@ public:
 private:
     void RenderToolbar();
     void RenderVariableTable();
-    void RenderVariable(const PythonVariable& var, int depth = 0);
+    void RenderVariable(const PythonVariable& var);
 
     // Fetch variables from Python namespace
     std::vector<PythonVariable> FetchVariablesFromPython();

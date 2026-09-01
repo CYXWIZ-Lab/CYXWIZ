@@ -49,9 +49,13 @@ add_executable(cyxwiz-tests
     unit/test_language_model_training.cpp
     unit/test_sequence_batcher.cpp
     unit/test_pipeline_runtime_capabilities.cpp
+    unit/test_gui_tensor_shape_inference.cpp
+    unit/test_nas_architecture_validation.cpp
     ../cyxwiz-engine/src/core/formats/cyxmodel_format.cpp
     ../cyxwiz-engine/src/core/language_model_training.cpp
     ../cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp
+    ../cyxwiz-engine/src/gui/tensor_shape_inference_contract.cpp
+    ../cyxwiz-engine/src/core/nas_evaluator.cpp
     ../cyxwiz-engine/src/core/compute_runtime_config.cpp
     ../cyxwiz-engine/src/core/route_qualification_snapshot.cpp
     ../cyxwiz-engine/src/core/route_qualification_service.cpp
@@ -62,6 +66,8 @@ add_executable(cyxwiz-tests
 target_link_libraries(cyxwiz-tests PRIVATE
     Catch2::Catch2
     cyxwiz-backend
+    imgui::imgui
+    spdlog::spdlog
     nlohmann_json::nlohmann_json
 )
 

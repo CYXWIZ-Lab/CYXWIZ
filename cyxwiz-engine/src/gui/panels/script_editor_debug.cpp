@@ -197,10 +197,6 @@ void ScriptEditorPanel::RenderScriptBreakpointGutter(float height) {
     float line_height = ImGui::GetTextLineHeightWithSpacing();
     float gutter_width = 20.0f;
 
-    // Get editor scroll position to sync gutter scrolling
-    // Note: TextEditor doesn't expose scroll position directly, so we estimate
-    auto coords = tab->editor.GetCursorPosition();
-
     ImGui::BeginChild("##script_bp_gutter", ImVec2(gutter_width, height), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar);
 

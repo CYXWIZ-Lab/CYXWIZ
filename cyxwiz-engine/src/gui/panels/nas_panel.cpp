@@ -284,9 +284,6 @@ void NASPanel::RenderMutationControls() {
 }
 
 void NASPanel::RenderSuggestions() {
-    // Task type for suggestions
-    const char* task_names[] = {"classification", "regression", "image_classification"};
-
     ImGui::Text("Generate architecture suggestions for your task:");
     ImGui::Spacing();
 
@@ -611,16 +608,6 @@ void NASPanel::RunEvolutionarySearch() {
 
     compute_thread_ = std::make_unique<std::thread>([this, initial_nodes, initial_links, input_shape, config]() {
         try {
-            auto callback = [this](int generation, const ArchitectureScore& best) {
-                search_generation_ = generation;
-                search_best_score_ = best.overall_score;
-
-                // Check if search should stop
-                return is_searching_.load();
-            };
-
-            // Note: The callback signature doesn't match - we'd need to modify this
-            // For now, use a simpler approach
             auto result = NASEvaluator::EvolveArchitecture(
                 initial_nodes, initial_links, input_shape, config,
                 [this](int gen, const ArchitectureScore& best) {

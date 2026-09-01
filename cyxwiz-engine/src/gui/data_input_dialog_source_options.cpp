@@ -197,9 +197,6 @@ void DataInputDialog::RenderFileSource() {
 }
 
 void DataInputDialog::RenderTabularOptions() {
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
-
     if (ImGui::CollapsingHeader("Format Options", ImGuiTreeNodeFlags_DefaultOpen)) {
         // Format auto-detect or manual selection
         ImGui::Text("Format:");

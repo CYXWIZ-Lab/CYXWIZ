@@ -85,6 +85,7 @@ private:
     std::atomic<bool> is_computing_{false};
     std::atomic<bool> cancel_requested_{false};
     std::atomic<int> progress_iteration_{0};
+    std::atomic<int> progress_total_{0};
     std::atomic<double> progress_inertia_{0.0};
     std::string status_message_;
 

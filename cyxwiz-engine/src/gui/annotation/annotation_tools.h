@@ -117,7 +117,7 @@ public:
     void DrawCircle(int cx, int cy, int radius, AnnotationLabel label);
     void DrawLine(int x1, int y1, int x2, int y2, int thickness, AnnotationLabel label);
     void DrawRect(int x, int y, int w, int h, AnnotationLabel label, bool filled = true);
-    void FloodFill(int x, int y, AnnotationLabel label, float tolerance = 0.0f);
+    void FloodFill(int x, int y, AnnotationLabel label);
 
     // Get raw data
     const std::vector<uint8_t>& GetData() const { return data_; }

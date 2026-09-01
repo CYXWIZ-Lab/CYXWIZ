@@ -102,7 +102,7 @@ private:
 
     // ===== Annotation List =====
     int selected_annotation_id_ = -1;
-    void RenderAnnotationItem(const Annotation& ann, int index);
+    void RenderAnnotationItem(const Annotation& ann);
     void DeleteSelectedAnnotation();
     void SaveCurrentToolAnnotation();
 

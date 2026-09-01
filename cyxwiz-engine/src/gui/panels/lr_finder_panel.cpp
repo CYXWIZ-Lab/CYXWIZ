@@ -190,12 +190,8 @@ void LRFinderPanel::RenderResults() {
     }
 
     // Plot
-    ImPlotFlags plot_flags = ImPlotFlags_NoTitle;
-    if (show_log_scale_) {
-        plot_flags |= ImPlotFlags_None;  // Log scale set via axis
-    }
-
-    if (ImPlot::BeginPlot("##LRFinderPlot", ImVec2(-1, 300))) {
+    const ImPlotFlags plot_flags = ImPlotFlags_NoTitle;
+    if (ImPlot::BeginPlot("##LRFinderPlot", ImVec2(-1, 300), plot_flags)) {
         ImPlot::SetupAxes("Learning Rate", "Loss", ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
         if (show_log_scale_) {
             ImPlot::SetupAxisScale(ImAxis_X1, ImPlotScale_Log10);

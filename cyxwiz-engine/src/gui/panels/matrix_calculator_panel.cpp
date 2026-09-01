@@ -119,6 +119,7 @@ void MatrixCalculatorPanel::RenderMatrixB() {
 void MatrixCalculatorPanel::RenderMatrixEditor(const char* label, std::vector<std::vector<double>>& matrix,
                                                 int& rows, int& cols, const char* id_prefix) {
     ImGui::PushID(id_prefix);
+    ImGui::TextUnformatted(label);
 
     // Size controls
     ImGui::Text("Size:");

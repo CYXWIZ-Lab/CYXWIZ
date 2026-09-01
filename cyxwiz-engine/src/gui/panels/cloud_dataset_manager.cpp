@@ -409,9 +409,7 @@ void CloudDatasetManagerPanel::RenderStreamingStatus() {
                 datastream_client_->StartStreaming(
                     current_dataset_.id,
                     stream_batch_size_,
-                    [](const network::StreamingBatch& batch) {
-                        // Just receive batches for testing
-                    },
+                    [](const network::StreamingBatch&) {},
                     [this](const std::string& error) {
                         last_error_ = error;
                         error_time_ = 5.0f;

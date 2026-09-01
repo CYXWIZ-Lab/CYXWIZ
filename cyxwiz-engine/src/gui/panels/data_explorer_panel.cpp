@@ -437,7 +437,10 @@ void DataExplorerPanel::RenderHistoryPopup() {
 
                 ImVec4 color = item.success ? ImVec4(0.4f, 1.0f, 0.4f, 1.0f) : ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
 
-                if (ImGui::Selectable(display.c_str())) {
+                ImGui::PushStyleColor(ImGuiCol_Text, color);
+                const bool selected = ImGui::Selectable(display.c_str());
+                ImGui::PopStyleColor();
+                if (selected) {
                     std::strcpy(query_buffer_, item.query.c_str());
                 }
                 if (ImGui::IsItemHovered()) {

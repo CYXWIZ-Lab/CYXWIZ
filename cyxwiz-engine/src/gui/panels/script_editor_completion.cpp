@@ -56,15 +56,7 @@ void ScriptEditorPanel::UpdateAutoCompletion(bool force) {
     }
 
     // Get completions
-    std::string code = tab->editor.GetText();
-    size_t cursor_offset = 0;
-    auto lines = tab->editor.GetTextLines();
-    for (int i = 0; i < cursor_pos.mLine && i < static_cast<int>(lines.size()); ++i) {
-        cursor_offset += lines[i].length() + 1; // +1 for newline
-    }
-    cursor_offset += col;
-
-    completion_items_ = script_manager_.GetCompletions(code, cursor_offset, current_line, col);
+    completion_items_ = script_manager_.GetCompletions(current_line, col);
 
     if (completion_items_.empty()) {
         CloseCompletionPopup();

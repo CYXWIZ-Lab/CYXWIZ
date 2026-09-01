@@ -233,7 +233,6 @@ void Theme::ApplyImNodesStyle() {
             ImVec4 node_bg_selected = ImVec4(0.25f, 0.26f, 0.30f, 1.0f);
             ImVec4 blue = ImVec4(0.38f, 0.69f, 0.94f, 1.0f);  // #61afef
             ImVec4 cyan = ImVec4(0.34f, 0.71f, 0.76f, 1.0f);  // #56b6c2
-            ImVec4 green = ImVec4(0.60f, 0.76f, 0.47f, 1.0f);  // #98c379
             ImVec4 purple = ImVec4(0.78f, 0.47f, 0.86f, 1.0f);  // #c678dd
 
             style.Colors[ImNodesCol_NodeBackground] = ColorToU32(node_bg);
@@ -266,7 +265,6 @@ void Theme::ApplyImNodesStyle() {
             ImVec4 frost_blue = ImVec4(0.53f, 0.75f, 0.82f, 1.0f);  // #88c0d0
             ImVec4 frost_cyan = ImVec4(0.56f, 0.74f, 0.73f, 1.0f);  // #8fbcbb
             ImVec4 frost_light = ImVec4(0.51f, 0.63f, 0.76f, 1.0f);  // #81a1c1
-            ImVec4 aurora_green = ImVec4(0.64f, 0.75f, 0.55f, 1.0f);  // #a3be8c
             ImVec4 aurora_purple = ImVec4(0.71f, 0.56f, 0.68f, 1.0f);  // #b48ead
 
             style.Colors[ImNodesCol_NodeBackground] = ColorToU32(node_bg);

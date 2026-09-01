@@ -170,7 +170,7 @@ void VariableExplorerPanel::RenderVariableTable() {
     ImGui::Text("%zu variables", variables_.size());
 }
 
-void VariableExplorerPanel::RenderVariable(const PythonVariable& var, int depth) {
+void VariableExplorerPanel::RenderVariable(const PythonVariable& var) {
     ImGui::TableNextRow();
 
     // Name column

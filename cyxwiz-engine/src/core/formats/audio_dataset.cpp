@@ -319,7 +319,6 @@ void AudioDataset::LoadFromCSV(const std::string& directory) {
     size_t total_rows = 0;
     size_t skipped_rows = 0;
     size_t missing_files = 0;
-    int header_cols = static_cast<int>(headers.size());
 
     while (std::getline(file, line)) {
         Trim(line);

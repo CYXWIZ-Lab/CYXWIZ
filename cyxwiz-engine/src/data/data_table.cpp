@@ -492,7 +492,10 @@ bool DataTable::SaveToHDF5(const std::string& filepath, const std::string& datas
 bool DataTable::LoadFromExcel(const std::string& filepath, const std::string& sheet_name) {
     // TODO: Implement Excel loading via Python openpyxl
     // This will be implemented later when we integrate with ScriptingEngine
-    spdlog::error("Excel support not yet implemented");
+    spdlog::error(
+        "Excel support is not implemented; cannot load file '{}' (sheet='{}')",
+        filepath,
+        sheet_name.empty() ? "<default>" : sheet_name);
     return false;
 }
 

@@ -257,7 +257,6 @@ void ReportMaterializationCacheStatus(
     PostPlotPanelUpdate(
         plot_panel,
         [message,
-         kCacheProgress,
          status,
          cache_key = materialize_result.cache_key,
          cache_artifact_path = materialize_result.cache_artifact_path,

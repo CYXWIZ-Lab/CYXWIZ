@@ -202,16 +202,6 @@ void LogTransformPanel::RenderPreview() {
             if (!selected_columns_[i]) continue;
             if (trans_idx >= static_cast<int>(transformed_stats_.size())) break;
 
-            // Calculate skewness
-            auto calc_skew = [](const std::vector<double>& data, double mean, double std) -> double {
-                if (data.empty() || std < 1e-10) return 0;
-                double skew = 0;
-                for (const auto& x : data) {
-                    skew += std::pow((x - mean) / std, 3);
-                }
-                return skew / data.size();
-            };
-
             double orig_skew = 0, trans_skew = 0;
 
             if (trans_idx < static_cast<int>(transform_result_.transformed_data.size())) {
@@ -253,11 +243,9 @@ void LogTransformPanel::RenderResults() {
     if (n_cols > 0 && ImGui::BeginTable("TransData", n_cols + 1, ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollX)) {
         ImGui::TableSetupColumn("Row");
 
-        int col_idx = 0;
         for (size_t i = 0; i < selected_columns_.size(); ++i) {
             if (selected_columns_[i]) {
                 ImGui::TableSetupColumn(column_names_[i].c_str());
-                col_idx++;
             }
         }
         ImGui::TableHeadersRow();

@@ -116,9 +116,6 @@ void CorrelationMatrixPanel::RenderLoadingIndicator() {
     ImGui::Text("Computing correlations...");
     ImGui::Spacing();
 
-    // Simple spinner
-    static float rotation = 0.0f;
-    rotation += ImGui::GetIO().DeltaTime * 5.0f;
     ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f),
                        "%s Computing...", ICON_FA_SPINNER);
 }

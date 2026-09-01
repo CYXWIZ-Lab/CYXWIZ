@@ -417,7 +417,7 @@ void TestManager::TestingThreadFunc(
                 exec->Test(
                     batch_size,
                     batch_callback,
-                    [this, &final_metrics](const TestingMetrics& metrics) {
+                    [&final_metrics](const TestingMetrics& metrics) {
                         final_metrics = metrics;
                     }
                 );
@@ -627,4 +627,3 @@ bool TestManager::ExportResultsToJSON(const std::string& filepath) {
 }
 
 } // namespace cyxwiz
-

@@ -870,7 +870,7 @@ MainWindow::MainWindow()
     });
 
     // When app theme changes from View menu, save settings immediately
-    toolbar_->SetAppThemeChangedCallback([this](int theme_index) {
+    toolbar_->SetAppThemeChangedCallback([](int theme_index) {
         auto& pm = cyxwiz::ProjectManager::Instance();
         if (pm.HasActiveProject()) {
             pm.GetConfig().editor_settings.app_theme = theme_index;
@@ -1114,7 +1114,7 @@ MainWindow::MainWindow()
     });
 
     // Pause Training
-    toolbar_->SetPauseTrainingCallback([this]() {
+    toolbar_->SetPauseTrainingCallback([]() {
         auto& tm = cyxwiz::TrainingManager::Instance();
         if (tm.IsTrainingActive()) {
             tm.PauseTraining();
@@ -1123,7 +1123,7 @@ MainWindow::MainWindow()
     });
 
     // Stop Training
-    toolbar_->SetStopTrainingCallback([this]() {
+    toolbar_->SetStopTrainingCallback([]() {
         auto& tm = cyxwiz::TrainingManager::Instance();
         if (tm.IsTrainingActive()) {
             tm.StopTraining();
@@ -1179,7 +1179,7 @@ MainWindow::MainWindow()
     });
 
     // Set up Save Model callback (native CyxWiz format)
-    toolbar_->SetSaveModelCallback([this]() {
+    toolbar_->SetSaveModelCallback([]() {
         auto& tm = cyxwiz::TrainingManager::Instance();
         if (!tm.HasTrainedModel()) {
             spdlog::warn("No trained model available to save");
@@ -1424,7 +1424,7 @@ MainWindow::MainWindow()
     );
 
     // Set up Model Conversion callbacks
-    toolbar_->SetConvertBinaryToDirCallback([this]() {
+    toolbar_->SetConvertBinaryToDirCallback([]() {
         spdlog::info("Binary to Directory conversion requested");
 
         // Step 1: Select input binary file
@@ -1462,7 +1462,7 @@ MainWindow::MainWindow()
         }
     });
 
-    toolbar_->SetConvertDirToBinaryCallback([this]() {
+    toolbar_->SetConvertDirToBinaryCallback([]() {
         spdlog::info("Directory to Binary conversion requested");
 
         // Step 1: Select input directory

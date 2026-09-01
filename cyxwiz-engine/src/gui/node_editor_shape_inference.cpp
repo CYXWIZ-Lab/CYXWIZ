@@ -1,4 +1,5 @@
 #include "node_editor_shape_inference.h"
+#include "tensor_shape_inference_contract.h"
 #include "../core/data_registry.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -137,19 +138,14 @@ std::vector<size_t> ShapeInferenceEngine::InferNodeOutputShape(
 
         case NodeType::MaxPool2D:
         case NodeType::AvgPool2D: {
-            // Pooling: [H, W, C] -> [H/pool, W/pool, C]
+            // Pooling: [H, W, C] -> [(H-K)/S+1, (W-K)/S+1, C]
             int pool_size = 2;
             int stride = 2;
             if (params.count("pool_size")) pool_size = std::stoi(params.at("pool_size"));
             if (params.count("stride")) stride = std::stoi(params.at("stride"));
-
-            if (input_shape.size() >= 3) {
-                output_shape = {
-                    input_shape[0] / stride,
-                    input_shape[1] / stride,
-                    input_shape[2]
-                };
-            }
+            output_shape = tensor_shape_inference::InferPool2DOutputShape(
+                               input_shape, pool_size, stride)
+                               .value_or(std::vector<size_t>{});
             break;
         }
 
@@ -184,39 +180,10 @@ std::vector<size_t> ShapeInferenceEngine::InferNodeOutputShape(
         }
 
         case NodeType::TensorReshape: {
-            // Reshape: parse target shape from params
             if (params.count("shape")) {
-                std::string shape_str = params.at("shape");
-                shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), '['), shape_str.end());
-                shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ']'), shape_str.end());
-                shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ' '), shape_str.end());
-
-                std::vector<int> dims;
-                size_t pos = 0;
-                while ((pos = shape_str.find(',')) != std::string::npos) {
-                    dims.push_back(std::stoi(shape_str.substr(0, pos)));
-                    shape_str.erase(0, pos + 1);
-                }
-                if (!shape_str.empty()) {
-                    dims.push_back(std::stoi(shape_str));
-                }
-
-                // Handle -1 dimension (infer size)
-                size_t total_elements = 1;
-                for (size_t dim : input_shape) total_elements *= dim;
-
-                size_t known_size = 1;
-                for (int d : dims) {
-                    if (d > 0) known_size *= d;
-                }
-
-                for (int d : dims) {
-                    if (d == -1) {
-                        output_shape.push_back(total_elements / known_size);
-                    } else {
-                        output_shape.push_back(static_cast<size_t>(d));
-                    }
-                }
+                output_shape = tensor_shape_inference::ResolveReshapeOutputShape(
+                                   input_shape, params.at("shape"))
+                                   .value_or(std::vector<size_t>{});
             } else {
                 output_shape = input_shape;
             }

@@ -365,9 +365,8 @@ void SpectrogramPanel::RenderSignalPreview() {
 
     // Statistics
     if (!signal_.empty()) {
-        double sum = 0, sum_sq = 0;
+        double sum_sq = 0;
         for (double v : signal_) {
-            sum += v;
             sum_sq += v * v;
         }
         double rms = std::sqrt(sum_sq / signal_.size());

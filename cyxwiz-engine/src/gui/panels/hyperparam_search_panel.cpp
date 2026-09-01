@@ -19,10 +19,6 @@ HyperparamSearchPanel::HyperparamSearchPanel()
         spdlog::info("HPO: Trial {} started", trial_id + 1);
     });
 
-    search_engine_->SetOnTrialProgress([this](int /*trial_id*/, int /*epoch*/, float /*loss*/, float /*acc*/) {
-        // Could update real-time plots here
-    });
-
     search_engine_->SetOnTrialComplete([this](const TrialResult& result) {
         cached_results_ = search_engine_->GetResults();
 

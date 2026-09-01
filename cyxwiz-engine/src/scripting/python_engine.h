@@ -75,9 +75,6 @@ public:
 
     void ReleaseGIL() {}
     void AcquireGIL() {}
-
-private:
-    bool initialized_ = false;
 };
 
 } // namespace scripting

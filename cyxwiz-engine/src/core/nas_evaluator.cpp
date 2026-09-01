@@ -376,6 +376,10 @@ std::pair<bool, std::string> NASEvaluator::ValidateArchitecture(
         if (node.type == gui::NodeType::Output) has_output = true;
     }
 
+    if (!has_input) {
+        return {false, "Missing DatasetInput node"};
+    }
+
     if (!has_output) {
         return {false, "Missing Output node"};
     }
@@ -385,11 +389,6 @@ std::pair<bool, std::string> NASEvaluator::ValidateArchitecture(
     for (const auto& link : links) {
         connected_nodes.insert(link.from_node);
         connected_nodes.insert(link.to_node);
-    }
-
-    // Single node graphs are valid if it's an output
-    if (nodes.size() == 1 && nodes[0].type == gui::NodeType::Output) {
-        return {true, ""};
     }
 
     if (connected_nodes.size() < nodes.size() - 1) {

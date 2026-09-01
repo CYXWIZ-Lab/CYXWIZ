@@ -541,7 +541,7 @@ void NodeEditor::Render() {
             }
 
             // Handle ANNOTATION drag-drop
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ANNOTATION")) {
+            if (ImGui::AcceptDragDropPayload("ANNOTATION") != nullptr) {
                 // Calculate drop position in grid space
                 ImVec2 editor_origin = ImGui::GetWindowPos();
                 ImVec2 panning = ImNodes::EditorContextGetPanning();
@@ -556,7 +556,7 @@ void NodeEditor::Render() {
             }
 
             // Handle STUDIO_FRAME drag-drop
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("STUDIO_FRAME")) {
+            if (ImGui::AcceptDragDropPayload("STUDIO_FRAME") != nullptr) {
                 // Calculate drop position in grid space
                 ImVec2 editor_origin = ImGui::GetWindowPos();
                 ImVec2 panning = ImNodes::EditorContextGetPanning();
@@ -1362,8 +1362,6 @@ void NodeEditor::RenderMinimap() {
 
     // Get parent window position and size for calculating minimap position
     ImVec2 parent_window_pos = ImGui::GetWindowPos();
-    ImVec2 parent_window_size = ImGui::GetWindowSize();
-
     // Get content region to properly account for toolbar/title bar
     ImVec2 content_min = ImGui::GetWindowContentRegionMin();
     ImVec2 content_max = ImGui::GetWindowContentRegionMax();
@@ -1507,7 +1505,6 @@ void NodeEditor::RenderMinimap() {
     };
 
     // Minimap content area rect (window already provides background)
-    ImVec2 minimap_content_min = window_pos;
     ImVec2 minimap_content_max = ImVec2(window_pos.x + window_size.x, window_pos.y + window_size.y);
 
     // Draw links first (underneath nodes)
@@ -1828,12 +1825,7 @@ void NodeEditor::RenderNodes() {
 
     int active_trace_node_id = -1;
     std::string active_trace_stage;
-    std::string active_trace_message;
-    std::string active_trace_task_name;
     float active_trace_progress = 0.0f;
-    uint64_t active_trace_processed = 0;
-    uint64_t active_trace_total = 0;
-    uint64_t active_trace_memory = 0;
     if (is_training_) {
         const auto trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
         for (auto it = trace.recent_events.rbegin();
@@ -1844,12 +1836,7 @@ void NodeEditor::RenderNodes() {
                 active_trace_stage = it->task_stage.empty()
                     ? it->stage
                     : it->task_stage;
-                active_trace_message = it->message;
-                active_trace_task_name = it->task_name;
                 active_trace_progress = it->task_progress;
-                active_trace_processed = it->processed_items;
-                active_trace_total = it->total_items;
-                active_trace_memory = it->estimated_memory_bytes;
                 break;
             }
         }

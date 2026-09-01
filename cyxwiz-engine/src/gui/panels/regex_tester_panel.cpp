@@ -423,11 +423,6 @@ void RegexTesterPanel::ClearAll() {
     result_ = RegexResult();
 }
 
-void RegexTesterPanel::InsertPattern(const std::string& name, const std::string& pattern) {
-    strcpy(pattern_buffer_, pattern.c_str());
-    has_result_ = false;
-}
-
 void RegexTesterPanel::GenerateSampleText() {
     const char* sample = R"(Contact Information:
 John Doe - john.doe@example.com - (555) 123-4567

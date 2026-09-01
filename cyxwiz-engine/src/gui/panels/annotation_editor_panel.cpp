@@ -350,7 +350,7 @@ void AnnotationEditorPanel::RenderAnnotationListPanel() {
 
     ImGui::BeginChild("AnnotationList", ImVec2(0, -60), true);
     for (size_t i = 0; i < anns->size(); ++i) {
-        RenderAnnotationItem((*anns)[i], static_cast<int>(i));
+        RenderAnnotationItem((*anns)[i]);
     }
     ImGui::EndChild();
 
@@ -362,7 +362,7 @@ void AnnotationEditorPanel::RenderAnnotationListPanel() {
     ImGui::EndDisabled();
 }
 
-void AnnotationEditorPanel::RenderAnnotationItem(const Annotation& ann, int index) {
+void AnnotationEditorPanel::RenderAnnotationItem(const Annotation& ann) {
     ImGui::PushID(ann.id);
 
     bool is_selected = (selected_annotation_id_ == ann.id);

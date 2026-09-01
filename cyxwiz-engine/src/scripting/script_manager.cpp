@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cctype>
 #include <spdlog/spdlog.h>
-#include <imgui.h>
 
 namespace scripting {
 
@@ -64,7 +63,7 @@ void ScriptManager::InitializeModules() {
 }
 
 std::vector<CompletionItem> ScriptManager::GetCompletions(
-    const std::string& code, size_t, const std::string& line, int col
+    const std::string& line, int col
 ) {
     std::vector<CompletionItem> results;
     if (col > 0 && col <= static_cast<int>(line.length()) && line[col-1] == '.') {
@@ -193,10 +192,6 @@ const char* GetCompletionKindIcon(CompletionItem::Kind k) {
         case CompletionItem::Kind::Variable: return "v";
         default: return "?";
     }
-}
-
-unsigned int GetCompletionKindColor(CompletionItem::Kind k) {
-    return IM_COL32(200, 200, 200, 255);
 }
 
 } // namespace scripting

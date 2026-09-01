@@ -2140,8 +2140,6 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
     int correct = 0;
     int total = 0;
     const auto metric_ignore_index = ClassificationMetricIgnoreIndex(config_);
-    int batch_num = 0;
-
     batcher.Reset();
 
     while (!batcher.IsEpochComplete()) {
@@ -2149,8 +2147,6 @@ void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
 
         Batch batch = batcher.GetNextBatch();
         if (!batch.IsValid()) break;
-
-        batch_num++;
 
         // Forward pass only (no backprop)
         Tensor predictions = Forward(batch.data);
@@ -2798,7 +2794,6 @@ TrainingExecutor::SequenceEvaluationMetrics
 TrainingExecutor::EvaluateSequenceBatcher(ISequenceBatcher& batcher) {
     float evaluation_loss = 0.0f;
     float loss_weight_sum = 0.0f;
-    int batch_num = 0;
     SequenceTagMetrics aggregate_metrics;
 
     batcher.Reset();
@@ -2818,7 +2813,6 @@ TrainingExecutor::EvaluateSequenceBatcher(ISequenceBatcher& batcher) {
             ? config_.sequence_batch.target_ignore_index
             : config_.sequence_batch.ignore_index;
 
-        ++batch_num;
         Tensor model_input = BuildSequenceModelInput(batch, config_);
         Tensor predictions = Forward(model_input);
         const float batch_loss = ComputeLoss(predictions, targets);

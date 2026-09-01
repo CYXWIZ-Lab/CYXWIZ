@@ -896,7 +896,7 @@ void TrainingManager::TrainingThreadFunc(
     TrainingExecutor* exec = nullptr;
 
     // Set up callbacks
-    auto epoch_callback = [this, plot_panel, epochs, batch_size, &exec](int epoch, float train_loss, float train_acc,
+    auto epoch_callback = [this, plot_panel, epochs, &exec](int epoch, float train_loss, float train_acc,
                                                float val_loss, float val_acc, float epoch_time) {
         // Update cached metrics
         float samples_per_sec = 0.0f;
@@ -1102,7 +1102,7 @@ void TrainingManager::TrainingThreadFunc(
                     batch_size,
                     batch_callback,
                     epoch_callback,
-                    [this, &final_metrics](const TrainingMetrics& metrics) {
+                    [&final_metrics](const TrainingMetrics& metrics) {
                         final_metrics = metrics;
                     }
                 );
