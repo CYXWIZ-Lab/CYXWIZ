@@ -1,0 +1,206 @@
+name: Compiler warning gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - Nodes_Implementation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compiler-warnings-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  warning-gate:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64 warnings
+            os: windows-latest
+            platform: windows
+            artifact: windows-x64
+          - name: Linux x64 warnings
+            os: ubuntu-22.04
+            platform: linux
+            artifact: linux-x64
+          - name: macOS arm64 warnings
+            os: macos-15
+            platform: macos
+            artifact: macos-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up warning-report Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Test warning analyzer
+        run: python -m unittest scripts.compiler_warnings.test_report
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Free Linux disk space
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo apt-get clean
+          docker system prune -af || true
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config \
+            libgl1-mesa-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libxi-dev libxext-dev libwayland-dev libxkbcommon-dev \
+            libgtk-3-dev autoconf automake libtool libcrypt-dev gperf
+
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install arrayfire autoconf automake bison cmake libtool ninja pkg-config
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+
+      - name: Use CI vcpkg manifest on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Copy-Item vcpkg-ci.json vcpkg.json -Force
+
+      - name: Use CI vcpkg manifest on Unix
+        if: runner.os != 'Windows'
+        run: cp vcpkg-ci.json vcpkg.json
+
+      - name: Set up vcpkg on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          Set-Location vcpkg
+          git checkout 594ad8871e1e8e45f8e626c015fd611163430207
+          .\bootstrap-vcpkg.bat
+          "VCPKG_ROOT=$PWD" | Out-File -Append $env:GITHUB_ENV
+
+      - name: Set up vcpkg on Unix
+        if: runner.os != 'Windows'
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          cd vcpkg
+          git checkout 594ad8871e1e8e45f8e626c015fd611163430207
+          ./bootstrap-vcpkg.sh
+          echo "VCPKG_ROOT=$PWD" >> "$GITHUB_ENV"
+
+      - name: Install ArrayFire on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://arrayfire.gateway.scarf.sh/windows/3.10.0/ArrayFire.exe -OutFile af.exe
+          Start-Process -FilePath af.exe -ArgumentList /S -Wait
+
+      - name: Install ArrayFire on Linux
+        if: runner.os == 'Linux'
+        run: |
+          wget -q https://arrayfire.gateway.scarf.sh/linux/3.10.0/ArrayFire.sh -O ArrayFire.sh
+          chmod +x ArrayFire.sh
+          yes | sudo ./ArrayFire.sh --prefix=/opt/arrayfire || true
+
+      - name: Configure Windows Release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DCYXWIZ_BUILD_ENGINE=ON `
+            -DCYXWIZ_BUILD_SERVER_NODE=ON `
+            -DCYXWIZ_BUILD_TESTS=OFF `
+            -DCYXWIZ_BUILD_TUI=OFF `
+            -DCYXWIZ_ENABLE_PYTHON=OFF `
+            -DCYXWIZ_ENABLE_ONNX=OFF `
+            -DCYXWIZ_ENABLE_GGUF=OFF `
+            -DCYXWIZ_ENABLE_PYTORCH=OFF `
+            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF `
+            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF `
+            -DCYXWIZ_ENABLE_CUDA=OFF `
+            -DCYXWIZ_ENABLE_OPENCL=OFF
+
+      - name: Configure Unix Release
+        if: runner.os != 'Windows'
+        run: |
+          AF_DIR=""
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            AF_DIR=$(find /opt/arrayfire -name ArrayFireConfig.cmake -exec dirname {} \; 2>/dev/null | head -1)
+          fi
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DCYXWIZ_BUILD_ENGINE=ON \
+            -DCYXWIZ_BUILD_SERVER_NODE=ON \
+            -DCYXWIZ_BUILD_TESTS=OFF \
+            -DCYXWIZ_BUILD_TUI=OFF \
+            -DCYXWIZ_ENABLE_PYTHON=OFF \
+            -DCYXWIZ_ENABLE_ONNX=OFF \
+            -DCYXWIZ_ENABLE_GGUF=OFF \
+            -DCYXWIZ_ENABLE_PYTORCH=OFF \
+            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF \
+            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF \
+            -DCYXWIZ_ENABLE_CUDA=OFF \
+            -DCYXWIZ_ENABLE_OPENCL=OFF \
+            ${AF_DIR:+-DArrayFire_DIR="$AF_DIR"}
+
+      - name: Build and capture warnings on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force warning-artifacts | Out-Null
+          cmake --build build --config Release --parallel 2>&1 |
+            Tee-Object -FilePath warning-artifacts/build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and capture warnings on Unix
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p warning-artifacts
+          set -o pipefail
+          cmake --build build --parallel 2>&1 | tee warning-artifacts/build.log
+
+      - name: Classify and enforce owned warning baseline
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          python scripts/compiler_warnings/report.py \
+            --log warning-artifacts/build.log \
+            --platform "${{ matrix.platform }}" \
+            --baseline scripts/compiler_warnings/baseline.json \
+            --repo-root . \
+            --output-dir warning-artifacts
+          report_status=$?
+          if [ -f warning-artifacts/warning-report.md ]; then
+            cat warning-artifacts/warning-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$report_status"
+
+      - name: Upload compiler warning evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiler-warnings-${{ matrix.artifact }}
+          path: warning-artifacts/
+          if-no-files-found: warn
