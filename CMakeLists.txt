@@ -51,14 +51,6 @@ elseif(UNIX)
     add_compile_definitions(CYXWIZ_PLATFORM_LINUX)
 endif()
 
-# Homebrew dependencies can expose broad /usr/local/include paths (ArrayFire
-# does this) that Clang searches before SYSTEM includes from vcpkg imported
-# targets. Preserve imported-target ordering on macOS so a Homebrew transitive
-# header cannot be compiled against a different vcpkg library version.
-if(APPLE)
-    set(CMAKE_NO_SYSTEM_FROM_IMPORTED ON)
-endif()
-
 message(STATUS "Building CyxWiz for ${CYXWIZ_PLATFORM}")
 
 # Build type specific flags

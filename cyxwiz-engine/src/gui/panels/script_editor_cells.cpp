@@ -154,7 +154,8 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
         // Right-aligned cell count
         float right_text_width = ImGui::CalcTextSize("Cells: 999").x + 20;
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - right_text_width);
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Cells: %d", tab->cell_manager.GetCellCount());
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Cells: %zu",
+                           tab->cell_manager.GetCellCount());
 
         ImGui::Separator();
         const char* notebook_mode = tab->editing_cell >= 0 ? "Edit mode" : "Command mode";

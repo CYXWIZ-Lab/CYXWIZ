@@ -177,7 +177,7 @@ void ConfusionMatrixPanel::RenderNormalizedMatrix() {
 
     int n = result_.n_classes;
 
-    ImGui::Text("Normalized Confusion Matrix (Row-wise %)");
+    ImGui::TextUnformatted("Normalized Confusion Matrix (Row-wise %)");
     ImGui::Spacing();
 
     float cell_size = 60.0f;

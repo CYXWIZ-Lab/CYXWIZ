@@ -40,6 +40,11 @@
 
 // Load window icon from resources
 static bool load_window_icon(GLFWwindow* window) {
+#ifdef __APPLE__
+    (void)window;
+    spdlog::debug("macOS uses the application bundle icon for regular windows");
+    return true;
+#else
     std::vector<std::string> icon_paths = {
         "./cyxwiz-server-node/resources/servernode.png",
         "./resources/servernode.png",
@@ -77,6 +82,7 @@ static bool load_window_icon(GLFWwindow* window) {
 
     spdlog::info("Window icon loaded from: {}", icon_path);
     return true;
+#endif
 }
 
 namespace cyxwiz::servernode::gui {

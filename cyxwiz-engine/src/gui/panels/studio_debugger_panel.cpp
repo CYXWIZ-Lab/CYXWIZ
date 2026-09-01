@@ -1918,11 +1918,15 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
                     ? "unknown"
                     : trace.residency_verdict.c_str());
     ImGui::SameLine(280);
-    ImGui::TextDisabled("fallbacks=%zu", trace.native_cpu_fallback_count);
-    ImGui::TextDisabled("transfers=%zu/%s  syncs=%zu/%s",
-                        trace.transfer_event_count,
+    ImGui::TextDisabled(
+        "fallbacks=%llu",
+        static_cast<unsigned long long>(trace.native_cpu_fallback_count));
+    ImGui::TextDisabled("transfers=%llu/%s  syncs=%llu/%s",
+                        static_cast<unsigned long long>(
+                            trace.transfer_event_count),
                         FormatBytesCompact(trace.transfer_known_bytes).c_str(),
-                        trace.synchronization_event_count,
+                        static_cast<unsigned long long>(
+                            trace.synchronization_event_count),
                         FormatBytesCompact(
                             trace.synchronization_known_bytes).c_str());
     ImGui::Text("Latest: epoch %d batch %d/%d  stage=%s",

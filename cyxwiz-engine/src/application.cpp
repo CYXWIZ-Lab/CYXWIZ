@@ -82,6 +82,11 @@ static void enable_dark_title_bar(GLFWwindow* window) {
 
 // Load window icon from resources
 static bool load_window_icon(GLFWwindow* window) {
+#ifdef __APPLE__
+    (void)window;
+    spdlog::debug("macOS uses the application bundle icon for regular windows");
+    return true;
+#else
     // Try both possible locations
     std::filesystem::path icon_path = "cyxwiz-engine/resources/cyxwiz.png";
 
@@ -111,6 +116,7 @@ static bool load_window_icon(GLFWwindow* window) {
 
     spdlog::info("Window icon loaded successfully ({}x{})", width, height);
     return true;
+#endif
 }
 
 namespace {
@@ -1029,7 +1035,7 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     char exec_path[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", exec_path, sizeof(exec_path) - 1);
     if (len != -1) {
-        exec_path[len] = ' ';
+        exec_path[len] = '\0';
         char* exec_path_copy = strdup(exec_path);
         std::string exec_dir = dirname(exec_path_copy);
         free(exec_path_copy);

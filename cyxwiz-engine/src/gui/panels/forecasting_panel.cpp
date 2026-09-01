@@ -311,7 +311,7 @@ void ForecastingPanel::RenderMetrics() {
     ImGui::Text("%.6f", result_.mae);
     ImGui::NextColumn();
 
-    ImGui::Text("MAPE (Mean Abs % Error):");
+    ImGui::TextUnformatted("MAPE (Mean Abs % Error):");
     ImGui::NextColumn();
     ImGui::Text("%.2f%%", result_.mape);
     ImGui::NextColumn();

@@ -378,7 +378,8 @@ void ConnectionDialog::RenderSelectedNodeInfo() {
     // Right column
     ImGui::Text("Region: %s", node.region.c_str());
     ImGui::Text("Reputation: %.0f%%", node.reputation_score * 100);
-    ImGui::Text("Jobs Completed: %d", node.total_jobs_completed);
+    ImGui::Text("Jobs Completed: %lld",
+                static_cast<long long>(node.total_jobs_completed));
     ImGui::Text("Billing: Hourly");
 
     // Price display based on reputation tier

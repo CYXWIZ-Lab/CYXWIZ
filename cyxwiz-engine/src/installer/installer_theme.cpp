@@ -183,8 +183,12 @@ LoadInstallerVisualAssets(GLFWwindow *window,
                  assets.logo_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
     assets.logo_texture = static_cast<ImTextureID>(texture);
 
+#ifndef __APPLE__
     GLFWimage icon{assets.logo_width, assets.logo_height, pixels};
     glfwSetWindowIcon(window, 1, &icon);
+#else
+    (void)window;
+#endif
     stbi_image_free(pixels);
   } else {
     AppendWarning(

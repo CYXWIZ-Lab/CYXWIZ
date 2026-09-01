@@ -38,11 +38,11 @@ private:
 
   LocalShellProcess process_;
   std::filesystem::path project_root_;
+  std::uint16_t columns_ = 80;
+  std::uint16_t rows_ = 24;
   TerminalBuffer terminal_;
   std::array<char, 8> input_capture_{};
   std::string status_message_;
-  std::uint16_t columns_ = 80;
-  std::uint16_t rows_ = 24;
   std::size_t scroll_offset_ = 0;
   std::thread start_thread_;
   std::atomic<bool> start_in_progress_{false};

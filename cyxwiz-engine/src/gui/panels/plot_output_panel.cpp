@@ -188,7 +188,7 @@ void PlotOutputPanel::RenderToolbar() {
         if (ImGui::Button("100%##actual")) {
             ActualSize();
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Actual size (100%)");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Actual size (100%%)");
 
         ImGui::SameLine();
         ImGui::TextDisabled("|");
