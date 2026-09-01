@@ -1631,6 +1631,18 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         {{"OneHot", PinType::Tensor, true, "One-hot tensor with shape [batch, num_classes]"}},
         {{"num_classes", "int", "10", "Total number of target classes", {}, "1-100000"}},
         NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Resize, NodeCategory::Preprocessing, "Resize", ICON_FA_EXPAND,
+        {"image", "resize", "width", "height", "aspect"}, 0, false,
+        "Configure the image batcher's target decode dimensions",
+        "Blocked until node-level output-shape, persisted-graph, and live image-training evidence is complete. The existing image batcher consumes this configuration, but that wiring alone is not production proof.",
+        "",
+        {{"Input", PinType::Tensor, true, "Image tensor [batch, channels, H, W]"}},
+        {{"Output", PinType::Tensor, true, "Image tensor resized to the configured width and height"}},
+        {{"width", "int", "224", "Positive output width in pixels", {}, ">0", "Width", "Output shape", true},
+         {"height", "int", "224", "Positive output height in pixels", {}, ">0", "Height", "Output shape", true},
+         {"mode", "enum", "exact", "Aspect-ratio and crop policy", {"exact", "fit", "fill", "center"}, "", "Mode", "Resize policy"}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
 }
 
 // =============================================================================
@@ -3621,6 +3633,18 @@ void NodeMetadataRegistry::InitializeAudioNodes() {
          {"hop_length", "int", "256", "Samples advanced between frames", {}, ">0"},
          {"n_mels", "int", "128", "Mel bands used before the DCT", {}, ">0"}},
         NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::AudioAugmentation, NodeCategory::Audio, "Audio Augmentation", ICON_FA_WAND_MAGIC_SPARKLES,
+        {"audio", "augmentation", "noise", "stretch", "pitch"}, 0, false,
+        "Configure training-time waveform augmentation before feature extraction",
+        "Blocked because the current graph noise_level contract is amplitude-like while the backend AddNoise helper expects SNR dB. Time-stretch and pitch-shift ranges are also hardcoded and lack deterministic node-level policy.",
+        "",
+        {{"Audio", PinType::Tensor, true, "Input waveform batch"}},
+        {{"Augmented", PinType::Tensor, true, "Training waveform after configured augmentation"}},
+        {{"noise_level", "float", "0.01", "Requested additive-noise control; units are not yet aligned with the backend helper", {}, ">=0", "Noise level", "Augmentation", false},
+         {"time_stretch", "bool", "false", "Enable bounded random time stretching", {}, "", "Time stretch", "Augmentation"},
+         {"pitch_shift", "bool", "false", "Enable bounded random pitch shifting", {}, "", "Pitch shift", "Augmentation"}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
 }
 
 // =============================================================================

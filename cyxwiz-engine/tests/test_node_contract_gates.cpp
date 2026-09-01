@@ -3,6 +3,7 @@
 #include "../src/gui/node_type_import_registry.h"
 #include "../src/gui/properties_contract.h"
 #include "node_contract_inventory.h"
+#include "node_workflow_evidence.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -10,6 +11,10 @@
 #include <map>
 #include <set>
 #include <string>
+
+#ifndef CYXWIZ_TICKET100_REPOSITORY_ROOT
+#error "CYXWIZ_TICKET100_REPOSITORY_ROOT must identify the source checkout"
+#endif
 
 namespace {
 
@@ -27,7 +32,7 @@ std::string TypeId(gui::NodeType type) {
 void CheckGraphImportNameContract(
     const cyxwiz::NodeMetadataRegistry& registry) {
     const auto import_names = gui::GetNodeTypeImportNames();
-    Check(import_names.size() == 195,
+    Check(import_names.size() == 199,
           "accepted graph-import name count drifted");
 
     std::set<std::string> names;
@@ -142,12 +147,14 @@ void CheckPortSchema(const cyxwiz::NodeMetadata& metadata) {
     check_ports(metadata.outputs, "output");
 }
 
-void CheckStaticCreationContract(const cyxwiz::NodeMetadata& metadata) {
+void CheckStaticCreationContract(const cyxwiz::NodeMetadata& metadata,
+                                 bool include_blocked = false) {
     // Blocked/template entries may retain legacy saved-graph compatibility
     // shapes without advertising a constructible production contract.
     // PluginCustom is populated from a runtime plugin-provided schema.
-    if (!metadata.IsImplemented() ||
-        !cyxwiz::CanAddNodeToGraph(metadata) ||
+    if ((!include_blocked &&
+         (!metadata.IsImplemented() ||
+          !cyxwiz::CanAddNodeToGraph(metadata))) ||
         metadata.type == gui::NodeType::PluginCustom) {
         return;
     }
@@ -375,6 +382,27 @@ int main(int argc, char** argv) {
               "--inventory-json requires an output path");
         inventory_output = argv[++index];
     }
+    if (!inventory_output.empty()) {
+        std::error_code inventory_path_error;
+        inventory_output = std::filesystem::absolute(
+            inventory_output, inventory_path_error);
+        Check(!inventory_path_error,
+              "failed to resolve inventory output path: " +
+                  inventory_path_error.message());
+    }
+
+    const std::filesystem::path repository_root =
+        CYXWIZ_TICKET100_REPOSITORY_ROOT;
+    const std::filesystem::path engine_root =
+        repository_root / "cyxwiz-engine";
+    Check(std::filesystem::is_directory(
+              engine_root / "resources" / "node_templates"),
+          "repository node-template resource directory is missing");
+    std::error_code working_directory_error;
+    std::filesystem::current_path(engine_root, working_directory_error);
+    Check(!working_directory_error,
+          "failed to anchor node contract gate working directory: " +
+              working_directory_error.message());
 
     auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
     registry.Initialize();
@@ -429,15 +457,58 @@ int main(int argc, char** argv) {
         }
     }
 
+    for (const auto [type, expected_evidence] : {
+             std::pair{gui::NodeType::Resize,
+                       cyxwiz::PipelineBackendPrimitiveEvidence::
+                           ProvenNodePrimitive},
+             std::pair{gui::NodeType::AudioAugmentation,
+                       cyxwiz::PipelineBackendPrimitiveEvidence::
+                           RelatedHelperOnly}}) {
+        const auto* blocked = registry.GetMetadata(type);
+        Check(blocked != nullptr,
+              "workflow-referenced blocked node has no metadata: " +
+                  TypeId(type));
+        Check(blocked->IsTemplate() &&
+                  !cyxwiz::CanAddNodeToGraph(*blocked) &&
+                  !blocked->parameters.empty(),
+              "workflow-referenced node must expose a truthful blocked contract: " +
+                  TypeId(type));
+        const auto support = cyxwiz::ResolvePipelineRuntimeSupport(type);
+        Check(support.mode ==
+                  cyxwiz::PipelineRuntimeSupportMode::FailClosed &&
+                  support.primitive_evidence == expected_evidence,
+              "workflow-referenced blocked node capability drifted: " +
+                  TypeId(type));
+        CheckStaticCreationContract(*blocked, true);
+    }
+
     Check(implemented_count > 0, "registry has no implemented nodes");
     Check(blocked_count > 0, "registry has no fail-closed nodes");
+    Check(resource_template_count > 0,
+          "registry omitted repository resource-template nodes");
     CheckTrainingCapabilityContract(registry);
     CheckGraphImportNameContract(registry);
+
+    const auto workflow_evidence =
+        cyxwiz::test::LoadNodeWorkflowEvidenceCatalog(
+            repository_root,
+            repository_root / "cyxwiz-engine" / "tests" /
+                "workflow_evidence_manifest.json",
+            all_metadata);
+    if (!workflow_evidence.errors.empty()) {
+        for (const auto& error : workflow_evidence.errors) {
+            std::cerr << "Workflow evidence error: " << error << '\n';
+        }
+    }
+    Check(workflow_evidence.errors.empty(),
+          "representative workflow evidence is invalid");
+    Check(!workflow_evidence.artifacts.empty(),
+          "representative workflow evidence is empty");
 
     cyxwiz::test::NodeContractInventorySummary inventory_summary;
     const std::string inventory =
         cyxwiz::test::BuildNodeContractInventoryJson(
-            all_metadata, inventory_summary);
+            all_metadata, workflow_evidence, inventory_summary);
     Check(!inventory.empty(), "generated node inventory is empty");
     Check(inventory_summary.node_count == all_metadata.size(),
           "generated node inventory does not cover the registry exactly once");
@@ -458,6 +529,15 @@ int main(int argc, char** argv) {
           "generated inventory compatibility import count drifted");
     Check(inventory_summary.unclassified_frontend_primitive_gap_count == 0,
           "generated inventory has an unclassified frontend primitive gap");
+    Check(inventory_summary.workflow_manifest_error_count == 0,
+          "generated inventory contains a workflow manifest error");
+    Check(inventory_summary.workflow_manifest_artifact_count ==
+              workflow_evidence.artifacts.size(),
+          "generated inventory workflow artifact count drifted");
+    Check(inventory_summary.authored_workflow_reference_count > 0 &&
+              inventory_summary.missing_representative_workflow_count <
+                  all_metadata.size(),
+          "generated inventory has no manifest-backed workflow coverage");
 
     if (!inventory_output.empty()) {
         std::string error;
@@ -470,6 +550,9 @@ int main(int argc, char** argv) {
 
     std::cout << "Node contract gates passed: nodes=" << all_metadata.size()
               << " implemented=" << implemented_count
-              << " blocked=" << blocked_count << '\n';
+              << " blocked=" << blocked_count
+              << " workflow_artifacts=" << workflow_evidence.artifacts.size()
+              << " workflow_nodes="
+              << inventory_summary.authored_workflow_reference_count << '\n';
     return 0;
 }

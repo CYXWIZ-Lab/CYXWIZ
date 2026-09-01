@@ -2084,6 +2084,7 @@ set_target_properties(test_pipeline_operator_metadata PROPERTIES
 add_executable(test_node_contract_gates
     tests/test_node_contract_gates.cpp
     tests/node_contract_inventory.cpp
+    tests/node_workflow_evidence.cpp
     src/gui/node_type_import_registry.cpp
     src/core/node_metadata_registry.cpp
     src/core/pipeline_runtime_capabilities.cpp
@@ -2111,10 +2112,12 @@ if(WIN32)
         _CRT_SECURE_NO_WARNINGS
         NOMINMAX
         CYXWIZ_NODE_FACTORY_ONLY
+        CYXWIZ_TICKET100_REPOSITORY_ROOT="${CMAKE_SOURCE_DIR}"
     )
 else()
     target_compile_definitions(test_node_contract_gates PRIVATE
         CYXWIZ_NODE_FACTORY_ONLY
+        CYXWIZ_TICKET100_REPOSITORY_ROOT="${CMAKE_SOURCE_DIR}"
     )
 endif()
 

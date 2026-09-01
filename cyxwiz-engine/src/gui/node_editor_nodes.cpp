@@ -558,18 +558,7 @@ MLNode NodeEditor::CreateNodeWithIds(NodeType type,
         // Jitter / Blur are train-only (eval/test pass-through); Resize /
         // CenterCrop / Grayscale always run.
         case NodeType::Resize: {
-            NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
-            in.name = "Input"; in.is_input = true;
-            in.description = "Image tensor [batch, channels, H, W] (any size).";
-            node.inputs.push_back(in);
-            NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
-            out.name = "Output"; out.is_input = false;
-            out.description = "Resized to [batch, channels, height, width]. "
-                              "Mode 'exact' stretches; other modes preserve aspect ratio.";
-            node.outputs.push_back(out);
-            node.parameters["width"] = "224";
-            node.parameters["height"] = "224";
-            node.parameters["mode"] = "exact";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
         case NodeType::CenterCrop: {
@@ -1540,21 +1529,7 @@ MLNode NodeEditor::CreateNodeWithIds(NodeType type,
         }
 
         case NodeType::AudioAugmentation: {
-            NodePin in;
-            in.id = next_pin_id_++;
-            in.type = PinType::Tensor;
-            in.name = "Audio";
-            in.is_input = true;
-            node.inputs.push_back(in);
-            NodePin out;
-            out.id = next_pin_id_++;
-            out.type = PinType::Tensor;
-            out.name = "Augmented";
-            out.is_input = false;
-            node.outputs.push_back(out);
-            node.parameters["noise_level"] = "0.01";
-            node.parameters["time_stretch"] = "false";
-            node.parameters["pitch_shift"] = "false";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 

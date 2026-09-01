@@ -1,4 +1,5 @@
 #include "node_contract_inventory.h"
+#include "node_workflow_evidence.h"
 
 #include "../src/core/node_metadata.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
@@ -159,7 +160,8 @@ std::string TriageClass(
     return "speculative_catalog_no_proven_owner";
 }
 
-std::string TargetDisposition(std::string_view triage_class) {
+std::string TargetDisposition(std::string_view triage_class,
+                              bool has_workflow_reference) {
     if (triage_class == "production_and_truthful" ||
         triage_class == "ui_only_workflow_surface") {
         return "retain_and_regression_guard";
@@ -181,7 +183,9 @@ std::string TargetDisposition(std::string_view triage_class) {
         return "validate_workflow_value_before_implementing_a_new_primitive";
     }
     if (triage_class == "speculative_catalog_no_proven_owner") {
-        return "review_workflow_value_before_implementation";
+        return has_workflow_reference
+            ? "review_referenced_workflow_and_assign_owner_before_implementation"
+            : "defer_or_remove_until_representative_workflow_proves_value";
     }
     return "keep_blocked_until_owner_and_required_evidence_exist";
 }
@@ -247,12 +251,35 @@ Json StringOrNull(const std::string& value) {
     return value.empty() ? Json(nullptr) : Json(value);
 }
 
+int ValidationLevelRank(WorkflowValidationLevel level) {
+    switch (level) {
+        case WorkflowValidationLevel::AuthoredGraphOnly: return 1;
+        case WorkflowValidationLevel::AutomatedContract: return 2;
+        case WorkflowValidationLevel::LiveRelease: return 3;
+    }
+    return 0;
+}
+
+Json WorkflowArtifactJson(const NodeWorkflowArtifactReference& artifact) {
+    return {{"id", artifact.id},
+            {"path", artifact.relative_path},
+            {"title", artifact.title},
+            {"workflow_lane", artifact.workflow_lane},
+            {"objective", artifact.objective},
+            {"validation_level",
+             WorkflowValidationLevelName(artifact.validation_level)}};
+}
+
 } // namespace
 
 std::string BuildNodeContractInventoryJson(
     const std::vector<const NodeMetadata*>& nodes,
+    const NodeWorkflowEvidenceCatalog& workflow_evidence,
     NodeContractInventorySummary& summary) {
     summary = {};
+    summary.workflow_manifest_artifact_count =
+        workflow_evidence.artifacts.size();
+    summary.workflow_manifest_error_count = workflow_evidence.errors.size();
     const int serialized_type_limit = static_cast<int>(gui::NodeType::Unknown);
     const auto training_roles = TrainingRoles();
     const auto legacy_aliases = LegacyAliases();
@@ -278,6 +305,10 @@ std::string BuildNodeContractInventoryJson(
             {"scope", entry.legacy_import_compatibility_only
                  ? "legacy_import_compatibility_only"
                  : "registered_pattern_import"}});
+    }
+    Json workflow_evidence_registry = Json::array();
+    for (const auto& artifact : workflow_evidence.artifacts) {
+        workflow_evidence_registry.push_back(WorkflowArtifactJson(artifact));
     }
     Json rows = Json::array();
     std::map<std::string, std::size_t> status_counts;
@@ -306,6 +337,34 @@ std::string BuildNodeContractInventoryJson(
             gui::properties_contract::ClassifyPanelContractPath(
                 metadata->type, metadata);
 
+        Json representative_workflow_ids = Json::array();
+        int highest_validation_rank = 0;
+        std::string highest_validation_level = "none";
+        const auto workflow_references =
+            workflow_evidence.artifact_indices_by_node.find(identity);
+        if (workflow_references !=
+            workflow_evidence.artifact_indices_by_node.end()) {
+            for (const std::size_t artifact_index :
+                 workflow_references->second) {
+                if (artifact_index >= workflow_evidence.artifacts.size()) {
+                    continue;
+                }
+                const auto& artifact =
+                    workflow_evidence.artifacts[artifact_index];
+                representative_workflow_ids.push_back(artifact.id);
+                const int validation_rank =
+                    ValidationLevelRank(artifact.validation_level);
+                if (validation_rank > highest_validation_rank) {
+                    highest_validation_rank = validation_rank;
+                    highest_validation_level =
+                        WorkflowValidationLevelName(
+                            artifact.validation_level);
+                }
+            }
+        }
+        const bool has_workflow_reference =
+            !representative_workflow_ids.empty();
+
         ++summary.node_count;
         if (metadata->IsImplemented()) ++summary.implemented_count;
         if (blocked) ++summary.blocked_count;
@@ -316,8 +375,26 @@ std::string BuildNodeContractInventoryJson(
         if (workflow_lane == "unclassified") {
             ++summary.unclassified_workflow_lane_count;
         }
-        if (metadata->example_usage.empty()) {
+        if (!metadata->example_usage.empty()) {
+            ++summary.documented_usage_hint_count;
+        }
+        if (!has_workflow_reference) {
             ++summary.missing_representative_workflow_count;
+        } else {
+            ++summary.authored_workflow_reference_count;
+        }
+        if (highest_validation_rank >= 2) {
+            ++summary.automated_workflow_evidence_count;
+        }
+        if (highest_validation_rank >= 3) {
+            ++summary.live_release_workflow_evidence_count;
+        }
+        if (triage_class == "speculative_catalog_no_proven_owner") {
+            if (has_workflow_reference) {
+                ++summary.speculative_with_workflow_reference_count;
+            } else {
+                ++summary.speculative_without_workflow_reference_count;
+            }
         }
         if (triage_class == "frontend_exists_backend_or_owner_missing") {
             ++summary.unclassified_frontend_primitive_gap_count;
@@ -397,7 +474,8 @@ std::string BuildNodeContractInventoryJson(
             {"metadata_status", status}, {"badge", metadata->badge},
             {"can_add_to_graph", CanAddNodeToGraph(*metadata)},
             {"triage_class", triage_class},
-            {"target_disposition", TargetDisposition(triage_class)},
+            {"target_disposition",
+             TargetDisposition(triage_class, has_workflow_reference)},
             {"properties", {{"path",
                              gui::properties_contract::PanelContractPathName(
                                   property_path)},
@@ -459,26 +537,32 @@ std::string BuildNodeContractInventoryJson(
                 {"graph_import_names", accepted_import_names},
                 {"pipeline_legacy_aliases", aliases}}},
             {"evidence", {{"focused_tests", focused_tests},
-                          {"representative_workflow",
-                           StringOrNull(metadata->example_usage)}}},
+                          {"documentation_usage_hint",
+                           StringOrNull(metadata->example_usage)},
+                          {"representative_workflow_ids",
+                           representative_workflow_ids},
+                          {"highest_workflow_validation_level",
+                           highest_validation_level}}},
             {"documentation", {{"brief", metadata->brief_description},
                                {"help", metadata->help_text}}}
         });
     }
 
     Json document = {
-        {"schema_version", 1},
+        {"schema_version", 2},
         {"source_authorities", Json::array({
             "NodeMetadataRegistry::GetAllMetadata",
             "NodeTypeImportRegistry",
             "PipelineRuntimeCapabilities", "PipelineTrainingCapabilities",
-            "PropertiesContract"})},
+            "PropertiesContract", "workflow_evidence_manifest.json"})},
         {"identity_note",
          "Built-in numeric IDs are serialized NodeType identities. Resource "
          "template IDs are deterministic runtime catalog identities beginning "
          "at 10000. Symbolic identity is the canonical metadata name because "
          "the C++ enum token is not exposed as a separate runtime authority."},
         {"graph_import_registry", std::move(graph_import_registry)},
+        {"workflow_evidence_registry",
+         std::move(workflow_evidence_registry)},
         {"summary", {{"nodes", summary.node_count},
                      {"implemented", summary.implemented_count},
                      {"blocked", summary.blocked_count},
@@ -489,6 +573,22 @@ std::string BuildNodeContractInventoryJson(
                       summary.unclassified_workflow_lane_count},
                      {"missing_representative_workflow",
                       summary.missing_representative_workflow_count},
+                     {"documented_usage_hints",
+                      summary.documented_usage_hint_count},
+                     {"workflow_manifest_artifacts",
+                      summary.workflow_manifest_artifact_count},
+                     {"nodes_with_authored_workflow_reference",
+                      summary.authored_workflow_reference_count},
+                     {"nodes_with_automated_workflow_evidence",
+                      summary.automated_workflow_evidence_count},
+                     {"nodes_with_live_release_workflow_evidence",
+                      summary.live_release_workflow_evidence_count},
+                     {"workflow_manifest_errors",
+                      summary.workflow_manifest_error_count},
+                     {"speculative_with_workflow_reference",
+                      summary.speculative_with_workflow_reference_count},
+                     {"speculative_without_workflow_reference",
+                      summary.speculative_without_workflow_reference_count},
                      {"graph_import_names",
                       summary.graph_import_name_count},
                      {"legacy_compatibility_import_names",
