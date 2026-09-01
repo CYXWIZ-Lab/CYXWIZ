@@ -130,6 +130,10 @@ def _resolve_dependency(
                     return candidate.resolve()
 
     name = Path(value).name
+    source_sibling = binary.source.parent / name
+    if source_sibling.is_file():
+        return source_sibling.resolve()
+
     matches: list[Path] = []
     for root in search_roots:
         candidate = root / name

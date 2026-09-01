@@ -71,6 +71,27 @@ class MachORuntimeClosureTests(unittest.TestCase):
             macho.packaged_reference(owner, dependency),
         )
 
+    def test_resolves_transitive_dependency_beside_original_binary(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-macho-") as temporary:
+            root = Path(temporary)
+            source = root / "gcc" / "libgfortran.5.dylib"
+            dependency = source.parent / "libquadmath.0.dylib"
+            packaged = root / "package" / "lib" / source.name
+            source.parent.mkdir(parents=True)
+            packaged.parent.mkdir(parents=True)
+            source.write_bytes(b"source")
+            dependency.write_bytes(b"dependency")
+            packaged.write_bytes(b"packaged")
+
+            resolved = macho._resolve_dependency(
+                "@rpath/libquadmath.0.dylib",
+                macho.PackagedBinary(packaged, source),
+                (),
+                (),
+            )
+
+            self.assertEqual(dependency.resolve(), resolved)
+
 
 if __name__ == "__main__":
     unittest.main()
