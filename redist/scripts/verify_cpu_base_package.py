@@ -283,7 +283,9 @@ def audit_runtime_modules(output: str, base: Path) -> list[str]:
 def audit_macos_dependencies(base: Path) -> list[str]:
     required = (
         base / "arrayfire" / "lib" / "libaf.dylib",
+        base / "arrayfire" / "lib" / "libaf.3.dylib",
         base / "arrayfire" / "lib" / "libafcpu.dylib",
+        base / "arrayfire" / "lib" / "libafcpu.3.dylib",
     )
     for path in required:
         if not path.is_file():

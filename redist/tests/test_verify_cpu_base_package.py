@@ -169,7 +169,12 @@ class CpuBasePackageVerifierTests(unittest.TestCase):
             base = Path(temporary) / "base"
             runtime = base / "arrayfire" / "lib"
             runtime.mkdir(parents=True)
-            for name in ("libaf.dylib", "libafcpu.dylib"):
+            for name in (
+                "libaf.dylib",
+                "libaf.3.dylib",
+                "libafcpu.dylib",
+                "libafcpu.3.dylib",
+            ):
                 (runtime / name).write_bytes(b"\xcf\xfa\xed\xfe" + b"fixture")
             output = (
                 f"{runtime / 'libaf.dylib'}:\n"

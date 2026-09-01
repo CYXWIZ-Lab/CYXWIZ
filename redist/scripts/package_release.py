@@ -470,6 +470,37 @@ def copy_optional_groups(roots: Sequence[Path], patterns: Sequence[str], destina
                 copied.add(key)
 
 
+def copy_arrayfire_library(
+    roots: Sequence[Path],
+    component: str,
+    lib_suffix: str,
+    destination: Path,
+    label: str,
+) -> None:
+    prefix = "" if lib_suffix == ".dll" else "lib"
+    if lib_suffix == ".dylib":
+        copy_required_group(
+            roots,
+            f"{prefix}{component}{lib_suffix}",
+            destination,
+            label,
+        )
+        copy_required_group(
+            roots,
+            f"{prefix}{component}.[0-9]*{lib_suffix}",
+            destination,
+            f"versioned {label}",
+        )
+        return
+    suffix_pattern = f"{lib_suffix}*" if lib_suffix != ".dll" else lib_suffix
+    copy_required_group(
+        roots,
+        f"{prefix}{component}{suffix_pattern}",
+        destination,
+        label,
+    )
+
+
 def package_arrayfire(
     arrayfire_root: Path,
     stage: Path,
@@ -502,12 +533,14 @@ def package_arrayfire_base(
     library_dir = arrayfire_library_dir(arrayfire_root)
     destination = stage / "arrayfire" / ("bin" if lib_suffix == ".dll" else "lib")
     destination.mkdir(parents=True, exist_ok=True)
-    prefix = "" if lib_suffix == ".dll" else "lib"
-    suffix_pattern = f"{lib_suffix}*" if lib_suffix != ".dll" else lib_suffix
     roots = [library_dir]
 
-    copy_required_group(roots, f"{prefix}af{suffix_pattern}", destination, "ArrayFire unified runtime")
-    copy_required_group(roots, f"{prefix}afcpu{suffix_pattern}", destination, "ArrayFire CPU backend")
+    copy_arrayfire_library(
+        roots, "af", lib_suffix, destination, "ArrayFire unified runtime"
+    )
+    copy_arrayfire_library(
+        roots, "afcpu", lib_suffix, destination, "ArrayFire CPU backend"
+    )
 
     if lib_suffix == ".dll":
         copy_required_group(roots, "mkl_rt*.dll", destination, "ArrayFire CPU MKL runtime")
@@ -550,13 +583,12 @@ def package_arrayfire_backend(
     library_dir = arrayfire_library_dir(arrayfire_root)
     destination = destination or stage / "runtime"
     destination.mkdir(parents=True, exist_ok=True)
-    prefix = "" if lib_suffix == ".dll" else "lib"
-    suffix_pattern = f"{lib_suffix}*" if lib_suffix != ".dll" else lib_suffix
     roots = [library_dir]
 
-    copy_required_group(
+    copy_arrayfire_library(
         roots,
-        f"{prefix}af{backend}{suffix_pattern}",
+        f"af{backend}",
+        lib_suffix,
         destination,
         f"ArrayFire {backend} backend",
     )

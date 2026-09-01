@@ -72,9 +72,9 @@ inline std::string CurrentArrayFireBackendPluginName(
 #ifdef _WIN32
     return "af" + std::string(backend) + ".dll";
 #elif defined(__APPLE__)
-    return "libaf" + std::string(backend) + ".dylib";
+    return "libaf" + std::string(backend) + ".3.dylib";
 #else
-    return "libaf" + std::string(backend) + ".so";
+    return "libaf" + std::string(backend) + ".so.3";
 #endif
 }
 

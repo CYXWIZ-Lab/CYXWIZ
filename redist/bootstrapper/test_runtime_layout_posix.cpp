@@ -119,6 +119,17 @@ std::string ReadText(const std::filesystem::path& path) {
 
 int main() {
     int failures = 0;
+#ifdef __APPLE__
+    failures += !Expect(
+        cyxwiz::runtime::CurrentArrayFireBackendPluginName("opencl") ==
+            "libafopencl.3.dylib",
+        "macOS must validate the ArrayFire major-version plugin alias");
+#else
+    failures += !Expect(
+        cyxwiz::runtime::CurrentArrayFireBackendPluginName("opencl") ==
+            "libafopencl.so.3",
+        "Linux must validate the ArrayFire major-version plugin alias");
+#endif
     const auto binary_directory = ExecutableDirectory();
     const auto bootstrapper = binary_directory /
         cyxwiz::runtime::CurrentRuntimeBootstrapperExecutableName();

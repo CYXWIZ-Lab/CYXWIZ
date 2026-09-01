@@ -138,6 +138,42 @@ class PackageReleaseTests(unittest.TestCase):
         (cache / "runtime.cpython-312.pyc").write_bytes(b"cache")
         return root
 
+    def test_macos_arrayfire_staging_preserves_loader_version_aliases(self) -> None:
+        root = self.root / "arrayfire-macos"
+        library = root / "lib"
+        licenses = root / "LICENSES"
+        include = root / "include" / "af"
+        library.mkdir(parents=True)
+        licenses.mkdir()
+        include.mkdir(parents=True)
+        (licenses / "LICENSE").write_text("license", encoding="ascii")
+        (include / "version.h").write_text(
+            '#define AF_VERSION "3.10.0"\n', encoding="ascii"
+        )
+        for component in ("af", "afcpu", "afopencl"):
+            for name in (
+                f"lib{component}.dylib",
+                f"lib{component}.3.dylib",
+                f"lib{component}.3.10.0.dylib",
+            ):
+                (library / name).write_bytes(name.encode("ascii"))
+
+        stage = self.root / "macos-stage"
+        package_release.package_arrayfire_base(root, stage, ".dylib")
+        package_release.package_arrayfire_backend(
+            root, stage, "opencl", ".dylib"
+        )
+
+        runtime = stage / "arrayfire" / "lib"
+        for name in (
+            "libaf.3.dylib",
+            "libafcpu.3.dylib",
+        ):
+            self.assertTrue((runtime / name).is_file(), name)
+        self.assertTrue(
+            (stage / "runtime" / "libafopencl.3.dylib").is_file()
+        )
+
     def create_runtime_licenses(self) -> Path:
         root = self.root / "intel-licenses"
         mkl = root / "onemkl-2025.2" / "licensing"
