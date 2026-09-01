@@ -6,6 +6,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -70,8 +71,9 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
 #ifdef CYXWIZ_HAS_ARRAYFIRE
         if (!use_native_cpu) {
             try {
-                af::array param_gpu = param.GetArray();
-                af::array grad_gpu = grad.GetArray();
+                const std::vector<size_t> parameter_shape = param.Shape();
+                af::array param_gpu = param.GetSemanticArray();
+                af::array grad_gpu = grad.GetSemanticArray();
 
                 if (momentum_ > 0.0) {
                     // Initialize velocity if needed
@@ -79,7 +81,9 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
                         velocity_[name] = Tensor::Zeros(param.Shape(), DataType::Float32);
                     }
 
-                    af::array v_gpu = velocity_[name].GetArray();
+                    const std::vector<size_t> velocity_shape =
+                        velocity_[name].Shape();
+                    af::array v_gpu = velocity_[name].GetSemanticArray();
 
                     // v = momentum * v + grad
                     v_gpu = static_cast<float>(momentum_) * v_gpu + grad_gpu;
@@ -88,14 +92,15 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
                     v_gpu.eval();
                     param_gpu.eval();
 
-                    velocity_[name].SetFromArray(v_gpu);
+                    velocity_[name].SetFromSemanticArray(
+                        v_gpu, velocity_shape);
                 } else {
                     // Simple SGD: param = param - lr * grad
                     param_gpu = param_gpu - static_cast<float>(learning_rate_) * grad_gpu;
                     param_gpu.eval();
                 }
 
-                param.SetFromArray(param_gpu);
+                param.SetFromSemanticArray(param_gpu, parameter_shape);
                 continue;
             } catch (const af::exception& e) {
                 optimizer_detail::LogOptimizerFallbackOnce(

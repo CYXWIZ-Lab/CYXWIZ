@@ -35,17 +35,6 @@ struct Pool2DGeometry {
     size_t out_w;
 };
 
-size_t CheckedPaddedExtent(size_t input_extent,
-                           int padding,
-                           const char* layer_name) {
-    const size_t pad = static_cast<size_t>(padding);
-    if (pad > ((std::numeric_limits<size_t>::max)() - input_extent) / 2) {
-        throw std::overflow_error(
-            std::string(layer_name) + " padded input extent overflow");
-    }
-    return input_extent + pad * 2;
-}
-
 Pool2DGeometry ValidatePoolForwardInput(const Tensor& input,
                                         int pool_size,
                                         int stride,
@@ -53,8 +42,10 @@ Pool2DGeometry ValidatePoolForwardInput(const Tensor& input,
                                         const char* layer_name) {
     ValidatePoolInput(input, layer_name);
     const std::vector<size_t>& shape = input.Shape();
-    const size_t padded_h = CheckedPaddedExtent(shape[0], padding, layer_name);
-    const size_t padded_w = CheckedPaddedExtent(shape[1], padding, layer_name);
+    const size_t padded_h = CheckedSpatialPaddedExtent(
+        shape[0], padding, layer_name);
+    const size_t padded_w = CheckedSpatialPaddedExtent(
+        shape[1], padding, layer_name);
     const size_t window = static_cast<size_t>(pool_size);
     if (padded_h < window || padded_w < window) {
         throw std::runtime_error(

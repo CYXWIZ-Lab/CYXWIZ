@@ -1,9 +1,14 @@
 #include "layer_utils.h"
 
+#include "../arrayfire_backend_utils.h"
+
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
+
+#include <spdlog/spdlog.h>
 
 namespace cyxwiz {
 
@@ -27,6 +32,66 @@ void ValidateSpatial4DInput(const Tensor& input, const char* name) {
 
 void ValidatePoolInput(const Tensor& input, const char* name) {
     ValidateSpatial4DInput(input, name);
+}
+
+size_t CheckedSpatialPaddedExtent(size_t input_extent,
+                                  int padding,
+                                  const char* layer_name) {
+    if (padding < 0) {
+        throw std::invalid_argument(
+            std::string(layer_name) + " requires non-negative padding");
+    }
+    const size_t pad = static_cast<size_t>(padding);
+    if (pad > ((std::numeric_limits<size_t>::max)() - input_extent) / 2) {
+        throw std::overflow_error(
+            std::string(layer_name) + " padded input extent overflow");
+    }
+    return input_extent + pad * 2;
+}
+
+size_t CheckedLayerProduct(size_t left,
+                           size_t right,
+                           const char* layer_name,
+                           const char* quantity) {
+    if (left != 0 && right > (std::numeric_limits<size_t>::max)() / left) {
+        throw std::overflow_error(
+            std::string(layer_name) + " " + quantity + " overflow");
+    }
+    return left * right;
+}
+
+void RecordLayerArrayFireFallback(const char* operation_name,
+                                  BackendFallbackReason reason,
+                                  const char* error_message,
+                                  const Tensor& tensor,
+                                  const char* tensor_name) {
+    const std::string context = BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext(tensor_name, tensor.Shape()));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        operation_name, reason, error_message, context);
+    if (ShouldLogArrayFireBackendFallbackOnce(
+            operation_name, reason, context)) {
+        spdlog::warn(
+            "{}",
+            BuildArrayFireBackendFallbackMessage(
+                operation_name,
+                reason,
+                reason != BackendFallbackReason::CudaJitParamOverflow,
+                error_message,
+                context));
+    }
+}
+
+void RecordLayerArrayFireFallback(const char* operation_name,
+                                  const char* error_message,
+                                  const Tensor& tensor,
+                                  const char* tensor_name) {
+    RecordLayerArrayFireFallback(
+        operation_name,
+        ClassifyArrayFireBackendFallbackReason(error_message),
+        error_message,
+        tensor,
+        tensor_name);
 }
 
 ResizeLinearSample ComputeResizeLinearSample(size_t out_index, size_t in_size, int scale_factor) {

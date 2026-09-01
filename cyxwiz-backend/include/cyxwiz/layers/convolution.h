@@ -45,6 +45,7 @@ private:
     Tensor bias_;
     Tensor grad_weights_;
     Tensor grad_bias_;
+    bool has_forward_ = false;
 };
 
 // ============================================================================
@@ -80,12 +81,7 @@ private:
     Tensor bias_;
     Tensor grad_weights_;
     Tensor grad_bias_;
-
-    Tensor Im2Col(const Tensor& input, int kernel_h, int kernel_w,
-                  int stride_h, int stride_w, int pad_h, int pad_w);
-    Tensor Col2Im(const Tensor& col, int height, int width, int channels,
-                  int kernel_h, int kernel_w, int stride_h, int stride_w,
-                  int pad_h, int pad_w);
+    bool has_forward_ = false;
 };
 
 // ============================================================================
