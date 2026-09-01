@@ -96,7 +96,15 @@ class CpuBasePackageVerifierTests(unittest.TestCase):
             archive.with_suffix(".zip.signed.json").write_bytes(
                 verify_cpu_base_package.canonical_json_bytes(signed)
             )
-            loaded = verify_cpu_base_package.load_manifest(manifest_path, archive)
+            fixture_target = mock.Mock(platform="win64", architecture="x86_64")
+            with mock.patch.object(
+                verify_cpu_base_package,
+                "detect_backend_pack_target",
+                return_value=fixture_target,
+            ):
+                loaded = verify_cpu_base_package.load_manifest(
+                    manifest_path, archive
+                )
             self.assertEqual([], loaded["signatures"])
 
     def test_engine_smoke_requires_explicit_cpu_and_isolation_evidence(self) -> None:
