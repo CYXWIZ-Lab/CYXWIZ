@@ -185,6 +185,27 @@ struct PipelineMaterializerStorageBackendCapability {
 };
 
 struct PipelineRuntimeSupport {
+    PipelineRuntimeSupport() = default;
+
+    PipelineRuntimeSupport(
+        PipelineRuntimeSupportMode mode_value,
+        PipelineRuntimeFailMode fail_mode_value,
+        std::optional<gui::NodeType> node_type_value,
+        std::optional<gui::NodeType> operator_type_value,
+        const char* fail_closed_reason_value,
+        PipelineMaterializerStorageSupport materializer_storage_support_value,
+        bool materializer_arrow_table_supported_value,
+        bool pipeline_executor_supported_value)
+        : mode(mode_value),
+          fail_mode(fail_mode_value),
+          node_type(node_type_value),
+          operator_type(operator_type_value),
+          fail_closed_reason(fail_closed_reason_value),
+          materializer_storage_support(materializer_storage_support_value),
+          materializer_arrow_table_supported(
+              materializer_arrow_table_supported_value),
+          pipeline_executor_supported(pipeline_executor_supported_value) {}
+
     PipelineRuntimeSupportMode mode = PipelineRuntimeSupportMode::Unknown;
     PipelineRuntimeFailMode fail_mode = PipelineRuntimeFailMode::Unknown;
     std::optional<gui::NodeType> node_type = std::nullopt;

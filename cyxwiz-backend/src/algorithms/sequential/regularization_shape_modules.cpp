@@ -23,6 +23,7 @@ int NormalizeSoftmaxDimension(int dimension, int rank) {
     return normalized;
 }
 
+#ifndef CYXWIZ_HAS_ARRAYFIRE
 std::vector<size_t> SoftmaxRowMajorStrides(
     const std::vector<size_t>& shape) {
     std::vector<size_t> strides(shape.size(), 1);
@@ -33,6 +34,7 @@ std::vector<size_t> SoftmaxRowMajorStrides(
     }
     return strides;
 }
+#endif
 
 } // namespace
 
@@ -220,4 +222,3 @@ Tensor FlattenModule::Backward(const Tensor& grad_output) {
 }
 
 } // namespace cyxwiz
-

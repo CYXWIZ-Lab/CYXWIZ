@@ -154,7 +154,7 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
         // Right-aligned cell count
         float right_text_width = ImGui::CalcTextSize("Cells: 999").x + 20;
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - right_text_width);
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Cells: %zu",
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Cells: %d",
                            tab->cell_manager.GetCellCount());
 
         ImGui::Separator();
@@ -224,9 +224,6 @@ void ScriptEditorPanel::RenderCell(Cell& cell, int index) {
     } else {
         left_border_color = ImVec4(0.2f, 0.2f, 0.22f, 1.0f);  // Subtle gray
     }
-
-    // Draw left border indicator (Jupyter-style)
-    ImVec2 cell_start_pos = ImGui::GetCursorScreenPos();
 
     // Cell background color
     ImVec4 cell_bg = is_selected ? ImVec4(0.14f, 0.14f, 0.16f, 1.0f) : ImVec4(0.12f, 0.12f, 0.14f, 1.0f);

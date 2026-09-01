@@ -10,6 +10,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz::runtime {
@@ -63,6 +64,18 @@ struct BackendPackInstallProgress {
 };
 
 struct BackendPackInstallResult {
+    BackendPackInstallResult() = default;
+
+    BackendPackInstallResult(
+        BackendPackInstallStatus status_value,
+        std::string message_value,
+        std::filesystem::path installed_directory_value = {},
+        std::optional<BackendPackStateResult> activation_value = std::nullopt)
+        : status(status_value),
+          message(std::move(message_value)),
+          installed_directory(std::move(installed_directory_value)),
+          activation(std::move(activation_value)) {}
+
     BackendPackInstallStatus status =
         BackendPackInstallStatus::InvalidRequest;
     std::string message;

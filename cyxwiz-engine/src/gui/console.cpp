@@ -179,14 +179,14 @@ struct Console::RuntimeLogExportTaskState {
 };
 
 Console::Console()
-    : scroll_to_bottom_(false), show_window_(true), auto_scroll_(true),
+    : agent_llm_(std::make_unique<cyxwiz::AgentLlmSession>()),
+      python_repl_(std::make_unique<cyxwiz::PythonReplSession>()),
+      scroll_to_bottom_(false), show_window_(true), auto_scroll_(true),
       inspector_export_task_state_(
           std::make_shared<RuntimeLogExportTaskState>()),
       truth_provider_(cyxwiz::CreateEngineRuntimeTruthProvider()),
       command_service_(std::make_unique<cyxwiz::RuntimeConsoleCommandService>(
           cyxwiz::RuntimeLogStore::Instance(), truth_provider_.get())),
-      agent_llm_(std::make_unique<cyxwiz::AgentLlmSession>()),
-      python_repl_(std::make_unique<cyxwiz::PythonReplSession>()),
       show_copy_notification_(false), copy_notification_time_(0.0f) {
   memset(input_buf_, 0, sizeof(input_buf_));
   LoadSavedInspectorFilters();

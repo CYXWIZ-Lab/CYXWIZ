@@ -20,7 +20,7 @@ namespace cyxwiz {
  *   ├── graph.cyxgraph
  *   ├── config.json
  *   ├── weights/manifest.json
- *   └── weights/*.bin
+ *   └── weights/(tensor files).bin
  *   Created by: Deploy > Export Model
  */
 class ModelConverter {

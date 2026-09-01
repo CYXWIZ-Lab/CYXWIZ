@@ -714,31 +714,25 @@ void CyxWizApp::HandleInput() {
 
     // Track state transitions for debugging
     static bool was_idle = false;
-    static int idle_frame_count = 0;
-    static int active_frame_count = 0;
 
     if (is_idle_ && !training_active) {
         // Use wait with timeout for reduced CPU/GPU usage when idle
         glfwWaitEventsTimeout(IDLE_FRAME_TIME);
 
-        idle_frame_count++;
         if (!was_idle) {
             if (log_idle_transitions_) {
                 spdlog::info("Entering IDLE mode (reduced GPU usage)");
             }
             was_idle = true;
-            active_frame_count = 0;
         }
     } else {
         glfwPollEvents();
 
-        active_frame_count++;
         if (was_idle) {
             if (log_idle_transitions_) {
                 spdlog::info("Exiting IDLE mode (full frame rate)");
             }
             was_idle = false;
-            idle_frame_count = 0;
         }
     }
 }

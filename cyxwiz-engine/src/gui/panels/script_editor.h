@@ -196,7 +196,7 @@ private:
     void RenderEditor();
     void RenderMinimap();
     void RenderStatusBar();
-    void HandleKeyboardShortcuts();
+    void HandleKeyboardShortcuts() override;
 
     // Cell-based editor rendering
     void RenderCellBasedEditor();

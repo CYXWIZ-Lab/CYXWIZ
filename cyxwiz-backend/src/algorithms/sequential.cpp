@@ -39,24 +39,6 @@ std::string ShapeToStringForTrace(const std::vector<size_t>& shape) {
     return out.str();
 }
 
-std::vector<size_t> UnravelIndex(size_t index, const std::vector<size_t>& shape) {
-    std::vector<size_t> indices(shape.size(), 0);
-    for (size_t i = shape.size(); i-- > 0;) {
-        indices[i] = index % shape[i];
-        index /= shape[i];
-    }
-    return indices;
-}
-
-size_t RavelIndex(const std::vector<size_t>& indices,
-                  const std::vector<size_t>& shape) {
-    size_t linear = 0;
-    for (size_t i = 0; i < shape.size(); ++i) {
-        linear = linear * shape[i] + indices[i];
-    }
-    return linear;
-}
-
 void EmitModelLayerTrace(const char* stage,
                          size_t layer_index,
                          const std::string& layer_name,
@@ -447,7 +429,6 @@ std::unique_ptr<Module> CreateModule(
 }
 
 } // namespace cyxwiz
-
 
 
 

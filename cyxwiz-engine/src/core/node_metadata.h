@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <utility>
 #include <vector>
 #include "../gui/node_editor.h"  // For NodeType, NodeCategory, PinType
 
@@ -25,6 +26,22 @@ enum class NodeImplementationStatus {
  * Port definition for node inputs/outputs
  */
 struct PortDefinition {
+    PortDefinition() = default;
+    PortDefinition(std::string name_value,
+                   PinType type_value = PinType::Tensor,
+                   bool required_value = true,
+                   std::string description_value = {},
+                   bool variadic_value = false,
+                   int min_connections_value = 0,
+                   int max_connections_value = 1)
+        : name(std::move(name_value)),
+          type(type_value),
+          required(required_value),
+          description(std::move(description_value)),
+          variadic(variadic_value),
+          min_connections(min_connections_value),
+          max_connections(max_connections_value) {}
+
     std::string name;
     PinType type = PinType::Tensor;
     bool required = true;
@@ -50,6 +67,31 @@ enum class ParameterConsumption {
  * Parameter definition for node configuration
  */
 struct ParameterDefinition {
+    ParameterDefinition() = default;
+    ParameterDefinition(
+        std::string name_value,
+        std::string type_value,
+        std::string default_value_value = {},
+        std::string description_value = {},
+        std::vector<std::string> enum_values_value = {},
+        std::string validation_value = {},
+        std::string display_name_value = {},
+        std::string group_value = {},
+        bool required_value = false,
+        bool advanced_value = false,
+        ParameterConsumption consumption_value = ParameterConsumption::Runtime)
+        : name(std::move(name_value)),
+          type(std::move(type_value)),
+          default_value(std::move(default_value_value)),
+          description(std::move(description_value)),
+          enum_values(std::move(enum_values_value)),
+          validation(std::move(validation_value)),
+          display_name(std::move(display_name_value)),
+          group(std::move(group_value)),
+          required(required_value),
+          advanced(advanced_value),
+          consumption(consumption_value) {}
+
     std::string name;
     std::string type;           // "string", "multiline", "password", "int", "float", "enum", "bool", "file", "directory"
     std::string default_value;
@@ -78,6 +120,16 @@ enum class NodePropertiesEditor {
  * Support axis for frontend/runtime capability display
  */
 struct SupportAxisDefinition {
+    SupportAxisDefinition() = default;
+    SupportAxisDefinition(std::string name_value,
+                          std::string value_value,
+                          bool supported_value = true,
+                          std::string reason_value = {})
+        : name(std::move(name_value)),
+          value(std::move(value_value)),
+          supported(supported_value),
+          reason(std::move(reason_value)) {}
+
     std::string name;
     std::string value;
     bool supported = true;
@@ -89,6 +141,47 @@ struct SupportAxisDefinition {
  * Used by NodeBrowserPanel for display and by Info Panel for documentation
  */
 struct NodeMetadata {
+    NodeMetadata() = default;
+    NodeMetadata(
+        NodeType type_value,
+        NodeCategory category_value,
+        std::string name_value,
+        std::string icon_value,
+        std::vector<std::string> keywords_value = {},
+        int usage_count_value = 0,
+        bool is_favorite_value = false,
+        std::string brief_description_value = {},
+        std::string help_text_value = {},
+        std::string example_usage_value = {},
+        std::vector<PortDefinition> inputs_value = {},
+        std::vector<PortDefinition> outputs_value = {},
+        std::vector<ParameterDefinition> parameters_value = {},
+        NodeImplementationStatus status_value =
+            NodeImplementationStatus::Implemented,
+        int user_votes_value = 0,
+        std::string badge_value = {},
+        std::vector<SupportAxisDefinition> support_axes_value = {},
+        NodePropertiesEditor properties_editor_value =
+            NodePropertiesEditor::Automatic)
+        : type(type_value),
+          category(category_value),
+          name(std::move(name_value)),
+          icon(std::move(icon_value)),
+          keywords(std::move(keywords_value)),
+          usage_count(usage_count_value),
+          is_favorite(is_favorite_value),
+          brief_description(std::move(brief_description_value)),
+          help_text(std::move(help_text_value)),
+          example_usage(std::move(example_usage_value)),
+          inputs(std::move(inputs_value)),
+          outputs(std::move(outputs_value)),
+          parameters(std::move(parameters_value)),
+          status(status_value),
+          user_votes(user_votes_value),
+          badge(std::move(badge_value)),
+          support_axes(std::move(support_axes_value)),
+          properties_editor(properties_editor_value) {}
+
     // Identity
     NodeType type = NodeType::Unknown;
     NodeCategory category = NodeCategory::Unknown;

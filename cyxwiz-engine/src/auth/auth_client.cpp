@@ -8,12 +8,6 @@
 #include <fstream>
 #include <filesystem>
 #include <cstdlib>
-#include <iomanip>
-#include <sstream>
-
-// OpenSSL for SHA-256 hashing
-#include <openssl/sha.h>
-#include <openssl/evp.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -31,28 +25,6 @@
 using json = nlohmann::json;
 
 namespace {
-
-// SHA-256 hash function for password protection
-std::string HashPassword(const std::string& password, const std::string& email) {
-    // Use email as salt to prevent rainbow table attacks
-    std::string salted = password + ":" + email + ":cyxwiz_salt_v1";
-
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-
-    EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr);
-    EVP_DigestUpdate(ctx, salted.c_str(), salted.length());
-    EVP_DigestFinal_ex(ctx, hash, nullptr);
-    EVP_MD_CTX_free(ctx);
-
-    // Convert to hex string
-    std::stringstream ss;
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-        ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
-    }
-
-    return ss.str();
-}
 
 // Parse URL into host, port, and base path
 struct ParsedUrl {

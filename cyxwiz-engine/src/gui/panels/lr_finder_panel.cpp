@@ -428,7 +428,7 @@ void LRFinderPanel::SimulateLRFinder() {
         }
 
         // Update LR
-        if ((schedule_type_ == 1)) {
+        if (schedule_type_ == 1) {
             current_lr *= lr_mult;
         } else {
             current_lr += lr_mult;

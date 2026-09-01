@@ -149,7 +149,7 @@ NumericHealthSample SampleTypedColumnHealth(
 
     NumericHealthSample health;
     const int64_t length = column->length();
-    size_t chunk_index = 0;
+    int chunk_index = 0;
     int64_t chunk_start = 0;
     for (int64_t sample = 0; sample < sample_count; ++sample) {
         if ((sample & 255) == 0 && should_cancel && should_cancel()) {
@@ -164,16 +164,14 @@ NumericHealthSample SampleTypedColumnHealth(
                     (static_cast<long double>(sample) * (length - 1)) /
                     (sample_count - 1)));
         while (chunk_index < column->num_chunks() &&
-               row >= chunk_start + column->chunk(
-                   static_cast<int>(chunk_index))->length()) {
-            chunk_start += column->chunk(
-                static_cast<int>(chunk_index))->length();
+               row >= chunk_start + column->chunk(chunk_index)->length()) {
+            chunk_start += column->chunk(chunk_index)->length();
             ++chunk_index;
         }
         if (chunk_index >= column->num_chunks()) break;
 
         auto values = std::static_pointer_cast<ArrayType>(
-            column->chunk(static_cast<int>(chunk_index)));
+            column->chunk(chunk_index));
         const int64_t local_row = row - chunk_start;
         if (values->IsNull(local_row)) continue;
         if constexpr (std::is_floating_point_v<ValueType>) {

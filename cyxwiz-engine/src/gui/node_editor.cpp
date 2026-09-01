@@ -533,11 +533,8 @@ void NodeEditor::Render() {
                     );
 
                     // Queue node for addition
-                    PendingNode pending;
-                    pending.type = static_cast<NodeType>(dropped_type);
-                    pending.name = node_name;
-                    pending.position = drop_pos;
-                    pending_nodes_.push_back(pending);
+                    pending_nodes_.emplace_back(
+                        static_cast<NodeType>(dropped_type), node_name, drop_pos);
 
                     spdlog::info("Drag-drop: Adding {} node at ({}, {})", node_name, drop_pos.x, drop_pos.y);
                 }
@@ -4469,11 +4466,7 @@ void NodeEditor::AddNodeFromMenu(NodeType type, const std::string& name) {
     ImVec2 visible_center(-panning.x + 400, -panning.y + 300);
     
     // Queue the node for addition (deferred to avoid modifying nodes_ during rendering)
-    PendingNode pending;
-    pending.type = type;
-    pending.name = name;
-    pending.position = visible_center;
-    pending_nodes_.push_back(pending);
+    pending_nodes_.emplace_back(type, name, visible_center);
     
     spdlog::info("Menu: Adding {} node at center of view", name);
 }

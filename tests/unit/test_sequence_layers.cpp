@@ -11,6 +11,7 @@
 #include <vector>
 #include <cstring>
 #include <map>
+#include <stdexcept>
 
 using namespace cyxwiz;
 using Catch::Matchers::WithinAbs;
@@ -316,6 +317,13 @@ TEST_CASE("LSTMLayer - Output shape", "[lstm][shape]") {
     REQUIRE(ShapesEqual(output.Shape(), {4, 5, 20}));
 }
 
+TEST_CASE("LSTMLayer rejects invalid input shape", "[lstm][validation]") {
+    LSTMLayer lstm(10, 20, 1, true, false, 0.0f);
+
+    REQUIRE_THROWS_AS(lstm.Forward(Tensor::Zeros({2, 10})), std::invalid_argument);
+    REQUIRE_THROWS_AS(lstm.Forward(Tensor::Zeros({2, 3, 9})), std::invalid_argument);
+}
+
 TEST_CASE("LSTMLayer - Bidirectional output shape", "[lstm][shape][bidirectional]") {
     // Bidirectional LSTM
     LSTMLayer lstm(10, 20, 1, true, true, 0.0f);
@@ -466,6 +474,13 @@ TEST_CASE("GRULayer - Output shape", "[gru][shape]") {
     Tensor output = gru.Forward(input);
 
     REQUIRE(ShapesEqual(output.Shape(), {4, 5, 20}));
+}
+
+TEST_CASE("GRULayer rejects invalid input shape", "[gru][validation]") {
+    GRULayer gru(10, 20, 1, true, false, 0.0f);
+
+    REQUIRE_THROWS_AS(gru.Forward(Tensor::Zeros({2, 10})), std::invalid_argument);
+    REQUIRE_THROWS_AS(gru.Forward(Tensor::Zeros({2, 3, 9})), std::invalid_argument);
 }
 
 TEST_CASE("GRULayer - Bidirectional output shape", "[gru][shape][bidirectional]") {

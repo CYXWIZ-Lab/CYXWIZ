@@ -40,13 +40,13 @@ public:
                     SequenceBatcherConfig config)
         : samples_(std::move(samples)),
           config_(config),
-          rng_(config_.seed),
           split_mode_(!config_.train_indices.empty() ||
                       !config_.val_indices.empty() ||
                       !config_.test_indices.empty()),
           train_indices_(std::move(config_.train_indices)),
           val_indices_(std::move(config_.val_indices)),
-          test_indices_(std::move(config_.test_indices)) {
+          test_indices_(std::move(config_.test_indices)),
+          rng_(config_.seed) {
         config_.batch_size = std::max<size_t>(1, config_.batch_size);
         sequence_length_ = ResolveSequenceLength();
 

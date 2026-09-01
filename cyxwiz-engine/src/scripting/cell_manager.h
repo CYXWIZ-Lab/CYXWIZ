@@ -4,8 +4,10 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 
 namespace scripting {
     class ScriptingEngine;
@@ -33,7 +35,12 @@ public:
     /**
      * Get cell count
      */
-    size_t GetCellCount() const { return cells_.size(); }
+    int GetCellCount() const {
+        if (cells_.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+            throw std::length_error("Cell count exceeds the editor index range");
+        }
+        return static_cast<int>(cells_.size());
+    }
 
     /**
      * Get cell at index

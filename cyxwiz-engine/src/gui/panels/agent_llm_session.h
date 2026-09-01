@@ -71,6 +71,10 @@ private:
   };
 
   struct TranscriptEntry {
+    TranscriptEntry() = default;
+    TranscriptEntry(EntryKind kind_value, std::string text_value)
+        : kind(kind_value), text(std::move(text_value)) {}
+
     EntryKind kind = EntryKind::Agent;
     std::string text;
     bool retrieval_requested = false;

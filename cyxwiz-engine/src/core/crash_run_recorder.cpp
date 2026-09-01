@@ -29,6 +29,7 @@ std::filesystem::path CurrentRunPath() {
     return DebugRunDir() / "current_run.json";
 }
 
+#ifdef _WIN32
 std::string ToLower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
@@ -81,12 +82,10 @@ std::map<std::string, std::string> ParseWerFile(const std::filesystem::path& pat
     }
     return values;
 }
+#endif
 
 void AttachLatestWerReport(CrashRunSummary& summary) {
-#ifndef _WIN32
-    (void)summary;
-    return;
-#else
+#ifdef _WIN32
     const std::string target = "cyxwiz-engine.exe";
     std::filesystem::path best_path;
     std::filesystem::file_time_type best_time{};
@@ -149,6 +148,8 @@ void AttachLatestWerReport(CrashRunSummary& summary) {
     summary.windows_crash_time = get("EventTime");
     summary.windows_report_id = get("ReportIdentifier");
     summary.windows_report_path = best_path.string();
+#else
+    (void)summary;
 #endif
 }
 

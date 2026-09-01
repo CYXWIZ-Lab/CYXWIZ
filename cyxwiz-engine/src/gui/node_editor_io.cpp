@@ -150,8 +150,6 @@ static void MigrateLegacyNodeParameters(NodeType type,
 }
 
 bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
-    using json = nlohmann::json;
-
     // Clear existing graph
     ClearGraph();
 

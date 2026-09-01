@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace cyxwiz::runtime {
 
@@ -122,6 +123,18 @@ struct BackendPackAcquisitionProgress {
 };
 
 struct BackendPackAcquisitionResult {
+    BackendPackAcquisitionResult() = default;
+
+    BackendPackAcquisitionResult(
+        BackendPackAcquisitionStatus status_value,
+        std::string message_value,
+        std::filesystem::path artifact_path_value = {},
+        std::uint64_t resumed_bytes_value = 0)
+        : status(status_value),
+          message(std::move(message_value)),
+          artifact_path(std::move(artifact_path_value)),
+          resumed_bytes(resumed_bytes_value) {}
+
     BackendPackAcquisitionStatus status =
         BackendPackAcquisitionStatus::InvalidRequest;
     std::string message;

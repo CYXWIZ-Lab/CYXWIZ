@@ -328,6 +328,10 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
             case EditorTheme::Dark: tab->editor.SetPalette(TextEditor::GetDarkPalette()); break;
             case EditorTheme::Light: tab->editor.SetPalette(TextEditor::GetLightPalette()); break;
             case EditorTheme::RetroBlu: tab->editor.SetPalette(TextEditor::GetRetroBluePalette()); break;
+            case EditorTheme::Monokai: tab->editor.SetPalette(GetMonokaiPalette()); break;
+            case EditorTheme::Dracula: tab->editor.SetPalette(GetDraculaPalette()); break;
+            case EditorTheme::OneDark: tab->editor.SetPalette(GetOneDarkPalette()); break;
+            case EditorTheme::GitHub: tab->editor.SetPalette(GetGitHubPalette()); break;
         }
         tab->editor.SetShowWhitespaces(show_whitespace_);
         tab->editor.SetColorizerEnable(syntax_highlighting_);

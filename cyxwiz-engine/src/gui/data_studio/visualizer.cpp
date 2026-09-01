@@ -10,12 +10,12 @@ namespace cyxwiz {
 Visualizer::Visualizer()
     : next_plot_id_(1)
     , selected_plot_id_(-1)
+    , context_(ImPlot::CreateContext())
+    , duckdb_(std::make_unique<DuckDBConnector>())
     , show_create_plot_dialog_(false)
     , selected_plot_type_(0)
-    , duckdb_(std::make_unique<DuckDBConnector>())
 {
     // Create separate ImPlot context for Data Studio
-    context_ = ImPlot::CreateContext();
     ImPlot::SetCurrentContext(context_);
 
     spdlog::info("[Data Studio] Visualizer initialized");

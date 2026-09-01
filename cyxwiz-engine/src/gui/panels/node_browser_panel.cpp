@@ -12,17 +12,6 @@ namespace gui {
 
 namespace {
 
-bool HasUnsupportedAxis(const cyxwiz::NodeMetadata* metadata,
-                        const char* axis_name) {
-    if (!metadata) return false;
-    return std::any_of(
-        metadata->support_axes.begin(),
-        metadata->support_axes.end(),
-        [axis_name](const cyxwiz::SupportAxisDefinition& axis) {
-            return axis.name == axis_name && !axis.supported;
-        });
-}
-
 bool HasSupportedAxis(const cyxwiz::NodeMetadata* metadata,
                       const char* axis_name) {
     if (!metadata) return false;

@@ -106,6 +106,20 @@ void GRULayer::SetHiddenState(const Tensor& h0) {
 }
 
 Tensor GRULayer::Forward(const Tensor& input) {
+    const auto& input_shape = input.Shape();
+    if (input.GetDataType() != DataType::Float32) {
+        throw std::invalid_argument("GRULayer::Forward expects Float32 input");
+    }
+    if (input_shape.size() != 3) {
+        throw std::invalid_argument(
+            "GRULayer::Forward expects a rank-3 [batch, sequence, features] "
+            "or [sequence, batch, features] tensor");
+    }
+    if (input_shape[2] != static_cast<size_t>(input_size_)) {
+        throw std::invalid_argument(
+            "GRULayer::Forward input feature dimension does not match input_size");
+    }
+
     cached_input_ = input;
 
     // Hoisted weight init guard — same pattern as LSTMLayer::Forward.
@@ -113,9 +127,7 @@ Tensor GRULayer::Forward(const Tensor& input) {
     // backend; if AF init silently failed the weight tensors carry null
     // data. CPU path needs valid weights before computing anything.
     {
-        const auto& shape = input.Shape();
-        size_t input_dim = shape.size() == 3
-            ? (batch_first_ ? shape[2] : shape[2]) : 0;
+        const size_t input_dim = input_shape[2];
         int num_directions = bidirectional_ ? 2 : 1;
         if (W_ih_.empty() || W_ih_[0].Data<float>() == nullptr) {
             for (int layer = 0; layer < num_layers_; layer++) {
@@ -131,10 +143,9 @@ Tensor GRULayer::Forward(const Tensor& input) {
     }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    const auto& af_guard_shape = input.Shape();
-    const size_t af_guard_batch = batch_first_ ? af_guard_shape[0] : af_guard_shape[1];
-    const size_t af_guard_seq = batch_first_ ? af_guard_shape[1] : af_guard_shape[0];
-    const size_t af_guard_input = af_guard_shape.size() >= 3 ? af_guard_shape[2] : 0;
+    const size_t af_guard_batch = batch_first_ ? input_shape[0] : input_shape[1];
+    const size_t af_guard_seq = batch_first_ ? input_shape[1] : input_shape[0];
+    const size_t af_guard_input = input_shape[2];
     const bool af_recurrent_allowed =
         ShouldUseArrayFireRecurrentForward(RecurrentLayerKind::GRU,
                                            af_guard_batch,

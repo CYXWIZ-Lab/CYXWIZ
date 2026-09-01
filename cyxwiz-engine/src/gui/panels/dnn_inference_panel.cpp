@@ -765,9 +765,15 @@ void DNNInferencePanel::DrawPoseKeypoints(ImDrawList* draw_list, ImVec2 img_min,
 
         // Draw skeleton connections
         for (const auto& [from, to] : pose.skeleton) {
-            if (from < pose.keypoints.size() && to < pose.keypoints.size()) {
-                const auto& kp1 = pose.keypoints[from];
-                const auto& kp2 = pose.keypoints[to];
+            if (from >= 0 && to >= 0) {
+                const size_t from_index = static_cast<size_t>(from);
+                const size_t to_index = static_cast<size_t>(to);
+                if (from_index >= pose.keypoints.size() ||
+                    to_index >= pose.keypoints.size()) {
+                    continue;
+                }
+                const auto& kp1 = pose.keypoints[from_index];
+                const auto& kp2 = pose.keypoints[to_index];
 
                 if (kp1.confidence > confidence_threshold_ && kp2.confidence > confidence_threshold_) {
                     float x1 = img_min.x + kp1.x * img_w;

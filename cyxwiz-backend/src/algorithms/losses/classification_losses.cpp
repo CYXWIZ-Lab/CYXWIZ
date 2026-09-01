@@ -166,23 +166,6 @@ Tensor ApplyClassReduction(const std::vector<float>& per_sample,
     return Tensor({1}, &total, DataType::Float32);
 }
 
-Tensor ApplyClassReduction(const std::vector<float>& per_sample,
-                           size_t batch,
-                           Reduction reduction) {
-    if (reduction == Reduction::None) {
-        return Tensor({batch}, per_sample.data(), DataType::Float32);
-    }
-
-    float total = 0.0f;
-    for (float value : per_sample) {
-        total += value;
-    }
-    if (reduction == Reduction::Mean && batch > 0) {
-        total /= static_cast<float>(batch);
-    }
-    return Tensor({1}, &total, DataType::Float32);
-}
-
 Tensor CpuSoftmaxRows(const Tensor& predictions,
                       const ClassAxisShape& shape,
                       std::vector<float>* log_probabilities = nullptr) {

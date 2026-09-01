@@ -10,6 +10,13 @@ namespace cyxwiz {
 namespace {
 
 struct StageTimingAggregate {
+    StageTimingAggregate(const char* category_value,
+                         const char* label_value,
+                         const char* unavailable_reason_value)
+        : category(category_value),
+          label(label_value),
+          unavailable_reason(unavailable_reason_value) {}
+
     const char* category;
     const char* label;
     const char* unavailable_reason;
@@ -42,9 +49,6 @@ struct StageTimingAggregate {
 
 constexpr size_t kPreprocessing = 0;
 constexpr size_t kBatchFetch = 1;
-constexpr size_t kBatchCreation = 2;
-constexpr size_t kDataWait = 3;
-constexpr size_t kNativeCpuFallback = 4;
 constexpr size_t kForward = 5;
 constexpr size_t kBackward = 6;
 constexpr size_t kOptimizer = 7;

@@ -131,8 +131,8 @@ void ToolbarPanel::SearchInFiles(const std::string& search_text, const std::stri
     namespace fs = std::filesystem;
 
     try {
-        int files_searched = 0;
-        int max_results = 1000;  // Limit results to prevent UI slowdown
+        size_t files_searched = 0;
+        constexpr size_t kMaxResults = 1000;  // Prevent UI slowdown.
 
         for (const auto& entry : fs::recursive_directory_iterator(search_path,
                 fs::directory_options::skip_permission_denied)) {
@@ -150,7 +150,8 @@ void ToolbarPanel::SearchInFiles(const std::string& search_text, const std::stri
             std::string line;
             int line_number = 0;
 
-            while (std::getline(file, line) && search_results_.size() < max_results) {
+            while (std::getline(file, line) &&
+                   search_results_.size() < kMaxResults) {
                 line_number++;
 
                 int match_start = 0, match_length = 0;
@@ -172,8 +173,9 @@ void ToolbarPanel::SearchInFiles(const std::string& search_text, const std::stri
                 }
             }
 
-            if (search_results_.size() >= max_results) {
-                spdlog::info("Search stopped: max results ({}) reached", max_results);
+            if (search_results_.size() >= kMaxResults) {
+                spdlog::info("Search stopped: max results ({}) reached",
+                             kMaxResults);
                 break;
             }
         }

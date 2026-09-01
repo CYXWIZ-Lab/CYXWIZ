@@ -8,6 +8,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace cyxwiz::runtime {
 
@@ -49,6 +50,18 @@ struct BackendPackRemovalProgress {
 };
 
 struct BackendPackRemovalResult {
+    BackendPackRemovalResult() = default;
+
+    BackendPackRemovalResult(
+        BackendPackRemovalStatus status_value,
+        std::string message_value,
+        std::filesystem::path quarantined_directory_value = {},
+        std::optional<BackendPackStateResult> deactivation_value = std::nullopt)
+        : status(status_value),
+          message(std::move(message_value)),
+          quarantined_directory(std::move(quarantined_directory_value)),
+          deactivation(std::move(deactivation_value)) {}
+
     BackendPackRemovalStatus status =
         BackendPackRemovalStatus::InvalidRequest;
     std::string message;

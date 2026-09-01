@@ -105,6 +105,11 @@ std::string QueryOpenClPlatformString(cl_platform_id platform,
     return value;
 }
 
+#if (defined(CL_DEVICE_UUID_KHR) && defined(CL_UUID_SIZE_KHR)) || \
+    (defined(CL_DEVICE_LUID_KHR) && defined(CL_LUID_SIZE_KHR) && \
+     defined(CL_DEVICE_LUID_VALID_KHR)) || \
+    defined(CL_DEVICE_PCI_BUS_INFO_KHR) || \
+    (defined(CL_DEVICE_PCI_BUS_ID_NV) && defined(CL_DEVICE_PCI_SLOT_ID_NV))
 bool HasOpenClExtension(const std::string& extensions,
                         const std::string& extension) {
     size_t position = 0;
@@ -118,6 +123,7 @@ bool HasOpenClExtension(const std::string& extensions,
     }
     return false;
 }
+#endif
 
 void EnrichOpenClIdentity(DeviceInfo& info) {
     const cl_device_id device = afcl::getDeviceId();

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 #include <memory>
 #include <future>
@@ -40,6 +41,28 @@ enum class ToolAvailability {
 
 // Tool entry for command palette search
 struct ToolEntry {
+    ToolEntry() = default;
+    ToolEntry(std::string name_value,
+              std::string category_value,
+              std::string keywords_value,
+              std::string icon_value,
+              std::string shortcut_value,
+              std::function<void()> callback_value,
+              std::function<bool()> is_enabled_value = {},
+              ToolSurface surface_value = ToolSurface::Command,
+              ToolAvailability availability_value = ToolAvailability::Working,
+              std::string status_detail_value = {})
+        : name(std::move(name_value)),
+          category(std::move(category_value)),
+          keywords(std::move(keywords_value)),
+          icon(std::move(icon_value)),
+          shortcut(std::move(shortcut_value)),
+          callback(std::move(callback_value)),
+          is_enabled(std::move(is_enabled_value)),
+          surface(surface_value),
+          availability(availability_value),
+          status_detail(std::move(status_detail_value)) {}
+
     std::string name;           // Display name (e.g., "K-Means Clustering")
     std::string category;       // Category (e.g., "Clustering", "Statistics")
     std::string keywords;       // Search keywords (e.g., "cluster kmeans machine learning")

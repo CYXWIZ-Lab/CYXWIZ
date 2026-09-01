@@ -143,10 +143,12 @@ void CrossValidationPanel::RenderResults() {
 
     // Show fold sizes
     std::vector<double> train_sizes(n_folds_), val_sizes(n_folds_);
-    std::vector<double> fold_indices(n_folds_);
+    std::vector<double> train_positions(n_folds_), val_positions(n_folds_);
 
     for (int i = 0; i < n_folds_; ++i) {
-        fold_indices[i] = i + 1;
+        const double fold_position = static_cast<double>(i + 1);
+        train_positions[i] = fold_position - 0.2;
+        val_positions[i] = fold_position + 0.2;
         train_sizes[i] = static_cast<double>(fold_splits_[i].first.size());
         val_sizes[i] = static_cast<double>(fold_splits_[i].second.size());
     }
@@ -157,10 +159,12 @@ void CrossValidationPanel::RenderResults() {
         ImPlot::SetupAxisLimits(ImAxis_X1, 0.5, n_folds_ + 0.5);
 
         ImPlot::SetNextFillStyle(ImVec4(0.2f, 0.5f, 0.8f, 0.8f));
-        ImPlot::PlotBars("Train", fold_indices.data(), train_sizes.data(), n_folds_, 0.4, -0.2);
+        ImPlot::PlotBars("Train", train_positions.data(), train_sizes.data(),
+                         n_folds_, 0.4);
 
         ImPlot::SetNextFillStyle(ImVec4(0.8f, 0.3f, 0.2f, 0.8f));
-        ImPlot::PlotBars("Validation", fold_indices.data(), val_sizes.data(), n_folds_, 0.4, 0.2);
+        ImPlot::PlotBars("Validation", val_positions.data(), val_sizes.data(),
+                         n_folds_, 0.4);
 
         ImPlot::EndPlot();
     }

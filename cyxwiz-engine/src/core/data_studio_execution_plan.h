@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace cyxwiz {
 
@@ -51,6 +52,12 @@ struct DataStudioExecutionPlanStep {
 };
 
 struct DataStudioExecutionPlan {
+    DataStudioExecutionPlan() = default;
+
+    DataStudioExecutionPlan(bool valid_value, std::string error_message_value)
+        : valid(valid_value),
+          error_message(std::move(error_message_value)) {}
+
     bool valid = false;
     std::string error_message;
     bool has_training_launch = false;

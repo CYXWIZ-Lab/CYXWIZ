@@ -15,12 +15,10 @@ namespace fs = std::filesystem;
 
 namespace cyxwiz::loaders {
 
-// ImageLayout values must match DataInputDialog::ImageLayout int
-// casts (0 = ClassSubdirs, 1 = FlatWithCSV). Captured as local
-// constants so the dispatch inside the worker reads clearly without
-// pulling the dialog's private enum across module boundaries.
+// ImageLayout values must match DataInputDialog::ImageLayout int casts.
+// Only FlatWithCSV needs special validation here; every other value follows
+// the class-subdirectory path in the loader worker.
 namespace {
-constexpr int kLayoutClassSubdirs = 0;
 constexpr int kLayoutFlatWithCSV  = 1;
 }  // namespace
 

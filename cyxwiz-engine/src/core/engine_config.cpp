@@ -47,14 +47,6 @@ std::filesystem::path ResolveVenvRoot(const std::filesystem::path& interpreter_p
     return {};
 }
 
-std::filesystem::path ResolvePythonHomeFromInterpreter(const std::filesystem::path& interpreter_path) {
-    auto venv_root = ResolveVenvRoot(interpreter_path);
-    if (!venv_root.empty()) {
-        return venv_root;
-    }
-    return interpreter_path.parent_path();
-}
-
 std::filesystem::path FindPosixSitePackages(const std::filesystem::path& base_root) {
 #ifndef _WIN32
     std::filesystem::path lib_dir = base_root / "lib";

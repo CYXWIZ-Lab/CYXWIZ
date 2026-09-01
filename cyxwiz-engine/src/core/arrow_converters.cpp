@@ -502,10 +502,27 @@ std::shared_ptr<arrow::Table> EncodeCategorical(
         auto string_array = std::static_pointer_cast<arrow::StringArray>(chunk);
         for (int64_t i = 0; i < string_array->length(); ++i) {
             if (string_array->IsNull(i)) {
-                builder.AppendNull();
+                const auto append_status = builder.AppendNull();
+                if (!append_status.ok()) {
+                    spdlog::error("Failed to append null encoded value: {}",
+                                  append_status.ToString());
+                    return nullptr;
+                }
             } else {
                 std::string value = string_array->GetString(i);
-                builder.Append(value_to_code[value]);
+                const auto code = value_to_code.find(value);
+                if (code == value_to_code.end()) {
+                    spdlog::error(
+                        "Categorical value '{}' is missing from the vocabulary",
+                        value);
+                    return nullptr;
+                }
+                const auto append_status = builder.Append(code->second);
+                if (!append_status.ok()) {
+                    spdlog::error("Failed to append encoded value: {}",
+                                  append_status.ToString());
+                    return nullptr;
+                }
             }
         }
     }
@@ -559,9 +576,20 @@ std::shared_ptr<arrow::Table> OneHotEncode(
             auto int_array = std::static_pointer_cast<arrow::Int32Array>(chunk);
             for (int64_t i = 0; i < int_array->length(); ++i) {
                 if (int_array->IsNull(i)) {
-                    builder.AppendNull();
+                    const auto append_status = builder.AppendNull();
+                    if (!append_status.ok()) {
+                        spdlog::error("Failed to append null one-hot value: {}",
+                                      append_status.ToString());
+                        return nullptr;
+                    }
                 } else {
-                    builder.Append(int_array->Value(i) == static_cast<int32_t>(cat));
+                    const auto append_status = builder.Append(
+                        int_array->Value(i) == static_cast<int32_t>(cat));
+                    if (!append_status.ok()) {
+                        spdlog::error("Failed to append one-hot value: {}",
+                                      append_status.ToString());
+                        return nullptr;
+                    }
                 }
             }
         }

@@ -7,6 +7,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace cyxwiz::runtime {
 
@@ -39,6 +40,18 @@ struct BackendPackStateProgress {
 };
 
 struct BackendPackStateResult {
+    BackendPackStateResult() = default;
+
+    BackendPackStateResult(
+        BackendPackStateStatus status_value,
+        std::string message_value,
+        std::optional<ActiveRuntimeState> previous_value = std::nullopt,
+        std::optional<ActiveRuntimeState> current_value = std::nullopt)
+        : status(status_value),
+          message(std::move(message_value)),
+          previous(std::move(previous_value)),
+          current(std::move(current_value)) {}
+
     BackendPackStateStatus status =
         BackendPackStateStatus::InvalidRequest;
     std::string message;

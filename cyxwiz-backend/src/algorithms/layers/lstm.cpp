@@ -43,6 +43,20 @@ using lstm_detail::RunLSTMAfDirectionForward;
 // ============================================================================
 
 Tensor LSTMLayer::Forward(const Tensor& input) {
+    const auto& input_shape = input.Shape();
+    if (input.GetDataType() != DataType::Float32) {
+        throw std::invalid_argument("LSTMLayer::Forward expects Float32 input");
+    }
+    if (input_shape.size() != 3) {
+        throw std::invalid_argument(
+            "LSTMLayer::Forward expects a rank-3 [batch, sequence, features] "
+            "or [sequence, batch, features] tensor");
+    }
+    if (input_shape[2] != static_cast<size_t>(input_size_)) {
+        throw std::invalid_argument(
+            "LSTMLayer::Forward input feature dimension does not match input_size");
+    }
+
     cached_input_ = input;
 
     // Hoisted from the CPU fallback path: ensure weights are valid
@@ -55,9 +69,7 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
     // Forward also failed, but with the AF path fixed at the boundary
     // it now gets further and trips on the null weights.
     {
-        const auto& shape = input.Shape();
-        size_t input_dim = shape.size() == 3
-            ? (batch_first_ ? shape[2] : shape[2]) : 0;
+        const size_t input_dim = input_shape[2];
         int num_directions = bidirectional_ ? 2 : 1;
         if (W_ih_.empty() || W_ih_[0].Data<float>() == nullptr) {
             for (int layer = 0; layer < num_layers_; layer++) {
@@ -113,10 +125,9 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
         // configuration, so skip it entirely instead of trying-and-falling-
         // back after the fact.
         constexpr bool kAfPathEnabled = true;
-        const auto& af_guard_shape = input.Shape();
-        const size_t af_guard_batch = batch_first_ ? af_guard_shape[0] : af_guard_shape[1];
-        const size_t af_guard_seq = batch_first_ ? af_guard_shape[1] : af_guard_shape[0];
-        const size_t af_guard_input = af_guard_shape.size() >= 3 ? af_guard_shape[2] : 0;
+        const size_t af_guard_batch = batch_first_ ? input_shape[0] : input_shape[1];
+        const size_t af_guard_seq = batch_first_ ? input_shape[1] : input_shape[0];
+        const size_t af_guard_input = input_shape[2];
         if (kAfPathEnabled &&
             ShouldUseArrayFireRecurrentForward(RecurrentLayerKind::LSTM,
                                                af_guard_batch,
@@ -132,19 +143,12 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
         // Handle batch_first format
         // Input: [batch, seq_len, input_size] if batch_first
         // Convert to: [seq_len, batch, input_size] for processing
-        dim_t batch_size, seq_len, input_dim;
-
         if (batch_first_) {
-            batch_size = x.dims(0);
-            seq_len = x.dims(1);
-            input_dim = x.dims(2);
             // Transpose to [seq_len, batch, input_size]
             x = af::reorder(x, 1, 0, 2);
-        } else {
-            seq_len = x.dims(0);
-            batch_size = x.dims(1);
-            input_dim = x.dims(2);
         }
+        const dim_t seq_len = x.dims(0);
+        const dim_t batch_size = x.dims(1);
 
         af::array semantic_input = x;
 

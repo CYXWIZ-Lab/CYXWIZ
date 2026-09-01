@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdint>
 #include <thread>
+#include <utility>
 #include <imgui.h>
 #include <nlohmann/json_fwd.hpp>
 
@@ -1383,6 +1384,17 @@ private:
 
     // Deferred node addition (to avoid modifying nodes_ while ImNodes is rendering)
     struct PendingNode {
+        PendingNode(
+            NodeType type_value,
+            std::string name_value,
+            ImVec2 position_value,
+            std::unordered_map<std::string, std::string>
+                initial_parameters_value = {})
+            : type(type_value),
+              name(std::move(name_value)),
+              position(position_value),
+              initial_parameters(std::move(initial_parameters_value)) {}
+
         NodeType type;
         std::string name;
         ImVec2 position;  // Grid space position where node should be created
@@ -1592,5 +1604,4 @@ private:
 };
 
 } // namespace gui
-
 

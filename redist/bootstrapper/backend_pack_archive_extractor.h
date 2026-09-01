@@ -8,6 +8,7 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <utility>
 
 namespace cyxwiz::runtime {
 
@@ -47,6 +48,16 @@ struct BackendPackExtractionProgress {
 };
 
 struct BackendPackExtractionResult {
+    BackendPackExtractionResult() = default;
+
+    BackendPackExtractionResult(
+        BackendPackExtractionStatus status_value,
+        std::string message_value,
+        std::filesystem::path extracted_directory_value = {})
+        : status(status_value),
+          message(std::move(message_value)),
+          extracted_directory(std::move(extracted_directory_value)) {}
+
     BackendPackExtractionStatus status =
         BackendPackExtractionStatus::InvalidRequest;
     std::string message;

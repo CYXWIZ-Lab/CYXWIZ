@@ -232,10 +232,65 @@ bool Test_TensorToArrow() {
 }
 
 /**
- * Test 6: DuckDB SQL Queries
+ * Test 6: Categorical encoding preserves values and nulls
+ */
+bool Test_CategoricalEncoding() {
+    spdlog::info("\n=== Test 6: Categorical Encoding ===");
+
+    arrow::StringBuilder source_builder;
+    TEST_ASSERT(source_builder.Append("red").ok(), "Append first category");
+    TEST_ASSERT(source_builder.AppendNull().ok(), "Append null category");
+    TEST_ASSERT(source_builder.Append("blue").ok(), "Append second category");
+    TEST_ASSERT(source_builder.Append("red").ok(), "Append repeated category");
+
+    std::shared_ptr<arrow::Array> source_array;
+    TEST_ASSERT(source_builder.Finish(&source_array).ok(),
+                "Finish categorical source array");
+
+    auto source_table = arrow::Table::Make(
+        arrow::schema({arrow::field("color", arrow::utf8())}),
+        {source_array});
+
+    std::vector<std::string> vocabulary;
+    auto encoded = arrow_converters::EncodeCategorical(
+        source_table, "color", vocabulary);
+    TEST_ASSERT(encoded != nullptr, "Encode categorical column");
+    TEST_ASSERT(vocabulary == std::vector<std::string>({"red", "blue"}),
+                "Vocabulary preserves first-seen order");
+
+    auto encoded_values = std::static_pointer_cast<arrow::Int32Array>(
+        encoded->GetColumnByName("color_encoded")->chunk(0));
+    TEST_ASSERT(encoded_values->Value(0) == 0, "Encode first category as zero");
+    TEST_ASSERT(encoded_values->IsNull(1), "Preserve null encoded value");
+    TEST_ASSERT(encoded_values->Value(2) == 1, "Encode second category as one");
+    TEST_ASSERT(encoded_values->Value(3) == 0, "Reuse existing category code");
+
+    auto one_hot = arrow_converters::OneHotEncode(source_table, "color");
+    TEST_ASSERT(one_hot != nullptr, "One-hot encode categorical column");
+    TEST_ASSERT(one_hot->GetColumnByName("color_red") != nullptr,
+                "Create first one-hot column");
+    TEST_ASSERT(one_hot->GetColumnByName("color_blue") != nullptr,
+                "Create second one-hot column");
+
+    auto red_values = std::static_pointer_cast<arrow::BooleanArray>(
+        one_hot->GetColumnByName("color_red")->chunk(0));
+    auto blue_values = std::static_pointer_cast<arrow::BooleanArray>(
+        one_hot->GetColumnByName("color_blue")->chunk(0));
+    TEST_ASSERT(red_values->Value(0) && !blue_values->Value(0),
+                "Set first one-hot category");
+    TEST_ASSERT(red_values->IsNull(1) && blue_values->IsNull(1),
+                "Preserve nulls in one-hot columns");
+    TEST_ASSERT(!red_values->Value(2) && blue_values->Value(2),
+                "Set second one-hot category");
+
+    return true;
+}
+
+/**
+ * Test 7: DuckDB SQL Queries
  */
 bool Test_DuckDB_Queries() {
-    spdlog::info("\n=== Test 6: DuckDB SQL Queries ===");
+    spdlog::info("\n=== Test 7: DuckDB SQL Queries ===");
 
     std::string csv_path = "test_duckdb.csv";
     CreateTestCSV(csv_path);
@@ -282,10 +337,10 @@ bool Test_DuckDB_Queries() {
 }
 
 /**
- * Test 7: End-to-End Data Studio Pipeline
+ * Test 8: End-to-End Data Studio Pipeline
  */
 bool Test_EndToEnd_Pipeline() {
-    spdlog::info("\n=== Test 7: End-to-End Pipeline ===");
+    spdlog::info("\n=== Test 8: End-to-End Pipeline ===");
 
     // This simulates a typical Data Studio workflow:
     // 1. Load CSV -> Arrow
@@ -371,6 +426,7 @@ int main() {
         {"DataRegistry Integration", Test_DataRegistry_Arrow},
         {"Arrow to Tensor Conversion", Test_ArrowToTensor},
         {"Tensor to Arrow Conversion", Test_TensorToArrow},
+        {"Categorical Encoding", Test_CategoricalEncoding},
         {"DuckDB SQL Queries", Test_DuckDB_Queries},
         {"End-to-End Pipeline", Test_EndToEnd_Pipeline},
     };

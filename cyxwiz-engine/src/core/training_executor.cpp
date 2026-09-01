@@ -643,8 +643,8 @@ TrainingExecutor::TrainingExecutor(TrainingConfiguration config,
 TrainingExecutor::TrainingExecutor(TrainingConfiguration config,
                                    ResolvedExternalBatchers external_batchers)
     : config_(std::move(config))
-    , external_batchers_(std::move(external_batchers))
     , mode_(DatasetMode::External)
+    , external_batchers_(std::move(external_batchers))
 {
     spdlog::info("TrainingExecutor: Created with resolved external role batchers, "
                  "{} layers, input_size={}, output_size={}",

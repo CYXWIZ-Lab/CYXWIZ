@@ -1730,31 +1730,11 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadParquetToArrow(
 
 std::shared_ptr<ArrowDataset> DataRegistry::LoadJSONToArrow(
     const std::string& path, const std::string& name, bool json_lines) {
-
-    std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
-
-    try {
-        // JSON loading via DuckDB (Arrow doesn't have native JSON reader)
-        // For now, fall back to FromFile which auto-detects
-        auto dataset = ArrowDataset::FromFile(path, unique_name);
-        if (!dataset) {
-            spdlog::warn("LoadJSONToArrow: Direct load failed, JSON may need DuckDB conversion");
-            // TODO: Use DuckDB to read JSON and convert to Arrow
-            return nullptr;
-        }
-
-        std::lock_guard<std::mutex> lock(mutex_);
-        arrow_datasets_[unique_name] = dataset;
-        RememberTabularSourcePathUnlocked(unique_name, path);
-
-        spdlog::info("LoadJSONToArrow: Loaded '{}' as '{}' ({} rows, {} cols)",
-                    path, unique_name, dataset->GetNumRows(), dataset->GetNumColumns());
-        return dataset;
-
-    } catch (const std::exception& e) {
-        spdlog::error("LoadJSONToArrow exception: {}", e.what());
-        return nullptr;
-    }
+    const char* format = json_lines ? "JSON Lines" : "JSON";
+    spdlog::error(
+        "LoadJSONToArrow: {} ingestion is not implemented for '{}' (requested name '{}')",
+        format, path, name);
+    return nullptr;
 }
 
 std::shared_ptr<ArrowDataset> DataRegistry::LoadExcelToArrow(
@@ -1917,7 +1897,9 @@ bool DataRegistry::ExportArrowToJSON(const std::string& dataset_name, const std:
 
     // JSON export - Arrow doesn't have native JSON writer, use custom implementation
     // For now, write as CSV with .json extension (will need proper JSON serialization)
-    spdlog::warn("ExportArrowToJSON: Native JSON export not implemented, consider CSV");
+    spdlog::warn(
+        "ExportArrowToJSON: Native JSON export for '{}' to '{}' is not implemented; consider CSV",
+        dataset_name, output_path);
     // TODO: Implement proper JSON export using nlohmann/json
     return false;
 }

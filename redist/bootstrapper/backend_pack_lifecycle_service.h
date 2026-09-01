@@ -13,6 +13,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz::runtime {
@@ -121,6 +122,23 @@ struct BackendPackLifecycleProgress {
 };
 
 struct BackendPackLifecycleResult {
+    BackendPackLifecycleResult() = default;
+
+    BackendPackLifecycleResult(
+        BackendPackLifecycleStatus status_value,
+        std::string message_value,
+        std::string pack_id_value = {},
+        std::string backend_value = {},
+        std::filesystem::path installed_directory_value = {},
+        std::optional<BackendPackQualificationDecision> qualification_value =
+            std::nullopt)
+        : status(status_value),
+          message(std::move(message_value)),
+          pack_id(std::move(pack_id_value)),
+          backend(std::move(backend_value)),
+          installed_directory(std::move(installed_directory_value)),
+          qualification(std::move(qualification_value)) {}
+
     BackendPackLifecycleStatus status =
         BackendPackLifecycleStatus::InvalidRequest;
     std::string message;
