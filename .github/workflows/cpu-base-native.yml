@@ -221,13 +221,23 @@ jobs:
             cmake libtool ninja pkg-config
           echo "$(brew --prefix libtool)/libexec/gnubin" >> "$GITHUB_PATH"
 
-      - name: Isolate vcpkg logging dependency build
+      - name: Isolate vcpkg dependency build
         run: |
-          brew unlink fmt spdlog
+          for formula in fmt spdlog jpeg-turbo; do
+            if brew list --versions "$formula" >/dev/null 2>&1; then
+              brew unlink "$formula"
+            fi
+          done
           brew_prefix="$(brew --prefix)"
           for dependency in fmt spdlog; do
             if [[ -e "$brew_prefix/include/$dependency" ]]; then
               echo "Homebrew $dependency headers remain visible at $brew_prefix/include/$dependency" >&2
+              exit 1
+            fi
+          done
+          for header in jconfig.h jmorecfg.h jpeglib.h; do
+            if [[ -e "$brew_prefix/include/$header" ]]; then
+              echo "Homebrew JPEG header remains visible at $brew_prefix/include/$header" >&2
               exit 1
             fi
           done
@@ -236,9 +246,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: vcpkg-binary-cache
-          key: cpu-base-macos-intel-vcpkg-v2-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: cpu-base-macos-intel-vcpkg-v3-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            cpu-base-macos-intel-vcpkg-v2-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-
+            cpu-base-macos-intel-vcpkg-v3-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-
 
       - name: Prepare vcpkg binary cache
         run: mkdir -p vcpkg-binary-cache
@@ -288,7 +298,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: vcpkg-binary-cache
-          key: cpu-base-macos-intel-vcpkg-v2-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: cpu-base-macos-intel-vcpkg-v3-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Build production CPU-base targets
         run: >-
