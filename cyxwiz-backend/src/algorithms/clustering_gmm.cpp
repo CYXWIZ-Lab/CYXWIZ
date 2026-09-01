@@ -7,6 +7,7 @@
 
 #include "cyxwiz/clustering.h"
 #include "arrayfire_backend_utils.h"
+#include "arrayfire_host_materialization.h"
 #include <spdlog/spdlog.h>
 
 #define _USE_MATH_DEFINES
@@ -175,7 +176,12 @@ GMMResult Clustering::GMM(
         result.responsibilities.resize(n_samples);
         std::vector<double> resp_flat(n_samples * n_components);
         best_resp.eval();
-        best_resp.host(resp_flat.data());
+        MaterializeArrayFireToHost(
+            best_resp,
+            resp_flat.data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "Clustering::GaussianMixture::Responsibilities",
+            "arrayfire_column_major");
         for (int i = 0; i < n_samples; ++i) {
             result.responsibilities[i].resize(n_components);
             for (int j = 0; j < n_components; ++j) {

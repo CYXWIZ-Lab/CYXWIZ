@@ -6,15 +6,31 @@ find_package(Catch2 CONFIG REQUIRED)
 add_executable(cyxwiz-tests
     unit/test_main.cpp
     unit/test_tensor.cpp
+    unit/test_tensor_ownership.cpp
+    unit/test_tensor_shape_contract.cpp
+    unit/test_tensor_permute_contract.cpp
+    unit/test_tensor_indexing_contract.cpp
+    unit/test_tensor_concat_contract.cpp
+    unit/test_tensor_reduction_contract.cpp
+    unit/test_tensor_elementwise_contract.cpp
+    unit/test_tensor_mask_contract.cpp
+    unit/test_tensor_broadcast_contract.cpp
+    unit/test_tensor_factory_contract.cpp
+    unit/test_tensor_linalg_contract.cpp
     unit/test_engine.cpp
     unit/test_c_api.cpp
     unit/test_activations.cpp
     unit/test_arrayfire_fallback_source_scan.cpp
+    unit/test_arrayfire_host_materialization.cpp
     unit/test_arrayfire_backend_utils.cpp
     unit/test_arrayfire_backend_smoke.cpp
     unit/test_loss.cpp
+    unit/test_model_evaluation.cpp
     unit/test_device.cpp
     unit/test_optimizer.cpp
+    unit/test_scheduler.cpp
+    unit/test_flatten_layer.cpp
+    unit/test_dropout_layer.cpp
     unit/test_linear_layer.cpp
     unit/test_linear_algebra.cpp
     unit/test_dense_layer.cpp
@@ -42,6 +58,76 @@ target_link_libraries(cyxwiz-tests PRIVATE
     Catch2::Catch2
     cyxwiz-backend
     nlohmann_json::nlohmann_json
+)
+
+set(CYXWIZ_TRAINING_CORE_FIXTURE_PATH
+    "${CMAKE_SOURCE_DIR}/cyxwiz-engine/tests/computation_truth/fixtures/training_core_pytorch.json"
+)
+set_source_files_properties(unit/test_scheduler.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_activations.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set(CYXWIZ_REGRESSION_METRICS_FIXTURE_PATH
+    "${CMAKE_SOURCE_DIR}/cyxwiz-engine/tests/computation_truth/fixtures/regression_metrics_sklearn.json"
+)
+set(CYXWIZ_CLASSIFICATION_METRICS_FIXTURE_PATH
+    "${CMAKE_SOURCE_DIR}/cyxwiz-engine/tests/computation_truth/fixtures/classification_metrics_sklearn_pytorch.json"
+)
+set_source_files_properties(unit/test_model_evaluation.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_REGRESSION_METRICS_FIXTURE_PATH=\"${CYXWIZ_REGRESSION_METRICS_FIXTURE_PATH}\";CYXWIZ_CLASSIFICATION_METRICS_FIXTURE_PATH=\"${CYXWIZ_CLASSIFICATION_METRICS_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_flatten_layer.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_tensor_shape_contract.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_tensor_permute_contract.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_tensor_indexing_contract.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_tensor_concat_contract.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_tensor_reduction_contract.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_tensor_elementwise_contract.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_tensor_mask_contract.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_tensor_broadcast_contract.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_tensor_factory_contract.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_tensor_linalg_contract.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
+)
+set_source_files_properties(unit/test_dropout_layer.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "CYXWIZ_TRAINING_CORE_FIXTURE_PATH=\"${CYXWIZ_TRAINING_CORE_FIXTURE_PATH}\""
 )
 
 if(CYXWIZ_BUILD_ENGINE AND WIN32)

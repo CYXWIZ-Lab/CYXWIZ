@@ -42,10 +42,12 @@ void ValidateFloat32ActivationBackward(const Tensor& grad_output,
 }
 
 Tensor CpuReLUForward(const Tensor& input) {
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "ReLU::Forward");
     ValidateFloat32UnaryActivation(input, "ReLU");
     Tensor output(input.Shape(), input.GetDataType());
-    const float* in = input.Data<float>();
-    float* out = output.Data<float>();
+    const float* in = input.ReadData<float>();
+    float* out = output.MutableData<float>();
     for (size_t i = 0; i < input.NumElements(); ++i) {
         out[i] = std::max(0.0f, in[i]);
     }
@@ -53,11 +55,13 @@ Tensor CpuReLUForward(const Tensor& input) {
 }
 
 Tensor CpuReLUBackward(const Tensor& grad_output, const Tensor& input) {
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "ReLU::Backward");
     ValidateFloat32ActivationBackward(grad_output, input, "ReLU");
     Tensor grad_input(input.Shape(), input.GetDataType());
-    const float* grad = grad_output.Data<float>();
-    const float* in = input.Data<float>();
-    float* out = grad_input.Data<float>();
+    const float* grad = grad_output.ReadData<float>();
+    const float* in = input.ReadData<float>();
+    float* out = grad_input.MutableData<float>();
     for (size_t i = 0; i < input.NumElements(); ++i) {
         out[i] = in[i] > 0.0f ? grad[i] : 0.0f;
     }
@@ -65,10 +69,12 @@ Tensor CpuReLUBackward(const Tensor& grad_output, const Tensor& input) {
 }
 
 Tensor CpuSigmoidForward(const Tensor& input) {
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "Sigmoid::Forward");
     ValidateFloat32UnaryActivation(input, "Sigmoid");
     Tensor output(input.Shape(), input.GetDataType());
-    const float* in = input.Data<float>();
-    float* out = output.Data<float>();
+    const float* in = input.ReadData<float>();
+    float* out = output.MutableData<float>();
     for (size_t i = 0; i < input.NumElements(); ++i) {
         out[i] = 1.0f / (1.0f + std::exp(-in[i]));
     }
@@ -76,11 +82,13 @@ Tensor CpuSigmoidForward(const Tensor& input) {
 }
 
 Tensor CpuSigmoidBackward(const Tensor& grad_output, const Tensor& input) {
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "Sigmoid::Backward");
     ValidateFloat32ActivationBackward(grad_output, input, "Sigmoid");
     Tensor grad_input(input.Shape(), input.GetDataType());
-    const float* grad = grad_output.Data<float>();
-    const float* in = input.Data<float>();
-    float* out = grad_input.Data<float>();
+    const float* grad = grad_output.ReadData<float>();
+    const float* in = input.ReadData<float>();
+    float* out = grad_input.MutableData<float>();
     for (size_t i = 0; i < input.NumElements(); ++i) {
         const float value = 1.0f / (1.0f + std::exp(-in[i]));
         out[i] = grad[i] * value * (1.0f - value);
@@ -89,10 +97,12 @@ Tensor CpuSigmoidBackward(const Tensor& grad_output, const Tensor& input) {
 }
 
 Tensor CpuTanhForward(const Tensor& input) {
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "Tanh::Forward");
     ValidateFloat32UnaryActivation(input, "Tanh");
     Tensor output(input.Shape(), input.GetDataType());
-    const float* in = input.Data<float>();
-    float* out = output.Data<float>();
+    const float* in = input.ReadData<float>();
+    float* out = output.MutableData<float>();
     for (size_t i = 0; i < input.NumElements(); ++i) {
         out[i] = std::tanh(in[i]);
     }
@@ -100,11 +110,13 @@ Tensor CpuTanhForward(const Tensor& input) {
 }
 
 Tensor CpuTanhBackward(const Tensor& grad_output, const Tensor& input) {
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "Tanh::Backward");
     ValidateFloat32ActivationBackward(grad_output, input, "Tanh");
     Tensor grad_input(input.Shape(), input.GetDataType());
-    const float* grad = grad_output.Data<float>();
-    const float* in = input.Data<float>();
-    float* out = grad_input.Data<float>();
+    const float* grad = grad_output.ReadData<float>();
+    const float* in = input.ReadData<float>();
+    float* out = grad_input.MutableData<float>();
     for (size_t i = 0; i < input.NumElements(); ++i) {
         const float value = std::tanh(in[i]);
         out[i] = grad[i] * (1.0f - value * value);
@@ -132,6 +144,8 @@ std::vector<size_t> RowMajorStrides(const std::vector<size_t>& shape) {
 }
 
 Tensor CpuSoftmaxForward(const Tensor& input, int axis, Tensor* cached_output) {
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "Softmax::Forward");
     ValidateFloat32UnaryActivation(input, "Softmax");
     const std::vector<size_t>& shape = input.Shape();
     const int actual_axis = NormalizeActivationAxis(axis, static_cast<int>(shape.size()), "Softmax");
@@ -141,8 +155,8 @@ Tensor CpuSoftmaxForward(const Tensor& input, int axis, Tensor* cached_output) {
     const size_t outer_count = input.NumElements() / axis_size;
 
     Tensor output(shape, input.GetDataType());
-    const float* in = input.Data<float>();
-    float* out = output.Data<float>();
+    const float* in = input.ReadData<float>();
+    float* out = output.MutableData<float>();
 
     for (size_t outer = 0; outer < outer_count; ++outer) {
         const size_t before_axis = outer / axis_stride;
@@ -173,10 +187,13 @@ Tensor CpuSoftmaxForward(const Tensor& input, int axis, Tensor* cached_output) {
 }
 
 Tensor CpuSoftmaxBackward(const Tensor& grad_output, const Tensor& input, int axis, const Tensor& cached_output) {
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "Softmax::Backward");
     ValidateFloat32ActivationBackward(grad_output, input, "Softmax");
-    Tensor softmax_out = cached_output.Shape() == input.Shape()
-                             ? cached_output
-                             : CpuSoftmaxForward(input, axis, nullptr);
+    // Backward receives the source input, so derive the Jacobian from that
+    // input rather than trusting a same-shaped cache from an earlier call.
+    (void)cached_output;
+    Tensor softmax_out = CpuSoftmaxForward(input, axis, nullptr);
 
     const std::vector<size_t>& shape = input.Shape();
     const int actual_axis = NormalizeActivationAxis(axis, static_cast<int>(shape.size()), "Softmax");
@@ -186,9 +203,9 @@ Tensor CpuSoftmaxBackward(const Tensor& grad_output, const Tensor& input, int ax
     const size_t outer_count = input.NumElements() / axis_size;
 
     Tensor grad_input(input.Shape(), input.GetDataType());
-    const float* grad = grad_output.Data<float>();
-    const float* softmax = softmax_out.Data<float>();
-    float* out = grad_input.Data<float>();
+    const float* grad = grad_output.ReadData<float>();
+    const float* softmax = softmax_out.ReadData<float>();
+    float* out = grad_input.MutableData<float>();
 
     for (size_t outer = 0; outer < outer_count; ++outer) {
         const size_t before_axis = outer / axis_stride;
@@ -212,10 +229,13 @@ Tensor CpuSoftmaxBackward(const Tensor& grad_output, const Tensor& input, int ax
 
 template <typename Fn>
 Tensor CpuElementwiseActivationForward(const Tensor& input, const char* name, Fn&& fn) {
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        std::string(name) + "::Forward");
     ValidateFloat32UnaryActivation(input, name);
     Tensor output(input.Shape(), input.GetDataType());
-    const float* in = input.Data<float>();
-    float* out = output.Data<float>();
+    const float* in = input.ReadData<float>();
+    float* out = output.MutableData<float>();
     for (size_t i = 0; i < input.NumElements(); ++i) {
         out[i] = fn(in[i]);
     }
@@ -227,11 +247,14 @@ Tensor CpuElementwiseActivationBackward(const Tensor& grad_output,
                                         const Tensor& input,
                                         const char* name,
                                         Fn&& derivative) {
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        std::string(name) + "::Backward");
     ValidateFloat32ActivationBackward(grad_output, input, name);
     Tensor grad_input(input.Shape(), input.GetDataType());
-    const float* grad = grad_output.Data<float>();
-    const float* in = input.Data<float>();
-    float* out = grad_input.Data<float>();
+    const float* grad = grad_output.ReadData<float>();
+    const float* in = input.ReadData<float>();
+    float* out = grad_input.MutableData<float>();
     for (size_t i = 0; i < input.NumElements(); ++i) {
         out[i] = grad[i] * derivative(in[i]);
     }
@@ -314,6 +337,11 @@ static void LogActivationFallbackOnce(
         ClassifyArrayFireBackendFallbackReason(error_message);
     const std::string context = BuildArrayFireBackendFallbackContext(
         BuildTensorShapeContext(tensor_name, tensor.Shape()));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        operation_name,
+        reason,
+        error_message,
+        context);
     const bool log_fallback =
         ShouldLogArrayFireBackendFallbackOnce(
             operation_name, reason, context);
@@ -647,15 +675,16 @@ Tensor TanhActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 // ============================================================================
 
 Tensor SoftmaxActivation::Forward(const Tensor& input) {
+    ValidateFloat32UnaryActivation(input, "Softmax");
+    const int actual_axis = NormalizeActivationAxis(
+        axis_, static_cast<int>(input.Shape().size()), "Softmax");
+    if (input.NumElements() == 0) {
+        cached_output_ = input.Clone();
+        return cached_output_;
+    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = input.GetSemanticArray();
-
-        // Determine the axis for softmax (default is last dimension)
-        int actual_axis = axis_;
-        if (actual_axis < 0) {
-            actual_axis = static_cast<int>(x.numdims()) - 1;
-        }
 
         // For numerical stability, subtract max before exp
         af::array max_vals = af::max(x, actual_axis);
@@ -687,24 +716,29 @@ Tensor SoftmaxActivation::Forward(const Tensor& input) {
 }
 
 Tensor SoftmaxActivation::Backward(const Tensor& grad_output, const Tensor& input) {
+    ValidateFloat32ActivationBackward(grad_output, input, "Softmax");
+    const int actual_axis = NormalizeActivationAxis(
+        axis_, static_cast<int>(input.Shape().size()), "Softmax");
+    if (input.NumElements() == 0) {
+        return grad_output.Clone();
+    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array grad_out = grad_output.GetSemanticArray();
-        af::array softmax_out = cached_output_.GetSemanticArray();
+        af::array x = input.GetSemanticArray();
 
-        int actual_axis = axis_;
-        if (actual_axis < 0) {
-            actual_axis = static_cast<int>(softmax_out.numdims()) - 1;
-        }
+        af::array max_vals = af::max(x, actual_axis);
+        af::dim4 tile_dims(1, 1, 1, 1);
+        tile_dims[actual_axis] = x.dims(actual_axis);
+        af::array exp_x = af::exp(x - af::tile(max_vals, tile_dims));
+        af::array softmax_out =
+            exp_x / af::tile(af::sum(exp_x, actual_axis), tile_dims);
 
         // Softmax backward: softmax * (grad - sum(grad * softmax))
         af::array grad_softmax = grad_out * softmax_out;
         grad_softmax.eval();
         af::array sum_grad_softmax = af::sum(grad_softmax, actual_axis);
         sum_grad_softmax.eval();
-
-        af::dim4 tile_dims(1, 1, 1, 1);
-        tile_dims[actual_axis] = softmax_out.dims(actual_axis);
 
         af::array dx = softmax_out * (grad_out - af::tile(sum_grad_softmax, tile_dims));
         dx.eval();
@@ -726,8 +760,9 @@ Tensor MishActivation::Forward(const Tensor& input) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
         af::array x = TensorToAf(input);
-        // Mish: x * tanh(softplus(x)) = x * tanh(ln(1 + exp(x)))
-        af::array softplus_x = af::log(1.0f + af::exp(x));
+        // Stable softplus avoids exp overflow for large finite inputs.
+        af::array softplus_x =
+            af::max(x, 0.0f) + af::log(1.0f + af::exp(-af::abs(x)));
         af::array output = x * af::tanh(softplus_x);
         return AfToTensor(output);
     } catch (const af::exception& e) {
@@ -746,11 +781,11 @@ Tensor MishActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         // Mish derivative is complex:
         // d/dx [x * tanh(softplus(x))]
         // = tanh(softplus(x)) + x * sech^2(softplus(x)) * sigmoid(x)
-        af::array exp_x = af::exp(x);
-        af::array softplus_x = af::log(1.0f + exp_x);
+        af::array softplus_x =
+            af::max(x, 0.0f) + af::log(1.0f + af::exp(-af::abs(x)));
         af::array tanh_sp = af::tanh(softplus_x);
         af::array sech2_sp = 1.0f - tanh_sp * tanh_sp;
-        af::array sigmoid_x = exp_x / (1.0f + exp_x);
+        af::array sigmoid_x = af::sigmoid(x);
 
         af::array dx = grad_out * (tanh_sp + x * sech2_sp * sigmoid_x);
 
@@ -859,7 +894,8 @@ Tensor SELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         // d(SELU)/dx = scale for x > 0, scale * alpha * exp(x) for x <= 0
         af::array positive_mask = (x > 0).as(af::dtype::f32);
         af::array negative_mask = (x <= 0).as(af::dtype::f32);
-        af::array grad_input = grad * SCALE * (positive_mask + ALPHA * af::exp(x) * negative_mask);
+        af::array grad_input = grad * SCALE *
+            (positive_mask + ALPHA * af::exp(af::min(x, 0.0f)) * negative_mask);
         return AfToTensor(grad_input);
     } catch (const af::exception& e) {
         LogActivationFallbackOnce("SELU::Backward", e.what(), grad_output, "grad_output");
@@ -876,20 +912,41 @@ Tensor SELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 
 PReLUActivation::PReLUActivation(int num_parameters, float init)
     : num_parameters_(num_parameters) {
+    if (num_parameters_ <= 0 || !std::isfinite(init)) {
+        throw std::invalid_argument(
+            "PReLU requires a positive parameter count and finite initial value");
+    }
     // Initialize alpha with the init value
     alpha_ = Tensor({static_cast<size_t>(num_parameters)}, DataType::Float32);
-    float* alpha_data = alpha_.Data<float>();
+    float* alpha_data = alpha_.MutableData<float>();
     for (int i = 0; i < num_parameters; ++i) {
         alpha_data[i] = init;
     }
     grad_alpha_ = Tensor::Zeros({static_cast<size_t>(num_parameters)});
 }
 
+void PReLUActivation::SetAlpha(const Tensor& alpha) {
+    if (alpha.GetDataType() != DataType::Float32 ||
+        alpha.Shape() != std::vector<size_t>{
+                             static_cast<size_t>(num_parameters_)}) {
+        throw std::invalid_argument(
+            "PReLU alpha must be Float32 with shape [num_parameters]");
+    }
+    alpha_ = alpha;
+}
+
 Tensor PReLUActivation::Forward(const Tensor& input) {
+    ValidateFloat32UnaryActivation(input, "PReLU");
+    if (num_parameters_ != 1 &&
+        (input.Shape().size() < 2 ||
+         input.Shape()[1] != static_cast<size_t>(num_parameters_))) {
+        throw std::invalid_argument(
+            "PReLU channel parameters must match input dimension 1");
+    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array x = TensorToAf(input);
-        af::array alpha = TensorToAf(alpha_);
+        af::array x = input.GetSemanticArray();
+        af::array alpha = alpha_.GetSemanticArray();
 
         // PReLU: max(0, x) + alpha * min(0, x)
         af::array positive = af::max(x, 0.0f);
@@ -916,27 +973,45 @@ Tensor PReLUActivation::Forward(const Tensor& input) {
             output = positive + alpha_bc * negative;
         }
 
-        return AfToTensor(output);
+        return Tensor::FromSemanticArray(output, input.Shape());
     } catch (const af::exception& e) {
         LogActivationFallbackOnce("PReLU::Forward", e.what(), input, "input");
     }
 #endif
-    if (num_parameters_ != 1) {
-        throw std::runtime_error("PReLU CPU fallback only supports shared alpha");
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "PReLU::Forward");
+    const auto& shape = input.Shape();
+    size_t channel_span = 1;
+    for (size_t dimension = 2; dimension < shape.size(); ++dimension) {
+        channel_span *= shape[dimension];
     }
-    const Tensor& alpha = alpha_;
-    const float alpha_value = alpha.Data<float>()[0];
-    return CpuElementwiseActivationForward(input, "PReLU", [alpha_value](float x) {
-        return x > 0.0f ? x : alpha_value * x;
-    });
+
+    const float* alpha = alpha_.ReadData<float>();
+    const float* in = input.ReadData<float>();
+    Tensor output(shape, input.GetDataType());
+    float* out = output.MutableData<float>();
+    for (size_t i = 0; i < input.NumElements(); ++i) {
+        const size_t channel = num_parameters_ == 1
+            ? 0
+            : (i / channel_span) % shape[1];
+        out[i] = in[i] > 0.0f ? in[i] : alpha[channel] * in[i];
+    }
+    return output;
 }
 
 Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
+    ValidateFloat32ActivationBackward(grad_output, input, "PReLU");
+    if (num_parameters_ != 1 &&
+        (input.Shape().size() < 2 ||
+         input.Shape()[1] != static_cast<size_t>(num_parameters_))) {
+        throw std::invalid_argument(
+            "PReLU channel parameters must match input dimension 1");
+    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
-        af::array grad = TensorToAf(grad_output);
-        af::array x = TensorToAf(input);
-        af::array alpha = TensorToAf(alpha_);
+        af::array grad = grad_output.GetSemanticArray();
+        af::array x = input.GetSemanticArray();
+        af::array alpha = alpha_.GetSemanticArray();
 
         // Gradient w.r.t input: 1 for x > 0, alpha for x <= 0
         af::array positive_mask = (x > 0).as(af::dtype::f32);
@@ -947,11 +1022,10 @@ Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input)
             grad_input = grad * (positive_mask + alpha(0) * negative_mask);
 
             // Gradient w.r.t alpha: sum of grad * min(0, x)
-            af::array grad_alpha_terms = grad * af::min(x, 0.0f);
-            grad_alpha_terms.eval();
-            float grad_alpha_val = af::sum<float>(grad_alpha_terms);
-            float* grad_alpha_data = grad_alpha_.Data<float>();
-            grad_alpha_data[0] = grad_alpha_val;
+            af::array grad_alpha_arr =
+                af::sum(af::flat(grad * af::min(x, 0.0f)));
+            grad_alpha_ = Tensor::FromSemanticArray(
+                af::moddims(grad_alpha_arr, af::dim4(1)), {1});
         } else {
             // Per-channel
             af::dim4 alpha_shape(1, 1, 1, 1);
@@ -966,35 +1040,47 @@ Tensor PReLUActivation::Backward(const Tensor& grad_output, const Tensor& input)
             // Gradient w.r.t alpha per channel
             af::array negative = af::min(x, 0.0f);
             af::array grad_times_neg = grad * negative;
-            // Sum over all dimensions except channel
-            af::array grad_alpha_arr = af::sum(af::sum(af::sum(grad_times_neg, 0), 2), 3);
-            grad_alpha_ = AfToTensor(af::moddims(grad_alpha_arr, af::dim4(num_parameters_)));
+            // Sum over every semantic dimension except channel dimension 1.
+            af::array grad_alpha_arr = grad_times_neg;
+            for (int dimension = 3; dimension >= 0; --dimension) {
+                if (dimension != 1) {
+                    grad_alpha_arr = af::sum(grad_alpha_arr, dimension);
+                }
+            }
+            grad_alpha_ = Tensor::FromSemanticArray(
+                af::moddims(grad_alpha_arr, af::dim4(num_parameters_)),
+                {static_cast<size_t>(num_parameters_)});
         }
 
-        return AfToTensor(grad_input);
+        return Tensor::FromSemanticArray(grad_input, input.Shape());
     } catch (const af::exception& e) {
         LogActivationFallbackOnce("PReLU::Backward", e.what(), grad_output, "grad_output");
     }
 #endif
-    if (num_parameters_ != 1) {
-        throw std::runtime_error("PReLU CPU fallback only supports shared alpha");
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "PReLU::Backward");
+    const auto& shape = input.Shape();
+    size_t channel_span = 1;
+    for (size_t dimension = 2; dimension < shape.size(); ++dimension) {
+        channel_span *= shape[dimension];
     }
 
-    ValidateFloat32ActivationBackward(grad_output, input, "PReLU");
-    const Tensor& alpha = alpha_;
-    const float alpha_value = alpha.Data<float>()[0];
+    const float* alpha = alpha_.ReadData<float>();
     Tensor grad_input(input.Shape(), input.GetDataType());
-    float grad_alpha_val = 0.0f;
-    const float* grad = grad_output.Data<float>();
-    const float* in = input.Data<float>();
-    float* out = grad_input.Data<float>();
+    grad_alpha_ = Tensor::Zeros({static_cast<size_t>(num_parameters_)});
+    float* grad_alpha = grad_alpha_.MutableData<float>();
+    const float* grad = grad_output.ReadData<float>();
+    const float* in = input.ReadData<float>();
+    float* out = grad_input.MutableData<float>();
     for (size_t i = 0; i < input.NumElements(); ++i) {
-        out[i] = grad[i] * (in[i] > 0.0f ? 1.0f : alpha_value);
+        const size_t channel = num_parameters_ == 1
+            ? 0
+            : (i / channel_span) % shape[1];
+        out[i] = grad[i] * (in[i] > 0.0f ? 1.0f : alpha[channel]);
         if (in[i] < 0.0f) {
-            grad_alpha_val += grad[i] * in[i];
+            grad_alpha[channel] += grad[i] * in[i];
         }
     }
-    grad_alpha_.Data<float>()[0] = grad_alpha_val;
     return grad_input;
 }
 

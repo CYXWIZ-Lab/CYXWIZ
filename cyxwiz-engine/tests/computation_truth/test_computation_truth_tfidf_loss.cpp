@@ -1,15 +1,31 @@
-#include "../../src/core/node_executors/tfidf_vectorizer_operator.h"
+#include "../../src/core/execution_device_context.h"
 #include "../../src/core/materialization_memory_guard.h"
-
+#include "../../src/core/metric_learning_metrics.h"
+#include "../../src/core/metric_learning_training_step.h"
+#include "../../src/core/node_executors/tfidf_vectorizer_operator.h"
+#include <cyxwiz/activation.h>
+#include <cyxwiz/cyxwiz.h>
+#include <cyxwiz/layers/dense.h>
 #include <cyxwiz/layers/linear.h>
 #include <cyxwiz/loss.h>
+#include <cyxwiz/losses/metric_learning.h>
 #include <cyxwiz/optimizers/adam.h>
+#include <cyxwiz/optimizers/adaptive.h>
+#include <cyxwiz/optimizers/lamb.h>
+#include <cyxwiz/optimizers/sgd.h>
+#include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
 
+#include "algorithms/arrayfire_backend_utils.h"
+
 #include <arrow/api.h>
+#include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -20,6 +36,45 @@
 
 namespace {
 
+using json = nlohmann::json;
+namespace fs = std::filesystem;
+
+thread_local std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent>*
+    g_fallback_events = nullptr;
+thread_local std::vector<cyxwiz::ArrayFireHostSyncEvent>* g_host_sync_events =
+    nullptr;
+
+void RecordFallbackEvent(
+    const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
+    if (g_fallback_events != nullptr) {
+        g_fallback_events->push_back(event);
+    }
+}
+
+void RecordHostSyncEvent(const cyxwiz::ArrayFireHostSyncEvent& event) {
+    if (g_host_sync_events != nullptr) {
+        g_host_sync_events->push_back(event);
+    }
+}
+
+bool IsDeclaredMetricReadback(
+    const cyxwiz::ArrayFireHostSyncEvent& event) {
+    if (event.attribution_category == "metric_input_validation") {
+        return event.attribution_operation ==
+                   "MetricLearning::PairDistance::LabelValidation" &&
+               event.bytes == sizeof(uint32_t);
+    }
+    if (event.attribution_category != "metric_scalar_readback") {
+        return false;
+    }
+    return (event.attribution_operation ==
+                "MetricLearning::PairDistance" &&
+            event.bytes == 5 * sizeof(float)) ||
+           (event.attribution_operation ==
+                "MetricLearning::Retrieval" &&
+            event.bytes == 3 * sizeof(float));
+}
+
 void Check(bool condition, const std::string& message) {
     if (!condition) {
         std::cerr << "FAIL: " << message << "\n";
@@ -29,12 +84,144 @@ void Check(bool condition, const std::string& message) {
 
 void CheckNear(float actual, float expected, float tolerance,
                const std::string& message) {
+    if (!std::isfinite(actual) || !std::isfinite(expected)) {
+        Check(actual == expected,
+              message + " encountered an unexpected non-finite value");
+        return;
+    }
     if (std::fabs(actual - expected) > tolerance) {
         std::ostringstream ss;
         ss << message << " expected=" << expected << " actual=" << actual
            << " tolerance=" << tolerance;
         Check(false, ss.str());
     }
+}
+
+struct Tolerance {
+    float absolute = 0.0f;
+    float relative = 0.0f;
+};
+
+Tolerance ReadTolerance(const json& test_case) {
+    const auto& tolerance = test_case.at("tolerance");
+    return {
+        tolerance.at("atol").get<float>(),
+        tolerance.at("rtol").get<float>(),
+    };
+}
+
+void CheckNear(float actual, float expected, const Tolerance& tolerance,
+               const std::string& message) {
+    if (!std::isfinite(actual) || !std::isfinite(expected)) {
+        Check(actual == expected,
+              message + " encountered an unexpected non-finite value");
+        return;
+    }
+    const float difference = std::fabs(actual - expected);
+    const float allowed = tolerance.absolute +
+        tolerance.relative * std::fabs(expected);
+    if (difference > allowed) {
+        std::ostringstream ss;
+        ss << message << " expected=" << expected << " actual=" << actual
+           << " absolute_error=" << difference
+           << " allowed_error=" << allowed
+           << " atol=" << tolerance.absolute
+           << " rtol=" << tolerance.relative;
+        Check(false, ss.str());
+    }
+}
+
+std::vector<size_t> ReadShape(const json& tensor_fixture,
+                              const std::string& context) {
+    const auto shape = tensor_fixture.at("shape").get<std::vector<size_t>>();
+    size_t element_count = 1;
+    for (size_t dimension : shape) {
+        Check(dimension == 0 ||
+                  element_count <= std::numeric_limits<size_t>::max() / dimension,
+              context + " shape product overflow");
+        element_count *= dimension;
+    }
+    Check(tensor_fixture.at("values").size() == element_count,
+          context + " value count does not match shape");
+    return shape;
+}
+
+std::vector<float> ReadFloatValues(const json& tensor_fixture,
+                                   const std::string& context) {
+    ReadShape(tensor_fixture, context);
+    return tensor_fixture.at("values").get<std::vector<float>>();
+}
+
+cyxwiz::Tensor FloatTensorFromFixture(const json& tensor_fixture,
+                                      const std::string& context) {
+    const auto values = ReadFloatValues(tensor_fixture, context);
+    return cyxwiz::Tensor(ReadShape(tensor_fixture, context), values.data(),
+                          cyxwiz::DataType::Float32);
+}
+
+std::vector<int64_t> ReadInt64Values(const json& tensor_fixture,
+                                     const std::string& context) {
+    ReadShape(tensor_fixture, context);
+    return tensor_fixture.at("values").get<std::vector<int64_t>>();
+}
+
+cyxwiz::Tensor Int64TensorFromFixture(const json& tensor_fixture,
+                                      const std::string& context) {
+    const auto values = ReadInt64Values(tensor_fixture, context);
+    return cyxwiz::Tensor(ReadShape(tensor_fixture, context), values.data(),
+                          cyxwiz::DataType::Int64);
+}
+
+void CheckTensor(const cyxwiz::Tensor& actual,
+                 const json& expected_fixture,
+                 const Tolerance& tolerance,
+                 const std::string& context) {
+    const auto expected_shape = ReadShape(expected_fixture, context);
+    Check(actual.Shape() == expected_shape, context + " shape mismatch");
+    const auto expected = ReadFloatValues(expected_fixture, context);
+    const cyxwiz::ScopedArrayFireHostSyncAttribution output_readback(
+        cyxwiz::ArrayFireHostSyncCategory::DebugSampleDump, context);
+    const float* actual_values = actual.ReadData<float>();
+    for (size_t i = 0; i < expected.size(); ++i) {
+        CheckNear(actual_values[i], expected[i], tolerance,
+                  context + "[" + std::to_string(i) + "]");
+    }
+}
+
+json LoadTrainingCoreFixture(const fs::path& executable_path,
+                             const char* explicit_path) {
+    fs::path fixture_path;
+    if (explicit_path && *explicit_path) {
+        fixture_path = explicit_path;
+    } else {
+        fixture_path = fs::absolute(executable_path).parent_path() /
+            "computation_truth_fixtures" /
+            "training_core_pytorch.json";
+    }
+
+    std::ifstream stream(fixture_path);
+    Check(stream.is_open(), "unable to open PyTorch fixture: " +
+          fixture_path.string());
+
+    json fixture;
+    try {
+        stream >> fixture;
+    } catch (const std::exception& error) {
+        Check(false, "unable to parse PyTorch fixture " +
+              fixture_path.string() + ": " + error.what());
+    }
+
+    Check(fixture.value("schema_version", 0) == 1,
+          "unsupported PyTorch fixture schema version");
+    Check(fixture.at("oracle").value("name", "") == "PyTorch",
+          "training-core fixture must declare PyTorch as its oracle");
+    Check(fixture.at("oracle").value("device", "") == "cpu",
+          "training-core fixture must be generated on PyTorch CPU");
+    Check(!fixture.at("oracle").value("version", "").empty(),
+          "training-core fixture must record the PyTorch version");
+    Check(fixture.contains("cases") && fixture.at("cases").is_object(),
+          "training-core fixture must contain cases");
+    return fixture;
 }
 
 std::shared_ptr<arrow::Array> FinishStringArray(
@@ -68,27 +255,6 @@ int32_t ReadIntValue(const std::shared_ptr<arrow::Table>& table,
     Check(column->num_chunks() == 1, "expected one chunk for " + column_name);
     auto array = std::static_pointer_cast<arrow::Int32Array>(column->chunk(0));
     return array->Value(row);
-}
-
-float ReferenceCrossEntropyMean(const std::vector<float>& logits,
-                                const std::vector<int64_t>& labels,
-                                size_t batch,
-                                size_t classes) {
-    float total = 0.0f;
-    for (size_t r = 0; r < batch; ++r) {
-        const size_t base = r * classes;
-        float max_logit = logits[base];
-        for (size_t c = 1; c < classes; ++c) {
-            max_logit = std::max(max_logit, logits[base + c]);
-        }
-        float sum_exp = 0.0f;
-        for (size_t c = 0; c < classes; ++c) {
-            sum_exp += std::exp(logits[base + c] - max_logit);
-        }
-        const float log_sum_exp = max_logit + std::log(sum_exp);
-        total += -logits[base + static_cast<size_t>(labels[r])] + log_sum_exp;
-    }
-    return total / static_cast<float>(batch);
 }
 
 void TestMaterializationMemoryGuardThresholds() {
@@ -342,136 +508,1999 @@ void TestTFIDFNGramMaterialization() {
               "row0 not good bigram should be present");
 }
 
-void TestCrossEntropyParity() {
-    const std::vector<float> logits = {
-        1.0f, 2.0f, 0.5f,
-        0.1f, -0.2f, 0.0f,
-    };
-    const std::vector<int64_t> labels = {1, 0};
+void TestCrossEntropyParity(const json& cases) {
+    const auto& test_case = cases.at("cross_entropy_index_mean_f32");
+    Check(test_case.value("operation", "") ==
+              "torch.nn.functional.cross_entropy",
+          "CrossEntropy fixture operation mismatch");
+    Check(test_case.value("dtype", "") == "float32" &&
+              test_case.value("target_dtype", "") == "int64",
+          "CrossEntropy fixture dtype mismatch");
+    Check(test_case.value("reduction", "") == "mean",
+          "CrossEntropy fixture reduction mismatch");
+    const auto logits = ReadFloatValues(test_case.at("logits"), "CE logits");
+    const auto labels = ReadInt64Values(test_case.at("targets"), "CE targets");
 
-    cyxwiz::Tensor predictions({2, 3}, logits.data(), cyxwiz::DataType::Float32);
-    cyxwiz::Tensor targets({2}, labels.data(), cyxwiz::DataType::Int64);
+    cyxwiz::Tensor predictions(
+        ReadShape(test_case.at("logits"), "CE logits"), logits.data(),
+        cyxwiz::DataType::Float32);
+    cyxwiz::Tensor targets(
+        ReadShape(test_case.at("targets"), "CE targets"), labels.data(),
+        cyxwiz::DataType::Int64);
     cyxwiz::CrossEntropyLoss loss(cyxwiz::Reduction::Mean);
     cyxwiz::Tensor actual = loss.Forward(predictions, targets);
 
-    const float expected =
-        ReferenceCrossEntropyMean(logits, labels, 2, 3);
-    CheckNear(actual.Data<float>()[0], expected, 1e-5f,
-              "CrossEntropy mean should match reference/PyTorch semantics");
+    const float expected = test_case.at("expected").at("loss").get<float>();
+    const cyxwiz::ScopedArrayFireHostSyncAttribution output_readback(
+        cyxwiz::ArrayFireHostSyncCategory::DebugSampleDump,
+        "CrossEntropy mean PyTorch parity");
+    CheckNear(actual.ReadData<float>()[0], expected, ReadTolerance(test_case),
+              "CrossEntropy mean PyTorch parity");
 }
 
-void TestLinearForwardBackwardParity() {
-    const std::vector<float> input_values = {
-        1.0f, 2.0f, -1.0f,
-        0.0f, -3.0f, 4.0f,
-    };
-    const std::vector<float> weight_values = {
-        0.5f, -1.0f, 2.0f,
-        -0.25f, 0.75f, 1.5f,
-    };
-    const std::vector<float> bias_values = {0.1f, -0.2f};
-    const std::vector<float> grad_output_values = {
-        1.0f, -0.5f,
-        0.25f, 2.0f,
-    };
-
-    cyxwiz::LinearLayer linear(3, 2, true);
-    cyxwiz::Tensor weight({2, 3}, weight_values.data(),
-                          cyxwiz::DataType::Float32);
-    cyxwiz::Tensor bias({2}, bias_values.data(), cyxwiz::DataType::Float32);
-    linear.SetParameters({{"weight", weight}, {"bias", bias}});
-
-    cyxwiz::Tensor input({2, 3}, input_values.data(),
-                         cyxwiz::DataType::Float32);
-    cyxwiz::Tensor output = linear.Forward(input);
-    const float* out = output.Data<float>();
-
-    const std::vector<float> expected_output = {
-        -3.4f, -0.45f,
-        11.1f, 3.55f,
-    };
-    for (size_t i = 0; i < expected_output.size(); ++i) {
-        CheckNear(out[i], expected_output[i], 1e-5f,
-                  "Linear forward output[" + std::to_string(i) + "]");
+cyxwiz::Reduction ParseReduction(const std::string& reduction) {
+    if (reduction == "none") {
+        return cyxwiz::Reduction::None;
     }
-
-    cyxwiz::Tensor grad_output({2, 2}, grad_output_values.data(),
-                               cyxwiz::DataType::Float32);
-    cyxwiz::Tensor grad_input = linear.Backward(grad_output);
-    const float* grad_in = grad_input.Data<float>();
-
-    const std::vector<float> expected_grad_input = {
-        0.625f, -1.375f, 1.25f,
-        -0.375f, 1.25f, 3.5f,
-    };
-    for (size_t i = 0; i < expected_grad_input.size(); ++i) {
-        CheckNear(grad_in[i], expected_grad_input[i], 1e-5f,
-                  "Linear backward grad_input[" + std::to_string(i) + "]");
+    if (reduction == "mean") {
+        return cyxwiz::Reduction::Mean;
     }
+    Check(reduction == "sum", "unsupported CrossEntropy fixture reduction");
+    return cyxwiz::Reduction::Sum;
+}
 
-    const auto grads = linear.GetGradients();
-    const float* grad_w = grads.at("weight").Data<float>();
-    const float* grad_b = grads.at("bias").Data<float>();
-    const std::vector<float> expected_grad_weight = {
-        0.5f, 0.625f, 0.0f,
-        -0.25f, -3.5f, 4.25f,
-    };
-    const std::vector<float> expected_grad_bias = {0.625f, 0.75f};
-    for (size_t i = 0; i < expected_grad_weight.size(); ++i) {
-        CheckNear(grad_w[i], expected_grad_weight[i], 1e-5f,
-                  "Linear backward grad_weight[" + std::to_string(i) + "]");
-    }
-    for (size_t i = 0; i < expected_grad_bias.size(); ++i) {
-        CheckNear(grad_b[i], expected_grad_bias[i], 1e-5f,
-                  "Linear backward grad_bias[" + std::to_string(i) + "]");
+void TestRegressionLossParity(const json& cases) {
+    const auto& matrix = cases.at("regression_loss_matrix_f32");
+    Check(matrix.is_array() && !matrix.empty(),
+          "regression loss matrix fixture must be non-empty");
+    for (const auto& test_case : matrix) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("dtype", "") == "float32",
+              name + " dtype mismatch");
+        const auto prediction_values = ReadFloatValues(
+            test_case.at("predictions"), name + " predictions");
+        const auto target_values = ReadFloatValues(
+            test_case.at("targets"), name + " targets");
+        cyxwiz::Tensor predictions(
+            ReadShape(test_case.at("predictions"), name + " predictions"),
+            prediction_values.data(), cyxwiz::DataType::Float32);
+        cyxwiz::Tensor targets(
+            ReadShape(test_case.at("targets"), name + " targets"),
+            target_values.data(), cyxwiz::DataType::Float32);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        predictions = cyxwiz::Tensor::FromSemanticArray(
+            predictions.GetSemanticArray(), predictions.Shape());
+        targets = cyxwiz::Tensor::FromSemanticArray(
+            targets.GetSemanticArray(), targets.Shape());
+#endif
+
+        const auto reduction = ParseReduction(
+            test_case.at("reduction").get<std::string>());
+        const float parameter = test_case.at("parameter").get<float>();
+        const std::string loss_type =
+            test_case.at("loss_type").get<std::string>();
+        std::unique_ptr<cyxwiz::Loss> loss;
+        std::string expected_operation;
+        if (loss_type == "mse") {
+            loss = std::make_unique<cyxwiz::MSELoss>(reduction);
+            expected_operation = "torch.nn.functional.mse_loss";
+        } else if (loss_type == "l1") {
+            loss = std::make_unique<cyxwiz::L1Loss>(reduction);
+            expected_operation = "torch.nn.functional.l1_loss";
+        } else if (loss_type == "smooth_l1") {
+            loss = std::make_unique<cyxwiz::SmoothL1Loss>(parameter, reduction);
+            expected_operation = "torch.nn.functional.smooth_l1_loss";
+        } else {
+            Check(loss_type == "huber", name + " loss type mismatch");
+            loss = std::make_unique<cyxwiz::HuberLoss>(parameter, reduction);
+            expected_operation = "torch.nn.functional.huber_loss";
+        }
+        Check(test_case.value("operation", "") == expected_operation,
+              name + " operation mismatch");
+
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto actual_loss = loss->Forward(predictions, targets);
+        const auto actual_gradient = loss->Backward(predictions, targets);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              name + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              name + " materialized a tensor during compute");
+
+        const auto& expected_loss = test_case.at("expected").at("loss");
+        if (expected_loss.value("non_finite", "") == "nan") {
+            Check(actual_loss.Shape() ==
+                      expected_loss.at("shape").get<std::vector<size_t>>(),
+                  name + " forward shape mismatch");
+            const cyxwiz::ScopedArrayFireHostSyncAttribution output_readback(
+                cyxwiz::ArrayFireHostSyncCategory::DebugSampleDump,
+                name + " non-finite forward readback");
+            Check(std::isnan(actual_loss.ReadData<float>()[0]),
+                  name + " forward expected NaN");
+        } else {
+            CheckTensor(actual_loss, expected_loss,
+                        ReadTolerance(test_case), name + " forward");
+        }
+        CheckTensor(actual_gradient,
+                    test_case.at("expected").at("prediction_gradient"),
+                    ReadTolerance(test_case), name + " backward");
     }
 }
 
-void TestAdamWOneStepParity() {
-    const double lr = 0.01;
-    const double beta1 = 0.9;
-    const double beta2 = 0.999;
-    const double eps = 1e-8;
-    const double weight_decay = 0.1;
-    const std::vector<float> initial = {1.0f, -2.0f, 0.5f};
-    const std::vector<float> grad_values = {0.25f, -0.5f, 0.125f};
+void TestProbabilityLossParity(const json& cases) {
+    const auto& matrix = cases.at("probability_loss_matrix_f32");
+    Check(matrix.is_array() && !matrix.empty(),
+          "probability loss matrix fixture must be non-empty");
+    for (const auto& test_case : matrix) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("dtype", "") == "float32",
+              name + " dtype mismatch");
+        const auto prediction_values = ReadFloatValues(
+            test_case.at("predictions"), name + " predictions");
+        const auto target_values =
+            ReadFloatValues(test_case.at("targets"), name + " targets");
+        cyxwiz::Tensor predictions(
+            ReadShape(test_case.at("predictions"), name),
+            prediction_values.data(), cyxwiz::DataType::Float32);
+        cyxwiz::Tensor targets(
+            ReadShape(test_case.at("targets"), name), target_values.data(),
+            cyxwiz::DataType::Float32);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        predictions = cyxwiz::Tensor::FromSemanticArray(
+            predictions.GetSemanticArray(), predictions.Shape());
+        targets = cyxwiz::Tensor::FromSemanticArray(
+            targets.GetSemanticArray(), targets.Shape());
+#endif
+
+        const auto reduction = ParseReduction(
+            test_case.at("reduction").get<std::string>());
+        const std::string loss_type =
+            test_case.at("loss_type").get<std::string>();
+        std::unique_ptr<cyxwiz::Loss> loss;
+        std::string expected_operation;
+        if (loss_type == "bce") {
+            loss = std::make_unique<cyxwiz::BCELoss>(reduction);
+            expected_operation =
+                "torch.nn.functional.binary_cross_entropy";
+        } else if (loss_type == "bce_with_logits") {
+            loss = std::make_unique<cyxwiz::BCEWithLogitsLoss>(
+                reduction, test_case.at("pos_weight").get<float>());
+            expected_operation =
+                "torch.nn.functional.binary_cross_entropy_with_logits";
+        } else {
+            Check(loss_type == "kl_div", name + " loss type mismatch");
+            loss = std::make_unique<cyxwiz::KLDivLoss>(
+                reduction, test_case.at("log_target").get<bool>());
+            expected_operation = "torch.nn.functional.kl_div";
+        }
+        Check(test_case.value("operation", "") == expected_operation,
+              name + " operation mismatch");
+
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto actual_loss = loss->Forward(predictions, targets);
+        const auto actual_gradient = loss->Backward(predictions, targets);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              name + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              name + " materialized a tensor during compute");
+        CheckTensor(actual_loss, test_case.at("expected").at("loss"),
+                    ReadTolerance(test_case), name + " forward");
+        CheckTensor(actual_gradient,
+                    test_case.at("expected").at("prediction_gradient"),
+                    ReadTolerance(test_case), name + " backward");
+    }
+}
+
+void TestOverlapLossParity(const json& cases) {
+    const auto& matrix = cases.at("overlap_loss_matrix_f32");
+    Check(matrix.is_array() && !matrix.empty(),
+          "overlap loss matrix fixture must be non-empty");
+    for (const auto& test_case : matrix) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("dtype", "") == "float32",
+              name + " dtype mismatch");
+        const auto prediction_values = ReadFloatValues(
+            test_case.at("predictions"), name + " predictions");
+        const auto target_values =
+            ReadFloatValues(test_case.at("targets"), name + " targets");
+        cyxwiz::Tensor predictions(
+            ReadShape(test_case.at("predictions"), name),
+            prediction_values.data(), cyxwiz::DataType::Float32);
+        cyxwiz::Tensor targets(
+            ReadShape(test_case.at("targets"), name), target_values.data(),
+            cyxwiz::DataType::Float32);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        predictions = cyxwiz::Tensor::FromSemanticArray(
+            predictions.GetSemanticArray(), predictions.Shape());
+        targets = cyxwiz::Tensor::FromSemanticArray(
+            targets.GetSemanticArray(), targets.Shape());
+#endif
+
+        const auto reduction = ParseReduction(
+            test_case.at("reduction").get<std::string>());
+        const float smooth = test_case.at("smooth").get<float>();
+        const std::string loss_type =
+            test_case.at("loss_type").get<std::string>();
+        std::unique_ptr<cyxwiz::Loss> loss;
+        std::string expected_operation;
+        if (loss_type == "soft_dice") {
+            loss = std::make_unique<cyxwiz::SoftDiceLoss>(
+                reduction, smooth);
+            expected_operation = "pytorch_explicit_soft_dice_loss";
+        } else if (loss_type == "tversky") {
+            loss = std::make_unique<cyxwiz::TverskyLoss>(
+                reduction,
+                test_case.at("alpha").get<float>(),
+                test_case.at("beta").get<float>(),
+                smooth);
+            expected_operation = "pytorch_explicit_tversky_loss";
+        } else {
+            Check(loss_type == "jaccard", name + " loss type mismatch");
+            loss = std::make_unique<cyxwiz::JaccardLoss>(
+                reduction, smooth);
+            expected_operation = "pytorch_explicit_jaccard_loss";
+        }
+        Check(test_case.value("operation", "") == expected_operation,
+              name + " operation mismatch");
+
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto actual_loss = loss->Forward(predictions, targets);
+        const auto actual_gradient = loss->Backward(predictions, targets);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              name + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              name + " materialized a tensor during compute");
+        CheckTensor(actual_loss, test_case.at("expected").at("loss"),
+                    ReadTolerance(test_case), name + " forward");
+        CheckTensor(actual_gradient,
+                    test_case.at("expected").at("prediction_gradient"),
+                    ReadTolerance(test_case), name + " backward");
+    }
+}
+
+void TestMetricLearningLossParity(const json& cases) {
+    const auto& matrix = cases.at("metric_learning_loss_matrix_f32");
+    Check(matrix.is_array() && matrix.size() == 12,
+          "metric-learning loss matrix fixture must contain 12 cases");
+    for (const auto& test_case : matrix) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("dtype", "") == "float32", name + " dtype mismatch");
+        const auto reduction = ParseReduction(test_case.at("reduction").get<std::string>());
+        const float margin = test_case.at("margin").get<float>();
+        const std::string loss_type = test_case.at("loss_type").get<std::string>();
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+
+        cyxwiz::Tensor actual_loss;
+        cyxwiz::Tensor actual_first_gradient;
+        cyxwiz::Tensor actual_second_gradient;
+        cyxwiz::Tensor actual_third_gradient;
+        if (loss_type == "cosine_embedding" || loss_type == "contrastive") {
+            const auto x1 = FloatTensorFromFixture(test_case.at("x1"), name + " x1");
+            const auto x2 = FloatTensorFromFixture(test_case.at("x2"), name + " x2");
+            const auto labels = FloatTensorFromFixture(test_case.at("labels"), name + " labels");
+            if (loss_type == "cosine_embedding") {
+                Check(test_case.value("operation", "") ==
+                          "torch.nn.functional.cosine_embedding_loss",
+                      name + " operation mismatch");
+                cyxwiz::CosineEmbeddingLoss loss(margin, reduction);
+                loss.SetLabels(labels);
+                actual_loss = loss.Forward(x1, x2);
+                actual_first_gradient = loss.Backward(x1, x2);
+                cyxwiz::CosineEmbeddingLoss swapped(margin, reduction);
+                swapped.SetLabels(labels);
+                actual_second_gradient = swapped.Backward(x2, x1);
+            } else {
+                Check(test_case.value("operation", "") == "pytorch_explicit_contrastive_loss",
+                      name + " operation mismatch");
+                cyxwiz::ContrastiveLoss loss(margin, reduction);
+                loss.SetLabels(labels);
+                actual_loss = loss.Forward(x1, x2);
+                actual_first_gradient = loss.Backward(x1, x2);
+                cyxwiz::ContrastiveLoss swapped(margin, reduction);
+                swapped.SetLabels(labels);
+                actual_second_gradient = swapped.Backward(x2, x1);
+            }
+        } else {
+            Check(loss_type == "triplet", name + " loss type mismatch");
+            const auto anchor = FloatTensorFromFixture(test_case.at("anchor"), name + " anchor");
+            const auto positive =
+                FloatTensorFromFixture(test_case.at("positive"), name + " positive");
+            const auto negative =
+                FloatTensorFromFixture(test_case.at("negative"), name + " negative");
+            const std::string distance_type = test_case.at("distance_type").get<std::string>();
+            const auto backend_distance = distance_type == "euclidean"
+                                              ? cyxwiz::TripletLoss::DistanceType::Euclidean
+                                              : cyxwiz::TripletLoss::DistanceType::Cosine;
+            Check(test_case.value("operation", "") ==
+                      (distance_type == "euclidean"
+                           ? "torch.nn.functional.triplet_margin_loss"
+                           : "pytorch_explicit_smooth_cosine_triplet_loss"),
+                  name + " operation mismatch");
+            cyxwiz::TripletLoss loss(margin, backend_distance, reduction);
+            loss.SetNegative(negative);
+            actual_loss = loss.Forward(anchor, positive);
+            const auto gradients = loss.BackwardAll(anchor, positive);
+            actual_first_gradient = gradients.anchor;
+            actual_second_gradient = gradients.positive;
+            actual_third_gradient = gradients.negative;
+        }
+
+        Check(g_fallback_events == nullptr || g_fallback_events->size() == fallback_count_before,
+              name + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr || g_host_sync_events->size() == host_sync_count_before,
+              name + " materialized a tensor during compute");
+        const auto tolerance = ReadTolerance(test_case);
+        CheckTensor(actual_loss, test_case.at("expected").at("loss"), tolerance, name + " forward");
+        if (loss_type == "triplet") {
+            CheckTensor(actual_first_gradient, test_case.at("expected").at("anchor_gradient"),
+                        tolerance, name + " anchor backward");
+            CheckTensor(actual_second_gradient, test_case.at("expected").at("positive_gradient"),
+                        tolerance, name + " positive backward");
+            CheckTensor(actual_third_gradient, test_case.at("expected").at("negative_gradient"),
+                        tolerance, name + " negative backward");
+        } else {
+            CheckTensor(actual_first_gradient, test_case.at("expected").at("x1_gradient"),
+                        tolerance, name + " x1 backward");
+            CheckTensor(actual_second_gradient, test_case.at("expected").at("x2_gradient"),
+                        tolerance, name + " x2 backward");
+        }
+    }
+}
+
+void TestMetricLearningMetricParity(const json& cases) {
+    const auto& matrix = cases.at("metric_learning_metric_matrix_f32");
+    const auto& pair_cases = matrix.at("pair_cases");
+    const auto& retrieval_cases = matrix.at("retrieval_cases");
+    Check(pair_cases.is_array() && pair_cases.size() == 2,
+          "metric-learning pair metric fixture must contain two cases");
+    Check(retrieval_cases.is_array() && retrieval_cases.size() == 2,
+          "metric-learning retrieval fixture must contain two cases");
+
+    for (const auto& test_case : pair_cases) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("dtype", "") == "float32" &&
+                  test_case.value("operation", "") ==
+                      "torch.linalg.vector_norm + threshold agreement",
+              name + " metric fixture metadata mismatch");
+        const std::string convention_name =
+            test_case.at("convention").get<std::string>();
+        const auto convention =
+            convention_name == "contrastive_zero_similar"
+                ? cyxwiz::MetricLearningLabelConvention::
+                      ContrastiveZeroSimilarOneDissimilar
+                : cyxwiz::MetricLearningLabelConvention::
+                      CosineOneSimilarNegativeOneDissimilar;
+        Check(convention_name == "contrastive_zero_similar" ||
+                  convention_name == "cosine_one_similar",
+              name + " metric fixture convention mismatch");
+        const size_t fallback_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto result = cyxwiz::ComputePairDistanceMetrics(
+            FloatTensorFromFixture(test_case.at("left"), name + " left"),
+            FloatTensorFromFixture(test_case.at("right"), name + " right"),
+            FloatTensorFromFixture(test_case.at("labels"), name + " labels"),
+            convention,
+            test_case.at("threshold").get<double>());
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_before,
+              name + " metric attempted native CPU fallback");
+        Check(g_host_sync_events != nullptr &&
+                  g_host_sync_events->size() == host_sync_before + 2,
+              name + " metric must perform two bounded readbacks");
+        Check(IsDeclaredMetricReadback(
+                  g_host_sync_events->at(host_sync_before)) &&
+                  g_host_sync_events->at(host_sync_before)
+                          .attribution_category ==
+                      "metric_input_validation",
+              name + " metric label validation readback mismatch");
+        Check(IsDeclaredMetricReadback(
+                  g_host_sync_events->at(host_sync_before + 1)) &&
+                  g_host_sync_events->at(host_sync_before + 1)
+                          .attribution_operation ==
+                      "MetricLearning::PairDistance",
+              name + " metric aggregate readback mismatch");
+
+        const auto& expected = test_case.at("expected");
+        const auto tolerance = ReadTolerance(test_case);
+        Check(result.pair_count ==
+                  expected.at("pair_count").get<size_t>() &&
+                  result.positive_count ==
+                      expected.at("positive_count").get<size_t>() &&
+                  result.negative_count ==
+                      expected.at("negative_count").get<size_t>(),
+              name + " metric counts mismatch");
+        CheckNear(static_cast<float>(result.accuracy),
+                  expected.at("accuracy").get<float>(),
+                  tolerance,
+                  name + " metric accuracy");
+        CheckNear(static_cast<float>(result.positive_distance_mean),
+                  expected.at("positive_distance_mean").get<float>(),
+                  tolerance,
+                  name + " metric positive distance mean");
+        CheckNear(static_cast<float>(result.negative_distance_mean),
+                  expected.at("negative_distance_mean").get<float>(),
+                  tolerance,
+                  name + " metric negative distance mean");
+    }
+
+    for (const auto& test_case : retrieval_cases) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("dtype", "") == "float32" &&
+                  test_case.value("class_id_dtype", "") == "int64" &&
+                  test_case.value("operation", "") ==
+                      "torch.cdist + stable argsort retrieval ranks",
+              name + " retrieval fixture metadata mismatch");
+        const size_t fallback_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto result = cyxwiz::ComputeRetrievalMetrics(
+            FloatTensorFromFixture(
+                test_case.at("embeddings"), name + " embeddings"),
+            Int64TensorFromFixture(
+                test_case.at("class_ids"), name + " class IDs"),
+            test_case.at("k").get<size_t>());
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_before,
+              name + " retrieval attempted native CPU fallback");
+        Check(g_host_sync_events != nullptr &&
+                  g_host_sync_events->size() == host_sync_before + 1 &&
+                  IsDeclaredMetricReadback(
+                      g_host_sync_events->at(host_sync_before)) &&
+                  g_host_sync_events->at(host_sync_before)
+                          .attribution_operation ==
+                      "MetricLearning::Retrieval",
+              name + " retrieval aggregate readback mismatch");
+
+        const auto& expected = test_case.at("expected");
+        const auto tolerance = ReadTolerance(test_case);
+        Check(result.query_count ==
+                  expected.at("query_count").get<size_t>() &&
+                  result.k == expected.at("effective_k").get<size_t>(),
+              name + " retrieval count/k mismatch");
+        CheckNear(static_cast<float>(result.recall_at_k),
+                  expected.at("recall_at_k").get<float>(),
+                  tolerance,
+                  name + " retrieval recall@k");
+        CheckNear(static_cast<float>(result.mean_reciprocal_rank),
+                  expected.at("mean_reciprocal_rank").get<float>(),
+                  tolerance,
+                  name + " retrieval MRR");
+        CheckNear(
+            static_cast<float>(result.nearest_neighbor_class_agreement),
+            expected.at("nearest_neighbor_class_agreement").get<float>(),
+            tolerance,
+            name + " retrieval nearest-neighbor agreement");
+    }
+}
+
+void TestMetricPairLinearMultiBatchUpdateParity(const json& cases) {
+    const auto& test_case = cases.at("metric_pair_linear_multibatch_sgd_f32");
+    Check(test_case.value("operation", "") ==
+                  "PyTorch explicit contrastive + shared nn.Linear + optim.SGD" &&
+              test_case.value("dtype", "") == "float32" &&
+              test_case.value("loss_type", "") == "contrastive" &&
+              test_case.value("reduction", "") == "mean",
+          "metric pair multi-batch fixture metadata mismatch");
+    const auto tolerance = ReadTolerance(test_case);
+    auto model = std::make_unique<cyxwiz::SequentialModel>();
+    model->Add<cyxwiz::LinearModule>(2, 2, true);
+    cyxwiz::SharedEncoderRuntime runtime(
+        std::make_unique<cyxwiz::SequentialExecutableModel>(std::move(model)));
+    runtime.SetParameters({
+        {"layer0.weight", FloatTensorFromFixture(test_case.at("initial").at("weight"),
+                                                 "metric pair initial weight")},
+        {"layer0.bias",
+         FloatTensorFromFixture(test_case.at("initial").at("bias"), "metric pair initial bias")},
+    });
+    cyxwiz::SGDOptimizer optimizer(test_case.at("learning_rate").get<double>());
+    cyxwiz::PairMetricTrainingStepConfig config;
+    config.loss_kind = cyxwiz::MetricLearningPairLossKind::Contrastive;
+    config.margin = test_case.at("margin").get<float>();
+    config.reduction = cyxwiz::Reduction::Mean;
+    config.update_parameters = true;
+
+    size_t step_index = 0;
+    for (const auto& step : test_case.at("steps")) {
+        const std::string label = "metric pair multi-batch step " + std::to_string(step_index + 1);
+        cyxwiz::PairBatch batch;
+        batch.input_a = FloatTensorFromFixture(step.at("input_a"), label + " input_a");
+        batch.input_b = FloatTensorFromFixture(step.at("input_b"), label + " input_b");
+        batch.pair_label = FloatTensorFromFixture(step.at("labels"), label + " labels");
+        batch.size = batch.input_a.Shape()[0];
+
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto result = cyxwiz::RunPairMetricTrainingStep(runtime, batch, config, &optimizer);
+        const auto parameters = runtime.GetParameters();
+        Check(g_fallback_events == nullptr || g_fallback_events->size() == fallback_count_before,
+              label + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr || g_host_sync_events->size() == host_sync_count_before,
+              label + " materialized a tensor during compute");
+
+        CheckTensor(result.embeddings.embedding_a, step.at("expected").at("embedding_a"), tolerance,
+                    label + " embedding_a");
+        CheckTensor(result.embeddings.embedding_b, step.at("expected").at("embedding_b"), tolerance,
+                    label + " embedding_b");
+        CheckTensor(result.loss, step.at("expected").at("loss"), tolerance, label + " loss");
+        CheckTensor(result.input_gradients.input_a, step.at("expected").at("grad_input_a"),
+                    tolerance, label + " input_a gradient");
+        CheckTensor(result.input_gradients.input_b, step.at("expected").at("grad_input_b"),
+                    tolerance, label + " input_b gradient");
+        CheckTensor(parameters.at("layer0.weight"), step.at("expected").at("updated_weight"),
+                    tolerance, label + " updated weight");
+        CheckTensor(parameters.at("layer0.bias"), step.at("expected").at("updated_bias"), tolerance,
+                    label + " updated bias");
+        ++step_index;
+        Check(optimizer.GetStepCount() == static_cast<int>(step_index),
+              label + " optimizer step count mismatch");
+    }
+    Check(step_index == 2, "metric pair multi-batch fixture must contain two update steps");
+}
+
+void TestOverlapLinearMultiBatchUpdateParity(const json& cases) {
+    const auto& test_case = cases.at("overlap_linear_multibatch_sgd_f32");
+    Check(test_case.value("operation", "") ==
+              "PyTorch explicit SoftDice + nn.Linear + optim.SGD" &&
+              test_case.value("dtype", "") == "float32" &&
+              test_case.value("reduction", "") == "mean",
+          "overlap multi-batch fixture metadata mismatch");
+    const auto tolerance = ReadTolerance(test_case);
+    const auto weight_shape = ReadShape(
+        test_case.at("initial").at("weight"),
+        "overlap multi-batch initial weight");
+    cyxwiz::LinearLayer linear(weight_shape[1], weight_shape[0], true);
+    linear.SetParameters({
+        {"weight", FloatTensorFromFixture(
+                       test_case.at("initial").at("weight"),
+                       "overlap multi-batch initial weight")},
+        {"bias", FloatTensorFromFixture(
+                     test_case.at("initial").at("bias"),
+                     "overlap multi-batch initial bias")},
+    });
+    cyxwiz::SoftDiceLoss loss(
+        cyxwiz::Reduction::Mean, test_case.at("smooth").get<float>());
+    cyxwiz::SGDOptimizer optimizer(
+        test_case.at("learning_rate").get<double>());
+
+    size_t step_index = 0;
+    for (const auto& step : test_case.at("steps")) {
+        const std::string label =
+            "overlap multi-batch step " + std::to_string(step_index + 1);
+        const auto input = FloatTensorFromFixture(
+            step.at("input"), label + " input");
+        const auto targets = FloatTensorFromFixture(
+            step.at("targets"), label + " targets");
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto output = linear.Forward(input);
+        const auto actual_loss = loss.Forward(output, targets);
+        const auto grad_output = loss.Backward(output, targets);
+        const auto grad_input = linear.Backward(grad_output);
+        const auto gradients = linear.GetGradients();
+        auto parameters = linear.GetParameters();
+        optimizer.Step(parameters, gradients);
+        linear.SetParameters(parameters);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              label + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              label + " materialized a tensor during compute");
+
+        CheckTensor(output, step.at("expected").at("output"), tolerance,
+                    label + " output");
+        CheckTensor(actual_loss, step.at("expected").at("loss"), tolerance,
+                    label + " loss");
+        CheckTensor(grad_output, step.at("expected").at("grad_output"),
+                    tolerance, label + " loss gradient");
+        CheckTensor(grad_input, step.at("expected").at("grad_input"),
+                    tolerance, label + " input gradient");
+        CheckTensor(gradients.at("weight"),
+                    step.at("expected").at("grad_weight"), tolerance,
+                    label + " weight gradient");
+        CheckTensor(gradients.at("bias"),
+                    step.at("expected").at("grad_bias"), tolerance,
+                    label + " bias gradient");
+        CheckTensor(parameters.at("weight"),
+                    step.at("expected").at("updated_weight"), tolerance,
+                    label + " updated weight");
+        CheckTensor(parameters.at("bias"),
+                    step.at("expected").at("updated_bias"), tolerance,
+                    label + " updated bias");
+        ++step_index;
+        Check(optimizer.GetStepCount() == static_cast<int>(step_index),
+              label + " optimizer step count mismatch");
+    }
+}
+
+void TestCrossEntropyMatrixParity(const json& cases) {
+    const auto& matrix = cases.at("cross_entropy_matrix_f32");
+    Check(matrix.is_array() && !matrix.empty(),
+          "CrossEntropy matrix fixture must be non-empty");
+    for (const auto& test_case : matrix) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("operation", "") ==
+                  "torch.nn.functional.cross_entropy",
+              name + " operation mismatch");
+        Check(test_case.value("dtype", "") == "float32",
+              name + " dtype mismatch");
+        const auto logits = ReadFloatValues(test_case.at("logits"), name);
+        cyxwiz::Tensor predictions(
+            ReadShape(test_case.at("logits"), name), logits.data(),
+            cyxwiz::DataType::Float32);
+
+        const std::string target_form =
+            test_case.at("target_form").get<std::string>();
+        cyxwiz::Tensor targets;
+        if (target_form == "index") {
+            const auto values = ReadInt64Values(test_case.at("targets"), name);
+            targets = cyxwiz::Tensor(
+                ReadShape(test_case.at("targets"), name), values.data(),
+                cyxwiz::DataType::Int64);
+        } else {
+            Check(target_form == "soft", name + " target form mismatch");
+            const auto values = ReadFloatValues(test_case.at("targets"), name);
+            targets = cyxwiz::Tensor(
+                ReadShape(test_case.at("targets"), name), values.data(),
+                cyxwiz::DataType::Float32);
+        }
+
+        // Re-wrap through the semantic ArrayFire view so the public inputs are
+        // device-current and host-stale at the compute boundary. A supported
+        // CrossEntropy shape must neither materialize them nor fall back.
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        predictions = cyxwiz::Tensor::FromSemanticArray(
+            predictions.GetSemanticArray(), predictions.Shape());
+        targets = cyxwiz::Tensor::FromSemanticArray(
+            targets.GetSemanticArray(), targets.Shape());
+#endif
+
+        cyxwiz::CrossEntropyLoss loss(
+            ParseReduction(test_case.at("reduction").get<std::string>()),
+            test_case.at("ignore_index").get<int>(),
+            test_case.at("class_weights").get<std::vector<float>>(),
+            test_case.at("label_smoothing").get<float>());
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto actual_loss = loss.Forward(predictions, targets);
+        const auto actual_gradient = loss.Backward(predictions, targets);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              name + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              name + " materialized a tensor during compute");
+
+        const auto& expected_loss = test_case.at("expected").at("loss");
+        if (expected_loss.value("non_finite", "") == "nan") {
+            Check(actual_loss.Shape() ==
+                      expected_loss.at("shape").get<std::vector<size_t>>(),
+                  name + " forward shape mismatch");
+            const cyxwiz::ScopedArrayFireHostSyncAttribution output_readback(
+                cyxwiz::ArrayFireHostSyncCategory::DebugSampleDump,
+                name + " non-finite forward readback");
+            Check(std::isnan(actual_loss.ReadData<float>()[0]),
+                  name + " forward expected NaN");
+        } else {
+            CheckTensor(actual_loss, expected_loss,
+                        ReadTolerance(test_case), name + " forward");
+        }
+        CheckTensor(actual_gradient,
+                    test_case.at("expected").at("logit_gradient"),
+                    ReadTolerance(test_case), name + " backward");
+    }
+}
+
+void TestNLLLossParity(const json& cases) {
+    const auto& matrix = cases.at("nll_loss_matrix_f32");
+    Check(matrix.is_array() && !matrix.empty(),
+          "NLL loss matrix fixture must be non-empty");
+    for (const auto& test_case : matrix) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("operation", "") ==
+                  "torch.nn.functional.nll_loss",
+              name + " operation mismatch");
+        Check(test_case.value("dtype", "") == "float32" &&
+                  test_case.value("target_dtype", "") == "int64",
+              name + " dtype mismatch");
+        const auto prediction_values = ReadFloatValues(
+            test_case.at("log_probabilities"), name + " log probabilities");
+        const auto target_values = ReadInt64Values(
+            test_case.at("targets"), name + " targets");
+        cyxwiz::Tensor predictions(
+            ReadShape(test_case.at("log_probabilities"), name),
+            prediction_values.data(), cyxwiz::DataType::Float32);
+        cyxwiz::Tensor targets(
+            ReadShape(test_case.at("targets"), name), target_values.data(),
+            cyxwiz::DataType::Int64);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        predictions = cyxwiz::Tensor::FromSemanticArray(
+            predictions.GetSemanticArray(), predictions.Shape());
+        targets = cyxwiz::Tensor::FromSemanticArray(
+            targets.GetSemanticArray(), targets.Shape());
+#endif
+
+        cyxwiz::NLLLoss loss(
+            ParseReduction(test_case.at("reduction").get<std::string>()),
+            test_case.at("ignore_index").get<int>());
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto actual_loss = loss.Forward(predictions, targets);
+        const auto actual_gradient = loss.Backward(predictions, targets);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              name + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              name + " materialized a tensor during compute");
+        const auto& expected_loss = test_case.at("expected").at("loss");
+        if (expected_loss.value("non_finite", "") == "nan") {
+            Check(actual_loss.Shape() ==
+                      expected_loss.at("shape").get<std::vector<size_t>>(),
+                  name + " forward shape mismatch");
+            const cyxwiz::ScopedArrayFireHostSyncAttribution output_readback(
+                cyxwiz::ArrayFireHostSyncCategory::DebugSampleDump,
+                name + " non-finite forward readback");
+            Check(std::isnan(actual_loss.ReadData<float>()[0]),
+                  name + " forward expected NaN");
+        } else {
+            CheckTensor(actual_loss, expected_loss,
+                        ReadTolerance(test_case), name + " forward");
+        }
+        CheckTensor(actual_gradient,
+                    test_case.at("expected").at("prediction_gradient"),
+                    ReadTolerance(test_case), name + " backward");
+    }
+}
+
+void TestFocalLossParity(const json& cases) {
+    const auto& matrix = cases.at("focal_loss_matrix_f32");
+    Check(matrix.is_array() && !matrix.empty(),
+          "Focal loss matrix fixture must be non-empty");
+    for (const auto& test_case : matrix) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("operation", "") ==
+                  "pytorch_explicit_focal_loss",
+              name + " operation mismatch");
+        Check(test_case.value("dtype", "") == "float32" &&
+                  test_case.value("target_dtype", "") == "int64",
+              name + " dtype mismatch");
+        const auto prediction_values =
+            ReadFloatValues(test_case.at("logits"), name + " logits");
+        const auto target_values =
+            ReadInt64Values(test_case.at("targets"), name + " targets");
+        cyxwiz::Tensor predictions(
+            ReadShape(test_case.at("logits"), name),
+            prediction_values.data(), cyxwiz::DataType::Float32);
+        cyxwiz::Tensor targets(
+            ReadShape(test_case.at("targets"), name), target_values.data(),
+            cyxwiz::DataType::Int64);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        predictions = cyxwiz::Tensor::FromSemanticArray(
+            predictions.GetSemanticArray(), predictions.Shape());
+        targets = cyxwiz::Tensor::FromSemanticArray(
+            targets.GetSemanticArray(), targets.Shape());
+#endif
+
+        cyxwiz::FocalLoss loss(
+            test_case.at("alpha").get<float>(),
+            test_case.at("gamma").get<float>(),
+            ParseReduction(test_case.at("reduction").get<std::string>()));
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto actual_loss = loss.Forward(predictions, targets);
+        const auto actual_gradient = loss.Backward(predictions, targets);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              name + " attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              name + " materialized a tensor during compute");
+        CheckTensor(actual_loss, test_case.at("expected").at("loss"),
+                    ReadTolerance(test_case), name + " forward");
+        CheckTensor(actual_gradient,
+                    test_case.at("expected").at("prediction_gradient"),
+                    ReadTolerance(test_case), name + " backward");
+    }
+}
+
+void TestLinearForwardBackwardParity(const json& cases) {
+    for (const auto& test_case :
+         cases.at("linear_forward_backward_f32")) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("operation", "") ==
+                  "torch.nn.functional.linear",
+              name + " Linear fixture operation mismatch");
+        Check(test_case.value("dtype", "") == "float32",
+              name + " Linear fixture dtype mismatch");
+        Check(test_case.value("parameter_gradient_reduction", "") ==
+                  "sum_over_batch",
+              name + " Linear fixture gradient reduction mismatch");
+        const bool use_bias = test_case.at("use_bias").get<bool>();
+        const auto weight_shape =
+            ReadShape(test_case.at("weight"), name + " Linear weight");
+        Check(weight_shape.size() == 2,
+              name + " Linear weight fixture must be rank 2");
+        const auto tolerance = ReadTolerance(test_case);
+
+        cyxwiz::LinearLayer linear(
+            weight_shape[1], weight_shape[0], use_bias);
+        std::map<std::string, cyxwiz::Tensor> parameters = {
+            {"weight", FloatTensorFromFixture(
+                           test_case.at("weight"),
+                           name + " Linear weight")},
+        };
+        if (use_bias) {
+            parameters.emplace(
+                "bias", FloatTensorFromFixture(
+                            test_case.at("bias"),
+                            name + " Linear bias"));
+        }
+        linear.SetParameters(parameters);
+
+        const auto output = linear.Forward(FloatTensorFromFixture(
+            test_case.at("input"), name + " Linear input"));
+        CheckTensor(output, test_case.at("expected").at("output"), tolerance,
+                    name + " Linear forward output");
+        const auto grad_input = linear.Backward(FloatTensorFromFixture(
+            test_case.at("grad_output"), name + " Linear grad_output"));
+        CheckTensor(grad_input,
+                    test_case.at("expected").at("grad_input"), tolerance,
+                    name + " Linear backward grad_input");
+
+        const auto gradients = linear.GetGradients();
+        CheckTensor(gradients.at("weight"),
+                    test_case.at("expected").at("grad_weight"), tolerance,
+                    name + " Linear backward grad_weight");
+        Check(gradients.count("bias") == (use_bias ? 1U : 0U),
+              name + " Linear bias-gradient ownership mismatch");
+        if (use_bias) {
+            CheckTensor(gradients.at("bias"),
+                        test_case.at("expected").at("grad_bias"), tolerance,
+                        name + " Linear backward grad_bias");
+        }
+    }
+}
+
+void TestDenseForwardBackwardParity(const json& cases) {
+    for (const auto& test_case :
+         cases.at("linear_forward_backward_f32")) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("operation", "") ==
+                  "torch.nn.functional.linear" &&
+                  test_case.value("dtype", "") == "float32" &&
+                  test_case.value("parameter_gradient_reduction", "") ==
+                      "sum_over_batch",
+              name + " Dense PyTorch fixture metadata mismatch");
+        const bool use_bias = test_case.at("use_bias").get<bool>();
+        const auto weight_shape =
+            ReadShape(test_case.at("weight"), name + " Dense weights");
+        const auto tolerance = ReadTolerance(test_case);
+
+        cyxwiz::DenseLayer dense(
+            static_cast<int>(weight_shape[1]),
+            static_cast<int>(weight_shape[0]), use_bias);
+        std::map<std::string, cyxwiz::Tensor> parameters = {
+            {"weights", FloatTensorFromFixture(
+                            test_case.at("weight"),
+                            name + " Dense weights")},
+        };
+        if (use_bias) {
+            parameters.emplace(
+                "bias", FloatTensorFromFixture(
+                            test_case.at("bias"), name + " Dense bias"));
+        }
+        dense.SetParameters(parameters);
+
+        const auto output = dense.Forward(FloatTensorFromFixture(
+            test_case.at("input"), name + " Dense input"));
+        CheckTensor(output, test_case.at("expected").at("output"), tolerance,
+                    name + " Dense forward output");
+        const auto grad_input = dense.Backward(FloatTensorFromFixture(
+            test_case.at("grad_output"), name + " Dense grad_output"));
+        CheckTensor(grad_input,
+                    test_case.at("expected").at("grad_input"), tolerance,
+                    name + " Dense backward grad_input");
+
+        const auto gradients = dense.GetGradients();
+        CheckTensor(gradients.at("weights"),
+                    test_case.at("expected").at("grad_weight"), tolerance,
+                    name + " Dense backward grad_weights");
+        Check(gradients.count("bias") == (use_bias ? 1U : 0U),
+              name + " Dense bias-gradient ownership mismatch");
+        if (use_bias) {
+            CheckTensor(gradients.at("bias"),
+                        test_case.at("expected").at("grad_bias"), tolerance,
+                        name + " Dense backward grad_bias");
+        }
+    }
+}
+
+std::unique_ptr<cyxwiz::Activation> CreateFixtureActivation(
+    const json& test_case) {
+    const std::string name = test_case.at("name").get<std::string>();
+    if (name == "relu") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::ReLU);
+    }
+    if (name == "leaky_relu") {
+        return cyxwiz::CreateActivation(
+            cyxwiz::ActivationType::LeakyReLU,
+            test_case.at("parameters").at("alpha").get<float>());
+    }
+    if (name == "elu") {
+        return cyxwiz::CreateActivation(
+            cyxwiz::ActivationType::ELU,
+            test_case.at("parameters").at("alpha").get<float>());
+    }
+    if (name == "gelu_tanh") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::GELU);
+    }
+    if (name == "silu") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::SiLU);
+    }
+    if (name == "sigmoid") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::Sigmoid);
+    }
+    if (name == "tanh") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::Tanh);
+    }
+    if (name == "mish") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::Mish);
+    }
+    if (name == "hardswish") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::Hardswish);
+    }
+    if (name == "selu") {
+        return cyxwiz::CreateActivation(cyxwiz::ActivationType::SELU);
+    }
+    Check(false, "unknown activation fixture: " + name);
+    return nullptr;
+}
+
+void TestElementwiseActivationParity(const json& cases) {
+    for (const auto& test_case :
+         cases.at("elementwise_activation_forward_backward_f32")) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("dtype", "") == "float32",
+              name + " activation fixture dtype mismatch");
+        Check(test_case.value("operation", "").rfind("torch.", 0) == 0,
+              name + " activation fixture must declare a PyTorch operation");
+        const auto coverage =
+            test_case.at("coverage").get<std::vector<std::string>>();
+        Check(coverage.size() == 4,
+              name + " activation fixture coverage metadata mismatch");
+
+        auto activation = CreateFixtureActivation(test_case);
+        const auto input = FloatTensorFromFixture(
+            test_case.at("input"), name + " activation input");
+        const size_t fallback_count_before =
+            g_fallback_events == nullptr ? 0 : g_fallback_events->size();
+        const size_t host_sync_count_before =
+            g_host_sync_events == nullptr ? 0 : g_host_sync_events->size();
+        const auto output = activation->Forward(input);
+        const auto grad_input = activation->Backward(
+            FloatTensorFromFixture(test_case.at("grad_output"),
+                                   name + " activation grad_output"),
+            input);
+        Check(g_fallback_events == nullptr ||
+                  g_fallback_events->size() == fallback_count_before,
+              name + " activation attempted native CPU fallback");
+        Check(g_host_sync_events == nullptr ||
+                  g_host_sync_events->size() == host_sync_count_before,
+              name + " activation materialized a tensor during compute");
+
+        const auto tolerance = ReadTolerance(test_case);
+        CheckTensor(output, test_case.at("expected").at("output"), tolerance,
+                    name + " activation forward");
+        CheckTensor(grad_input,
+                    test_case.at("expected").at("grad_input"), tolerance,
+                    name + " activation backward");
+    }
+}
+
+void TestSoftmaxParity(const json& cases) {
+    for (const auto& test_case : cases.at("softmax_forward_backward_f32")) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("operation", "") ==
+                  "torch.nn.functional.softmax" &&
+                  test_case.value("dtype", "") == "float32",
+              name + " Softmax fixture metadata mismatch");
+        const int axis = test_case.at("axis").get<int>();
+        const auto input = FloatTensorFromFixture(
+            test_case.at("input"), name + " Softmax input");
+        const auto grad_output = FloatTensorFromFixture(
+            test_case.at("grad_output"), name + " Softmax grad_output");
+        const auto tolerance = ReadTolerance(test_case);
+
+        cyxwiz::SoftmaxActivation activation(axis);
+        const auto activation_output = activation.Forward(input);
+        cyxwiz::SoftmaxActivation backward_activation(axis);
+        const auto activation_gradient =
+            backward_activation.Backward(grad_output, input);
+        CheckTensor(activation_output,
+                    test_case.at("expected").at("output"), tolerance,
+                    name + " SoftmaxActivation forward");
+        CheckTensor(activation_gradient,
+                    test_case.at("expected").at("grad_input"), tolerance,
+                    name + " SoftmaxActivation backward");
+
+        cyxwiz::SoftmaxModule module(axis);
+        const auto module_output = module.Forward(input);
+        const auto module_gradient = module.Backward(grad_output);
+        CheckTensor(module_output, test_case.at("expected").at("output"),
+                    tolerance, name + " SoftmaxModule forward");
+        CheckTensor(module_gradient,
+                    test_case.at("expected").at("grad_input"), tolerance,
+                    name + " SoftmaxModule backward");
+    }
+}
+
+void TestPReLUParity(const json& cases) {
+    for (const auto& test_case : cases.at("prelu_forward_backward_f32")) {
+        const std::string name = test_case.at("name").get<std::string>();
+        Check(test_case.value("operation", "") ==
+                  "torch.nn.functional.prelu" &&
+                  test_case.value("dtype", "") == "float32",
+              name + " PReLU fixture metadata mismatch");
+        cyxwiz::PReLUActivation activation(
+            test_case.at("num_parameters").get<int>());
+        activation.SetAlpha(FloatTensorFromFixture(
+            test_case.at("alpha"), name + " PReLU alpha"));
+        const auto input = FloatTensorFromFixture(
+            test_case.at("input"), name + " PReLU input");
+        const auto output = activation.Forward(input);
+        const auto grad_input = activation.Backward(
+            FloatTensorFromFixture(test_case.at("grad_output"),
+                                   name + " PReLU grad_output"),
+            input);
+        const auto tolerance = ReadTolerance(test_case);
+        CheckTensor(output, test_case.at("expected").at("output"), tolerance,
+                    name + " PReLU forward");
+        CheckTensor(grad_input,
+                    test_case.at("expected").at("grad_input"), tolerance,
+                    name + " PReLU input gradient");
+        CheckTensor(activation.GetAlphaGradient(),
+                    test_case.at("expected").at("grad_alpha"), tolerance,
+                    name + " PReLU alpha gradient");
+    }
+}
+
+void TestLinearMultiBatchUpdateParity(const json& cases) {
+    const auto& test_case = cases.at("linear_multibatch_sgd_f32");
+    Check(test_case.value("operation", "") ==
+              "torch.nn.Linear + torch.optim.SGD",
+          "Linear multi-batch fixture operation mismatch");
+    Check(test_case.value("parameter_gradient_reduction", "") ==
+              "sum_over_batch",
+          "Linear multi-batch gradient reduction mismatch");
+    const auto tolerance = ReadTolerance(test_case);
+    const auto weight_shape = ReadShape(
+        test_case.at("initial").at("weight"),
+        "Linear multi-batch initial weight");
+    cyxwiz::LinearLayer linear(weight_shape[1], weight_shape[0], true);
+    linear.SetParameters({
+        {"weight", FloatTensorFromFixture(
+                       test_case.at("initial").at("weight"),
+                       "Linear multi-batch initial weight")},
+        {"bias", FloatTensorFromFixture(
+                     test_case.at("initial").at("bias"),
+                     "Linear multi-batch initial bias")},
+    });
+    cyxwiz::SGDOptimizer optimizer(
+        test_case.at("learning_rate").get<double>());
+
+    size_t step_index = 0;
+    for (const auto& step : test_case.at("steps")) {
+        const std::string label =
+            "Linear multi-batch step " + std::to_string(step_index + 1);
+        const auto output = linear.Forward(FloatTensorFromFixture(
+            step.at("input"), label + " input"));
+        CheckTensor(output, step.at("expected").at("output"), tolerance,
+                    label + " output");
+        const auto grad_input = linear.Backward(FloatTensorFromFixture(
+            step.at("grad_output"), label + " grad_output"));
+        CheckTensor(grad_input, step.at("expected").at("grad_input"),
+                    tolerance, label + " grad_input");
+        const auto gradients = linear.GetGradients();
+        CheckTensor(gradients.at("weight"),
+                    step.at("expected").at("grad_weight"), tolerance,
+                    label + " grad_weight");
+        CheckTensor(gradients.at("bias"),
+                    step.at("expected").at("grad_bias"), tolerance,
+                    label + " grad_bias");
+
+        auto parameters = linear.GetParameters();
+        optimizer.Step(parameters, gradients);
+        linear.SetParameters(parameters);
+        CheckTensor(parameters.at("weight"),
+                    step.at("expected").at("updated_weight"), tolerance,
+                    label + " updated weight");
+        CheckTensor(parameters.at("bias"),
+                    step.at("expected").at("updated_bias"), tolerance,
+                    label + " updated bias");
+        ++step_index;
+        Check(optimizer.GetStepCount() == static_cast<int>(step_index),
+              label + " optimizer step count mismatch");
+    }
+}
+
+void TestDenseMultiBatchUpdateParity(const json& cases) {
+    const auto& test_case = cases.at("linear_multibatch_sgd_f32");
+    Check(test_case.value("operation", "") ==
+              "torch.nn.Linear + torch.optim.SGD" &&
+              test_case.value("parameter_gradient_reduction", "") ==
+                  "sum_over_batch",
+          "Dense multi-batch PyTorch fixture metadata mismatch");
+    const auto tolerance = ReadTolerance(test_case);
+    const auto weight_shape = ReadShape(
+        test_case.at("initial").at("weight"),
+        "Dense multi-batch initial weights");
+    cyxwiz::DenseLayer dense(
+        static_cast<int>(weight_shape[1]),
+        static_cast<int>(weight_shape[0]), true);
+    dense.SetParameters({
+        {"weights", FloatTensorFromFixture(
+                        test_case.at("initial").at("weight"),
+                        "Dense multi-batch initial weights")},
+        {"bias", FloatTensorFromFixture(
+                     test_case.at("initial").at("bias"),
+                     "Dense multi-batch initial bias")},
+    });
+    cyxwiz::SGDOptimizer optimizer(
+        test_case.at("learning_rate").get<double>());
+
+    size_t step_index = 0;
+    for (const auto& step : test_case.at("steps")) {
+        const std::string label =
+            "Dense multi-batch step " + std::to_string(step_index + 1);
+        const auto output = dense.Forward(FloatTensorFromFixture(
+            step.at("input"), label + " input"));
+        CheckTensor(output, step.at("expected").at("output"), tolerance,
+                    label + " output");
+        const auto grad_input = dense.Backward(FloatTensorFromFixture(
+            step.at("grad_output"), label + " grad_output"));
+        CheckTensor(grad_input, step.at("expected").at("grad_input"),
+                    tolerance, label + " grad_input");
+        const auto gradients = dense.GetGradients();
+        CheckTensor(gradients.at("weights"),
+                    step.at("expected").at("grad_weight"), tolerance,
+                    label + " grad_weights");
+        CheckTensor(gradients.at("bias"),
+                    step.at("expected").at("grad_bias"), tolerance,
+                    label + " grad_bias");
+
+        const auto dense_state = dense.GetParameters();
+        std::map<std::string, cyxwiz::Tensor> parameters = {
+            {"weights", dense_state.at("weights")},
+            {"bias", dense_state.at("bias")},
+        };
+        optimizer.Step(parameters, gradients);
+        dense.SetParameters(parameters);
+        CheckTensor(parameters.at("weights"),
+                    step.at("expected").at("updated_weight"), tolerance,
+                    label + " updated weights");
+        CheckTensor(parameters.at("bias"),
+                    step.at("expected").at("updated_bias"), tolerance,
+                    label + " updated bias");
+        ++step_index;
+        Check(optimizer.GetStepCount() == static_cast<int>(step_index),
+              label + " optimizer step count mismatch");
+    }
+}
+
+void CheckAdamFamilyState(
+    const cyxwiz::OptimizerState& state,
+    const std::string& parameter_name,
+    const json& expected,
+    const Tolerance& tolerance,
+    const std::string& label,
+    bool expect_mu_product) {
+    CheckTensor(state.tensors.at("first_moment/" + parameter_name),
+                expected.at("exp_avg"), tolerance,
+                label + " first moment");
+    CheckTensor(state.tensors.at("second_moment/" + parameter_name),
+                expected.at("exp_avg_sq"), tolerance,
+                label + " second moment");
+    const auto& step_tensor =
+        state.tensors.at("parameter_step/" + parameter_name);
+    Check(step_tensor.GetDataType() == cyxwiz::DataType::Int32,
+          label + " parameter-step dtype");
+    Check(step_tensor.NumElements() == 1,
+          label + " parameter-step scalar shape");
+    Check(step_tensor.ReadData<int32_t>()[0] == expected.at("step").get<int>(),
+          label + " per-parameter step parity");
+    if (expect_mu_product) {
+        const auto& mu_tensor =
+            state.tensors.at("mu_product/" + parameter_name);
+        Check(mu_tensor.GetDataType() == cyxwiz::DataType::Float32,
+              label + " mu-product dtype");
+        Check(std::abs(mu_tensor.ReadData<float>()[0] -
+                       expected.at("mu_product").get<float>()) <= 2.0e-6f,
+              label + " mu-product parity");
+    }
+}
+
+template <typename OptimizerFactory>
+void TestAdamFamilyCase(
+    const json& test_case,
+    const std::string& label,
+    bool expect_mu_product,
+    OptimizerFactory&& factory) {
+    Check(test_case.value("dtype", "") == "float32",
+          label + " fixture dtype mismatch");
+    Check(test_case.value("zero_grad_contract", "") ==
+              "clears gradients without resetting optimizer state",
+          label + " zero_grad fixture contract mismatch");
+    const auto initial = ReadFloatValues(
+        test_case.at("initial_parameter"), label + " initial parameter");
+    const auto shape = ReadShape(
+        test_case.at("initial_parameter"), label + " initial parameter");
+    const auto tolerance = ReadTolerance(test_case);
+    std::map<std::string, cyxwiz::Tensor> parameters = {
+        {"weight", cyxwiz::Tensor(
+                       shape, initial.data(), cyxwiz::DataType::Float32)},
+    };
+    auto optimizer = factory();
+    const auto& gradients = test_case.at("gradients");
+    const auto& expected_steps = test_case.at("expected_steps");
+    Check(gradients.size() == expected_steps.size(),
+          label + " fixture gradient/step count mismatch");
+    cyxwiz::OptimizerState checkpoint;
+    std::map<std::string, cyxwiz::Tensor> checkpoint_parameters;
+
+    for (size_t index = 0; index < gradients.size(); ++index) {
+        const auto values = ReadFloatValues(
+            gradients.at(index), label + " gradient");
+        const std::map<std::string, cyxwiz::Tensor> step_gradients = {
+            {"weight", cyxwiz::Tensor(
+                           ReadShape(gradients.at(index), label + " gradient"),
+                           values.data(), cyxwiz::DataType::Float32)},
+        };
+        optimizer->ZeroGrad();
+        optimizer->Step(parameters, step_gradients);
+        const auto& expected = expected_steps.at(index);
+        CheckTensor(parameters.at("weight"), expected.at("parameter"),
+                    tolerance, label + " multi-step parameter");
+        cyxwiz::OptimizerState state;
+        std::string error;
+        Check(optimizer->ExportState(state, error),
+              label + " state export failed: " + error);
+        Check(state.step_count == static_cast<int>(index + 1),
+              label + " global update-count parity");
+        CheckAdamFamilyState(state, "weight", expected.at("state"),
+                             tolerance, label, expect_mu_product);
+        if (index + 2 == gradients.size()) {
+            checkpoint = state;
+            checkpoint_parameters = parameters;
+        }
+    }
+
+    auto resumed = factory();
+    resumed->SetLearningRate(0.123);
+    std::string error;
+    Check(resumed->ImportState(checkpoint, error),
+          label + " state import failed: " + error);
+    Check(resumed->GetLearningRate() == checkpoint.learning_rate,
+          label + " state import did not restore learning rate");
+    const size_t final_index = gradients.size() - 1;
+    const auto final_values = ReadFloatValues(
+        gradients.at(final_index), label + " resumed gradient");
+    const std::map<std::string, cyxwiz::Tensor> final_gradients = {
+        {"weight", cyxwiz::Tensor(
+                       ReadShape(gradients.at(final_index),
+                                 label + " resumed gradient"),
+                       final_values.data(), cyxwiz::DataType::Float32)},
+    };
+    resumed->ZeroGrad();
+    resumed->Step(checkpoint_parameters, final_gradients);
+    CheckTensor(checkpoint_parameters.at("weight"),
+                expected_steps.at(final_index).at("parameter"),
+                tolerance, label + " resumed parameter");
+    cyxwiz::OptimizerState resumed_state;
+    Check(resumed->ExportState(resumed_state, error),
+          label + " resumed state export failed: " + error);
+    CheckAdamFamilyState(
+        resumed_state, "weight",
+        expected_steps.at(final_index).at("state"), tolerance,
+        label + " resumed", expect_mu_product);
+
+    const auto& sparse = test_case.at("missing_gradient_case");
+    const auto initial_b = ReadFloatValues(
+        sparse.at("initial_b"), label + " sparse initial b");
+    std::map<std::string, cyxwiz::Tensor> sparse_parameters = {
+        {"a", cyxwiz::Tensor(
+                  shape, initial.data(), cyxwiz::DataType::Float32)},
+        {"b", cyxwiz::Tensor(
+                  shape, initial_b.data(), cyxwiz::DataType::Float32)},
+    };
+    auto sparse_optimizer = factory();
+    const auto first_gradient = ReadFloatValues(
+        gradients.at(0), label + " sparse first gradient");
+    sparse_optimizer->Step(
+        sparse_parameters,
+        {{"a", cyxwiz::Tensor(
+                   shape, first_gradient.data(), cyxwiz::DataType::Float32)}});
+    CheckTensor(sparse_parameters.at("b"),
+                sparse.at("b_after_missing_gradient"), tolerance,
+                label + " missing-gradient parameter preservation");
+
+    const auto second_gradient = ReadFloatValues(
+        gradients.at(1), label + " sparse second gradient");
+    const auto third_gradient = ReadFloatValues(
+        gradients.at(2), label + " sparse third gradient");
+    sparse_optimizer->ZeroGrad();
+    sparse_optimizer->Step(
+        sparse_parameters,
+        {{"a", cyxwiz::Tensor(
+                   shape, second_gradient.data(), cyxwiz::DataType::Float32)},
+         {"b", cyxwiz::Tensor(
+                   shape, third_gradient.data(), cyxwiz::DataType::Float32)}});
+    CheckTensor(sparse_parameters.at("a"), sparse.at("final_a"),
+                tolerance, label + " sparse parameter a");
+    CheckTensor(sparse_parameters.at("b"), sparse.at("final_b"),
+                tolerance, label + " sparse parameter b");
+    cyxwiz::OptimizerState sparse_state;
+    Check(sparse_optimizer->ExportState(sparse_state, error),
+          label + " sparse state export failed: " + error);
+    CheckAdamFamilyState(sparse_state, "a", sparse.at("state_a"),
+                         tolerance, label + " sparse a", expect_mu_product);
+    CheckAdamFamilyState(sparse_state, "b", sparse.at("state_b"),
+                         tolerance, label + " sparse b", expect_mu_product);
+}
+
+void TestAdamFamilyMultiStepParity(const json& cases) {
+    const auto& family = cases.at("adam_family_multistep_f32");
+
+    const auto& adam = family.at("adam");
+    Check(adam.value("operation", "") == "torch.optim.Adam",
+          "Adam fixture operation mismatch");
+    const auto& adam_hyper = adam.at("hyperparameters");
+    TestAdamFamilyCase(
+        adam, "Adam", false,
+        [&adam_hyper]() {
+            return std::make_unique<cyxwiz::AdamOptimizer>(
+                adam_hyper.at("learning_rate").get<double>(),
+                adam_hyper.at("beta1").get<double>(),
+                adam_hyper.at("beta2").get<double>(),
+                adam_hyper.at("epsilon").get<double>());
+        });
+
+    const auto& adamw = family.at("adamw");
+    Check(adamw.value("operation", "") == "torch.optim.AdamW",
+          "AdamW fixture operation mismatch");
+    const auto& adamw_hyper = adamw.at("hyperparameters");
+    TestAdamFamilyCase(
+        adamw, "AdamW", false,
+        [&adamw_hyper]() {
+            return std::make_unique<cyxwiz::AdamWOptimizer>(
+                adamw_hyper.at("learning_rate").get<double>(),
+                adamw_hyper.at("beta1").get<double>(),
+                adamw_hyper.at("beta2").get<double>(),
+                adamw_hyper.at("epsilon").get<double>(),
+                adamw_hyper.at("weight_decay").get<double>());
+        });
+
+    const auto& nadam = family.at("nadam");
+    Check(nadam.value("operation", "") == "torch.optim.NAdam",
+          "NAdam fixture operation mismatch");
+    Check(nadam.at("hyperparameters").at("momentum_decay").get<double>() ==
+              0.004,
+          "NAdam fixture momentum-decay contract mismatch");
+    const auto& nadam_hyper = nadam.at("hyperparameters");
+    TestAdamFamilyCase(
+        nadam, "NAdam", true,
+        [&nadam_hyper]() {
+            return std::make_unique<cyxwiz::NAdamOptimizer>(
+                nadam_hyper.at("learning_rate").get<double>(),
+                nadam_hyper.at("beta1").get<double>(),
+                nadam_hyper.at("beta2").get<double>(),
+                nadam_hyper.at("epsilon").get<double>());
+        });
+}
+
+void TestSGDMomentumMultiStepParity(const json& cases) {
+    const auto& test_case = cases.at("sgd_momentum_multistep_f32");
+    Check(test_case.value("operation", "") == "torch.optim.SGD",
+          "SGD fixture operation mismatch");
+    Check(test_case.value("dtype", "") == "float32",
+          "SGD fixture dtype mismatch");
+    const auto& hyperparameters = test_case.at("hyperparameters");
+    const double lr = hyperparameters.at("learning_rate").get<double>();
+    const double momentum = hyperparameters.at("momentum").get<double>();
+    const auto initial = ReadFloatValues(
+        test_case.at("initial_parameter"), "SGD initial parameter");
+    const auto parameter_shape = ReadShape(
+        test_case.at("initial_parameter"), "SGD initial parameter");
+    const auto& gradients = test_case.at("gradients");
+    const auto& expected_steps = test_case.at("expected_steps");
+    Check(gradients.size() == expected_steps.size(),
+          "SGD fixture gradient/step count mismatch");
 
     std::map<std::string, cyxwiz::Tensor> parameters = {
-        {"weight", cyxwiz::Tensor({3}, initial.data(), cyxwiz::DataType::Float32)},
+        {"weight", cyxwiz::Tensor(parameter_shape, initial.data(),
+                                  cyxwiz::DataType::Float32)},
     };
-    std::map<std::string, cyxwiz::Tensor> gradients = {
-        {"weight", cyxwiz::Tensor({3}, grad_values.data(), cyxwiz::DataType::Float32)},
+    cyxwiz::SGDOptimizer optimizer(lr, momentum);
+    for (size_t index = 0; index < gradients.size(); ++index) {
+        const auto gradient_values = ReadFloatValues(
+            gradients.at(index), "SGD gradient");
+        const std::map<std::string, cyxwiz::Tensor> step_gradients = {
+            {"weight", cyxwiz::Tensor(
+                           ReadShape(gradients.at(index), "SGD gradient"),
+                           gradient_values.data(), cyxwiz::DataType::Float32)},
+        };
+        optimizer.Step(parameters, step_gradients);
+
+        const auto& expected = expected_steps.at(index);
+        Check(optimizer.GetStepCount() ==
+                  expected.at("step_count").get<int>(),
+              "SGD PyTorch step-count parity");
+        CheckTensor(parameters.at("weight"), expected.at("parameter"),
+                    ReadTolerance(test_case),
+                    "SGD multi-step parameter");
+
+        cyxwiz::OptimizerState state;
+        std::string error;
+        Check(optimizer.ExportState(state, error),
+              "SGD state export failed: " + error);
+        Check(error.empty(), "SGD state export returned an error");
+        Check(state.step_count == optimizer.GetStepCount(),
+              "SGD exported step count mismatch");
+        Check(state.tensors.count("velocity/weight") == 1,
+              "SGD momentum state is missing velocity/weight");
+        CheckTensor(state.tensors.at("velocity/weight"),
+                    expected.at("momentum_buffer"),
+                    ReadTolerance(test_case),
+                    "SGD PyTorch momentum-buffer parity");
+    }
+}
+
+template <typename OptimizerFactory>
+void TestAdaptiveOptimizerCase(
+    const json& test_case,
+    const std::string& label,
+    OptimizerFactory&& factory,
+    const std::vector<std::pair<std::string, std::string>>& state_mapping) {
+    Check(test_case.value("dtype", "") == "float32",
+          label + " fixture dtype mismatch");
+    Check(test_case.value("zero_grad_contract", "") ==
+              "clears gradients without resetting optimizer state",
+          label + " zero_grad fixture contract mismatch");
+    const auto initial = ReadFloatValues(
+        test_case.at("initial_parameter"), label + " initial parameter");
+    const auto parameter_shape = ReadShape(
+        test_case.at("initial_parameter"), label + " initial parameter");
+    const auto& gradients = test_case.at("gradients");
+    const auto& expected_steps = test_case.at("expected_steps");
+    Check(gradients.size() == expected_steps.size(),
+          label + " fixture gradient/step count mismatch");
+
+    std::map<std::string, cyxwiz::Tensor> parameters = {
+        {"weight", cyxwiz::Tensor(parameter_shape, initial.data(),
+                                  cyxwiz::DataType::Float32)},
+    };
+    auto optimizer = factory();
+    cyxwiz::OptimizerState checkpoint;
+    std::map<std::string, cyxwiz::Tensor> checkpoint_parameters;
+
+    for (size_t index = 0; index < gradients.size(); ++index) {
+        const auto gradient_values = ReadFloatValues(
+            gradients.at(index), label + " gradient");
+        const std::map<std::string, cyxwiz::Tensor> step_gradients = {
+            {"weight", cyxwiz::Tensor(
+                           ReadShape(gradients.at(index), label + " gradient"),
+                           gradient_values.data(), cyxwiz::DataType::Float32)},
+        };
+        optimizer->ZeroGrad();
+        optimizer->Step(parameters, step_gradients);
+
+        const auto& expected = expected_steps.at(index);
+        Check(optimizer->GetStepCount() ==
+                  expected.at("step_count").get<int>(),
+              label + " PyTorch step-count parity");
+        CheckTensor(parameters.at("weight"), expected.at("parameter"),
+                    ReadTolerance(test_case),
+                    label + " multi-step parameter");
+
+        cyxwiz::OptimizerState state;
+        std::string error;
+        Check(optimizer->ExportState(state, error),
+              label + " state export failed: " + error);
+        Check(error.empty(), label + " state export returned an error");
+        Check(state.step_count == optimizer->GetStepCount(),
+              label + " exported step count mismatch");
+        for (const auto& [cyxwiz_name, pytorch_name] : state_mapping) {
+            Check(state.tensors.count(cyxwiz_name) == 1,
+                  label + " state is missing " + cyxwiz_name);
+            CheckTensor(state.tensors.at(cyxwiz_name),
+                        expected.at("state").at(pytorch_name),
+                        ReadTolerance(test_case),
+                        label + " state parity for " + pytorch_name);
+        }
+        if (index + 2 == gradients.size()) {
+            checkpoint = state;
+            checkpoint_parameters = parameters;
+        }
+    }
+
+    auto resumed = factory();
+    std::string error;
+    Check(resumed->ImportState(checkpoint, error),
+          label + " state import failed: " + error);
+    Check(error.empty(), label + " state import returned an error");
+    const size_t final_index = gradients.size() - 1;
+    const auto final_gradient_values = ReadFloatValues(
+        gradients.at(final_index), label + " resumed gradient");
+    const std::map<std::string, cyxwiz::Tensor> final_gradients = {
+        {"weight", cyxwiz::Tensor(
+                       ReadShape(
+                           gradients.at(final_index), label + " resumed gradient"),
+                       final_gradient_values.data(), cyxwiz::DataType::Float32)},
+    };
+    resumed->ZeroGrad();
+    resumed->Step(checkpoint_parameters, final_gradients);
+    CheckTensor(checkpoint_parameters.at("weight"),
+                expected_steps.at(final_index).at("parameter"),
+                ReadTolerance(test_case),
+                label + " resumed parameter");
+    Check(resumed->GetStepCount() == optimizer->GetStepCount(),
+          label + " resumed step count mismatch");
+    cyxwiz::OptimizerState resumed_state;
+    Check(resumed->ExportState(resumed_state, error),
+          label + " resumed state export failed: " + error);
+    for (const auto& [cyxwiz_name, pytorch_name] : state_mapping) {
+        Check(resumed_state.tensors.count(cyxwiz_name) == 1,
+              label + " resumed state is missing " + cyxwiz_name);
+        CheckTensor(resumed_state.tensors.at(cyxwiz_name),
+                    expected_steps.at(final_index).at("state").at(pytorch_name),
+                    ReadTolerance(test_case),
+                    label + " resumed state parity for " + pytorch_name);
+    }
+}
+
+void TestAdaptiveOptimizerMultiStepParity(const json& cases) {
+    const auto& adaptive = cases.at("adaptive_optimizer_multistep_f32");
+
+    const auto& rmsprop = adaptive.at("rmsprop");
+    Check(rmsprop.value("operation", "") == "torch.optim.RMSprop",
+          "RMSprop fixture operation mismatch");
+    const auto& rmsprop_hyper = rmsprop.at("hyperparameters");
+    TestAdaptiveOptimizerCase(
+        rmsprop,
+        "RMSprop",
+        [&rmsprop_hyper]() {
+            return std::make_unique<cyxwiz::RMSpropOptimizer>(
+                rmsprop_hyper.at("learning_rate").get<double>(),
+                rmsprop_hyper.at("alpha").get<double>(),
+                rmsprop_hyper.at("epsilon").get<double>(),
+                rmsprop_hyper.at("momentum").get<double>());
+        },
+        {{"square_average/weight", "square_avg"},
+         {"momentum_buffer/weight", "momentum_buffer"}});
+
+    const auto& adagrad = adaptive.at("adagrad");
+    Check(adagrad.value("operation", "") == "torch.optim.Adagrad",
+          "AdaGrad fixture operation mismatch");
+    const auto& adagrad_hyper = adagrad.at("hyperparameters");
+    TestAdaptiveOptimizerCase(
+        adagrad,
+        "AdaGrad",
+        [&adagrad_hyper]() {
+            return std::make_unique<cyxwiz::AdaGradOptimizer>(
+                adagrad_hyper.at("learning_rate").get<double>(),
+                adagrad_hyper.at("epsilon").get<double>());
+        },
+        {{"sum/weight", "sum"}});
+
+    const auto& adadelta = adaptive.at("adadelta");
+    Check(adadelta.value("operation", "") == "torch.optim.Adadelta",
+          "Adadelta fixture operation mismatch");
+    const auto& adadelta_hyper = adadelta.at("hyperparameters");
+    TestAdaptiveOptimizerCase(
+        adadelta,
+        "Adadelta",
+        [&adadelta_hyper]() {
+            auto optimizer = std::make_unique<cyxwiz::AdadeltaOptimizer>(
+                adadelta_hyper.at("rho").get<double>(),
+                adadelta_hyper.at("epsilon").get<double>());
+            optimizer->SetLearningRate(
+                adadelta_hyper.at("learning_rate").get<double>());
+            return optimizer;
+        },
+        {{"square_average/weight", "square_avg"},
+         {"accumulated_delta/weight", "acc_delta"}});
+}
+
+void TestLambMultiStepParity(const json& cases) {
+    const auto& test_case = cases.at("lamb_multistep_f32");
+    Check(test_case.value("operation", "") ==
+              "independent PyTorch tensor LAMB equation",
+          "LAMB fixture operation mismatch");
+    Check(test_case.value("dtype", "") == "float32",
+          "LAMB fixture dtype mismatch");
+    Check(test_case.value("zero_grad_contract", "") ==
+              "clears gradients without resetting optimizer state",
+          "LAMB zero_grad fixture contract mismatch");
+    const auto& lamb_hyper = test_case.at("hyperparameters");
+    const auto tolerance = ReadTolerance(test_case);
+    const auto make_optimizer = [&lamb_hyper]() {
+        return std::make_unique<cyxwiz::LAMBOptimizer>(
+            lamb_hyper.at("learning_rate").get<double>(),
+            lamb_hyper.at("beta1").get<double>(),
+            lamb_hyper.at("beta2").get<double>(),
+            lamb_hyper.at("epsilon").get<double>(),
+            lamb_hyper.at("weight_decay").get<double>());
     };
 
-    cyxwiz::AdamWOptimizer optimizer(lr, beta1, beta2, eps, weight_decay);
-    optimizer.Step(parameters, gradients);
+    const auto initial = ReadFloatValues(
+        test_case.at("initial_parameter"), "LAMB initial parameter");
+    const auto shape = ReadShape(
+        test_case.at("initial_parameter"), "LAMB initial parameter");
+    std::map<std::string, cyxwiz::Tensor> parameters = {
+        {"weight", cyxwiz::Tensor(
+                       shape, initial.data(), cyxwiz::DataType::Float32)},
+    };
+    auto optimizer = make_optimizer();
+    const auto& gradients = test_case.at("gradients");
+    const auto& expected_steps = test_case.at("expected_steps");
+    Check(gradients.size() == expected_steps.size(),
+          "LAMB fixture gradient/step count mismatch");
+    cyxwiz::OptimizerState checkpoint;
+    std::map<std::string, cyxwiz::Tensor> checkpoint_parameters;
 
-    const float* actual = parameters.at("weight").Data<float>();
-    for (size_t i = 0; i < initial.size(); ++i) {
-        const double after_decay = static_cast<double>(initial[i]) *
-            (1.0 - lr * weight_decay);
-        const double g = static_cast<double>(grad_values[i]);
-        const double m = (1.0 - beta1) * g;
-        const double v = (1.0 - beta2) * g * g;
-        const double m_hat = m / (1.0 - beta1);
-        const double v_hat = v / (1.0 - beta2);
-        const double expected =
-            after_decay - lr * m_hat / (std::sqrt(v_hat) + eps);
-        CheckNear(actual[i], static_cast<float>(expected), 1e-5f,
-                  "AdamW first-step parameter[" + std::to_string(i) + "]");
+    for (size_t index = 0; index < gradients.size(); ++index) {
+        const auto values = ReadFloatValues(
+            gradients.at(index), "LAMB gradient");
+        const std::map<std::string, cyxwiz::Tensor> step_gradients = {
+            {"weight", cyxwiz::Tensor(
+                           ReadShape(gradients.at(index), "LAMB gradient"),
+                           values.data(), cyxwiz::DataType::Float32)},
+        };
+        optimizer->ZeroGrad();
+        optimizer->Step(parameters, step_gradients);
+        const auto& expected = expected_steps.at(index);
+        Check(optimizer->GetStepCount() ==
+                  expected.at("step_count").get<int>(),
+              "LAMB step-count parity");
+        CheckTensor(parameters.at("weight"), expected.at("parameter"),
+                    tolerance, "LAMB multi-step parameter");
+
+        cyxwiz::OptimizerState state;
+        std::string error;
+        Check(optimizer->ExportState(state, error),
+              "LAMB state export failed: " + error);
+        CheckTensor(state.tensors.at("first_moment/weight"),
+                    expected.at("first_moment"), tolerance,
+                    "LAMB first-moment parity");
+        CheckTensor(state.tensors.at("second_moment/weight"),
+                    expected.at("second_moment"), tolerance,
+                    "LAMB second-moment parity");
+        if (index + 2 == gradients.size()) {
+            checkpoint = state;
+            checkpoint_parameters = parameters;
+        }
+    }
+
+    auto resumed = make_optimizer();
+    resumed->SetLearningRate(0.123);
+    std::string error;
+    Check(resumed->ImportState(checkpoint, error),
+          "LAMB state import failed: " + error);
+    Check(resumed->GetLearningRate() == checkpoint.learning_rate,
+          "LAMB state import did not restore learning rate");
+    const size_t final_index = gradients.size() - 1;
+    const auto final_values = ReadFloatValues(
+        gradients.at(final_index), "LAMB resumed gradient");
+    const std::map<std::string, cyxwiz::Tensor> final_gradients = {
+        {"weight", cyxwiz::Tensor(
+                       ReadShape(gradients.at(final_index),
+                                 "LAMB resumed gradient"),
+                       final_values.data(), cyxwiz::DataType::Float32)},
+    };
+    resumed->ZeroGrad();
+    resumed->Step(checkpoint_parameters, final_gradients);
+    CheckTensor(checkpoint_parameters.at("weight"),
+                expected_steps.at(final_index).at("parameter"),
+                tolerance, "LAMB resumed parameter");
+    cyxwiz::OptimizerState resumed_state;
+    Check(resumed->ExportState(resumed_state, error),
+          "LAMB resumed state export failed: " + error);
+    CheckTensor(resumed_state.tensors.at("first_moment/weight"),
+                expected_steps.at(final_index).at("first_moment"),
+                tolerance, "LAMB resumed first moment");
+    CheckTensor(resumed_state.tensors.at("second_moment/weight"),
+                expected_steps.at(final_index).at("second_moment"),
+                tolerance, "LAMB resumed second moment");
+
+    for (const auto& [edge_name, edge] :
+         test_case.at("zero_norm_edges").items()) {
+        Check(edge.at("expected_trust_ratio").get<double>() == 1.0,
+              "LAMB " + edge_name + " fixture trust-ratio edge mismatch");
+        const auto edge_initial = ReadFloatValues(
+            edge.at("initial_parameter"), "LAMB " + edge_name + " initial");
+        const auto edge_gradient = ReadFloatValues(
+            edge.at("gradient"), "LAMB " + edge_name + " gradient");
+        const auto edge_shape = ReadShape(
+            edge.at("initial_parameter"), "LAMB " + edge_name + " initial");
+        std::map<std::string, cyxwiz::Tensor> edge_parameters = {
+            {"weight", cyxwiz::Tensor(
+                           edge_shape, edge_initial.data(),
+                           cyxwiz::DataType::Float32)},
+        };
+        const std::map<std::string, cyxwiz::Tensor> edge_gradients = {
+            {"weight", cyxwiz::Tensor(
+                           edge_shape, edge_gradient.data(),
+                           cyxwiz::DataType::Float32)},
+        };
+        cyxwiz::LAMBOptimizer edge_optimizer(
+            lamb_hyper.at("learning_rate").get<double>(),
+            lamb_hyper.at("beta1").get<double>(),
+            lamb_hyper.at("beta2").get<double>(),
+            lamb_hyper.at("epsilon").get<double>(),
+            edge.at("weight_decay").get<double>());
+        edge_optimizer.Step(edge_parameters, edge_gradients);
+        CheckTensor(edge_parameters.at("weight"),
+                    edge.at("expected_parameter"), tolerance,
+                    "LAMB " + edge_name + " parameter");
+        cyxwiz::OptimizerState edge_state;
+        Check(edge_optimizer.ExportState(edge_state, error),
+              "LAMB " + edge_name + " state export failed: " + error);
+        CheckTensor(edge_state.tensors.at("first_moment/weight"),
+                    edge.at("expected_first_moment"), tolerance,
+                    "LAMB " + edge_name + " first moment");
+        CheckTensor(edge_state.tensors.at("second_moment/weight"),
+                    edge.at("expected_second_moment"), tolerance,
+                    "LAMB " + edge_name + " second moment");
+    }
+}
+
+void TestOptimizerMultiStepParity(const json& cases) {
+    TestAdamFamilyMultiStepParity(cases);
+    TestSGDMomentumMultiStepParity(cases);
+    TestAdaptiveOptimizerMultiStepParity(cases);
+    TestLambMultiStepParity(cases);
+}
+
+void TestArrayFireCpuTrainingCoreTruth(const json& cases) {
+    const bool initialized_here = !cyxwiz::IsInitialized();
+    if (initialized_here) {
+        Check(cyxwiz::Initialize(), "CyxWiz backend initialization failed");
+    }
+
+    cyxwiz::Device cpu(cyxwiz::DeviceType::CPU, 0);
+    const auto activation = cpu.ActivateExact(true);
+    Check(activation.success,
+          "ArrayFire CPU activation failed: " + activation.message);
+    Check(activation.execution_validated,
+          "ArrayFire CPU activation did not validate execution");
+    Check(activation.requested_type == cyxwiz::DeviceType::CPU &&
+              activation.effective_type == cyxwiz::DeviceType::CPU &&
+              activation.requested_device_id == 0 &&
+              activation.effective_device_id == 0,
+          "ArrayFire CPU requested/effective identity mismatch");
+    Check(cyxwiz::CurrentArrayFireBackendName() == "cpu",
+          "training-core truth test must execute on ArrayFire CPU");
+
+    auto context = cyxwiz::CaptureCurrentExecutionDeviceContext(
+        cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+    context.execution_validated = activation.execution_validated;
+    Check(context.valid && context.platform == "arrayfire",
+          "execution context must report a valid ArrayFire platform");
+    Check(context.requested_backend == "arrayfire_cpu" &&
+              context.effective_backend == "arrayfire_cpu" &&
+              context.requested_device_id == 0 &&
+              context.effective_device_id == 0,
+          "execution context must preserve exact ArrayFire CPU identity");
+    Check(!context.selection_fallback_applied,
+          "exact ArrayFire CPU activation must not report selection fallback");
+
+    std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent> fallback_events;
+    std::vector<cyxwiz::ArrayFireHostSyncEvent> host_sync_events;
+    g_fallback_events = &fallback_events;
+    g_host_sync_events = &host_sync_events;
+    {
+        const cyxwiz::ScopedArrayFireFallbackPolicy strict_policy(
+            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+        const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
+            &RecordFallbackEvent);
+        const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
+            &RecordHostSyncEvent);
+        const cyxwiz::ScopedActiveExecutionDeviceContext active_run;
+        const cyxwiz::ScopedExecutionDeviceContext bound_context(context);
+
+        Check(cyxwiz::CurrentExecutionDeviceContext() == &context,
+              "one immutable execution context must be bound before compute");
+        Check(cyxwiz::IsArrayFireNativeCpuFallbackForbidden(),
+              "training-core truth test must forbid native CPU fallback");
+
+        TestRegressionLossParity(cases);
+        TestProbabilityLossParity(cases);
+        TestOverlapLossParity(cases);
+        TestMetricLearningLossParity(cases);
+        TestMetricLearningMetricParity(cases);
+        TestMetricPairLinearMultiBatchUpdateParity(cases);
+        TestOverlapLinearMultiBatchUpdateParity(cases);
+        TestCrossEntropyParity(cases);
+        TestCrossEntropyMatrixParity(cases);
+        TestNLLLossParity(cases);
+        TestFocalLossParity(cases);
+        TestElementwiseActivationParity(cases);
+        TestSoftmaxParity(cases);
+        TestPReLUParity(cases);
+        TestLinearForwardBackwardParity(cases);
+        TestLinearMultiBatchUpdateParity(cases);
+        TestDenseForwardBackwardParity(cases);
+        TestDenseMultiBatchUpdateParity(cases);
+        TestOptimizerMultiStepParity(cases);
+    }
+    g_fallback_events = nullptr;
+    g_host_sync_events = nullptr;
+
+    Check(fallback_events.empty(),
+          "training-core ArrayFire CPU path attempted native CPU fallback");
+    for (const auto& event : host_sync_events) {
+        Check(event.selected_backend == "cpu",
+              "host-sync evidence must retain ArrayFire CPU identity");
+        Check(event.attribution_category == "debug_sample_dump" ||
+                  IsDeclaredMetricReadback(event),
+              "training-core compute performed an undeclared host sync: " +
+                  event.attribution_category + " operation=" +
+                  event.operation_name);
+        Check(event.bytes <= 4096,
+              "truth-test output readback must remain bounded");
+    }
+
+    if (initialized_here) {
+        cyxwiz::Shutdown();
+    }
+}
+
+void TestInstalledAcceleratorTrainingCoreTruth(const json& cases) {
+    const bool initialized_here = !cyxwiz::IsInitialized();
+    if (initialized_here) {
+        Check(cyxwiz::Initialize(), "CyxWiz backend initialization failed");
+    }
+
+    size_t exercised_routes = 0;
+    for (const auto& device : cyxwiz::Device::GetAvailableDevices()) {
+        if (!device.device_selectable ||
+            (device.type != cyxwiz::DeviceType::CUDA &&
+             device.type != cyxwiz::DeviceType::OPENCL)) {
+            continue;
+        }
+
+        const auto activation =
+            cyxwiz::Device(device.type, device.device_id).ActivateExact(true);
+        const std::string route = device.name + " device=" +
+            std::to_string(device.device_id);
+        Check(activation.success,
+              "accelerator training-core activation failed for " + route +
+                  ": " + activation.message);
+        Check(activation.execution_validated &&
+                  activation.effective_type == device.type &&
+                  activation.effective_device_id == device.device_id,
+              "accelerator training-core activation changed exact route for " +
+                  route);
+
+        const std::string backend = cyxwiz::CurrentArrayFireBackendName();
+        auto context = cyxwiz::CaptureCurrentExecutionDeviceContext(
+            cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+        context.execution_validated = activation.execution_validated;
+        Check(context.valid && context.platform == "arrayfire" &&
+                  context.requested_backend == context.effective_backend &&
+                  context.requested_device_id == device.device_id &&
+                  context.effective_device_id == device.device_id &&
+                  !context.selection_fallback_applied,
+              "accelerator training-core context lost exact route identity for " +
+                  route);
+
+        std::vector<cyxwiz::ArrayFireNativeCpuFallbackEvent> fallback_events;
+        std::vector<cyxwiz::ArrayFireHostSyncEvent> host_sync_events;
+        g_fallback_events = &fallback_events;
+        g_host_sync_events = &host_sync_events;
+        {
+            const cyxwiz::ScopedArrayFireFallbackPolicy strict_policy(
+                cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
+            const cyxwiz::ScopedArrayFireNativeCpuFallbackObserver
+                fallback_observer(&RecordFallbackEvent);
+            const cyxwiz::ScopedArrayFireHostSyncObserver host_sync_observer(
+                &RecordHostSyncEvent);
+            const cyxwiz::ScopedActiveExecutionDeviceContext active_run;
+            const cyxwiz::ScopedExecutionDeviceContext bound_context(context);
+            TestRegressionLossParity(cases);
+            TestProbabilityLossParity(cases);
+            TestOverlapLossParity(cases);
+            TestMetricLearningLossParity(cases);
+            TestMetricLearningMetricParity(cases);
+            TestMetricPairLinearMultiBatchUpdateParity(cases);
+            TestOverlapLinearMultiBatchUpdateParity(cases);
+            TestCrossEntropyParity(cases);
+            TestCrossEntropyMatrixParity(cases);
+            TestNLLLossParity(cases);
+            TestFocalLossParity(cases);
+            TestElementwiseActivationParity(cases);
+            TestSoftmaxParity(cases);
+            TestPReLUParity(cases);
+            TestLinearForwardBackwardParity(cases);
+            TestLinearMultiBatchUpdateParity(cases);
+            TestDenseForwardBackwardParity(cases);
+            TestDenseMultiBatchUpdateParity(cases);
+            TestOptimizerMultiStepParity(cases);
+        }
+        g_fallback_events = nullptr;
+        g_host_sync_events = nullptr;
+
+        Check(fallback_events.empty(),
+              "accelerator training-core path attempted native CPU fallback for " +
+                  route);
+        for (const auto& event : host_sync_events) {
+            Check(event.selected_backend == backend,
+                  "accelerator training-core readback lost backend identity for " +
+                      route);
+            Check((event.attribution_category == "debug_sample_dump" &&
+                       event.bytes <= 4096) ||
+                      IsDeclaredMetricReadback(event),
+                  "accelerator training-core performed an undeclared host sync for " +
+                      route + ": " + event.attribution_category +
+                      " operation=" + event.operation_name);
+        }
+        ++exercised_routes;
+    }
+
+    if (exercised_routes == 0) {
+        std::cout << "SKIP: no selectable CUDA/OpenCL training-core route\n";
+    }
+    const auto cpu_restore =
+        cyxwiz::Device(cyxwiz::DeviceType::CPU, 0).ActivateExact(true);
+    Check(cpu_restore.success,
+          "failed to restore ArrayFire CPU after training-core route matrix");
+    if (initialized_here) {
+        cyxwiz::Shutdown();
     }
 }
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    const auto fixture = LoadTrainingCoreFixture(
+        argc > 0 ? fs::path(argv[0]) : fs::path{}, argc > 1 ? argv[1] : nullptr);
+    const auto& cases = fixture.at("cases");
     TestMaterializationMemoryGuardThresholds();
     TestTFIDFBlocksBeforeAllocationHeavyWork();
     TestBoundedTFIDFMaterialization();
     TestTFIDFNGramMaterialization();
-    TestCrossEntropyParity();
-    TestLinearForwardBackwardParity();
-    TestAdamWOneStepParity();
-    std::cout << "Computation truth TF-IDF + CrossEntropy + Linear + AdamW checks passed\n";
+    TestArrayFireCpuTrainingCoreTruth(cases);
+    TestInstalledAcceleratorTrainingCoreTruth(cases);
+    std::cout << "Computation truth TF-IDF + training-core checks passed\n";
     return 0;
 }

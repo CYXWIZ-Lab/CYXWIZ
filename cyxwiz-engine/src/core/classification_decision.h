@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <optional>
 #include <string_view>
 
 namespace cyxwiz {
@@ -20,6 +21,10 @@ enum class ClassificationDecisionMode {
 inline bool UsesScalarBinaryTargets(gui::NodeType loss_type) {
     return loss_type == gui::NodeType::BCELoss ||
            loss_type == gui::NodeType::BCEWithLogits;
+}
+
+inline bool UsesClassIndexTargets(gui::NodeType loss_type) {
+    return loss_type == gui::NodeType::CrossEntropyLoss;
 }
 
 inline ClassificationDecisionMode ClassificationDecisionModeForLoss(
@@ -66,8 +71,8 @@ struct ClassificationDecisionCount {
 };
 
 struct ClassificationDecisionScalar {
-    Tensor correct;
-    size_t total = 0;
+    // Float32 [2] kept device-resident as {correct, valid_target_count}.
+    Tensor counts;
 };
 
 inline ClassificationDecisionCount CountClassificationDecisions(
@@ -96,14 +101,16 @@ ClassificationDecisionCount CountClassificationDecisionScalars(
     const Tensor& targets,
     size_t batch_size,
     size_t output_width,
-    ClassificationDecisionMode mode);
+    ClassificationDecisionMode mode,
+    std::optional<int> ignore_index = std::nullopt);
 
 ClassificationDecisionScalar BuildClassificationDecisionScalar(
     const Tensor& predictions,
     const Tensor& targets,
     size_t batch_size,
     size_t output_width,
-    ClassificationDecisionMode mode);
+    ClassificationDecisionMode mode,
+    std::optional<int> ignore_index = std::nullopt);
 
 ClassificationDecisionCount ReadClassificationDecisionScalar(
     const ClassificationDecisionScalar& scalar,

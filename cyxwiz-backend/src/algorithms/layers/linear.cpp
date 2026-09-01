@@ -182,7 +182,7 @@ void LinearLayer::InitializeWeights() {
     weight_ = Tensor::Random({out_features_, in_features_}, DataType::Float32);
 
     // Scale to [-limit, limit]
-    float* weight_data = static_cast<float*>(weight_.Data());
+    float* weight_data = weight_.MutableData<float>();
     size_t num_weights = out_features_ * in_features_;
     for (size_t i = 0; i < num_weights; i++) {
         weight_data[i] = (weight_data[i] * 2.0f - 1.0f) * static_cast<float>(limit);
@@ -300,10 +300,10 @@ Tensor LinearLayer::Forward(const Tensor& input) {
     // CPU fallback implementation
     if (is_batched) {
         Tensor output({batch_size, out_features_}, DataType::Float32);
-        const float* input_data = static_cast<const float*>(input.Data());
-        const float* weight_data = static_cast<const float*>(weight_.Data());
-        const float* bias_data = use_bias_ ? static_cast<const float*>(bias_.Data()) : nullptr;
-        float* output_data = static_cast<float*>(output.Data());
+        const float* input_data = input.ReadData<float>();
+        const float* weight_data = weight_.ReadData<float>();
+        const float* bias_data = use_bias_ ? bias_.ReadData<float>() : nullptr;
+        float* output_data = output.MutableData<float>();
 
         // Matrix multiplication: C = A @ B^T
         for (size_t b = 0; b < batch_size; b++) {
@@ -323,10 +323,10 @@ Tensor LinearLayer::Forward(const Tensor& input) {
     } else {
         // Single sample (no batch dimension)
         Tensor output({out_features_}, DataType::Float32);
-        const float* input_data = static_cast<const float*>(input.Data());
-        const float* weight_data = static_cast<const float*>(weight_.Data());
-        const float* bias_data = use_bias_ ? static_cast<const float*>(bias_.Data()) : nullptr;
-        float* output_data = static_cast<float*>(output.Data());
+        const float* input_data = input.ReadData<float>();
+        const float* weight_data = weight_.ReadData<float>();
+        const float* bias_data = use_bias_ ? bias_.ReadData<float>() : nullptr;
+        float* output_data = output.MutableData<float>();
 
         for (size_t o = 0; o < out_features_; o++) {
             float sum = 0.0f;
@@ -394,15 +394,10 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
                 af::array weight_grad_gpu =
                     af::matmul(grad_gpu, input_gpu, AF_MAT_TRANS, AF_MAT_NONE);
                 weight_grad_gpu.eval();
-                weight_grad_gpu =
-                    weight_grad_gpu / static_cast<float>(batch_size);
-                weight_grad_gpu.eval();
                 weight_grad_ = Tensor::FromArrayRowMajor2D(weight_grad_gpu);
 
                 if (use_bias_) {
-                    af::array bias_grad_gpu = af::flat(
-                        af::sum(grad_gpu, 0) /
-                        static_cast<float>(batch_size));
+                    af::array bias_grad_gpu = af::flat(af::sum(grad_gpu, 0));
                     bias_grad_gpu.eval();
                     bias_grad_ = Tensor(bias_grad_gpu);
                 }
@@ -446,9 +441,9 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
 
     // CPU fallback implementation
     if (is_batched) {
-        const float* grad_output_data = static_cast<const float*>(grad_output.Data());
-        const float* input_data = static_cast<const float*>(input_cache_.Data());
-        float* weight_grad_data = static_cast<float*>(weight_grad_.Data());
+        const float* grad_output_data = grad_output.ReadData<float>();
+        const float* input_data = input_cache_.ReadData<float>();
+        float* weight_grad_data = weight_grad_.MutableData<float>();
 
         // Initialize gradients to zero
         std::memset(weight_grad_data, 0, sizeof(float) * out_features_ * in_features_);
@@ -460,12 +455,12 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
                     grad_sum += grad_output_data[b * out_features_ + o] *
                               input_data[b * in_features_ + i];
                 }
-                weight_grad_data[o * in_features_ + i] = grad_sum / static_cast<float>(batch_size);
+                weight_grad_data[o * in_features_ + i] = grad_sum;
             }
         }
 
         if (use_bias_) {
-            float* bias_grad_data = static_cast<float*>(bias_grad_.Data());
+            float* bias_grad_data = bias_grad_.MutableData<float>();
             std::memset(bias_grad_data, 0, sizeof(float) * out_features_);
 
             for (size_t b = 0; b < batch_size; b++) {
@@ -474,15 +469,12 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
                 }
             }
 
-            for (size_t o = 0; o < out_features_; o++) {
-                bias_grad_data[o] /= static_cast<float>(batch_size);
-            }
         }
 
         // Gradient w.r.t. input
         Tensor grad_input({batch_size, in_features_}, DataType::Float32);
-        float* grad_input_data = static_cast<float*>(grad_input.Data());
-        const float* weight_data = static_cast<const float*>(weight_.Data());
+        float* grad_input_data = grad_input.MutableData<float>();
+        const float* weight_data = weight_.ReadData<float>();
 
         for (size_t b = 0; b < batch_size; b++) {
             for (size_t i = 0; i < in_features_; i++) {
@@ -498,9 +490,9 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
         return grad_input;
     } else {
         // Single sample (1D tensors)
-        const float* grad_output_data = static_cast<const float*>(grad_output.Data());
-        const float* input_data = static_cast<const float*>(input_cache_.Data());
-        float* weight_grad_data = static_cast<float*>(weight_grad_.Data());
+        const float* grad_output_data = grad_output.ReadData<float>();
+        const float* input_data = input_cache_.ReadData<float>();
+        float* weight_grad_data = weight_grad_.MutableData<float>();
 
         for (size_t o = 0; o < out_features_; o++) {
             for (size_t i = 0; i < in_features_; i++) {
@@ -509,12 +501,13 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
         }
 
         if (use_bias_) {
-            std::memcpy(bias_grad_.Data(), grad_output.Data(), sizeof(float) * out_features_);
+            std::memcpy(bias_grad_.MutableData(), grad_output.ReadData(),
+                        sizeof(float) * out_features_);
         }
 
         Tensor grad_input({in_features_}, DataType::Float32);
-        float* grad_input_data = static_cast<float*>(grad_input.Data());
-        const float* weight_data = static_cast<const float*>(weight_.Data());
+        float* grad_input_data = grad_input.MutableData<float>();
+        const float* weight_data = weight_.ReadData<float>();
 
         for (size_t i = 0; i < in_features_; i++) {
             float sum = 0.0f;

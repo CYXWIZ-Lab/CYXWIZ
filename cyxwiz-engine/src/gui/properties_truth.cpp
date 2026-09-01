@@ -1443,7 +1443,7 @@ void AddCoreLayerTruth(NodeTruthReport& report, const MLNode& node) {
             true,
             false,
             "Dropout preserves tensor shape and randomly zeros activations during training.");
-        RequireFloatInRange(rate, "rate", 0.0, 1.0, true, false);
+        RequireFloatInRange(rate, "rate", 0.0, 1.0, true, true);
         report.properties.push_back(std::move(rate));
         add_executable_configuration();
         return;

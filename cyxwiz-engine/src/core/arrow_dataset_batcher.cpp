@@ -894,6 +894,10 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
             std::vector<size_t> label_shape = {
                 actual_batch_size, regression_target_width};
             batch.labels = Tensor(label_shape, batch_labels_float.data());
+        } else if (class_index_label_mode_ && !batch_labels.empty()) {
+            std::vector<size_t> label_shape = {actual_batch_size};
+            batch.labels = Tensor(
+                label_shape, batch_labels.data(), DataType::Int32);
         } else if (one_hot_ && !batch_labels.empty()) {
             // One-hot encoding
             std::vector<float> onehot_data(actual_batch_size * num_classes_, 0.0f);
@@ -938,10 +942,20 @@ void ArrowDatasetBatcher::Reset() {
 }
 
 bool ArrowDatasetBatcher::IsEpochComplete() const {
-    return current_index_ >= indices_.size();
+    if (current_index_ >= indices_.size()) {
+        return true;
+    }
+    return drop_last_ &&
+        indices_.size() - current_index_ < batch_size_;
 }
 
 size_t ArrowDatasetBatcher::GetNumBatches() const {
+    if (batch_size_ == 0 || indices_.empty()) {
+        return 0;
+    }
+    if (drop_last_) {
+        return indices_.size() / batch_size_;
+    }
     return (indices_.size() + batch_size_ - 1) / batch_size_;
 }
 
@@ -1043,7 +1057,10 @@ void ArrowDatasetBatcher::RebuildBalancedIndices() {
             balanced.insert(balanced.end(), rows.begin(), rows.begin() + keep);
         }
     } else if (balance_mode_ == "weighted_sampler") {
-        const size_t total_samples = target_count * by_label.size();
+        // Match PyTorch WeightedRandomSampler's usual training contract:
+        // replacement changes which rows are drawn, not the configured epoch
+        // length. This preserves batch and optimizer-update counts.
+        const size_t total_samples = base_indices_.size();
         std::vector<int64_t> labels_order;
         labels_order.reserve(by_label.size());
         for (const auto& entry : by_label) {

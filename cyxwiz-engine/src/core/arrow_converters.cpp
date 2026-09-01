@@ -1,4 +1,5 @@
 #include "arrow_converters.h"
+#include "algorithms/arrayfire_host_materialization.h"
 #include <arrow/compute/api.h>
 #include <arrow/type.h>
 #include <spdlog/spdlog.h>
@@ -283,7 +284,12 @@ std::shared_ptr<arrow::Table> TensorToArrow(
 
         // Copy data from device to host
         std::vector<float> host_data(num_rows * num_cols);
-        tensor.host(host_data.data());
+        MaterializeArrayFireToHost(
+            tensor,
+            host_data.data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "ArrowConverters::ArrayFireToRecordBatch",
+            "arrayfire_column_major");
 
         // Build Arrow arrays for each column
         arrow::FieldVector fields;

@@ -10,6 +10,32 @@
 #endif
 
 namespace cyxwiz {
+namespace {
+
+int NormalizeSoftmaxDimension(int dimension, int rank) {
+    if (rank <= 0) {
+        throw std::runtime_error("SoftmaxModule requires at least one dimension");
+    }
+    const int normalized = dimension < 0 ? dimension + rank : dimension;
+    if (normalized < 0 || normalized >= rank) {
+        throw std::runtime_error("SoftmaxModule dimension is out of range");
+    }
+    return normalized;
+}
+
+std::vector<size_t> SoftmaxRowMajorStrides(
+    const std::vector<size_t>& shape) {
+    std::vector<size_t> strides(shape.size(), 1);
+    for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i) {
+        strides[static_cast<size_t>(i)] =
+            strides[static_cast<size_t>(i + 1)] *
+            shape[static_cast<size_t>(i + 1)];
+    }
+    return strides;
+}
+
+} // namespace
+
 // ============================================================================
 // SoftmaxModule Implementation (ArrayFire)
 // ============================================================================
@@ -17,20 +43,29 @@ namespace cyxwiz {
 SoftmaxModule::SoftmaxModule(int dim) : dim_(dim) {}
 
 Tensor SoftmaxModule::Forward(const Tensor& input) {
+    if (input.GetDataType() != DataType::Float32) {
+        throw std::runtime_error("SoftmaxModule only supports Float32 tensors");
+    }
+    const int actual_dim = NormalizeSoftmaxDimension(
+        dim_, static_cast<int>(input.Shape().size()));
     input_cache_ = input.Clone();
+    if (input.NumElements() == 0) {
+        output_cache_ = input.Clone();
+        return output_cache_;
+    }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     // ArrayFire implementation
     af::array x = input.GetSemanticArray();
 
     // Softmax: exp(x - max) / sum(exp(x - max))
-    // Compute along dim 1 (classes dimension) for [batch, classes] input
-    // Note: Use (af::max) to prevent Windows macro conflict
-    af::array max_vals = (af::max)(x, 1);  // [batch, 1]
-    af::array x_shifted = x - af::tile(max_vals, 1, static_cast<unsigned>(x.dims(1)));  // Subtract max for stability
+    af::array max_vals = (af::max)(x, actual_dim);
+    af::dim4 tile_dims(1, 1, 1, 1);
+    tile_dims[actual_dim] = x.dims(actual_dim);
+    af::array x_shifted = x - af::tile(max_vals, tile_dims);
     af::array exp_x = af::exp(x_shifted);
-    af::array sum_exp = af::sum(exp_x, 1);  // [batch, 1]
-    af::array softmax = exp_x / af::tile(sum_exp, 1, static_cast<unsigned>(x.dims(1)));
+    af::array sum_exp = af::sum(exp_x, actual_dim);
+    af::array softmax = exp_x / af::tile(sum_exp, tile_dims);
 
     Tensor output = Tensor::FromSemanticArray(softmax, input.Shape());
     output_cache_ = output.Clone();
@@ -38,25 +73,31 @@ Tensor SoftmaxModule::Forward(const Tensor& input) {
 #else
     // CPU fallback
     const auto& shape = input.Shape();
-    size_t batch_size = shape[0];
-    size_t num_classes = shape.size() > 1 ? shape[1] : shape[0];
+    const std::vector<size_t> strides = SoftmaxRowMajorStrides(shape);
+    const size_t axis_size = shape[static_cast<size_t>(actual_dim)];
+    const size_t axis_stride = strides[static_cast<size_t>(actual_dim)];
+    const size_t outer_count = input.NumElements() / axis_size;
 
-    Tensor output({batch_size, num_classes}, DataType::Float32);
+    Tensor output(shape, DataType::Float32);
     const float* in_data = input.ReadData<float>();
     float* out_data = output.MutableData<float>();
 
-    for (size_t b = 0; b < batch_size; ++b) {
-        float max_val = in_data[b * num_classes];
-        for (size_t c = 1; c < num_classes; ++c) {
-            max_val = std::max(max_val, in_data[b * num_classes + c]);
+    for (size_t outer = 0; outer < outer_count; ++outer) {
+        const size_t before_axis = outer / axis_stride;
+        const size_t after_axis = outer % axis_stride;
+        const size_t base = before_axis * axis_size * axis_stride + after_axis;
+        float max_val = in_data[base];
+        for (size_t i = 1; i < axis_size; ++i) {
+            max_val = std::max(max_val, in_data[base + i * axis_stride]);
         }
         float sum = 0.0f;
-        for (size_t c = 0; c < num_classes; ++c) {
-            out_data[b * num_classes + c] = std::exp(in_data[b * num_classes + c] - max_val);
-            sum += out_data[b * num_classes + c];
+        for (size_t i = 0; i < axis_size; ++i) {
+            const size_t index = base + i * axis_stride;
+            out_data[index] = std::exp(in_data[index] - max_val);
+            sum += out_data[index];
         }
-        for (size_t c = 0; c < num_classes; ++c) {
-            out_data[b * num_classes + c] /= sum;
+        for (size_t i = 0; i < axis_size; ++i) {
+            out_data[base + i * axis_stride] /= sum;
         }
     }
     output_cache_ = output.Clone();
@@ -65,38 +106,55 @@ Tensor SoftmaxModule::Forward(const Tensor& input) {
 }
 
 Tensor SoftmaxModule::Backward(const Tensor& grad_output) {
+    if (grad_output.GetDataType() != DataType::Float32 ||
+        output_cache_.Shape() != grad_output.Shape()) {
+        throw std::runtime_error(
+            "SoftmaxModule backward requires a matching successful forward");
+    }
+    const int actual_dim = NormalizeSoftmaxDimension(
+        dim_, static_cast<int>(grad_output.Shape().size()));
+    if (grad_output.NumElements() == 0) {
+        return grad_output.Clone();
+    }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     // ArrayFire implementation
     // Softmax backward: grad_input = softmax * (grad_output - sum(grad_output * softmax))
     af::array grad = grad_output.GetSemanticArray();
     af::array soft = output_cache_.GetSemanticArray();
 
-    // Compute dot product per sample: sum(grad * softmax) along classes dimension
-    af::array dot = af::sum(grad * soft, 1);  // [batch, 1]
+    af::array dot = af::sum(grad * soft, actual_dim);
+    af::dim4 tile_dims(1, 1, 1, 1);
+    tile_dims[actual_dim] = grad.dims(actual_dim);
 
     // grad_input = softmax * (grad - dot)
-    af::array grad_input = soft * (grad - af::tile(dot, 1, static_cast<unsigned>(grad.dims(1))));
+    af::array grad_input = soft * (grad - af::tile(dot, tile_dims));
 
     return Tensor::FromSemanticArray(grad_input, grad_output.Shape());
 #else
     // CPU fallback
     const auto& shape = grad_output.Shape();
-    size_t batch_size = shape[0];
-    size_t num_classes = shape.size() > 1 ? shape[1] : shape[0];
+    const std::vector<size_t> strides = SoftmaxRowMajorStrides(shape);
+    const size_t axis_size = shape[static_cast<size_t>(actual_dim)];
+    const size_t axis_stride = strides[static_cast<size_t>(actual_dim)];
+    const size_t outer_count = grad_output.NumElements() / axis_size;
 
-    Tensor grad_input({batch_size, num_classes}, DataType::Float32);
+    Tensor grad_input(shape, DataType::Float32);
     const float* grad_data = grad_output.ReadData<float>();
     const float* soft_data = output_cache_.ReadData<float>();
     float* out_data = grad_input.MutableData<float>();
 
-    for (size_t b = 0; b < batch_size; ++b) {
+    for (size_t outer = 0; outer < outer_count; ++outer) {
+        const size_t before_axis = outer / axis_stride;
+        const size_t after_axis = outer % axis_stride;
+        const size_t base = before_axis * axis_size * axis_stride + after_axis;
         float dot = 0.0f;
-        for (size_t c = 0; c < num_classes; ++c) {
-            dot += grad_data[b * num_classes + c] * soft_data[b * num_classes + c];
+        for (size_t i = 0; i < axis_size; ++i) {
+            const size_t index = base + i * axis_stride;
+            dot += grad_data[index] * soft_data[index];
         }
-        for (size_t c = 0; c < num_classes; ++c) {
-            out_data[b * num_classes + c] = soft_data[b * num_classes + c] *
-                (grad_data[b * num_classes + c] - dot);
+        for (size_t i = 0; i < axis_size; ++i) {
+            const size_t index = base + i * axis_stride;
+            out_data[index] = soft_data[index] * (grad_data[index] - dot);
         }
     }
     return grad_input;
@@ -107,95 +165,24 @@ Tensor SoftmaxModule::Backward(const Tensor& grad_output) {
 // DropoutModule Implementation (ArrayFire)
 // ============================================================================
 
-DropoutModule::DropoutModule(float p) : p_(p) {
-    if (!std::isfinite(p_) || p_ < 0.0f || p_ >= 1.0f) {
+DropoutModule::DropoutModule(float p) : p_(p), layer_(p) {
+    if (!std::isfinite(p_) || p_ < 0.0f || p_ > 1.0f) {
         throw std::invalid_argument(
-            "DropoutModule: p must be a finite probability in [0, 1)");
+            "DropoutModule: p must be a finite probability in [0, 1]");
     }
 }
 
 Tensor DropoutModule::Forward(const Tensor& input) {
-    input_cache_ = input.Clone();
-
-    // During eval, just return input
-    if (!is_training_) {
-        return input.Clone();
-    }
-
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    // ArrayFire implementation
-    af::array x = input.GetSemanticArray();
-    float scale = 1.0f / (1.0f - p_);
-
-    // Generate random mask: values > p are kept (scaled), values <= p are dropped
-    af::array rand_vals = af::randu(x.dims());
-    af::array keep_mask = (rand_vals > p_).as(af::dtype::f32);  // 1 for keep, 0 for drop
-    af::array scaled_mask = keep_mask * scale;
-
-    // Store mask for backward pass
-    mask_ = Tensor::FromSemanticArray(scaled_mask, input.Shape());
-
-    // Apply dropout
-    af::array output = x * scaled_mask;
-    return Tensor::FromSemanticArray(output, input.Shape());
-#else
-    // CPU fallback
-    const auto& shape = input.Shape();
-    size_t total = input.NumElements();
-
-    Tensor output(shape, input.GetDataType());
-    mask_ = Tensor(shape, DataType::Float32);
-
-    const float* in_data = input.ReadData<float>();
-    float* out_data = output.MutableData<float>();
-    float* mask_data = mask_.MutableData<float>();
-
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-    float scale = 1.0f / (1.0f - p_);
-
-    for (size_t i = 0; i < total; ++i) {
-        if (dist(gen) > p_) {
-            mask_data[i] = scale;
-            out_data[i] = in_data[i] * scale;
-        } else {
-            mask_data[i] = 0.0f;
-            out_data[i] = 0.0f;
-        }
-    }
-    return output;
-#endif
+    return layer_.Forward(input);
 }
 
 Tensor DropoutModule::Backward(const Tensor& grad_output) {
-    if (!is_training_) {
-        return grad_output.Clone();
-    }
+    return layer_.Backward(grad_output);
+}
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-    // ArrayFire implementation
-    af::array grad = grad_output.GetSemanticArray();
-    af::array mask = mask_.GetSemanticArray();
-
-    // grad_input = grad * mask (mask already has scaling applied)
-    af::array grad_input = grad * mask;
-    return Tensor::FromSemanticArray(grad_input, grad_output.Shape());
-#else
-    // CPU fallback
-    const auto& shape = grad_output.Shape();
-    Tensor grad_input(shape, DataType::Float32);
-
-    const float* grad_data = grad_output.ReadData<float>();
-    const float* mask_data = mask_.ReadData<float>();
-    float* out_data = grad_input.MutableData<float>();
-
-    size_t total = grad_output.NumElements();
-    for (size_t i = 0; i < total; ++i) {
-        out_data[i] = grad_data[i] * mask_data[i];
-    }
-    return grad_input;
-#endif
+void DropoutModule::SetTraining(bool training) {
+    Module::SetTraining(training);
+    layer_.SetTraining(training);
 }
 
 std::string DropoutModule::GetName() const {
@@ -209,33 +196,27 @@ std::string DropoutModule::GetName() const {
 FlattenModule::FlattenModule(int start_dim) : start_dim_(start_dim) {}
 
 Tensor FlattenModule::Forward(const Tensor& input) {
+    Tensor output = input.Flatten(start_dim_);
     original_shape_ = input.Shape();
-
-    // Calculate flattened size from start_dim onwards
-    size_t batch_size = 1;
-    size_t flat_size = 1;
-
-    for (size_t i = 0; i < original_shape_.size(); ++i) {
-        if (static_cast<int>(i) < start_dim_) {
-            batch_size *= original_shape_[i];
-        } else {
-            flat_size *= original_shape_[i];
-        }
-    }
-
-    // Pure CPU reshape — just copy data with new shape. Flatten has no
-    // computation, and going through ArrayFire's moddims scrambles the
-    // row-major data layout (column-major AF produces transposed output
-    // that LinearLayer can't consume). This approach is both correct
-    // and faster than a GPU round-trip for a zero-compute operation.
-    const float* in_data = input.ReadData<float>();
-    return Tensor({batch_size, flat_size}, in_data, input.GetDataType());
+    output_shape_ = output.Shape();
+    output_dtype_ = output.GetDataType();
+    return output;
 }
 
 Tensor FlattenModule::Backward(const Tensor& grad_output) {
-    // Pure CPU reshape back to original shape (same as Forward).
-    const float* grad_data = grad_output.ReadData<float>();
-    return Tensor(original_shape_, grad_data, grad_output.GetDataType());
+    if (original_shape_.empty()) {
+        throw std::logic_error(
+            "FlattenModule::Backward requires a successful Forward call");
+    }
+    if (grad_output.Shape() != output_shape_) {
+        throw std::runtime_error(
+            "FlattenModule::Backward gradient shape does not match Forward output");
+    }
+    if (grad_output.GetDataType() != output_dtype_) {
+        throw std::runtime_error(
+            "FlattenModule::Backward gradient dtype does not match Forward output");
+    }
+    return grad_output.Reshape(original_shape_);
 }
 
 } // namespace cyxwiz

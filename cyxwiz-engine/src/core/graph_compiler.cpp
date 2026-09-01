@@ -4096,8 +4096,13 @@ TrainingConfiguration GraphCompiler::Compile(
                 config.validation_freq = std::max(1, std::stoi(loader_node->parameters.at("validation_freq")));
             if (loader_node->parameters.count("seed"))
                 config.dataloader_seed = std::max(0, std::stoi(loader_node->parameters.at("seed")));
-            if (loader_node->parameters.count("grad_accum_steps"))
-                config.grad_accum_steps = std::max(1, std::stoi(loader_node->parameters.at("grad_accum_steps")));
+            if (loader_node->parameters.count(
+                    training_contract::kGradientAccumulationStepsKey)) {
+                config.grad_accum_steps =
+                    training_contract::ClampGradientAccumulationSteps(
+                        std::stoi(loader_node->parameters.at(
+                            training_contract::kGradientAccumulationStepsKey)));
+            }
             if (loader_node->parameters.count("balance_classes"))
                 config.balance_classes =
                     IsTruthyParameterValue(loader_node->parameters.at("balance_classes"));

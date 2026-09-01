@@ -70,10 +70,12 @@ endif()
 set(BACKEND_SOURCES
     src/core/engine.cpp
     src/core/tensor.cpp
+    src/core/tensor_factory.cpp
     src/core/tensor_utils.cpp
     src/core/tensor_shape.cpp
     src/core/tensor_reductions.cpp
     src/core/tensor_elementwise.cpp
+    src/core/tensor_arithmetic.cpp
     src/core/tensor_comparison.cpp
     src/core/tensor_logical.cpp
     src/core/tensor_linalg.cpp
@@ -88,6 +90,7 @@ set(BACKEND_SOURCES
     src/core/cyxwiz_c.cpp
     src/algorithms/optimizer.cpp
     src/algorithms/arrayfire_backend_utils.cpp
+    src/algorithms/arrayfire_host_materialization.cpp
     src/algorithms/backend_placement_observation.cpp
     src/algorithms/optimizers/optimizer_utils.cpp
     src/algorithms/optimizers/sgd.cpp

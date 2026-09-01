@@ -6,6 +6,7 @@
 #endif
 
 #include "cyxwiz/clustering.h"
+#include "arrayfire_host_materialization.h"
 #include <spdlog/spdlog.h>
 
 #define _USE_MATH_DEFINES
@@ -64,7 +65,12 @@ std::vector<std::vector<double>> Clustering::FromAfArray(const af::array& arr) {
     std::vector<double> flat_data(n_samples * n_features);
     af::array materialized = arr;
     materialized.eval();
-    materialized.host(flat_data.data());
+    MaterializeArrayFireToHost(
+        materialized,
+        flat_data.data(),
+        ArrayFireHostSyncCategory::AlgorithmCpuPath,
+        "Clustering::AfArrayToMatrix",
+        "arrayfire_column_major");
 
     std::vector<std::vector<double>> result(n_samples, std::vector<double>(n_features));
     for (int i = 0; i < n_samples; ++i) {
@@ -85,7 +91,12 @@ std::vector<int> Clustering::AfArrayToIntVector(const af::array& arr) {
     // Convert to int array on host
     af::array int_arr = arr.as(s32);
     int_arr.eval();
-    int_arr.host(result.data());
+    MaterializeArrayFireToHost(
+        int_arr,
+        result.data(),
+        ArrayFireHostSyncCategory::AlgorithmCpuPath,
+        "Clustering::AfArrayToIntVector",
+        "arrayfire_native");
 
     return result;
 }
@@ -98,7 +109,12 @@ std::vector<double> Clustering::AfArrayToDoubleVector(const af::array& arr) {
 
     af::array double_arr = arr.as(f64);
     double_arr.eval();
-    double_arr.host(result.data());
+    MaterializeArrayFireToHost(
+        double_arr,
+        result.data(),
+        ArrayFireHostSyncCategory::AlgorithmCpuPath,
+        "Clustering::AfArrayToDoubleVector",
+        "arrayfire_native");
 
     return result;
 }

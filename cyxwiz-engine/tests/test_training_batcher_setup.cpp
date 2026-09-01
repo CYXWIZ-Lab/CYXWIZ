@@ -11,16 +11,20 @@
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
 #include <cyxwiz/losses/probability.h>
+#include <nlohmann/json.hpp>
 
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace {
+
+using json = nlohmann::json;
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -63,6 +67,57 @@ std::shared_ptr<arrow::Array> FinishInt8Array(const std::vector<int8_t>& values)
     auto st = builder.Finish(&array);
     Check(st.ok(), st.ToString());
     return array;
+}
+
+json LoadTrainingCoreFixture(const std::filesystem::path& executable_path) {
+    const auto fixture_path = std::filesystem::absolute(executable_path)
+        .parent_path() / "computation_truth_fixtures" /
+        "training_core_pytorch.json";
+    std::ifstream stream(fixture_path);
+    Check(stream.is_open(), "unable to open PyTorch fixture: " +
+          fixture_path.string());
+
+    json fixture;
+    try {
+        stream >> fixture;
+    } catch (const std::exception& error) {
+        Check(false, "unable to parse PyTorch fixture " +
+              fixture_path.string() + ": " + error.what());
+    }
+    Check(fixture.value("schema_version", 0) == 1,
+          "unsupported PyTorch fixture schema");
+    Check(fixture.at("oracle").value("name", "") == "PyTorch",
+          "weighted sampler fixture must identify PyTorch as its oracle");
+    return fixture;
+}
+
+std::shared_ptr<cyxwiz::ArrowDataset>
+MakeWeightedSamplerDistributionDataset(const std::vector<size_t>& class_counts) {
+    std::vector<float> features;
+    std::vector<int32_t> labels;
+    size_t total_samples = 0;
+    for (size_t count : class_counts) {
+        total_samples += count;
+    }
+    features.reserve(total_samples);
+    labels.reserve(total_samples);
+    for (size_t label = 0; label < class_counts.size(); ++label) {
+        for (size_t row = 0; row < class_counts[label]; ++row) {
+            features.push_back(static_cast<float>(features.size()));
+            labels.push_back(static_cast<int32_t>(label));
+        }
+    }
+
+    auto schema = arrow::schema({
+        arrow::field("x", arrow::float32()),
+        arrow::field("label", arrow::int32()),
+    });
+    auto table = arrow::Table::Make(schema, {
+        FinishFloatArray(features),
+        FinishIntArray(labels),
+    }, static_cast<int64_t>(total_samples));
+    return std::make_shared<cyxwiz::ArrowDataset>(
+        table, "weighted_sampler_pytorch_distribution");
 }
 
 std::shared_ptr<cyxwiz::ArrowDataset> MakeDataset() {
@@ -341,6 +396,79 @@ std::vector<size_t> CollectOneHotLabels(cyxwiz::IBatcher& batcher,
     return labels;
 }
 
+void TestWeightedSamplerPyTorchDistribution(const json& fixture) {
+    const auto& sampler_case =
+        fixture.at("cases").at("weighted_sampler_inverse_frequency");
+    Check(sampler_case.value("operation", "") ==
+              "torch.utils.data.WeightedRandomSampler",
+          "weighted sampler fixture should name the PyTorch operation");
+    Check(sampler_case.value("sample_weight_rule", "") ==
+              "inverse_class_frequency",
+          "weighted sampler fixture should use inverse-frequency weights");
+    Check(sampler_case.value("replacement", false),
+          "weighted sampler fixture should sample with replacement");
+
+    const auto class_counts =
+        sampler_case.at("class_counts").get<std::vector<size_t>>();
+    const auto expected_probabilities = sampler_case
+        .at("expected_class_probabilities").get<std::vector<double>>();
+    const auto pytorch_counts = sampler_case
+        .at("pytorch_empirical_class_counts").get<std::vector<size_t>>();
+    const size_t num_samples = sampler_case.at("num_samples").get<size_t>();
+    Check(class_counts.size() == expected_probabilities.size() &&
+              class_counts.size() == pytorch_counts.size(),
+          "weighted sampler fixture class vectors should have equal width");
+
+    auto config = MakeConfig();
+    config.train_ratio = 1.0f;
+    config.val_ratio = 0.0f;
+    config.test_ratio = 0.0f;
+    config.has_data_split = true;
+    config.shuffle = false;
+    config.balance_classes = true;
+    config.balance_mode = "weighted_sampler";
+    config.balance_target = "max";
+    config.balance_seed = sampler_case.at("seed").get<int>();
+    config.prefetch_factor = 0;
+
+    auto batchers = cyxwiz::BuildArrowTrainingBatchers(
+        config,
+        MakeWeightedSamplerDistributionDataset(class_counts),
+        "label",
+        /*batch_size=*/256);
+    Check(batchers.num_train_samples == num_samples,
+          "weighted sampler should preserve the PyTorch fixture epoch length");
+    const auto labels = CollectOneHotLabels(
+        *batchers.train, class_counts.size(),
+        "PyTorch weighted sampler distribution");
+    Check(labels.size() == num_samples,
+          "weighted sampler should emit the configured number of draws");
+
+    std::vector<size_t> observed_counts(class_counts.size(), 0);
+    for (size_t label : labels) {
+        Check(label < observed_counts.size(),
+              "weighted sampler emitted an out-of-range class");
+        ++observed_counts[label];
+    }
+
+    const double probability_tolerance =
+        sampler_case.at("absolute_probability_tolerance").get<double>();
+    const double cross_rng_tolerance =
+        sampler_case.at("cross_rng_probability_tolerance").get<double>();
+    for (size_t label = 0; label < observed_counts.size(); ++label) {
+        const double observed_probability =
+            static_cast<double>(observed_counts[label]) / num_samples;
+        const double pytorch_probability =
+            static_cast<double>(pytorch_counts[label]) / num_samples;
+        Check(std::abs(observed_probability - expected_probabilities[label]) <=
+                  probability_tolerance,
+              "weighted sampler class probability should match inverse-frequency mass");
+        Check(std::abs(observed_probability - pytorch_probability) <=
+                  cross_rng_tolerance,
+              "weighted sampler distribution should match the seeded PyTorch reference");
+    }
+}
+
 void WriteParquetWithRowGroupSize(const cyxwiz::ArrowDataset& dataset,
                                   const std::string& path,
                                   int64_t row_group_size) {
@@ -401,8 +529,11 @@ void RunModelTrainValidationSmoke(cyxwiz::IBatcher& train,
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     namespace fs = std::filesystem;
+
+    const auto training_core_fixture = LoadTrainingCoreFixture(
+        argc > 0 ? fs::path(argv[0]) : fs::path{});
 
     Check(cyxwiz::ClampNumWorkersToPlatform(-3) == 0,
           "negative workers should normalize to single-threaded");
@@ -592,8 +723,10 @@ int main() {
         MakeStratifiedDataset(),
         "label",
         /*batch_size=*/4);
-    Check(weighted_sampler_batchers.num_train_samples == 16,
-          "weighted sampler should draw target_count * num_classes train samples");
+    Check(weighted_sampler_batchers.num_train_samples == 9,
+          "weighted sampler should preserve the configured Train epoch length");
+    Check(weighted_sampler_batchers.train->GetNumBatches() == 3,
+          "weighted sampler should preserve the configured optimizer-update count");
     Check(weighted_sampler_batchers.num_val_samples == 3,
           "weighted sampler should not alter validation split");
     Check(weighted_sampler_batchers.num_test_samples == 0,
@@ -617,6 +750,7 @@ int main() {
     }
     Check(weighted_minority_count > 1,
           "weighted sampler should sample minority class rows with replacement");
+    TestWeightedSamplerPyTorchDistribution(training_core_fixture);
 
     auto wide_sampler_config = MakeConfig();
     wide_sampler_config.train_ratio = 0.8f;
@@ -1004,6 +1138,30 @@ int main() {
     Check(multiclass_tensor_accuracy.correct == 2 &&
               multiclass_tensor_accuracy.total == 2,
           "multiclass tensor accuracy must count argmax matches on tensor data");
+
+    const float ignored_scores[] = {
+        0.1f, 0.8f, 0.1f,
+        0.9f, 0.05f, 0.05f,
+        0.7f, 0.2f, 0.1f,
+        0.1f, 0.8f, 0.1f,
+    };
+    const int32_t ignored_targets[] = {1, -100, 0, 2};
+    cyxwiz::Tensor ignored_score_tensor(
+        {4, 3}, ignored_scores, cyxwiz::DataType::Float32);
+    cyxwiz::Tensor ignored_target_tensor(
+        {4}, ignored_targets, cyxwiz::DataType::Int32);
+    const auto ignored_tensor_accuracy =
+        cyxwiz::CountClassificationDecisionScalars(
+            ignored_score_tensor,
+            ignored_target_tensor,
+            4,
+            3,
+            cyxwiz::ClassificationDecisionMode::MulticlassScores,
+            -100);
+    Check(ignored_tensor_accuracy.correct == 2 &&
+              ignored_tensor_accuracy.total == 3,
+          "class-index accuracy must exclude ignored targets from both "
+          "the numerator and denominator");
 
     auto ts_arrow_dataset = MakeTimeSeriesDataset();
     auto ts_arrow_batchers = cyxwiz::BuildArrowTrainingBatchers(

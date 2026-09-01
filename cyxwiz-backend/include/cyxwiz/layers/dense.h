@@ -17,8 +17,12 @@ public:
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
+    // Legacy Layer serialization includes grad_* entries in this map.
+    // New optimizer-facing code should use GetGradients() for an exact
+    // parameter-name -> gradient-name mapping.
     std::map<std::string, Tensor> GetParameters() override;
     void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() const;
     std::string GetName() const override { return "Dense"; }
 
 private:
@@ -30,6 +34,7 @@ private:
     Tensor bias_;         // [out_features]
     Tensor grad_weights_; // Gradient accumulator
     Tensor grad_bias_;    // Gradient accumulator
+    bool has_cached_input_ = false;
 };
 
 } // namespace cyxwiz

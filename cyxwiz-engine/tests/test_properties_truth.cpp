@@ -1082,8 +1082,8 @@ int main() {
         const auto* rate = FindProperty(report, "rate");
         Check(rate != nullptr,
               "Dropout should surface rate truth");
-        Check(HasStatus(*rate, gui::properties_truth::TruthStatus::Missing),
-              "Dropout rate >= 1 should be visible");
+        Check(HasStatus(*rate, gui::properties_truth::TruthStatus::OK),
+              "Dropout rate=1 should remain the executable PyTorch boundary");
     }
 
     {

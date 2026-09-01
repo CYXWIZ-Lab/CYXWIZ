@@ -1,5 +1,7 @@
 #include <cyxwiz/signal_processing.h>
 
+#include "arrayfire_host_materialization.h"
+
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -40,7 +42,12 @@ FFTResult SignalProcessing::FFT(const std::vector<double>& signal, double sample
 
         // Get complex output
         std::vector<af::cfloat> complex_host(n);
-        fft_result.host(complex_host.data());
+        MaterializeArrayFireToHost(
+            fft_result,
+            complex_host.data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "SignalProcessing::FFT",
+            "arrayfire_native");
 
         result.complex_output.resize(n);
         result.magnitude.resize(n);
@@ -164,7 +171,12 @@ FFT2DResult SignalProcessing::FFT2D(const std::vector<std::vector<double>>& imag
 
         // Get complex output
         std::vector<af::cfloat> complex_host(rows * cols);
-        af::transpose(fft_result).host(complex_host.data());
+        MaterializeArrayFireToHost(
+            af::transpose(fft_result),
+            complex_host.data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "SignalProcessing::FFT2D",
+            "row_major_2d");
 
         result.complex_output.resize(rows, std::vector<std::complex<double>>(cols));
         result.magnitude.resize(rows, std::vector<double>(cols));
@@ -247,7 +259,12 @@ std::vector<double> SignalProcessing::IFFT(const std::vector<std::complex<double
         af::array ifft_result = af::ifft(spec);
 
         std::vector<float> real_output(n);
-        af::real(ifft_result).host(real_output.data());
+        MaterializeArrayFireToHost(
+            af::real(ifft_result),
+            real_output.data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "SignalProcessing::IFFT",
+            "arrayfire_native");
 
         std::vector<double> result(n);
         for (int i = 0; i < n; i++) {

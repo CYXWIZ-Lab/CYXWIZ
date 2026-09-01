@@ -195,7 +195,12 @@ void CrashRunRecorder::StartTrainingRun(const TrainingConfiguration& config,
     last_thread_id_ = ThreadIdString();
     failure_reason_.clear();
     terminal_reason_.clear();
+    checkpoint_used_.clear();
+    restored_checkpoint_epoch_ = 0;
+    restored_checkpoint_step_ = 0;
+    active_model_provenance_.clear();
     epoch_ = 0;
+    last_executed_epoch_ = 0;
     batch_ = 0;
     total_batches_ = 0;
     epochs_ = epochs;
@@ -289,6 +294,33 @@ void CrashRunRecorder::MarkBackendEvent(const std::string& source,
     WriteLocked();
 }
 
+void CrashRunRecorder::UpdateLastExecutedEpoch(int epoch) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!active_) {
+        return;
+    }
+    last_executed_epoch_ = std::max(0, epoch);
+    WriteLocked();
+}
+
+void CrashRunRecorder::MarkActiveModelCheckpoint(
+    const std::string& checkpoint_path,
+    int checkpoint_epoch,
+    int checkpoint_step,
+    const std::string& provenance) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!active_) {
+        return;
+    }
+    checkpoint_used_ = checkpoint_path;
+    restored_checkpoint_epoch_ = checkpoint_epoch;
+    restored_checkpoint_step_ = checkpoint_step;
+    active_model_provenance_ = provenance;
+    last_event_time_ = NowIso8601();
+    last_thread_id_ = ThreadIdString();
+    WriteLocked();
+}
+
 void CrashRunRecorder::MarkCompleted() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!active_) {
@@ -366,6 +398,8 @@ std::optional<CrashRunSummary> CrashRunRecorder::LoadLastRun() {
         summary.last_stage = j.value("last_stage", "");
         summary.last_event_time = j.value("last_event_time", "");
         summary.epoch = j.value("epoch", 0);
+        summary.last_executed_epoch =
+            j.value("last_executed_epoch", summary.epoch);
         summary.batch = j.value("batch", 0);
         summary.total_batches = j.value("total_batches", 0);
         summary.epochs = j.value("epochs", 0);
@@ -376,6 +410,13 @@ std::optional<CrashRunSummary> CrashRunRecorder::LoadLastRun() {
         summary.file_path = path.string();
         summary.terminal_reason = j.value("terminal_reason", "");
         summary.failure_reason = j.value("failure_reason", "");
+        summary.checkpoint_used = j.value("checkpoint_used", "");
+        summary.restored_checkpoint_epoch =
+            j.value("restored_checkpoint_epoch", 0);
+        summary.restored_checkpoint_step =
+            j.value("restored_checkpoint_step", 0);
+        summary.active_model_provenance =
+            j.value("active_model_provenance", "");
         summary.panel_events = j.value("panel_events", std::vector<std::string>{});
 
         if (summary.status == "running") {
@@ -410,6 +451,7 @@ void CrashRunRecorder::WriteLocked() {
             {"last_event_time", last_event_time_},
             {"last_thread_id", last_thread_id_},
             {"epoch", epoch_},
+            {"last_executed_epoch", last_executed_epoch_},
             {"batch", batch_},
             {"total_batches", total_batches_},
             {"epochs", epochs_},
@@ -419,6 +461,10 @@ void CrashRunRecorder::WriteLocked() {
             {"accuracy", accuracy_},
             {"failure_reason", failure_reason_},
             {"terminal_reason", terminal_reason_},
+            {"checkpoint_used", checkpoint_used_},
+            {"restored_checkpoint_epoch", restored_checkpoint_epoch_},
+            {"restored_checkpoint_step", restored_checkpoint_step_},
+            {"active_model_provenance", active_model_provenance_},
             {"panel_events", panel_events_}
         };
 

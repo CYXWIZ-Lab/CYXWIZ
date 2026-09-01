@@ -20,6 +20,44 @@ Tensor ReLUModule::Backward(const Tensor& grad_output) {
 }
 
 // ============================================================================
+// PReLUModule Implementation
+// ============================================================================
+
+PReLUModule::PReLUModule(int num_parameters, float init)
+    : activation_(
+          std::make_unique<PReLUActivation>(num_parameters, init))
+    , num_parameters_(num_parameters) {}
+
+Tensor PReLUModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    return activation_->Forward(input);
+}
+
+Tensor PReLUModule::Backward(const Tensor& grad_output) {
+    return activation_->Backward(grad_output, input_cache_);
+}
+
+std::map<std::string, Tensor> PReLUModule::GetParameters() {
+    return {{"alpha", activation_->GetAlpha()}};
+}
+
+void PReLUModule::SetParameters(
+    const std::map<std::string, Tensor>& params) {
+    const auto alpha = params.find("alpha");
+    if (alpha != params.end()) {
+        activation_->SetAlpha(alpha->second);
+    }
+}
+
+std::map<std::string, Tensor> PReLUModule::GetGradients() {
+    return {{"alpha", activation_->GetAlphaGradient()}};
+}
+
+std::string PReLUModule::GetName() const {
+    return "PReLU(num_parameters=" + std::to_string(num_parameters_) + ")";
+}
+
+// ============================================================================
 // SigmoidModule Implementation
 // ============================================================================
 

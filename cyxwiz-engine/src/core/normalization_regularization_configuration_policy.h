@@ -135,9 +135,9 @@ ResolveNormalizationRegularizationConfiguration(
     if (node_type == gui::NodeType::Dropout) {
         if (const std::string* text = FindNonEmpty(parameters, "rate")) {
             const auto value = ParseFiniteDouble(*text);
-            if (!value || *value < 0.0 || *value >= 1.0) {
+            if (!value || *value < 0.0 || *value > 1.0) {
                 return std::string(
-                    "Dropout rate must be a finite number in [0, 1).");
+                    "Dropout rate must be a finite number in [0, 1].");
             }
             configuration.dropout_rate = static_cast<float>(*value);
         }

@@ -7,6 +7,8 @@
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 namespace cyxwiz {
 
@@ -128,8 +130,9 @@ void ROCAUCPanel::RenderROCCurve() {
         if (!roc_result_.thresholds.empty()) {
             // Find closest threshold
             int best_idx = 0;
-            double best_diff = 1e9;
+            double best_diff = std::numeric_limits<double>::infinity();
             for (size_t i = 0; i < roc_result_.thresholds.size(); ++i) {
+                if (!std::isfinite(roc_result_.thresholds[i])) continue;
                 double diff = std::abs(roc_result_.thresholds[i] - selected_threshold_);
                 if (diff < best_diff) {
                     best_diff = diff;
@@ -153,7 +156,16 @@ void ROCAUCPanel::RenderThresholdAnalysis() {
     ImGui::Text(ICON_FA_SLIDERS " Threshold Selection");
     ImGui::Spacing();
 
-    if (ImGui::SliderFloat("Threshold", (float*)&selected_threshold_, 0.0f, 1.0f, "%.3f")) {
+    // Scores may be probabilities or unbounded logits. Preserve the public
+    // Float64 threshold contract instead of forcing a [0, 1] float slider.
+    double edited_threshold = selected_threshold_;
+    if (ImGui::InputDouble(
+            "Threshold", &edited_threshold, 0.0, 0.0, "%.6g")) {
+        if (!std::isfinite(edited_threshold)) {
+            status_message_ = "Threshold must be finite.";
+            return;
+        }
+        selected_threshold_ = edited_threshold;
         // Recompute metrics at new threshold
         std::vector<int> y_true;
         std::vector<double> y_scores;
@@ -169,6 +181,9 @@ void ROCAUCPanel::RenderThresholdAnalysis() {
                 }
             }
             current_metrics_ = ModelEvaluation::ComputeBinaryMetrics(y_true, y_scores, selected_threshold_);
+            if (!current_metrics_.success) {
+                status_message_ = "Error: " + current_metrics_.error_message;
+            }
         }
     }
 
@@ -278,10 +293,17 @@ void ROCAUCPanel::RenderMetrics() {
         ImPlot::SetupAxes("Threshold", "Rate");
         ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 1);
 
-        // Need to reverse since thresholds are descending
-        std::vector<double> thresh_rev(roc_result_.thresholds.rbegin(), roc_result_.thresholds.rend());
-        std::vector<double> tpr_rev(roc_result_.tpr.rbegin(), roc_result_.tpr.rend());
-        std::vector<double> fpr_rev(roc_result_.fpr.rbegin(), roc_result_.fpr.rend());
+        // sklearn starts ROC thresholds with +infinity. Exclude that sentinel
+        // from the finite threshold-axis plot while preserving aligned rates.
+        std::vector<double> thresh_rev;
+        std::vector<double> tpr_rev;
+        std::vector<double> fpr_rev;
+        for (size_t index = roc_result_.thresholds.size(); index-- > 0;) {
+            if (!std::isfinite(roc_result_.thresholds[index])) continue;
+            thresh_rev.push_back(roc_result_.thresholds[index]);
+            tpr_rev.push_back(roc_result_.tpr[index]);
+            fpr_rev.push_back(roc_result_.fpr[index]);
+        }
 
         ImPlot::SetNextLineStyle(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), 2.0f);
         ImPlot::PlotLine("TPR", thresh_rev.data(), tpr_rev.data(), static_cast<int>(thresh_rev.size()));

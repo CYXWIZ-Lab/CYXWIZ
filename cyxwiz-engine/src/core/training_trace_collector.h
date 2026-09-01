@@ -282,6 +282,16 @@ public:
                                float validation_loss,
                                float validation_accuracy,
                                bool is_best_checkpoint);
+    void RecordCheckpointRestored(int epoch,
+                                  const std::string& checkpoint_path,
+                                  float validation_loss,
+                                  float validation_accuracy);
+    void RecordHeldOutTestMetrics(
+        int epoch,
+        float test_loss,
+        float test_accuracy,
+        const std::string& active_model_provenance,
+        const std::string& checkpoint_path);
     void RecordTerminalEvent(const std::string& terminal_status,
                              const std::string& terminal_reason,
                              int epoch,

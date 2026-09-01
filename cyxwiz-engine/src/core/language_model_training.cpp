@@ -677,7 +677,7 @@ std::vector<int64_t> GenerateGreedyTokenIds(
                 "GenerateGreedyTokenIds model must return Float32 [1, seq, vocab] logits");
         }
 
-        const float* data = logits.Data<float>();
+        const float* data = logits.ReadData<float>();
         const std::vector<float> logits_values(data, data + logits.NumElements());
         const int64_t next_token = GreedyNextTokenFromLogits(
             logits_values,

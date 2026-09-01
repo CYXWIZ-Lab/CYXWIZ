@@ -216,6 +216,16 @@ void TestCompatibilityEvaluation() {
         "missing driver evidence must remain unknown");
 
   context = CompatibleMachine();
+  context.devices.front().provider.clear();
+  const auto unknown_provider =
+      EvaluateBackendPackCompatibility(manifest, context);
+  Check(unknown_provider.eligibility == BackendPackEligibility::Unknown &&
+            unknown_provider.rule == BackendPackCompatibilityRule::Provider &&
+            unknown_provider.remediation == BackendPackRemediation::VerifyRoute,
+        "missing provider identity must not bypass provider-specific driver "
+        "constraints");
+
+  context = CompatibleMachine();
   context.devices.front().provider_types = {"opencl-icd"};
   const auto wrong_provider =
       EvaluateBackendPackCompatibility(manifest, context);

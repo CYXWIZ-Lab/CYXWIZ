@@ -43,8 +43,9 @@ std::unique_ptr<Loss> CreateLoss(LossType type, Reduction reduction, float delta
         case LossType::L1:
             return std::make_unique<L1Loss>(reduction);
         case LossType::SmoothL1:
-        case LossType::Huber:
             return std::make_unique<SmoothL1Loss>(delta, reduction);
+        case LossType::Huber:
+            return std::make_unique<HuberLoss>(delta, reduction);
         case LossType::KLDivergence:
             return std::make_unique<KLDivLoss>(reduction);
         case LossType::CosineEmbedding:

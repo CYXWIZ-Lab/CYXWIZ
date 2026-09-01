@@ -7,6 +7,7 @@
 
 #include "cyxwiz/clustering.h"
 #include "arrayfire_backend_utils.h"
+#include "arrayfire_host_materialization.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <queue>
@@ -99,7 +100,12 @@ DBSCANResult Clustering::DBSCAN(
         // (DBSCAN requires sequential cluster expansion which is hard to parallelize)
         std::vector<double> dist_flat(n * n);
         dist_matrix.eval();
-        dist_matrix.host(dist_flat.data());
+        MaterializeArrayFireToHost(
+            dist_matrix,
+            dist_flat.data(),
+            ArrayFireHostSyncCategory::AlgorithmCpuPath,
+            "Clustering::DBSCAN::DistanceMatrix",
+            "arrayfire_column_major");
 
         // Initialize labels
         result.labels.assign(n, -1);  // -1 = unvisited/noise

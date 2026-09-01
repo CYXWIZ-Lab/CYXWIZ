@@ -10,12 +10,14 @@
 namespace cyxwiz {
 
 enum class BackendFallbackReason {
+    BackendUnavailable,
     GpuBackendException,
     ArrayFireJitCompileFailure,
     CudaJitParamOverflow,
     GpuOutOfMemory,
     UnsupportedDtype,
     UnsupportedShape,
+    UnsupportedOperation,
     BackendCompileTimeout,
     BackendInternalError,
 };
@@ -34,6 +36,12 @@ enum class ArrayFireHostSyncCategory {
     LayerCpuPath,
     OptimizerCpuPath,
     CheckpointOutput,
+    AlgorithmCpuPath,
+    OutputMaterialization,
+    LossCpuPath,
+    LossInputValidation,
+    MetricCpuPath,
+    MetricInputValidation,
 };
 
 struct ArrayFireHostSyncAttribution {

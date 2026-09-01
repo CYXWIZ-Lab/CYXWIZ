@@ -4,6 +4,7 @@
 #include "compiled_graph_plan.h"
 #include "dataset_partitions.h"
 #include "metric_learning_graph_contract.h"
+#include "training_parameter_contract.h"
 #include <core/regression_target_transform.h>
 #include "../gui/node_editor.h"
 #include "../preprocessing/preprocessing_config.h"
@@ -467,7 +468,7 @@ struct TrainingConfiguration {
     int log_interval = 10;              // batch metric/log cadence; 0 samples first/final only
     int validation_freq = 1;            // epoch-based validation cadence; final epoch always validates
     int dataloader_seed = 42;           // deterministic DataLoader split/shuffle seed
-    int grad_accum_steps = 1;           // optimizer step every N backward passes
+    int grad_accum_steps = training_contract::kGradientAccumulationStepsDefault;
     bool balance_classes = false;       // rebalance training split batches when supported
     std::string balance_mode = "none";  // none|oversample|undersample|weighted_sampler
     std::string balance_target = "max"; // max|median|min|number

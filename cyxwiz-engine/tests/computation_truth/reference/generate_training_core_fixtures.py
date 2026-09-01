@@ -1,0 +1,3927 @@
+#!/usr/bin/env python3
+"""Generate deterministic PyTorch fixtures for core CyxWiz training math."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from pathlib import Path
+from typing import Any
+
+import torch
+import torch.nn.functional as functional
+
+
+SCHEMA_VERSION = 1
+DEFAULT_OUTPUT = (
+    Path(__file__).resolve().parent.parent
+    / "fixtures"
+    / "training_core_pytorch.json"
+)
+
+
+def tensor_fixture(tensor: torch.Tensor) -> dict[str, Any]:
+    value = tensor.detach().cpu().contiguous()
+    return {
+        "shape": list(value.shape),
+        "values": value.reshape(-1).tolist(),
+    }
+
+
+def regression_loss_matrix() -> list[dict[str, Any]]:
+    definitions = [
+        ("mse_none", "mse", "none", 0.0),
+        ("mse_mean", "mse", "mean", 0.0),
+        ("mse_sum", "mse", "sum", 0.0),
+        ("l1_none", "l1", "none", 0.0),
+        ("l1_mean", "l1", "mean", 0.0),
+        ("l1_sum", "l1", "sum", 0.0),
+        ("smooth_l1_beta_zero_none", "smooth_l1", "none", 0.0),
+        ("smooth_l1_beta_half_mean", "smooth_l1", "mean", 0.5),
+        ("smooth_l1_beta_two_sum", "smooth_l1", "sum", 2.0),
+        ("huber_delta_half_none", "huber", "none", 0.5),
+        ("huber_delta_one_mean", "huber", "mean", 1.0),
+        ("huber_delta_two_sum", "huber", "sum", 2.0),
+    ]
+    prediction_values = [[-3.0, -2.0, -0.5], [0.0, 0.5, 2.0]]
+    target_values = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+    cases: list[dict[str, Any]] = []
+    for name, loss_type, reduction, parameter in definitions:
+        predictions = torch.tensor(
+            prediction_values, dtype=torch.float32, requires_grad=True
+        )
+        targets = torch.tensor(target_values, dtype=torch.float32)
+        if loss_type == "mse":
+            loss = functional.mse_loss(predictions, targets, reduction=reduction)
+            operation = "torch.nn.functional.mse_loss"
+        elif loss_type == "l1":
+            loss = functional.l1_loss(predictions, targets, reduction=reduction)
+            operation = "torch.nn.functional.l1_loss"
+        elif loss_type == "smooth_l1":
+            loss = functional.smooth_l1_loss(
+                predictions, targets, reduction=reduction, beta=parameter
+            )
+            operation = "torch.nn.functional.smooth_l1_loss"
+        else:
+            loss = functional.huber_loss(
+                predictions, targets, reduction=reduction, delta=parameter
+            )
+            operation = "torch.nn.functional.huber_loss"
+        (loss.sum() if reduction == "none" else loss).backward()
+        cases.append({
+            "name": name,
+            "operation": operation,
+            "loss_type": loss_type,
+            "dtype": "float32",
+            "reduction": reduction,
+            "parameter": parameter,
+            "tolerance": {"atol": 1.0e-6, "rtol": 1.0e-6},
+            "predictions": tensor_fixture(predictions),
+            "targets": tensor_fixture(targets),
+            "expected": {
+                "loss": tensor_fixture(
+                    loss.reshape(1) if loss.ndim == 0 else loss
+                ),
+                "prediction_gradient": tensor_fixture(predictions.grad),
+            },
+        })
+    return cases
+
+
+def probability_loss_matrix() -> list[dict[str, Any]]:
+    definitions = [
+        {
+            "name": "bce_scalar_sum",
+            "loss_type": "bce",
+            "reduction": "sum",
+            "predictions": 0.25,
+            "targets": 1.0,
+        },
+        {
+            "name": "bce_rank2_none_fractional_targets",
+            "loss_type": "bce",
+            "reduction": "none",
+            "predictions": [[0.8, 0.2], [0.35, 0.65]],
+            "targets": [[1.0, 0.0], [0.25, 0.75]],
+        },
+        {
+            "name": "bce_boundary_mean",
+            "loss_type": "bce",
+            "reduction": "mean",
+            "predictions": [0.0, 1.0, 0.0, 1.0],
+            "targets": [1.0, 0.0, 0.0, 1.0],
+            "tolerance": {"atol": 1.0e-4, "rtol": 1.0e-6},
+        },
+        {
+            "name": "bce_rank3_sum",
+            "loss_type": "bce",
+            "reduction": "sum",
+            "predictions": [
+                [[0.1, 0.9], [0.3, 0.7]],
+                [[0.6, 0.4], [0.05, 0.95]],
+            ],
+            "targets": [
+                [[0.0, 1.0], [1.0, 0.0]],
+                [[0.25, 0.75], [0.0, 1.0]],
+            ],
+        },
+        {
+            "name": "bce_logits_rank2_none",
+            "loss_type": "bce_with_logits",
+            "reduction": "none",
+            "pos_weight": 1.0,
+            "predictions": [[2.0, 0.0, -1.0], [0.5, 1.5, -0.5]],
+            "targets": [[1.0, 0.0, 1.0], [0.25, 0.75, 0.5]],
+        },
+        {
+            "name": "bce_logits_fractional_mean_weighted",
+            "loss_type": "bce_with_logits",
+            "reduction": "mean",
+            "pos_weight": 4.0,
+            "predictions": [[0.0, 2.0], [-2.0, 0.5]],
+            "targets": [[1.0, 0.0], [0.25, 0.75]],
+        },
+        {
+            "name": "bce_logits_extreme_sum_weighted",
+            "loss_type": "bce_with_logits",
+            "reduction": "sum",
+            "pos_weight": 2.5,
+            "predictions": [-100.0, 100.0, 80.0, -80.0],
+            "targets": [1.0, 0.0, 1.0, 0.0],
+            "tolerance": {"atol": 1.0e-4, "rtol": 1.0e-6},
+        },
+        {
+            "name": "bce_logits_rank4_none",
+            "loss_type": "bce_with_logits",
+            "reduction": "none",
+            "pos_weight": 1.75,
+            "predictions": [[[[2.0, -1.0]], [[0.0, 0.5]]]],
+            "targets": [[[[1.0, 0.0]], [[0.25, 0.75]]]],
+        },
+        {
+            "name": "kl_probability_none_zero_target",
+            "loss_type": "kl_div",
+            "reduction": "none",
+            "log_target": False,
+            "predictions": [
+                [-1.6094379, -0.6931472, -1.2039728],
+                [-0.35667494, -2.3025851, -1.6094379],
+            ],
+            "targets": [[0.1, 0.7, 0.2], [0.0, 0.25, 0.75]],
+        },
+        {
+            "name": "kl_probability_mean",
+            "loss_type": "kl_div",
+            "reduction": "mean",
+            "log_target": False,
+            "predictions": [[-2.0, -0.5], [-1.0, -3.0]],
+            "targets": [[0.0, 1.0], [0.3, 0.7]],
+        },
+        {
+            "name": "kl_probability_rank3_sum",
+            "loss_type": "kl_div",
+            "reduction": "sum",
+            "log_target": False,
+            "predictions": [
+                [[-1.0, -2.0], [-0.5, -3.0]],
+                [[-2.5, -0.25], [-1.5, -0.75]],
+            ],
+            "targets": [
+                [[0.4, 0.6], [0.0, 1.0]],
+                [[0.25, 0.75], [0.8, 0.2]],
+            ],
+        },
+        {
+            "name": "kl_log_target_rank2_none",
+            "loss_type": "kl_div",
+            "reduction": "none",
+            "log_target": True,
+            "predictions": [[-1.5, -0.25], [-2.0, -0.75]],
+            "targets": [[-1.6094379, -0.22314355], [-0.6931472, -0.6931472]],
+        },
+        {
+            "name": "kl_log_target_extreme_mean",
+            "loss_type": "kl_div",
+            "reduction": "mean",
+            "log_target": True,
+            "predictions": [-3.0, -0.5, -2.0],
+            "targets": [-100.0, 0.0, -2.0],
+        },
+    ]
+    cases: list[dict[str, Any]] = []
+    for definition in definitions:
+        predictions = torch.tensor(
+            definition["predictions"], dtype=torch.float32,
+            requires_grad=True,
+        )
+        targets = torch.tensor(definition["targets"], dtype=torch.float32)
+        reduction = definition["reduction"]
+        loss_type = definition["loss_type"]
+        if loss_type == "bce":
+            loss = functional.binary_cross_entropy(
+                predictions, targets, reduction=reduction
+            )
+            operation = "torch.nn.functional.binary_cross_entropy"
+        elif loss_type == "bce_with_logits":
+            pos_weight = torch.tensor(
+                definition["pos_weight"], dtype=torch.float32
+            )
+            loss = functional.binary_cross_entropy_with_logits(
+                predictions,
+                targets,
+                pos_weight=pos_weight,
+                reduction=reduction,
+            )
+            operation = (
+                "torch.nn.functional.binary_cross_entropy_with_logits"
+            )
+        else:
+            loss = functional.kl_div(
+                predictions,
+                targets,
+                reduction=reduction,
+                log_target=definition["log_target"],
+            )
+            operation = "torch.nn.functional.kl_div"
+        (loss.sum() if reduction == "none" else loss).backward()
+        cases.append({
+            "name": definition["name"],
+            "operation": operation,
+            "loss_type": loss_type,
+            "dtype": "float32",
+            "reduction": reduction,
+            "pos_weight": definition.get("pos_weight", 1.0),
+            "log_target": definition.get("log_target", False),
+            "tolerance": definition.get(
+                "tolerance", {"atol": 1.0e-6, "rtol": 1.0e-6}
+            ),
+            "predictions": tensor_fixture(predictions),
+            "targets": tensor_fixture(targets),
+            "expected": {
+                "loss": tensor_fixture(
+                    loss.reshape(1) if loss.ndim == 0 else loss
+                ),
+                "prediction_gradient": tensor_fixture(predictions.grad),
+            },
+        })
+    return cases
+
+
+def overlap_loss_matrix() -> list[dict[str, Any]]:
+    definitions = [
+        {
+            "name": "soft_dice_scalar_none",
+            "loss_type": "soft_dice",
+            "reduction": "none",
+            "smooth": 1.0,
+            "predictions": 0.8,
+            "targets": 1.0,
+        },
+        {
+            "name": "soft_dice_rank2_mean",
+            "loss_type": "soft_dice",
+            "reduction": "mean",
+            "smooth": 1.0,
+            "predictions": [[0.8, 0.2, 0.4], [0.1, 0.9, 0.6]],
+            "targets": [[1.0, 0.0, 0.0], [0.0, 1.0, 1.0]],
+        },
+        {
+            "name": "soft_dice_rank4_sum",
+            "loss_type": "soft_dice",
+            "reduction": "sum",
+            "smooth": 0.5,
+            "predictions": [
+                [[[0.9, 0.1], [0.4, 0.7]]],
+                [[[0.2, 0.8], [0.6, 0.3]]],
+            ],
+            "targets": [
+                [[[1.0, 0.0], [0.0, 1.0]]],
+                [[[0.0, 1.0], [1.0, 0.0]]],
+            ],
+        },
+        {
+            "name": "soft_dice_degenerate_zero_mask",
+            "loss_type": "soft_dice",
+            "reduction": "mean",
+            "smooth": 1.0,
+            "predictions": [[0.0, 0.0], [0.0, 0.0]],
+            "targets": [[0.0, 0.0], [0.0, 0.0]],
+        },
+        {
+            "name": "tversky_rank1_sum",
+            "loss_type": "tversky",
+            "reduction": "sum",
+            "smooth": 1.0,
+            "alpha": 0.3,
+            "beta": 0.7,
+            "predictions": [0.8, 0.2, 0.4, 0.9],
+            "targets": [1.0, 0.0, 0.0, 1.0],
+        },
+        {
+            "name": "tversky_rank3_none",
+            "loss_type": "tversky",
+            "reduction": "none",
+            "smooth": 0.25,
+            "alpha": 0.2,
+            "beta": 0.8,
+            "predictions": [
+                [[0.9, 0.1], [0.4, 0.7]],
+                [[0.2, 0.8], [0.6, 0.3]],
+            ],
+            "targets": [
+                [[1.0, 0.0], [0.0, 1.0]],
+                [[0.0, 1.0], [1.0, 0.0]],
+            ],
+        },
+        {
+            "name": "tversky_rank4_mean",
+            "loss_type": "tversky",
+            "reduction": "mean",
+            "smooth": 0.75,
+            "alpha": 0.6,
+            "beta": 0.4,
+            "predictions": [
+                [[[0.7, 0.3]], [[0.1, 0.9]]],
+                [[[0.4, 0.6]], [[0.8, 0.2]]],
+            ],
+            "targets": [
+                [[[1.0, 0.0]], [[0.0, 1.0]]],
+                [[[0.0, 1.0]], [[1.0, 0.0]]],
+            ],
+        },
+        {
+            "name": "tversky_degenerate_zero_mask",
+            "loss_type": "tversky",
+            "reduction": "none",
+            "smooth": 1.0,
+            "alpha": 0.3,
+            "beta": 0.7,
+            "predictions": [[0.0, 0.0], [0.0, 0.0]],
+            "targets": [[0.0, 0.0], [0.0, 0.0]],
+        },
+        {
+            "name": "jaccard_rank1_none",
+            "loss_type": "jaccard",
+            "reduction": "none",
+            "smooth": 1.0,
+            "predictions": [0.8, 0.2, 0.4, 0.9],
+            "targets": [1.0, 0.0, 0.0, 1.0],
+        },
+        {
+            "name": "jaccard_rank2_sum_zero_smooth",
+            "loss_type": "jaccard",
+            "reduction": "sum",
+            "smooth": 0.0,
+            "predictions": [[0.8, 0.2, 0.4], [0.1, 0.9, 0.6]],
+            "targets": [[1.0, 0.0, 0.0], [0.0, 1.0, 1.0]],
+        },
+        {
+            "name": "jaccard_rank4_mean",
+            "loss_type": "jaccard",
+            "reduction": "mean",
+            "smooth": 0.5,
+            "predictions": [
+                [[[0.9, 0.1], [0.4, 0.7]]],
+                [[[0.2, 0.8], [0.6, 0.3]]],
+            ],
+            "targets": [
+                [[[1.0, 0.0], [0.0, 1.0]]],
+                [[[0.0, 1.0], [1.0, 0.0]]],
+            ],
+        },
+        {
+            "name": "jaccard_degenerate_zero_mask",
+            "loss_type": "jaccard",
+            "reduction": "sum",
+            "smooth": 1.0,
+            "predictions": [[0.0, 0.0], [0.0, 0.0]],
+            "targets": [[0.0, 0.0], [0.0, 0.0]],
+        },
+    ]
+    cases: list[dict[str, Any]] = []
+    for definition in definitions:
+        predictions = torch.tensor(
+            definition["predictions"], dtype=torch.float32,
+            requires_grad=True,
+        )
+        targets = torch.tensor(definition["targets"], dtype=torch.float32)
+        rows = predictions.reshape(
+            predictions.shape[0] if predictions.ndim > 1 else 1, -1
+        )
+        target_rows = targets.reshape(rows.shape)
+        intersection = (rows * target_rows).sum(dim=1)
+        prediction_sum = rows.sum(dim=1)
+        target_sum = target_rows.sum(dim=1)
+        smooth = definition["smooth"]
+        loss_type = definition["loss_type"]
+        if loss_type == "soft_dice":
+            per_sample = 1.0 - (
+                (2.0 * intersection + smooth) /
+                (prediction_sum + target_sum + smooth)
+            )
+            operation = "pytorch_explicit_soft_dice_loss"
+        elif loss_type == "tversky":
+            false_positive = (rows * (1.0 - target_rows)).sum(dim=1)
+            false_negative = ((1.0 - rows) * target_rows).sum(dim=1)
+            per_sample = 1.0 - (
+                (intersection + smooth) /
+                (
+                    intersection +
+                    definition["alpha"] * false_positive +
+                    definition["beta"] * false_negative + smooth
+                )
+            )
+            operation = "pytorch_explicit_tversky_loss"
+        else:
+            union = prediction_sum + target_sum - intersection
+            per_sample = 1.0 - (intersection + smooth) / (union + smooth)
+            operation = "pytorch_explicit_jaccard_loss"
+        reduction = definition["reduction"]
+        if reduction == "mean":
+            loss = per_sample.mean()
+        elif reduction == "sum":
+            loss = per_sample.sum()
+        else:
+            loss = per_sample
+        (loss.sum() if reduction == "none" else loss).backward()
+        cases.append({
+            "name": definition["name"],
+            "operation": operation,
+            "loss_type": loss_type,
+            "dtype": "float32",
+            "reduction": reduction,
+            "smooth": smooth,
+            "alpha": definition.get("alpha", 0.5),
+            "beta": definition.get("beta", 0.5),
+            "tolerance": {"atol": 1.0e-5, "rtol": 1.0e-5},
+            "predictions": tensor_fixture(predictions),
+            "targets": tensor_fixture(targets),
+            "expected": {
+                "loss": tensor_fixture(
+                    loss.reshape(1) if loss.ndim == 0 else loss
+                ),
+                "prediction_gradient": tensor_fixture(predictions.grad),
+            },
+        })
+    return cases
+
+
+def metric_learning_loss_matrix() -> list[dict[str, Any]]:
+    definitions = [
+        {
+            "name": "cosine_embedding_mixed_none",
+            "loss_type": "cosine_embedding",
+            "reduction": "none",
+            "margin": 0.2,
+            "x1": [[1.0, 0.5, -0.2], [0.2, 0.9, 0.1], [1.0, 0.0, 0.0]],
+            "x2": [[0.8, 0.3, -0.4], [0.7, 0.1, 0.2], [-1.0, 0.0, 0.0]],
+            "labels": [1.0, -1.0, -1.0],
+        },
+        {
+            "name": "cosine_embedding_zero_mean",
+            "loss_type": "cosine_embedding",
+            "reduction": "mean",
+            "margin": -0.1,
+            "x1": [[0.0, 0.0], [0.3, -0.4]],
+            "x2": [[0.0, 0.0], [-0.2, 0.7]],
+            "labels": [1.0, -1.0],
+        },
+        {
+            "name": "cosine_embedding_similar_sum",
+            "loss_type": "cosine_embedding",
+            "reduction": "sum",
+            "margin": 0.0,
+            "x1": [[0.1, 0.3, -0.5, 0.7]],
+            "x2": [[0.6, -0.2, -0.1, 0.4]],
+            "labels": [1.0],
+        },
+        {
+            "name": "contrastive_mixed_none",
+            "loss_type": "contrastive",
+            "reduction": "none",
+            "margin": 1.5,
+            "x1": [[1.0, 0.0], [0.0, 0.0], [2.0, 1.0]],
+            "x2": [[0.5, 0.0], [0.4, 0.3], [0.0, 1.0]],
+            "labels": [0.0, 1.0, 1.0],
+        },
+        {
+            "name": "contrastive_zero_distance_mean",
+            "loss_type": "contrastive",
+            "reduction": "mean",
+            "margin": 2.0,
+            "x1": [[0.0, 0.0, 0.0], [0.5, -0.2, 0.4]],
+            "x2": [[0.0, 0.0, 0.0], [0.1, 0.2, -0.3]],
+            "labels": [1.0, 0.0],
+        },
+        {
+            "name": "contrastive_boundary_sum",
+            "loss_type": "contrastive",
+            "reduction": "sum",
+            "margin": 1.0,
+            "x1": [[1.0, 0.0], [0.25, -0.5]],
+            "x2": [[0.0, 0.0], [-0.25, 0.5]],
+            "labels": [1.0, 0.0],
+        },
+        {
+            "name": "triplet_euclidean_mixed_none",
+            "loss_type": "triplet",
+            "distance_type": "euclidean",
+            "reduction": "none",
+            "margin": 1.0,
+            "anchor": [[0.0, 0.0, 0.0], [1.0, 0.5, -0.5], [0.2, 0.4, 0.6]],
+            "positive": [[0.4, 0.0, 0.0], [1.1, 0.4, -0.4], [0.3, 0.5, 0.7]],
+            "negative": [[1.0, 0.0, 0.0], [-1.0, -1.0, 0.0], [0.25, 0.45, 0.65]],
+        },
+        {
+            "name": "triplet_euclidean_coincident_mean",
+            "loss_type": "triplet",
+            "distance_type": "euclidean",
+            "reduction": "mean",
+            "margin": 2.0,
+            "anchor": [[0.0, 0.0], [0.5, -0.5]],
+            "positive": [[0.0, 0.0], [0.5, -0.5]],
+            "negative": [[1.0, 0.0], [0.0, -0.5]],
+        },
+        {
+            "name": "triplet_euclidean_sum",
+            "loss_type": "triplet",
+            "distance_type": "euclidean",
+            "reduction": "sum",
+            "margin": 0.75,
+            "anchor": [[0.2, -0.1, 0.4, 0.8]],
+            "positive": [[0.3, 0.0, 0.2, 0.7]],
+            "negative": [[-0.4, 0.5, 0.9, -0.2]],
+        },
+        {
+            "name": "triplet_cosine_mixed_none",
+            "loss_type": "triplet",
+            "distance_type": "cosine",
+            "reduction": "none",
+            "margin": 0.4,
+            "anchor": [[1.0, 0.2, -0.3], [0.1, 0.9, 0.2], [0.7, -0.1, 0.4]],
+            "positive": [[0.8, 0.1, -0.2], [0.0, 0.8, 0.3], [-0.6, 0.2, 0.1]],
+            "negative": [[-0.2, 0.8, 0.1], [0.2, 0.7, 0.4], [0.6, -0.2, 0.5]],
+        },
+        {
+            "name": "triplet_cosine_zero_mean",
+            "loss_type": "triplet",
+            "distance_type": "cosine",
+            "reduction": "mean",
+            "margin": 0.5,
+            "anchor": [[0.0, 0.0], [0.4, -0.3]],
+            "positive": [[0.0, 0.0], [0.3, -0.2]],
+            "negative": [[0.2, 0.1], [-0.4, 0.5]],
+        },
+        {
+            "name": "triplet_cosine_sum",
+            "loss_type": "triplet",
+            "distance_type": "cosine",
+            "reduction": "sum",
+            "margin": 0.25,
+            "anchor": [[0.5, -0.2, 0.1, 0.6]],
+            "positive": [[0.4, -0.1, 0.2, 0.7]],
+            "negative": [[-0.3, 0.8, -0.2, 0.1]],
+        },
+    ]
+    cases: list[dict[str, Any]] = []
+    for definition in definitions:
+        reduction = definition["reduction"]
+        margin = definition["margin"]
+        loss_type = definition["loss_type"]
+        case = {
+            "name": definition["name"],
+            "loss_type": loss_type,
+            "dtype": "float32",
+            "reduction": reduction,
+            "margin": margin,
+            "tolerance": {"atol": 2.0e-5, "rtol": 2.0e-5},
+        }
+        if loss_type in {"cosine_embedding", "contrastive"}:
+            x1 = torch.tensor(
+                definition["x1"], dtype=torch.float32, requires_grad=True
+            )
+            x2 = torch.tensor(
+                definition["x2"], dtype=torch.float32, requires_grad=True
+            )
+            labels = torch.tensor(definition["labels"], dtype=torch.float32)
+            if loss_type == "cosine_embedding":
+                loss = functional.cosine_embedding_loss(
+                    x1, x2, labels, margin=margin, reduction=reduction
+                )
+                case["operation"] = "torch.nn.functional.cosine_embedding_loss"
+            else:
+                distances = torch.linalg.vector_norm(x1 - x2, dim=1)
+                per_sample = (
+                    (1.0 - labels) * distances.square() +
+                    labels * torch.relu(margin - distances).square()
+                )
+                loss = (
+                    per_sample.mean() if reduction == "mean" else
+                    per_sample.sum() if reduction == "sum" else
+                    per_sample
+                )
+                case["operation"] = "pytorch_explicit_contrastive_loss"
+            (loss.sum() if reduction == "none" else loss).backward()
+            case.update({
+                "x1": tensor_fixture(x1),
+                "x2": tensor_fixture(x2),
+                "labels": tensor_fixture(labels),
+                "expected": {
+                    "loss": tensor_fixture(
+                        loss.reshape(1) if loss.ndim == 0 else loss
+                    ),
+                    "x1_gradient": tensor_fixture(x1.grad),
+                    "x2_gradient": tensor_fixture(x2.grad),
+                },
+            })
+        else:
+            anchor = torch.tensor(
+                definition["anchor"], dtype=torch.float32,
+                requires_grad=True,
+            )
+            positive = torch.tensor(
+                definition["positive"], dtype=torch.float32,
+                requires_grad=True,
+            )
+            negative = torch.tensor(
+                definition["negative"], dtype=torch.float32,
+                requires_grad=True,
+            )
+            distance_type = definition["distance_type"]
+            if distance_type == "euclidean":
+                loss = functional.triplet_margin_loss(
+                    anchor, positive, negative, margin=margin, p=2.0,
+                    eps=1.0e-6, swap=False, reduction=reduction,
+                )
+                case["operation"] = "torch.nn.functional.triplet_margin_loss"
+            else:
+                def smooth_cosine_distance(
+                    left: torch.Tensor, right: torch.Tensor
+                ) -> torch.Tensor:
+                    left_norm = torch.sqrt(
+                        left.square().sum(dim=1) + 1.0e-8
+                    )
+                    right_norm = torch.sqrt(
+                        right.square().sum(dim=1) + 1.0e-8
+                    )
+                    return 1.0 - (
+                        (left * right).sum(dim=1) /
+                        (left_norm * right_norm)
+                    )
+
+                per_sample = torch.relu(
+                    smooth_cosine_distance(anchor, positive) -
+                    smooth_cosine_distance(anchor, negative) + margin
+                )
+                loss = (
+                    per_sample.mean() if reduction == "mean" else
+                    per_sample.sum() if reduction == "sum" else
+                    per_sample
+                )
+                case["operation"] = "pytorch_explicit_smooth_cosine_triplet_loss"
+            (loss.sum() if reduction == "none" else loss).backward()
+            case.update({
+                "distance_type": distance_type,
+                "anchor": tensor_fixture(anchor),
+                "positive": tensor_fixture(positive),
+                "negative": tensor_fixture(negative),
+                "expected": {
+                    "loss": tensor_fixture(
+                        loss.reshape(1) if loss.ndim == 0 else loss
+                    ),
+                    "anchor_gradient": tensor_fixture(anchor.grad),
+                    "positive_gradient": tensor_fixture(positive.grad),
+                    "negative_gradient": tensor_fixture(negative.grad),
+                },
+            })
+        cases.append(case)
+    return cases
+
+
+def metric_learning_metric_matrix() -> dict[str, list[dict[str, Any]]]:
+    pair_definitions = [
+        {
+            "name": "contrastive_pair_rank2",
+            "convention": "contrastive_zero_similar",
+            "threshold": 0.5,
+            "left": [
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [1.0, 1.0],
+                [2.0, 2.0],
+            ],
+            "right": [
+                [0.1, 0.0],
+                [2.0, 0.0],
+                [1.2, 1.0],
+                [2.0, 4.0],
+            ],
+            "labels": [0.0, 1.0, 0.0, 1.0],
+        },
+        {
+            "name": "cosine_convention_pair_rank3",
+            "convention": "cosine_one_similar",
+            "threshold": 1.0,
+            "left": [
+                [[0.0, 0.0], [0.0, 0.0]],
+                [[1.0, 1.0], [1.0, 1.0]],
+                [[-1.0, 0.0], [1.0, 0.0]],
+            ],
+            "right": [
+                [[0.25, 0.0], [0.0, 0.0]],
+                [[2.0, 1.0], [1.0, 1.0]],
+                [[-3.0, 0.0], [1.0, 0.0]],
+            ],
+            "labels": [1.0, 1.0, -1.0],
+        },
+    ]
+    pair_cases: list[dict[str, Any]] = []
+    for definition in pair_definitions:
+        left = torch.tensor(definition["left"], dtype=torch.float32)
+        right = torch.tensor(definition["right"], dtype=torch.float32)
+        labels = torch.tensor(definition["labels"], dtype=torch.float32)
+        distances = torch.linalg.vector_norm(
+            (left - right).flatten(start_dim=1), dim=1
+        )
+        if definition["convention"] == "contrastive_zero_similar":
+            similar = labels == 0.0
+        else:
+            similar = labels == 1.0
+        predicted_similar = distances <= definition["threshold"]
+        positive = distances[similar]
+        negative = distances[~similar]
+        pair_cases.append({
+            "name": definition["name"],
+            "operation": "torch.linalg.vector_norm + threshold agreement",
+            "dtype": "float32",
+            "convention": definition["convention"],
+            "threshold": definition["threshold"],
+            "tolerance": {"atol": 2.0e-6, "rtol": 2.0e-6},
+            "left": tensor_fixture(left),
+            "right": tensor_fixture(right),
+            "labels": tensor_fixture(labels),
+            "expected": {
+                "pair_count": int(left.shape[0]),
+                "accuracy": float(
+                    (predicted_similar == similar).to(torch.float64).mean()
+                ),
+                "positive_count": int(similar.sum()),
+                "negative_count": int((~similar).sum()),
+                "positive_distance_mean": (
+                    float(positive.to(torch.float64).mean())
+                    if positive.numel() else 0.0
+                ),
+                "negative_distance_mean": (
+                    float(negative.to(torch.float64).mean())
+                    if negative.numel() else 0.0
+                ),
+            },
+        })
+
+    retrieval_definitions = [
+        {
+            "name": "retrieval_rank2_k1",
+            "embeddings": [
+                [0.0, 0.0],
+                [0.1, 0.0],
+                [5.0, 5.0],
+                [5.1, 5.0],
+                [0.0, 5.0],
+            ],
+            "class_ids": [1, 1, 2, 2, 3],
+            "k": 1,
+        },
+        {
+            "name": "retrieval_rank3_stable_ties",
+            "embeddings": [
+                [[0.0, 0.0]],
+                [[1.0, 0.0]],
+                [[-1.0, 0.0]],
+                [[3.0, 0.0]],
+            ],
+            "class_ids": [1, 2, 1, 2],
+            "k": 3,
+        },
+    ]
+    retrieval_cases: list[dict[str, Any]] = []
+    for definition in retrieval_definitions:
+        embeddings = torch.tensor(
+            definition["embeddings"], dtype=torch.float32
+        )
+        class_ids = torch.tensor(definition["class_ids"], dtype=torch.int64)
+        flattened = embeddings.flatten(start_dim=1)
+        distances = torch.cdist(flattened, flattened, p=2.0)
+        sample_count = embeddings.shape[0]
+        effective_k = min(definition["k"], sample_count - 1)
+        recall_hits = 0
+        reciprocal_rank_sum = 0.0
+        nearest_match_sum = 0
+        for query in range(sample_count):
+            order = torch.argsort(distances[query], stable=True).tolist()
+            order = [candidate for candidate in order if candidate != query]
+            first_relevant_rank = 0
+            for rank, candidate in enumerate(order, start=1):
+                if class_ids[candidate] == class_ids[query]:
+                    first_relevant_rank = rank
+                    break
+            if 0 < first_relevant_rank <= effective_k:
+                recall_hits += 1
+            if first_relevant_rank > 0:
+                reciprocal_rank_sum += 1.0 / first_relevant_rank
+            if order and class_ids[order[0]] == class_ids[query]:
+                nearest_match_sum += 1
+        retrieval_cases.append({
+            "name": definition["name"],
+            "operation": "torch.cdist + stable argsort retrieval ranks",
+            "dtype": "float32",
+            "class_id_dtype": "int64",
+            "k": definition["k"],
+            "tolerance": {"atol": 2.0e-6, "rtol": 2.0e-6},
+            "embeddings": tensor_fixture(embeddings),
+            "class_ids": tensor_fixture(class_ids),
+            "expected": {
+                "query_count": sample_count,
+                "effective_k": effective_k,
+                "recall_at_k": recall_hits / sample_count,
+                "mean_reciprocal_rank": (
+                    reciprocal_rank_sum / sample_count
+                ),
+                "nearest_neighbor_class_agreement": (
+                    nearest_match_sum / sample_count
+                ),
+            },
+        })
+    return {
+        "pair_cases": pair_cases,
+        "retrieval_cases": retrieval_cases,
+    }
+
+
+def metric_pair_linear_multibatch_sgd_case() -> dict[str, Any]:
+    model = torch.nn.Linear(2, 2, bias=True)
+    with torch.no_grad():
+        model.weight.copy_(torch.tensor(
+            [[0.35, -0.20], [0.10, 0.45]], dtype=torch.float32
+        ))
+        model.bias.copy_(torch.tensor([0.05, -0.15], dtype=torch.float32))
+    initial = {
+        "weight": tensor_fixture(model.weight),
+        "bias": tensor_fixture(model.bias),
+    }
+    learning_rate = 0.04
+    margin = 1.25
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    definitions = [
+        {
+            "input_a": [[1.0, 0.0], [0.2, 0.8]],
+            "input_b": [[0.8, 0.1], [-0.4, 0.6]],
+            "labels": [0.0, 1.0],
+        },
+        {
+            "input_a": [[0.5, -0.3], [0.1, 0.9], [-0.7, 0.4]],
+            "input_b": [[-0.2, 0.6], [0.0, 0.7], [0.8, -0.1]],
+            "labels": [1.0, 0.0, 1.0],
+        },
+    ]
+    steps = []
+    for definition in definitions:
+        input_a = torch.tensor(
+            definition["input_a"], dtype=torch.float32, requires_grad=True
+        )
+        input_b = torch.tensor(
+            definition["input_b"], dtype=torch.float32, requires_grad=True
+        )
+        labels = torch.tensor(definition["labels"], dtype=torch.float32)
+        optimizer.zero_grad(set_to_none=True)
+        embedding_a = model(input_a)
+        embedding_b = model(input_b)
+        embedding_a.retain_grad()
+        embedding_b.retain_grad()
+        distances = torch.linalg.vector_norm(
+            embedding_a - embedding_b, dim=1
+        )
+        loss = (
+            (1.0 - labels) * distances.square() +
+            labels * torch.relu(margin - distances).square()
+        ).mean()
+        loss.backward()
+        step = {
+            "input_a": tensor_fixture(input_a),
+            "input_b": tensor_fixture(input_b),
+            "labels": tensor_fixture(labels),
+            "expected": {
+                "embedding_a": tensor_fixture(embedding_a),
+                "embedding_b": tensor_fixture(embedding_b),
+                "loss": tensor_fixture(loss.reshape(1)),
+                "grad_embedding_a": tensor_fixture(embedding_a.grad),
+                "grad_embedding_b": tensor_fixture(embedding_b.grad),
+                "grad_input_a": tensor_fixture(input_a.grad),
+                "grad_input_b": tensor_fixture(input_b.grad),
+                "grad_weight": tensor_fixture(model.weight.grad),
+                "grad_bias": tensor_fixture(model.bias.grad),
+            },
+        }
+        optimizer.step()
+        step["expected"]["updated_weight"] = tensor_fixture(model.weight)
+        step["expected"]["updated_bias"] = tensor_fixture(model.bias)
+        steps.append(step)
+    return {
+        "operation": (
+            "PyTorch explicit contrastive + shared nn.Linear + optim.SGD"
+        ),
+        "dtype": "float32",
+        "loss_type": "contrastive",
+        "reduction": "mean",
+        "margin": margin,
+        "learning_rate": learning_rate,
+        "tolerance": {"atol": 2.0e-5, "rtol": 2.0e-5},
+        "initial": initial,
+        "steps": steps,
+    }
+
+
+def overlap_linear_multibatch_sgd_case() -> dict[str, Any]:
+    model = torch.nn.Linear(3, 2, bias=True)
+    with torch.no_grad():
+        model.weight.copy_(torch.tensor(
+            [[0.15, -0.10, 0.20], [-0.05, 0.12, 0.08]],
+            dtype=torch.float32,
+        ))
+        model.bias.copy_(torch.tensor([0.40, 0.35], dtype=torch.float32))
+    initial = {
+        "weight": tensor_fixture(model.weight),
+        "bias": tensor_fixture(model.bias),
+    }
+    learning_rate = 0.03
+    smooth = 1.0
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    definitions = [
+        (
+            [[0.2, 0.4, 0.1], [0.5, 0.1, 0.3]],
+            [[1.0, 0.0], [0.0, 1.0]],
+        ),
+        (
+            [[0.1, 0.3, 0.6], [0.7, 0.2, 0.1], [0.4, 0.5, 0.2]],
+            [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
+        ),
+    ]
+    steps = []
+    for input_values, target_values in definitions:
+        input_tensor = torch.tensor(
+            input_values, dtype=torch.float32, requires_grad=True
+        )
+        targets = torch.tensor(target_values, dtype=torch.float32)
+        optimizer.zero_grad(set_to_none=True)
+        output = model(input_tensor)
+        output.retain_grad()
+        intersection = (output * targets).sum(dim=1)
+        per_sample = 1.0 - (
+            (2.0 * intersection + smooth) /
+            (output.sum(dim=1) + targets.sum(dim=1) + smooth)
+        )
+        loss = per_sample.mean()
+        loss.backward()
+        step = {
+            "input": tensor_fixture(input_tensor),
+            "targets": tensor_fixture(targets),
+            "expected": {
+                "output": tensor_fixture(output),
+                "loss": tensor_fixture(loss.reshape(1)),
+                "grad_output": tensor_fixture(output.grad),
+                "grad_input": tensor_fixture(input_tensor.grad),
+                "grad_weight": tensor_fixture(model.weight.grad),
+                "grad_bias": tensor_fixture(model.bias.grad),
+            },
+        }
+        optimizer.step()
+        step["expected"]["updated_weight"] = tensor_fixture(model.weight)
+        step["expected"]["updated_bias"] = tensor_fixture(model.bias)
+        steps.append(step)
+    return {
+        "operation": "PyTorch explicit SoftDice + nn.Linear + optim.SGD",
+        "dtype": "float32",
+        "reduction": "mean",
+        "smooth": smooth,
+        "learning_rate": learning_rate,
+        "initial": initial,
+        "steps": steps,
+        "tolerance": {"atol": 1.0e-5, "rtol": 1.0e-5},
+    }
+
+
+def elementwise_activation_matrix() -> list[dict[str, Any]]:
+    """Forward/autograd truth at smooth, branch-boundary, and finite extremes."""
+    definitions = [
+        ("relu", "torch.nn.functional.relu", {}, functional.relu),
+        (
+            "leaky_relu",
+            "torch.nn.functional.leaky_relu",
+            {"alpha": 0.2},
+            lambda value: functional.leaky_relu(value, negative_slope=0.2),
+        ),
+        (
+            "elu",
+            "torch.nn.functional.elu",
+            {"alpha": 1.3},
+            lambda value: functional.elu(value, alpha=1.3),
+        ),
+        (
+            "gelu_tanh",
+            "torch.nn.functional.gelu(approximate=tanh)",
+            {},
+            lambda value: functional.gelu(value, approximate="tanh"),
+        ),
+        ("silu", "torch.nn.functional.silu", {}, functional.silu),
+        ("sigmoid", "torch.sigmoid", {}, torch.sigmoid),
+        ("tanh", "torch.tanh", {}, torch.tanh),
+        ("mish", "torch.nn.functional.mish", {}, functional.mish),
+        (
+            "hardswish",
+            "torch.nn.functional.hardswish",
+            {},
+            functional.hardswish,
+        ),
+        ("selu", "torch.nn.functional.selu", {}, functional.selu),
+    ]
+    input_values = [
+        [-100.0, -20.0, -3.0, -2.999, -1.0],
+        [-1.0e-6, 0.0, 1.0e-6, 1.0, 2.999],
+        [3.0, 20.0, 100.0, -0.5, 0.5],
+    ]
+    grad_output_values = [
+        [0.25, -0.5, 0.75, -1.0, 1.25],
+        [-1.5, 1.75, -2.0, 2.25, -2.5],
+        [2.75, -3.0, 3.25, -3.5, 3.75],
+    ]
+    cases: list[dict[str, Any]] = []
+    for name, operation, parameters, activation in definitions:
+        input_tensor = torch.tensor(
+            input_values, dtype=torch.float32, requires_grad=True
+        )
+        grad_output = torch.tensor(grad_output_values, dtype=torch.float32)
+        output = activation(input_tensor)
+        (grad_input,) = torch.autograd.grad(
+            output, input_tensor, grad_outputs=grad_output
+        )
+        cases.append({
+            "name": name,
+            "operation": operation,
+            "dtype": "float32",
+            "parameters": parameters,
+            "coverage": [
+                "rank2",
+                "zero",
+                "branch_boundaries",
+                "finite_extremes",
+            ],
+            "tolerance": {"atol": 2.0e-5, "rtol": 2.0e-5},
+            "input": tensor_fixture(input_tensor),
+            "grad_output": tensor_fixture(grad_output),
+            "expected": {
+                "output": tensor_fixture(output),
+                "grad_input": tensor_fixture(grad_input),
+            },
+        })
+    return cases
+
+
+def softmax_case(
+    name: str,
+    input_values: list[Any],
+    axis: int,
+    shape: list[int] | None = None,
+) -> dict[str, Any]:
+    input_tensor = torch.tensor(
+        input_values, dtype=torch.float32, requires_grad=True
+    )
+    if shape is not None:
+        input_tensor = input_tensor.reshape(shape).detach().requires_grad_(True)
+    grad_output = torch.linspace(
+        -1.75, 2.25, steps=input_tensor.numel(), dtype=torch.float32
+    ).reshape(input_tensor.shape)
+    output = functional.softmax(input_tensor, dim=axis)
+    (grad_input,) = torch.autograd.grad(
+        output, input_tensor, grad_outputs=grad_output
+    )
+    return {
+        "name": name,
+        "operation": "torch.nn.functional.softmax",
+        "dtype": "float32",
+        "axis": axis,
+        "tolerance": {"atol": 2.0e-5, "rtol": 2.0e-5},
+        "input": tensor_fixture(input_tensor),
+        "grad_output": tensor_fixture(grad_output),
+        "expected": {
+            "output": tensor_fixture(output),
+            "grad_input": tensor_fixture(grad_input),
+        },
+    }
+
+
+def softmax_matrix() -> list[dict[str, Any]]:
+    return [
+        softmax_case("rank1_last_extreme", [-100.0, 0.0, 100.0], -1),
+        softmax_case(
+            "rank2_axis0",
+            [[100.0, -100.0, 0.0], [99.0, -99.0, 1.0]],
+            0,
+        ),
+        softmax_case(
+            "rank2_last_extreme",
+            [[100.0, 101.0, 102.0], [-100.0, -101.0, -102.0]],
+            -1,
+        ),
+        softmax_case(
+            "rank3_axis1",
+            [
+                [[-3.0, 0.0, 3.0], [4.0, -4.0, 1.0]],
+                [[2.0, -2.0, 0.5], [-1.0, 5.0, -5.0]],
+            ],
+            1,
+        ),
+        softmax_case(
+            "rank3_last",
+            [
+                [[-3.0, 0.0, 3.0], [4.0, -4.0, 1.0]],
+                [[2.0, -2.0, 0.5], [-1.0, 5.0, -5.0]],
+            ],
+            -1,
+        ),
+        softmax_case(
+            "rank4_axis2",
+            [
+                -4.0, -3.0, -2.0, -1.0,
+                0.0, 1.0, 2.0, 3.0,
+                4.0, 5.0, 6.0, 7.0,
+            ],
+            2,
+            [1, 2, 3, 2],
+        ),
+        softmax_case("rank3_empty_axis", [], 1, [2, 0, 3]),
+    ]
+
+
+def prelu_case(
+    name: str,
+    input_values: list[Any],
+    alpha_values: list[float],
+    shape: list[int] | None = None,
+) -> dict[str, Any]:
+    input_tensor = torch.tensor(
+        input_values, dtype=torch.float32, requires_grad=True
+    )
+    if shape is not None:
+        input_tensor = input_tensor.reshape(shape).detach().requires_grad_(True)
+    alpha = torch.tensor(alpha_values, dtype=torch.float32, requires_grad=True)
+    grad_output = torch.linspace(
+        -1.5, 2.0, steps=input_tensor.numel(), dtype=torch.float32
+    ).reshape(input_tensor.shape)
+    output = functional.prelu(input_tensor, alpha)
+    grad_input, grad_alpha = torch.autograd.grad(
+        output, (input_tensor, alpha), grad_outputs=grad_output
+    )
+    return {
+        "name": name,
+        "operation": "torch.nn.functional.prelu",
+        "dtype": "float32",
+        "num_parameters": len(alpha_values),
+        "tolerance": {"atol": 2.0e-5, "rtol": 2.0e-5},
+        "input": tensor_fixture(input_tensor),
+        "alpha": tensor_fixture(alpha),
+        "grad_output": tensor_fixture(grad_output),
+        "expected": {
+            "output": tensor_fixture(output),
+            "grad_input": tensor_fixture(grad_input),
+            "grad_alpha": tensor_fixture(grad_alpha),
+        },
+    }
+
+
+def prelu_matrix() -> list[dict[str, Any]]:
+    return [
+        prelu_case(
+            "shared_rank2",
+            [[-3.0, 0.0, 2.0], [4.0, -5.0, -1.0e-6]],
+            [0.25],
+        ),
+        prelu_case(
+            "channel_rank2",
+            [[-3.0, 0.0, 2.0], [4.0, -5.0, -1.0e-6]],
+            [0.1, 0.2, 0.3],
+        ),
+        prelu_case(
+            "channel_rank4",
+            [float(value - 12) for value in range(24)],
+            [0.1, 0.2, 0.3],
+            [2, 3, 2, 2],
+        ),
+    ]
+
+
+def linear_case(
+    name: str,
+    input_values: list[Any],
+    grad_output_values: list[Any],
+    use_bias: bool,
+) -> dict[str, Any]:
+    input_tensor = torch.tensor(
+        input_values, dtype=torch.float32, requires_grad=True
+    )
+    weight = torch.tensor(
+        [[0.5, -1.0, 2.0], [-0.25, 0.75, 1.5]],
+        dtype=torch.float32,
+        requires_grad=True,
+    )
+    bias = (
+        torch.tensor([0.1, -0.2], dtype=torch.float32, requires_grad=True)
+        if use_bias
+        else None
+    )
+    grad_output = torch.tensor(grad_output_values, dtype=torch.float32)
+
+    output = functional.linear(input_tensor, weight, bias)
+    differentiable = (input_tensor, weight, bias) if use_bias else (
+        input_tensor,
+        weight,
+    )
+    gradients = torch.autograd.grad(
+        output, differentiable, grad_outputs=grad_output
+    )
+    grad_input, grad_weight = gradients[:2]
+
+    expected = {
+        "output": tensor_fixture(output),
+        "grad_input": tensor_fixture(grad_input),
+        "grad_weight": tensor_fixture(grad_weight),
+    }
+    if use_bias:
+        expected["grad_bias"] = tensor_fixture(gradients[2])
+
+    result = {
+        "name": name,
+        "operation": "torch.nn.functional.linear",
+        "dtype": "float32",
+        "use_bias": use_bias,
+        "parameter_gradient_reduction": "sum_over_batch",
+        "tolerance": {"atol": 1.0e-5, "rtol": 1.0e-5},
+        "input": tensor_fixture(input_tensor),
+        "weight": tensor_fixture(weight),
+        "grad_output": tensor_fixture(grad_output),
+        "expected": expected,
+    }
+    if use_bias:
+        result["bias"] = tensor_fixture(bias)
+    return result
+
+
+def linear_matrix() -> list[dict[str, Any]]:
+    return [
+        linear_case(
+            "rank2_biased",
+            [[1.0, 2.0, -1.0], [0.0, -3.0, 4.0]],
+            [[1.0, -0.5], [0.25, 2.0]],
+            True,
+        ),
+        linear_case(
+            "rank1_no_bias",
+            [1.5, -2.0, 0.25],
+            [-0.75, 1.25],
+            False,
+        ),
+        linear_case(
+            "rank2_no_bias_three_samples",
+            [[1.0, 0.0, -1.0], [2.0, 3.0, 0.5], [-2.0, 1.0, 4.0]],
+            [[0.5, -1.0], [1.5, 0.25], [-0.75, 2.0]],
+            False,
+        ),
+    ]
+
+
+def linear_multibatch_sgd_case() -> dict[str, Any]:
+    model = torch.nn.Linear(3, 2, bias=True)
+    with torch.no_grad():
+        model.weight.copy_(torch.tensor(
+            [[0.5, -1.0, 2.0], [-0.25, 0.75, 1.5]],
+            dtype=torch.float32,
+        ))
+        model.bias.copy_(torch.tensor([0.1, -0.2], dtype=torch.float32))
+    initial = {
+        "weight": tensor_fixture(model.weight),
+        "bias": tensor_fixture(model.bias),
+    }
+    learning_rate = 0.05
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    definitions = [
+        (
+            [[1.0, 2.0, -1.0], [0.0, -3.0, 4.0]],
+            [[1.0, -0.5], [0.25, 2.0]],
+        ),
+        (
+            [[-1.0, 0.5, 2.0], [3.0, -2.0, 1.0], [0.25, 1.5, -0.5]],
+            [[-0.25, 1.0], [0.75, -1.5], [2.0, 0.5]],
+        ),
+    ]
+    steps = []
+    for input_values, grad_output_values in definitions:
+        input_tensor = torch.tensor(
+            input_values, dtype=torch.float32, requires_grad=True
+        )
+        grad_output = torch.tensor(grad_output_values, dtype=torch.float32)
+        optimizer.zero_grad(set_to_none=True)
+        output = model(input_tensor)
+        output.backward(grad_output)
+        step = {
+            "input": tensor_fixture(input_tensor),
+            "grad_output": tensor_fixture(grad_output),
+            "expected": {
+                "output": tensor_fixture(output),
+                "grad_input": tensor_fixture(input_tensor.grad),
+                "grad_weight": tensor_fixture(model.weight.grad),
+                "grad_bias": tensor_fixture(model.bias.grad),
+            },
+        }
+        optimizer.step()
+        step["expected"]["updated_weight"] = tensor_fixture(model.weight)
+        step["expected"]["updated_bias"] = tensor_fixture(model.bias)
+        steps.append(step)
+    return {
+        "operation": "torch.nn.Linear + torch.optim.SGD",
+        "dtype": "float32",
+        "parameter_gradient_reduction": "sum_over_batch",
+        "learning_rate": learning_rate,
+        "initial": initial,
+        "steps": steps,
+        "tolerance": {"atol": 1.0e-5, "rtol": 1.0e-5},
+    }
+
+
+def flatten_case(
+    name: str,
+    shape: list[int],
+    start_dim: int,
+) -> dict[str, Any]:
+    element_count = math.prod(shape)
+    input_tensor = (
+        torch.arange(element_count, dtype=torch.float32)
+        .reshape(shape)
+        .sub(7.5)
+        .requires_grad_(True)
+    )
+    module = torch.nn.Flatten(start_dim=start_dim)
+    output = module(input_tensor)
+    grad_output = torch.linspace(
+        -1.25, 1.75, steps=element_count, dtype=torch.float32
+    ).reshape(output.shape)
+    (grad_input,) = torch.autograd.grad(
+        output, input_tensor, grad_outputs=grad_output
+    )
+
+    return {
+        "name": name,
+        "operation": "torch.nn.Flatten",
+        "dtype": "float32",
+        "parameters": {"start_dim": start_dim, "end_dim": -1},
+        "tolerance": {"atol": 0.0, "rtol": 0.0},
+        "input": tensor_fixture(input_tensor),
+        "grad_output": tensor_fixture(grad_output),
+        "expected": {
+            "output": tensor_fixture(output),
+            "grad_input": tensor_fixture(grad_input),
+        },
+    }
+
+
+def flatten_matrix() -> list[dict[str, Any]]:
+    return [
+        flatten_case("rank4_start1", [2, 1, 2, 2], 1),
+        flatten_case("rank4_start2", [2, 1, 2, 2], 2),
+        flatten_case("rank3_negative_start", [2, 2, 2], -2),
+        flatten_case("rank2_start1_identity_shape", [2, 2], 1),
+    ]
+
+
+def tensor_shape_semantics() -> dict[str, Any]:
+    input_tensor = torch.arange(6, dtype=torch.float32).reshape(1, 2, 1, 3)
+    scalar = torch.tensor(7.0, dtype=torch.float32)
+    empty = torch.empty((2, 0, 3), dtype=torch.float32)
+
+    return {
+        "operation": "torch.Tensor shape operations",
+        "dtype": "float32",
+        "input": tensor_fixture(input_tensor),
+        "scalar": tensor_fixture(scalar),
+        "empty": tensor_fixture(empty),
+        "expected": {
+            "reshape": tensor_fixture(input_tensor.reshape(3, 2)),
+            "view": tensor_fixture(input_tensor.view(2, 3)),
+            "squeeze_all": tensor_fixture(torch.squeeze(input_tensor)),
+            "squeeze_last_non_singleton": tensor_fixture(
+                torch.squeeze(input_tensor, -1)
+            ),
+            "squeeze_middle_non_singleton": tensor_fixture(
+                torch.squeeze(input_tensor, 1)
+            ),
+            "squeeze_negative_singleton": tensor_fixture(
+                torch.squeeze(input_tensor, -2)
+            ),
+            "unsqueeze_front": tensor_fixture(torch.unsqueeze(input_tensor, 0)),
+            "unsqueeze_back": tensor_fixture(torch.unsqueeze(input_tensor, -1)),
+            "flatten_all": tensor_fixture(torch.flatten(input_tensor)),
+            "flatten_middle": tensor_fixture(torch.flatten(input_tensor, 1, 2)),
+            "scalar_squeeze": tensor_fixture(torch.squeeze(scalar)),
+            "scalar_squeeze_dim": tensor_fixture(torch.squeeze(scalar, -1)),
+            "scalar_unsqueeze": tensor_fixture(torch.unsqueeze(scalar, -1)),
+            "scalar_flatten": tensor_fixture(torch.flatten(scalar)),
+            "empty_reshape": tensor_fixture(empty.reshape(0, 6)),
+            "empty_flatten": tensor_fixture(torch.flatten(empty, 1, 2)),
+        },
+    }
+
+
+def tensor_permute_case(
+    name: str,
+    shape: list[int],
+    dims: list[int],
+) -> dict[str, Any]:
+    input_tensor = torch.arange(
+        math.prod(shape), dtype=torch.float32
+    ).reshape(shape)
+    output = input_tensor.permute(tuple(dims))
+    return {
+        "name": name,
+        "operation": "torch.Tensor.permute",
+        "dims": dims,
+        "input": tensor_fixture(input_tensor),
+        "expected": tensor_fixture(output),
+    }
+
+
+def tensor_permute_matrix() -> list[dict[str, Any]]:
+    return [
+        tensor_permute_case("scalar", [], []),
+        tensor_permute_case("rank1_identity", [6], [-1]),
+        tensor_permute_case("rank2_swap", [2, 3], [1, 0]),
+        tensor_permute_case("rank2_negative_swap", [2, 3], [-1, -2]),
+        tensor_permute_case("rank3_rotate", [2, 3, 4], [2, 0, 1]),
+        tensor_permute_case("rank3_negative", [2, 3, 4], [-2, -1, -3]),
+        tensor_permute_case("rank4_general", [2, 2, 3, 2], [3, 1, 0, 2]),
+        tensor_permute_case("rank4_identity", [2, 2, 3, 2], [0, 1, 2, 3]),
+        tensor_permute_case("empty", [2, 0, 3], [2, 0, 1]),
+    ]
+
+
+def tensor_slice_case(
+    name: str,
+    shape: list[int],
+    dim: int,
+    start: int,
+    end: int = -1,
+    step: int = 1,
+) -> dict[str, Any]:
+    input_tensor = torch.arange(
+        math.prod(shape), dtype=torch.float32
+    ).reshape(shape)
+    normalized_dim = dim if dim >= 0 else dim + len(shape)
+    selection = [slice(None)] * len(shape)
+    selection[normalized_dim] = slice(start, None if end == -1 else end, step)
+    output = input_tensor[tuple(selection)]
+    return {
+        "name": name,
+        "operation": "torch.Tensor.__getitem__",
+        "dim": dim,
+        "start": start,
+        "end": end,
+        "step": step,
+        "input": tensor_fixture(input_tensor),
+        "expected": tensor_fixture(output),
+    }
+
+
+def tensor_index_select_case(
+    name: str,
+    shape: list[int],
+    dim: int,
+    indices: list[int],
+) -> dict[str, Any]:
+    input_tensor = torch.arange(
+        math.prod(shape), dtype=torch.float32
+    ).reshape(shape)
+    normalized_dim = dim if dim >= 0 else dim + len(shape)
+    dim_size = shape[normalized_dim]
+    oracle_indices = [
+        index + dim_size if index < 0 else index
+        for index in indices
+    ]
+    output = torch.index_select(
+        input_tensor,
+        normalized_dim,
+        torch.tensor(oracle_indices, dtype=torch.int64),
+    )
+    return {
+        "name": name,
+        "operation": "torch.index_select",
+        "dim": dim,
+        "indices": indices,
+        "oracle_indices": oracle_indices,
+        "input": tensor_fixture(input_tensor),
+        "expected": tensor_fixture(output),
+    }
+
+
+def tensor_indexing_matrix() -> dict[str, Any]:
+    return {
+        "slice": [
+            tensor_slice_case("rank1_step", [6], 0, 1, -1, 2),
+            tensor_slice_case("rank2_negative_bounds", [3, 4], -1, -3),
+            tensor_slice_case("rank2_empty", [3, 4], 1, 3, 1),
+            tensor_slice_case("rank3_step", [2, 3, 4], 1, 0, -1, 2),
+            tensor_slice_case("rank4_middle", [2, 2, 3, 2], 2, 1, 3),
+            tensor_slice_case("clamped_bounds", [6], 0, -99, 99),
+            tensor_slice_case("explicit_negative_end", [6], 0, 1, -2),
+            tensor_slice_case("zero_dimension", [2, 0, 3], 1, 0),
+        ],
+        "index_select": [
+            tensor_index_select_case("rank1_repeat", [6], 0, [5, 1, 1, 0]),
+            tensor_index_select_case("rank2_negative_dim", [3, 4], -1, [3, 1]),
+            tensor_index_select_case("rank3_general", [2, 3, 4], 1, [2, 0]),
+            tensor_index_select_case("rank4_general", [2, 2, 3, 2], 2, [2, 0, 2]),
+            tensor_index_select_case("empty_indices", [3, 4], 1, []),
+            tensor_index_select_case("negative_extension", [3, 4], 1, [-1, 0]),
+            tensor_index_select_case("zero_other_dimension", [2, 0, 3], 0, [1, 0]),
+        ],
+    }
+
+
+def tensor_values(shape: list[int], offset: int = 0) -> torch.Tensor:
+    return torch.arange(
+        offset, offset + math.prod(shape), dtype=torch.float32
+    ).reshape(shape)
+
+
+def tensor_cat_case(
+    name: str,
+    shapes: list[list[int]],
+    dim: int,
+) -> dict[str, Any]:
+    tensors: list[torch.Tensor] = []
+    offset = 0
+    for shape in shapes:
+        tensor = tensor_values(shape, offset)
+        tensors.append(tensor)
+        offset += tensor.numel()
+    return {
+        "name": name,
+        "operation": "torch.cat",
+        "dim": dim,
+        "inputs": [tensor_fixture(tensor) for tensor in tensors],
+        "expected": tensor_fixture(torch.cat(tensors, dim=dim)),
+    }
+
+
+def tensor_stack_case(
+    name: str,
+    shape: list[int],
+    count: int,
+    dim: int,
+) -> dict[str, Any]:
+    element_count = math.prod(shape)
+    tensors = [
+        tensor_values(shape, index * element_count)
+        for index in range(count)
+    ]
+    return {
+        "name": name,
+        "operation": "torch.stack",
+        "dim": dim,
+        "inputs": [tensor_fixture(tensor) for tensor in tensors],
+        "expected": tensor_fixture(torch.stack(tensors, dim=dim)),
+    }
+
+
+def tensor_split_size_case(
+    name: str,
+    shape: list[int],
+    split_size: int,
+    dim: int,
+) -> dict[str, Any]:
+    input_tensor = tensor_values(shape)
+    outputs = torch.split(input_tensor, split_size, dim=dim)
+    return {
+        "name": name,
+        "operation": "torch.split",
+        "dim": dim,
+        "split_size": split_size,
+        "input": tensor_fixture(input_tensor),
+        "expected": [tensor_fixture(output) for output in outputs],
+    }
+
+
+def tensor_split_sizes_case(
+    name: str,
+    shape: list[int],
+    sizes: list[int],
+    dim: int,
+) -> dict[str, Any]:
+    input_tensor = tensor_values(shape)
+    outputs = torch.split(input_tensor, sizes, dim=dim)
+    return {
+        "name": name,
+        "operation": "torch.split",
+        "dim": dim,
+        "sizes": sizes,
+        "input": tensor_fixture(input_tensor),
+        "expected": [tensor_fixture(output) for output in outputs],
+    }
+
+
+def tensor_chunk_case(
+    name: str,
+    shape: list[int],
+    chunks: int,
+    dim: int,
+) -> dict[str, Any]:
+    input_tensor = tensor_values(shape)
+    outputs = torch.chunk(input_tensor, chunks, dim=dim)
+    return {
+        "name": name,
+        "operation": "torch.chunk",
+        "dim": dim,
+        "chunks": chunks,
+        "input": tensor_fixture(input_tensor),
+        "expected": [tensor_fixture(output) for output in outputs],
+    }
+
+
+def tensor_concat_matrix() -> dict[str, Any]:
+    return {
+        "cat": [
+            tensor_cat_case("rank1", [[2], [3]], 0),
+            tensor_cat_case("rank2_negative_dim", [[2, 1], [2, 2]], -1),
+            tensor_cat_case("rank3_middle", [[2, 1, 2], [2, 2, 2]], 1),
+            tensor_cat_case(
+                "rank4_middle", [[1, 2, 1, 2], [1, 2, 2, 2]], 2
+            ),
+            tensor_cat_case("empty_concat_axis", [[2, 0, 3], [2, 2, 3]], 1),
+            tensor_cat_case("rank1_empty_identity", [[0], [2, 3]], 0),
+            tensor_cat_case("zero_other_axis", [[2, 0, 1], [2, 0, 2]], 2),
+        ],
+        "stack": [
+            tensor_stack_case("scalar", [], 2, 0),
+            tensor_stack_case("rank1_last", [3], 2, -1),
+            tensor_stack_case("rank2_middle", [2, 3], 2, 1),
+            tensor_stack_case("rank3_to_rank4", [2, 2, 2], 2, -1),
+            tensor_stack_case("empty", [2, 0], 2, 0),
+        ],
+        "split_size": [
+            tensor_split_size_case("uneven", [2, 5], 2, 1),
+            tensor_split_size_case("oversized", [3], 8, 0),
+            tensor_split_size_case("empty_dimension", [0, 3], 2, 0),
+        ],
+        "split_sizes": [
+            tensor_split_sizes_case("zero_section", [4], [1, 0, 3], 0),
+            tensor_split_sizes_case("negative_dim", [2, 4], [1, 3], -1),
+        ],
+        "chunk": [
+            tensor_chunk_case("uneven", [7], 3, 0),
+            tensor_chunk_case("more_chunks_than_elements", [3], 5, 0),
+            tensor_chunk_case("empty_dimension", [0, 3], 3, 0),
+            tensor_chunk_case("negative_dim", [2, 5], 3, -1),
+        ],
+    }
+
+
+def tensor_reduction_input(
+    shape: list[int],
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    count = math.prod(shape)
+    if dtype == torch.uint8:
+        return torch.tensor(
+            [(index % 4) + 1 for index in range(count)], dtype=dtype
+        ).reshape(shape)
+    values = torch.arange(count, dtype=torch.float64).reshape(shape)
+    values = (values.remainder(7) - 3).add(values * 0.125)
+    return values.to(dtype)
+
+
+def tensor_reduction_result(
+    input_tensor: torch.Tensor,
+    operation: str,
+    dim: int | None,
+    keepdim: bool,
+    correction: int,
+) -> torch.Tensor:
+    dimension_args: dict[str, Any] = {}
+    if dim is not None:
+        dimension_args = {"dim": dim, "keepdim": keepdim}
+
+    if operation == "sum":
+        return torch.sum(
+            input_tensor, dtype=input_tensor.dtype, **dimension_args
+        )
+    if operation == "prod":
+        return torch.prod(
+            input_tensor, dtype=input_tensor.dtype, **dimension_args
+        )
+    if operation == "max":
+        return torch.amax(input_tensor, **dimension_args)
+    if operation == "min":
+        return torch.amin(input_tensor, **dimension_args)
+
+    real_dtype = (
+        torch.float64
+        if input_tensor.dtype == torch.float64
+        else torch.float32
+    )
+    real_input = input_tensor.to(real_dtype)
+    if operation == "mean":
+        return torch.mean(real_input, **dimension_args)
+    if operation == "var":
+        return torch.var(
+            real_input, correction=correction, **dimension_args
+        )
+    if operation == "std":
+        return torch.std(
+            real_input, correction=correction, **dimension_args
+        )
+    raise ValueError(f"unsupported Tensor reduction: {operation}")
+
+
+def tensor_reduction_case(
+    name: str,
+    shape: list[int],
+    dtype: torch.dtype,
+    operation: str,
+    dim: int | None = None,
+    keepdim: bool = False,
+    correction: int = 0,
+) -> dict[str, Any]:
+    input_tensor = tensor_reduction_input(shape, dtype)
+    return tensor_reduction_case_from_input(
+        name, input_tensor, operation, dim, keepdim, correction
+    )
+
+
+def tensor_reduction_case_from_input(
+    name: str,
+    input_tensor: torch.Tensor,
+    operation: str,
+    dim: int | None = None,
+    keepdim: bool = False,
+    correction: int = 0,
+) -> dict[str, Any]:
+    expected = tensor_reduction_result(
+        input_tensor, operation, dim, keepdim, correction
+    )
+    return {
+        "name": name,
+        "operation": f"torch.{operation}",
+        "input_dtype": str(input_tensor.dtype).removeprefix("torch."),
+        "output_dtype": str(expected.dtype).removeprefix("torch."),
+        "dim": dim,
+        "keepdim": keepdim,
+        "correction": correction,
+        "input": tensor_fixture(input_tensor),
+        "expected": tensor_fixture(expected),
+        "tolerance": {
+            "atol": 1.0e-10 if expected.dtype == torch.float64 else 1.0e-5,
+            "rtol": 1.0e-10 if expected.dtype == torch.float64 else 1.0e-5,
+        },
+    }
+
+
+def tensor_reduction_matrix() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    dtype_matrix = [
+        ("f32", torch.float32, [2, 3, 4]),
+        ("f64", torch.float64, [2, 2, 2, 3]),
+        ("i32", torch.int32, [2, 3]),
+        ("i64", torch.int64, [2, 3, 2]),
+        ("u8", torch.uint8, [2, 2, 3]),
+    ]
+    for dtype_name, dtype, shape in dtype_matrix:
+        cases.extend([
+            tensor_reduction_case(
+                f"{dtype_name}_sum_global", shape, dtype, "sum"
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_sum_negative_dim_keepdim",
+                shape, dtype, "sum", -1, True
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_mean_global", shape, dtype, "mean"
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_mean_negative_dim_keepdim",
+                shape, dtype, "mean", -1, True
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_max_global", shape, dtype, "max"
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_max_dim0", shape, dtype, "max", 0
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_min_global", shape, dtype, "min"
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_min_negative_dim",
+                shape, dtype, "min", -1
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_prod_global", shape, dtype, "prod"
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_prod_dim0_keepdim",
+                shape, dtype, "prod", 0, True
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_var_global_population",
+                shape, dtype, "var", correction=0
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_var_negative_dim_sample",
+                shape, dtype, "var", -1, False, 1
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_std_global_population",
+                shape, dtype, "std", correction=0
+            ),
+            tensor_reduction_case(
+                f"{dtype_name}_std_negative_dim_sample",
+                shape, dtype, "std", -1, False, 1
+            ),
+        ])
+
+    cases.extend([
+        tensor_reduction_case(
+            "f32_sum_middle_dim", [2, 3, 4], torch.float32, "sum", 1
+        ),
+        tensor_reduction_case(
+            "f32_var_middle_dim_keepdim_correction2",
+            [2, 3, 4], torch.float32, "var", 1, True, 2
+        ),
+        tensor_reduction_case(
+            "f64_std_global_negative_correction",
+            [2, 2, 2, 3], torch.float64, "std", correction=-1
+        ),
+        tensor_reduction_case(
+            "scalar_mean_dim0", [], torch.float32, "mean", 0, True
+        ),
+        tensor_reduction_case_from_input(
+            "i32_sum_global_overflow",
+            torch.tensor([torch.iinfo(torch.int32).max, 1], dtype=torch.int32),
+            "sum",
+        ),
+        tensor_reduction_case_from_input(
+            "i32_sum_axis_overflow",
+            torch.tensor(
+                [
+                    [torch.iinfo(torch.int32).max, 1],
+                    [torch.iinfo(torch.int32).min, -1],
+                ],
+                dtype=torch.int32,
+            ),
+            "sum", 1,
+        ),
+        tensor_reduction_case_from_input(
+            "i32_prod_global_overflow",
+            torch.tensor([torch.iinfo(torch.int32).max, 2], dtype=torch.int32),
+            "prod",
+        ),
+        tensor_reduction_case_from_input(
+            "i32_prod_axis_overflow",
+            torch.tensor(
+                [
+                    [torch.iinfo(torch.int32).max, 2],
+                    [torch.iinfo(torch.int32).min, -1],
+                ],
+                dtype=torch.int32,
+            ),
+            "prod", 1,
+        ),
+    ])
+    return cases
+
+
+def tensor_elementwise_input(
+    shape: list[int],
+    dtype: torch.dtype,
+    offset: int,
+) -> torch.Tensor:
+    count = math.prod(shape)
+    values = [((index + offset) % 5) + 1 for index in range(count)]
+    return torch.tensor(values, dtype=dtype).reshape(shape)
+
+
+def tensor_elementwise_case(
+    name: str,
+    operation: str,
+    left: torch.Tensor,
+    right: torch.Tensor | float | None = None,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> dict[str, Any]:
+    if operation == "add":
+        expected = left + right
+    elif operation == "subtract":
+        expected = left - right
+    elif operation == "multiply":
+        expected = left * right
+    elif operation == "divide":
+        expected = left / right
+    elif operation == "pow":
+        expected = torch.pow(left, right)
+    elif operation == "sqrt":
+        expected = torch.sqrt(left)
+    elif operation == "exp":
+        expected = torch.exp(left)
+    elif operation == "log":
+        expected = torch.log(left)
+    elif operation == "abs":
+        expected = torch.abs(left)
+    elif operation == "sign":
+        expected = torch.sign(left)
+    elif operation == "clip":
+        expected = torch.clamp(left, minimum, maximum)
+    elif operation == "negate":
+        expected = torch.neg(left)
+    else:
+        raise ValueError(f"unsupported Tensor elementwise operation: {operation}")
+
+    result = {
+        "name": name,
+        "operation": operation,
+        "input_dtype": str(left.dtype).removeprefix("torch."),
+        "output_dtype": str(expected.dtype).removeprefix("torch."),
+        "input": tensor_fixture(left),
+        "expected": tensor_fixture(expected),
+        "tolerance": {
+            "atol": 1.0e-10 if expected.dtype == torch.float64 else 1.0e-5,
+            "rtol": 1.0e-10 if expected.dtype == torch.float64 else 1.0e-5,
+        },
+    }
+    if isinstance(right, torch.Tensor):
+        result["rhs_kind"] = "tensor"
+        result["rhs_dtype"] = str(right.dtype).removeprefix("torch.")
+        result["rhs"] = tensor_fixture(right)
+    elif right is not None:
+        result["rhs_kind"] = "scalar"
+        result["scalar"] = float(right)
+    else:
+        result["rhs_kind"] = "none"
+    if minimum is not None:
+        result["minimum"] = minimum
+    if maximum is not None:
+        result["maximum"] = maximum
+    return result
+
+
+def tensor_elementwise_matrix() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    dtypes = [
+        ("f32", torch.float32),
+        ("f64", torch.float64),
+        ("i32", torch.int32),
+        ("i64", torch.int64),
+        ("u8", torch.uint8),
+    ]
+
+    # Every public dtype pair exercises PyTorch promotion and rank-3
+    # right-aligned broadcasting for the four tensor arithmetic operators.
+    for left_name, left_dtype in dtypes:
+        for right_name, right_dtype in dtypes:
+            left = tensor_elementwise_input([2, 1, 3], left_dtype, 0)
+            right = tensor_elementwise_input([1, 2, 1], right_dtype, 1)
+            for operation in ["add", "subtract", "multiply", "divide"]:
+                cases.append(tensor_elementwise_case(
+                    f"tensor_{operation}_{left_name}_{right_name}_broadcast",
+                    operation,
+                    left,
+                    right,
+                ))
+
+    # Pow has its own promotion/output contract and uses the same complete
+    # dtype-pair broadcast matrix with small exact exponents.
+    for left_name, left_dtype in dtypes:
+        for right_name, right_dtype in dtypes:
+            left = tensor_elementwise_input([2, 1, 3], left_dtype, 0)
+            right = torch.tensor([1, 2], dtype=right_dtype).reshape(1, 2, 1)
+            cases.append(tensor_elementwise_case(
+                f"tensor_pow_{left_name}_{right_name}_broadcast",
+                "pow",
+                left,
+                right,
+            ))
+
+    for dtype_name, dtype in dtypes:
+        scalar_input = tensor_elementwise_input([2, 3], dtype, 0)
+        for operation in ["add", "subtract", "multiply", "divide"]:
+            cases.append(tensor_elementwise_case(
+                f"scalar_{operation}_{dtype_name}",
+                operation,
+                scalar_input,
+                2.5,
+            ))
+        cases.append(tensor_elementwise_case(
+            f"scalar_pow_{dtype_name}", "pow", scalar_input, 2.0
+        ))
+
+        positive = tensor_elementwise_input([2, 3], dtype, 0)
+        signed_values = (
+            torch.tensor([-3, 0, 2, -1, 4, 1], dtype=dtype).reshape(2, 3)
+            if dtype != torch.uint8
+            else torch.tensor([0, 1, 2, 3, 4, 255], dtype=dtype).reshape(2, 3)
+        )
+        for operation in ["sqrt", "exp", "log"]:
+            cases.append(tensor_elementwise_case(
+                f"unary_{operation}_{dtype_name}", operation, positive
+            ))
+        for operation in ["abs", "sign", "negate"]:
+            cases.append(tensor_elementwise_case(
+                f"unary_{operation}_{dtype_name}", operation, signed_values
+            ))
+        cases.append(tensor_elementwise_case(
+            f"unary_clip_{dtype_name}",
+            "clip",
+            signed_values,
+            minimum=-1.5,
+            maximum=2.5,
+        ))
+
+    # Rank and empty-shape sentinels complement the rank-3 dtype matrix.
+    rank_shapes = [[], [3], [2, 3], [1, 2, 1, 3], [2, 0, 3]]
+    for index, shape in enumerate(rank_shapes):
+        left = tensor_elementwise_input(shape, torch.float32, 0)
+        scalar = torch.tensor(2.0, dtype=torch.float32)
+        cases.append(tensor_elementwise_case(
+            f"rank_{index}_add_scalar_tensor", "add", left, scalar
+        ))
+
+    return cases
+
+
+def tensor_mask_input(
+    shape: list[int],
+    dtype: torch.dtype,
+    offset: int,
+) -> torch.Tensor:
+    count = math.prod(shape)
+    if dtype == torch.uint8:
+        values = [((index + offset) % 5) for index in range(count)]
+    else:
+        values = [((index + offset) % 7) - 3 for index in range(count)]
+    return torch.tensor(values, dtype=dtype).reshape(shape)
+
+
+def tensor_mask_case(
+    name: str,
+    operation: str,
+    left: torch.Tensor,
+    right: torch.Tensor | float | None = None,
+) -> dict[str, Any]:
+    if operation == "greater":
+        expected = torch.gt(left, right)
+    elif operation == "greater_equal":
+        expected = torch.ge(left, right)
+    elif operation == "less":
+        expected = torch.lt(left, right)
+    elif operation == "less_equal":
+        expected = torch.le(left, right)
+    elif operation == "equal":
+        expected = torch.eq(left, right)
+    elif operation == "not_equal":
+        expected = torch.ne(left, right)
+    elif operation == "logical_and":
+        expected = torch.logical_and(left, right)
+    elif operation == "logical_or":
+        expected = torch.logical_or(left, right)
+    elif operation == "logical_not":
+        expected = torch.logical_not(left)
+    else:
+        raise ValueError(f"unsupported Tensor mask operation: {operation}")
+
+    result = {
+        "name": name,
+        "operation": operation,
+        "input_dtype": str(left.dtype).removeprefix("torch."),
+        "input": tensor_fixture(left),
+        "expected": tensor_fixture(expected.to(torch.uint8)),
+    }
+    if isinstance(right, torch.Tensor):
+        result["rhs_kind"] = "tensor"
+        result["rhs_dtype"] = str(right.dtype).removeprefix("torch.")
+        result["rhs"] = tensor_fixture(right)
+    elif right is not None:
+        result["rhs_kind"] = "scalar"
+        result["scalar"] = float(right)
+    else:
+        result["rhs_kind"] = "none"
+    return result
+
+
+def tensor_mask_matrix() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    dtypes = [
+        ("f32", torch.float32),
+        ("f64", torch.float64),
+        ("i32", torch.int32),
+        ("i64", torch.int64),
+        ("u8", torch.uint8),
+    ]
+    comparisons = [
+        "greater",
+        "greater_equal",
+        "less",
+        "less_equal",
+        "equal",
+        "not_equal",
+    ]
+
+    for left_name, left_dtype in dtypes:
+        for right_name, right_dtype in dtypes:
+            left = tensor_mask_input([2, 1, 3], left_dtype, 0)
+            right = tensor_mask_input([1, 2, 1], right_dtype, 2)
+            for operation in comparisons:
+                cases.append(tensor_mask_case(
+                    f"tensor_{operation}_{left_name}_{right_name}_broadcast",
+                    operation,
+                    left,
+                    right,
+                ))
+            for operation in ["logical_and", "logical_or"]:
+                cases.append(tensor_mask_case(
+                    f"tensor_{operation}_{left_name}_{right_name}_broadcast",
+                    operation,
+                    left,
+                    right,
+                ))
+
+    for dtype_name, dtype in dtypes:
+        scalar_input = tensor_mask_input([2, 3], dtype, 0)
+        for operation in comparisons:
+            cases.append(tensor_mask_case(
+                f"scalar_{operation}_{dtype_name}",
+                operation,
+                scalar_input,
+                2.5,
+            ))
+        cases.append(tensor_mask_case(
+            f"logical_not_{dtype_name}",
+            "logical_not",
+            scalar_input,
+        ))
+
+    for rank, shape in enumerate([[], [3], [2, 3], [2, 0, 3], [1, 2, 1, 3]]):
+        value = tensor_mask_input(shape, torch.float32, rank)
+        cases.append(tensor_mask_case(
+            f"rank_{rank}_equal_scalar", "equal", value, 2.5
+        ))
+        cases.append(tensor_mask_case(
+            f"rank_{rank}_logical_not", "logical_not", value
+        ))
+
+    cases.append(tensor_mask_case(
+        "mixed_i64_f32_precision_equal",
+        "equal",
+        torch.tensor([16_777_217], dtype=torch.int64),
+        torch.tensor([16_777_216], dtype=torch.float32),
+    ))
+    return cases
+
+
+def tensor_broadcast_input(
+    shape: list[int],
+    dtype: torch.dtype,
+    offset: int,
+) -> torch.Tensor:
+    count = math.prod(shape)
+    if dtype == torch.uint8:
+        values = [((index + offset) % 11) for index in range(count)]
+    else:
+        values = [((index + offset) % 11) - 5 for index in range(count)]
+    return torch.tensor(values, dtype=dtype).reshape(shape)
+
+
+def tensor_broadcast_matrix() -> dict[str, Any]:
+    shape_pairs = [
+        ("scalar_scalar", [], []),
+        ("scalar_zero_rank3", [], [2, 0, 3]),
+        ("leading_rank", [2, 3, 4], [3, 1]),
+        ("crossed_singletons", [5, 1], [1, 7]),
+        ("zero_singleton", [2, 0, 3], [1, 1, 3]),
+        ("rank5_valid", [1, 2, 1, 3, 1], [2, 1, 3, 1]),
+        ("incompatible", [2, 3], [4, 3]),
+        ("zero_conflict", [2, 0, 3], [2, 2, 3]),
+    ]
+    shape_cases: list[dict[str, Any]] = []
+    for name, left, right in shape_pairs:
+        try:
+            expected = list(torch.broadcast_shapes(left, right))
+            shape_cases.append({
+                "name": name,
+                "left": left,
+                "right": right,
+                "broadcastable": True,
+                "expected_shape": expected,
+            })
+        except RuntimeError:
+            shape_cases.append({
+                "name": name,
+                "left": left,
+                "right": right,
+                "broadcastable": False,
+            })
+
+    dtypes = [
+        ("f32", torch.float32),
+        ("f64", torch.float64),
+        ("i32", torch.int32),
+        ("i64", torch.int64),
+        ("u8", torch.uint8),
+    ]
+    patterns = [
+        ("scalar_to_rank4", [], [2, 1, 2, 3]),
+        ("rank1_to_rank3", [3], [2, 1, 3]),
+        ("rank2_cross", [2, 1], [2, 3]),
+        ("rank3_middle", [1, 2, 1], [3, 2, 4]),
+        ("rank4_multi_axis", [1, 2, 1, 3], [2, 2, 4, 3]),
+        ("zero_output", [1, 3], [2, 0, 3]),
+        ("identity", [2, 3], [2, 3]),
+        ("leading_singleton_only", [3], [1, 3]),
+    ]
+    materialization_cases: list[dict[str, Any]] = []
+    for dtype_name, dtype in dtypes:
+        for index, (name, input_shape, target_shape) in enumerate(patterns):
+            input_tensor = tensor_broadcast_input(input_shape, dtype, index)
+            expected = input_tensor.expand(target_shape)
+            materialization_cases.append({
+                "name": f"{name}_{dtype_name}",
+                "dtype": str(dtype).removeprefix("torch."),
+                "input": tensor_fixture(input_tensor),
+                "target_shape": target_shape,
+                "expected": tensor_fixture(expected),
+            })
+
+    invalid_pairs = [
+        ("rank_too_small", [2, 3], [3]),
+        ("incompatible_axis", [2, 1], [3, 2]),
+        ("zero_to_nonzero", [0, 3], [1, 3]),
+    ]
+    invalid_materializations: list[dict[str, Any]] = []
+    for name, input_shape, target_shape in invalid_pairs:
+        input_tensor = torch.empty(input_shape)
+        try:
+            input_tensor.expand(target_shape)
+        except RuntimeError:
+            invalid_materializations.append({
+                "name": name,
+                "input_shape": input_shape,
+                "target_shape": target_shape,
+            })
+        else:
+            raise AssertionError(f"invalid expand case unexpectedly succeeded: {name}")
+
+    return {
+        "shape_cases": shape_cases,
+        "materialization_cases": materialization_cases,
+        "invalid_materializations": invalid_materializations,
+    }
+
+
+def tensor_factory_matrix() -> dict[str, Any]:
+    dtypes = [
+        ("f32", torch.float32),
+        ("f64", torch.float64),
+        ("i32", torch.int32),
+        ("i64", torch.int64),
+        ("u8", torch.uint8),
+    ]
+    shapes = [
+        ("scalar", []),
+        ("rank1", [5]),
+        ("trailing_singleton", [2, 1]),
+        ("rank3", [1, 2, 3]),
+        ("rank4_singletons", [1, 2, 1, 3]),
+        ("zero_size", [2, 0, 3]),
+    ]
+    exact_cases: list[dict[str, Any]] = []
+    for dtype_name, dtype in dtypes:
+        for shape_name, shape in shapes:
+            count = math.prod(shape)
+            for operation, value in (
+                ("zeros", torch.zeros(shape, dtype=dtype)),
+                ("ones", torch.ones(shape, dtype=dtype)),
+                (
+                    "range_n",
+                    torch.arange(count, dtype=dtype).reshape(shape),
+                ),
+            ):
+                exact_cases.append({
+                    "name": f"{operation}_{shape_name}_{dtype_name}",
+                    "operation": operation,
+                    "dtype": str(dtype).removeprefix("torch."),
+                    "shape": shape,
+                    "expected": tensor_fixture(value),
+                })
+
+    torch.manual_seed(39001)
+    sample_count = 65536
+    samples = torch.rand(sample_count, dtype=torch.float32)
+    return {
+        "operation": "torch.zeros/ones/arange and uniform random concepts",
+        "exact_cases": exact_cases,
+        "random_contract": {
+            "sample_count": sample_count,
+            "floating_range": [0.0, 1.0],
+            "theoretical_mean": 0.5,
+            "theoretical_variance": 1.0 / 12.0,
+            "pytorch_observed": {
+                "mean": float(samples.mean().item()),
+                "variance": float(samples.var(unbiased=False).item()),
+            },
+            "tolerance": {"mean": 0.015, "variance": 0.01},
+            "cyxwiz_integer_extensions": {
+                "int32": [0, 100],
+                "int64": [0, 100],
+                "uint8": [0, 256],
+            },
+        },
+        "seeded_contract": {
+            "same_seed": 39039,
+            "different_seed": 39040,
+            "rule": (
+                "Exact replay is required for repeated construction with the "
+                "same seed, dtype, shape, active backend and device; PyTorch "
+                "and CyxWiz random streams are not required to be identical."
+            ),
+        },
+    }
+
+
+def tensor_linalg_input(
+    shape: list[int], dtype: torch.dtype, offset: int
+) -> torch.Tensor:
+    count = math.prod(shape)
+    base = torch.arange(count, dtype=torch.int64)
+    if dtype.is_floating_point:
+        values = (
+            base.remainder(7)
+            .sub(3)
+            .to(dtype)
+            .mul(0.25)
+            .add(offset * 0.125)
+        )
+    if dtype == torch.uint8:
+        values = (base.mul(3).add(offset).remainder(11)).to(dtype)
+    elif not dtype.is_floating_point:
+        values = base.remainder(7).sub(3).add(offset).to(dtype)
+    return values.reshape(shape)
+
+
+def tensor_linalg_matrix() -> dict[str, Any]:
+    dtypes = [
+        ("f32", torch.float32),
+        ("f64", torch.float64),
+        ("i32", torch.int32),
+        ("i64", torch.int64),
+        ("u8", torch.uint8),
+    ]
+    dot_shapes = [
+        ("vector", [7]),
+        ("rowwise", [3, 4]),
+        ("empty_vector", [0]),
+        ("empty_batch", [0, 4]),
+        ("zero_features", [3, 0]),
+    ]
+    dot_cases: list[dict[str, Any]] = []
+    for dtype_name, dtype in dtypes:
+        for index, (name, shape) in enumerate(dot_shapes):
+            left = tensor_linalg_input(shape, dtype, index)
+            right = tensor_linalg_input(shape, dtype, index + 1)
+            if len(shape) == 1:
+                expected = torch.dot(left, right).reshape(1)
+            else:
+                expected = (left * right).sum(dim=1, keepdim=True).to(dtype)
+            dot_cases.append({
+                "name": f"{name}_{dtype_name}",
+                "dtype": str(dtype).removeprefix("torch."),
+                "left": tensor_fixture(left),
+                "right": tensor_fixture(right),
+                "expected": tensor_fixture(expected),
+            })
+
+    batch_shapes = [
+        ("basic", [2, 2, 3], [2, 3, 2]),
+        ("singleton_matrix", [1, 1, 3], [1, 3, 1]),
+        ("zero_shared", [2, 2, 0], [2, 0, 4]),
+        ("zero_batch", [0, 2, 3], [0, 3, 4]),
+        ("zero_rows", [2, 0, 3], [2, 3, 4]),
+        ("zero_columns", [2, 3, 4], [2, 4, 0]),
+    ]
+    batch_matmul_cases: list[dict[str, Any]] = []
+    for dtype_name, dtype in dtypes:
+        for index, (name, left_shape, right_shape) in enumerate(batch_shapes):
+            left = tensor_linalg_input(left_shape, dtype, index)
+            right = tensor_linalg_input(right_shape, dtype, index + 2)
+            expected = torch.bmm(left, right)
+            batch_matmul_cases.append({
+                "name": f"{name}_{dtype_name}",
+                "dtype": str(dtype).removeprefix("torch."),
+                "left": tensor_fixture(left),
+                "right": tensor_fixture(right),
+                "expected": tensor_fixture(expected),
+            })
+
+    return {
+        "dot_cases": dot_cases,
+        "batch_matmul_cases": batch_matmul_cases,
+        "invalid_dot": [
+            {"name": "vector_size", "left_shape": [2], "right_shape": [3]},
+            {"name": "rank_mismatch", "left_shape": [2], "right_shape": [1, 2]},
+            {"name": "rowwise_shape", "left_shape": [2, 3], "right_shape": [2, 4]},
+            {"name": "scalar_rank", "left_shape": [], "right_shape": []},
+            {"name": "rank3", "left_shape": [1, 2, 3], "right_shape": [1, 2, 3]},
+        ],
+        "invalid_batch_matmul": [
+            {"name": "rank", "left_shape": [2, 3], "right_shape": [1, 3, 2]},
+            {"name": "batch", "left_shape": [1, 2, 3], "right_shape": [2, 3, 4]},
+            {"name": "inner", "left_shape": [2, 2, 3], "right_shape": [2, 4, 2]},
+        ],
+        "cyxwiz_extensions": {
+            "vector_dot_output_shape": [1],
+            "rowwise_dot": "(left * right).sum(dim=1, keepdim=True)",
+            "batch_matmul_reference": "torch.bmm; batch broadcasting is rejected",
+        },
+    }
+
+
+def dropout_semantics() -> dict[str, Any]:
+    input_tensor = torch.tensor(
+        [[1.0, -2.0, 3.5], [4.0, -5.0, 6.5]],
+        dtype=torch.float32,
+        requires_grad=True,
+    )
+    grad_output = torch.tensor(
+        [[0.25, -0.5, 0.75], [1.0, -1.25, 1.5]],
+        dtype=torch.float32,
+    )
+
+    eval_module = torch.nn.Dropout(0.5).eval()
+    eval_output = eval_module(input_tensor)
+    (eval_grad_input,) = torch.autograd.grad(
+        eval_output, input_tensor, grad_outputs=grad_output
+    )
+
+    boundary_cases: list[dict[str, Any]] = []
+    for probability in (0.0, 1.0):
+        boundary_input = input_tensor.detach().clone().requires_grad_(True)
+        boundary_output = torch.nn.Dropout(probability)(boundary_input)
+        (boundary_grad_input,) = torch.autograd.grad(
+            boundary_output, boundary_input, grad_outputs=grad_output
+        )
+        boundary_cases.append({
+            "probability": probability,
+            "expected": {
+                "output": tensor_fixture(boundary_output),
+                "grad_input": tensor_fixture(boundary_grad_input),
+            },
+        })
+
+    distribution_cases: list[dict[str, Any]] = []
+    sample_count = 65536
+    for index, probability in enumerate((0.25, 0.5, 0.9)):
+        torch.manual_seed(3901 + index)
+        samples = torch.ones(
+            sample_count, dtype=torch.float32, requires_grad=True
+        )
+        output = torch.nn.Dropout(probability)(samples)
+        (grad_input,) = torch.autograd.grad(
+            output, samples, grad_outputs=torch.ones_like(output)
+        )
+        distribution_cases.append({
+            "probability": probability,
+            "sample_count": sample_count,
+            "expected_keep_scale": 1.0 / (1.0 - probability),
+            "theoretical": {
+                "zero_fraction": probability,
+                "mean": 1.0,
+                "variance": probability / (1.0 - probability),
+            },
+            "pytorch_observed": {
+                "zero_fraction": float((output == 0).float().mean().item()),
+                "mean": float(output.mean().item()),
+                "variance": float(output.var(unbiased=False).item()),
+                "backward_mask_mismatch_count": int(
+                    (grad_input != output).sum().item()
+                ),
+            },
+            "tolerance": {
+                "zero_fraction": 0.015,
+                "mean": 0.03,
+                "variance": 0.3 if probability == 0.9 else 0.06,
+            },
+        })
+
+    return {
+        "operation": "torch.nn.Dropout",
+        "dtype": "float32",
+        "input": tensor_fixture(input_tensor),
+        "grad_output": tensor_fixture(grad_output),
+        "eval_expected": {
+            "output": tensor_fixture(eval_output),
+            "grad_input": tensor_fixture(eval_grad_input),
+        },
+        "boundary_cases": boundary_cases,
+        "distribution_cases": distribution_cases,
+        "rng_contract": (
+            "Distribution parity is required across frameworks; exact mask "
+            "replay is required only after resetting the same backend RNG seed."
+        ),
+    }
+
+
+def gradient_accumulation_case(
+    name: str,
+    input_values: list[list[float]],
+    target_values: list[int],
+    microbatch_size: int,
+    grad_accum_steps: int,
+    class_weights: list[float] | None = None,
+    ignore_index: int = -100,
+    label_smoothing: float = 0.0,
+    loss_reduction: str = "mean",
+) -> dict[str, Any]:
+    if loss_reduction not in {"mean", "sum"}:
+        raise ValueError("gradient accumulation requires mean or sum reduction")
+    inputs = torch.tensor(input_values, dtype=torch.float32)
+    targets = torch.tensor(target_values, dtype=torch.int64)
+    initial_weight = torch.tensor(
+        [[0.2, -0.4], [-0.1, 0.3]], dtype=torch.float32
+    )
+    # CyxWiz Linear bias initialization is deterministically zero. These
+    # fixtures use zero-valued features so the bias update is independent of
+    # backend-specific random weight initialization while still exercising the
+    # full Linear -> CrossEntropy -> accumulation -> SGD path.
+    initial_bias = torch.zeros(2, dtype=torch.float32)
+    model = torch.nn.Linear(2, 2, bias=True)
+    with torch.no_grad():
+        model.weight.copy_(initial_weight)
+        model.bias.copy_(initial_bias)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    weight = (
+        torch.tensor(class_weights, dtype=torch.float32)
+        if class_weights is not None
+        else None
+    )
+
+    microbatches = list(
+        zip(inputs.split(microbatch_size), targets.split(microbatch_size))
+    )
+    expected_steps: list[dict[str, Any]] = []
+    correct_predictions = 0
+    valid_predictions = 0
+    epoch_loss_numerator = 0.0
+    epoch_loss_denominator = 0.0
+    for window_start in range(0, len(microbatches), grad_accum_steps):
+        window = microbatches[window_start:window_start + grad_accum_steps]
+        effective_inputs = torch.cat([batch[0] for batch in window])
+        effective_targets = torch.cat([batch[1] for batch in window])
+        optimizer.zero_grad(set_to_none=True)
+        logits = model(effective_inputs)
+        valid_mask = effective_targets != ignore_index
+        correct_predictions += int(
+            ((logits.argmax(dim=1) == effective_targets) & valid_mask)
+            .sum()
+            .item()
+        )
+        valid_predictions += int(valid_mask.sum().item())
+        loss = functional.cross_entropy(
+            logits,
+            effective_targets,
+            weight=weight,
+            ignore_index=ignore_index,
+            label_smoothing=label_smoothing,
+            reduction=loss_reduction,
+        )
+        loss.backward()
+        optimizer.step()
+        if loss_reduction == "sum":
+            epoch_loss_numerator += float(loss.item())
+            epoch_loss_denominator = 1.0
+        else:
+            semantic_denominator = (
+                float(weight[effective_targets[valid_mask]].sum().item())
+                if weight is not None
+                else float(valid_mask.sum().item())
+            )
+            epoch_loss_numerator += float(loss.item()) * semantic_denominator
+            epoch_loss_denominator += semantic_denominator
+        expected_steps.append({
+            "ending_microbatch": window_start + len(window),
+            "window_microbatch_count": len(window),
+            "window_sample_count": int(effective_inputs.shape[0]),
+            "loss": float(loss.item()),
+            "weight": tensor_fixture(model.weight),
+            "bias": tensor_fixture(model.bias),
+        })
+
+    return {
+        "name": name,
+        "operation": "torch.nn.Linear + torch.nn.functional.cross_entropy + torch.optim.SGD",
+        "dtype": "float32",
+        "loss_reduction": loss_reduction,
+        "class_weights": class_weights or [],
+        "ignore_index": ignore_index,
+        "label_smoothing": label_smoothing,
+        "learning_rate": 0.1,
+        "microbatch_size": microbatch_size,
+        "grad_accum_steps": grad_accum_steps,
+        "expected_optimizer_step_count": len(expected_steps),
+        "expected_train_accuracy": (
+            correct_predictions / valid_predictions
+            if valid_predictions > 0
+            else 0.0
+        ),
+        "expected_train_loss": (
+            epoch_loss_numerator / epoch_loss_denominator
+            if epoch_loss_denominator > 0.0
+            else 0.0
+        ),
+        "expected_valid_target_count": valid_predictions,
+        "tolerance": {"atol": 2.0e-5, "rtol": 2.0e-5},
+        "input": tensor_fixture(inputs),
+        "targets": tensor_fixture(targets),
+        "initial": {
+            "weight": tensor_fixture(initial_weight),
+            "bias": tensor_fixture(initial_bias),
+        },
+        "expected_steps": expected_steps,
+        "expected": {
+            "weight": tensor_fixture(model.weight),
+            "bias": tensor_fixture(model.bias),
+        },
+    }
+
+
+def gradient_accumulation_matrix() -> list[dict[str, Any]]:
+    return [
+        gradient_accumulation_case(
+            "uneven_microbatch_sample_weighting",
+            [
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+            ],
+            [0, 1, 1, 0, 1],
+            microbatch_size=3,
+            grad_accum_steps=2,
+        ),
+        gradient_accumulation_case(
+            "final_partial_window_flush",
+            [
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+            ],
+            [0, 1, 1, 0, 1, 0, 1],
+            microbatch_size=2,
+            grad_accum_steps=3,
+        ),
+        gradient_accumulation_case(
+            "weighted_ignored_mean_denominator",
+            [
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+            ],
+            [0, 1, -100, 1, 0],
+            microbatch_size=3,
+            grad_accum_steps=2,
+            class_weights=[1.0, 4.0],
+            ignore_index=-100,
+            label_smoothing=0.2,
+        ),
+        gradient_accumulation_case(
+            "weighted_ignored_sum_reduction",
+            [
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [0.0, 0.0],
+            ],
+            [0, 1, -100, 1, 0],
+            microbatch_size=3,
+            grad_accum_steps=2,
+            class_weights=[1.0, 4.0],
+            ignore_index=-100,
+            label_smoothing=0.2,
+            loss_reduction="sum",
+        ),
+    ]
+
+
+def cross_entropy_case() -> dict[str, Any]:
+    logits = torch.tensor(
+        [[1.0, 2.0, 0.5], [0.1, -0.2, 0.0]], dtype=torch.float32
+    )
+    targets = torch.tensor([1, 0], dtype=torch.int64)
+    loss = functional.cross_entropy(logits, targets, reduction="mean")
+    return {
+        "operation": "torch.nn.functional.cross_entropy",
+        "dtype": "float32",
+        "target_dtype": "int64",
+        "reduction": "mean",
+        "tolerance": {"atol": 1.0e-5, "rtol": 1.0e-5},
+        "logits": tensor_fixture(logits),
+        "targets": tensor_fixture(targets),
+        "expected": {"loss": float(loss.item())},
+    }
+
+
+def cross_entropy_matrix() -> list[dict[str, Any]]:
+    rank2_logits = [
+        [2.0, 0.0, -1.0],
+        [0.5, 1.5, -0.5],
+        [-1.0, 0.2, 2.2],
+        [1.0, -0.5, 0.25],
+    ]
+    rank2_indices = [0, 0, -100, 2]
+    rank2_soft = [
+        [0.7, 0.2, 0.1],
+        [0.0, 1.0, 0.0],
+        [0.2, 0.3, 0.5],
+        [0.1, 0.2, 0.7],
+    ]
+    definitions = [
+        {
+            "name": "index_none",
+            "logits": rank2_logits,
+            "targets": rank2_indices,
+            "target_form": "index",
+            "reduction": "none",
+        },
+        {
+            "name": "index_sum_weighted_smoothed_ignored",
+            "logits": rank2_logits,
+            "targets": rank2_indices,
+            "target_form": "index",
+            "reduction": "sum",
+            "weights": [1.0, 2.0, 4.0],
+            "smoothing": 0.2,
+        },
+        {
+            "name": "index_mean_ignored",
+            "logits": rank2_logits,
+            "targets": rank2_indices,
+            "target_form": "index",
+            "reduction": "mean",
+        },
+        {
+            "name": "index_mean_weighted_smoothed_ignored",
+            "logits": rank2_logits,
+            "targets": rank2_indices,
+            "target_form": "index",
+            "reduction": "mean",
+            "weights": [1.0, 2.0, 4.0],
+            "smoothing": 0.2,
+        },
+        {
+            "name": "soft_mean_weighted_smoothed",
+            "logits": rank2_logits,
+            "targets": rank2_soft,
+            "target_form": "soft",
+            "reduction": "mean",
+            "weights": [1.0, 2.0, 4.0],
+            "smoothing": 0.2,
+        },
+        {
+            "name": "rank1_index_mean_extreme_logits",
+            "logits": [1000.0, -1000.0, 0.0],
+            "targets": 1,
+            "target_form": "index",
+            "reduction": "mean",
+            "tolerance": {"atol": 1.0e-4, "rtol": 1.0e-6},
+        },
+        {
+            "name": "rank1_soft_sum_weighted_smoothed",
+            "logits": [1.5, -0.25, 0.75],
+            "targets": [0.1, 0.6, 0.3],
+            "target_form": "soft",
+            "reduction": "sum",
+            "weights": [1.0, 3.0, 2.0],
+            "smoothing": 0.15,
+        },
+        {
+            "name": "rank3_index_none_ignored",
+            "logits": [
+                [[2.0, 0.0, -1.0], [0.5, 1.5, -0.5]],
+                [[-1.0, 0.2, 2.2], [1.0, -0.5, 0.25]],
+            ],
+            "targets": [[0, -100], [2, 1]],
+            "target_form": "index",
+            "reduction": "none",
+        },
+        {
+            "name": "rank3_index_mean_weighted_smoothed_ignored",
+            "logits": [
+                [[2.0, 0.0, -1.0], [0.5, 1.5, -0.5]],
+                [[-1.0, 0.2, 2.2], [1.0, -0.5, 0.25]],
+            ],
+            "targets": [[0, -100], [2, 1]],
+            "target_form": "index",
+            "reduction": "mean",
+            "weights": [1.0, 2.0, 4.0],
+            "smoothing": 0.2,
+        },
+        {
+            "name": "rank3_soft_sum_weighted_smoothed",
+            "logits": [
+                [[1.0, -0.5, 0.25], [0.0, 1.0, -1.0]],
+                [[-0.25, 0.5, 1.5], [2.0, 0.0, -0.5]],
+            ],
+            "targets": [
+                [[0.7, 0.2, 0.1], [0.1, 0.8, 0.1]],
+                [[0.2, 0.3, 0.5], [0.6, 0.1, 0.3]],
+            ],
+            "target_form": "soft",
+            "reduction": "sum",
+            "weights": [1.0, 2.0, 4.0],
+            "smoothing": 0.1,
+        },
+        {
+            "name": "rank2_index_mean_all_ignored",
+            "logits": [[2.0, 0.0, -1.0], [0.5, 1.5, -0.5]],
+            "targets": [-100, -100],
+            "target_form": "index",
+            "reduction": "mean",
+            "weights": [1.0, 2.0, 4.0],
+            "smoothing": 0.2,
+        },
+    ]
+    cases: list[dict[str, Any]] = []
+    for definition in definitions:
+        name = definition["name"]
+        target_form = definition["target_form"]
+        reduction = definition["reduction"]
+        weights = definition.get("weights", [])
+        smoothing = definition.get("smoothing", 0.0)
+        ignore_index = definition.get("ignore_index", -100)
+        logits = torch.tensor(
+            definition["logits"], dtype=torch.float32, requires_grad=True
+        )
+        targets = torch.tensor(
+            definition["targets"],
+            dtype=torch.int64 if target_form == "index" else torch.float32,
+        )
+        weight = (
+            torch.tensor(weights, dtype=torch.float32) if weights else None
+        )
+        # CyxWiz rank-3 classification tensors are class-last [B, S, C].
+        # PyTorch cross_entropy is class-second [B, C, S], so adapt only the
+        # independent oracle input and restore gradients to the public shape.
+        torch_logits = logits.movedim(-1, 1) if logits.ndim == 3 else logits
+        torch_targets = (
+            targets.movedim(-1, 1)
+            if target_form == "soft" and targets.ndim == 3
+            else targets
+        )
+        loss = functional.cross_entropy(
+            torch_logits,
+            torch_targets,
+            weight=weight,
+            ignore_index=ignore_index,
+            label_smoothing=smoothing,
+            reduction=reduction,
+        )
+        (loss.sum() if reduction == "none" else loss).backward()
+        cases.append({
+            "name": name,
+            "operation": "torch.nn.functional.cross_entropy",
+            "dtype": "float32",
+            "target_form": target_form,
+            "target_dtype": "int64" if target_form == "index" else "float32",
+            "reduction": reduction,
+            "ignore_index": ignore_index,
+            "class_weights": weights,
+            "label_smoothing": smoothing,
+            "tolerance": definition.get(
+                "tolerance", {"atol": 1.0e-5, "rtol": 1.0e-5}
+            ),
+            "logits": tensor_fixture(logits),
+            "targets": tensor_fixture(targets),
+            "expected": {
+                "loss": (
+                    {
+                        "shape": list(
+                            (loss.reshape(1) if loss.ndim == 0 else loss).shape
+                        ),
+                        "non_finite": "nan",
+                    }
+                    if torch.isnan(loss).all()
+                    else tensor_fixture(
+                        loss.reshape(1) if loss.ndim == 0 else loss
+                    )
+                ),
+                "logit_gradient": tensor_fixture(logits.grad),
+            },
+        })
+    return cases
+
+
+def nll_case(
+    name: str,
+    log_probabilities: Any,
+    targets: Any,
+    reduction: str,
+    ignore_index: int = -100,
+) -> dict[str, Any]:
+    predictions = torch.tensor(
+        log_probabilities, dtype=torch.float32, requires_grad=True
+    )
+    target_tensor = torch.tensor(targets, dtype=torch.int64)
+    # CyxWiz classification tensors keep classes last. PyTorch NLL accepts
+    # classes in dimension 1 for rank-3 tensors, so adapt only the oracle.
+    oracle_predictions = (
+        predictions.movedim(-1, 1)
+        if predictions.ndim == 3
+        else predictions
+    )
+    loss = functional.nll_loss(
+        oracle_predictions,
+        target_tensor,
+        ignore_index=ignore_index,
+        reduction=reduction,
+    )
+    (loss.sum() if reduction == "none" else loss).backward()
+    return {
+        "name": name,
+        "operation": "torch.nn.functional.nll_loss",
+        "dtype": "float32",
+        "target_dtype": "int64",
+        "reduction": reduction,
+        "ignore_index": ignore_index,
+        "tolerance": {"atol": 1.0e-6, "rtol": 1.0e-6},
+        "log_probabilities": tensor_fixture(predictions),
+        "targets": tensor_fixture(target_tensor),
+        "expected": {
+            "loss": (
+                {
+                    "shape": list(
+                        (loss.reshape(1) if loss.ndim == 0 else loss).shape
+                    ),
+                    "non_finite": "nan",
+                }
+                if torch.isnan(loss).all()
+                else tensor_fixture(
+                    loss.reshape(1) if loss.ndim == 0 else loss
+                )
+            ),
+            "prediction_gradient": tensor_fixture(predictions.grad),
+        },
+    }
+
+
+def nll_matrix() -> list[dict[str, Any]]:
+    return [
+        nll_case(
+            "rank1_none",
+            [-0.40760595, -1.4076059, -2.407606],
+            0,
+            "none",
+        ),
+        nll_case(
+            "rank2_sum",
+            [
+                [-0.40760595, -1.4076059, -2.407606],
+                [-1.6802697, -0.68026966, -1.1802697],
+            ],
+            [2, 1],
+            "sum",
+        ),
+        nll_case(
+            "rank2_mean_ignored",
+            [
+                [-0.40760595, -1.4076059, -2.407606],
+                [-1.6802697, -0.68026966, -1.1802697],
+                [-2.407606, -1.4076059, -0.40760595],
+            ],
+            [0, -100, 2],
+            "mean",
+        ),
+        nll_case(
+            "rank3_class_last_none",
+            [
+                [
+                    [-0.40760595, -1.4076059, -2.407606],
+                    [-1.6802697, -0.68026966, -1.1802697],
+                ],
+                [
+                    [-2.407606, -1.4076059, -0.40760595],
+                    [-0.4643688, -2.4643688, -1.4643688],
+                ],
+            ],
+            [[0, 1], [2, -100]],
+            "none",
+        ),
+        nll_case(
+            "rank2_mean_all_ignored",
+            [
+                [-0.40760595, -1.4076059, -2.407606],
+                [-1.6802697, -0.68026966, -1.1802697],
+            ],
+            [-100, -100],
+            "mean",
+        ),
+    ]
+
+
+def focal_case(
+    name: str,
+    logits: Any,
+    targets: Any,
+    reduction: str,
+    alpha: float,
+    gamma: float,
+    tolerance: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    predictions = torch.tensor(logits, dtype=torch.float32, requires_grad=True)
+    target_tensor = torch.tensor(targets, dtype=torch.int64)
+    log_probabilities = functional.log_softmax(predictions, dim=-1)
+    probabilities = log_probabilities.exp()
+    gather_indices = target_tensor.reshape(-1, 1)
+    row_log_probabilities = log_probabilities.reshape(
+        -1, predictions.shape[-1]
+    )
+    row_probabilities = probabilities.reshape(-1, predictions.shape[-1])
+    log_pt = row_log_probabilities.gather(1, gather_indices).reshape(
+        target_tensor.shape if target_tensor.ndim > 0 else ()
+    )
+    pt = row_probabilities.gather(1, gather_indices).reshape(
+        target_tensor.shape if target_tensor.ndim > 0 else ()
+    )
+    per_sample_loss = -alpha * (1.0 - pt).pow(gamma) * log_pt
+    if reduction == "mean":
+        loss = per_sample_loss.mean()
+    elif reduction == "sum":
+        loss = per_sample_loss.sum()
+    else:
+        loss = per_sample_loss.reshape(1) if per_sample_loss.ndim == 0 else per_sample_loss
+    (loss.sum() if reduction == "none" else loss).backward()
+    return {
+        "name": name,
+        "operation": "pytorch_explicit_focal_loss",
+        "formula": "-alpha * (1 - softmax(logits)[target])^gamma * log_softmax(logits)[target]",
+        "dtype": "float32",
+        "target_dtype": "int64",
+        "reduction": reduction,
+        "alpha": alpha,
+        "gamma": gamma,
+        "tolerance": tolerance or {"atol": 1.0e-5, "rtol": 1.0e-5},
+        "logits": tensor_fixture(predictions),
+        "targets": tensor_fixture(target_tensor),
+        "expected": {
+            "loss": tensor_fixture(
+                loss.reshape(1) if loss.ndim == 0 else loss
+            ),
+            "prediction_gradient": tensor_fixture(predictions.grad),
+        },
+    }
+
+
+def focal_matrix() -> list[dict[str, Any]]:
+    return [
+        focal_case(
+            "rank1_none_gamma_zero",
+            [1.5, -0.25, 0.75],
+            1,
+            "none",
+            alpha=0.75,
+            gamma=0.0,
+        ),
+        focal_case(
+            "rank2_mean_gamma_two",
+            [[2.0, 0.0, -1.0], [0.5, 1.5, -0.5], [-1.0, 0.2, 2.2]],
+            [0, 0, 2],
+            "mean",
+            alpha=0.25,
+            gamma=2.0,
+        ),
+        focal_case(
+            "rank2_sum_extreme_logits",
+            [[80.0, -80.0, 0.0], [-60.0, 60.0, 0.0]],
+            [1, 1],
+            "sum",
+            alpha=0.5,
+            gamma=1.5,
+            tolerance={"atol": 1.0e-4, "rtol": 1.0e-5},
+        ),
+        focal_case(
+            "rank3_class_last_none",
+            [
+                [[2.0, 0.0, -1.0], [0.5, 1.5, -0.5]],
+                [[-1.0, 0.2, 2.2], [1.0, -0.5, 0.25]],
+            ],
+            [[0, 1], [2, 1]],
+            "none",
+            alpha=0.8,
+            gamma=2.0,
+        ),
+    ]
+
+
+def adam_family_multistep_cases() -> dict[str, Any]:
+    gradients = [
+        torch.tensor([0.25, -0.5, 0.125], dtype=torch.float32),
+        torch.tensor([-0.125, 0.25, 0.5], dtype=torch.float32),
+        torch.tensor([0.75, -0.25, -0.375], dtype=torch.float32),
+    ]
+
+    def make_optimizer(
+        optimizer_name: str,
+        parameters: list[torch.nn.Parameter],
+        hyperparameters: dict[str, float],
+    ) -> torch.optim.Optimizer:
+        common = {
+            "lr": hyperparameters["learning_rate"],
+            "betas": (hyperparameters["beta1"], hyperparameters["beta2"]),
+            "eps": hyperparameters["epsilon"],
+            "foreach": False,
+        }
+        if optimizer_name == "adam":
+            return torch.optim.Adam(
+                parameters, weight_decay=0.0, fused=False, **common
+            )
+        if optimizer_name == "adamw":
+            return torch.optim.AdamW(
+                parameters,
+                weight_decay=hyperparameters["weight_decay"],
+                fused=False,
+                **common,
+            )
+        if optimizer_name == "nadam":
+            return torch.optim.NAdam(
+                parameters,
+                weight_decay=0.0,
+                momentum_decay=hyperparameters["momentum_decay"],
+                decoupled_weight_decay=False,
+                capturable=False,
+                differentiable=False,
+                **common,
+            )
+        raise ValueError(f"unsupported Adam-family optimizer: {optimizer_name}")
+
+    def state_fixture(
+        optimizer: torch.optim.Optimizer,
+        parameter: torch.nn.Parameter,
+        include_mu_product: bool,
+    ) -> dict[str, Any]:
+        state = optimizer.state[parameter]
+        result = {
+            "exp_avg": tensor_fixture(state["exp_avg"]),
+            "exp_avg_sq": tensor_fixture(state["exp_avg_sq"]),
+            "step": int(state["step"].item()),
+        }
+        if include_mu_product:
+            result["mu_product"] = float(state["mu_product"].item())
+        return result
+
+    configurations = {
+        "adam": {
+            "learning_rate": 0.01,
+            "beta1": 0.9,
+            "beta2": 0.999,
+            "epsilon": 1.0e-8,
+        },
+        "adamw": {
+            "learning_rate": 0.01,
+            "beta1": 0.9,
+            "beta2": 0.999,
+            "epsilon": 1.0e-8,
+            "weight_decay": 0.1,
+        },
+        "nadam": {
+            "learning_rate": 0.01,
+            "beta1": 0.9,
+            "beta2": 0.999,
+            "epsilon": 1.0e-8,
+            "momentum_decay": 0.004,
+        },
+    }
+    cases = {}
+    for optimizer_name, hyperparameters in configurations.items():
+        parameter = torch.nn.Parameter(
+            torch.tensor([1.0, -2.0, 0.5], dtype=torch.float32)
+        )
+        initial_parameter = parameter.detach().clone()
+        optimizer = make_optimizer(
+            optimizer_name, [parameter], hyperparameters
+        )
+        expected_steps = []
+        for gradient in gradients:
+            optimizer.zero_grad(set_to_none=True)
+            parameter.grad = gradient.clone()
+            optimizer.step()
+            expected_steps.append({
+                "parameter": tensor_fixture(parameter),
+                "state": state_fixture(
+                    optimizer, parameter, optimizer_name == "nadam"
+                ),
+            })
+
+        sparse_a = torch.nn.Parameter(
+            torch.tensor([1.0, -2.0, 0.5], dtype=torch.float32)
+        )
+        sparse_b = torch.nn.Parameter(
+            torch.tensor([-0.75, 0.25, 1.5], dtype=torch.float32)
+        )
+        sparse_initial_b = sparse_b.detach().clone()
+        sparse_optimizer = make_optimizer(
+            optimizer_name, [sparse_a, sparse_b], hyperparameters
+        )
+        sparse_optimizer.zero_grad(set_to_none=True)
+        sparse_a.grad = gradients[0].clone()
+        sparse_optimizer.step()
+        b_after_missing_gradient = sparse_b.detach().clone()
+        sparse_optimizer.zero_grad(set_to_none=True)
+        sparse_a.grad = gradients[1].clone()
+        sparse_b.grad = gradients[2].clone()
+        sparse_optimizer.step()
+
+        cases[optimizer_name] = {
+            "operation": f"torch.optim.{optimizer.__class__.__name__}",
+            "dtype": "float32",
+            "hyperparameters": hyperparameters,
+            "tolerance": {"atol": 2.0e-6, "rtol": 2.0e-6},
+            "initial_parameter": tensor_fixture(initial_parameter),
+            "gradients": [tensor_fixture(gradient) for gradient in gradients],
+            "expected_steps": expected_steps,
+            "zero_grad_contract":
+                "clears gradients without resetting optimizer state",
+            "missing_gradient_case": {
+                "initial_b": tensor_fixture(sparse_initial_b),
+                "b_after_missing_gradient":
+                    tensor_fixture(b_after_missing_gradient),
+                "final_a": tensor_fixture(sparse_a),
+                "final_b": tensor_fixture(sparse_b),
+                "state_a": state_fixture(
+                    sparse_optimizer,
+                    sparse_a,
+                    optimizer_name == "nadam",
+                ),
+                "state_b": state_fixture(
+                    sparse_optimizer,
+                    sparse_b,
+                    optimizer_name == "nadam",
+                ),
+            },
+        }
+    return cases
+
+
+def sgd_momentum_multistep_case() -> dict[str, Any]:
+    hyperparameters = {
+        "learning_rate": 0.1,
+        "momentum": 0.9,
+    }
+    parameter = torch.nn.Parameter(
+        torch.tensor([1.0, -2.0, 0.5], dtype=torch.float32)
+    )
+    initial_parameter = parameter.detach().clone()
+    gradients = [
+        torch.tensor([0.25, -0.5, 0.125], dtype=torch.float32),
+        torch.tensor([-0.125, 0.25, 0.5], dtype=torch.float32),
+        torch.tensor([0.75, -0.25, -0.375], dtype=torch.float32),
+    ]
+    optimizer = torch.optim.SGD(
+        [parameter],
+        lr=hyperparameters["learning_rate"],
+        momentum=hyperparameters["momentum"],
+        foreach=False,
+        fused=False,
+    )
+    expected_steps = []
+    for step_count, gradient in enumerate(gradients, start=1):
+        parameter.grad = gradient.clone()
+        optimizer.step()
+        state = optimizer.state[parameter]
+        expected_steps.append({
+            "step_count": step_count,
+            "parameter": tensor_fixture(parameter),
+            "momentum_buffer": tensor_fixture(state["momentum_buffer"]),
+        })
+
+    return {
+        "operation": "torch.optim.SGD",
+        "dtype": "float32",
+        "hyperparameters": hyperparameters,
+        "tolerance": {"atol": 1.0e-6, "rtol": 1.0e-6},
+        "initial_parameter": tensor_fixture(initial_parameter),
+        "gradients": [tensor_fixture(gradient) for gradient in gradients],
+        "expected_steps": expected_steps,
+    }
+
+
+def adaptive_optimizer_multistep_cases() -> dict[str, Any]:
+    gradients = [
+        torch.tensor([0.25, -0.5, 0.125], dtype=torch.float32),
+        torch.tensor([-0.125, 0.25, 0.5], dtype=torch.float32),
+        torch.tensor([0.75, -0.25, -0.375], dtype=torch.float32),
+    ]
+
+    def run_case(
+        optimizer_name: str,
+        hyperparameters: dict[str, float],
+    ) -> dict[str, Any]:
+        parameter = torch.nn.Parameter(
+            torch.tensor([1.0, -2.0, 0.5], dtype=torch.float32)
+        )
+        initial_parameter = parameter.detach().clone()
+        if optimizer_name == "rmsprop":
+            optimizer = torch.optim.RMSprop(
+                [parameter],
+                lr=hyperparameters["learning_rate"],
+                alpha=hyperparameters["alpha"],
+                eps=hyperparameters["epsilon"],
+                momentum=hyperparameters["momentum"],
+                centered=False,
+                weight_decay=0.0,
+                foreach=False,
+            )
+            state_names = ["square_avg", "momentum_buffer"]
+        elif optimizer_name == "adagrad":
+            optimizer = torch.optim.Adagrad(
+                [parameter],
+                lr=hyperparameters["learning_rate"],
+                lr_decay=0.0,
+                weight_decay=0.0,
+                initial_accumulator_value=0.0,
+                eps=hyperparameters["epsilon"],
+                foreach=False,
+            )
+            state_names = ["sum"]
+        elif optimizer_name == "adadelta":
+            optimizer = torch.optim.Adadelta(
+                [parameter],
+                lr=hyperparameters["learning_rate"],
+                rho=hyperparameters["rho"],
+                eps=hyperparameters["epsilon"],
+                weight_decay=0.0,
+                foreach=False,
+            )
+            state_names = ["square_avg", "acc_delta"]
+        else:
+            raise ValueError(f"unsupported adaptive optimizer: {optimizer_name}")
+
+        expected_steps = []
+        for step_count, gradient in enumerate(gradients, start=1):
+            optimizer.zero_grad(set_to_none=True)
+            parameter.grad = gradient.clone()
+            optimizer.step()
+            state = optimizer.state[parameter]
+            expected_steps.append({
+                "step_count": step_count,
+                "parameter": tensor_fixture(parameter),
+                "state": {
+                    name: tensor_fixture(state[name]) for name in state_names
+                },
+            })
+
+        return {
+            "operation": f"torch.optim.{optimizer.__class__.__name__}",
+            "dtype": "float32",
+            "hyperparameters": hyperparameters,
+            "tolerance": {"atol": 1.0e-6, "rtol": 1.0e-6},
+            "initial_parameter": tensor_fixture(initial_parameter),
+            "gradients": [tensor_fixture(gradient) for gradient in gradients],
+            "expected_steps": expected_steps,
+            "zero_grad_contract": "clears gradients without resetting optimizer state",
+        }
+
+    return {
+        "rmsprop": run_case(
+            "rmsprop",
+            {
+                "learning_rate": 0.01,
+                "alpha": 0.9,
+                "epsilon": 1.0e-8,
+                "momentum": 0.5,
+            },
+        ),
+        "adagrad": run_case(
+            "adagrad",
+            {"learning_rate": 0.1, "epsilon": 1.0e-10},
+        ),
+        "adadelta": run_case(
+            "adadelta",
+            {"learning_rate": 0.5, "rho": 0.9, "epsilon": 1.0e-6},
+        ),
+    }
+
+
+def lamb_multistep_case() -> dict[str, Any]:
+    hyperparameters = {
+        "learning_rate": 0.01,
+        "beta1": 0.9,
+        "beta2": 0.999,
+        "epsilon": 1.0e-6,
+        "weight_decay": 0.02,
+    }
+
+    def run_step(
+        parameter: torch.Tensor,
+        gradient: torch.Tensor,
+        first_moment: torch.Tensor,
+        second_moment: torch.Tensor,
+        step_count: int,
+        weight_decay: float,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
+        beta1 = hyperparameters["beta1"]
+        beta2 = hyperparameters["beta2"]
+        first_moment = beta1 * first_moment + (1.0 - beta1) * gradient
+        second_moment = (
+            beta2 * second_moment + (1.0 - beta2) * gradient * gradient
+        )
+        bias_correction1 = 1.0 - beta1 ** step_count
+        bias_correction2 = 1.0 - beta2 ** step_count
+        update = (first_moment / bias_correction1) / (
+            torch.sqrt(second_moment / bias_correction2)
+            + hyperparameters["epsilon"]
+        )
+        if weight_decay > 0.0:
+            update = update + weight_decay * parameter
+        weight_norm = torch.linalg.vector_norm(parameter)
+        update_norm = torch.linalg.vector_norm(update)
+        trust_ratio = torch.tensor(1.0, dtype=torch.float32)
+        if weight_norm.item() > 0.0 and update_norm.item() > 0.0:
+            trust_ratio = weight_norm / update_norm
+        parameter = (
+            parameter
+            - hyperparameters["learning_rate"] * trust_ratio * update
+        )
+        return parameter, first_moment, second_moment, trust_ratio.item()
+
+    parameter = torch.tensor([1.0, -2.0, 0.5], dtype=torch.float32)
+    initial_parameter = parameter.clone()
+    first_moment = torch.zeros_like(parameter)
+    second_moment = torch.zeros_like(parameter)
+    gradients = [
+        torch.tensor([0.25, -0.5, 0.125], dtype=torch.float32),
+        torch.tensor([-0.125, 0.25, 0.5], dtype=torch.float32),
+        torch.tensor([0.75, -0.25, -0.375], dtype=torch.float32),
+    ]
+    expected_steps = []
+    for step_count, gradient in enumerate(gradients, start=1):
+        parameter, first_moment, second_moment, trust_ratio = run_step(
+            parameter,
+            gradient,
+            first_moment,
+            second_moment,
+            step_count,
+            hyperparameters["weight_decay"],
+        )
+        expected_steps.append({
+            "step_count": step_count,
+            "parameter": tensor_fixture(parameter),
+            "first_moment": tensor_fixture(first_moment),
+            "second_moment": tensor_fixture(second_moment),
+            "trust_ratio": trust_ratio,
+        })
+
+    edge_cases = {}
+    for name, edge_parameter, edge_gradient in [
+        (
+            "zero_weight_norm",
+            torch.zeros(3, dtype=torch.float32),
+            torch.tensor([0.5, -0.25, 0.125], dtype=torch.float32),
+        ),
+        (
+            "zero_update_norm",
+            torch.tensor([1.0, -2.0, 0.5], dtype=torch.float32),
+            torch.zeros(3, dtype=torch.float32),
+        ),
+    ]:
+        edge_initial = edge_parameter.clone()
+        edge_parameter, edge_first, edge_second, trust_ratio = run_step(
+            edge_parameter,
+            edge_gradient,
+            torch.zeros_like(edge_parameter),
+            torch.zeros_like(edge_parameter),
+            1,
+            0.0,
+        )
+        edge_cases[name] = {
+            "initial_parameter": tensor_fixture(edge_initial),
+            "gradient": tensor_fixture(edge_gradient),
+            "expected_parameter": tensor_fixture(edge_parameter),
+            "expected_first_moment": tensor_fixture(edge_first),
+            "expected_second_moment": tensor_fixture(edge_second),
+            "expected_trust_ratio": trust_ratio,
+            "weight_decay": 0.0,
+        }
+
+    return {
+        "operation": "independent PyTorch tensor LAMB equation",
+        "dtype": "float32",
+        "hyperparameters": hyperparameters,
+        "tolerance": {"atol": 2.0e-6, "rtol": 2.0e-6},
+        "initial_parameter": tensor_fixture(initial_parameter),
+        "gradients": [tensor_fixture(gradient) for gradient in gradients],
+        "expected_steps": expected_steps,
+        "zero_grad_contract": "clears gradients without resetting optimizer state",
+        "zero_norm_edges": edge_cases,
+    }
+
+
+def weighted_sampler_case() -> dict[str, Any]:
+    class_counts = [3072, 1024]
+    labels = torch.repeat_interleave(
+        torch.arange(len(class_counts), dtype=torch.int64),
+        torch.tensor(class_counts, dtype=torch.int64),
+    )
+    class_count_tensor = torch.tensor(class_counts, dtype=torch.float64)
+    sample_weights = class_count_tensor.reciprocal()[labels]
+    expected_probabilities = torch.stack(
+        [sample_weights[labels == label].sum()
+         for label in range(len(class_counts))]
+    )
+    expected_probabilities /= expected_probabilities.sum()
+
+    seed = 3901
+    num_samples = sum(class_counts)
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(seed)
+    sampler = torch.utils.data.WeightedRandomSampler(
+        sample_weights,
+        num_samples=num_samples,
+        replacement=True,
+        generator=generator,
+    )
+    sampled_indices = torch.tensor(list(sampler), dtype=torch.int64)
+    empirical_counts = torch.bincount(
+        labels[sampled_indices], minlength=len(class_counts)
+    )
+
+    return {
+        "operation": "torch.utils.data.WeightedRandomSampler",
+        "class_counts": class_counts,
+        "sample_weight_rule": "inverse_class_frequency",
+        "replacement": True,
+        "num_samples": num_samples,
+        "seed": seed,
+        "expected_class_probabilities": expected_probabilities.tolist(),
+        "pytorch_empirical_class_counts": empirical_counts.tolist(),
+        "absolute_probability_tolerance": 0.03,
+        "cross_rng_probability_tolerance": 0.04,
+        "rng_contract": (
+            "Distribution parity is required; the C++ RNG stream is not "
+            "required to reproduce torch.multinomial indices."
+        ),
+    }
+
+
+def scheduler_lr_case(
+    name: str,
+    scheduler_type: str,
+    scheduler_parameters: dict[str, Any],
+    steps: int,
+    metrics: list[float] | None = None,
+) -> dict[str, Any]:
+    base_lr = 0.1
+    parameter = torch.nn.Parameter(torch.tensor([1.0], dtype=torch.float32))
+    optimizer = torch.optim.SGD([parameter], lr=base_lr)
+
+    if scheduler_type == "StepLR":
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=scheduler_parameters["step_size"],
+            gamma=scheduler_parameters["gamma"],
+        )
+    elif scheduler_type == "ExponentialLR":
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(
+            optimizer, gamma=scheduler_parameters["gamma"]
+        )
+    elif scheduler_type == "CosineAnnealingLR":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=scheduler_parameters["T_max"],
+            eta_min=scheduler_parameters["eta_min"],
+        )
+    elif scheduler_type == "ReduceLROnPlateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode=scheduler_parameters["mode"],
+            factor=scheduler_parameters["factor"],
+            patience=scheduler_parameters["patience"],
+            threshold=scheduler_parameters["threshold"],
+            threshold_mode="abs",
+            min_lr=scheduler_parameters["min_lr"],
+        )
+    elif scheduler_type == "LinearWarmupLR":
+        warmup_epochs = scheduler_parameters["warmup_epochs"]
+        start_lr = scheduler_parameters["start_lr"]
+        start_factor = start_lr / base_lr
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda epoch: start_factor
+            + (1.0 - start_factor) * min(epoch / warmup_epochs, 1.0),
+        )
+    elif scheduler_type == "OneCycleLR":
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=scheduler_parameters["max_lr"],
+            total_steps=scheduler_parameters["total_steps"],
+            pct_start=scheduler_parameters["pct_start"],
+            anneal_strategy="cos",
+            cycle_momentum=False,
+            div_factor=scheduler_parameters["div_factor"],
+            final_div_factor=scheduler_parameters["final_div_factor"],
+            three_phase=False,
+        )
+    else:
+        raise ValueError(f"unsupported scheduler fixture type: {scheduler_type}")
+
+    initial_learning_rate = optimizer.param_groups[0]["lr"]
+    expected_steps: list[dict[str, Any]] = []
+    for index in range(1, steps + 1):
+        optimizer.step()
+        expected: dict[str, Any] = {"index": index}
+        if metrics is None:
+            scheduler.step()
+        else:
+            metric = metrics[index - 1]
+            scheduler.step(metric)
+            expected["metric"] = metric
+        expected["learning_rate"] = optimizer.param_groups[0]["lr"]
+        expected_steps.append(expected)
+
+    result = {
+        "name": name,
+        "operation": (
+            "torch.optim.lr_scheduler.LambdaLR(linear_warmup)"
+            if scheduler_type == "LinearWarmupLR"
+            else f"torch.optim.lr_scheduler.{scheduler_type}"
+        ),
+        "call_order": "optimizer.step_then_scheduler.step",
+        "base_learning_rate": base_lr,
+        "parameters": scheduler_parameters,
+        "tolerance": {"atol": 1.0e-12, "rtol": 1.0e-12},
+        "expected_initial_learning_rate": initial_learning_rate,
+        "expected_steps": expected_steps,
+        "expected_reset_learning_rate": base_lr
+        if scheduler_type not in {"LinearWarmupLR", "OneCycleLR"}
+        else (
+            start_lr
+            if scheduler_type == "LinearWarmupLR"
+            else scheduler_parameters["max_lr"] / scheduler_parameters["div_factor"]
+        ),
+    }
+    if scheduler_type == "OneCycleLR":
+        result["expected_error_step"] = scheduler_parameters["total_steps"] + 1
+    return result
+
+
+def scheduler_lr_matrix() -> list[dict[str, Any]]:
+    return [
+        scheduler_lr_case(
+            "step_lr_epoch_sequence",
+            "StepLR",
+            {"step_size": 2, "gamma": 0.5},
+            steps=5,
+        ),
+        scheduler_lr_case(
+            "exponential_lr_epoch_sequence",
+            "ExponentialLR",
+            {"gamma": 0.9},
+            steps=4,
+        ),
+        scheduler_lr_case(
+            "cosine_annealing_boundary_sequence",
+            "CosineAnnealingLR",
+            {"T_max": 4, "eta_min": 0.01},
+            steps=5,
+        ),
+        scheduler_lr_case(
+            "plateau_patience_sequence",
+            "ReduceLROnPlateau",
+            {
+                "mode": "min",
+                "factor": 0.5,
+                "patience": 2,
+                "threshold": 1.0e-4,
+                "min_lr": 0.01,
+            },
+            steps=5,
+            metrics=[1.0, 1.1, 1.2, 1.3, 1.4],
+        ),
+        scheduler_lr_case(
+            "plateau_max_threshold_minimum_sequence",
+            "ReduceLROnPlateau",
+            {
+                "mode": "max",
+                "factor": 0.5,
+                "patience": 1,
+                "threshold": 0.05,
+                "min_lr": 0.01,
+            },
+            steps=13,
+            metrics=[
+                0.50,
+                0.54,
+                0.56,
+                0.55,
+                0.54,
+                0.53,
+                0.52,
+                0.51,
+                0.50,
+                0.49,
+                0.48,
+                0.47,
+                0.46,
+            ],
+        ),
+        scheduler_lr_case(
+            "linear_warmup_boundary_sequence",
+            "LinearWarmupLR",
+            {"warmup_epochs": 4, "start_lr": 0.0},
+            steps=6,
+        ),
+        scheduler_lr_case(
+            "one_cycle_two_phase_cosine_sequence",
+            "OneCycleLR",
+            {
+                "max_lr": 0.1,
+                "total_steps": 10,
+                "pct_start": 0.3,
+                "div_factor": 25.0,
+                "final_div_factor": 10000.0,
+                "anneal_strategy": "cos",
+                "cycle_momentum": False,
+                "three_phase": False,
+            },
+            steps=10,
+        ),
+    ]
+
+
+def optimizer_lr_warmup_case(
+    name: str,
+    warmup_type: str,
+    warmup_steps: int = 4,
+    steps: int = 6,
+) -> dict[str, Any]:
+    base_lr = 0.1
+    parameter = torch.nn.Parameter(torch.tensor([1.0], dtype=torch.float32))
+    optimizer = torch.optim.SGD([parameter], lr=base_lr)
+
+    if warmup_type == "linear":
+        lr_lambda = lambda step: min(step / warmup_steps, 1.0)
+    elif warmup_type == "cosine":
+        lr_lambda = lambda step: 0.5 * (
+            1.0 - math.cos(math.pi * min(step / warmup_steps, 1.0))
+        )
+    elif warmup_type == "none":
+        lr_lambda = lambda step: 1.0
+    else:
+        raise ValueError(f"unsupported optimizer warmup type: {warmup_type}")
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer, lr_lambda=lr_lambda
+    )
+    expected_steps: list[dict[str, Any]] = []
+    for index in range(1, steps + 1):
+        optimizer.zero_grad()
+        parameter.grad = torch.tensor([1.0], dtype=torch.float32)
+        optimizer.step()
+        scheduler.step()
+        expected_steps.append(
+            {
+                "index": index,
+                "learning_rate": optimizer.param_groups[0]["lr"],
+                "parameter": parameter.detach().item(),
+                "warmup_progress": (
+                    1.0
+                    if warmup_type == "none"
+                    else min(index / warmup_steps, 1.0)
+                ),
+                "warmup_complete": (
+                    warmup_type == "none" or index >= warmup_steps
+                ),
+            }
+        )
+
+    return {
+        "name": name,
+        "operation": "torch.optim.SGD + torch.optim.lr_scheduler.LambdaLR",
+        "call_order": "optimizer.step_then_scheduler.step",
+        "base_learning_rate": base_lr,
+        "warmup_type": warmup_type,
+        "warmup_steps": warmup_steps,
+        "initial_parameter": 1.0,
+        "gradient": 1.0,
+        "expected_initial_learning_rate": (
+            0.0 if warmup_type != "none" else base_lr
+        ),
+        "expected_steps": expected_steps,
+        "tolerance": {"atol": 1.0e-7, "rtol": 1.0e-7},
+    }
+
+
+def optimizer_lr_warmup_matrix() -> list[dict[str, Any]]:
+    return [
+        optimizer_lr_warmup_case("optimizer_linear_warmup", "linear"),
+        optimizer_lr_warmup_case("optimizer_cosine_warmup", "cosine"),
+        optimizer_lr_warmup_case("optimizer_no_warmup", "none"),
+    ]
+
+
+def generate_fixture() -> dict[str, Any]:
+    torch.manual_seed(39)
+    torch.use_deterministic_algorithms(True)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "oracle": {
+            "name": "PyTorch",
+            "version": torch.__version__,
+            "device": "cpu",
+        },
+        "seed": 39,
+        "cases": {
+            "elementwise_activation_forward_backward_f32":
+                elementwise_activation_matrix(),
+            "softmax_forward_backward_f32": softmax_matrix(),
+            "prelu_forward_backward_f32": prelu_matrix(),
+            "dropout_semantics_f32": dropout_semantics(),
+            "flatten_forward_backward_f32": flatten_matrix(),
+            "tensor_concat_f32": tensor_concat_matrix(),
+            "tensor_elementwise": tensor_elementwise_matrix(),
+            "tensor_masks": tensor_mask_matrix(),
+            "tensor_broadcast": tensor_broadcast_matrix(),
+            "tensor_factories": tensor_factory_matrix(),
+            "tensor_linalg": tensor_linalg_matrix(),
+            "tensor_indexing_f32": tensor_indexing_matrix(),
+            "tensor_permute_f32": tensor_permute_matrix(),
+            "tensor_reductions": tensor_reduction_matrix(),
+            "tensor_shape_semantics_f32": tensor_shape_semantics(),
+            "linear_forward_backward_f32": linear_matrix(),
+            "linear_multibatch_sgd_f32": linear_multibatch_sgd_case(),
+            "cross_entropy_index_mean_f32": cross_entropy_case(),
+            "cross_entropy_matrix_f32": cross_entropy_matrix(),
+            "regression_loss_matrix_f32": regression_loss_matrix(),
+            "probability_loss_matrix_f32": probability_loss_matrix(),
+            "overlap_loss_matrix_f32": overlap_loss_matrix(),
+            "metric_learning_loss_matrix_f32": (
+                metric_learning_loss_matrix()
+            ),
+            "metric_learning_metric_matrix_f32": (
+                metric_learning_metric_matrix()
+            ),
+            "metric_pair_linear_multibatch_sgd_f32": (
+                metric_pair_linear_multibatch_sgd_case()
+            ),
+            "overlap_linear_multibatch_sgd_f32": (
+                overlap_linear_multibatch_sgd_case()
+            ),
+            "nll_loss_matrix_f32": nll_matrix(),
+            "focal_loss_matrix_f32": focal_matrix(),
+            "adam_family_multistep_f32": adam_family_multistep_cases(),
+            "sgd_momentum_multistep_f32": sgd_momentum_multistep_case(),
+            "adaptive_optimizer_multistep_f32":
+                adaptive_optimizer_multistep_cases(),
+            "lamb_multistep_f32": lamb_multistep_case(),
+            "gradient_accumulation_linear_ce_sgd_f32":
+                gradient_accumulation_matrix(),
+            "weighted_sampler_inverse_frequency": weighted_sampler_case(),
+            "scheduler_lr_sequences": scheduler_lr_matrix(),
+            "optimizer_lr_warmup_sequences": optimizer_lr_warmup_matrix(),
+        },
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    args = parser.parse_args()
+
+    output = args.output.resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(generate_fixture(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(output)
+
+
+if __name__ == "__main__":
+    main()

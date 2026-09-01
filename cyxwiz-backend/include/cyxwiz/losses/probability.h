@@ -6,29 +6,28 @@ namespace cyxwiz {
 
 class CYXWIZ_API BCELoss : public Loss {
 public:
-    explicit BCELoss(Reduction reduction = Reduction::Mean, float eps = 1e-7f)
-        : Loss(reduction), eps_(eps) {}
+    explicit BCELoss(Reduction reduction = Reduction::Mean,
+                     float denominator_epsilon = 1e-12f);
 
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
     Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
     std::string GetName() const override { return "BCE"; }
 
 private:
-    float eps_;
+    float denominator_epsilon_;
 };
 
 class CYXWIZ_API BCEWithLogitsLoss : public Loss {
 public:
     explicit BCEWithLogitsLoss(Reduction reduction = Reduction::Mean,
-                               float pos_weight = 1.0f)
-        : Loss(reduction), pos_weight_(pos_weight) {}
+                               float pos_weight = 1.0f);
 
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
     Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
     std::string GetName() const override { return "BCEWithLogits"; }
 
     float GetPosWeight() const { return pos_weight_; }
-    void SetPosWeight(float pos_weight) { pos_weight_ = pos_weight; }
+    void SetPosWeight(float pos_weight);
 
 private:
     float pos_weight_ = 1.0f;
@@ -50,8 +49,7 @@ private:
 class CYXWIZ_API SoftDiceLoss : public Loss {
 public:
     explicit SoftDiceLoss(Reduction reduction = Reduction::Mean,
-                          float smooth = 1.0f)
-        : Loss(reduction), smooth_(smooth) {}
+                          float smooth = 1.0f);
 
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
     Tensor Backward(const Tensor& predictions, const Tensor& targets) override;
@@ -87,8 +85,7 @@ private:
 class CYXWIZ_API JaccardLoss : public Loss {
 public:
     explicit JaccardLoss(Reduction reduction = Reduction::Mean,
-                         float smooth = 1.0f)
-        : Loss(reduction), smooth_(smooth) {}
+                         float smooth = 1.0f);
 
     Tensor Forward(const Tensor& predictions, const Tensor& targets) override;
     Tensor Backward(const Tensor& predictions, const Tensor& targets) override;

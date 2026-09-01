@@ -1420,13 +1420,19 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
             spdlog::info("TrainingExecutor: Using L1 loss (reduction={})",
                          ReductionName(reduction));
             return CreateLoss(LossType::L1, reduction);
-        case gui::NodeType::SmoothL1Loss:
-        case gui::NodeType::HuberLoss: {
+        case gui::NodeType::SmoothL1Loss: {
             const float beta = resolved.beta.value();
-            spdlog::info("TrainingExecutor: Using SmoothL1/Huber loss "
+            spdlog::info("TrainingExecutor: Using SmoothL1 loss "
                          "(reduction={}, beta={})",
                          ReductionName(reduction), beta);
             return CreateLoss(LossType::SmoothL1, reduction, beta);
+        }
+        case gui::NodeType::HuberLoss: {
+            const float delta = resolved.beta.value();
+            spdlog::info("TrainingExecutor: Using Huber loss "
+                         "(reduction={}, delta={})",
+                         ReductionName(reduction), delta);
+            return CreateLoss(LossType::Huber, reduction, delta);
         }
         case gui::NodeType::NLLLoss: {
             spdlog::info("TrainingExecutor: Using NLL loss "

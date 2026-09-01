@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../core/training_parameter_contract.h"
+
 #include "../panel.h"
 #include <functional>
 #include <string>
@@ -98,7 +100,8 @@ private:
 
     // Advanced settings
     float gradient_clip_norm_ = 0.0f;  // 0 = disabled
-    int gradient_accumulation_steps_ = 1;
+    int gradient_accumulation_steps_ =
+        training_contract::kGradientAccumulationStepsDefault;
     bool use_mixed_precision_ = false;
 
     // Callback

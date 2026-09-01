@@ -1,4 +1,5 @@
 #include "statistics_calculator.h"
+#include "algorithms/arrayfire_host_materialization.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
@@ -178,15 +179,30 @@ DatasetStatistics StatisticsCalculator::Compute(
         // Eigenvectors (columns of V = rows of Vt transposed)
         af::array V = af::transpose(Vt);
         std::vector<float> V_host(n_features * n_features);
-        V.host(V_host.data());
+        MaterializeArrayFireToHost(
+            V,
+            V_host.data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "StatisticsCalculator::ComputePCA::Components",
+            "arrayfire_column_major");
 
         // Singular values
         std::vector<float> S_host(n_features);
-        S.host(S_host.data());
+        MaterializeArrayFireToHost(
+            S,
+            S_host.data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "StatisticsCalculator::ComputePCA::SingularValues",
+            "arrayfire_native");
 
         // Mean vector
         std::vector<float> mean_host(n_features);
-        mean_af.host(mean_host.data());
+        MaterializeArrayFireToHost(
+            mean_af,
+            mean_host.data(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "StatisticsCalculator::ComputePCA::Mean",
+            "arrayfire_native");
 
         // 7. Store in stats structure
         stats.pca_components.resize(n_features);

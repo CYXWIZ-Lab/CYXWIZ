@@ -266,8 +266,8 @@ void PrintCoverageMatrix() {
            "pipeline ClassificationMetricsNode in operator-routing tests\n"
         << "- GPU losses: ArrayFire MSE smoke runs only on active CUDA/OpenCL; "
            "otherwise skipped explicitly\n"
-        << "- GPU metrics: CPU-only by design for Arrow/pipeline metrics; "
-           "ArrayFire graph tensor placement covered by graph executable tests\n";
+        << "- GPU metrics: metric-learning pair/retrieval metrics are ArrayFire-first; "
+           "Arrow/pipeline metrics remain native CPU by design\n";
 }
 
 }  // namespace

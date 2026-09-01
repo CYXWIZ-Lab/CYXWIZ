@@ -194,14 +194,7 @@ private:
             throw std::logic_error(
                 "SharedEncoderRuntime accumulated gradients require Float32 tensors");
         }
-
-        std::vector<float> values(left.NumElements(), 0.0f);
-        const float* left_data = left.Data<float>();
-        const float* right_data = right.Data<float>();
-        for (size_t i = 0; i < values.size(); ++i) {
-            values[i] = left_data[i] + right_data[i];
-        }
-        return Tensor(left.Shape(), values.data(), DataType::Float32);
+        return left + right;
     }
 
     static std::map<std::string, Tensor> SumGradientMaps(

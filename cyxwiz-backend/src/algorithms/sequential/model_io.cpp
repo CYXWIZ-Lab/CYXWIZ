@@ -58,7 +58,7 @@ static void WriteTensor(std::ostream& os, const Tensor& tensor) {
     // Write data
     size_t num_bytes = tensor.NumBytes();
     os.write(reinterpret_cast<const char*>(&num_bytes), sizeof(num_bytes));
-    os.write(reinterpret_cast<const char*>(tensor.Data()), num_bytes);
+    os.write(reinterpret_cast<const char*>(tensor.ReadData()), num_bytes);
 }
 
 // Helper: Read tensor from binary stream
@@ -78,7 +78,7 @@ static Tensor ReadTensor(std::istream& is) {
     is.read(reinterpret_cast<char*>(&num_bytes), sizeof(num_bytes));
 
     Tensor tensor(shape, dtype);
-    is.read(reinterpret_cast<char*>(tensor.Data()), num_bytes);
+    is.read(reinterpret_cast<char*>(tensor.MutableData()), num_bytes);
 
     return tensor;
 }

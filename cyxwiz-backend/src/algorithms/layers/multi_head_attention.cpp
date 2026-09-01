@@ -29,6 +29,11 @@ void LogAttentionInitializationFallbackOnce(
     const std::string context = BuildArrayFireBackendFallbackContext(
         "embed_dim=" + std::to_string(embed_dim) +
         "; num_heads=" + std::to_string(num_heads));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "MultiHeadAttentionLayer::InitializeWeights",
+        reason,
+        error_message,
+        context);
     if (!ShouldLogArrayFireBackendFallbackOnce(
             "MultiHeadAttentionLayer::InitializeWeights", reason, context)) {
         return;
@@ -88,14 +93,12 @@ void MultiHeadAttentionLayer::InitializeWeights() {
         W_o_ = AfToTensor(w_o);
 
         if (use_bias_) {
-            b_q_ = Tensor({static_cast<size_t>(embed_dim_)}, DataType::Float32);
-            b_k_ = Tensor({static_cast<size_t>(embed_dim_)}, DataType::Float32);
-            b_v_ = Tensor({static_cast<size_t>(embed_dim_)}, DataType::Float32);
-            b_o_ = Tensor({static_cast<size_t>(embed_dim_)}, DataType::Float32);
-            std::memset(b_q_.Data(), 0, embed_dim_ * sizeof(float));
-            std::memset(b_k_.Data(), 0, embed_dim_ * sizeof(float));
-            std::memset(b_v_.Data(), 0, embed_dim_ * sizeof(float));
-            std::memset(b_o_.Data(), 0, embed_dim_ * sizeof(float));
+            const std::vector<size_t> bias_shape{
+                static_cast<size_t>(embed_dim_)};
+            b_q_ = Tensor::Zeros(bias_shape, DataType::Float32);
+            b_k_ = Tensor::Zeros(bias_shape, DataType::Float32);
+            b_v_ = Tensor::Zeros(bias_shape, DataType::Float32);
+            b_o_ = Tensor::Zeros(bias_shape, DataType::Float32);
         }
 
         // Initialize gradient tensors
@@ -121,6 +124,9 @@ void MultiHeadAttentionLayer::InitializeWeights() {
 #endif
 
     // CPU fallback
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        "MultiHeadAttentionLayer::InitializeWeights");
     std::random_device rd;
     std::mt19937 gen(rd());
     float limit = std::sqrt(6.0f / (embed_dim_ + embed_dim_));
@@ -131,10 +137,10 @@ void MultiHeadAttentionLayer::InitializeWeights() {
     W_v_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
     W_o_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
 
-    float* wq = W_q_.Data<float>();
-    float* wk = W_k_.Data<float>();
-    float* wv = W_v_.Data<float>();
-    float* wo = W_o_.Data<float>();
+    float* wq = W_q_.MutableData<float>();
+    float* wk = W_k_.MutableData<float>();
+    float* wv = W_v_.MutableData<float>();
+    float* wo = W_o_.MutableData<float>();
 
     for (int i = 0; i < embed_dim_ * embed_dim_; i++) {
         wq[i] = dist(gen);
@@ -148,10 +154,10 @@ void MultiHeadAttentionLayer::InitializeWeights() {
         b_k_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
         b_v_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
         b_o_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_)});
-        std::memset(b_q_.Data(), 0, embed_dim_ * sizeof(float));
-        std::memset(b_k_.Data(), 0, embed_dim_ * sizeof(float));
-        std::memset(b_v_.Data(), 0, embed_dim_ * sizeof(float));
-        std::memset(b_o_.Data(), 0, embed_dim_ * sizeof(float));
+        std::memset(b_q_.MutableData(), 0, embed_dim_ * sizeof(float));
+        std::memset(b_k_.MutableData(), 0, embed_dim_ * sizeof(float));
+        std::memset(b_v_.MutableData(), 0, embed_dim_ * sizeof(float));
+        std::memset(b_o_.MutableData(), 0, embed_dim_ * sizeof(float));
     }
 
     grad_W_q_ = Tensor(std::vector<size_t>{static_cast<size_t>(embed_dim_), static_cast<size_t>(embed_dim_)});
@@ -174,14 +180,6 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& input) {
 
 Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
                                          const Tensor& value, const Tensor* attn_mask) {
-    // Cache inputs for backward
-    cached_query_ = query;
-    cached_key_ = key;
-    cached_value_ = value;
-    cached_self_attention_ = (&query == &key && &key == &value);
-    cached_grad_key_ = Tensor();
-    cached_grad_value_ = Tensor();
-
     const auto& q_shape = query.Shape();
     const auto& k_shape = key.Shape();
     const auto& v_shape = value.Shape();
@@ -221,6 +219,27 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
         throw std::runtime_error("MultiHeadAttention forward bias mismatch");
     }
 
+    const std::string fallback_context = BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext("query", q_shape) + "; " +
+        BuildTensorShapeContext("key", k_shape) + "; " +
+        BuildTensorShapeContext("value", v_shape));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "MultiHeadAttentionLayer::Forward",
+        BackendFallbackReason::UnsupportedOperation,
+        "ArrayFire implementation unavailable",
+        fallback_context);
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        "MultiHeadAttentionLayer::Forward");
+
+    // Cache inputs only after compatibility policy authorizes native work.
+    cached_query_ = query;
+    cached_key_ = key;
+    cached_value_ = value;
+    cached_self_attention_ = (&query == &key && &key == &value);
+    cached_grad_key_ = Tensor();
+    cached_grad_value_ = Tensor();
+
     const size_t batch_size = q_shape[0];
     const size_t seq_len_q = q_shape[1];
     const size_t seq_len_kv = k_shape[1];
@@ -249,10 +268,10 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
     };
     const auto project = [&](const Tensor& src, const Tensor& weights, const Tensor* bias,
                              Tensor& dst, size_t seq_len) {
-        const float* src_data = src.Data<float>();
-        const float* weight_data = weights.Data<float>();
-        const float* bias_data = bias != nullptr ? bias->Data<float>() : nullptr;
-        float* dst_data = dst.Data<float>();
+        const float* src_data = src.ReadData<float>();
+        const float* weight_data = weights.ReadData<float>();
+        const float* bias_data = bias != nullptr ? bias->ReadData<float>() : nullptr;
+        float* dst_data = dst.MutableData<float>();
         for (size_t b = 0; b < batch_size; ++b) {
             for (size_t s = 0; s < seq_len; ++s) {
                 for (size_t out = 0; out < embed_dim; ++out) {
@@ -270,13 +289,13 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
     project(key, W_k_, use_bias_ ? &b_k_ : nullptr, cached_K_, seq_len_kv);
     project(value, W_v_, use_bias_ ? &b_v_ : nullptr, cached_V_, seq_len_kv);
 
-    const float* Q = cached_Q_.Data<float>();
-    const float* K = cached_K_.Data<float>();
-    const float* V = cached_V_.Data<float>();
-    const float* mask_data = attn_mask != nullptr ? attn_mask->Data<float>() : nullptr;
-    float* attn_data = cached_attn_weights_.Data<float>();
-    float* dropout_mask_data = cached_attention_dropout_ ? dropout_mask_.Data<float>() : nullptr;
-    float* context_data = cached_context_.Data<float>();
+    const float* Q = cached_Q_.ReadData<float>();
+    const float* K = cached_K_.ReadData<float>();
+    const float* V = cached_V_.ReadData<float>();
+    const float* mask_data = attn_mask != nullptr ? attn_mask->ReadData<float>() : nullptr;
+    float* attn_data = cached_attn_weights_.MutableData<float>();
+    float* dropout_mask_data = cached_attention_dropout_ ? dropout_mask_.MutableData<float>() : nullptr;
+    float* context_data = cached_context_.MutableData<float>();
     static thread_local std::mt19937 dropout_rng(std::random_device{}());
     std::bernoulli_distribution keep_dist(1.0f - dropout_);
     const float dropout_scale = cached_attention_dropout_ ? 1.0f / (1.0f - dropout_) : 1.0f;
@@ -328,10 +347,10 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
         }
     }
 
-    const float* context = cached_context_.Data<float>();
-    const float* wo = W_o_.Data<float>();
-    const float* bo = use_bias_ ? b_o_.Data<float>() : nullptr;
-    float* output_data = output.Data<float>();
+    const float* context = cached_context_.ReadData<float>();
+    const float* wo = W_o_.ReadData<float>();
+    const float* bo = use_bias_ ? b_o_.ReadData<float>() : nullptr;
+    float* output_data = output.MutableData<float>();
     for (size_t b = 0; b < batch_size; ++b) {
         for (size_t q = 0; q < seq_len_q; ++q) {
             for (size_t out = 0; out < embed_dim; ++out) {
@@ -379,6 +398,17 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
         throw std::runtime_error("MultiHeadAttention backward dropout mask shape mismatch");
     }
 
+    const std::string fallback_context = BuildArrayFireBackendFallbackContext(
+        BuildTensorShapeContext("grad_output", shape));
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "MultiHeadAttentionLayer::Backward",
+        BackendFallbackReason::UnsupportedOperation,
+        "ArrayFire implementation unavailable",
+        fallback_context);
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath,
+        "MultiHeadAttentionLayer::Backward");
+
     const auto seq_index = [embed_dim](size_t b, size_t s, size_t e, size_t seq_len) {
         return (b * seq_len + s) * embed_dim + e;
     };
@@ -404,12 +434,12 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
         grad_b_o_ = Tensor({embed_dim}, DataType::Float32);
     }
 
-    const float* grad_out = grad_output.Data<float>();
-    const float* context = cached_context_.Data<float>();
-    const float* wo = W_o_.Data<float>();
-    float* grad_context_data = grad_context.Data<float>();
-    float* grad_W_o = grad_W_o_.Data<float>();
-    float* grad_b_o = use_bias_ ? grad_b_o_.Data<float>() : nullptr;
+    const float* grad_out = grad_output.ReadData<float>();
+    const float* context = cached_context_.ReadData<float>();
+    const float* wo = W_o_.ReadData<float>();
+    float* grad_context_data = grad_context.MutableData<float>();
+    float* grad_W_o = grad_W_o_.MutableData<float>();
+    float* grad_b_o = use_bias_ ? grad_b_o_.MutableData<float>() : nullptr;
 
     for (size_t b = 0; b < batch_size; ++b) {
         for (size_t q = 0; q < seq_len_q; ++q) {
@@ -427,14 +457,14 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
         }
     }
 
-    const float* Q = cached_Q_.Data<float>();
-    const float* K = cached_K_.Data<float>();
-    const float* V = cached_V_.Data<float>();
-    const float* attn = cached_attn_weights_.Data<float>();
-    const float* dropout_mask_data = cached_attention_dropout_ ? dropout_mask_.Data<float>() : nullptr;
-    float* grad_Q_data = grad_Q.Data<float>();
-    float* grad_K_data = grad_K.Data<float>();
-    float* grad_V_data = grad_V.Data<float>();
+    const float* Q = cached_Q_.ReadData<float>();
+    const float* K = cached_K_.ReadData<float>();
+    const float* V = cached_V_.ReadData<float>();
+    const float* attn = cached_attn_weights_.ReadData<float>();
+    const float* dropout_mask_data = cached_attention_dropout_ ? dropout_mask_.ReadData<float>() : nullptr;
+    float* grad_Q_data = grad_Q.MutableData<float>();
+    float* grad_K_data = grad_K.MutableData<float>();
+    float* grad_V_data = grad_V.MutableData<float>();
     std::vector<float> grad_attn(seq_len_kv, 0.0f);
     const float dropout_scale = cached_attention_dropout_ ? 1.0f / (1.0f - dropout_) : 1.0f;
 
@@ -482,12 +512,12 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
                                          const Tensor& grad_projected,
                                          Tensor& grad_input, Tensor& grad_weight,
                                          Tensor* grad_bias, size_t seq_len) {
-        const float* input_data = input.Data<float>();
-        const float* weight_data = weight.Data<float>();
-        const float* grad_proj_data = grad_projected.Data<float>();
-        float* grad_input_data = grad_input.Data<float>();
-        float* grad_weight_data = grad_weight.Data<float>();
-        float* grad_bias_data = grad_bias != nullptr ? grad_bias->Data<float>() : nullptr;
+        const float* input_data = input.ReadData<float>();
+        const float* weight_data = weight.ReadData<float>();
+        const float* grad_proj_data = grad_projected.ReadData<float>();
+        float* grad_input_data = grad_input.MutableData<float>();
+        float* grad_weight_data = grad_weight.MutableData<float>();
+        float* grad_bias_data = grad_bias != nullptr ? grad_bias->MutableData<float>() : nullptr;
 
         for (size_t b = 0; b < batch_size; ++b) {
             for (size_t s = 0; s < seq_len; ++s) {
@@ -518,9 +548,9 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
     cached_grad_value_ = grad_value;
 
     if (cached_self_attention_) {
-        float* grad_query_data = grad_query.Data<float>();
-        const float* grad_key_data = grad_key.Data<float>();
-        const float* grad_value_data = grad_value.Data<float>();
+        float* grad_query_data = grad_query.MutableData<float>();
+        const float* grad_key_data = grad_key.ReadData<float>();
+        const float* grad_value_data = grad_value.ReadData<float>();
         for (size_t i = 0; i < grad_query.NumElements(); ++i) {
             grad_query_data[i] += grad_key_data[i] + grad_value_data[i];
         }

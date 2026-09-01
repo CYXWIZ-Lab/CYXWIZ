@@ -860,6 +860,16 @@ int main() {
     Check(config.pin_memory_transfer.NeedsUserWarning(),
           "unsupported pin_memory transfer status should require user warning");
 
+    nodes[1].parameters["grad_accum_steps"] = "100001";
+    config = compiler.Compile(nodes, links, true);
+    Check(config.grad_accum_steps == 100000,
+          "DataLoader compiler boundary must enforce the Properties-panel gradient accumulation maximum");
+
+    nodes[1].parameters["grad_accum_steps"] = "0";
+    config = compiler.Compile(nodes, links, true);
+    Check(config.grad_accum_steps == 1,
+          "DataLoader compiler boundary must enforce the Properties-panel gradient accumulation minimum");
+
     auto sequence_builder = Node(22,
                                  gui::NodeType::NERSequenceBuilder,
                                  "NER Sequence Builder",

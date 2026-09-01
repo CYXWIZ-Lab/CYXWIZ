@@ -1300,6 +1300,77 @@ void TrainingTraceCollector::RecordCheckpointSaved(
     MaybePersistLocked(true);
 }
 
+void TrainingTraceCollector::RecordCheckpointRestored(
+    int epoch,
+    const std::string& checkpoint_path,
+    float validation_loss,
+    float validation_accuracy) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id_.empty()) {
+        return;
+    }
+
+    TrainingTraceEvent event;
+    event.timestamp = NowLocal();
+    event.run_id = run_id_;
+    event.stage = "CheckpointRestored";
+    event.thread_id = ThreadIdString();
+    event.epoch = epoch;
+    event.validation_loss = validation_loss;
+    event.validation_accuracy = validation_accuracy;
+    event.metric_scope = "active_model";
+    event.checkpoint_path = checkpoint_path;
+    event.is_best_checkpoint = true;
+    event.message = "Active model restored from best validation checkpoint";
+    PopulateStageExecutionContext(event);
+    PopulateMemorySnapshot(event);
+    events_.push_back(event);
+    while (events_.size() > settings_.max_recent_events) {
+        events_.pop_front();
+    }
+
+    if (settings_.persist_enabled) {
+        WriteLocked();
+        events_since_write_ = 0;
+    }
+}
+
+void TrainingTraceCollector::RecordHeldOutTestMetrics(
+    int epoch,
+    float test_loss,
+    float test_accuracy,
+    const std::string& active_model_provenance,
+    const std::string& checkpoint_path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id_.empty()) {
+        return;
+    }
+
+    TrainingTraceEvent event;
+    event.timestamp = NowLocal();
+    event.run_id = run_id_;
+    event.stage = "HeldOutTestCompleted";
+    event.thread_id = ThreadIdString();
+    event.epoch = epoch;
+    event.loss = test_loss;
+    event.accuracy = test_accuracy;
+    event.metric_scope = "test";
+    event.checkpoint_path = checkpoint_path;
+    event.message = "Held-out Test evaluated active model provenance: " +
+        active_model_provenance;
+    PopulateStageExecutionContext(event);
+    PopulateMemorySnapshot(event);
+    events_.push_back(event);
+    while (events_.size() > settings_.max_recent_events) {
+        events_.pop_front();
+    }
+
+    if (settings_.persist_enabled) {
+        WriteLocked();
+        events_since_write_ = 0;
+    }
+}
+
 void TrainingTraceCollector::RecordTerminalEvent(
     const std::string& terminal_status,
     const std::string& terminal_reason,

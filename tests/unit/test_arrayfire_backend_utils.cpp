@@ -134,6 +134,15 @@ TEST_CASE("ArrayFire fallback reasons classify backend failures", "[arrayfire][f
     REQUIRE(cyxwiz::ClassifyArrayFireBackendFallbackReason(
                 "device lost") ==
             cyxwiz::BackendFallbackReason::GpuBackendException);
+    REQUIRE(std::string(cyxwiz::BackendFallbackReasonName(
+                cyxwiz::BackendFallbackReason::UnsupportedOperation)) ==
+            "unsupported_operation");
+    REQUIRE(std::string(cyxwiz::BackendFallbackReasonName(
+                cyxwiz::BackendFallbackReason::BackendUnavailable)) ==
+            "backend_unavailable");
+    REQUIRE(cyxwiz::ClassifyArrayFireBackendFallbackReason(
+                "ArrayFire backend unavailable") ==
+            cyxwiz::BackendFallbackReason::BackendUnavailable);
 }
 
 TEST_CASE("ArrayFire fallback log gate is once per operation reason and context",

@@ -26,6 +26,8 @@ public:
 
 private:
     std::vector<size_t> input_shape_;  // Original shape for backward
+    std::vector<size_t> output_shape_; // Exact gradient contract
+    DataType output_dtype_ = DataType::Float32;
 };
 
 } // namespace cyxwiz

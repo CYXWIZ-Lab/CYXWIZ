@@ -38,11 +38,11 @@ inline bool UsesSequenceFeatureFusion(const TrainingConfiguration& config) {
 inline int64_t ReadSequenceIdAt(const Tensor& tensor, size_t index) {
     switch (tensor.GetDataType()) {
         case DataType::Float32:
-            return static_cast<int64_t>(tensor.Data<float>()[index]);
+            return static_cast<int64_t>(tensor.ReadData<float>()[index]);
         case DataType::Int32:
-            return static_cast<int64_t>(tensor.Data<int32_t>()[index]);
+            return static_cast<int64_t>(tensor.ReadData<int32_t>()[index]);
         case DataType::Int64:
-            return tensor.Data<int64_t>()[index];
+            return tensor.ReadData<int64_t>()[index];
         default:
             throw std::runtime_error(
                 "sequence model ids must be Float32, Int32, or Int64");
@@ -52,15 +52,15 @@ inline int64_t ReadSequenceIdAt(const Tensor& tensor, size_t index) {
 inline bool ReadSequenceMaskAt(const Tensor& tensor, size_t index) {
     switch (tensor.GetDataType()) {
         case DataType::Float32:
-            return tensor.Data<float>()[index] != 0.0f;
+            return tensor.ReadData<float>()[index] != 0.0f;
         case DataType::Float64:
-            return tensor.Data<double>()[index] != 0.0;
+            return tensor.ReadData<double>()[index] != 0.0;
         case DataType::Int32:
-            return tensor.Data<int32_t>()[index] != 0;
+            return tensor.ReadData<int32_t>()[index] != 0;
         case DataType::Int64:
-            return tensor.Data<int64_t>()[index] != 0;
+            return tensor.ReadData<int64_t>()[index] != 0;
         case DataType::UInt8:
-            return tensor.Data<uint8_t>()[index] != 0;
+            return tensor.ReadData<uint8_t>()[index] != 0;
         default:
             throw std::runtime_error(
                 "sequence attention mask must be numeric");
@@ -70,13 +70,13 @@ inline bool ReadSequenceMaskAt(const Tensor& tensor, size_t index) {
 inline void WriteSequenceIdAt(Tensor& tensor, size_t index, int64_t value) {
     switch (tensor.GetDataType()) {
         case DataType::Float32:
-            tensor.Data<float>()[index] = static_cast<float>(value);
+            tensor.MutableData<float>()[index] = static_cast<float>(value);
             return;
         case DataType::Int32:
-            tensor.Data<int32_t>()[index] = static_cast<int32_t>(value);
+            tensor.MutableData<int32_t>()[index] = static_cast<int32_t>(value);
             return;
         case DataType::Int64:
-            tensor.Data<int64_t>()[index] = value;
+            tensor.MutableData<int64_t>()[index] = value;
             return;
         default:
             throw std::runtime_error(

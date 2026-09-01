@@ -62,12 +62,17 @@ InstallerPackPresentation BuildInstallerPackPresentation(
         return result;
     }
     if (!record.compatibility) {
-        result.status = record.active ? "Installed and active"
-            : record.installed ? "Installed" : "Available";
-        result.explanation =
-            "Compatibility details are unavailable for this installed package.";
-        result.tone = record.active ? InstallerPackPresentationTone::Success
-                                    : InstallerPackPresentationTone::Accent;
+        result.status = record.active ? "Active; compatibility unknown"
+            : record.installed ? "Installed; compatibility unknown"
+                               : "Unavailable";
+        result.explanation = record.installed
+            ? "Compatibility could not be evaluated for this installed package."
+            : "Compatibility could not be evaluated, so installation is disabled.";
+        result.action =
+            "Refresh the signed package catalog and compatibility details.";
+        result.tone = record.installed
+            ? InstallerPackPresentationTone::Warning
+            : InstallerPackPresentationTone::Danger;
         return result;
     }
 

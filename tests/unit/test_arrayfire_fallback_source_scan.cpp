@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -23,6 +25,46 @@ struct ArrayFireCatchHit {
     size_t line_number;
     std::string line;
 };
+
+struct LegacyTensorDataOwner {
+    const char* path;
+    size_t expected_line_count;
+    const char* disposition;
+    const char* owner;
+};
+
+const std::vector<LegacyTensorDataOwner>& LegacyTensorDataInventory() {
+    // This is a bounded migration inventory, not a permanent allow-list.
+    // "compatibility_compute" rows must either become ArrayFire-first or gain
+    // an explicit observed fallback boundary. The remaining transport row
+    // requires dedicated device-pointer ownership rather than a host accessor.
+    static const std::vector<LegacyTensorDataOwner> inventory = {
+        {"cyxwiz-backend/src/algorithms/distributed/distributed_trainer.cpp", 10, "compatibility_compute", "legacy distributed trainer"},
+        {"cyxwiz-backend/src/algorithms/distributed/nccl_backend.cpp", 6, "transport_boundary", "NCCL transport"},
+        {"cyxwiz-backend/src/algorithms/feature_importance.cpp", 3, "compatibility_compute", "feature importance"},
+        {"cyxwiz-backend/src/algorithms/layers/batch_norm.cpp", 15, "compatibility_compute", "BatchNorm layer"},
+        {"cyxwiz-backend/src/algorithms/layers/conv_transpose2d.cpp", 10, "compatibility_compute", "ConvTranspose2D layer"},
+        {"cyxwiz-backend/src/algorithms/layers/conv1d.cpp", 11, "compatibility_compute", "Conv1D layer"},
+        {"cyxwiz-backend/src/algorithms/layers/conv2d.cpp", 10, "compatibility_compute", "Conv2D layer"},
+        {"cyxwiz-backend/src/algorithms/layers/gru.cpp", 20, "compatibility_compute", "GRU layer"},
+        {"cyxwiz-backend/src/algorithms/layers/gru_backward.cpp", 7, "compatibility_compute", "GRU backward"},
+        {"cyxwiz-backend/src/algorithms/layers/lstm.cpp", 35, "compatibility_compute", "LSTM layer"},
+        {"cyxwiz-backend/src/algorithms/layers/lstm_backward.cpp", 11, "compatibility_compute", "LSTM backward"},
+        {"cyxwiz-backend/src/algorithms/layers/lstm_direction_helpers.cpp", 26, "compatibility_compute", "LSTM direction kernels"},
+        {"cyxwiz-backend/src/algorithms/layers/normalization.cpp", 39, "compatibility_compute", "normalization layers"},
+        {"cyxwiz-backend/src/algorithms/layers/transformer_layers.cpp", 56, "compatibility_compute", "transformer layers"},
+        {"cyxwiz-backend/src/algorithms/layers/upsampling.cpp", 8, "compatibility_compute", "upsampling layers"},
+        {"cyxwiz-backend/src/algorithms/model_interpretability.cpp", 10, "compatibility_compute", "model interpretability"},
+        {"cyxwiz-backend/src/algorithms/sequential/feedforward_modules.cpp", 11, "compatibility_compute", "feed-forward modules"},
+        {"cyxwiz-backend/src/algorithms/sequential/normalization_modules.cpp", 21, "compatibility_compute", "normalization modules"},
+        {"cyxwiz-backend/src/algorithms/sequential/recurrent_modules.cpp", 15, "compatibility_compute", "recurrent modules"},
+        {"cyxwiz-engine/src/core/graph_executable_model.cpp", 8, "compatibility_compute", "graph executable model"},
+        {"cyxwiz-engine/src/core/sequence_tag_metrics.h", 3, "compatibility_compute", "sequence metrics"},
+        {"cyxwiz-engine/src/core/smoke_run_executor.cpp", 2, "compatibility_compute", "smoke-run metrics"},
+        {"cyxwiz-engine/src/core/test_executor.cpp", 3, "compatibility_compute", "test evaluation"},
+    };
+    return inventory;
+}
 
 fs::path FindRepoRoot() {
     auto dir = fs::current_path();
@@ -217,6 +259,75 @@ std::vector<fs::path> ArrayFireFallbackHandlerScanFiles(
     return files;
 }
 
+std::vector<fs::path> LegacyTensorDataScanFiles(const fs::path& repo_root) {
+    std::vector<fs::path> files;
+    const std::vector<fs::path> roots = {
+        repo_root / "cyxwiz-backend" / "src" / "algorithms",
+        repo_root / "cyxwiz-engine" / "src" / "core",
+    };
+    for (const auto& root : roots) {
+        for (const auto& entry : fs::recursive_directory_iterator(root)) {
+            if (entry.is_regular_file() && IsSourceFile(entry.path())) {
+                files.push_back(entry.path());
+            }
+        }
+    }
+    std::sort(files.begin(), files.end());
+    return files;
+}
+
+size_t CountLegacyTensorDataLines(const fs::path& path) {
+    const std::vector<std::string> needles = {
+        ".Data<",
+        ".Data()",
+        "->Data<",
+        "->Data()",
+    };
+    size_t count = 0;
+    for (const auto& line : ReadLines(path)) {
+        if (std::any_of(
+                needles.begin(), needles.end(),
+                [&line](const std::string& needle) {
+                    return line.find(needle) != std::string::npos;
+                })) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool FunctionBodyContains(
+    const std::vector<std::string>& lines,
+    const std::string& function_name,
+    const std::string& needle) {
+    bool found_signature = false;
+    bool found_body = false;
+    int brace_depth = 0;
+    for (const auto& line : lines) {
+        if (!found_signature) {
+            if (line.find(function_name + "(") == std::string::npos) {
+                continue;
+            }
+            found_signature = true;
+        }
+        if (line.find(needle) != std::string::npos) {
+            return true;
+        }
+        for (const char ch : line) {
+            if (ch == '{') {
+                found_body = true;
+                ++brace_depth;
+            } else if (ch == '}') {
+                --brace_depth;
+            }
+        }
+        if (found_body && brace_depth == 0) {
+            return false;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 TEST_CASE("ArrayFire fallback raw warning strings stay behind the shared policy",
@@ -363,12 +474,16 @@ TEST_CASE("ArrayFire training hot path uses semantic and explicit host Tensor ac
         "cyxwiz-backend/src/algorithms/sequential/regularization_shape_modules.cpp",
         "cyxwiz-backend/src/algorithms/optimizers/adam_family.cpp",
         "cyxwiz-engine/src/core/classification_decision.cpp",
+        "cyxwiz-engine/src/core/sequence_training_step.h",
         "cyxwiz-engine/src/core/training_executor.cpp",
     };
     const std::vector<std::string> implicit_access_needles = {
         ".GetArray()",
         ".SetFromArray(",
         ".Data<",
+        ".Data()",
+        "->Data<",
+        "->Data()",
     };
 
     std::vector<RawFallbackHit> implicit_access_hits;
@@ -394,4 +509,112 @@ TEST_CASE("ArrayFire training hot path uses semantic and explicit host Tensor ac
     INFO("Implicit Tensor access in semantic training hot path:" +
          FormatHits(implicit_access_hits));
     REQUIRE(implicit_access_hits.empty());
+}
+
+TEST_CASE("Legacy Tensor Data compatibility access has exact reviewed ownership",
+          "[arrayfire][fallback][tensor_host_access][source_scan]") {
+    const fs::path repo_root = FindRepoRoot();
+    const auto& inventory = LegacyTensorDataInventory();
+    REQUIRE_FALSE(inventory.empty());
+
+    const std::set<std::string> valid_dispositions = {
+        "compatibility_compute",
+        "transport_boundary",
+    };
+    std::map<std::string, size_t> expected;
+    for (const auto& row : inventory) {
+        INFO("Legacy Tensor Data inventory row: " << row.path);
+        REQUIRE(row.expected_line_count > 0);
+        REQUIRE_FALSE(std::string(row.owner).empty());
+        REQUIRE(valid_dispositions.count(row.disposition) == 1);
+        REQUIRE(expected.emplace(row.path, row.expected_line_count).second);
+    }
+
+    std::map<std::string, size_t> actual;
+    for (const auto& path : LegacyTensorDataScanFiles(repo_root)) {
+        const size_t count = CountLegacyTensorDataLines(path);
+        if (count == 0) {
+            continue;
+        }
+        actual.emplace(fs::relative(path, repo_root).generic_string(), count);
+    }
+
+    INFO("Every legacy Data-access file must have a reviewed owner and exact "
+         "line count; update the inventory only after reviewing the new path.");
+    REQUIRE(actual == expected);
+}
+
+TEST_CASE("Tensor-facing fallback helpers enforce strict policy before native compute",
+          "[arrayfire][fallback][policy][source_scan]") {
+    const fs::path repo_root = FindRepoRoot();
+    const std::vector<std::pair<std::string, std::string>> guarded_helpers = {
+        {"cyxwiz-backend/src/algorithms/activation.cpp",
+         "LogActivationFallbackOnce"},
+        {"cyxwiz-backend/src/algorithms/layers/pooling.cpp",
+         "LogPoolingFallbackOnce"},
+        {"cyxwiz-backend/src/algorithms/layers/multi_head_attention.cpp",
+         "LogAttentionInitializationFallbackOnce"},
+        {"cyxwiz-backend/src/algorithms/linear_algebra_tensor.cpp",
+         "LogLinearAlgebraTensorFallbackOnce"},
+    };
+
+    for (const auto& [relative_path, helper_name] : guarded_helpers) {
+        const auto lines = ReadLines(repo_root / relative_path);
+        INFO(relative_path << "::" << helper_name);
+        REQUIRE(FunctionBodyContains(
+            lines,
+            helper_name,
+            "ThrowIfArrayFireNativeCpuFallbackForbidden"));
+    }
+}
+
+TEST_CASE("Host-vector model evaluation has one native execution owner",
+          "[arrayfire][classification_metrics][ownership][source_scan]") {
+    const fs::path repo_root = FindRepoRoot();
+    const std::vector<std::string> relative_paths = {
+        "cyxwiz-backend/src/algorithms/evaluation/classification_metrics.cpp",
+        "cyxwiz-backend/src/algorithms/evaluation/cross_validation.cpp",
+        "cyxwiz-backend/src/algorithms/evaluation/roc_pr_curves.cpp",
+        "cyxwiz-backend/src/algorithms/model_evaluation.cpp",
+    };
+    const std::vector<std::string> forbidden_needles = {
+        "CYXWIZ_HAS_ARRAYFIRE",
+        "arrayfire.h",
+        "af::",
+        "ArrayFireHostSyncCategory",
+        "LogEvaluationFallbackOnce",
+    };
+
+    std::vector<RawFallbackHit> unexpected_hits;
+    for (const auto& relative_path : relative_paths) {
+        const auto lines = ReadLines(repo_root / relative_path);
+        for (size_t line_index = 0; line_index < lines.size(); ++line_index) {
+            for (const auto& needle : forbidden_needles) {
+                if (lines[line_index].find(needle) != std::string::npos) {
+                    unexpected_hits.push_back(RawFallbackHit{
+                        relative_path,
+                        line_index + 1,
+                        needle,
+                        lines[line_index]});
+                }
+            }
+        }
+    }
+
+    INFO("Host-vector evaluation must not upload to a selected device or hide "
+         "a size-dependent native fallback:" + FormatHits(unexpected_hits));
+    REQUIRE(unexpected_hits.empty());
+
+    const auto forwarding_header = ReadLines(
+        repo_root / "cyxwiz-engine/src/core/model_evaluation.h");
+    REQUIRE(std::any_of(
+        forwarding_header.begin(), forwarding_header.end(),
+        [](const std::string& line) {
+            return line.find("#include <cyxwiz/model_evaluation.h>") !=
+                   std::string::npos;
+        }));
+    for (const auto& line : forwarding_header) {
+        CHECK(line.find("struct BinaryMetrics") == std::string::npos);
+        CHECK(line.find("class ModelEvaluation") == std::string::npos);
+    }
 }

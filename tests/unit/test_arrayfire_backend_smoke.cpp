@@ -248,6 +248,7 @@ TEST_CASE("Loss path returns clean forward value and gradient",
     REQUIRE(ShapeEquals(grad, {2, 3}));
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
 TEST_CASE("Weighted smoothed CrossEntropy keeps device logits resident",
           "[arrayfire][backend_smoke][loss][residency]") {
     float logit_values[] = {
@@ -285,3 +286,4 @@ TEST_CASE("Weighted smoothed CrossEntropy keeps device logits resident",
     REQUIRE(ShapeEquals(grad, {2, 3}));
     REQUIRE(std::isfinite(loss_value.ReadData<float>()[0]));
 }
+#endif

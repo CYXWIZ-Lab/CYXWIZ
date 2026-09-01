@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstring>
 #include <functional>
+#include <stdexcept>
 #include "cyxwiz/sequential.h"
 #include "cyxwiz/tokenizer.h"
 #include "cyxwiz/audio_processing.h"
@@ -1782,6 +1783,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     stats.def("confusion_matrix", [](const std::vector<int>& y_true, const std::vector<int>& y_pred) {
         auto result = cyxwiz::ModelEvaluation::ComputeConfusionMatrix(y_true, y_pred);
+        if (!result.success) throw std::invalid_argument(result.error_message);
         return py::dict(
             "matrix"_a = result.matrix,
             "accuracy"_a = result.accuracy,
@@ -1793,6 +1795,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     stats.def("roc", [](const std::vector<int>& y_true, const std::vector<double>& y_scores) {
         auto result = cyxwiz::ModelEvaluation::ComputeROC(y_true, y_scores);
+        if (!result.success) throw std::invalid_argument(result.error_message);
         return py::dict(
             "fpr"_a = result.fpr,
             "tpr"_a = result.tpr,

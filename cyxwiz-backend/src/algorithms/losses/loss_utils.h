@@ -2,6 +2,7 @@
 
 #include "cyxwiz/loss.h"
 #include "cyxwiz/tensor.h"
+#include "../arrayfire_backend_utils.h"
 
 #include <vector>
 
@@ -33,7 +34,17 @@ Tensor CpuSmoothL1Backward(const Tensor& predictions,
                            const Tensor& targets,
                            float delta,
                            Reduction reduction);
-Tensor CpuBCEForward(const Tensor& predictions, const Tensor& targets, float eps, Reduction reduction);
+Tensor CpuHuberForward(const Tensor& predictions,
+                       const Tensor& targets,
+                       float delta,
+                       Reduction reduction);
+Tensor CpuHuberBackward(const Tensor& predictions,
+                        const Tensor& targets,
+                        float delta,
+                        Reduction reduction);
+Tensor CpuBCEForward(const Tensor& predictions,
+                     const Tensor& targets,
+                     Reduction reduction);
 Tensor CpuBCEBackward(const Tensor& predictions, const Tensor& targets, float eps, Reduction reduction);
 float CpuSigmoidValue(float x);
 Tensor CpuBCEWithLogitsForward(const Tensor& predictions,
@@ -53,11 +64,11 @@ Tensor CpuKLDivBackward(const Tensor& predictions,
                         bool log_target,
                         Reduction reduction);
 
-#ifdef CYXWIZ_HAS_ARRAYFIRE
-af::array TensorToAf(const Tensor& t);
-Tensor AfToTensor(const af::array& arr);
-Tensor AfToTensor(const af::array& arr,
-                  const std::vector<size_t>& semantic_shape);
+bool PrepareLossNativeCpuFallback(
+    const char* operation_name,
+    const Tensor& predictions,
+    const Tensor& targets,
+    Reduction reduction);
 void LogArrayFireLossFallbackOnce(
     const char* operation_name,
     const char* error_message,
@@ -69,6 +80,19 @@ void LogArrayFireLossFallbackOnce(
     const Tensor& predictions,
     const Tensor& targets,
     Reduction reduction);
+void LogArrayFireLossFallbackOnce(
+    const char* operation_name,
+    BackendFallbackReason reason,
+    const char* error_message,
+    const Tensor& predictions,
+    const Tensor& targets,
+    Reduction reduction);
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+af::array TensorToAf(const Tensor& t);
+Tensor AfToTensor(const af::array& arr);
+Tensor AfToTensor(const af::array& arr,
+                  const std::vector<size_t>& semantic_shape);
 af::array ApplyReduction(const af::array& loss, Reduction reduction);
 af::array StableSoftmax(const af::array& x, int axis = 0);
 af::array SignLike(const af::array& x);

@@ -34,6 +34,7 @@ public:
     void SetOneHotEncoding(size_t num_classes) override;
     void SetScalarLabelMode(bool enable) override { scalar_label_mode_ = enable; }
     void SetFlatten(bool flatten) override;
+    void SetDropLast(bool drop_last) override { drop_last_ = drop_last; }
     void SetPhase(BatcherPhase phase) override;
 
     size_t GetNumValSamples() const { return val_indices_.size(); }
@@ -45,6 +46,7 @@ private:
     int batch_size_;
     bool shuffle_;
     int num_workers_ = 0;
+    bool drop_last_ = false;
     bool flatten_ = false;  // output [batch, H, W, C] — let graph's Flatten node handle it
 
     float norm_mean_ = 0.0f;

@@ -144,8 +144,20 @@ const char* ArrayFireHostSyncCategoryName(
             return "layer_cpu_path";
         case ArrayFireHostSyncCategory::OptimizerCpuPath:
             return "optimizer_cpu_path";
+        case ArrayFireHostSyncCategory::LossCpuPath:
+            return "loss_cpu_path";
+        case ArrayFireHostSyncCategory::LossInputValidation:
+            return "loss_input_validation";
+        case ArrayFireHostSyncCategory::MetricCpuPath:
+            return "metric_cpu_path";
+        case ArrayFireHostSyncCategory::MetricInputValidation:
+            return "metric_input_validation";
         case ArrayFireHostSyncCategory::CheckpointOutput:
             return "checkpoint_output";
+        case ArrayFireHostSyncCategory::AlgorithmCpuPath:
+            return "algorithm_cpu_path";
+        case ArrayFireHostSyncCategory::OutputMaterialization:
+            return "output_materialization";
         case ArrayFireHostSyncCategory::Unknown:
         default:
             return "unknown";
@@ -174,6 +186,8 @@ void NotifyArrayFireHostSync(ArrayFireHostSyncEvent event) {
 
 const char* BackendFallbackReasonName(BackendFallbackReason reason) {
     switch (reason) {
+    case BackendFallbackReason::BackendUnavailable:
+        return "backend_unavailable";
     case BackendFallbackReason::CudaJitParamOverflow:
         return "cuda_jit_param_overflow";
     case BackendFallbackReason::ArrayFireJitCompileFailure:
@@ -186,6 +200,8 @@ const char* BackendFallbackReasonName(BackendFallbackReason reason) {
         return "unsupported_dtype";
     case BackendFallbackReason::UnsupportedShape:
         return "unsupported_shape";
+    case BackendFallbackReason::UnsupportedOperation:
+        return "unsupported_operation";
     case BackendFallbackReason::BackendCompileTimeout:
         return "backend_compile_timeout";
     case BackendFallbackReason::BackendInternalError:
@@ -212,6 +228,12 @@ BackendFallbackReason ClassifyArrayFireBackendFallbackReason(
         return BackendFallbackReason::BackendInternalError;
     }
     const std::string text = ToLowerAscii(message);
+    if (ContainsAny(text, {
+            "backend unavailable",
+            "backend is unavailable",
+            "no arrayfire backend"})) {
+        return BackendFallbackReason::BackendUnavailable;
+    }
     if (ContainsAny(text, {
             "out of memory",
             "cuda_error_memory_allocation",

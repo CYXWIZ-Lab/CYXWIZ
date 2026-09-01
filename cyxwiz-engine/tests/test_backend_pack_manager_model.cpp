@@ -110,6 +110,18 @@ void TestInstallerChoices() {
         "Custom must reject a proven-incompatible pack");
   Check(!cyxwiz::IsBackendPackSelectableForInstaller(incompatible),
         "The component selector must disable proven-incompatible packs");
+  auto missing_decision =
+      Pack("opencl-no-decision", cyxwiz::BackendPackCatalogSupport::Supported);
+  missing_decision.delivery_metadata_available = true;
+  missing_decision.compatibility.reset();
+  const auto missing_decision_rejected =
+      cyxwiz::ResolveBackendPackInstallerSelection(
+          cyxwiz::BackendPackInstallChoice::Custom, {missing_decision},
+          {"opencl-no-decision"});
+  Check(!missing_decision_rejected.valid &&
+            !cyxwiz::HasSelectableCustomBackendPack({missing_decision}) &&
+            !cyxwiz::IsBackendPackSelectableForInstaller(missing_decision),
+        "Custom must fail closed when compatibility was not evaluated");
   const auto empty_custom = cyxwiz::ResolveBackendPackInstallerSelection(
       cyxwiz::BackendPackInstallChoice::Custom, records);
   Check(!empty_custom.valid,
@@ -170,6 +182,21 @@ void TestInstallerPackPresentation() {
   Check(presentation.status == "Not compatible" &&
             presentation.action.find("Update") != std::string::npos,
         "a minimum-driver mismatch must show bounded remediation");
+
+  pack.compatibility.reset();
+  presentation = cyxwiz::BuildInstallerPackPresentation(pack);
+  Check(presentation.status == "Active; compatibility unknown" &&
+            presentation.tone ==
+                cyxwiz::InstallerPackPresentationTone::Warning &&
+            !presentation.action.empty(),
+        "an installed pack without compatibility evidence must show a warning");
+  pack.active = false;
+  pack.installed = false;
+  presentation = cyxwiz::BuildInstallerPackPresentation(pack);
+  Check(presentation.status == "Unavailable" &&
+            presentation.tone ==
+                cyxwiz::InstallerPackPresentationTone::Danger,
+        "an uninstalled pack without compatibility evidence must not appear available");
 }
 
 void TestActionPolicy() {
@@ -296,11 +323,10 @@ void TestInstallerPlan() {
 }
 
 void TestFreshInstallerPlan() {
-  cyxwiz::BackendPackManagerRecord base;
+  auto base =
+      Pack("base-v1", cyxwiz::BackendPackCatalogSupport::Supported);
   base.backend = "cpu";
-  base.pack_id = "base-v1";
   base.runtime_set_id = "set-v1";
-  base.catalog_support = cyxwiz::BackendPackCatalogSupport::Supported;
   base.delivery_metadata_available = true;
   base.download_size_bytes = 1000;
 
@@ -332,6 +358,18 @@ void TestFreshInstallerPlan() {
       cyxwiz::CyxWizInstallerMode::FreshInstall);
   Check(!incompatible.valid,
         "Fresh plan must reject a backend pack from another base runtime set");
+
+  auto incompatible_base = base;
+  incompatible_base.compatibility->eligibility =
+      cyxwiz::runtime::BackendPackEligibility::Incompatible;
+  incompatible_base.compatibility->install_recommendation =
+      cyxwiz::runtime::BackendPackInstallRecommendation::NotOffered;
+  selection.pack_ids = {"opencl-v1"};
+  const auto incompatible_base_plan = cyxwiz::BuildBackendPackInstallerPlan(
+      selection, std::vector{incompatible_base, optional},
+      cyxwiz::CyxWizInstallerMode::FreshInstall);
+  Check(!incompatible_base_plan.valid,
+        "Fresh plan must reject an incompatible required CPU base");
 
   const auto missing_base = cyxwiz::BuildBackendPackInstallerPlan(
       selection, std::vector{foreign},

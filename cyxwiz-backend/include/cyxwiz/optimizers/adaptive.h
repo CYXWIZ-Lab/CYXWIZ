@@ -19,6 +19,8 @@ public:
               const std::map<std::string, Tensor>& gradients) override;
 
     void ZeroGrad() override;
+    bool ExportState(OptimizerState& state, std::string& error) const override;
+    bool ImportState(const OptimizerState& state, std::string& error) override;
 
 private:
     double alpha_;
@@ -37,6 +39,8 @@ public:
               const std::map<std::string, Tensor>& gradients) override;
 
     void ZeroGrad() override;
+    bool ExportState(OptimizerState& state, std::string& error) const override;
+    bool ImportState(const OptimizerState& state, std::string& error) override;
 
 private:
     double epsilon_;
@@ -52,6 +56,8 @@ public:
               const std::map<std::string, Tensor>& gradients) override;
 
     void ZeroGrad() override;
+    bool ExportState(OptimizerState& state, std::string& error) const override;
+    bool ImportState(const OptimizerState& state, std::string& error) override;
 
     double GetRho() const { return rho_; }
 

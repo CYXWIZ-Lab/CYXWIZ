@@ -534,7 +534,7 @@ ImportResult ModelImporter::ImportCyxModelBinary(
                 file.read(reinterpret_cast<char*>(&num_bytes), sizeof(num_bytes));
 
                 Tensor tensor(shape, dtype);
-                file.read(reinterpret_cast<char*>(tensor.Data()), num_bytes);
+                file.read(reinterpret_cast<char*>(tensor.MutableData()), num_bytes);
 
                 params[name] = std::move(tensor);
                 result.layer_names.push_back("layer_" + std::to_string(i) + "." + name);

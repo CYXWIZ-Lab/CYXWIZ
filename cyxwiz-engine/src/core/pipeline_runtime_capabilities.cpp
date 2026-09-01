@@ -1131,21 +1131,20 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
 
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedTrainingControlCapabilities() {
+    constexpr const char* scheduler_ownership_gap =
+        "the backend scheduler is numerically available, but GraphCompiler/"
+        "TrainingExecutor do not construct it or own its update cadence, run "
+        "state, or checkpoint restoration";
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::StepLR,
-         "has a backend scheduler primitive, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint it yet",
+        {gui::NodeType::StepLR, scheduler_ownership_gap,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::CosineAnnealing,
-         "has a backend scheduler primitive, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint it yet",
+        {gui::NodeType::CosineAnnealing, scheduler_ownership_gap,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::ReduceOnPlateau,
-         "has a backend scheduler primitive, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint it yet",
+        {gui::NodeType::ReduceOnPlateau, scheduler_ownership_gap,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::ExponentialLR,
-         "has a backend scheduler primitive, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint it yet",
+        {gui::NodeType::ExponentialLR, scheduler_ownership_gap,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {gui::NodeType::WarmupScheduler,
-         "has backend warmup primitives, but GraphCompiler/TrainingExecutor do not construct, step, restore, or checkpoint one for this node yet",
+        {gui::NodeType::WarmupScheduler, scheduler_ownership_gap,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::L1Regularization,
          "has no Engine owner that reads model parameters, computes a differentiable L1 penalty, and adds it to the selected training loss",

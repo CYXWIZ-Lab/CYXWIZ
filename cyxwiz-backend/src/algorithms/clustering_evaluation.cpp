@@ -7,6 +7,7 @@
 
 #include "cyxwiz/clustering.h"
 #include "arrayfire_backend_utils.h"
+#include "arrayfire_host_materialization.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
@@ -151,7 +152,12 @@ af::array Clustering::ComputeSilhouetteCoefficients(const af::array& dist_matrix
     std::vector<int> cpu_labels = AfArrayToIntVector(labels);
     std::vector<double> dist_flat(n * n);
     dist_matrix.eval();
-    dist_matrix.host(dist_flat.data());
+    MaterializeArrayFireToHost(
+        dist_matrix,
+        dist_flat.data(),
+        ArrayFireHostSyncCategory::AlgorithmCpuPath,
+        "ClusteringEvaluation::SilhouetteDistanceMatrix",
+        "arrayfire_column_major");
 
     std::vector<double> silhouettes(n);
 

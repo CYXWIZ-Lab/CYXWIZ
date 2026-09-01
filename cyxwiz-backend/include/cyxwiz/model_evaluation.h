@@ -48,12 +48,14 @@ struct CYXWIZ_API ConfusionMatrixData {
 struct CYXWIZ_API ROCCurveData {
     std::vector<double> fpr;        // False positive rate
     std::vector<double> tpr;        // True positive rate
+    // sklearn order: +infinity, then unique scores descending.
     std::vector<double> thresholds;
     double auc = 0.0;               // Area under curve
 
     // For multi-class (one-vs-rest)
     std::vector<std::vector<double>> class_fpr;
     std::vector<std::vector<double>> class_tpr;
+    std::vector<std::vector<double>> class_thresholds;
     std::vector<double> class_auc;
 
     bool success = false;
@@ -64,12 +66,15 @@ struct CYXWIZ_API ROCCurveData {
 struct CYXWIZ_API PRCurveData {
     std::vector<double> precision;
     std::vector<double> recall;
+    // Unique scores ascending. Precision/recall have one trailing endpoint.
     std::vector<double> thresholds;
-    double average_precision = 0.0;  // Area under PR curve
+    // sklearn-compatible non-interpolated average precision.
+    double average_precision = 0.0;
 
     // For multi-class
     std::vector<std::vector<double>> class_precision;
     std::vector<std::vector<double>> class_recall;
+    std::vector<std::vector<double>> class_thresholds;
     std::vector<double> class_ap;
 
     bool success = false;
@@ -109,7 +114,7 @@ struct CYXWIZ_API RegressionMetrics {
     double rmse = 0.0;      // Root Mean Squared Error
     double mae = 0.0;       // Mean Absolute Error
     double r_squared = 0.0; // Coefficient of determination (R²)
-    double mape = 0.0;      // Mean Absolute Percentage Error
+    double mape = 0.0;      // sklearn relative MAPE ratio (1.0 == 100%)
     double max_error = 0.0; // Maximum absolute error
 
     bool success = false;
@@ -126,10 +131,15 @@ struct CYXWIZ_API BinaryMetrics {
     double specificity = 0.0;
     double balanced_accuracy = 0.0;
     double mcc = 0.0;  // Matthews correlation coefficient
+
+    bool success = false;
+    std::string error_message;
 };
 
 class CYXWIZ_API ModelEvaluation {
 public:
+    // These vector APIs own bounded native host evaluation/reporting. Training
+    // Tensor decision counts remain device-resident in the training executor.
     // Confusion matrix computation
     static ConfusionMatrixData ComputeConfusionMatrix(
         const std::vector<int>& y_true,
@@ -162,7 +172,7 @@ public:
         const std::vector<double>& y_scores,
         double threshold = 0.5);
 
-    // AUC computation (trapezoidal rule)
+    // sklearn-compatible AUC for monotonic finite x. Invalid input returns NaN.
     static double ComputeAUC(
         const std::vector<double>& x,
         const std::vector<double>& y);
@@ -199,15 +209,17 @@ public:
         const std::vector<double>& y_true,
         const std::vector<double>& y_pred);
 
-    // Optimal threshold finder (maximizes F1 or Youden's J)
+    // Optimal threshold finder. Invalid input/criterion returns NaN. Candidate
+    // thresholds are unique scores in ascending order; the first maximum wins.
     static double FindOptimalThreshold(
         const std::vector<int>& y_true,
         const std::vector<double>& y_scores,
         const std::string& criterion = "f1");  // "f1", "youden", "balanced"
 
 private:
-    // Helper: sort by scores and return indices
-    static std::vector<size_t> ArgSort(const std::vector<double>& v, bool descending = true);
+    static std::vector<size_t> ArgSort(
+        const std::vector<double>& values,
+        bool descending = true);
 };
 
 } // namespace cyxwiz

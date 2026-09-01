@@ -22,49 +22,109 @@ namespace cyxwiz {
 
 using namespace loss_detail;
 
+namespace {
+
+template <typename CpuFunction>
+Tensor RunNativeCpuLoss(const char* operation_name, CpuFunction&& compute) {
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LossCpuPath, operation_name);
+    return compute();
+}
+
+}  // namespace
+
+BCELoss::BCELoss(Reduction reduction, float denominator_epsilon)
+    : Loss(reduction), denominator_epsilon_(denominator_epsilon) {
+    if (!std::isfinite(denominator_epsilon_) ||
+        denominator_epsilon_ <= 0.0f) {
+        throw std::invalid_argument(
+            "BCELoss denominator epsilon must be finite and positive");
+    }
+}
+
+BCEWithLogitsLoss::BCEWithLogitsLoss(Reduction reduction, float pos_weight)
+    : Loss(reduction), pos_weight_(pos_weight) {
+    SetPosWeight(pos_weight);
+}
+
+void BCEWithLogitsLoss::SetPosWeight(float pos_weight) {
+    if (!std::isfinite(pos_weight) || pos_weight <= 0.0f) {
+        throw std::invalid_argument(
+            "BCEWithLogitsLoss pos_weight must be finite and positive");
+    }
+    pos_weight_ = pos_weight;
+}
+
+SoftDiceLoss::SoftDiceLoss(Reduction reduction, float smooth)
+    : Loss(reduction), smooth_(smooth) {
+    if (!std::isfinite(smooth_) || smooth_ < 0.0f) {
+        throw std::invalid_argument(
+            "SoftDiceLoss smooth must be finite and non-negative");
+    }
+}
+
+JaccardLoss::JaccardLoss(Reduction reduction, float smooth)
+    : Loss(reduction), smooth_(smooth) {
+    if (!std::isfinite(smooth_) || smooth_ < 0.0f) {
+        throw std::invalid_argument(
+            "JaccardLoss smooth must be finite and non-negative");
+    }
+}
+
 // ============================================================================
 // BCE Loss Implementation
 // ============================================================================
 
 Tensor BCELoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "BCELoss::Forward";
+    ValidateFloat32Pair(predictions, targets, "BCE");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
         af::array pred = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
 
-        // Clamp predictions for numerical stability
-        af::array pred_clamped = af::clamp(pred, eps_, 1.0f - eps_);
-        pred_clamped.eval();
-
-        // BCE: -[target * log(pred) + (1 - target) * log(1 - pred)]
-        af::array loss = -(target * af::log(pred_clamped) +
-                          (1.0f - target) * af::log(1.0f - pred_clamped));
+        // PyTorch BCELoss clamps the logarithm to -100 while retaining the
+        // public probability value for its separately bounded derivative.
+        af::array log_prediction = af::max(af::log(pred), -100.0f);
+        af::array log_complement =
+            af::max(af::log(1.0f - pred), -100.0f);
+        af::array loss = -(target * log_prediction +
+                          (1.0f - target) * log_complement);
         loss.eval();
 
         loss = ApplyReduction(loss, reduction_);
 
-        return AfToTensor(loss);
+        return AfToTensor(
+            loss,
+            reduction_ == Reduction::None
+                ? predictions.Shape()
+                : std::vector<size_t>{1});
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "BCELoss::Forward", e.what(), predictions, targets, reduction_);
+            kOperation, e.what(), predictions, targets, reduction_);
     }
 #endif
-    return CpuBCEForward(predictions, targets, eps_, reduction_);
+    return RunNativeCpuLoss(kOperation, [&] {
+        return CpuBCEForward(predictions, targets, reduction_);
+    });
 }
 
 Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "BCELoss::Backward";
+    ValidateFloat32Pair(predictions, targets, "BCE");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
         af::array pred = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
 
-        // Clamp predictions for numerical stability
-        af::array pred_clamped = af::clamp(pred, eps_, 1.0f - eps_);
-        pred_clamped.eval();
-
-        // Gradient: -target/pred + (1-target)/(1-pred)
-        //         = (pred - target) / (pred * (1 - pred))
-        af::array grad = (pred_clamped - target) / (pred_clamped * (1.0f - pred_clamped) + eps_);
+        // Match PyTorch's bounded BCE derivative denominator.
+        af::array denominator = af::max(
+            pred * (1.0f - pred), denominator_epsilon_);
+        af::array grad = (pred - target) / denominator;
         grad.eval();
 
         if (reduction_ == Reduction::Mean) {
@@ -75,10 +135,13 @@ Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
         return AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "BCELoss::Backward", e.what(), predictions, targets, reduction_);
+            kOperation, e.what(), predictions, targets, reduction_);
     }
 #endif
-    return CpuBCEBackward(predictions, targets, eps_, reduction_);
+    return RunNativeCpuLoss(kOperation, [&] {
+        return CpuBCEBackward(
+            predictions, targets, denominator_epsilon_, reduction_);
+    });
 }
 
 // ============================================================================
@@ -86,8 +149,12 @@ Tensor BCELoss::Backward(const Tensor& predictions, const Tensor& targets) {
 // ============================================================================
 
 Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "BCEWithLogitsLoss::Forward";
+    ValidateFloat32Pair(predictions, targets, "BCEWithLogits");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
         af::array logits = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
 
@@ -105,18 +172,29 @@ Tensor BCEWithLogitsLoss::Forward(const Tensor& predictions, const Tensor& targe
 
         loss = ApplyReduction(loss, reduction_);
 
-        return AfToTensor(loss);
+        return AfToTensor(
+            loss,
+            reduction_ == Reduction::None
+                ? predictions.Shape()
+                : std::vector<size_t>{1});
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "BCEWithLogitsLoss::Forward", e.what(), predictions, targets, reduction_);
+            kOperation, e.what(), predictions, targets, reduction_);
     }
 #endif
-    return CpuBCEWithLogitsForward(predictions, targets, reduction_, pos_weight_);
+    return RunNativeCpuLoss(kOperation, [&] {
+        return CpuBCEWithLogitsForward(
+            predictions, targets, reduction_, pos_weight_);
+    });
 }
 
 Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "BCEWithLogitsLoss::Backward";
+    ValidateFloat32Pair(predictions, targets, "BCEWithLogits");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
         af::array logits = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
 
@@ -136,10 +214,13 @@ Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targ
         return AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "BCEWithLogitsLoss::Backward", e.what(), predictions, targets, reduction_);
+            kOperation, e.what(), predictions, targets, reduction_);
     }
 #endif
-    return CpuBCEWithLogitsBackward(predictions, targets, reduction_, pos_weight_);
+    return RunNativeCpuLoss(kOperation, [&] {
+        return CpuBCEWithLogitsBackward(
+            predictions, targets, reduction_, pos_weight_);
+    });
 }
 
 // ============================================================================
@@ -147,8 +228,12 @@ Tensor BCEWithLogitsLoss::Backward(const Tensor& predictions, const Tensor& targ
 // ============================================================================
 
 Tensor KLDivLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "KLDivLoss::Forward";
+    ValidateFloat32Pair(predictions, targets, "KLDiv");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
         af::array log_pred = TensorToAf(predictions);  // Log probabilities
         af::array target = TensorToAf(targets);        // Probabilities or log probabilities
 
@@ -160,30 +245,39 @@ Tensor KLDivLoss::Forward(const Tensor& predictions, const Tensor& targets) {
             loss = target_prob * (target - log_pred);
         } else {
             // KL = target * (log(target) - pred)
-            // Avoid log(0) by adding small epsilon
-            af::array log_target = af::log(target + 1e-10f);
-            log_target.eval();
-            loss = target * (log_target - log_pred);
+            // xlogy semantics define the zero-target contribution as zero;
+            // negative targets remain NaN, matching PyTorch.
+            loss = af::select(
+                target == 0.0f,
+                0.0f,
+                target * (af::log(target) - log_pred));
         }
-        loss.eval();
-
-        // Only consider positive targets
-        loss = af::select(target > 0, loss, 0.0f);
         loss.eval();
         loss = ApplyReduction(loss, reduction_);
 
-        return AfToTensor(loss);
+        return AfToTensor(
+            loss,
+            reduction_ == Reduction::None
+                ? predictions.Shape()
+                : std::vector<size_t>{1});
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "KLDivLoss::Forward", e.what(), predictions, targets, reduction_);
+            kOperation, e.what(), predictions, targets, reduction_);
     }
 #endif
-    return CpuKLDivForward(predictions, targets, log_target_, reduction_);
+    return RunNativeCpuLoss(kOperation, [&] {
+        return CpuKLDivForward(
+            predictions, targets, log_target_, reduction_);
+    });
 }
 
 Tensor KLDivLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "KLDivLoss::Backward";
+    ValidateFloat32Pair(predictions, targets, "KLDiv");
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    try {
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
         af::array log_pred = TensorToAf(predictions);
         af::array target = TensorToAf(targets);
 
@@ -196,10 +290,6 @@ Tensor KLDivLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         }
         grad.eval();
 
-        // Only consider positive targets
-        grad = af::select(target > 0, grad, 0.0f);
-        grad.eval();
-
         if (reduction_ == Reduction::Mean) {
             grad = grad / static_cast<float>(log_pred.elements());
             grad.eval();
@@ -208,10 +298,13 @@ Tensor KLDivLoss::Backward(const Tensor& predictions, const Tensor& targets) {
         return AfToTensor(grad, predictions.Shape());
     } catch (const af::exception& e) {
         LogArrayFireLossFallbackOnce(
-            "KLDivLoss::Backward", e.what(), predictions, targets, reduction_);
+            kOperation, e.what(), predictions, targets, reduction_);
     }
 #endif
-    return CpuKLDivBackward(predictions, targets, log_target_, reduction_);
+    return RunNativeCpuLoss(kOperation, [&] {
+        return CpuKLDivBackward(
+            predictions, targets, log_target_, reduction_);
+    });
 }
 
 // ============================================================================
@@ -256,15 +349,90 @@ void ValidateSoftDiceInputs(const Tensor& predictions,
     }
 }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+af::array ReduceOverlapSamples(
+    const af::array& values,
+    const std::vector<size_t>& semantic_shape) {
+    if (semantic_shape.size() <= 1) {
+        af::array result = af::sum(af::flat(values));
+        result.eval();
+        return result;
+    }
+
+    af::array result = values;
+    for (int axis = static_cast<int>(semantic_shape.size()) - 1;
+         axis >= 1;
+         --axis) {
+        result = af::sum(result, axis);
+        result.eval();
+    }
+    return result;
+}
+
+af::array TileOverlapSamples(
+    const af::array& per_sample,
+    const std::vector<size_t>& semantic_shape) {
+    af::dim4 factors(1, 1, 1, 1);
+    if (semantic_shape.size() == 1) {
+        factors[0] = static_cast<dim_t>(semantic_shape[0]);
+    } else {
+        for (size_t axis = 1; axis < semantic_shape.size(); ++axis) {
+            factors[static_cast<unsigned>(axis)] =
+                static_cast<dim_t>(semantic_shape[axis]);
+        }
+    }
+    af::array result = af::tile(per_sample, factors);
+    result.eval();
+    return result;
+}
+
+Tensor WrapOverlapLoss(const af::array& per_sample,
+                       Reduction reduction,
+                       size_t batch) {
+    const af::array reduced = ApplyReduction(per_sample, reduction);
+    return Tensor::FromSemanticArray(
+        reduced,
+        reduction == Reduction::None
+            ? SoftDiceLossShape(batch)
+            : std::vector<size_t>{1});
+}
+#endif
+
 }  // namespace
 
 Tensor SoftDiceLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "SoftDiceLoss::Forward";
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
+        const af::array prediction_values = TensorToAf(predictions);
+        const af::array target_values = TensorToAf(targets);
+        const af::array intersection = ReduceOverlapSamples(
+            prediction_values * target_values, predictions.Shape());
+        const af::array prediction_sum = ReduceOverlapSamples(
+            prediction_values, predictions.Shape());
+        const af::array target_sum = ReduceOverlapSamples(
+            target_values, targets.Shape());
+        af::array per_sample = 1.0f -
+            (2.0f * intersection + smooth_) /
+                (prediction_sum + target_sum + smooth_);
+        per_sample.eval();
+        return WrapOverlapLoss(per_sample, reduction_, batch);
+    } catch (const af::exception& e) {
+        LogArrayFireLossFallbackOnce(
+            kOperation, e.what(), predictions, targets, reduction_);
+    }
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     std::vector<float> per_sample(batch, 0.0f);
 
     for (size_t b = 0; b < batch; ++b) {
@@ -300,14 +468,51 @@ Tensor SoftDiceLoss::Forward(const Tensor& predictions, const Tensor& targets) {
 }
 
 Tensor SoftDiceLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "SoftDiceLoss::Backward";
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
+        const af::array prediction_values = TensorToAf(predictions);
+        const af::array target_values = TensorToAf(targets);
+        const af::array intersection = ReduceOverlapSamples(
+            prediction_values * target_values, predictions.Shape());
+        const af::array prediction_sum = ReduceOverlapSamples(
+            prediction_values, predictions.Shape());
+        const af::array target_sum = ReduceOverlapSamples(
+            target_values, targets.Shape());
+        const af::array numerator = 2.0f * intersection + smooth_;
+        const af::array denominator =
+            prediction_sum + target_sum + smooth_;
+        const af::array numerator_tiled = TileOverlapSamples(
+            numerator, predictions.Shape());
+        const af::array denominator_tiled = TileOverlapSamples(
+            denominator, predictions.Shape());
+        af::array gradient =
+            -((2.0f * target_values * denominator_tiled) -
+              numerator_tiled) /
+            (denominator_tiled * denominator_tiled);
+        if (reduction_ == Reduction::Mean) {
+            gradient = gradient / static_cast<float>(batch);
+        }
+        gradient.eval();
+        return Tensor::FromSemanticArray(gradient, predictions.Shape());
+    } catch (const af::exception& e) {
+        LogArrayFireLossFallbackOnce(
+            kOperation, e.what(), predictions, targets, reduction_);
+    }
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     Tensor grad(predictions.Shape(), DataType::Float32);
-    float* out = grad.Data<float>();
+    float* out = grad.MutableData<float>();
 
     for (size_t b = 0; b < batch; ++b) {
         const size_t base = b * sample_size;
@@ -361,12 +566,41 @@ TverskyLoss::TverskyLoss(Reduction reduction,
 }
 
 Tensor TverskyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "TverskyLoss::Forward";
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
+        const af::array prediction_values = TensorToAf(predictions);
+        const af::array target_values = TensorToAf(targets);
+        const af::array true_positive = ReduceOverlapSamples(
+            prediction_values * target_values, predictions.Shape());
+        const af::array false_positive = ReduceOverlapSamples(
+            prediction_values * (1.0f - target_values),
+            predictions.Shape());
+        const af::array false_negative = ReduceOverlapSamples(
+            (1.0f - prediction_values) * target_values,
+            predictions.Shape());
+        af::array per_sample = 1.0f -
+            (true_positive + smooth_) /
+                (true_positive + alpha_ * false_positive +
+                 beta_ * false_negative + smooth_);
+        per_sample.eval();
+        return WrapOverlapLoss(per_sample, reduction_, batch);
+    } catch (const af::exception& e) {
+        LogArrayFireLossFallbackOnce(
+            kOperation, e.what(), predictions, targets, reduction_);
+    }
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     std::vector<float> per_sample(batch, 0.0f);
 
     for (size_t b = 0; b < batch; ++b) {
@@ -404,14 +638,55 @@ Tensor TverskyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
 }
 
 Tensor TverskyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "TverskyLoss::Backward";
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
+        const af::array prediction_values = TensorToAf(predictions);
+        const af::array target_values = TensorToAf(targets);
+        const af::array true_positive = ReduceOverlapSamples(
+            prediction_values * target_values, predictions.Shape());
+        const af::array false_positive = ReduceOverlapSamples(
+            prediction_values * (1.0f - target_values),
+            predictions.Shape());
+        const af::array false_negative = ReduceOverlapSamples(
+            (1.0f - prediction_values) * target_values,
+            predictions.Shape());
+        const af::array numerator = true_positive + smooth_;
+        const af::array denominator = true_positive +
+            alpha_ * false_positive + beta_ * false_negative + smooth_;
+        const af::array numerator_tiled = TileOverlapSamples(
+            numerator, predictions.Shape());
+        const af::array denominator_tiled = TileOverlapSamples(
+            denominator, predictions.Shape());
+        const af::array denominator_derivative =
+            alpha_ + (1.0f - alpha_ - beta_) * target_values;
+        af::array gradient =
+            -((target_values * denominator_tiled) -
+              (numerator_tiled * denominator_derivative)) /
+            (denominator_tiled * denominator_tiled);
+        if (reduction_ == Reduction::Mean) {
+            gradient = gradient / static_cast<float>(batch);
+        }
+        gradient.eval();
+        return Tensor::FromSemanticArray(gradient, predictions.Shape());
+    } catch (const af::exception& e) {
+        LogArrayFireLossFallbackOnce(
+            kOperation, e.what(), predictions, targets, reduction_);
+    }
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     Tensor grad(predictions.Shape(), DataType::Float32);
-    float* out = grad.Data<float>();
+    float* out = grad.MutableData<float>();
 
     for (size_t b = 0; b < batch; ++b) {
         const size_t base = b * sample_size;
@@ -452,12 +727,39 @@ Tensor TverskyLoss::Backward(const Tensor& predictions, const Tensor& targets) {
 }
 
 Tensor JaccardLoss::Forward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "JaccardLoss::Forward";
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
+        const af::array prediction_values = TensorToAf(predictions);
+        const af::array target_values = TensorToAf(targets);
+        const af::array intersection = ReduceOverlapSamples(
+            prediction_values * target_values, predictions.Shape());
+        const af::array prediction_sum = ReduceOverlapSamples(
+            prediction_values, predictions.Shape());
+        const af::array target_sum = ReduceOverlapSamples(
+            target_values, targets.Shape());
+        const af::array numerator = intersection + smooth_;
+        const af::array denominator =
+            prediction_sum + target_sum - intersection + smooth_;
+        af::array per_sample = 1.0f - numerator / denominator;
+        per_sample.eval();
+        return WrapOverlapLoss(per_sample, reduction_, batch);
+    } catch (const af::exception& e) {
+        LogArrayFireLossFallbackOnce(
+            kOperation, e.what(), predictions, targets, reduction_);
+    }
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     std::vector<float> per_sample(batch, 0.0f);
 
     for (size_t b = 0; b < batch; ++b) {
@@ -495,14 +797,51 @@ Tensor JaccardLoss::Forward(const Tensor& predictions, const Tensor& targets) {
 }
 
 Tensor JaccardLoss::Backward(const Tensor& predictions, const Tensor& targets) {
+    constexpr const char* kOperation = "JaccardLoss::Backward";
     ValidateSoftDiceInputs(predictions, targets, smooth_);
 
     const size_t batch = SoftDiceBatchSize(predictions);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const bool use_native_cpu = PrepareLossNativeCpuFallback(
+        kOperation, predictions, targets, reduction_);
+    if (!use_native_cpu) try {
+        const af::array prediction_values = TensorToAf(predictions);
+        const af::array target_values = TensorToAf(targets);
+        const af::array intersection = ReduceOverlapSamples(
+            prediction_values * target_values, predictions.Shape());
+        const af::array prediction_sum = ReduceOverlapSamples(
+            prediction_values, predictions.Shape());
+        const af::array target_sum = ReduceOverlapSamples(
+            target_values, targets.Shape());
+        const af::array numerator = intersection + smooth_;
+        const af::array denominator =
+            prediction_sum + target_sum - intersection + smooth_;
+        const af::array numerator_tiled = TileOverlapSamples(
+            numerator, predictions.Shape());
+        const af::array denominator_tiled = TileOverlapSamples(
+            denominator, predictions.Shape());
+        af::array gradient =
+            -((target_values * denominator_tiled) -
+              (numerator_tiled * (1.0f - target_values))) /
+            (denominator_tiled * denominator_tiled);
+        if (reduction_ == Reduction::Mean) {
+            gradient = gradient / static_cast<float>(batch);
+        }
+        gradient.eval();
+        return Tensor::FromSemanticArray(gradient, predictions.Shape());
+    } catch (const af::exception& e) {
+        LogArrayFireLossFallbackOnce(
+            kOperation, e.what(), predictions, targets, reduction_);
+    }
+#endif
+
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LossCpuPath, kOperation);
     const size_t sample_size = SoftDiceSampleSize(predictions);
-    const float* pred = predictions.Data<float>();
-    const float* target = targets.Data<float>();
+    const float* pred = predictions.ReadData<float>();
+    const float* target = targets.ReadData<float>();
     Tensor grad(predictions.Shape(), DataType::Float32);
-    float* out = grad.Data<float>();
+    float* out = grad.MutableData<float>();
 
     for (size_t b = 0; b < batch; ++b) {
         const size_t base = b * sample_size;

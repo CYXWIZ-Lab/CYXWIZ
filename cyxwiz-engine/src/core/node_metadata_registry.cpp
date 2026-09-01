@@ -1,5 +1,6 @@
 #include "node_metadata_registry.h"
 #include "pipeline_runtime_capabilities.h"
+#include "training_parameter_contract.h"
 #include "simulation_runtime_capabilities.h"
 #include "../gui/icons.h"
 #include <algorithm>
@@ -1293,7 +1294,16 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"log_interval", "int", "10", "Training metric and log interval in batches", {}, "0-100000", "", "Training", false, true},
          {"validation_freq", "int", "1", "Validation frequency in epochs", {}, "1-10000", "", "Training", false, true},
          {"seed", "int", "42", "Batching random seed", {}, "0-2147483647", "", "Training", false, true},
-         {"grad_accum_steps", "int", "1", "Gradient accumulation steps", {}, "1-10000", "", "Training", false, true},
+         {training_contract::kGradientAccumulationStepsKey,
+          "int",
+          training_contract::kGradientAccumulationStepsDefaultValue,
+          "Gradient accumulation steps",
+          {},
+          training_contract::kGradientAccumulationStepsValidation,
+          "",
+          "Training",
+          false,
+          true},
          {"balance_classes", "bool", "false", "Apply training-only class balancing", {}, "", "", "Balancing", false, true},
          {"balance_mode", "enum", "none", "Class balancing mode", {"none", "oversample", "undersample", "weighted_sampler"}, "", "", "Balancing", false, true},
          {"balance_target", "string", "max", "Class balancing target", {}, "", "", "Balancing", false, true},
@@ -2267,7 +2277,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         "Applies inverted dropout during training and passes values through unchanged during evaluation.", "",
         {{"Input", PinType::Tensor, true, "Activations of any supported shape."}},
         {{"Output", PinType::Tensor, true, "Same shape as Input."}},
-        {{"rate", "float", "0.5", "Probability of dropping each activation", {}, "0.0-0.999",
+        {{"rate", "float", "0.5", "Probability of dropping each activation", {}, "0.0-1.0",
           "Drop Probability", "Regularization", true, false}},
         NodeImplementationStatus::Implemented, 0});
 

@@ -28,6 +28,7 @@
 #include "../core/data_convert_service.h"
 #include "../core/data_preview_service.h"
 #include "../core/dataset_partitions.h"
+#include "../core/training_parameter_contract.h"
 
 namespace gui {
 
@@ -650,7 +651,8 @@ private:
     int log_interval_ = 10;
     int validation_freq_ = 1;
     int seed_ = 42;
-    int grad_accum_steps_ = 1;
+    int grad_accum_steps_ =
+        cyxwiz::training_contract::kGradientAccumulationStepsDefault;
     bool balance_classes_ = false;
     int balance_mode_index_ = 0;
     char balance_target_[32] = "max";

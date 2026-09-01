@@ -8,6 +8,7 @@
 #define _USE_MATH_DEFINES
 #include "cyxwiz/dimensionality_reduction.h"
 #include "arrayfire_backend_utils.h"
+#include "arrayfire_host_materialization.h"
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -205,7 +206,12 @@ std::vector<std::vector<double>> DimensionalityReduction::ComputeCovarianceMatri
             // Copy back to CPU
             std::vector<std::vector<double>> cov(n_features, std::vector<double>(n_features));
             std::vector<double> cov_flat(n_features * n_features);
-            XtX.host(cov_flat.data());
+            MaterializeArrayFireToHost(
+                XtX,
+                cov_flat.data(),
+                ArrayFireHostSyncCategory::OutputMaterialization,
+                "DimensionalityReduction::ComputeCovarianceMatrix",
+                "arrayfire_column_major");
 
             for (size_t i = 0; i < n_features; i++) {
                 for (size_t j = 0; j < n_features; j++) {
@@ -432,7 +438,12 @@ std::vector<std::vector<double>> DimensionalityReduction::ComputeSquaredDistance
             // Copy back to CPU
             std::vector<std::vector<double>> distances(n, std::vector<double>(n, 0.0));
             std::vector<double> dist_flat(n * n);
-            dist_sq.host(dist_flat.data());
+            MaterializeArrayFireToHost(
+                dist_sq,
+                dist_flat.data(),
+                ArrayFireHostSyncCategory::OutputMaterialization,
+                "DimensionalityReduction::ComputeSquaredDistances",
+                "arrayfire_column_major");
 
             for (size_t i = 0; i < n; i++) {
                 for (size_t j = 0; j < n; j++) {

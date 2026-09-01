@@ -14,7 +14,7 @@ namespace cyxwiz {
 inline constexpr const char* kCyxWizComputeContractId =
     "cyxwiz-arrayfire-training-v1";
 inline constexpr const char* kRouteQualificationOperationManifestId =
-    "arrayfire-route-ops-v1";
+    "arrayfire-route-ops-v3";
 inline constexpr const char* kRouteQualificationMatrixId =
     "cyxwiz-route-qualification-v1";
 inline constexpr const char* kRoutePerformanceBenchmarkId =

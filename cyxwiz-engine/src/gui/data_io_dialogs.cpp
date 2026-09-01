@@ -4,6 +4,7 @@
 #include "../core/async_task_manager.h"
 #include "../core/file_dialogs.h"
 #include "../core/graph_compiler.h"
+#include "../core/training_parameter_contract.h"
 #include "../core/worker_defaults.h"
 
 #include <cmath>
@@ -983,8 +984,12 @@ DataLoaderDialog::DataLoaderDialog(MLNode* node)
         if (validation_freq_ < 1) validation_freq_ = 1;
         ReadIntParam(node_->parameters, "seed", seed_);
         if (seed_ < 0) seed_ = 0;
-        ReadIntParam(node_->parameters, "grad_accum_steps", grad_accum_steps_);
-        if (grad_accum_steps_ < 1) grad_accum_steps_ = 1;
+        ReadIntParam(node_->parameters,
+                     cyxwiz::training_contract::kGradientAccumulationStepsKey,
+                     grad_accum_steps_);
+        grad_accum_steps_ =
+            cyxwiz::training_contract::ClampGradientAccumulationSteps(
+                grad_accum_steps_);
         ReadBoolParam(node_->parameters, "balance_classes", balance_classes_);
         balance_mode_index_ = BalanceModeIndexFromName(
             ReadStringParamValue(node_->parameters, "balance_mode", "none"));
@@ -1017,7 +1022,10 @@ void DataLoaderDialog::Apply() {
     node_->parameters["log_interval"] = std::to_string(log_interval_);
     node_->parameters["validation_freq"] = std::to_string(validation_freq_);
     node_->parameters["seed"] = std::to_string(seed_);
-    node_->parameters["grad_accum_steps"] = std::to_string(grad_accum_steps_);
+    node_->parameters[cyxwiz::training_contract::kGradientAccumulationStepsKey] =
+        std::to_string(
+            cyxwiz::training_contract::ClampGradientAccumulationSteps(
+                grad_accum_steps_));
     node_->parameters["balance_classes"] = balance_classes_ ? "true" : "false";
     node_->parameters["balance_mode"] = BalanceModeName(
         balance_classes_ ? balance_mode_index_ : 0);
@@ -1048,7 +1056,8 @@ void DataLoaderDialog::Reset() {
     log_interval_ = 10;
     validation_freq_ = 1;
     seed_ = 42;
-    grad_accum_steps_ = 1;
+    grad_accum_steps_ =
+        cyxwiz::training_contract::kGradientAccumulationStepsDefault;
     balance_classes_ = false;
     balance_mode_index_ = 0;
     CopyToBuffer(balance_target_, sizeof(balance_target_), "max");
@@ -1070,8 +1079,12 @@ void DataLoaderDialog::Reset() {
     if (validation_freq_ < 1) validation_freq_ = 1;
     ReadIntParam(original_params_, "seed", seed_);
     if (seed_ < 0) seed_ = 0;
-    ReadIntParam(original_params_, "grad_accum_steps", grad_accum_steps_);
-    if (grad_accum_steps_ < 1) grad_accum_steps_ = 1;
+    ReadIntParam(original_params_,
+                 cyxwiz::training_contract::kGradientAccumulationStepsKey,
+                 grad_accum_steps_);
+    grad_accum_steps_ =
+        cyxwiz::training_contract::ClampGradientAccumulationSteps(
+            grad_accum_steps_);
     ReadBoolParam(original_params_, "balance_classes", balance_classes_);
     balance_mode_index_ = BalanceModeIndexFromName(
         ReadStringParamValue(original_params_, "balance_mode", "none"));
@@ -1142,8 +1155,9 @@ void DataLoaderDialog::RenderContent() {
     ImGui::SameLine(130);
     ImGui::SetNextItemWidth(120);
     if (ImGui::InputInt("##grad_accum_steps", &grad_accum_steps_)) {
-        if (grad_accum_steps_ < 1) grad_accum_steps_ = 1;
-        if (grad_accum_steps_ > 100000) grad_accum_steps_ = 100000;
+        grad_accum_steps_ =
+            cyxwiz::training_contract::ClampGradientAccumulationSteps(
+                grad_accum_steps_);
         has_changes_ = true;
     }
     ImGui::SameLine();

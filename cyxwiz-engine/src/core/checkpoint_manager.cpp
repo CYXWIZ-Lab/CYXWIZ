@@ -6,6 +6,7 @@
 #include <chrono>
 #include <iomanip>
 #include <algorithm>
+#include <limits>
 #include <vector>
 
 namespace cyxwiz {
@@ -16,6 +17,18 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr const char* kCheckpointFormatV1 = "1.0";
+
+bool IsSupportedCheckpointDataType(DataType dtype) {
+    switch (dtype) {
+        case DataType::Float32:
+        case DataType::Float64:
+        case DataType::Int32:
+        case DataType::Int64:
+        case DataType::UInt8:
+            return true;
+    }
+    return false;
+}
 
 CheckpointInspection ClassifyCheckpointVersion(const std::string& version) {
     CheckpointInspection inspection;
@@ -657,9 +670,17 @@ bool CheckpointManager::SaveTensor(const fs::path& path, const Tensor& tensor) {
         const ScopedArrayFireHostSyncAttribution checkpoint_attribution(
             ArrayFireHostSyncCategory::CheckpointOutput,
             "CheckpointManager::SaveTensor");
-        const float* data = tensor.ReadData<float>();
-        size_t num_elements = tensor.NumElements();
-        file.write(reinterpret_cast<const char*>(data), num_elements * sizeof(float));
+        const size_t num_bytes = tensor.NumBytes();
+        if (num_bytes > static_cast<size_t>(
+                (std::numeric_limits<std::streamsize>::max)())) {
+            spdlog::error(
+                "CheckpointManager: Tensor payload is too large to serialize: {}",
+                path.string());
+            return false;
+        }
+        const void* data = tensor.ReadData();
+        file.write(reinterpret_cast<const char*>(data),
+                   static_cast<std::streamsize>(num_bytes));
         if (!file.good()) {
             spdlog::error("CheckpointManager: Failed to write tensor data to file: {}", path.string());
             return false;
@@ -708,14 +729,27 @@ std::optional<Tensor> CheckpointManager::LoadTensor(const fs::path& path) {
                           path.string();
             return std::nullopt;
         }
+        const auto data_type = static_cast<DataType>(dtype);
+        if (!IsSupportedCheckpointDataType(data_type)) {
+            last_error_ = "Checkpoint tensor has an unsupported data type header: " +
+                          path.string();
+            return std::nullopt;
+        }
 
         // Create tensor with shape
-        Tensor tensor(shape, static_cast<DataType>(dtype));
+        Tensor tensor(shape, data_type);
 
         // Read data
-        float* data = tensor.MutableData<float>();
-        size_t num_elements = tensor.NumElements();
-        file.read(reinterpret_cast<char*>(data), num_elements * sizeof(float));
+        const size_t num_bytes = tensor.NumBytes();
+        if (num_bytes > static_cast<size_t>(
+                (std::numeric_limits<std::streamsize>::max)())) {
+            last_error_ = "Checkpoint tensor payload is too large to load: " +
+                          path.string();
+            return std::nullopt;
+        }
+        void* data = tensor.MutableData();
+        file.read(reinterpret_cast<char*>(data),
+                  static_cast<std::streamsize>(num_bytes));
         if (!file.good()) {
             last_error_ = "Checkpoint tensor data is truncated: " + path.string();
             return std::nullopt;

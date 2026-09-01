@@ -7,6 +7,7 @@
 #include "parquet_backed_dataset.h"
 #include "data_registry.h"
 #include "arrow_dataset.h"
+#include "training_scheduler_controller.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/optimizer.h>
 #include <cyxwiz/sequential.h>
@@ -31,10 +32,15 @@ inline bool UsesRegressionMetrics(const TrainingConfiguration& config) {
 struct TrainingMetrics {
     // Current progress
     int current_epoch = 0;
+    // Run-history truth. This is never rewritten when an earlier checkpoint
+    // is restored into the active model after training.
+    int last_executed_epoch = 0;
     int total_epochs = 0;
     int current_batch = 0;
     int total_batches = 0;
     int optimizer_step_count = 0;
+    int scheduler_step_count = 0;
+    double learning_rate = 0.0;
     size_t train_sample_count = 0;
     size_t val_sample_count = 0;
     size_t test_sample_count = 0;
@@ -59,9 +65,12 @@ struct TrainingMetrics {
     float test_rmse = 0.0f;
     bool has_test_metrics = false;
 
-    // Checkpoint actually restored/used for final evaluation. Empty means no
-    // concrete checkpoint path was restored by the executor.
+    // Active-model provenance after training. Run-history fields above remain
+    // about executed work; restored checkpoint state is reported separately.
     std::string checkpoint_used;
+    int restored_checkpoint_epoch = 0;
+    int restored_checkpoint_step = 0;
+    std::string active_model_provenance;
 
     // Token-level sequence tagging metrics. For sequence training,
     // train_accuracy/val_accuracy also mirror token accuracy so existing
@@ -70,8 +79,11 @@ struct TrainingMetrics {
     float val_token_accuracy = 0.0f;
     float train_entity_f1 = 0.0f;
     float val_entity_f1 = 0.0f;
+    float test_token_accuracy = 0.0f;
+    float test_entity_f1 = 0.0f;
     size_t train_token_count = 0;
     size_t val_token_count = 0;
+    size_t test_token_count = 0;
 
     // Timing
     float epoch_time_seconds = 0.0f;
@@ -94,6 +106,9 @@ struct TrainingMetrics {
     std::vector<float> val_accuracy_history;
     std::vector<float> val_mae_history;
     std::vector<float> val_rmse_history;
+    // Post-step learning rates, one entry per scheduler advance. The initial
+    // rate is reported separately by learning_rate before the first advance.
+    std::vector<double> learning_rate_history;
 };
 
 struct ObjectiveEvaluationMetrics {
@@ -253,7 +268,37 @@ public:
      */
     std::unique_ptr<Optimizer> ReleaseOptimizer() { return std::move(optimizer_); }
 
+    /**
+     * Configure a fresh scheduler before Train(). Graph/node compilation may
+     * call this boundary without taking ownership of runtime cadence.
+     */
+    bool ConfigureScheduler(
+        TrainingSchedulerSpec specification,
+        std::string& error);
+
+    /** Configure a scheduler and restore exact scheduler lifecycle state. */
+    bool ConfigureScheduler(
+        TrainingSchedulerSpec specification,
+        TrainingSchedulerResumeState resume_state,
+        std::string& error);
+
+    std::optional<TrainingSchedulerResumeState>
+    ExportSchedulerResumeState(std::string& error) const;
+
+    const LRScheduler* GetScheduler() const {
+        return scheduler_controller_
+            ? scheduler_controller_->GetScheduler()
+            : nullptr;
+    }
+
 private:
+    struct SequenceEvaluationMetrics {
+        float loss = 0.0f;
+        float accuracy = 0.0f;
+        float entity_f1 = 0.0f;
+        size_t token_count = 0;
+    };
+
     // Three possible dataset backings. Exactly one of dataset_ / arrow_dataset_ /
     // parquet_dataset_ is populated at construction time, based on which
     // constructor was called. mode_ is the tag the Train() function uses
@@ -288,6 +333,9 @@ private:
     std::unique_ptr<IExecutableModel> model_;
     std::unique_ptr<Optimizer> optimizer_;
     std::unique_ptr<Loss> loss_;  // Unified loss function (MSE, CrossEntropy, BCE, etc.)
+    std::optional<TrainingSchedulerSpec> scheduler_specification_;
+    std::optional<TrainingSchedulerResumeState> scheduler_resume_state_;
+    std::unique_ptr<TrainingSchedulerController> scheduler_controller_;
 
     // Internal training methods
 
@@ -342,6 +390,8 @@ private:
      * Run validation for token-tagging batches.
      */
     void RunValidationSequence(ISequenceBatcher& batcher);
+    SequenceEvaluationMetrics EvaluateSequenceBatcher(
+        ISequenceBatcher& batcher);
 
     /**
      * Forward pass through the model
@@ -377,8 +427,13 @@ private:
         int total_batches,
         float batch_loss,
         float current_acc,
+        float gradient_weight,
+        const Tensor* device_gradient_weight,
         bool force_step
     );
+
+    void ApplySchedulerAdvance(
+        const TrainingSchedulerAdvanceResult& result);
 
     /**
      * Apply preprocessing to batch data
@@ -396,15 +451,18 @@ private:
     bool ShouldStop() const { return stop_requested_.load(); }
 
     /**
-     * Wait while paused
+     * Wait while paused and report whether execution may continue.
      */
-    void WaitWhilePaused();
+    bool WaitWhilePaused();
 
     // Cached tensors for backward pass
     Tensor last_predictions_;
     Tensor loss_gradient_;
     std::map<std::string, Tensor> gradient_accumulator_;
     int gradient_accumulated_batches_ = 0;
+    float gradient_accumulation_weight_ = 0.0f;
+    Tensor gradient_accumulation_device_weight_;
+    bool gradient_accumulation_device_weight_initialized_ = false;
 };
 
 } // namespace cyxwiz

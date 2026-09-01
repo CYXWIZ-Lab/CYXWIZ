@@ -5,6 +5,7 @@
 
 #include "cyxwiz/linear_algebra.h"
 #include "arrayfire_backend_utils.h"
+#include "arrayfire_host_materialization.h"
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <cstdint>
@@ -43,7 +44,12 @@ static cyxwiz::Tensor AfArrayToTensorWithShape(const af::array& arr, const std::
     if (out.NumBytes() > 0) {
         af::array materialized = arr;
         materialized.eval();
-        materialized.host(out.Data());
+        MaterializeArrayFireToHost(
+            materialized,
+            out.MutableData(),
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "LinearAlgebra::AfArrayToTensor",
+            "arrayfire_native");
     }
     return out;
 }
@@ -68,6 +74,11 @@ static void LogLinearAlgebraTensorFallbackOnce(
 {
     const BackendFallbackReason reason = ClassifyArrayFireBackendFallbackReason(error_message);
     const std::string context = BuildArrayFireBackendFallbackContext(tensor_context);
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        operation_name,
+        reason,
+        error_message,
+        context);
     if (ShouldLogArrayFireBackendFallbackOnce(operation_name, reason, context)) {
         spdlog::warn("{}",
             BuildArrayFireBackendFallbackMessage(
@@ -83,15 +94,15 @@ static void LogLinearAlgebraTensorFallbackOnce(
 static double TensorValueAsDouble(const Tensor& t, size_t idx) {
     switch (t.GetDataType()) {
         case DataType::Float64:
-            return static_cast<const double*>(t.Data())[idx];
+            return static_cast<const double*>(t.ReadData())[idx];
         case DataType::Float32:
-            return static_cast<double>(static_cast<const float*>(t.Data())[idx]);
+            return static_cast<double>(static_cast<const float*>(t.ReadData())[idx]);
         case DataType::Int32:
-            return static_cast<double>(static_cast<const int32_t*>(t.Data())[idx]);
+            return static_cast<double>(static_cast<const int32_t*>(t.ReadData())[idx]);
         case DataType::Int64:
-            return static_cast<double>(static_cast<const int64_t*>(t.Data())[idx]);
+            return static_cast<double>(static_cast<const int64_t*>(t.ReadData())[idx]);
         case DataType::UInt8:
-            return static_cast<double>(static_cast<const uint8_t*>(t.Data())[idx]);
+            return static_cast<double>(static_cast<const uint8_t*>(t.ReadData())[idx]);
         default:
             return 0.0;
     }
@@ -112,7 +123,7 @@ static std::vector<std::vector<double>> Tensor2DToMatrix(const Tensor& t) {
     }
 
     if (t.GetDataType() == DataType::Float64) {
-        const double* src = static_cast<const double*>(t.Data());
+        const double* src = static_cast<const double*>(t.ReadData());
         for (size_t r = 0; r < rows; ++r) {
             std::memcpy(out[r].data(), src + r * cols, cols * sizeof(double));
         }
@@ -156,7 +167,7 @@ static Tensor MatrixToTensor(const std::vector<std::vector<double>>& mat, bool s
 
     if (squeeze_single_col && cols == 1) {
         Tensor out({rows}, DataType::Float64);
-        double* dst = static_cast<double*>(out.Data());
+        double* dst = static_cast<double*>(out.MutableData());
         for (size_t r = 0; r < rows; ++r) {
             dst[r] = mat[r][0];
         }
@@ -164,7 +175,7 @@ static Tensor MatrixToTensor(const std::vector<std::vector<double>>& mat, bool s
     }
 
     Tensor out({rows, cols}, DataType::Float64);
-    double* dst = static_cast<double*>(out.Data());
+    double* dst = static_cast<double*>(out.MutableData());
     for (size_t r = 0; r < rows; ++r) {
         std::memcpy(dst + r * cols, mat[r].data(), cols * sizeof(double));
     }
@@ -217,6 +228,9 @@ TensorResult LinearAlgebra::Multiply(const Tensor& A, const Tensor& B) {
     }
 #endif
 
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::AlgorithmCpuPath,
+        "LinearAlgebra::TensorMultiply");
     auto A_mat = Tensor2DToMatrix(A);
     auto B_mat = Tensor2DToMatrix(B);
     auto cpu_result = Multiply(A_mat, B_mat);
@@ -262,6 +276,9 @@ TensorResult LinearAlgebra::Transpose(const Tensor& A) {
     }
 #endif
 
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::AlgorithmCpuPath,
+        "LinearAlgebra::TensorTranspose");
     auto A_mat = Tensor2DToMatrix(A);
     auto cpu_result = Transpose(A_mat);
     if (!cpu_result.success) {
@@ -309,6 +326,9 @@ TensorResult LinearAlgebra::Inverse(const Tensor& A) {
     }
 #endif
 
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::AlgorithmCpuPath,
+        "LinearAlgebra::TensorInverse");
     auto A_mat = Tensor2DToMatrix(A);
     auto cpu_result = Inverse(A_mat);
     if (!cpu_result.success) {
@@ -351,6 +371,9 @@ ScalarResult LinearAlgebra::FrobeniusNorm(const Tensor& A) {
     }
 #endif
 
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::AlgorithmCpuPath,
+        "LinearAlgebra::TensorFrobeniusNorm");
     auto A_mat = Tensor2DToMatrix(A);
     return FrobeniusNorm(A_mat);
 }
@@ -416,6 +439,9 @@ TensorResult LinearAlgebra::Solve(const Tensor& A, const Tensor& b) {
     }
 #endif
 
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::AlgorithmCpuPath,
+        "LinearAlgebra::TensorSolve");
     auto A_mat = Tensor2DToMatrix(A);
     auto b_mat = TensorVectorOr2DToMatrix(b);
     auto cpu_result = Solve(A_mat, b_mat);
@@ -487,6 +513,9 @@ TensorResult LinearAlgebra::LeastSquares(const Tensor& A, const Tensor& b) {
     }
 #endif
 
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::AlgorithmCpuPath,
+        "LinearAlgebra::TensorLeastSquares");
     auto A_mat = Tensor2DToMatrix(A);
     auto b_mat = TensorVectorOr2DToMatrix(b);
     auto cpu_result = LeastSquares(A_mat, b_mat);

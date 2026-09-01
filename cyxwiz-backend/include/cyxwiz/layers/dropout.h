@@ -6,6 +6,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -30,6 +31,10 @@ public:
 private:
     float p_;
     Tensor mask_;  // Dropout mask for backward pass
+    bool has_forward_ = false;
+    bool forward_used_dropout_ = false;
+    std::vector<size_t> output_shape_;
+    DataType output_dtype_ = DataType::Float32;
 };
 
 } // namespace cyxwiz

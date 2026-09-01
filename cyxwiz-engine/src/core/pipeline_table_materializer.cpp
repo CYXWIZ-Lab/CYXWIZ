@@ -585,7 +585,12 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
                         : configured_limit > 0
                             ? configured_limit
                             : safe_memory_budget_bytes;
-                    if (runtime_limit > 0 &&
+                    // Estimate-only preflight must report the operator's
+                    // projected risk. Incidental process growth while setting
+                    // up the preflight is not materialization growth and must
+                    // not reclassify a warning as a runtime block.
+                    if (!execution_context.stop_after_memory_preflight &&
+                        runtime_limit > 0 &&
                         with_node.process_resident_growth_bytes >=
                             runtime_limit) {
                         with_node.status = "blocked";

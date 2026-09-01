@@ -201,7 +201,9 @@ set(ENGINE_SOURCES
     src/core/graph_topology_utils.cpp
     src/core/training_batcher_setup.cpp
     src/core/classification_decision.cpp
+    src/core/training_scheduler_controller.cpp
     src/core/sequence_arrow_batcher.cpp
+    src/core/metric_learning_metrics.cpp
     src/core/training_executor.cpp
     src/core/training_manager.cpp
     src/core/executable_model.cpp
@@ -1391,6 +1393,7 @@ set_target_properties(test_metric_learning_shared_encoder_contracts PROPERTIES
 # ===== Test: Metric-Learning Metrics =====
 add_executable(test_metric_learning_metrics
     tests/test_metric_learning_metrics.cpp
+    src/core/metric_learning_metrics.cpp
 )
 
 target_include_directories(test_metric_learning_metrics PRIVATE
@@ -1415,6 +1418,7 @@ set_target_properties(test_metric_learning_metrics PROPERTIES
 # ===== Test: Metric-Learning Inference Outputs =====
 add_executable(test_metric_learning_inference_outputs
     tests/test_metric_learning_inference_outputs.cpp
+    src/core/metric_learning_metrics.cpp
 )
 
 target_include_directories(test_metric_learning_inference_outputs PRIVATE
@@ -1488,6 +1492,7 @@ set_target_properties(test_metric_learning_losses PROPERTIES
 # ===== Test: ML Primitive CPU/GPU Coverage Matrix =====
 add_executable(test_ml_primitive_coverage_matrix
     tests/test_ml_primitive_coverage_matrix.cpp
+    src/core/metric_learning_metrics.cpp
 )
 
 target_include_directories(test_ml_primitive_coverage_matrix PRIVATE
@@ -1598,6 +1603,8 @@ set_target_properties(test_text_tokenizer_operator PROPERTIES
 # ===== Test: Computation Truth - TF-IDF + Loss Parity =====
 add_executable(test_computation_truth_tfidf_loss
     tests/computation_truth/test_computation_truth_tfidf_loss.cpp
+    src/core/executable_model.cpp
+    src/core/metric_learning_metrics.cpp
     src/core/preprocessing_state.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
 )
@@ -1610,7 +1617,26 @@ target_link_libraries(test_computation_truth_tfidf_loss PRIVATE
     Arrow::arrow_shared
     spdlog::spdlog
     fmt::fmt
+    nlohmann_json::nlohmann_json
     cyxwiz-backend
+)
+
+set(CYXWIZ_TRAINING_CORE_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/training_core_pytorch.json"
+)
+
+add_custom_target(copy_test_computation_truth_tfidf_loss_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_tfidf_loss>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_TRAINING_CORE_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_tfidf_loss>/computation_truth_fixtures/training_core_pytorch.json"
+    SOURCES "${CYXWIZ_TRAINING_CORE_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+
+add_dependencies(test_computation_truth_tfidf_loss
+    copy_test_computation_truth_tfidf_loss_fixture
 )
 
 if(WIN32)
@@ -3366,7 +3392,22 @@ target_link_libraries(test_training_batcher_setup PRIVATE
     Parquet::parquet_shared
     spdlog::spdlog
     fmt::fmt
+    nlohmann_json::nlohmann_json
     cyxwiz-backend
+)
+
+add_custom_target(copy_test_training_batcher_setup_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_training_batcher_setup>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_TRAINING_CORE_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_training_batcher_setup>/computation_truth_fixtures/training_core_pytorch.json"
+    SOURCES "${CYXWIZ_TRAINING_CORE_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+
+add_dependencies(test_training_batcher_setup
+    copy_test_training_batcher_setup_fixture
 )
 
 if(WIN32)
@@ -3709,6 +3750,7 @@ set_target_properties(test_console_session_model PROPERTIES
 # ===== TrainingExecutor test and benchmark runtime =====
 set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     src/core/training_executor.cpp
+    src/core/training_scheduler_controller.cpp
     src/core/regression_target_transform.cpp
     src/core/preprocessing_state.cpp
     src/core/training_batcher_setup.cpp
@@ -3747,9 +3789,9 @@ function(configure_training_executor_harness target_name)
         target_compile_definitions(${target_name} PRIVATE
             _CRT_SECURE_NO_WARNINGS
             NOMINMAX
-            CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
         )
-    else()
+    endif()
+    if(NOT (ARGC GREATER 1 AND "${ARGV1}" STREQUAL "LEGACY"))
         target_compile_definitions(${target_name} PRIVATE
             CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
         )
@@ -3766,6 +3808,56 @@ add_executable(test_training_executor_arrow_parquet
     ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
 )
 configure_training_executor_harness(test_training_executor_arrow_parquet)
+
+# ===== Test: Legacy DatasetHandle cooperative lifecycle =====
+add_executable(test_training_executor_dataset_handle
+    tests/test_training_executor_dataset_handle.cpp
+    tests/legacy_dataset_harness_stubs.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
+    src/core/dataset_batcher.cpp
+)
+configure_training_executor_harness(
+    test_training_executor_dataset_handle LEGACY)
+
+add_custom_target(copy_test_training_executor_arrow_parquet_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_training_executor_arrow_parquet>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_TRAINING_CORE_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_training_executor_arrow_parquet>/computation_truth_fixtures/training_core_pytorch.json"
+    SOURCES "${CYXWIZ_TRAINING_CORE_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_training_executor_arrow_parquet
+    copy_test_training_executor_arrow_parquet_fixture
+)
+
+# ===== Test: Training scheduler cadence/state/checkpoint lifecycle =====
+add_executable(test_training_scheduler_lifecycle
+    tests/test_training_scheduler_lifecycle.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
+    src/core/checkpoint_manifest.cpp
+    src/core/checkpoint_payload_io.cpp
+)
+configure_training_executor_harness(test_training_scheduler_lifecycle)
+
+# ===== Test: TrainingManager Session Orchestration =====
+add_executable(test_training_manager_session
+    tests/test_training_manager_session.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
+    src/core/training_manager.cpp
+    src/core/async_task_manager.cpp
+    src/gui/panels/training_plot_panel.cpp
+)
+configure_training_executor_harness(test_training_manager_session)
+target_compile_definitions(test_training_manager_session PRIVATE
+    CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS
+    CYXWIZ_PLOTTING_MODULE
+)
+target_link_libraries(test_training_manager_session PRIVATE
+    imgui::imgui
+    implot::implot
+)
 
 # ===== Benchmark: Ticket 85 APS-style dense training =====
 add_executable(test_dense_training_benchmark
@@ -3867,6 +3959,46 @@ if(WIN32)
 endif()
 
 set_target_properties(test_text_dataset_batcher_arrow PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Image/Audio Train-only drop_last =====
+add_executable(test_modality_batcher_drop_last
+    tests/test_modality_batcher_drop_last.cpp
+    src/core/audio_dataset_batcher.cpp
+    src/core/image_dataset_batcher.cpp
+    src/core/dataset_base.cpp
+    src/core/datasets/image_csv_dataset.cpp
+    src/core/formats/audio_dataset.cpp
+    src/core/image_utils.cpp
+    src/preprocessing/image_transform.cpp
+    src/preprocessing/morphology_transform.cpp
+    src/preprocessing/blur_transform.cpp
+    src/preprocessing/perspective_transform.cpp
+    src/preprocessing/pyramid_transform.cpp
+    src/utils/image_enhancer.cpp
+)
+
+target_include_directories(test_modality_batcher_drop_last PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_modality_batcher_drop_last PRIVATE
+    ${OpenCV_LIBS}
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_modality_batcher_drop_last PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_modality_batcher_drop_last PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

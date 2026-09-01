@@ -234,6 +234,12 @@ void TextDatasetBatcher::Reset() {
     }
 }
 
+void TextDatasetBatcher::SetDropLast(bool drop_last) {
+    if (train_batcher_) {
+        train_batcher_->SetDropLast(drop_last);
+    }
+}
+
 void TextDatasetBatcher::SetPhase(BatcherPhase phase) {
     switch (phase) {
         case BatcherPhase::Val:

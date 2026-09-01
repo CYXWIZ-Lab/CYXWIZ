@@ -97,7 +97,7 @@ inline SequenceTrainingEpochResult TrainSequenceTaggerEpoch(
             Tensor model_input = BuildSequenceModelInput(batch, config);
             Tensor predictions = built.model->Forward(model_input);
             Tensor loss_tensor = built.loss->Forward(predictions, targets);
-            const float batch_loss = loss_tensor.Data<float>()[0];
+            const float batch_loss = loss_tensor.ReadData<float>()[0];
             if (!std::isfinite(batch_loss)) {
                 result.error = "sequence tagger loss is not finite";
                 return result;

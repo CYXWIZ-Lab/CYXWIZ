@@ -82,13 +82,16 @@ public:
     af::array GetArrayRowMajor2D() const;
     // 3D row-major Tensor view as semantic ArrayFire [dim0, dim1, dim2].
     af::array GetArrayRowMajor3D() const;
-    // Rank-aware semantic view: row-major for rank 2/3, native otherwise.
+    // 4D row-major Tensor view as semantic ArrayFire [dim0, dim1, dim2, dim3].
+    af::array GetArrayRowMajor4D() const;
+    // Rank-aware semantic view: row-major for rank 2/3/4, native otherwise.
     af::array GetSemanticArray() const;
     // Set from ArrayFire array, keeping device data resident until host data is requested.
     void SetFromArray(const af::array& arr);
     // Set from semantic row-major ArrayFire views, keeping device data resident.
     void SetFromArrayRowMajor2D(const af::array& arr);
     void SetFromArrayRowMajor3D(const af::array& arr);
+    void SetFromArrayRowMajor4D(const af::array& arr);
     // Store a semantic ArrayFire result with an explicit logical shape.
     void SetFromSemanticArray(
         const af::array& arr,
@@ -97,6 +100,8 @@ public:
     static Tensor FromArrayRowMajor2D(const af::array& arr);
     // Build a row-major 3D Tensor from semantic ArrayFire [dim0, dim1, dim2].
     static Tensor FromArrayRowMajor3D(const af::array& arr);
+    // Build a row-major 4D Tensor from semantic ArrayFire [dim0, dim1, dim2, dim3].
+    static Tensor FromArrayRowMajor4D(const af::array& arr);
     static Tensor FromSemanticArray(
         const af::array& arr,
         std::vector<size_t> semantic_shape);
@@ -106,7 +111,8 @@ public:
     Tensor Clone() const;
     Tensor Reshape(const std::vector<size_t>& new_shape) const;
     Tensor View(const std::vector<size_t>& new_shape) const;
-    Tensor Squeeze(int dim = -1) const;
+    Tensor Squeeze() const;
+    Tensor Squeeze(int dim) const;
     Tensor Unsqueeze(int dim) const;
     Tensor Flatten() const;
     Tensor Flatten(int start_dim, int end_dim = -1) const;
@@ -184,12 +190,21 @@ public:
     Tensor Min(int dim, bool keepdim = false) const;
     Tensor Prod() const;
     Tensor Prod(int dim, bool keepdim = false) const;
+    // Population variance/stddev remain the compatibility default
+    // (correction=0). The named global overloads avoid ambiguity with the
+    // existing Var(dim)/Std(dim) APIs.
     Tensor Var() const;
+    Tensor VarWithCorrection(int64_t correction) const;
     Tensor Var(int dim, bool keepdim = false) const;
+    Tensor Var(int dim, bool keepdim, int64_t correction) const;
     Tensor Std() const;
+    Tensor StdWithCorrection(int64_t correction) const;
     Tensor Std(int dim, bool keepdim = false) const;
+    Tensor Std(int dim, bool keepdim, int64_t correction) const;
 
-    // Math operations
+    // Math operations follow PyTorch right-aligned broadcasting and promotion
+    // over the public dtypes. Division of integral tensors and operations with
+    // a float scalar produce Float32 (Float64 inputs remain Float64).
     Tensor operator+(const Tensor& other) const;
     Tensor operator-(const Tensor& other) const;
     Tensor operator*(const Tensor& other) const;
@@ -304,7 +319,8 @@ private:
         None,
         ArrayFireNative,
         RowMajor2D,
-        RowMajor3D
+        RowMajor3D,
+        RowMajor4D
     };
 
     mutable std::unique_ptr<af::array> af_array_;

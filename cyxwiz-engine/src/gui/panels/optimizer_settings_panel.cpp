@@ -59,9 +59,7 @@ void OptimizerSettingsPanel::RenderPresetButtons() {
         momentum_ = 0.9f;
         weight_decay_ = 0.0001f;
         nesterov_ = true;
-        scheduler_type_ = LRSchedulerType::StepLR;
-        step_size_ = 30;
-        gamma_ = 0.1f;
+        scheduler_type_ = LRSchedulerType::None;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("SGD with momentum for image classification");
 
@@ -72,10 +70,9 @@ void OptimizerSettingsPanel::RenderPresetButtons() {
         beta1_ = 0.9f;
         beta2_ = 0.999f;
         weight_decay_ = 0.01f;
-        scheduler_type_ = LRSchedulerType::WarmupCosine;
-        warmup_steps_ = 1000;
+        scheduler_type_ = LRSchedulerType::None;
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("AdamW with warmup for transformers");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("AdamW defaults for transformers");
 
     ImGui::SameLine();
     if (ImGui::SmallButton("GAN")) {
@@ -272,6 +269,14 @@ void OptimizerSettingsPanel::RenderNAdamSettings() {
 
 void OptimizerSettingsPanel::RenderSchedulerSection() {
     if (ImGui::CollapsingHeader(ICON_FA_CHART_LINE " Learning Rate Scheduler")) {
+        scheduler_type_ = LRSchedulerType::None;
+        ImGui::TextDisabled(
+            "Unavailable: graph schedulers remain blocked until TrainingExecutor "
+            "owns update cadence, run state, and checkpoint restoration.");
+        ImGui::TextWrapped(
+            "Scheduler node parameters are still shown by the generic node "
+            "property panel for graph compatibility, but they do not execute.");
+        ImGui::BeginDisabled();
         const char* scheduler_names[] = {
             "None", "StepLR", "ExponentialLR", "CosineAnnealing",
             "ReduceOnPlateau", "Warmup + Cosine"
@@ -332,6 +337,7 @@ void OptimizerSettingsPanel::RenderSchedulerSection() {
                 ImGui::TextDisabled("No scheduler - constant learning rate");
                 break;
         }
+        ImGui::EndDisabled();
     }
 }
 
@@ -344,7 +350,9 @@ void OptimizerSettingsPanel::RenderAdvancedSection() {
         ImGui::SetNextItemWidth(150);
         ImGui::InputInt("Gradient Accumulation", &gradient_accumulation_steps_);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Accumulate gradients over N steps (effective batch = batch_size * N)");
-        gradient_accumulation_steps_ = std::max(1, gradient_accumulation_steps_);
+        gradient_accumulation_steps_ =
+            training_contract::ClampGradientAccumulationSteps(
+                gradient_accumulation_steps_);
 
         ImGui::Checkbox("Mixed Precision (FP16)", &use_mixed_precision_);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use automatic mixed precision for faster training (requires GPU)");

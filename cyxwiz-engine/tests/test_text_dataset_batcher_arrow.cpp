@@ -142,6 +142,34 @@ int main() {
     Check(test.data.Shape()[1] == 4, "test data token width");
     Check(test.labels.Shape()[1] == 2, "test labels one-hot width");
 
+    cyxwiz::TextDatasetBatcher drop_last_batcher(
+        entry,
+        preprocessing,
+        /*batch_size=*/2,
+        /*train_split=*/0.75f,
+        /*val_split=*/0.25f,
+        /*test_split=*/0.0f,
+        /*shuffle=*/false,
+        /*num_workers=*/0);
+    drop_last_batcher.SetDropLast(true);
+    Check(drop_last_batcher.GetNumSamples() == 3,
+          "drop_last should not change the Text Train role sample count");
+    Check(drop_last_batcher.GetNumBatches() == 1,
+          "drop_last should floor the Text Train batch count");
+    auto kept_train = drop_last_batcher.GetNextBatch();
+    Check(kept_train.IsValid() && kept_train.size == 2,
+          "drop_last should retain the complete Text Train batch");
+    Check(drop_last_batcher.IsEpochComplete(),
+          "drop_last should suppress the partial Text Train batch");
+
+    drop_last_batcher.SetPhase(cyxwiz::BatcherPhase::Val);
+    drop_last_batcher.Reset();
+    Check(drop_last_batcher.GetNumBatches() == 1,
+          "drop_last should not remove the partial Text validation batch");
+    auto partial_val = drop_last_batcher.GetNextBatch();
+    Check(partial_val.IsValid() && partial_val.size == 1,
+          "Text validation should retain its partial batch");
+
     std::filesystem::remove_all(root);
     std::cout << "TextDatasetBatcher Arrow delegation passed\n";
     return 0;

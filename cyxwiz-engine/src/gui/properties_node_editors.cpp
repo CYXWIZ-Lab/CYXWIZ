@@ -536,7 +536,7 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             float rate = std::stof(rate_str);
             ImGui::Text("Drop Rate:");
             ImGui::SetNextItemWidth(200.0f);
-            if (ImGui::SliderFloat("##rate", &rate, 0.0f, 0.9f, "%.2f")) {
+            if (ImGui::SliderFloat("##rate", &rate, 0.0f, 1.0f, "%.2f")) {
                 char buf[32];
                 snprintf(buf, sizeof(buf), "%.2f", rate);
                 rate_str = buf;

@@ -23,12 +23,20 @@ public:
     bool ExportState(OptimizerState& state, std::string& error) const override;
     bool ImportState(const OptimizerState& state, std::string& error) override;
 
+protected:
+    std::map<std::string, double> AdamHyperparameters() const;
+    void StepImpl(std::map<std::string, Tensor>& parameters,
+                  const std::map<std::string, Tensor>& gradients,
+                  const char* operation_name,
+                  double weight_decay);
+
 private:
     double beta1_;
     double beta2_;
     double epsilon_;
     std::map<std::string, Tensor> m_;
     std::map<std::string, Tensor> v_;
+    std::map<std::string, int> parameter_steps_;
 };
 
 class CYXWIZ_API AdamWOptimizer : public AdamOptimizer {
@@ -60,6 +68,8 @@ public:
               const std::map<std::string, Tensor>& gradients) override;
 
     void ZeroGrad() override;
+    bool ExportState(OptimizerState& state, std::string& error) const override;
+    bool ImportState(const OptimizerState& state, std::string& error) override;
 
 private:
     double beta1_;
@@ -67,6 +77,8 @@ private:
     double epsilon_;
     std::map<std::string, Tensor> m_;
     std::map<std::string, Tensor> v_;
+    std::map<std::string, int> parameter_steps_;
+    std::map<std::string, float> mu_products_;
 };
 
 } // namespace cyxwiz

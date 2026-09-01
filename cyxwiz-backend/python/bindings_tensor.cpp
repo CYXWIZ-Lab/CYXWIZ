@@ -63,9 +63,15 @@ py::class_<cyxwiz::Tensor>(m, "Tensor",
     .def("view", &cyxwiz::Tensor::View,
          py::arg("shape"),
          "Alias for reshape semantics")
-    .def("squeeze", &cyxwiz::Tensor::Squeeze,
-         py::arg("dim") = -1,
-         "Remove singleton dimensions")
+    .def("squeeze",
+         static_cast<cyxwiz::Tensor (cyxwiz::Tensor::*)() const>(
+             &cyxwiz::Tensor::Squeeze),
+         "Remove all singleton dimensions")
+    .def("squeeze",
+         static_cast<cyxwiz::Tensor (cyxwiz::Tensor::*)(int) const>(
+             &cyxwiz::Tensor::Squeeze),
+         py::arg("dim"),
+         "Remove a singleton dimension when its size is one")
     .def("unsqueeze", &cyxwiz::Tensor::Unsqueeze,
          py::arg("dim"),
          "Insert a singleton dimension")

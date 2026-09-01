@@ -73,7 +73,12 @@ public:
     void SetNormalization(float mean, float std_dev) override;
     void SetOneHotEncoding(size_t num_classes) override;
     void SetFlatten(bool flatten) override { flatten_ = flatten; }
+    void SetDropLast(bool drop_last) override { drop_last_ = drop_last; }
     void SetScalarLabelMode(bool enable) override { scalar_label_mode_ = enable; }
+    void SetClassIndexLabelMode(bool enable) override {
+        class_index_label_mode_ = enable;
+        if (enable) one_hot_ = false;
+    }
     void SetRegressionMode(bool enable) { SetScalarLabelMode(enable); }
     void SetRegressionTargetWidth(
         size_t width, const std::string& target_base = {});
@@ -85,6 +90,7 @@ private:
     size_t batch_size_;
     bool shuffle_;
     bool is_training_;
+    bool drop_last_ = false;
     int num_workers_ = 0;
     float train_split_;
     float val_split_ = 0.0f;
@@ -123,6 +129,7 @@ private:
     size_t num_classes_ = 10;
     bool flatten_ = true;
     bool scalar_label_mode_ = false;
+    bool class_index_label_mode_ = false;
 
     std::mt19937 rng_;
 

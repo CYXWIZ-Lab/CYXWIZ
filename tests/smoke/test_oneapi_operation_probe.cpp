@@ -15,6 +15,8 @@
 
 #include "core/arrayfire_backend_discovery_isolation.h"
 #include "core/route_qualification_snapshot.h"
+#include "route_probe_dropout_contract.h"
+#include "route_probe_flatten_contract.h"
 
 #include <algorithm>
 #include <array>
@@ -60,6 +62,15 @@ std::string active_backend_name = "oneapi";
 int active_device_id = 0;
 std::string active_operation = "unknown";
 std::string active_probe_stage = "argument_parse";
+
+void ConfigureIsolatedProbeFailureMode() {
+#ifdef _WIN32
+  const UINT previous_mode = SetErrorMode(SEM_FAILCRITICALERRORS |
+                                          SEM_NOGPFAULTERRORBOX);
+  SetErrorMode(previous_mode | SEM_FAILCRITICALERRORS |
+               SEM_NOGPFAULTERRORBOX);
+#endif
+}
 
 void Stage(const std::string &operation, const char *stage) {
   active_operation = operation;
@@ -511,6 +522,14 @@ void RunOperation(const ProbeOptions &options) {
     Stage(operation, "constructor_complete");
     return;
   }
+  if (operation == "cyxwiz_flatten_forward_backward") {
+    cyxwiz::route_probe::RunFlattenForwardBackwardContract(operation, &Stage);
+    return;
+  }
+  if (operation == "cyxwiz_dropout_forward_backward") {
+    cyxwiz::route_probe::RunDropoutForwardBackwardContract(operation, &Stage);
+    return;
+  }
 
   throw std::invalid_argument("unknown operation: " + operation);
 }
@@ -518,6 +537,7 @@ void RunOperation(const ProbeOptions &options) {
 } // namespace
 
 int main(int argc, char **argv) {
+  ConfigureIsolatedProbeFailureMode();
   try {
     cyxwiz::ScopedArrayFireBackendDiscoveryIsolation isolation;
     std::string isolation_error;
