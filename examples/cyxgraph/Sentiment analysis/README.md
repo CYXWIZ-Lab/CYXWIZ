@@ -10,6 +10,18 @@ Example graph files (`.cyxgraph`) for CyxWiz Engine.
 | `mnist_classifier.cyxgraph` | CNN-based MNIST digit classifier (legacy - may need updating). |
 | `sentiment_analysis_gru_classifier.cyxgraph` | Text sentiment classifier for `D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv`. Uses text tokenization, vocabulary building, padding, Embedding, and GRU layers. |
 | `sentiment_analysis_inference.py` | Local inference helper for the sentiment graph. Uses the prep metadata/vocab file and calls the embedded predict endpoint. |
+| `sentiment_analysis_tfidf_mlp_classifier.cyxgraph` | Canonical unigram TF-IDF benchmark graph. |
+| `sentiment_analysis_tfidf_mlp_classifier_unigram_bigram_candidate.cyxgraph` | Canonical unigram+bigram candidate graph. |
+| `benchmark_sentiment_text_features.py` | Reproducible sklearn feature-isolation benchmark for the two TF-IDF configurations. |
+| `sentiment_text_feature_benchmark.json` | Recorded full-dataset reference result, including dataset hash and limitations. |
+
+## Canonical graph ownership
+
+The `.cyxgraph` files directly in this directory are the tracked source of
+truth. A nested `sentiment/` directory is a local Studio project workspace; it
+may contain copied graphs, environments, caches, and checkpoints and is ignored
+by Git. Promote an intentional graph edit back to the canonical top-level file
+instead of committing a second copy.
 
 ## Sentiment vocab path
 

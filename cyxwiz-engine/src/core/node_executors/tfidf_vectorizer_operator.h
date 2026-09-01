@@ -13,9 +13,9 @@ namespace cyxwiz {
  * downstream (Dense + softmax, logistic regression, etc.):
  *   `tfidf_0, tfidf_1, ..., tfidf_{max_features-1}, y`
  *
- * Wraps the existing `cyxwiz::TextProcessing::ComputeTFIDF` math
- * (smoothed IDF + l1/l2/none normalization) and adds vocabulary
- * capping via `max_features` so the output column count stays
+ * Applies sklearn-compatible raw term count multiplied by optional
+ * smoothed IDF, followed by l1/l2/none row normalization. Vocabulary
+ * capping via `max_features` keeps the output column count
  * bounded on large corpora. For a sentiment dataset with ~10k
  * unique words and 50k docs, an unbounded TF-IDF matrix would be
  * 2 GB of floats — `max_features=2000` keeps the top-N terms by

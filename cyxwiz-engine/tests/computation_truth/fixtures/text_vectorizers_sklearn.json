@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "oracle": {"name": "scikit-learn", "version": "1.8.0"},
+  "dtype": "float64",
+  "tolerance": 1e-05,
+  "notes": "CyxWiz tokenization is constrained to simple lowercase ASCII words in this fixture. Count l1/l2 cases use sklearn.preprocessing.normalize.",
+  "cases": [
+    {
+      "name": "count_raw_unigram_bigram",
+      "operator": "CountVectorizer",
+      "parameters": {"ngram_range": "1,2", "binary": "false", "norm": "none"},
+      "documents": ["Good good movie", "not good movie", "bad ending"],
+      "feature_names": ["bad", "bad ending", "ending", "good", "good good", "good movie", "movie", "not", "not good"],
+      "expected": [
+        [0.0, 0.0, 0.0, 2.0, 1.0, 1.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      ]
+    },
+    {
+      "name": "count_binary_bigram_only",
+      "operator": "CountVectorizer",
+      "parameters": {"ngram_range": "2,2", "binary": "true", "norm": "none"},
+      "documents": ["Good good movie", "not good movie", "bad ending"],
+      "feature_names": ["bad ending", "good good", "good movie", "not good"],
+      "expected": [
+        [0.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0, 1.0],
+        [1.0, 0.0, 0.0, 0.0]
+      ]
+    },
+    {
+      "name": "count_l2_unigram",
+      "operator": "CountVectorizer",
+      "parameters": {"ngram_range": "1,1", "binary": "false", "norm": "l2"},
+      "documents": ["Good good movie", "not good movie", "bad ending"],
+      "feature_names": ["bad", "ending", "good", "movie", "not"],
+      "expected": [
+        [0.0, 0.0, 0.8944271909999159, 0.4472135954999579, 0.0],
+        [0.0, 0.0, 0.5773502691896258, 0.5773502691896258, 0.5773502691896258],
+        [0.7071067811865475, 0.7071067811865475, 0.0, 0.0, 0.0]
+      ]
+    },
+    {
+      "name": "count_max_features_uses_corpus_count",
+      "operator": "CountVectorizer",
+      "parameters": {"max_features": "1", "ngram_range": "1,1", "binary": "false", "norm": "none"},
+      "documents": ["burst burst burst burst", "spread token", "spread value", "spread ending"],
+      "feature_names": ["burst"],
+      "expected": [[4.0], [0.0], [0.0], [0.0]]
+    },
+    {
+      "name": "tfidf_raw_unigram_bigram",
+      "operator": "TFIDFVectorizer",
+      "parameters": {"ngram_range": "1,2", "use_idf": "true", "smooth_idf": "true", "norm": "none"},
+      "documents": ["Good good movie", "not good movie", "bad ending"],
+      "feature_names": ["bad", "bad ending", "ending", "good", "good good", "good movie", "movie", "not", "not good"],
+      "expected": [
+        [0.0, 0.0, 0.0, 2.5753641449035616, 1.6931471805599454, 1.2876820724517808, 1.2876820724517808, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.2876820724517808, 0.0, 1.2876820724517808, 1.2876820724517808, 1.6931471805599454, 1.6931471805599454],
+        [1.6931471805599454, 1.6931471805599454, 1.6931471805599454, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      ],
+      "idf": [1.6931471805599454, 1.6931471805599454, 1.6931471805599454, 1.2876820724517808, 1.6931471805599454, 1.2876820724517808, 1.2876820724517808, 1.6931471805599454, 1.6931471805599454]
+    },
+    {
+      "name": "tfidf_raw_without_idf",
+      "operator": "TFIDFVectorizer",
+      "parameters": {"ngram_range": "1,1", "use_idf": "false", "smooth_idf": "false", "norm": "none"},
+      "documents": ["Good good movie", "not good movie", "bad ending"],
+      "feature_names": ["bad", "ending", "good", "movie", "not"],
+      "expected": [
+        [0.0, 0.0, 2.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 0.0, 0.0, 0.0]
+      ],
+      "idf": [1.0, 1.0, 1.0, 1.0, 1.0]
+    },
+    {
+      "name": "tfidf_l2_unigram_through_trigram",
+      "operator": "TFIDFVectorizer",
+      "parameters": {"ngram_range": "1,3", "use_idf": "true", "smooth_idf": "true", "norm": "l2"},
+      "documents": ["Good good movie", "not good movie", "bad ending"],
+      "feature_names": ["bad", "bad ending", "ending", "good", "good good", "good good movie", "good movie", "movie", "not", "not good", "not good movie"],
+      "expected": [
+        [0.0, 0.0, 0.0, 0.6503310970758703, 0.42755362018356385, 0.42755362018356385, 0.32516554853793517, 0.32516554853793517, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.3494981241087058, 0.0, 0.0, 0.3494981241087058, 0.3494981241087058, 0.45954803293870056, 0.45954803293870056, 0.45954803293870056],
+        [0.5773502691896257, 0.5773502691896257, 0.5773502691896257, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      ],
+      "idf": [1.6931471805599454, 1.6931471805599454, 1.6931471805599454, 1.2876820724517808, 1.6931471805599454, 1.6931471805599454, 1.2876820724517808, 1.2876820724517808, 1.6931471805599454, 1.6931471805599454, 1.6931471805599454]
+    },
+    {
+      "name": "tfidf_max_features_uses_corpus_count",
+      "operator": "TFIDFVectorizer",
+      "parameters": {"max_features": "1", "ngram_range": "1,1", "use_idf": "true", "smooth_idf": "true", "norm": "none"},
+      "documents": ["burst burst burst burst", "spread token", "spread value", "spread ending"],
+      "feature_names": ["burst"],
+      "expected": [[7.66516292749662], [0.0], [0.0], [0.0]],
+      "idf": [1.916290731874155]
+    }
+  ]
+}

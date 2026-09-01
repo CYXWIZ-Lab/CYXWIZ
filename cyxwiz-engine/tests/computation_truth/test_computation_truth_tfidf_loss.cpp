@@ -441,17 +441,17 @@ void TestBoundedTFIDFMaterialization() {
     const float idf_apple = std::log(4.0f / 2.0f) + 1.0f;
     const float idf_banana = std::log(4.0f / 3.0f) + 1.0f;
     CheckNear(ReadFloatValue(output, "tfidf_0", 0),
-              (2.0f / 3.0f) * idf_apple,
+              2.0f * idf_apple,
               1e-5f,
               "row0 apple TF-IDF");
     CheckNear(ReadFloatValue(output, "tfidf_1", 0),
-              (1.0f / 3.0f) * idf_banana,
+              idf_banana,
               1e-5f,
               "row0 banana TF-IDF");
     CheckNear(ReadFloatValue(output, "tfidf_0", 1), 0.0f, 1e-6f,
               "row1 apple TF-IDF");
     CheckNear(ReadFloatValue(output, "tfidf_1", 1),
-              0.5f * idf_banana,
+              idf_banana,
               1e-5f,
               "row1 banana TF-IDF");
     CheckNear(ReadFloatValue(output, "tfidf_0", 2), 0.0f, 1e-6f,
@@ -498,13 +498,13 @@ void TestTFIDFNGramMaterialization() {
 
     CheckNear(ReadFloatValue(output, "tfidf_0", 0), 0.0f, 1e-6f,
               "row0 bad unigram should be absent");
-    CheckNear(ReadFloatValue(output, "tfidf_1", 0), 1.0f / 3.0f, 1e-6f,
+    CheckNear(ReadFloatValue(output, "tfidf_1", 0), 1.0f, 1e-6f,
               "row0 good unigram should be present");
-    CheckNear(ReadFloatValue(output, "tfidf_2", 0), 1.0f / 3.0f, 1e-6f,
+    CheckNear(ReadFloatValue(output, "tfidf_2", 0), 1.0f, 1e-6f,
               "row0 not unigram should be present");
     CheckNear(ReadFloatValue(output, "tfidf_3", 0), 0.0f, 1e-6f,
               "row0 not bad bigram should be absent");
-    CheckNear(ReadFloatValue(output, "tfidf_4", 0), 1.0f / 3.0f, 1e-6f,
+    CheckNear(ReadFloatValue(output, "tfidf_4", 0), 1.0f, 1e-6f,
               "row0 not good bigram should be present");
 }
 

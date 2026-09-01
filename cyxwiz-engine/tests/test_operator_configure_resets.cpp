@@ -1,6 +1,7 @@
 #include "../src/core/node_executors/clustering_operators.h"
 #include "../src/core/node_executors/count_vectorizer_operator.h"
 #include "../src/core/node_executors/pca_operator.h"
+#include "../src/core/node_executors/text_vectorizer_contract.h"
 #include "../src/core/node_executors/time_series_features_operator.h"
 #include "../src/core/node_executors/time_series_segment_operator.h"
 #include "../src/core/node_executors/time_series_split_operator.h"
@@ -171,6 +172,49 @@ void TestCountVectorizerPrefersNGramRangeWhenDefaultsArePresent() {
     Check(count_result.ok(), count_result.status().ToString());
     Check(count_result.ValueOrDie()->num_columns() == 8,
           "CountVectorizer should honor ngram_range=1,2 over stale ngram_max=1");
+}
+
+void TestTextVectorizerNGramContractRejectsMalformedRanges() {
+    const std::vector<std::string> invalid_ranges = {
+        "0,1", "1,0", "-1,2", "2,1", "1,4", "1,2junk", "1,2,3", "1"
+    };
+    for (const auto& range : invalid_ranges) {
+        int ngram_min = 0;
+        int ngram_max = 0;
+        std::string error;
+        Check(!cyxwiz::text_vectorizer_contract::ParseNGramRange(
+                  {{"ngram_range", range}}, "TFIDFVectorizer",
+                  ngram_min, ngram_max, error),
+              "strict ngram_range parser should reject '" + range + "'");
+        Check(!error.empty(),
+              "invalid ngram_range should provide a specific error");
+    }
+
+    int ngram_min = 0;
+    int ngram_max = 0;
+    std::string error;
+    Check(!cyxwiz::text_vectorizer_contract::ParseNGramRange(
+              {{"ngram_min", "1junk"}, {"ngram_max", "2"}},
+              "CountVectorizer", ngram_min, ngram_max, error),
+          "legacy ngram aliases should reject trailing characters");
+
+    error.clear();
+    Check(cyxwiz::text_vectorizer_contract::ParseNGramRange(
+              {{"ngram_range", " 1 ; 3 "},
+               {"ngram_min", "9"}, {"ngram_max", "9"}},
+              "CountVectorizer", ngram_min, ngram_max, error),
+          "canonical ngram_range should accept the serialized semicolon alias: " +
+              error);
+    Check(ngram_min == 1 && ngram_max == 3,
+          "canonical ngram_range should win over legacy aliases");
+
+    const auto features =
+        cyxwiz::text_vectorizer_contract::BuildNGramFeatures(
+            {"not", "very", "good"}, 1, 3);
+    Check(features == std::vector<std::string>({
+              "not", "very", "good", "not very", "very good",
+              "not very good"}),
+          "shared n-gram builder should preserve deterministic range ordering");
 }
 
 void TestCountVectorizerBinaryModeEmitsPresenceValues() {
@@ -628,6 +672,7 @@ void TestTimeSeriesSplitPurgesCrossBoundaryTargets() {
 int main() {
     TestCountVectorizerResetsOptionalLabelAndMaxFeatures();
     TestCountVectorizerPrefersNGramRangeWhenDefaultsArePresent();
+    TestTextVectorizerNGramContractRejectsMalformedRanges();
     TestCountVectorizerBinaryModeEmitsPresenceValues();
     TestCountVectorizerRejectsSparseOutputFormat();
     TestCountVectorizerBlocksBeforeAllocationHeavyWork();

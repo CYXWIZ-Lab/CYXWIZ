@@ -1,5 +1,6 @@
 #include "count_vectorizer_operator.h"
 #include "text_column_utils.h"
+#include "text_vectorizer_contract.h"
 
 #include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
@@ -57,116 +58,6 @@ void NormalizeCountRow(std::vector<float>& values, const std::string& norm) {
     for (float& value : values) {
         value = static_cast<float>(static_cast<double>(value) / denom);
     }
-}
-
-std::string JoinNGram(const std::vector<std::string>& tokens,
-                      size_t start,
-                      size_t n) {
-    std::string out;
-    for (size_t i = 0; i < n; ++i) {
-        if (i > 0) {
-            out += " ";
-        }
-        out += tokens[start + i];
-    }
-    return out;
-}
-
-std::vector<std::string> BuildNGramFeatures(
-    const std::vector<std::string>& tokens,
-    int ngram_min,
-    int ngram_max) {
-    std::vector<std::string> features;
-    if (tokens.empty()) {
-        return features;
-    }
-    const int safe_min = std::max(1, ngram_min);
-    const int safe_max = std::max(safe_min, ngram_max);
-    size_t total = 0;
-    for (int n = safe_min; n <= safe_max; ++n) {
-        if (tokens.size() >= static_cast<size_t>(n)) {
-            total += tokens.size() - static_cast<size_t>(n) + 1;
-        }
-    }
-    features.reserve(total);
-    for (int n = safe_min; n <= safe_max; ++n) {
-        const size_t width = static_cast<size_t>(n);
-        if (tokens.size() < width) {
-            continue;
-        }
-        for (size_t i = 0; i + width <= tokens.size(); ++i) {
-            features.push_back(width == 1
-                ? tokens[i]
-                : JoinNGram(tokens, i, width));
-        }
-    }
-    return features;
-}
-
-bool ParseNGramRange(const std::map<std::string, std::string>& params,
-                     int& ngram_min,
-                     int& ngram_max,
-                     std::string& error) {
-    ngram_min = 1;
-    ngram_max = 1;
-
-    auto range = params.find("ngram_range");
-    const bool has_range = range != params.end() && !range->second.empty();
-    if (has_range) {
-        std::string value = range->second;
-        std::replace(value.begin(), value.end(), ';', ',');
-        const size_t comma = value.find(',');
-        if (comma == std::string::npos) {
-            error = "CountVectorizer: ngram_range must be formatted as "
-                    "'min,max' (got '" + range->second + "')";
-            return false;
-        }
-        try {
-            ngram_min = std::stoi(value.substr(0, comma));
-            ngram_max = std::stoi(value.substr(comma + 1));
-        } catch (...) {
-            error = "CountVectorizer: ngram_range must contain integer values "
-                    "(got '" + range->second + "')";
-            return false;
-        }
-    }
-
-    auto parse_positive = [&](const char* key, int& out) -> bool {
-        auto it = params.find(key);
-        if (it == params.end() || it->second.empty()) {
-            return true;
-        }
-        try {
-            out = std::stoi(it->second);
-        } catch (...) {
-            error = std::string("CountVectorizer: '") + key +
-                    "' is not a valid integer: " + it->second;
-            return false;
-        }
-        if (out < 1) {
-            error = std::string("CountVectorizer: '") + key +
-                    "' must be >= 1 (got " + std::to_string(out) + ")";
-            return false;
-        }
-        return true;
-    };
-
-    if (!has_range) {
-        if (!parse_positive("ngram_min", ngram_min)) return false;
-        if (!parse_positive("ngram_max", ngram_max)) return false;
-    }
-    if (ngram_min > ngram_max) {
-        error = "CountVectorizer: ngram_min must be <= ngram_max (got " +
-                std::to_string(ngram_min) + "," +
-                std::to_string(ngram_max) + ")";
-        return false;
-    }
-    if (ngram_max > 3) {
-        error = "CountVectorizer: ngram_max > 3 is not supported yet (got " +
-                std::to_string(ngram_max) + ")";
-        return false;
-    }
-    return true;
 }
 
 bool IsStringLikeColumn(const std::shared_ptr<arrow::ChunkedArray>& column,
@@ -251,7 +142,10 @@ bool CountVectorizerOperator::Configure(
         }
     }
 
-    if (!ParseNGramRange(params, ngram_min_, ngram_max_, error)) return false;
+    if (!text_vectorizer_contract::ParseNGramRange(
+            params, "CountVectorizer", ngram_min_, ngram_max_, error)) {
+        return false;
+    }
 
     auto sw = params.find("stop_words");
     if (sw != params.end() && !sw->second.empty()) {
@@ -288,6 +182,7 @@ CountVectorizerOperator::BuildFittedConfiguration() const {
         {"stop_words", stop_words_},
         {"binary", binary_ ? "true" : "false"},
         {"output_format", output_format_},
+        {"value_semantics", "sklearn_raw_count_v1"},
     };
 }
 
@@ -456,7 +351,7 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         auto base_tokens = stop_words_ == "english"
             ? TextProcessing::RemoveStopwords(tokenized.tokens, "english")
             : tokenized.tokens;
-        auto tokens = BuildNGramFeatures(
+        auto tokens = text_vectorizer_contract::BuildNGramFeatures(
             base_tokens, ngram_min_, ngram_max_);
         doc_token_counts.push_back(tokens.size());
 
@@ -496,9 +391,9 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         static_cast<uint64_t>(full_vocab),
         static_cast<uint64_t>(full_vocab));
 
-    // Cap by document frequency. Without IDF scores we approximate
-    // "most useful terms" as "most frequent terms" — count how many
-    // documents each vocab term appears in, keep top-N.
+    // Match sklearn max_features selection: keep the terms with the highest
+    // corpus counts, then use document frequency and term name as stable
+    // tie-breakers.
     std::vector<CountTermStats> all_terms;
     all_terms.reserve(full_vocab);
     for (auto& pair : term_stats_by_name) {
@@ -517,11 +412,11 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             all_terms.begin() + kept,
             all_terms.end(),
             [](const CountTermStats& a, const CountTermStats& b) {
-                if (a.doc_freq != b.doc_freq) {
-                    return a.doc_freq > b.doc_freq;
-                }
                 if (a.corpus_count != b.corpus_count) {
                     return a.corpus_count > b.corpus_count;
+                }
+                if (a.doc_freq != b.doc_freq) {
+                    return a.doc_freq > b.doc_freq;
                 }
                 return a.term < b.term;
             });
@@ -612,8 +507,7 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                 }
                 row_values[kept_it->second] = binary_
                     ? 1.0f
-                    : static_cast<float>(pair.second) /
-                          static_cast<float>(token_count);
+                    : static_cast<float>(pair.second);
             }
             NormalizeCountRow(row_values, norm_);
         }

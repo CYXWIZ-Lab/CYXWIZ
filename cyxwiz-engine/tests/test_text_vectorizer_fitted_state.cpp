@@ -112,6 +112,9 @@ void CheckTFIDFState(const std::shared_ptr<arrow::Table>& training,
           error);
     Check(state.features.size() == 3,
           "TF-IDF state should preserve its bounded vocabulary");
+    Check(state.configuration.at("value_semantics") ==
+              "sklearn_raw_count_v1",
+          "TF-IDF state should pin its numerical value semantics");
     const size_t carrot = FindFeature(state, "carrot");
     const double carrot_idf =
         state.features[carrot].numeric_values.at("weight");
@@ -188,6 +191,9 @@ void CheckCountState(const std::shared_ptr<arrow::Table>& training,
     Check(cyxwiz::LoadFittedPreprocessingState(
               state_path.string(), "CountVectorizer", state, error),
           error);
+    Check(state.configuration.at("value_semantics") ==
+              "sklearn_raw_count_v1",
+          "Count state should pin its numerical value semantics");
     const size_t carrot = FindFeature(state, "carrot");
 
     auto transform_params = fit_params;

@@ -1,5 +1,6 @@
 #include "tfidf_vectorizer_operator.h"
 #include "text_column_utils.h"
+#include "text_vectorizer_contract.h"
 
 #include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
@@ -60,123 +61,6 @@ void NormalizeDenseRow(std::vector<float>& values, const std::string& norm) {
     for (float& value : values) {
         value = static_cast<float>(static_cast<double>(value) / denom);
     }
-}
-
-std::string JoinNGram(const std::vector<std::string>& tokens,
-                      size_t start,
-                      size_t n) {
-    std::string out;
-    for (size_t i = 0; i < n; ++i) {
-        if (i > 0) {
-            out += " ";
-        }
-        out += tokens[start + i];
-    }
-    return out;
-}
-
-std::vector<std::string> BuildNGramFeatures(
-    const std::vector<std::string>& tokens,
-    int ngram_min,
-    int ngram_max) {
-    std::vector<std::string> features;
-    if (tokens.empty()) {
-        return features;
-    }
-
-    const int safe_min = std::max(1, ngram_min);
-    const int safe_max = std::max(safe_min, ngram_max);
-    size_t total = 0;
-    for (int n = safe_min; n <= safe_max; ++n) {
-        if (tokens.size() >= static_cast<size_t>(n)) {
-            total += tokens.size() - static_cast<size_t>(n) + 1;
-        }
-    }
-    features.reserve(total);
-
-    for (int n = safe_min; n <= safe_max; ++n) {
-        const size_t width = static_cast<size_t>(n);
-        if (tokens.size() < width) {
-            continue;
-        }
-        for (size_t i = 0; i + width <= tokens.size(); ++i) {
-            if (width == 1) {
-                features.push_back(tokens[i]);
-            } else {
-                features.push_back(JoinNGram(tokens, i, width));
-            }
-        }
-    }
-    return features;
-}
-
-bool ParseNGramRange(const std::map<std::string, std::string>& params,
-                     const std::string& operator_name,
-                     int& ngram_min,
-                     int& ngram_max,
-                     std::string& error) {
-    ngram_min = 1;
-    ngram_max = 1;
-
-    auto parse_positive = [&](const char* key, int& out) -> bool {
-        auto it = params.find(key);
-        if (it == params.end() || it->second.empty()) {
-            return true;
-        }
-        try {
-            out = std::stoi(it->second);
-        } catch (...) {
-            error = operator_name + ": '" + key +
-                    "' is not a valid integer: " + it->second;
-            return false;
-        }
-        if (out < 1) {
-            error = operator_name + ": '" + key +
-                    "' must be >= 1 (got " + std::to_string(out) + ")";
-            return false;
-        }
-        return true;
-    };
-
-    auto range = params.find("ngram_range");
-    const bool has_range = range != params.end() && !range->second.empty();
-    if (has_range) {
-        std::string value = range->second;
-        std::replace(value.begin(), value.end(), ';', ',');
-        const size_t comma = value.find(',');
-        if (comma == std::string::npos) {
-            error = operator_name +
-                    ": ngram_range must be formatted as 'min,max' (got '" +
-                    range->second + "')";
-            return false;
-        }
-        try {
-            ngram_min = std::stoi(value.substr(0, comma));
-            ngram_max = std::stoi(value.substr(comma + 1));
-        } catch (...) {
-            error = operator_name +
-                    ": ngram_range must contain integer values (got '" +
-                    range->second + "')";
-            return false;
-        }
-    }
-
-    if (!has_range) {
-        if (!parse_positive("ngram_min", ngram_min)) return false;
-        if (!parse_positive("ngram_max", ngram_max)) return false;
-    }
-    if (ngram_min > ngram_max) {
-        error = operator_name + ": ngram_min must be <= ngram_max (got " +
-                std::to_string(ngram_min) + "," +
-                std::to_string(ngram_max) + ")";
-        return false;
-    }
-    if (ngram_max > 3) {
-        error = operator_name + ": ngram_max > 3 is not supported yet (got " +
-                std::to_string(ngram_max) + ")";
-        return false;
-    }
-    return true;
 }
 
 bool IsStringLikeColumn(const std::shared_ptr<arrow::ChunkedArray>& column,
@@ -306,8 +190,10 @@ bool TFIDFVectorizerOperator::Configure(
         }
     }
 
-    if (!ParseNGramRange(params, "TFIDFVectorizer",
-                         ngram_min_, ngram_max_, error)) return false;
+    if (!text_vectorizer_contract::ParseNGramRange(
+            params, "TFIDFVectorizer", ngram_min_, ngram_max_, error)) {
+        return false;
+    }
 
     return ParseFittedPreprocessingOptions(
         params, GetName(), state_options_, error);
@@ -326,6 +212,7 @@ TFIDFVectorizerOperator::BuildFittedConfiguration() const {
                             std::to_string(ngram_max_)},
         {"stop_words", stop_words_},
         {"output_format", output_format_},
+        {"value_semantics", "sklearn_raw_count_v1"},
     };
 }
 
@@ -500,7 +387,7 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             auto base_tokens = stop_words_ == "english"
                 ? TextProcessing::RemoveStopwords(tokenized.tokens, "english")
                 : tokenized.tokens;
-            auto tokens = BuildNGramFeatures(
+            auto tokens = text_vectorizer_contract::BuildNGramFeatures(
                 base_tokens, ngram_min_, ngram_max_);
             doc_token_counts.push_back(tokens.size());
 
@@ -708,11 +595,9 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                     continue;
                 }
                 const size_t col = kept_it->second;
-                const double tf =
-                    static_cast<double>(pair.second) /
-                    static_cast<double>(token_count);
                 dense_row[col] =
-                    static_cast<float>(tf * kept_idf[col]);
+                    static_cast<float>(
+                        static_cast<double>(pair.second) * kept_idf[col]);
             }
             NormalizeDenseRow(dense_row, norm_);
         }

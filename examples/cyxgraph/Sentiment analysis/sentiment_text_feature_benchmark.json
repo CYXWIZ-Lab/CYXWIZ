@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "run_date": "2026-09-01",
+  "benchmark_kind": "reference_text_feature_isolation",
+  "engine_graph_training": false,
+  "oracle": {"name": "scikit-learn", "version": "1.8.0"},
+  "dataset": {
+    "source_path": "D:/demo/mrcj/datasets/sentiment analysis/sentiment_mental_health.csv",
+    "sha256": "67274f52dec3b0155aec4d7d1ff31d2a92b0e9b383ab917614591cd168cc2474",
+    "rows": 52681,
+    "class_counts": {
+      "Anxiety": 3841,
+      "Bipolar": 2777,
+      "Depression": 15404,
+      "Normal": 16343,
+      "Personality disorder": 1077,
+      "Stress": 2587,
+      "Suicidal": 10652
+    }
+  },
+  "split": {
+    "seed": 42,
+    "stratified": true,
+    "train_rows": 42144,
+    "validation_rows": 5268,
+    "test_rows": 5269
+  },
+  "estimator": {
+    "type": "SGDClassifier",
+    "loss": "log_loss",
+    "alpha": 1e-5,
+    "max_iter": 30,
+    "class_weight": "balanced",
+    "average": true,
+    "convergence": "both cases reached the fixed 30-iteration budget"
+  },
+  "cases": [
+    {
+      "name": "unigram_benchmark",
+      "vectorizer": {
+        "max_features": 8000,
+        "min_df": 2,
+        "ngram_range": [1, 1],
+        "stop_words": "cyxwiz_english",
+        "vocabulary_size": 8000
+      },
+      "matrix": {"train_rows": 42144, "columns": 8000, "train_nnz": 1681754},
+      "classifier_iterations": 30,
+      "validation_accuracy": 0.7556947608200456,
+      "test_accuracy": 0.7661795407098121,
+      "timing_seconds": {
+        "vectorizer_fit_and_transform": 4.910387099997024,
+        "classifier_fit": 4.204223500004446
+      }
+    },
+    {
+      "name": "unigram_bigram_candidate",
+      "vectorizer": {
+        "max_features": 8000,
+        "min_df": 1,
+        "ngram_range": [1, 2],
+        "stop_words": "none",
+        "vocabulary_size": 8000
+      },
+      "matrix": {"train_rows": 42144, "columns": 8000, "train_nnz": 4044664},
+      "classifier_iterations": 30,
+      "validation_accuracy": 0.782839787395596,
+      "test_accuracy": 0.7775669007401784,
+      "timing_seconds": {
+        "vectorizer_fit_and_transform": 15.330074199999217,
+        "classifier_fit": 6.82137800000055
+      }
+    }
+  ],
+  "candidate_delta": {
+    "validation_accuracy": 0.0271450265755504,
+    "test_accuracy": 0.011387360030366334
+  },
+  "limitations": [
+    "This isolates text features with one sparse sklearn classifier.",
+    "It does not validate CyxWiz MLP device placement or training lifecycle.",
+    "A live Engine run is required before replacing the benchmark graph."
+  ]
+}

@@ -145,6 +145,8 @@ install-solana*.ps1
 /examples/logs/
 /examples/screenshots/
 /examples/startup_scripts/
+/examples/cyxgraph/Sentiment analysis/sentiment/
+/examples/cyxgraph/Sentiment analysis/fitted_state.cyxstate.json
 /scripts/token-metadata/
 /plugins/simulation/mujoco/mujoco-*.zip
 /engine_todo.md

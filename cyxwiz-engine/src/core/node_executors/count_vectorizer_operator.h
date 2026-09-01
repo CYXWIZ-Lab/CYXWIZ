@@ -12,16 +12,14 @@ namespace cyxwiz {
  * bag-of-words (term frequency) matrix:
  *   `count_0, count_1, ..., count_{max_features-1}, y`
  *
- * Each column is the term-frequency value for one vocabulary term
- * (count divided by document total tokens). Use this when you want
- * BoW features without the IDF reweighting — common baseline for
- * classical ML and a useful contrast against TFIDFVectorizer.
+ * Each column is the raw count for one vocabulary term, matching
+ * sklearn CountVectorizer semantics before optional row normalization.
+ * Use this when you want BoW features without the IDF reweighting —
+ * a common baseline and a useful contrast against TFIDFVectorizer.
  *
- * Implementation note: backed by the same `TextProcessing::ComputeTFIDF`
- * call as TFIDFVectorizer with `use_idf=false`. Schema parallels
- * TFIDFVectorizer (`tfidf_*` → `count_*`); same `max_features` capping
- * by document frequency. Future: a true raw-count variant (no
- * normalization) would be a `mode="raw"` switch.
+ * Schema parallels TFIDFVectorizer (`tfidf_*` → `count_*`); the same
+ * bounded vocabulary policy applies. `binary=true` converts raw counts
+ * to presence values before optional normalization.
  *
  * Params:
  *   text_col          (required)        — string column with raw text

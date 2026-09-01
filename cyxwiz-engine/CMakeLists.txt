@@ -1650,6 +1650,55 @@ set_target_properties(test_computation_truth_tfidf_loss PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Computation Truth - Text Vectorizers (sklearn) =====
+add_executable(test_computation_truth_text_vectorizers
+    tests/computation_truth/test_computation_truth_text_vectorizers.cpp
+    src/core/preprocessing_state.cpp
+    src/core/node_executors/count_vectorizer_operator.cpp
+    src/core/node_executors/tfidf_vectorizer_operator.cpp
+)
+
+target_include_directories(test_computation_truth_text_vectorizers PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_computation_truth_text_vectorizers PRIVATE
+    Arrow::arrow_shared
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+set(CYXWIZ_TEXT_VECTORIZER_SKLEARN_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/text_vectorizers_sklearn.json"
+)
+
+add_custom_target(copy_test_computation_truth_text_vectorizers_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_text_vectorizers>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_TEXT_VECTORIZER_SKLEARN_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_text_vectorizers>/computation_truth_fixtures/text_vectorizers_sklearn.json"
+    SOURCES "${CYXWIZ_TEXT_VECTORIZER_SKLEARN_FIXTURE}"
+    VERBATIM
+)
+
+add_dependencies(test_computation_truth_text_vectorizers
+    copy_test_computation_truth_text_vectorizers_fixture
+)
+
+if(WIN32)
+    target_compile_definitions(test_computation_truth_text_vectorizers PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_computation_truth_text_vectorizers PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Text Vectorizer Fitted-State Persistence =====
 add_executable(test_text_vectorizer_fitted_state
     tests/test_text_vectorizer_fitted_state.cpp
