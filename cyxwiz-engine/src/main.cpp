@@ -78,7 +78,6 @@ const char* EnvironmentValue(const char* name) {
 
 int RunPackageSmoke() {
     constexpr const char* kForbiddenOverrides[] = {
-        "AF_PATH",
         "AF_PLUGIN_PATH",
         "CYXWIZ_ARRAYFIRE_DIR",
         "AF_BUILD_PATH",
@@ -89,6 +88,14 @@ int RunPackageSmoke() {
     if (std::string_view(EnvironmentValue("CYXWIZ_ACTIVE_RUNTIME_ROOT")).empty()) {
         std::cerr << "package_smoke schema=1 status=fail "
                      "reason=active_runtime_missing\n";
+        return 78;
+    }
+    const auto af_path = std::filesystem::path(EnvironmentValue("AF_PATH"));
+    const auto expected_af_path = GetExecutableDir() / "arrayfire";
+    if (!af_path.empty() &&
+        af_path.lexically_normal() != expected_af_path.lexically_normal()) {
+        std::cerr << "package_smoke schema=1 status=fail "
+                     "reason=runtime_override_present variable=AF_PATH\n";
         return 78;
     }
     for (const char* name : kForbiddenOverrides) {

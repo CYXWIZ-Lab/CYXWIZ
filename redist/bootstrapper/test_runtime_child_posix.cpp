@@ -24,9 +24,11 @@ int main(int argc, char** argv) {
 #else
     const auto library_path = EnvironmentValue("LD_LIBRARY_PATH");
 #endif
+    const auto expected_af_path =
+        std::filesystem::path(runtime_root) / "base" / "base-v1" / "arrayfire";
     if (library_path.find("cyxwiz-untrusted-marker") != std::string::npos ||
         library_path.find("base-v1") == std::string::npos ||
-        !EnvironmentValue("AF_PATH").empty() ||
+        std::filesystem::path(EnvironmentValue("AF_PATH")) != expected_af_path ||
         !EnvironmentValue("PYTHONPATH").empty() ||
         !EnvironmentValue("LD_PRELOAD").empty() ||
         !EnvironmentValue("DYLD_INSERT_LIBRARIES").empty()) {

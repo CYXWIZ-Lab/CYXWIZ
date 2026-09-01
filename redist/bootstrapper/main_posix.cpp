@@ -113,6 +113,11 @@ bool ConfigureRuntimeEnvironment(
              "DYLD_FALLBACK_LIBRARY_PATH"}) {
         if (!ClearEnvironmentValue(name)) return false;
     }
+    if (!SetEnvironmentValue(
+            "AF_PATH",
+            (runtime.base_directory / "arrayfire").string())) {
+        return false;
+    }
 #ifdef __APPLE__
     return SetEnvironmentValue(
         "DYLD_LIBRARY_PATH", RuntimeLibraryPath(runtime)) &&

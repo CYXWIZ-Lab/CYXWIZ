@@ -155,6 +155,9 @@ int main() {
         std::filesystem::copy_file(
             child,
             base / cyxwiz::runtime::CurrentInstallerManagerExecutableName());
+        std::filesystem::create_directories(
+            base / "arrayfire" /
+            cyxwiz::runtime::CurrentArrayFireLibraryDirectoryName());
         std::filesystem::permissions(
             base / cyxwiz::runtime::CurrentEngineExecutableName(),
             std::filesystem::perms::owner_exec |
