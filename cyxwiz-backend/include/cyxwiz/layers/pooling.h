@@ -35,6 +35,7 @@ private:
     int padding_;
 
     Tensor max_indices_;  // Store indices for backward pass
+    bool has_forward_ = false;
 };
 
 // ============================================================================
@@ -61,6 +62,7 @@ private:
     int pool_size_;
     int stride_;
     int padding_;
+    bool has_forward_ = false;
 };
 
 // ============================================================================
@@ -76,6 +78,9 @@ public:
     std::map<std::string, Tensor> GetParameters() override { return {}; }
     void SetParameters(const std::map<std::string, Tensor>&) override {}
     std::string GetName() const override { return "GlobalAvgPool2D"; }
+
+private:
+    bool has_forward_ = false;
 };
 
 } // namespace cyxwiz

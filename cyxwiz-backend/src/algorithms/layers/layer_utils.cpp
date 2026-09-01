@@ -14,14 +14,14 @@ size_t Pool4DIndex(size_t h, size_t w, size_t c, size_t b,
 
 void ValidateSpatial4DInput(const Tensor& input, const char* name) {
     if (input.GetDataType() != DataType::Float32) {
-        throw std::runtime_error(std::string(name) + " CPU fallback requires Float32 input");
+        throw std::runtime_error(std::string(name) + " requires Float32 input");
     }
     if (input.Shape().size() != 4) {
-        throw std::runtime_error(std::string(name) + " CPU fallback expects [H, W, C, N] input");
+        throw std::runtime_error(std::string(name) + " expects [H, W, C, N] input");
     }
     if (input.Shape()[0] == 0 || input.Shape()[1] == 0 ||
         input.Shape()[2] == 0 || input.Shape()[3] == 0) {
-        throw std::runtime_error(std::string(name) + " CPU fallback does not support empty dimensions");
+        throw std::runtime_error(std::string(name) + " does not support empty dimensions");
     }
 }
 

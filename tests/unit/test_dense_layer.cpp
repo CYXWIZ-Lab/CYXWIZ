@@ -834,8 +834,8 @@ TEST_CASE("GlobalAvgPool2DLayer computes forward and backward values", "[pool][l
     REQUIRE(grad_input_data[7] == Catch::Approx(0.5f));
 }
 
-TEST_CASE("CPU-only Tensor layers reject strict native fallback before compute",
-          "[arrayfire][fallback][policy][attention][pool]") {
+TEST_CASE("CPU-only attention rejects strict native fallback before compute",
+          "[arrayfire][fallback][policy][attention]") {
     cyxwiz::MultiHeadAttentionLayer attention(2, 1, 0.0f, false);
     const float attention_values[] = {
         1.0f, 0.0f,
@@ -844,15 +844,9 @@ TEST_CASE("CPU-only Tensor layers reject strict native fallback before compute",
     const cyxwiz::Tensor attention_input(
         {1, 2, 2}, attention_values, cyxwiz::DataType::Float32);
 
-    const float pool_values[] = {1.0f, 2.0f, 3.0f, 4.0f};
-    const cyxwiz::Tensor pool_input(
-        {2, 2, 1, 1}, pool_values, cyxwiz::DataType::Float32);
-    cyxwiz::GlobalAvgPool2DLayer pool;
-
     const cyxwiz::ScopedArrayFireFallbackPolicy strict(
         cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
     REQUIRE_THROWS_AS(attention.Forward(attention_input), std::runtime_error);
-    REQUIRE_THROWS_AS(pool.Forward(pool_input), std::runtime_error);
 }
 
 TEST_CASE("Upsample2DLayer nearest computes forward and backward values", "[upsample][layer]") {

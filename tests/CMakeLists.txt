@@ -34,6 +34,7 @@ add_executable(cyxwiz-tests
     unit/test_linear_layer.cpp
     unit/test_linear_algebra.cpp
     unit/test_dense_layer.cpp
+    unit/test_pooling_layer.cpp
     unit/test_spatial_modules.cpp
     unit/test_spatial_normalization_modules.cpp
     unit/test_sequence_layers.cpp
