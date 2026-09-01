@@ -43,7 +43,7 @@ Initial target cases:
 
 The broad tracking ticket is:
 
-`docs/Data Studio/tofix39.md`
+`docs/Data Studio/done39.md`
 
 ## Current tests
 
