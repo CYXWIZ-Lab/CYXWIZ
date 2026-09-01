@@ -84,6 +84,9 @@ AudioData AudioProcessing::LoadAudio(const std::string& filepath, int target_sr)
     return result;
 #else
     result.error_message = "Audio loading requires libsndfile (not available in this build)";
+    if (target_sr > 0) {
+        result.error_message += "; requested sample rate: " + std::to_string(target_sr);
+    }
     return result;
 #endif // CYXWIZ_HAS_SNDFILE
 }

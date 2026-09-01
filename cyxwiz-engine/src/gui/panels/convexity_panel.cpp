@@ -190,7 +190,8 @@ void ConvexityPanel::RenderPointInput() {
 
 void ConvexityPanel::RenderLoadingIndicator() {
     ImGui::Text("Analyzing convexity...");
-    float progress = 0.5f + 0.5f * std::sin(ImGui::GetTime() * 5.0f);
+    float progress = 0.5f + 0.5f * static_cast<float>(
+        std::sin(ImGui::GetTime() * 5.0));
     ImGui::ProgressBar(progress, ImVec2(-1, 0));
 }
 

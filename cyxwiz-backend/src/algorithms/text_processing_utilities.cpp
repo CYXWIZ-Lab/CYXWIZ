@@ -62,7 +62,7 @@ std::string TextProcessing::ToLowercase(const std::string& text) {
     std::string result;
     result.reserve(text.size());
     for (char c : text) {
-        result += std::tolower(static_cast<unsigned char>(c));
+        result += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     return result;
 }

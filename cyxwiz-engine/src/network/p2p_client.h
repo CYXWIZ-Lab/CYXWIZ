@@ -3,6 +3,7 @@
 #include <string>
 #include <memory>
 #include <functional>
+#include <map>
 #include <thread>
 #include <atomic>
 #include <mutex>
@@ -27,10 +28,10 @@ struct TrainingProgress {
     uint32_t total_epochs;
     uint32_t current_batch;
     uint32_t total_batches;
-    float progress_percentage;
-    std::map<std::string, float> metrics;  // loss, accuracy, etc.
-    float gpu_usage;
-    float memory_usage;
+    double progress_percentage;
+    std::map<std::string, double> metrics;  // loss, accuracy, etc.
+    double gpu_usage;
+    double memory_usage;
 };
 
 struct CheckpointInfo {

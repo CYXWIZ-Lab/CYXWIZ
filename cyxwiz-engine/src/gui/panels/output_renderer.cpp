@@ -484,7 +484,9 @@ bool OutputRenderer::IsHeaderLine(const std::string& line, int& level) {
 bool OutputRenderer::IsHtmlHeader(const std::string& line, int& level, std::string& content) {
     // Check for <h1>...</h1>, <h2>...</h2>, etc. (case insensitive)
     std::string lower_line = line;
-    for (auto& c : lower_line) c = std::tolower(c);
+    for (auto& c : lower_line) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
 
     for (int h = 1; h <= 6; h++) {
         std::string open_tag = "<h" + std::to_string(h) + ">";

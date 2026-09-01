@@ -393,7 +393,7 @@ Tensor ScalingTransform::ApplyPCAWhitening(const Tensor& input) {
     std::vector<float> output_data(num_elements);
 
     // Get PCA parameters from cached member variables
-    int n_features = pca_components_.size();
+    const size_t n_features = pca_components_.size();
     const auto& mean = pca_mean_;
     const auto& eigenvalues = pca_eigenvalues_;
     const auto& eigenvectors = pca_components_;
@@ -418,7 +418,7 @@ Tensor ScalingTransform::ApplyPCAWhitening(const Tensor& input) {
         features_per_sample = shape[0];
     }
 
-    if (features_per_sample != static_cast<size_t>(n_features)) {
+    if (features_per_sample != n_features) {
         spdlog::error("PCA whitening: Feature size mismatch (got {}, expected {})",
                       features_per_sample, n_features);
         return input;
@@ -430,20 +430,20 @@ Tensor ScalingTransform::ApplyPCAWhitening(const Tensor& input) {
 
         // 1. Center the data: x_centered = x - mean
         std::vector<float> centered(n_features);
-        for (int i = 0; i < n_features; ++i) {
+        for (size_t i = 0; i < n_features; ++i) {
             centered[i] = input_data[offset + i] - mean[i];
         }
 
         // 2. Project onto principal components: x_pca = x_centered × V
         std::vector<float> projected(n_features, 0.0f);
-        for (int i = 0; i < n_features; ++i) {
-            for (int j = 0; j < n_features; ++j) {
+        for (size_t i = 0; i < n_features; ++i) {
+            for (size_t j = 0; j < n_features; ++j) {
                 projected[i] += centered[j] * eigenvectors[j][i];
             }
         }
 
         // 3. Whiten: x_white = x_pca / sqrt(eigenvalue + epsilon)
-        for (int i = 0; i < n_features; ++i) {
+        for (size_t i = 0; i < n_features; ++i) {
             float scale = std::sqrt(std::abs(eigenvalues[i]) + config_.epsilon);
             output_data[offset + i] = projected[i] / scale;
         }

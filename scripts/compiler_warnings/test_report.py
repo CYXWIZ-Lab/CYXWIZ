@@ -39,6 +39,19 @@ class CompilerWarningReportTests(unittest.TestCase):
         self.assertEqual(diagnostics[0].target, "cyxwiz-backend")
         self.assertEqual(diagnostics[0].code, "C4267")
 
+    def test_normalizes_repeated_github_checkout_name_and_deduplicates_msvc_details(self):
+        diagnostics = report.parse_diagnostics(
+            [
+                r"D:\a\CYXWIZ\CYXWIZ\cyxwiz-backend\src\text.cpp(12,5): warning C4244: conversion [D:\a\CYXWIZ\CYXWIZ\build\cyxwiz-backend.vcxproj]",
+                r"D:\a\CYXWIZ\CYXWIZ\cyxwiz-backend\src\text.cpp(12,5): warning C4244: with [D:\a\CYXWIZ\CYXWIZ\build\cyxwiz-backend.vcxproj]",
+            ],
+            self.repo_root,
+        )
+
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(diagnostics[0].source, "cyxwiz-backend/src/text.cpp")
+        self.assertEqual(diagnostics[0].ownership, "owned")
+
     def test_classifies_msvc_tool_warning_without_source(self):
         diagnostics = report.parse_diagnostics(
             [

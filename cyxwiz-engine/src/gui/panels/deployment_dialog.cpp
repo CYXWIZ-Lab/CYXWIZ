@@ -78,7 +78,9 @@ void DeploymentDialog::Render() {
     if (!is_open_) return;
 
     // Taller window when GGUF options are shown
-    ImGui::SetNextWindowSize(ImVec2(550, is_gguf_model_ ? 750 : 600), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(
+        ImVec2(550.0f, is_gguf_model_ ? 750.0f : 600.0f),
+        ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin(ICON_FA_ROCKET " Deploy Model", &is_open_)) {
         RenderModeSelector();

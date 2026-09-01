@@ -155,7 +155,8 @@ int ImageDeduplicator::HammingDistance(uint64_t hash1, uint64_t hash2) {
     uint64_t diff = hash1 ^ hash2;
 
     // Count set bits (popcount)
-    return std::bitset<64>(diff).count();
+    // A 64-bit popcount is always representable by the public int distance.
+    return static_cast<int>(std::bitset<64>(diff).count());
 }
 
 float ImageDeduplicator::ComputeSimilarity(uint64_t hash1, uint64_t hash2) {

@@ -406,10 +406,14 @@ HyperparamSearch::SampleGrid(int trial_idx) {
     std::map<std::string, std::string> categorical_params;
 
     // Calculate indices for each parameter
-    int remaining = trial_idx;
+    size_t remaining = static_cast<size_t>(std::max(0, trial_idx));
     for (const auto& param : config_.space.parameters) {
         if (param.type == ParamType::Categorical) {
-            int idx = remaining % param.options.size();
+            if (param.options.empty()) {
+                spdlog::warn("Skipping categorical parameter '{}' with no options", param.name);
+                continue;
+            }
+            const size_t idx = remaining % param.options.size();
             remaining /= param.options.size();
             categorical_params[param.name] = param.options[idx];
         } else {
@@ -418,10 +422,13 @@ HyperparamSearch::SampleGrid(int trial_idx) {
                 num_steps = static_cast<int>((param.max_value - param.min_value) / param.step) + 1;
             }
 
-            int idx = remaining % num_steps;
-            remaining /= num_steps;
+            const size_t step_count = static_cast<size_t>(std::max(1, num_steps));
+            const size_t idx = remaining % step_count;
+            remaining /= step_count;
 
-            float t = (num_steps > 1) ? static_cast<float>(idx) / (num_steps - 1) : 0.5f;
+            float t = (step_count > 1)
+                ? static_cast<float>(idx) / static_cast<float>(step_count - 1)
+                : 0.5f;
 
             if (param.type == ParamType::LogScale) {
                 float log_min = std::log(param.min_value);

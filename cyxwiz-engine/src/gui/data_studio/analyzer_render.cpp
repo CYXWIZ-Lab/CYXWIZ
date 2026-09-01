@@ -48,7 +48,7 @@ void Analyzer::RenderOverview() {
                    current_report_.categorical_columns);
 
         // Data quality score with color
-        float quality = current_report_.data_quality_score;
+        const double quality = current_report_.data_quality_score;
         ImVec4 color = quality > 80 ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f) :
                       quality > 60 ? ImVec4(0.8f, 0.8f, 0.2f, 1.0f) :
                                     ImVec4(0.8f, 0.2f, 0.2f, 1.0f);

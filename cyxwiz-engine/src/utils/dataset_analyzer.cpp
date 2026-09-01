@@ -198,8 +198,10 @@ DatasetAnalytics DatasetAnalyzer::ComputeAnalytics(
 
         float var_brightness = 0.0f, var_contrast = 0.0f;
         for (size_t i = 0; i < brightness_values.size(); ++i) {
-            var_brightness += std::pow(brightness_values[i] - analytics.mean_brightness, 2);
-            var_contrast += std::pow(contrast_values[i] - analytics.mean_contrast, 2);
+            const float brightness_delta = brightness_values[i] - analytics.mean_brightness;
+            const float contrast_delta = contrast_values[i] - analytics.mean_contrast;
+            var_brightness += brightness_delta * brightness_delta;
+            var_contrast += contrast_delta * contrast_delta;
         }
         analytics.std_brightness = std::sqrt(var_brightness / brightness_values.size());
         analytics.std_contrast = std::sqrt(var_contrast / contrast_values.size());
@@ -413,7 +415,8 @@ float DatasetAnalyzer::ComputeContrast(const std::vector<float>& image) {
 
     float variance = 0.0f;
     for (float val : image) {
-        variance += std::pow(val - mean, 2);
+        const float delta = val - mean;
+        variance += delta * delta;
     }
     variance /= image.size();
 

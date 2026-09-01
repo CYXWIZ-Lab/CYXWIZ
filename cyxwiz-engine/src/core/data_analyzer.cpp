@@ -796,9 +796,9 @@ DescriptiveStats DataAnalyzer::ComputeDescriptiveStats(const std::vector<double>
 
     if (data.empty()) return stats;
 
-    stats.count = static_cast<double>(data.size());
+    stats.count = data.size();
     stats.sum = std::accumulate(data.begin(), data.end(), 0.0);
-    stats.mean = stats.sum / stats.count;
+    stats.mean = stats.sum / static_cast<double>(stats.count);
     stats.median = Median(std::vector<double>(data));
     stats.mode = Mode(data);
     stats.min = *std::min_element(data.begin(), data.end());
@@ -1221,7 +1221,8 @@ HypothesisTestResult DataAnalyzer::ChiSquareTest(const std::vector<std::vector<d
     result.p_value = 1.0 - ChiSquareCDF(chi2, result.df);
 
     // Effect size: Cramér's V
-    double min_dim = std::min(rows - 1, cols - 1);
+    const size_t min_dimension = std::min(rows - 1, cols - 1);
+    const double min_dim = static_cast<double>(min_dimension);
     if (min_dim > 0 && grand_total > 0) {
         result.effect_size = std::sqrt(chi2 / (grand_total * min_dim));
     }
@@ -1578,9 +1579,10 @@ RegressionResult DataAnalyzer::LinearRegression(const std::vector<double>& x,
 
     // t-values and p-values
     result.t_values = {b0 / se_b0, b1 / se_b1};
+    const double residual_df = static_cast<double>(result.df_resid);
     result.p_values = {
-        2.0 * (1.0 - StudentTCDF(std::abs(result.t_values[0]), n - 2)),
-        2.0 * (1.0 - StudentTCDF(std::abs(result.t_values[1]), n - 2))
+        2.0 * (1.0 - StudentTCDF(std::abs(result.t_values[0]), residual_df)),
+        2.0 * (1.0 - StudentTCDF(std::abs(result.t_values[1]), residual_df))
     };
 
     // F-statistic
@@ -1588,7 +1590,7 @@ RegressionResult DataAnalyzer::LinearRegression(const std::vector<double>& x,
     result.f_statistic = result.residual_variance > 0
         ? (ss_reg / 1) / result.residual_variance
         : 0;
-    result.f_p_value = 1.0 - FCDF(result.f_statistic, 1, n - 2);
+    result.f_p_value = 1.0 - FCDF(result.f_statistic, 1.0, residual_df);
 
     return result;
 }
@@ -1790,22 +1792,26 @@ RegressionResult DataAnalyzer::MultipleLinearRegression(const std::vector<std::v
     result.t_values.resize(p);
     result.p_values.resize(p);
 
+    const double residual_df = static_cast<double>(result.df_resid);
+
     for (size_t i = 0; i < p; i++) {
         result.std_errors[i] =
             std::sqrt(result.residual_variance * XtX_inv[i][i]);
         if (result.std_errors[i] > 0) {
             result.t_values[i] = result.coefficients[i] / result.std_errors[i];
-            result.p_values[i] = 2.0 * (1.0 - StudentTCDF(std::abs(result.t_values[i]), n - p));
+            result.p_values[i] =
+                2.0 * (1.0 - StudentTCDF(std::abs(result.t_values[i]), residual_df));
         }
     }
 
     // F-statistic
     double ss_reg = ss_tot - ss_res;
-    double ms_reg = ss_reg / (p - 1);
+    const double model_df = static_cast<double>(result.df_model);
+    double ms_reg = ss_reg / model_df;
     result.f_statistic = result.residual_variance > 0
         ? ms_reg / result.residual_variance
         : 0;
-    result.f_p_value = 1.0 - FCDF(result.f_statistic, p - 1, n - p);
+    result.f_p_value = 1.0 - FCDF(result.f_statistic, model_df, residual_df);
 
     return result;
 }

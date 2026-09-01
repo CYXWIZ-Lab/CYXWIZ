@@ -6,6 +6,7 @@
 #include "../../core/engine_config.h"
 
 #include <chrono>
+#include <cmath>
 #include <cctype>
 #include <cstring>
 #include <sstream>
@@ -662,7 +663,9 @@ void ToolbarPanel::RenderAccountDialogs() {
                 // Verifying...
                 ImGui::TextWrapped("Verifying signature...");
                 ImGui::Spacing();
-                ImGui::ProgressBar(-1.0f * ImGui::GetTime(), ImVec2(input_width, 4));
+                const float animation_time = static_cast<float>(
+                    std::fmod(ImGui::GetTime(), 1.0));
+                ImGui::ProgressBar(-animation_time, ImVec2(input_width, 4));
             }
 
             ImGui::Spacing();

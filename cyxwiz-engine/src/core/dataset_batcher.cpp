@@ -9,11 +9,26 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <thread>
 #include <utility>
 
 namespace cyxwiz {
+
+namespace {
+
+bool TryConvertImageDimension(size_t value, const char* name, int& converted) {
+    if (value == 0 || value > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        spdlog::error("DatasetBatcher: Invalid image {} dimension {}", name, value);
+        return false;
+    }
+
+    converted = static_cast<int>(value);
+    return true;
+}
+
+} // namespace
 
 DatasetBatcher::DatasetBatcher(
     DatasetHandle dataset,
@@ -94,6 +109,19 @@ Batch DatasetBatcher::GetNextBatch() {
                           apply_augmentation_on_train_ &&
                           split_ == DatasetSplit::Train;
 
+    int transform_height = 0;
+    int transform_width = 0;
+    int transform_channels = 0;
+    if (should_augment) {
+        if (info.shape.size() < 2 ||
+            !TryConvertImageDimension(info.shape[0], "height", transform_height) ||
+            !TryConvertImageDimension(info.shape[1], "width", transform_width) ||
+            !TryConvertImageDimension(info.shape.size() > 2 ? info.shape[2] : 1,
+                                      "channel", transform_channels)) {
+            return batch;
+        }
+    }
+
     std::vector<std::pair<std::vector<float>, int>> samples(actual_batch_size);
 
     auto load_range = [&](size_t begin, size_t end) {
@@ -130,11 +158,7 @@ Batch DatasetBatcher::GetNextBatch() {
         if (should_augment) {
             // Convert sample to transforms::Image
             // Assume image format: [height, width, channels] or [width, height, channels]
-            size_t height = info.shape[0];
-            size_t width = info.shape[1];
-            size_t channels = info.shape.size() > 2 ? info.shape[2] : 1;
-
-            transforms::Image img(sample, width, height, channels);
+            transforms::Image img(sample, transform_width, transform_height, transform_channels);
 
             // Apply augmentation pipeline
             transforms::Image augmented = augmentation_pipeline_->apply(img);
@@ -540,6 +564,16 @@ AnnotatedBatch DatasetBatcher::GetAnnotatedBatch(const std::string& dataset_id,
                           apply_augmentation_on_train_ &&
                           split_ == DatasetSplit::Train;
 
+    int transform_height = 0;
+    int transform_width = 0;
+    int transform_channels = 0;
+    if (should_augment &&
+        (!TryConvertImageDimension(batch.height, "height", transform_height) ||
+         !TryConvertImageDimension(batch.width, "width", transform_width) ||
+         !TryConvertImageDimension(batch.channels, "channel", transform_channels))) {
+        return {};
+    }
+
     std::vector<std::pair<std::vector<float>, int>> samples(batch.size);
 
     auto load_range = [&](size_t begin, size_t end) {
@@ -573,7 +607,7 @@ AnnotatedBatch DatasetBatcher::GetAnnotatedBatch(const std::string& dataset_id,
 
         // Apply augmentation if enabled
         if (should_augment && !sample.empty()) {
-            transforms::Image img(sample, batch.width, batch.height, batch.channels);
+            transforms::Image img(sample, transform_width, transform_height, transform_channels);
             transforms::Image augmented = augmentation_pipeline_->apply(img);
             sample = augmented.data;
         }
@@ -601,8 +635,14 @@ AnnotatedBatch DatasetBatcher::GetAnnotatedBatch(const std::string& dataset_id,
     // Generate segmentation masks if annotations exist
     const auto& ann_mgr = DataRegistry::Instance().GetAnnotationManager();
     if (ann_mgr.HasAnnotationSet(dataset_id)) {
-        int out_width = mask_width_ > 0 ? mask_width_ : static_cast<int>(batch.width);
-        int out_height = mask_height_ > 0 ? mask_height_ : static_cast<int>(batch.height);
+        int image_width = 0;
+        int image_height = 0;
+        if (!TryConvertImageDimension(batch.width, "width", image_width) ||
+            !TryConvertImageDimension(batch.height, "height", image_height)) {
+            return {};
+        }
+        int out_width = mask_width_ > 0 ? mask_width_ : image_width;
+        int out_height = mask_height_ > 0 ? mask_height_ : image_height;
         size_t mask_size = static_cast<size_t>(out_width) * static_cast<size_t>(out_height);
 
         std::vector<float> masks_data;

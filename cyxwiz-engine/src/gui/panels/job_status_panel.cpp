@@ -575,12 +575,12 @@ void JobStatusPanel::OnP2PProgressUpdate(const std::string& job_id,
 
     auto loss_it = progress.metrics.find("loss");
     if (loss_it != progress.metrics.end()) {
-        loss = loss_it->second;
+        loss = static_cast<float>(loss_it->second);
     }
 
     auto acc_it = progress.metrics.find("accuracy");
     if (acc_it != progress.metrics.end()) {
-        acc = acc_it->second * 100.0f;  // Convert to percentage
+        acc = static_cast<float>(acc_it->second * 100.0);  // Convert to percentage
     }
 
     metrics.AddPoint(epoch_val, loss, acc);

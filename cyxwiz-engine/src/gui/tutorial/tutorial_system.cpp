@@ -147,7 +147,7 @@ void TutorialSystem::RenderOverlay() {
 
     // Auto-advance for non-interactive steps
     if (!step.requires_interaction && step.delay_seconds > 0) {
-        float elapsed = ImGui::GetTime() - step_start_time_;
+        const double elapsed = ImGui::GetTime() - step_start_time_;
         if (elapsed >= step.delay_seconds) {
             NextStep();
         }

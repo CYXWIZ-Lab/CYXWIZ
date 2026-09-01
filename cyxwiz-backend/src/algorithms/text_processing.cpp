@@ -132,7 +132,8 @@ std::vector<std::string> TextProcessing::TokenizeWord(
     for (char c : text) {
         if (std::isalnum(static_cast<unsigned char>(c))) {
             if (lowercase) {
-                current_token += std::tolower(static_cast<unsigned char>(c));
+                current_token += static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(c)));
             } else {
                 current_token += c;
             }

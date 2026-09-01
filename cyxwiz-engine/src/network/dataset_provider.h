@@ -85,7 +85,8 @@ private:
 
     // Serialize batch data to raw bytes (float32)
     static std::string SerializeImages(const std::vector<std::vector<float>>& images);
-    static std::string SerializeLabels(const std::vector<int>& labels, bool one_hot, int num_classes);
+    static std::string SerializeLabels(const std::vector<int>& labels, bool one_hot,
+                                       size_t num_classes);
 
     struct RegisteredDataset {
         cyxwiz::DatasetHandle handle;

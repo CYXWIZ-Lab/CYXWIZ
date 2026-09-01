@@ -215,7 +215,7 @@ struct OutlierResult {
  * Extended descriptive statistics result
  */
 struct DescriptiveStats {
-    double count = 0;
+    size_t count = 0;
     double mean = 0.0;
     double median = 0.0;
     double mode = 0.0;

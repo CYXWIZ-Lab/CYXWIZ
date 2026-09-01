@@ -290,7 +290,7 @@ void FeatureImportancePanel::RenderImportanceChart() {
 
         // Add feature name labels
         for (size_t i = 0; i < sorted_names.size(); i++) {
-            double y = sorted_indices.size() - 1 - i;
+            const double y = static_cast<double>(sorted_indices.size() - 1 - i);
             ImPlot::PlotText(sorted_names[i], sorted_importances[i] + 0.02, y);
         }
 

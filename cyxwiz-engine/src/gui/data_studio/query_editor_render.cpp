@@ -1,5 +1,6 @@
 #include "query_editor.h"
 #include <cstring>
+#include <limits>
 
 namespace cyxwiz {
 
@@ -103,8 +104,15 @@ void QueryEditor::RenderResultsTable() {
 
     ImGui::Separator();
 
+    if (last_result_.column_names.size() >
+        static_cast<size_t>(std::numeric_limits<int>::max())) {
+        ImGui::TextDisabled("Result has too many columns to display.");
+        return;
+    }
+    const int column_count = static_cast<int>(last_result_.column_names.size());
+
     // Begin table
-    if (ImGui::BeginTable("##results", last_result_.column_names.size(),
+    if (ImGui::BeginTable("##results", column_count,
                          ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY |
                          ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
 
@@ -117,9 +125,11 @@ void QueryEditor::RenderResultsTable() {
         // Data rows
         for (const auto& row : last_result_.rows) {
             ImGui::TableNextRow();
-            for (size_t col = 0; col < row.size(); col++) {
+            for (int col = 0;
+                 col < column_count && static_cast<size_t>(col) < row.size();
+                 ++col) {
                 ImGui::TableSetColumnIndex(col);
-                ImGui::TextUnformatted(row[col].c_str());
+                ImGui::TextUnformatted(row[static_cast<size_t>(col)].c_str());
             }
         }
 

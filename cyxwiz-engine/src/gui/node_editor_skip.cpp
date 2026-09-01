@@ -141,8 +141,8 @@ bool NodeEditor::IsSkipConnection(const NodeLink& link) const {
 
     int path_length = 0;
     while (!queue.empty() && path_length < 10) {  // Limit search depth
-        int level_size = queue.size();
-        for (int i = 0; i < level_size; ++i) {
+        const size_t level_size = queue.size();
+        for (size_t i = 0; i < level_size; ++i) {
             int current = queue.front();
             queue.pop();
 

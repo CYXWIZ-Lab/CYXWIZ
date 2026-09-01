@@ -400,8 +400,8 @@ bool DataTable::LoadFromHDF5(const std::string& filepath, const std::string& dat
                 std::vector<std::vector<std::vector<double>>> data_3d;
                 selection.read(data_3d);
                 for (const auto& plane : data_3d) {
-                    for (const auto& r : plane) {
-                        for (double val : r) {
+                    for (const auto& row_values : plane) {
+                        for (double val : row_values) {
                             row.push_back(val);
                         }
                     }
@@ -412,8 +412,8 @@ bool DataTable::LoadFromHDF5(const std::string& filepath, const std::string& dat
                 selection.read(data_4d);
                 for (const auto& vol : data_4d) {
                     for (const auto& plane : vol) {
-                        for (const auto& r : plane) {
-                            for (double val : r) {
+                        for (const auto& row_values : plane) {
+                            for (double val : row_values) {
                                 row.push_back(val);
                             }
                         }

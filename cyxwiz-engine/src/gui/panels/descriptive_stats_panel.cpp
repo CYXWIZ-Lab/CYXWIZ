@@ -164,7 +164,7 @@ void DescriptiveStatsPanel::RenderStatisticsTable() {
             ImGui::Text(format, value);
         };
 
-        AddRow("Count", stats_.count, "%.0f");
+        AddRow("Count", static_cast<double>(stats_.count), "%.0f");
         AddRow("Mean", stats_.mean);
         AddRow("Median", stats_.median);
         AddRow("Mode", stats_.mode);

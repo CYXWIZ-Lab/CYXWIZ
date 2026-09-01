@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <fstream>
 #include <cmath>
+#include <limits>
 
 namespace cyxwiz {
 
@@ -442,7 +443,12 @@ void DimReductionPanel::RenderEmbeddingsTable() {
         return;
     }
 
-    int n_dims = embeddings->front().size();
+    if (embeddings->front().size() >
+        static_cast<size_t>(std::numeric_limits<int>::max())) {
+        ImGui::TextDisabled("Embedding dimension count exceeds the table limit");
+        return;
+    }
+    const int n_dims = static_cast<int>(embeddings->front().size());
     int n_cols = n_dims + (labels_.empty() ? 0 : 1);
 
     if (ImGui::BeginTable("EmbeddingsTable", n_cols + 1,
@@ -504,7 +510,13 @@ void DimReductionPanel::RenderExportOptions() {
             if (embeddings && !embeddings->empty()) {
                 std::ofstream file(export_path_);
                 if (file) {
-                    int n_dims = embeddings->front().size();
+                    if (embeddings->front().size() >
+                        static_cast<size_t>(std::numeric_limits<int>::max())) {
+                        spdlog::error("Cannot export embeddings: dimension count exceeds int range");
+                        ImGui::CloseCurrentPopup();
+                        return;
+                    }
+                    const int n_dims = static_cast<int>(embeddings->front().size());
 
                     // Header
                     for (int d = 0; d < n_dims; d++) {
@@ -667,7 +679,7 @@ void DimReductionPanel::RunReduction() {
                     };
 
                     auto result = DimensionalityReduction::ComputetSNE(
-                        data, tsne_dims, tsne_perp, tsne_iter, tsne_lr, callback);
+                        data, tsne_dims, tsne_perp, tsne_lr, tsne_iter, callback);
 
                     std::lock_guard<std::mutex> lock(result_mutex_);
                     tsne_result_ = std::move(result);

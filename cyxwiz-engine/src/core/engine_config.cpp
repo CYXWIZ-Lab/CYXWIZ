@@ -47,8 +47,8 @@ std::filesystem::path ResolveVenvRoot(const std::filesystem::path& interpreter_p
     return {};
 }
 
-std::filesystem::path FindPosixSitePackages(const std::filesystem::path& base_root) {
 #ifndef _WIN32
+std::filesystem::path FindPosixSitePackages(const std::filesystem::path& base_root) {
     std::filesystem::path lib_dir = base_root / "lib";
     if (!std::filesystem::exists(lib_dir)) {
         return {};
@@ -67,9 +67,9 @@ std::filesystem::path FindPosixSitePackages(const std::filesystem::path& base_ro
             return candidate;
         }
     }
-#endif
     return {};
 }
+#endif
 
 std::filesystem::path ResolveSitePackagesFromInterpreter(const std::filesystem::path& interpreter_path) {
 #ifdef _WIN32

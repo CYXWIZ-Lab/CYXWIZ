@@ -265,7 +265,7 @@ std::string DatasetProvider::SerializeImages(const std::vector<std::vector<float
 
 std::string DatasetProvider::SerializeLabels(const std::vector<int>& labels,
                                               bool one_hot,
-                                              int num_classes) {
+                                              size_t num_classes) {
     if (labels.empty()) {
         return {};
     }
@@ -278,8 +278,9 @@ std::string DatasetProvider::SerializeLabels(const std::vector<int>& labels,
 
         float* ptr = reinterpret_cast<float*>(buffer.data());
         for (int label : labels) {
-            for (int c = 0; c < num_classes; ++c) {
-                *ptr++ = (c == label) ? 1.0f : 0.0f;
+            for (size_t c = 0; c < num_classes; ++c) {
+                const bool is_label = label >= 0 && static_cast<size_t>(label) == c;
+                *ptr++ = is_label ? 1.0f : 0.0f;
             }
         }
         return buffer;

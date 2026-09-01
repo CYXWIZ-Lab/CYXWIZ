@@ -2,6 +2,7 @@
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <filesystem>
+#include <limits>
 
 namespace network {
 
@@ -628,13 +629,25 @@ bool P2PClient::DownloadWeightsWithOffset(const std::string& job_id,
         return false;
     }
 
+    if (offset > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
+        last_error_ = "Download offset exceeds the protocol limit";
+        spdlog::error("P2PClient: {}", last_error_);
+        return false;
+    }
+    if (chunk_size == 0 ||
+        chunk_size > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+        last_error_ = "Download chunk size must be between 1 and INT32_MAX bytes";
+        spdlog::error("P2PClient: {}", last_error_);
+        return false;
+    }
+
     spdlog::info("P2PClient: Downloading weights for job {} to {}", job_id, output_path);
 
     // Prepare download request
     cyxwiz::protocol::DownloadRequest request;
     request.set_job_id(job_id);
-    request.set_offset(offset);
-    request.set_chunk_size(chunk_size);
+    request.set_offset(static_cast<int64_t>(offset));
+    request.set_chunk_size(static_cast<int32_t>(chunk_size));
 
     grpc::ClientContext context;
     AddAuthMetadata(context);

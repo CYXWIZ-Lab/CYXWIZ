@@ -105,7 +105,7 @@ private:
     bool is_active_ = false;
     Tutorial* current_tutorial_ = nullptr;
     int current_step_index_ = 0;
-    float step_start_time_ = 0.0f;
+    double step_start_time_ = 0.0;
 
     // Progress tracking
     std::vector<std::string> completed_tutorials_;

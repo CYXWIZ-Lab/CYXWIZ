@@ -80,7 +80,10 @@ def _relative_source(source: str, repo_root: Path) -> str:
     if normalized.startswith(root + "/"):
         return normalized[len(root) + 1 :]
     checkout_marker = f"/{repo_root.resolve().name}/"
-    marker_offset = normalized.lower().find(checkout_marker.lower())
+    # GitHub's Windows checkout commonly repeats the repository name
+    # (for example D:/a/CYXWIZ/CYXWIZ/...). The last marker identifies the
+    # actual repository-relative source path.
+    marker_offset = normalized.lower().rfind(checkout_marker.lower())
     if marker_offset >= 0:
         return normalized[marker_offset + len(checkout_marker) :]
     return normalized.removeprefix("./")
@@ -115,7 +118,26 @@ def _target_from_line(line: str, current_target: str) -> str:
 
 def parse_diagnostics(lines: Iterable[str], repo_root: Path) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
+    source_diagnostic_keys: set[tuple[object, ...]] = set()
     current_target = "unknown"
+
+    def append(diagnostic: Diagnostic) -> None:
+        if diagnostic.source is None:
+            diagnostics.append(diagnostic)
+            return
+        # MSVC emits template expansion details as several warning-prefixed
+        # lines at the same source location. The source location, code, and
+        # target identify one compiler diagnostic; retain its primary line.
+        key = (
+            diagnostic.source,
+            diagnostic.line,
+            diagnostic.column,
+            diagnostic.code,
+            diagnostic.target,
+        )
+        if key not in source_diagnostic_keys:
+            source_diagnostic_keys.add(key)
+            diagnostics.append(diagnostic)
 
     for raw_line in lines:
         line = raw_line.strip()
@@ -130,7 +152,7 @@ def parse_diagnostics(lines: Iterable[str], repo_root: Path) -> list[Diagnostic]
                 target = Path(_slash_path(project.group("project"))).stem
                 message = message[: project.start()].rstrip()
             source = _relative_source(match.group("path"), repo_root)
-            diagnostics.append(
+            append(
                 Diagnostic(
                     source=source,
                     line=int(match.group("line")),
@@ -151,7 +173,7 @@ def parse_diagnostics(lines: Iterable[str], repo_root: Path) -> list[Diagnostic]
             if project:
                 target = Path(_slash_path(project.group("project"))).stem
                 message = message[: project.start()].rstrip()
-            diagnostics.append(
+            append(
                 Diagnostic(
                     source=None,
                     line=None,
@@ -172,7 +194,7 @@ def parse_diagnostics(lines: Iterable[str], repo_root: Path) -> list[Diagnostic]
             if flag:
                 message = message[: flag.start()].rstrip()
             source = _relative_source(match.group("path"), repo_root)
-            diagnostics.append(
+            append(
                 Diagnostic(
                     source=source,
                     line=int(match.group("line")),

@@ -519,7 +519,9 @@ bool JobManager::StartP2PExecution(const std::string& job_id) {
                 (*job->status.mutable_metrics())[key] = static_cast<double>(value);
             }
 
-            float loss = progress.metrics.count("loss") ? progress.metrics.at("loss") : 0.0f;
+            const double loss = progress.metrics.count("loss")
+                ? progress.metrics.at("loss")
+                : 0.0;
             spdlog::debug("Job {} progress: epoch {}/{}, batch {}/{}, loss={:.4f}",
                          job_id, progress.current_epoch, progress.total_epochs,
                          progress.current_batch, progress.total_batches, loss);

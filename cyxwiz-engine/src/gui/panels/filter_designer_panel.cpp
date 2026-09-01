@@ -251,7 +251,8 @@ void FilterDesignerPanel::RenderFrequencyResponse() {
                 // Draw -3dB line
                 double x_range[2] = { filter_.freq_axis.front(), filter_.freq_axis.back() };
                 double y_3db[2] = { -3.0, -3.0 };
-                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(1, 0.5, 0, 0.7));
+                ImPlot::PushStyleColor(
+                    ImPlotCol_Line, ImVec4(1.0f, 0.5f, 0.0f, 0.7f));
                 ImPlot::PlotLine("-3dB", x_range, y_3db, 2);
                 ImPlot::PopStyleColor();
             } else {

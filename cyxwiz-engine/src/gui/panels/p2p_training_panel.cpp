@@ -614,7 +614,7 @@ void P2PTrainingPanel::OnProgress(const network::TrainingProgress& progress) {
     total_epochs_ = progress.total_epochs;
     current_batch_ = progress.current_batch;
     total_batches_ = progress.total_batches;
-    current_progress_ = progress.progress_percentage;
+    current_progress_ = static_cast<float>(progress.progress_percentage);
 
     // Update metrics history - protect against division by zero
     float epoch_value = static_cast<float>(progress.current_epoch);
@@ -623,15 +623,18 @@ void P2PTrainingPanel::OnProgress(const network::TrainingProgress& progress) {
     }
 
     if (progress.metrics.count("loss")) {
-        loss_history_.AddPoint(epoch_value, progress.metrics.at("loss"));
+        loss_history_.AddPoint(epoch_value, static_cast<float>(progress.metrics.at("loss")));
     }
 
     if (progress.metrics.count("accuracy")) {
-        accuracy_history_.AddPoint(epoch_value, progress.metrics.at("accuracy"));
+        accuracy_history_.AddPoint(epoch_value,
+                                   static_cast<float>(progress.metrics.at("accuracy")));
     }
 
-    gpu_usage_history_.AddPoint(epoch_value, progress.gpu_usage * 100.0f);
-    memory_usage_history_.AddPoint(epoch_value, progress.memory_usage * 100.0f);
+    gpu_usage_history_.AddPoint(epoch_value,
+                                static_cast<float>(progress.gpu_usage * 100.0));
+    memory_usage_history_.AddPoint(epoch_value,
+                                   static_cast<float>(progress.memory_usage * 100.0));
 
     // Update ETA
     UpdateETA();

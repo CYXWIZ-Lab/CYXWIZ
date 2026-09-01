@@ -1386,11 +1386,11 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
         // Defensively clamp the final table. The bounded path already stops
         // its streaming reader at max_rows, so this should normally be a no-op.
         if (max_rows > 0) {
-            auto table = dataset->GetArrowTable();
-            if (table && table->num_rows() > max_rows) {
-                auto sliced = table->Slice(0, max_rows);
+            auto bounded_table = dataset->GetArrowTable();
+            if (bounded_table && bounded_table->num_rows() > max_rows) {
+                auto sliced = bounded_table->Slice(0, max_rows);
                 spdlog::info("LoadCSVToArrow: max_rows={} applied, sliced from {} to {} rows",
-                             max_rows, table->num_rows(), sliced->num_rows());
+                             max_rows, bounded_table->num_rows(), sliced->num_rows());
                 dataset = std::make_shared<ArrowDataset>(sliced, unique_name);
             }
         }
