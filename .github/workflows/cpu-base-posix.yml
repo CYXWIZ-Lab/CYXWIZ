@@ -55,8 +55,16 @@ jobs:
             https://arrayfire.gateway.scarf.sh/linux/3.10.0/ArrayFire.sh \
             --output ArrayFire.sh
           chmod +x ArrayFire.sh
-          sudo ./ArrayFire.sh --include-subdir --prefix=/opt
-          test -d /opt/arrayfire
+          installer_status=0
+          sudo ./ArrayFire.sh --include-subdir --prefix=/opt || installer_status=$?
+          arrayfire_root=/opt/ArrayFire-3.10.0-Linux
+          test -f "$arrayfire_root/include/af/version.h"
+          test -n "$(find -H "$arrayfire_root" -name ArrayFireConfig.cmake -print -quit)"
+          test -n "$(find -H "$arrayfire_root" -name 'libaf.so*' -type f -print -quit)"
+          test -n "$(find -H "$arrayfire_root" -name 'libafcpu.so*' -type f -print -quit)"
+          if [[ "$installer_status" -ne 0 ]]; then
+            echo "ArrayFire self-extractor returned $installer_status after a complete validated extraction"
+          fi
 
       - name: Install macOS build dependencies
         if: runner.os == 'macOS'
@@ -113,7 +121,7 @@ jobs:
       - name: Locate ArrayFire
         run: |
           if [[ "${{ runner.os }}" == "Linux" ]]; then
-            arrayfire_root=/opt/arrayfire
+            arrayfire_root=/opt/ArrayFire-3.10.0-Linux
           else
             arrayfire_root="$(brew --prefix arrayfire)"
           fi

@@ -67,7 +67,10 @@ class ElfRuntimeClosureTests(unittest.TestCase):
             def runner(command):
                 command = tuple(command)
                 commands.append(command)
-                if command[0] == "ldd" and Path(command[1]) == engine:
+                if (
+                    command[0] == "ldd"
+                    and Path(command[1]).resolve() == engine.resolve()
+                ):
                     output = f"libvendor.so.1 => {dependency} (0x01)\n"
                 elif command[0] == "ldd":
                     output = "libc.so.6 => /usr/lib/libc.so.6 (0x02)\n"
