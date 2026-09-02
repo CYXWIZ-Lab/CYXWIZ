@@ -4,18 +4,27 @@
 #include "data_registry.h"
 #include "materialization_memory_guard.h"
 #include "pipeline_runtime_capabilities.h"
+#include "sparse_feature_dataset.h"
+#include "sparse_feature_dataset_cache.h"
 
 #include <arrow/table.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <new>
+#include <queue>
 #include <system_error>
+#include <unordered_set>
 
 namespace cyxwiz {
 
 namespace {
+
+constexpr const char* kSparseCacheArtifactFormat =
+    "sparse_csr_arrow_ipc_v1";
 
 PipelineStorageBackend ToStorageBackend(PipelineMaterializerSourceKind kind) {
     switch (kind) {
@@ -29,6 +38,8 @@ PipelineStorageBackend ToStorageBackend(PipelineMaterializerSourceKind kind) {
         return PipelineStorageBackend::AudioDataset;
     case PipelineMaterializerSourceKind::TextDataset:
         return PipelineStorageBackend::TextDataset;
+    case PipelineMaterializerSourceKind::SparseFeatureDataset:
+        return PipelineStorageBackend::SparseFeatureDataset;
     case PipelineMaterializerSourceKind::Unknown:
         return PipelineStorageBackend::Unknown;
     }
@@ -38,6 +49,80 @@ PipelineStorageBackend ToStorageBackend(PipelineMaterializerSourceKind kind) {
 bool CacheEnabled(const MaterializationCacheConfig& config) {
     return config.mode != MaterializationCacheMode::Disabled &&
            !config.cache_root.empty();
+}
+
+bool IsSparseOutputChoice(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char ch) {
+                       return static_cast<char>(std::tolower(ch));
+                   });
+    return value == "sparse";
+}
+
+bool GraphRequestsSparseFeatureMaterialization(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    const std::string& source_dataset_name) {
+    int source_node_id = -1;
+    int fallback_source_node_id = -1;
+    for (const auto& node : nodes) {
+        if (node.type != gui::NodeType::DataInput &&
+            node.type != gui::NodeType::DatasetInput) {
+            continue;
+        }
+        if (fallback_source_node_id < 0) fallback_source_node_id = node.id;
+        auto dataset_name = node.parameters.find("dataset_name");
+        if (dataset_name == node.parameters.end() ||
+            dataset_name->second.empty()) {
+            dataset_name = node.parameters.find("dataset");
+        }
+        if (!source_dataset_name.empty() &&
+            dataset_name != node.parameters.end() &&
+            dataset_name->second == source_dataset_name) {
+            source_node_id = node.id;
+            break;
+        }
+    }
+    if (source_node_id < 0 && source_dataset_name.empty()) {
+        source_node_id = fallback_source_node_id;
+    }
+    if (source_node_id < 0) return false;
+
+    std::queue<int> pending;
+    std::unordered_set<int> reachable;
+    pending.push(source_node_id);
+    reachable.insert(source_node_id);
+    while (!pending.empty()) {
+        const int current = pending.front();
+        pending.pop();
+        for (const auto& link : links) {
+            if (link.from_node == current &&
+                reachable.insert(link.to_node).second) {
+                pending.push(link.to_node);
+            }
+        }
+    }
+
+    for (const auto& node : nodes) {
+        if (reachable.count(node.id) == 0) continue;
+        if (node.type != gui::NodeType::CountVectorizer &&
+            node.type != gui::NodeType::TFIDFVectorizer) {
+            continue;
+        }
+        const auto output_format = node.parameters.find("output_format");
+        if (output_format != node.parameters.end() &&
+            IsSparseOutputChoice(output_format->second)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::filesystem::path SparseCacheArtifactPath(
+    const MaterializationCacheConfig& config,
+    const std::string& cache_key) {
+    return MaterializationCacheEntryDirectory(config, cache_key) /
+           "data.csr.arrow";
 }
 
 std::string FindNodeParameter(const gui::MLNode& node,
@@ -254,6 +339,8 @@ const char* PipelineMaterializerSourceKindName(
         return "AudioDataset";
     case PipelineMaterializerSourceKind::TextDataset:
         return "TextDataset";
+    case PipelineMaterializerSourceKind::SparseFeatureDataset:
+        return "SparseFeatureDataset";
     case PipelineMaterializerSourceKind::Unknown:
         return "Unknown";
     }
@@ -291,6 +378,9 @@ PipelineMaterializerSourceKind ResolvePipelineMaterializerSourceKind(
     }
     if (registry.IsTextDataset(source_dataset_name)) {
         return PipelineMaterializerSourceKind::TextDataset;
+    }
+    if (registry.IsSparseFeatureDataset(source_dataset_name)) {
+        return PipelineMaterializerSourceKind::SparseFeatureDataset;
     }
     return PipelineMaterializerSourceKind::Unknown;
 }
@@ -337,6 +427,7 @@ MaterializeResult PipelineMaterializer::Materialize(
 
     result.source_kind = ResolvePipelineMaterializerSourceKind(
         registry, source_dataset_name);
+    result.effective_kind = result.source_kind;
 
     const auto backend_support =
         ResolvePipelineMaterializerStorageBackendSupport(
@@ -381,6 +472,13 @@ MaterializeResult PipelineMaterializer::Materialize(
 
     const std::string materialized_name =
         source_dataset_name + kMaterializedSuffix;
+    const bool sparse_materialization_requested =
+        GraphRequestsSparseFeatureMaterialization(
+            nodes, links, source_dataset_name);
+    const std::string requested_artifact_format =
+        sparse_materialization_requested
+            ? kSparseCacheArtifactFormat
+            : cache_config.artifact_format;
     const std::string source_schema_fingerprint =
         ComputeSchemaFingerprint(source_table->schema());
     MaterializationCacheability cacheability;
@@ -427,8 +525,10 @@ MaterializeResult PipelineMaterializer::Materialize(
         const auto manifest_path =
             MaterializationCacheManifestPath(cache_config, result.cache_key);
         result.cache_manifest_path = manifest_path.string();
-        result.cache_artifact_path =
-            MaterializationCacheArtifactPath(cache_config, result.cache_key).string();
+        result.cache_artifact_path = sparse_materialization_requested
+            ? SparseCacheArtifactPath(cache_config, result.cache_key).string()
+            : MaterializationCacheArtifactPath(
+                  cache_config, result.cache_key).string();
 
         if (cache_config.mode != MaterializationCacheMode::Rebuild) {
             MaterializationCacheManifest manifest;
@@ -436,6 +536,15 @@ MaterializeResult PipelineMaterializer::Materialize(
             if (ReadMaterializationCacheManifest(manifest_path, manifest, &read_error)) {
                 auto validation = ValidateMaterializationCacheManifest(
                     manifest, result.cache_key, source_schema_fingerprint);
+                if (validation.usable &&
+                    validation.manifest.artifact_format !=
+                        requested_artifact_format) {
+                    validation.usable = false;
+                    validation.status = MaterializationCacheStatus::Stale;
+                    validation.message =
+                        "cached artifact representation does not match the "
+                        "requested graph output";
+                }
                 result.cache_status = validation.status;
                 result.cache_message = validation.message;
                 if (!validation.manifest.artifact_path.empty()) {
@@ -453,23 +562,53 @@ MaterializeResult PipelineMaterializer::Materialize(
                     }
                     const auto cache_load_started =
                         std::chrono::steady_clock::now();
-                    auto cached = LoadCachedArrowDataset(
-                        validation.manifest, materialized_name);
-                    if (cached && cached->GetArrowTable()) {
-                        if (StopIfMaterializationCancelled(
-                                execution_context, result)) {
-                            return result;
+                    bool cache_loaded = false;
+                    uint64_t expanded_bytes = 0;
+                    std::string cache_load_error;
+                    if (validation.manifest.artifact_format ==
+                        kSparseCacheArtifactFormat) {
+                        auto cached = SparseFeatureDatasetCache::Load(
+                            validation.manifest.artifact_path);
+                        if (!cached.ok()) {
+                            cache_load_error = cached.status().ToString();
+                        } else if (cached.ValueOrDie()->GetName() !=
+                                   materialized_name) {
+                            cache_load_error =
+                                "sparse cache dataset identity does not match "
+                                "the requested materialized name";
+                        } else {
+                            if (StopIfMaterializationCancelled(
+                                    execution_context, result)) {
+                                return result;
+                            }
+                            cache_loaded = registry.RegisterSparseFeatureDataset(
+                                cached.ValueOrDie());
+                            expanded_bytes =
+                                cached.ValueOrDie()->GetEstimatedHostMemoryBytes();
+                            result.effective_kind =
+                                PipelineMaterializerSourceKind::SparseFeatureDataset;
                         }
-                        auto registered = registry.RegisterArrowTable(
-                            cached->GetArrowTable(), materialized_name);
-                        if (!registered) {
-                            SetMaterializationFailure(
-                                result,
-                                MaterializationFailureKind::Error,
-                                "PipelineMaterializer: RegisterArrowTable failed for cached '" +
-                                    materialized_name + "'");
-                            return result;
+                    } else {
+                        auto cached = LoadCachedArrowDataset(
+                            validation.manifest, materialized_name);
+                        if (cached && cached->GetArrowTable()) {
+                            if (StopIfMaterializationCancelled(
+                                    execution_context, result)) {
+                                return result;
+                            }
+                            cache_loaded = static_cast<bool>(
+                                registry.RegisterArrowTable(
+                                    cached->GetArrowTable(), materialized_name));
+                            expanded_bytes = static_cast<uint64_t>(
+                                cached->GetMemoryUsage());
+                            result.effective_kind =
+                                PipelineMaterializerSourceKind::ArrowTable;
+                        } else {
+                            cache_load_error =
+                                "Arrow cache artifact could not be loaded";
                         }
+                    }
+                    if (cache_loaded) {
                         result.effective_dataset_name = materialized_name;
                         result.operators_applied =
                             validation.manifest.operators_applied;
@@ -488,9 +627,6 @@ MaterializeResult PipelineMaterializer::Materialize(
                                 artifact_size_error));
                         const uint64_t safe_artifact_bytes =
                             artifact_size_error ? 0 : artifact_bytes;
-                        const uint64_t expanded_bytes =
-                            static_cast<uint64_t>(cached->GetMemoryUsage());
-
                         std::ostringstream cache_message;
                         cache_message
                             << "Preprocessing skipped: reused cached "
@@ -534,8 +670,10 @@ MaterializeResult PipelineMaterializer::Materialize(
                         return result;
                     }
                     result.cache_status = MaterializationCacheStatus::Corrupt;
-                    result.cache_message =
-                        "cached materialization artifact could not be loaded";
+                    result.cache_message = cache_load_error.empty()
+                        ? "cached materialization artifact could not be registered"
+                        : "cached materialization artifact could not be loaded: " +
+                              cache_load_error;
                 }
             } else if (std::filesystem::exists(manifest_path)) {
                 result.cache_status = MaterializationCacheStatus::Corrupt;
@@ -593,21 +731,43 @@ MaterializeResult PipelineMaterializer::Materialize(
     }
 
     result.effective_dataset_name = materialized_name;
+    const bool sparse_result = static_cast<bool>(table_result.sparse_dataset);
+    result.effective_kind = sparse_result
+        ? PipelineMaterializerSourceKind::SparseFeatureDataset
+        : PipelineMaterializerSourceKind::ArrowTable;
 
     if (cache_enabled) {
         std::filesystem::path artifact_path;
         std::string cache_error;
-        if (ExportCachedArtifact(table_result.table, materialized_name,
-                                 cache_config, result.cache_key,
-                                 artifact_path, &cache_error)) {
+        bool artifact_saved = false;
+        if (sparse_result) {
+            artifact_path = SparseCacheArtifactPath(
+                cache_config, result.cache_key);
+            const auto status = SparseFeatureDatasetCache::SaveAtomically(
+                *table_result.sparse_dataset, artifact_path.string());
+            artifact_saved = status.ok();
+            if (!artifact_saved) cache_error = status.ToString();
+        } else {
+            artifact_saved = ExportCachedArtifact(
+                table_result.table, materialized_name, cache_config,
+                result.cache_key, artifact_path, &cache_error);
+        }
+        if (artifact_saved) {
             MaterializationCacheManifest manifest;
             manifest.cache_key = result.cache_key;
             manifest.source_dataset_name = source_dataset_name;
             manifest.effective_dataset_name = materialized_name;
             manifest.artifact_path = artifact_path.string();
-            manifest.artifact_format = cache_config.artifact_format;
-            manifest.row_count = table_result.table ? table_result.table->num_rows() : 0;
-            manifest.column_count = table_result.table ? table_result.table->num_columns() : 0;
+            manifest.artifact_format = sparse_result
+                ? kSparseCacheArtifactFormat
+                : cache_config.artifact_format;
+            manifest.row_count = sparse_result
+                ? table_result.sparse_dataset->GetNumRows()
+                : table_result.table ? table_result.table->num_rows() : 0;
+            manifest.column_count = sparse_result
+                ? table_result.sparse_dataset->GetNumFeatures() +
+                      (table_result.sparse_dataset->GetLabels() ? 1 : 0)
+                : table_result.table ? table_result.table->num_columns() : 0;
             result.cache_row_count = manifest.row_count;
             result.cache_column_count = manifest.column_count;
             manifest.schema_fingerprint = source_schema_fingerprint;
@@ -640,14 +800,18 @@ MaterializeResult PipelineMaterializer::Materialize(
     if (StopIfMaterializationCancelled(execution_context, result)) {
         return result;
     }
-    auto registered =
-        registry.RegisterArrowTable(table_result.table, materialized_name);
+    const bool registered = sparse_result
+        ? registry.RegisterSparseFeatureDataset(table_result.sparse_dataset)
+        : static_cast<bool>(
+              registry.RegisterArrowTable(table_result.table, materialized_name));
     if (!registered) {
         SetMaterializationFailure(
             result,
             MaterializationFailureKind::Error,
-            "PipelineMaterializer: RegisterArrowTable failed for '" +
-                materialized_name + "'");
+            "PipelineMaterializer: failed to register " +
+                std::string(sparse_result ? "SparseFeatureDataset" :
+                                            "ArrowTable") +
+                " for '" + materialized_name + "'");
         return result;
     }
 

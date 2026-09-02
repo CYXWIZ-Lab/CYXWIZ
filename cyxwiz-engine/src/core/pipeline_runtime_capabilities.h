@@ -147,6 +147,7 @@ enum class PipelineStorageBackend {
     ImageDataset,
     AudioDataset,
     TextDataset,
+    SparseFeatureDataset,
 };
 
 enum class PipelineRuntimeSupportMode {

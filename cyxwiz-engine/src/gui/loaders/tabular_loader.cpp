@@ -482,16 +482,22 @@ bool TabularLoader::LaunchTraining(
             config.dataset_roles.train.dataset_name);
         datasets.train_parquet = registry.GetParquetBackedDataset(
             config.dataset_roles.train.dataset_name);
+        datasets.train_sparse = registry.GetSparseFeatureDataset(
+            config.dataset_roles.train.dataset_name);
         if (config.dataset_roles.dev.IsSupplied()) {
             datasets.dev_arrow = registry.GetArrowDataset(
                 config.dataset_roles.dev.dataset_name);
             datasets.dev_parquet = registry.GetParquetBackedDataset(
+                config.dataset_roles.dev.dataset_name);
+            datasets.dev_sparse = registry.GetSparseFeatureDataset(
                 config.dataset_roles.dev.dataset_name);
         }
         if (config.dataset_roles.test.IsSupplied()) {
             datasets.test_arrow = registry.GetArrowDataset(
                 config.dataset_roles.test.dataset_name);
             datasets.test_parquet = registry.GetParquetBackedDataset(
+                config.dataset_roles.test.dataset_name);
+            datasets.test_sparse = registry.GetSparseFeatureDataset(
                 config.dataset_roles.test.dataset_name);
         }
         auto built = BuildResolvedTabularTrainingBatchers(
@@ -564,6 +570,36 @@ bool TabularLoader::LaunchTraining(
             std::move(node_editor_callback));
     }
 
+    if (auto sparse_dataset =
+            registry.GetSparseFeatureDataset(dataset_name)) {
+        if (!config.dataset_roles.train.IsSupplied()) {
+            config.dataset_roles.train.dataset_name = dataset_name;
+            config.dataset_roles.train.label_column =
+                sparse_dataset->GetLabelName();
+        }
+        ResolvedTabularDatasets datasets;
+        datasets.train_sparse = std::move(sparse_dataset);
+        auto built = BuildResolvedTabularTrainingBatchers(
+            config, datasets, batch_size);
+        if (!built.ok()) {
+            spdlog::error(
+                "TabularLoader: could not build sparse partitions: {}",
+                built.error_message);
+            return false;
+        }
+        spdlog::info(
+            "TabularLoader: Starting sparse CSR training: dataset={}, "
+            "epochs={}, batch_size={}, features={}, label={}",
+            dataset_name, epochs, batch_size,
+            datasets.train_sparse->GetNumFeatures(),
+            datasets.train_sparse->GetLabelName());
+        return tm.StartTrainingExternal(
+            std::move(config),
+            TakeResolvedExternalBatchers(std::move(built.batchers)),
+            epochs, batch_size, plot_panel,
+            std::move(node_editor_callback));
+    }
+
     // Tabular covers both backends: in-memory Arrow (the default fast
     // path) and disk-backed Parquet (picked by LoadTabularCSV when the
     // CSV was too big to fit in RAM). Check Arrow first since the
@@ -585,7 +621,7 @@ bool TabularLoader::LaunchTraining(
                                        epochs, batch_size, plot_panel,
                                        std::move(node_editor_callback));
     }
-    spdlog::error("TabularLoader: '{}' is registered but neither Arrow nor Parquet "
+    spdlog::error("TabularLoader: '{}' is registered but no supported tabular "
                   "dataset can be retrieved", dataset_name);
     return false;
 }

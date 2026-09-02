@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 namespace cyxwiz {
@@ -23,6 +24,18 @@ public:
 
     virtual Tensor Forward(const Tensor& input) = 0;
     virtual Tensor Backward(const Tensor& grad_output) = 0;
+    virtual bool SupportsSparseCsrInput() const { return false; }
+    virtual Tensor ForwardSparseCsr(
+        const LinearSparseCsrBatchView& /*input*/) {
+        throw std::runtime_error(
+            "Executable model does not support sparse CSR input");
+    }
+    virtual void BackwardSparseCsr(
+        const LinearSparseCsrBatchView& /*input*/,
+        const Tensor& /*grad_output*/) {
+        throw std::runtime_error(
+            "Executable model does not support sparse CSR input");
+    }
     virtual void SetTraining(bool training) = 0;
 
     virtual std::map<std::string, Tensor> GetParameters() = 0;
@@ -43,6 +56,12 @@ public:
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
+    bool SupportsSparseCsrInput() const override;
+    Tensor ForwardSparseCsr(
+        const LinearSparseCsrBatchView& input) override;
+    void BackwardSparseCsr(
+        const LinearSparseCsrBatchView& input,
+        const Tensor& grad_output) override;
     void SetTraining(bool training) override;
 
     std::map<std::string, Tensor> GetParameters() override;

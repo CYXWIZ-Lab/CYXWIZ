@@ -399,6 +399,7 @@ private:
      * @return Output tensor [batch_size, num_classes]
      */
     Tensor Forward(const Tensor& input);
+    Tensor ForwardBatch(const Batch& batch);
 
     /**
      * Compute loss between predictions and targets
@@ -415,6 +416,9 @@ private:
      * Backward pass through the model
      */
     void Backward(const Tensor& predictions, const Tensor& targets);
+    void BackwardBatch(const Tensor& predictions,
+                       const Tensor& targets,
+                       const Batch& batch);
 
     /**
      * Accumulate current model gradients and step optimizer at the configured

@@ -19,6 +19,21 @@ Tensor SequentialExecutableModel::Backward(const Tensor& grad_output) {
     return model_->Backward(grad_output);
 }
 
+bool SequentialExecutableModel::SupportsSparseCsrInput() const {
+    return model_->SupportsSparseCsrInput();
+}
+
+Tensor SequentialExecutableModel::ForwardSparseCsr(
+    const LinearSparseCsrBatchView& input) {
+    return model_->ForwardSparseCsr(input);
+}
+
+void SequentialExecutableModel::BackwardSparseCsr(
+    const LinearSparseCsrBatchView& input,
+    const Tensor& grad_output) {
+    model_->BackwardSparseCsr(input, grad_output);
+}
+
 void SequentialExecutableModel::SetTraining(bool training) {
     model_->SetTraining(training);
 }

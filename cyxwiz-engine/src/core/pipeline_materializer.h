@@ -15,6 +15,7 @@ class Table;
 namespace cyxwiz {
 
 class DataRegistry;
+class SparseFeatureDataset;
 
 enum class PipelineMaterializerSourceKind {
     Unknown,
@@ -23,6 +24,7 @@ enum class PipelineMaterializerSourceKind {
     ImageDataset,
     AudioDataset,
     TextDataset,
+    SparseFeatureDataset,
 };
 
 enum class MaterializationFailureKind {
@@ -64,6 +66,11 @@ struct MaterializeResult {
     int operators_applied = 0;
     PipelineMaterializerSourceKind source_kind =
         PipelineMaterializerSourceKind::Unknown;
+    // Typed identity of the effective registry artifact. Today this matches
+    // source_kind for pass-through and is ArrowTable after dense operator
+    // materialization. Sparse vectorizer emission will set it explicitly.
+    PipelineMaterializerSourceKind effective_kind =
+        PipelineMaterializerSourceKind::Unknown;
     bool skipped_unsupported_source = false;
     std::string unsupported_source_reason;
     std::string diagnostic_message;
@@ -93,6 +100,7 @@ struct MaterializeResult {
  */
 struct MaterializeTableResult {
     std::shared_ptr<arrow::Table> table;
+    std::shared_ptr<SparseFeatureDataset> sparse_dataset;
     int operators_applied = 0;
     bool memory_preflight_observed = false;
     PipelineOperatorProgress memory_preflight;

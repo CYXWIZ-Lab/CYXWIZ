@@ -256,6 +256,7 @@ set(BACKEND_HEADERS
     include/cyxwiz/layers/transformer.h
     include/cyxwiz/layers/upsampling.h
     include/cyxwiz/layers/linear.h
+    include/cyxwiz/layers/linear_sparse_csr.h
     include/cyxwiz/activations/relu.h
     include/cyxwiz/activations/sigmoid.h
     include/cyxwiz/activations/tanh.h

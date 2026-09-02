@@ -112,6 +112,7 @@ set(ENGINE_SOURCES
     src/core/route_qualification_service.cpp
     src/core/route_recommendation.cpp
     src/core/data_registry_core.cpp
+    src/core/data_registry_sparse.cpp
     src/core/data_registry.cpp
     src/core/data_registry_config.cpp
     src/core/data_registry_utils.cpp
@@ -132,6 +133,11 @@ set(ENGINE_SOURCES
     src/core/datasets/huggingface_dataset.cpp
     src/core/datasets/custom_dataset.cpp
     src/core/arrow_dataset.cpp
+    src/core/sparse_feature_dataset.cpp
+    src/core/sparse_feature_dataset_cache.cpp
+    src/core/sparse_feature_dataset_batcher.cpp
+    src/core/sparse_feature_dataset_batcher_balancing.cpp
+    src/core/sparse_training_batcher_setup.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/parquet_arrow_batcher.cpp
     src/core/image_dataset_batcher.cpp
@@ -219,6 +225,7 @@ set(ENGINE_SOURCES
     src/core/node_executors/differencing_operator.cpp        # Phase 4 Band 1
     src/core/node_executors/time_series_features_operator.cpp  # Phase 4 Band 1
     src/core/node_executors/text_tokenizer_operator.cpp      # Fix B Band 1
+    src/core/node_executors/text_feature_matrix.cpp          # Shared dense/CSR text output
     src/core/node_executors/tfidf_vectorizer_operator.cpp    # Tool-to-Node Band 1
     src/core/node_executors/count_vectorizer_operator.cpp    # Tool-to-Node Band 1
     src/core/node_executors/pca_operator.cpp                 # Tool-to-Node Band 1
@@ -593,6 +600,9 @@ set(ENGINE_HEADERS
     src/core/data_registry.h
     src/core/data_preview_service.h
     src/core/arrow_dataset.h
+    src/core/sparse_feature_dataset.h
+    src/core/sparse_feature_dataset_cache.h
+    src/core/sparse_feature_dataset_batcher.h
     src/core/arrow_converters.h
     src/core/duckdb_connector.h
     src/core/pipeline_executor.h  # Unified Canvas Phase 2: Moved from data_studio
@@ -644,6 +654,7 @@ set(ENGINE_HEADERS
     src/core/node_executors/differencing_operator.h
     src/core/node_executors/time_series_features_operator.h
     src/core/node_executors/text_tokenizer_operator.h
+    src/core/node_executors/text_feature_matrix.h
     src/core/node_executors/tfidf_vectorizer_operator.h
     src/core/node_executors/count_vectorizer_operator.h
     src/core/node_executors/pca_operator.h
@@ -1268,6 +1279,209 @@ set_target_properties(test_arrow_integration PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Sparse Feature Dataset Contract =====
+add_executable(test_sparse_feature_dataset
+    tests/test_sparse_feature_dataset.cpp
+    src/core/sparse_feature_dataset.cpp
+)
+
+target_include_directories(test_sparse_feature_dataset PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_sparse_feature_dataset PRIVATE
+    Arrow::arrow_shared
+)
+
+if(WIN32)
+    target_compile_definitions(test_sparse_feature_dataset PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_sparse_feature_dataset PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Sparse Feature Registry Lifecycle =====
+add_executable(test_sparse_feature_registry
+    tests/test_sparse_feature_registry.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_sparse.cpp
+    src/core/sparse_feature_dataset.cpp
+)
+
+target_include_directories(test_sparse_feature_registry PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_sparse_feature_registry PRIVATE
+    Arrow::arrow_shared
+    spdlog::spdlog
+    fmt::fmt
+)
+
+if(WIN32)
+    target_compile_definitions(test_sparse_feature_registry PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_sparse_feature_registry PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Sparse Feature Dataset Cache =====
+add_executable(test_sparse_feature_dataset_cache
+    tests/test_sparse_feature_dataset_cache.cpp
+    src/core/sparse_feature_dataset.cpp
+    src/core/sparse_feature_dataset_cache.cpp
+)
+
+target_include_directories(test_sparse_feature_dataset_cache PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_sparse_feature_dataset_cache PRIVATE
+    Arrow::arrow_shared
+)
+
+if(WIN32)
+    target_compile_definitions(test_sparse_feature_dataset_cache PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_sparse_feature_dataset_cache PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Shared Dense/CSR Text Feature Emission =====
+add_executable(test_text_feature_matrix
+    tests/test_text_feature_matrix.cpp
+    src/core/node_executors/text_feature_matrix.cpp
+    src/core/sparse_feature_dataset.cpp
+)
+
+target_include_directories(test_text_feature_matrix PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_text_feature_matrix PRIVATE
+    Arrow::arrow_shared
+)
+
+if(WIN32)
+    target_compile_definitions(test_text_feature_matrix PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_text_feature_matrix PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Sparse Text Vectorizer Representation Parity =====
+add_executable(test_sparse_text_vectorizers
+    tests/test_sparse_text_vectorizers.cpp
+    src/core/preprocessing_state.cpp
+    src/core/node_executors/count_vectorizer_operator.cpp
+    src/core/node_executors/tfidf_vectorizer_operator.cpp
+    src/core/node_executors/text_feature_matrix.cpp
+    src/core/sparse_feature_dataset.cpp
+)
+
+target_include_directories(test_sparse_text_vectorizers PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_sparse_text_vectorizers PRIVATE
+    Arrow::arrow_shared
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_sparse_text_vectorizers PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_sparse_text_vectorizers PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Sparse Feature Dataset Batcher =====
+add_executable(test_sparse_feature_dataset_batcher
+    tests/test_sparse_feature_dataset_batcher.cpp
+    src/core/sparse_feature_dataset.cpp
+    src/core/sparse_feature_dataset_batcher.cpp
+    src/core/sparse_feature_dataset_batcher_balancing.cpp
+)
+
+target_include_directories(test_sparse_feature_dataset_batcher PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_sparse_feature_dataset_batcher PRIVATE
+    Arrow::arrow_shared
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_sparse_feature_dataset_batcher PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_sparse_feature_dataset_batcher PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: ArrayFire Sparse Projection Contract =====
+add_executable(test_sparse_arrayfire_projection
+    tests/test_sparse_arrayfire_projection.cpp
+)
+
+target_link_libraries(test_sparse_arrayfire_projection PRIVATE
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_sparse_arrayfire_projection PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_sparse_arrayfire_projection PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+add_custom_target(copy_test_sparse_linear_pytorch_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_sparse_arrayfire_projection>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/sparse_linear_pytorch.json"
+        "$<TARGET_FILE_DIR:test_sparse_arrayfire_projection>/computation_truth_fixtures/sparse_linear_pytorch.json"
+    SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/sparse_linear_pytorch.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/reference/generate_sparse_linear_fixture.py"
+    VERBATIM
+)
+add_dependencies(test_sparse_arrayfire_projection
+    copy_test_sparse_linear_pytorch_fixture)
+
 # ===== Test: Debug Executor (Local Debug Mode - Commit 1) =====
 # Smoke test for BuildSequentialFromConfig extraction and MakeSyntheticBatch.
 # Compiles the extracted files directly so the test does not depend on the
@@ -1284,6 +1498,10 @@ add_executable(test_debug_executor
     src/core/checkpoint_payload_io.cpp
     src/core/checkpoint_manager.cpp
     src/core/training_batcher_setup.cpp
+    src/core/sparse_training_batcher_setup.cpp
+    src/core/sparse_feature_dataset.cpp
+    src/core/sparse_feature_dataset_batcher.cpp
+    src/core/sparse_feature_dataset_batcher_balancing.cpp
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
     src/core/debug_numerics.cpp
@@ -1608,6 +1826,8 @@ add_executable(test_computation_truth_tfidf_loss
     src/core/metric_learning_metrics.cpp
     src/core/preprocessing_state.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
+    src/core/node_executors/text_feature_matrix.cpp
+    src/core/sparse_feature_dataset.cpp
 )
 
 target_include_directories(test_computation_truth_tfidf_loss PRIVATE
@@ -1657,6 +1877,8 @@ add_executable(test_computation_truth_text_vectorizers
     src/core/preprocessing_state.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
+    src/core/node_executors/text_feature_matrix.cpp
+    src/core/sparse_feature_dataset.cpp
 )
 
 target_include_directories(test_computation_truth_text_vectorizers PRIVATE
@@ -1706,6 +1928,8 @@ add_executable(test_text_vectorizer_fitted_state
     src/core/preprocessing_state.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
+    src/core/node_executors/text_feature_matrix.cpp
+    src/core/sparse_feature_dataset.cpp
 )
 
 target_include_directories(test_text_vectorizer_fitted_state PRIVATE
@@ -1829,6 +2053,8 @@ add_executable(test_operator_configure_resets
     src/core/preprocessing_state.cpp
     src/core/node_executors/clustering_operators.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
+    src/core/node_executors/text_feature_matrix.cpp
+    src/core/sparse_feature_dataset.cpp
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
@@ -2100,6 +2326,8 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
+    src/core/node_executors/text_feature_matrix.cpp
+    src/core/sparse_feature_dataset.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
@@ -2208,6 +2436,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/arrow_dataset.cpp
     src/core/data_registry.cpp
     src/core/data_registry_core.cpp
+    src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
     src/core/data_convert_service.cpp
     src/core/data_analyzer.cpp
@@ -2222,6 +2451,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/crash_run_recorder.cpp
     src/core/pipeline_materializer.cpp
     src/core/materialization_cache.cpp
+    src/core/sparse_feature_dataset_cache.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/datasets/image_csv_dataset.cpp
@@ -2253,6 +2483,8 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
+    src/core/node_executors/text_feature_matrix.cpp
+    src/core/sparse_feature_dataset.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
@@ -2296,6 +2528,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/arrow_dataset.cpp
     src/core/data_registry.cpp
     src/core/data_registry_core.cpp
+    src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
     src/core/data_convert_service.cpp
     src/core/data_analyzer.cpp
@@ -2306,6 +2539,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/pipeline_executor.cpp
     src/core/pipeline_materializer.cpp
     src/core/materialization_cache.cpp
+    src/core/sparse_feature_dataset_cache.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/datasets/image_csv_dataset.cpp
@@ -2337,6 +2571,8 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
+    src/core/node_executors/text_feature_matrix.cpp
+    src/core/sparse_feature_dataset.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
@@ -2380,6 +2616,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/arrow_dataset.cpp
     src/core/data_registry.cpp
     src/core/data_registry_core.cpp
+    src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
     src/core/data_convert_service.cpp
     src/core/data_analyzer.cpp
@@ -2390,6 +2627,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/pipeline_executor.cpp
     src/core/pipeline_materializer.cpp
     src/core/materialization_cache.cpp
+    src/core/sparse_feature_dataset_cache.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/datasets/image_csv_dataset.cpp
@@ -2421,6 +2659,8 @@ add_executable(test_data_convert_pipeline_input
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
+    src/core/node_executors/text_feature_matrix.cpp
+    src/core/sparse_feature_dataset.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
@@ -2920,8 +3160,10 @@ add_executable(test_graph_training_sequence_preflight
     src/core/crash_run_recorder.cpp
     src/core/pipeline_materializer.cpp
     src/core/materialization_cache.cpp
+    src/core/sparse_feature_dataset_cache.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/pipeline_table_materializer.cpp
+    src/core/data_registry_sparse.cpp
     src/core/data_analyzer.cpp
     src/data/data_table.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
@@ -2950,6 +3192,8 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
+    src/core/node_executors/text_feature_matrix.cpp
+    src/core/sparse_feature_dataset.cpp
     src/core/node_executors/time_series_analysis_operators.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
@@ -3001,16 +3245,24 @@ add_executable(test_text_gui_training_launch
     src/core/sequence_arrow_batcher.cpp
     src/core/pipeline_materializer.cpp
     src/core/materialization_cache.cpp
+    src/core/sparse_feature_dataset_cache.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/pipeline_table_materializer.cpp
+    src/core/preprocessing_state.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/count_vectorizer_operator.cpp
+    src/core/node_executors/text_feature_matrix.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/data_registry_core.cpp
+    src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
+    src/core/sparse_feature_dataset.cpp
+    src/core/sparse_feature_dataset_batcher.cpp
+    src/core/sparse_feature_dataset_batcher_balancing.cpp
     src/core/dataset_base.cpp
     src/core/parquet_backed_dataset.cpp
 )
@@ -3374,6 +3626,10 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/regression_target_transform.cpp
     src/core/preprocessing_state.cpp
     src/core/training_batcher_setup.cpp
+    src/core/sparse_training_batcher_setup.cpp
+    src/core/sparse_feature_dataset.cpp
+    src/core/sparse_feature_dataset_batcher.cpp
+    src/core/sparse_feature_dataset_batcher_balancing.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
@@ -3425,6 +3681,10 @@ set_target_properties(test_saved_ner_sequence_smoke PROPERTIES
 add_executable(test_training_batcher_setup
     tests/test_training_batcher_setup.cpp
     src/core/training_batcher_setup.cpp
+    src/core/sparse_training_batcher_setup.cpp
+    src/core/sparse_feature_dataset.cpp
+    src/core/sparse_feature_dataset_batcher.cpp
+    src/core/sparse_feature_dataset_batcher_balancing.cpp
     src/core/classification_decision.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
@@ -3807,6 +4067,10 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     src/core/regression_target_transform.cpp
     src/core/preprocessing_state.cpp
     src/core/training_batcher_setup.cpp
+    src/core/sparse_training_batcher_setup.cpp
+    src/core/sparse_feature_dataset.cpp
+    src/core/sparse_feature_dataset_batcher.cpp
+    src/core/sparse_feature_dataset_batcher_balancing.cpp
     src/core/classification_decision.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
@@ -3861,6 +4125,13 @@ add_executable(test_training_executor_arrow_parquet
     ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
 )
 configure_training_executor_harness(test_training_executor_arrow_parquet)
+
+# ===== Test: Sparse first-projection TrainingExecutor lifecycle =====
+add_executable(test_sparse_training_executor
+    tests/test_sparse_training_executor.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
+)
+configure_training_executor_harness(test_sparse_training_executor)
 
 # ===== Test: Legacy DatasetHandle cooperative lifecycle =====
 add_executable(test_training_executor_dataset_handle
@@ -4240,12 +4511,18 @@ add_executable(test_pipeline_materializer_cache
     tests/test_pipeline_materializer_cache.cpp
     src/core/pipeline_materializer.cpp
     src/core/materialization_cache.cpp
+    src/core/sparse_feature_dataset_cache.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/count_vectorizer_operator.cpp
+    src/core/node_executors/text_feature_matrix.cpp
+    src/core/preprocessing_state.cpp
     src/core/arrow_dataset.cpp
     src/core/data_registry_core.cpp
+    src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
+    src/core/sparse_feature_dataset.cpp
     src/core/dataset_base.cpp
     src/core/parquet_backed_dataset.cpp
 )

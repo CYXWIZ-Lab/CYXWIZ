@@ -377,6 +377,9 @@ public:
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
+    Tensor ForwardSparseCsr(const LinearSparseCsrBatchView& input);
+    void BackwardSparseCsr(const LinearSparseCsrBatchView& input,
+                           const Tensor& grad_output);
     std::map<std::string, Tensor> GetParameters() override;
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;
@@ -1174,12 +1177,21 @@ public:
      */
     Tensor Forward(const Tensor& input);
 
+    /** Execute a CSR input through a Linear first module, then continue dense. */
+    Tensor ForwardSparseCsr(const LinearSparseCsrBatchView& input);
+
     /**
      * @brief Backward pass through all layers (reverse order)
      * @param grad_output Gradient from loss function
      * @return Gradient w.r.t input (usually not needed)
      */
     Tensor Backward(const Tensor& grad_output);
+
+    /** Backpropagate to, and through, the Linear first module without dX. */
+    void BackwardSparseCsr(const LinearSparseCsrBatchView& input,
+                           const Tensor& grad_output);
+
+    bool SupportsSparseCsrInput() const;
 
     /**
      * @brief Get all trainable parameters

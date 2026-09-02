@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -16,6 +17,61 @@
 
 namespace cyxwiz {
 namespace {
+
+void ValidateLinearSparseCsrBatchView(
+    const LinearSparseCsrBatchView& input,
+    size_t expected_columns) {
+    if (input.rows == 0 || input.columns == 0) {
+        throw std::invalid_argument(
+            "LinearLayer sparse CSR input must have positive dimensions");
+    }
+    if (input.columns != expected_columns) {
+        throw std::invalid_argument(
+            "LinearLayer sparse CSR input features mismatch. Expected " +
+            std::to_string(expected_columns) + ", got " +
+            std::to_string(input.columns));
+    }
+    if (input.rows > static_cast<size_t>(
+            (std::numeric_limits<int32_t>::max)()) ||
+        input.columns > static_cast<size_t>(
+            (std::numeric_limits<int32_t>::max)()) ||
+        input.nnz > static_cast<size_t>(
+            (std::numeric_limits<int32_t>::max)())) {
+        throw std::length_error(
+            "LinearLayer sparse CSR dimensions exceed the int32 boundary");
+    }
+    if (input.row_offsets == nullptr) {
+        throw std::invalid_argument(
+            "LinearLayer sparse CSR row offsets are null");
+    }
+    if (input.nnz > 0 &&
+        (input.column_indices == nullptr || input.values == nullptr)) {
+        throw std::invalid_argument(
+            "LinearLayer sparse CSR values or column indices are null");
+    }
+    if (input.row_offsets[0] != 0 ||
+        input.row_offsets[input.rows] != static_cast<int32_t>(input.nnz)) {
+        throw std::invalid_argument(
+            "LinearLayer sparse CSR row offsets do not bound nnz");
+    }
+    int32_t previous = 0;
+    for (size_t row = 0; row <= input.rows; ++row) {
+        const int32_t offset = input.row_offsets[row];
+        if (offset < previous || offset < 0 ||
+            static_cast<size_t>(offset) > input.nnz) {
+            throw std::invalid_argument(
+                "LinearLayer sparse CSR row offsets are not canonical");
+        }
+        previous = offset;
+    }
+    for (size_t index = 0; index < input.nnz; ++index) {
+        const int32_t column = input.column_indices[index];
+        if (column < 0 || static_cast<size_t>(column) >= input.columns) {
+            throw std::invalid_argument(
+                "LinearLayer sparse CSR column index is out of range");
+        }
+    }
+}
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 void LogLinearInitializationFallbackOnce(
@@ -343,6 +399,121 @@ Tensor LinearLayer::Forward(const Tensor& input) {
     }
 }
 
+Tensor LinearLayer::ForwardSparseCsr(
+    const LinearSparseCsrBatchView& input) {
+    ValidateLinearSparseCsrBatchView(input, in_features_);
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsCurrentArrayFireBackendAvailable()) {
+        const std::string context = BuildLinearRuntimeFallbackContext(
+            in_features_, out_features_, input.rows, use_bias_);
+        if (ShouldForceArrayFireBackendFallbackForTesting(
+                "LinearLayer::ForwardSparseCsr")) {
+            RecordLinearRuntimeFallback(
+                "LinearLayer::ForwardSparseCsr",
+                BackendFallbackReason::GpuBackendException,
+                "forced ArrayFire backend fallback test hook",
+                context,
+                {input.rows, input.columns},
+                {input.rows, out_features_},
+                in_features_,
+                out_features_,
+                use_bias_);
+        } else {
+            try {
+                af::array output_gpu;
+                if (input.nnz == 0) {
+                    output_gpu = af::constant(
+                        0.0f,
+                        static_cast<dim_t>(input.rows),
+                        static_cast<dim_t>(out_features_),
+                        f32);
+                } else {
+                    af::array sparse_input = af::sparse(
+                        static_cast<dim_t>(input.rows),
+                        static_cast<dim_t>(input.columns),
+                        static_cast<dim_t>(input.nnz),
+                        input.values,
+                        input.row_offsets,
+                        input.column_indices,
+                        f32,
+                        AF_STORAGE_CSR,
+                        afHost);
+                    af::array weight_transposed = af::transpose(
+                        weight_.GetArrayRowMajor2D().as(af::dtype::f32));
+                    output_gpu = af::matmul(
+                        sparse_input,
+                        weight_transposed,
+                        AF_MAT_NONE,
+                        AF_MAT_NONE);
+                }
+                if (use_bias_) {
+                    af::array bias_gpu = af::moddims(
+                        bias_.GetArray(),
+                        1,
+                        static_cast<dim_t>(out_features_)).as(af::dtype::f32);
+                    output_gpu = output_gpu + af::tile(
+                        bias_gpu,
+                        static_cast<unsigned int>(input.rows),
+                        1);
+                }
+                output_gpu.eval();
+                return Tensor::FromArrayRowMajor2D(output_gpu);
+            } catch (const af::exception& e) {
+                const BackendFallbackReason reason =
+                    ClassifyArrayFireBackendFallbackReason(e.what());
+                RecordLinearRuntimeFallback(
+                    "LinearLayer::ForwardSparseCsr",
+                    reason,
+                    e.what(),
+                    context,
+                    {input.rows, input.columns},
+                    {input.rows, out_features_},
+                    in_features_,
+                    out_features_,
+                    use_bias_);
+                if (ShouldLogArrayFireBackendFallbackOnce(
+                        "LinearLayer::ForwardSparseCsr", reason, context)) {
+                    spdlog::warn("{}", BuildLinearRuntimeFallbackDetail(
+                        "LinearLayer::ForwardSparseCsr",
+                        reason,
+                        e.what(),
+                        context));
+                }
+            }
+        }
+    }
+#endif
+
+    Tensor output({input.rows, out_features_}, DataType::Float32);
+    float* output_data = output.MutableData<float>();
+    const float* weight_data = weight_.ReadData<float>();
+    const float* bias_data = use_bias_ ? bias_.ReadData<float>() : nullptr;
+    for (size_t row = 0; row < input.rows; ++row) {
+        for (size_t output_feature = 0;
+             output_feature < out_features_;
+             ++output_feature) {
+            output_data[row * out_features_ + output_feature] =
+                use_bias_ ? bias_data[output_feature] : 0.0f;
+        }
+        const size_t begin = static_cast<size_t>(input.row_offsets[row]);
+        const size_t end = static_cast<size_t>(input.row_offsets[row + 1]);
+        for (size_t index = begin; index < end; ++index) {
+            const size_t column =
+                static_cast<size_t>(input.column_indices[index]);
+            const float value = input.values[index];
+            for (size_t output_feature = 0;
+                 output_feature < out_features_;
+                 ++output_feature) {
+                output_data[row * out_features_ + output_feature] +=
+                    value * weight_data[
+                        output_feature * in_features_ + column];
+            }
+        }
+    }
+    return output;
+}
+
 Tensor LinearLayer::Backward(const Tensor& grad_output) {
     const auto& grad_shape = grad_output.Shape();
     const auto& input_shape = input_cache_.Shape();
@@ -518,6 +689,134 @@ Tensor LinearLayer::Backward(const Tensor& grad_output) {
         }
 
         return grad_input;
+    }
+}
+
+void LinearLayer::BackwardSparseCsr(
+    const LinearSparseCsrBatchView& input,
+    const Tensor& grad_output) {
+    ValidateLinearSparseCsrBatchView(input, in_features_);
+    const auto& grad_shape = grad_output.Shape();
+    if (grad_shape != std::vector<size_t>{input.rows, out_features_}) {
+        throw std::invalid_argument(
+            "LinearLayer sparse CSR grad_output must have shape [" +
+            std::to_string(input.rows) + ", " +
+            std::to_string(out_features_) + "]");
+    }
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsCurrentArrayFireBackendAvailable()) {
+        const std::string context = BuildLinearRuntimeFallbackContext(
+            in_features_, out_features_, input.rows, use_bias_);
+        if (ShouldForceArrayFireBackendFallbackForTesting(
+                "LinearLayer::BackwardSparseCsr")) {
+            RecordLinearRuntimeFallback(
+                "LinearLayer::BackwardSparseCsr",
+                BackendFallbackReason::GpuBackendException,
+                "forced ArrayFire backend fallback test hook",
+                context,
+                {input.rows, input.columns},
+                {out_features_, in_features_},
+                in_features_,
+                out_features_,
+                use_bias_);
+        } else {
+            try {
+                af::array grad_gpu =
+                    grad_output.GetArrayRowMajor2D().as(af::dtype::f32);
+                af::array weight_grad_gpu;
+                if (input.nnz == 0) {
+                    weight_grad_gpu = af::constant(
+                        0.0f,
+                        static_cast<dim_t>(out_features_),
+                        static_cast<dim_t>(in_features_),
+                        f32);
+                } else {
+                    af::array sparse_input = af::sparse(
+                        static_cast<dim_t>(input.rows),
+                        static_cast<dim_t>(input.columns),
+                        static_cast<dim_t>(input.nnz),
+                        input.values,
+                        input.row_offsets,
+                        input.column_indices,
+                        f32,
+                        AF_STORAGE_CSR,
+                        afHost);
+                    af::array feature_by_output = af::matmul(
+                        sparse_input,
+                        grad_gpu,
+                        AF_MAT_TRANS,
+                        AF_MAT_NONE);
+                    weight_grad_gpu = af::transpose(feature_by_output);
+                }
+                weight_grad_gpu.eval();
+                weight_grad_ = Tensor::FromArrayRowMajor2D(weight_grad_gpu);
+
+                if (use_bias_) {
+                    af::array bias_grad_gpu = af::flat(af::sum(grad_gpu, 0));
+                    bias_grad_gpu.eval();
+                    bias_grad_ = Tensor(bias_grad_gpu);
+                }
+                return;
+            } catch (const af::exception& e) {
+                const BackendFallbackReason reason =
+                    ClassifyArrayFireBackendFallbackReason(e.what());
+                RecordLinearRuntimeFallback(
+                    "LinearLayer::BackwardSparseCsr",
+                    reason,
+                    e.what(),
+                    context,
+                    {input.rows, input.columns},
+                    {out_features_, in_features_},
+                    in_features_,
+                    out_features_,
+                    use_bias_);
+                if (ShouldLogArrayFireBackendFallbackOnce(
+                        "LinearLayer::BackwardSparseCsr", reason, context)) {
+                    spdlog::warn("{}", BuildLinearRuntimeFallbackDetail(
+                        "LinearLayer::BackwardSparseCsr",
+                        reason,
+                        e.what(),
+                        context));
+                }
+            }
+        }
+    }
+#endif
+
+    const float* grad_data = grad_output.ReadData<float>();
+    float* weight_grad_data = weight_grad_.MutableData<float>();
+    std::memset(
+        weight_grad_data,
+        0,
+        sizeof(float) * out_features_ * in_features_);
+    if (use_bias_) {
+        float* bias_grad_data = bias_grad_.MutableData<float>();
+        std::memset(bias_grad_data, 0, sizeof(float) * out_features_);
+        for (size_t row = 0; row < input.rows; ++row) {
+            for (size_t output_feature = 0;
+                 output_feature < out_features_;
+                 ++output_feature) {
+                bias_grad_data[output_feature] +=
+                    grad_data[row * out_features_ + output_feature];
+            }
+        }
+    }
+    for (size_t row = 0; row < input.rows; ++row) {
+        const size_t begin = static_cast<size_t>(input.row_offsets[row]);
+        const size_t end = static_cast<size_t>(input.row_offsets[row + 1]);
+        for (size_t index = begin; index < end; ++index) {
+            const size_t column =
+                static_cast<size_t>(input.column_indices[index]);
+            const float value = input.values[index];
+            for (size_t output_feature = 0;
+                 output_feature < out_features_;
+                 ++output_feature) {
+                weight_grad_data[
+                    output_feature * in_features_ + column] +=
+                    grad_data[row * out_features_ + output_feature] * value;
+            }
+        }
     }
 }
 

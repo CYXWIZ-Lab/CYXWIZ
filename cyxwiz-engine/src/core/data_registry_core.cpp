@@ -29,6 +29,19 @@ std::string DataRegistry::GenerateUniqueName(const std::string& base_name) {
     return name + "_" + std::to_string(suffix);
 }
 
+void DataRegistry::ForgetTabularSourcePathUnlocked(const std::string& name) {
+    auto it = tabular_source_paths_by_name_.find(name);
+    if (it == tabular_source_paths_by_name_.end()) return;
+    tabular_dataset_by_source_path_.erase(it->second);
+    tabular_source_paths_by_name_.erase(it);
+}
+
+bool DataRegistry::IsSparseFeatureDataset(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return sparse_feature_datasets_.find(name) !=
+        sparse_feature_datasets_.end();
+}
+
 void DataRegistry::UnloadDataset(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
 

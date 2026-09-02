@@ -7,6 +7,7 @@
 #include "../core/parquet_backed_dataset.h"
 #include "../core/pipeline_materializer.h"
 #include "../core/profiler_trace.h"
+#include "../core/sparse_feature_dataset.h"
 #include "../core/process_memory_snapshot.h"
 #include "../core/training_trace_collector.h"
 #include "panels/training_plot_panel.h"
@@ -416,6 +417,15 @@ std::string ResolveRuntimeArrowLabelColumn(
     cyxwiz::DataRegistry& registry,
     const std::string& dataset_name,
     const std::string& requested_label) {
+    if (auto sparse_ds = registry.GetSparseFeatureDataset(dataset_name)) {
+        if (!requested_label.empty() &&
+            requested_label == sparse_ds->GetLabelName()) {
+            return requested_label;
+        }
+        return sparse_ds->GetLabels()
+            ? sparse_ds->GetLabelName()
+            : requested_label;
+    }
     auto arrow_ds = registry.GetArrowDataset(dataset_name);
     auto parquet_ds = registry.GetParquetBackedDataset(dataset_name);
     auto schema = arrow_ds ? arrow_ds->GetSchema()
@@ -472,6 +482,20 @@ void ReconcileRuntimeTabularFeatureWidth(
     cyxwiz::TrainingConfiguration& config) {
     if (config.sequence_batch.enabled || config.is_time_series) return;
 
+    if (auto sparse_ds = registry.GetSparseFeatureDataset(dataset_name)) {
+        const size_t feature_count = static_cast<size_t>(
+            sparse_ds->GetNumFeatures());
+        if (feature_count > 0 && config.input_size != feature_count) {
+            spdlog::warn(
+                "StartTrainingFromGraph: corrected compiled sparse input "
+                "width {} -> {} from CSR artifact '{}'",
+                config.input_size, feature_count, dataset_name);
+            config.input_shape = {feature_count};
+            config.input_size = feature_count;
+        }
+        return;
+    }
+
     std::shared_ptr<arrow::Schema> schema;
     if (auto arrow_ds = registry.GetArrowDataset(dataset_name)) {
         schema = arrow_ds->GetSchema();
@@ -508,6 +532,24 @@ std::shared_ptr<arrow::Schema> FindTabularSchema(
     }
     if (auto parquet_ds = registry.GetParquetBackedDataset(dataset_name)) {
         return parquet_ds->GetSchema();
+    }
+    if (auto sparse_ds = registry.GetSparseFeatureDataset(dataset_name)) {
+        std::vector<std::shared_ptr<arrow::Field>> fields;
+        fields.reserve(static_cast<size_t>(sparse_ds->GetNumFeatures()) + 1);
+        const auto& names = sparse_ds->GetFeatureNames();
+        for (int64_t feature = 0;
+             feature < sparse_ds->GetNumFeatures(); ++feature) {
+            fields.push_back(arrow::field(
+                names.empty()
+                    ? "feature_" + std::to_string(feature)
+                    : names[static_cast<size_t>(feature)],
+                arrow::float32(), false));
+        }
+        if (const auto& labels = sparse_ds->GetLabels()) {
+            fields.push_back(arrow::field(
+                sparse_ds->GetLabelName(), labels->type()));
+        }
+        return arrow::schema(std::move(fields));
     }
     return nullptr;
 }
@@ -1289,7 +1331,8 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
                                               GraphTrainingLaunchResult& launch_result) {
         if (!role.IsSupplied()) return true;
         if (registry.GetArrowDataset(role.dataset_name) ||
-            registry.GetParquetBackedDataset(role.dataset_name)) {
+            registry.GetParquetBackedDataset(role.dataset_name) ||
+            registry.GetSparseFeatureDataset(role.dataset_name)) {
             return true;
         }
         SetBlockedStatus(launch_result,

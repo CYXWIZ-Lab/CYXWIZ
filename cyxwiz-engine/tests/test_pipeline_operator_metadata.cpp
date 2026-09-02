@@ -2103,12 +2103,15 @@ void CheckTextVectorizerSentimentFamilyContract(
                                    "fit_transform") &&
                   HasEnumValue(vectorizer, "operation_mode",
                                "transform_only") &&
+                  ParameterMatches(vectorizer, "output_format", "dropdown",
+                                   "dense") &&
+                  HasEnumValue(vectorizer, "output_format", "sparse") &&
                   ParameterMatches(vectorizer, "save_state", "bool",
                                    "false") &&
                   ParameterMatches(vectorizer, "state_path", "file", "") &&
                   ParameterMatches(vectorizer, "state_overwrite", "bool",
                                    "false"),
-              "vectorizer should expose one output, one canonical n-gram control, and fitted-state workflow");
+              "vectorizer should expose one output, dense/sparse format, one canonical n-gram control, and fitted-state workflow");
 
         auto legacy_op =
             cyxwiz::PipelineOperatorFactory::Instance().Create(vectorizer->type);
@@ -3875,6 +3878,7 @@ int main() {
             "ImageDataset",
             "AudioDataset",
             "TextDataset",
+            "SparseFeatureDataset",
         };
         for (const auto& capability :
              cyxwiz::GetPipelineMaterializerStorageBackendCapabilities()) {
@@ -3922,7 +3926,7 @@ int main() {
               "exactly one materializer storage backend should be supported today");
         Check(materializer_storage_backends.size() ==
                   expected_materializer_storage_backends.size(),
-              "materializer storage scope should pin Arrow plus four pass-through domains");
+              "materializer storage scope should pin Arrow plus five pass-through domains");
     }
 
     for (const auto& capability : cyxwiz::GetPipelineOperatorRuntimeCapabilities()) {

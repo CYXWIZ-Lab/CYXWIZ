@@ -2,14 +2,35 @@
 
 #include "data_registry.h"
 #include "arrow_dataset.h"
+#include <cyxwiz/layers/linear_sparse_csr.h>
 #include <cyxwiz/tensor.h>
 #include <cstdint>
+#include <optional>
 #include <vector>
 #include <random>
 #include <memory>
 #include <string>
 
 namespace cyxwiz {
+
+/** Owning, batch-local CSR payload for a first Linear projection. */
+struct SparseFeatureBatch {
+    size_t rows = 0;
+    size_t columns = 0;
+    std::vector<int32_t> row_offsets;
+    std::vector<int32_t> column_indices;
+    std::vector<float> values;
+
+    LinearSparseCsrBatchView View() const noexcept {
+        return {
+            rows,
+            columns,
+            values.size(),
+            row_offsets.data(),
+            column_indices.data(),
+            values.data()};
+    }
+};
 
 struct BatchColumnInspection {
     std::string name;
@@ -45,11 +66,17 @@ namespace transforms {
  */
 struct Batch {
     Tensor data;          // [batch_size, ...input_dims] - input features
+    // Present only when a sparse feature batch is routed directly into the
+    // model's first Linear projection. In that mode data remains empty.
+    std::optional<SparseFeatureBatch> sparse_features;
     Tensor labels;        // [batch_size] or [batch_size, num_classes] if one-hot
     size_t size = 0;      // Actual batch size (may be < requested for last batch)
     BatchInspectionMetadata inspection;
 
     bool IsValid() const { return size > 0; }
+    bool HasSparseFeatures() const {
+        return sparse_features.has_value();
+    }
 };
 
 /**
@@ -172,6 +199,7 @@ public:
     virtual void SetFlatten(bool flatten) = 0;
     virtual void SetBatchInspectionEnabled(bool /*enable*/) {}
     virtual void SetDropLast(bool /*drop_last*/) {}
+    virtual void SetSparseFeatureOutput(bool /*enable*/) {}
 
     // Switch between train/val/test index sets. Default: no-op (batchers
     // that already have a separate validation instance don't need this).

@@ -2,6 +2,7 @@
 #include "../src/core/classification_decision.h"
 #include "../src/core/model_builder.h"
 #include "../src/core/parquet_backed_dataset.h"
+#include "../src/core/sparse_feature_dataset.h"
 #include "../src/core/test_dataset_selection.h"
 #include "../src/core/training_batcher_setup.h"
 #include "../src/core/training_executor.h"
@@ -264,6 +265,26 @@ cyxwiz::TrainingConfiguration MakeConfig() {
     return config;
 }
 
+std::shared_ptr<cyxwiz::SparseFeatureDataset> MakeSparseDataset(
+    const std::string& name,
+    std::vector<std::string> feature_names = {
+        "alpha", "beta", "delta", "gamma"}) {
+    cyxwiz::SparseFeatureDataset::Contents contents;
+    contents.name = name;
+    contents.num_rows = 6;
+    contents.num_features = 4;
+    contents.row_offsets = {0, 1, 2, 2, 3, 4, 6};
+    contents.column_indices = {0, 1, 2, 3, 0, 3};
+    contents.values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    contents.feature_names = std::move(feature_names);
+    contents.labels = std::make_shared<arrow::ChunkedArray>(
+        FinishIntArray({0, 0, 0, 0, 1, 1}));
+    contents.label_name = "label";
+    auto dataset = cyxwiz::SparseFeatureDataset::Create(std::move(contents));
+    Check(dataset.ok(), dataset.status().ToString());
+    return dataset.ValueOrDie();
+}
+
 cyxwiz::TrainingConfiguration MakeTimeSeriesConfig() {
     auto config = MakeConfig();
     config.is_time_series = true;
@@ -314,6 +335,27 @@ void CheckFeatureAndLabelShapes(const cyxwiz::Batch& batch,
     Check(batch.labels.Shape().size() == 2, label + " label tensor should be 2D");
     Check(batch.labels.Shape()[0] == batch_rows, label + " label rows should match");
     Check(batch.labels.Shape()[1] == label_width, label + " label width should match");
+}
+
+void CheckSparseFeatureAndLabelShapes(const cyxwiz::Batch& batch,
+                                      size_t batch_rows,
+                                      size_t feature_width,
+                                      size_t label_width,
+                                      const std::string& label) {
+    Check(batch.IsValid() && batch.HasSparseFeatures(),
+          label + " batch should contain typed sparse features");
+    Check(batch.data.Shape().empty(),
+          label + " batch must not allocate a dense feature Tensor");
+    Check(batch.sparse_features->rows == batch_rows,
+          label + " sparse batch dimension should match");
+    Check(batch.sparse_features->columns == feature_width,
+          label + " sparse feature width should match");
+    Check(batch.labels.Shape().size() == 2,
+          label + " label tensor should be 2D");
+    Check(batch.labels.Shape()[0] == batch_rows,
+          label + " label rows should match");
+    Check(batch.labels.Shape()[1] == label_width,
+          label + " label width should match");
 }
 
 std::vector<size_t> CountOneHotLabels(cyxwiz::IBatcher& batcher,
@@ -1013,6 +1055,91 @@ int main(int argc, char** argv) {
               all_external_build.batchers.num_test_samples == 4,
           "Train+Dev+Test typed partitions must preserve every external role in full");
 
+    auto sparse_config = MakeConfig();
+    sparse_config.has_data_split = true;
+    sparse_config.train_ratio = 2.0f / 3.0f;
+    sparse_config.val_ratio = 1.0f / 6.0f;
+    sparse_config.test_ratio = 1.0f / 6.0f;
+    sparse_config.drop_last = true;
+    sparse_config.prefetch_factor = 2;
+    auto sparse_batchers = cyxwiz::BuildSparseTrainingBatchers(
+        sparse_config, MakeSparseDataset("sparse_direct"), /*batch_size=*/3);
+    Check(sparse_batchers.sparse_train != nullptr &&
+              sparse_batchers.sparse_val != nullptr &&
+              sparse_batchers.sparse_test != nullptr,
+          "sparse training setup must retain typed Train/Dev/Test owners");
+    Check(sparse_batchers.prefetch_train != nullptr &&
+              sparse_batchers.train == sparse_batchers.prefetch_train.get(),
+          "sparse training setup must attach prefetch after typed ownership");
+    Check(sparse_batchers.num_train_samples == 4 &&
+              sparse_batchers.num_val_samples == 1 &&
+              sparse_batchers.num_test_samples == 1 &&
+              sparse_batchers.train->GetNumBatches() == 1,
+          "sparse split and drop-last counts must be exact");
+    auto sparse_batch = sparse_batchers.train->GetNextBatch();
+    CheckSparseFeatureAndLabelShapes(
+        sparse_batch, 3, 4, 2, "sparse training");
+
+    auto sparse_roles_config = MakeConfig();
+    sparse_roles_config.dataset_roles.train = {
+        "sparse_train", "label", 40, true};
+    sparse_roles_config.dataset_roles.dev = {
+        "sparse_dev", "label", 41, true};
+    sparse_roles_config.dataset_roles.test = {
+        "sparse_test", "label", 42, true};
+    sparse_roles_config.dataset_roles.policy.train_ratio = 1.0f;
+    sparse_roles_config.dataset_roles.policy.dev_ratio = 0.0f;
+    sparse_roles_config.dataset_roles.policy.test_ratio = 0.0f;
+    sparse_roles_config.prefetch_factor = 1;
+    cyxwiz::ResolvedTabularDatasets sparse_role_datasets;
+    sparse_role_datasets.train_sparse = MakeSparseDataset("sparse_train");
+    sparse_role_datasets.dev_sparse = MakeSparseDataset("sparse_dev");
+    sparse_role_datasets.test_sparse = MakeSparseDataset("sparse_test");
+    auto sparse_roles_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+        sparse_roles_config, sparse_role_datasets, /*batch_size=*/2);
+    Check(sparse_roles_build.ok(), sparse_roles_build.error_message);
+    Check(sparse_roles_build.batchers.num_train_samples == 6 &&
+              sparse_roles_build.batchers.num_val_samples == 6 &&
+              sparse_roles_build.batchers.num_test_samples == 6,
+          "resolved sparse roles must preserve every supplied role row");
+    Check(sparse_roles_config.dataset_roles.manifest.train_rows == 6 &&
+              sparse_roles_config.dataset_roles.manifest.dev_rows == 6 &&
+              sparse_roles_config.dataset_roles.manifest.test_rows == 6 &&
+              sparse_roles_config.dataset_roles.manifest.manifest_fingerprint.size() == 16,
+          "resolved sparse roles must finalize the runtime manifest");
+    auto sparse_external = cyxwiz::TakeResolvedExternalBatchers(
+        std::move(sparse_roles_build.batchers));
+    Check(sparse_external.dev != nullptr && sparse_external.test != nullptr,
+          "resolved sparse handoff must retain external role lifetimes");
+    CheckSparseFeatureAndLabelShapes(
+        sparse_external.test->GetNextBatch(), 2, 4, 2,
+        "resolved sparse external Test");
+
+    auto sparse_mismatch_config = sparse_roles_config;
+    cyxwiz::ResolvedTabularDatasets sparse_mismatch_datasets;
+    sparse_mismatch_datasets.train_sparse = MakeSparseDataset("mismatch_train");
+    sparse_mismatch_datasets.dev_sparse = MakeSparseDataset(
+        "mismatch_dev", {"alpha", "beta", "gamma", "delta"});
+    sparse_mismatch_datasets.test_sparse = MakeSparseDataset("mismatch_test");
+    auto sparse_mismatch_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+        sparse_mismatch_config, sparse_mismatch_datasets, /*batch_size=*/2);
+    Check(!sparse_mismatch_build.ok() &&
+              sparse_mismatch_build.error_message.find("vocabulary/order") !=
+                  std::string::npos,
+          "resolved sparse roles must reject a different fitted vocabulary order");
+
+    auto sparse_mixed_config = sparse_roles_config;
+    cyxwiz::ResolvedTabularDatasets sparse_mixed_datasets;
+    sparse_mixed_datasets.train_sparse = MakeSparseDataset("mixed_train");
+    sparse_mixed_datasets.dev_arrow = MakeDataset();
+    sparse_mixed_datasets.test_sparse = MakeSparseDataset("mixed_test");
+    auto sparse_mixed_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+        sparse_mixed_config, sparse_mixed_datasets, /*batch_size=*/2);
+    Check(!sparse_mixed_build.ok() &&
+              sparse_mixed_build.error_message.find("same sparse") !=
+                  std::string::npos,
+          "resolved roles must reject mixed sparse and dense representations");
+
     auto binary_config = MakeConfig();
     binary_config.output_size = 1;
     binary_config.loss_type = gui::NodeType::BCEWithLogits;
@@ -1357,6 +1484,13 @@ int main(int argc, char** argv) {
     train_dev_datasets = cyxwiz::ResolvedTabularDatasets{};
     all_external_build = cyxwiz::ResolvedTabularBatcherBuildResult{};
     all_external_datasets = cyxwiz::ResolvedTabularDatasets{};
+    sparse_batchers = cyxwiz::TrainingBatcherSet{};
+    sparse_external = cyxwiz::ResolvedExternalBatchers{};
+    sparse_role_datasets = cyxwiz::ResolvedTabularDatasets{};
+    sparse_mismatch_build = cyxwiz::ResolvedTabularBatcherBuildResult{};
+    sparse_mismatch_datasets = cyxwiz::ResolvedTabularDatasets{};
+    sparse_mixed_build = cyxwiz::ResolvedTabularBatcherBuildResult{};
+    sparse_mixed_datasets = cyxwiz::ResolvedTabularDatasets{};
     parquet_dataset.reset();
     ts_parquet_dataset.reset();
     multi_parquet_dataset.reset();

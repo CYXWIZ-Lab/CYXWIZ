@@ -1185,6 +1185,22 @@ void TrainingExecutor::Train(
 #endif
     }
 
+    if (active_train_ibatcher) {
+        const bool sparse_projection =
+            model_ && model_->SupportsSparseCsrInput();
+        active_train_ibatcher->SetSparseFeatureOutput(sparse_projection);
+        if (active_val_ibatcher) {
+            active_val_ibatcher->SetSparseFeatureOutput(sparse_projection);
+        }
+        if (active_test_ibatcher) {
+            active_test_ibatcher->SetSparseFeatureOutput(sparse_projection);
+        }
+        spdlog::info(
+            "TrainingExecutor: sparse first-projection route {}",
+            sparse_projection ? "enabled for compatible batchers"
+                              : "disabled; using dense batch compatibility");
+    }
+
     if (mode_ == DatasetMode::SequenceExternal && active_sequence_batcher) {
         active_sequence_batcher->SetPhase(BatcherPhase::Train);
         num_train_samples = active_sequence_batcher->GetNumSamples();
@@ -2236,6 +2252,25 @@ Tensor TrainingExecutor::Forward(const Tensor& input) {
     return last_predictions_;
 }
 
+Tensor TrainingExecutor::ForwardBatch(const Batch& batch) {
+    if (!batch.HasSparseFeatures()) {
+        return Forward(batch.data);
+    }
+    if (!model_ || !model_->SupportsSparseCsrInput()) {
+        throw std::runtime_error(
+            "TrainingExecutor received sparse features for a model without "
+            "a Linear first projection");
+    }
+    const auto sparse_view = batch.sparse_features->View();
+    last_predictions_ = model_->ForwardSparseCsr(sparse_view);
+    TrainingTraceCollector::Instance().RecordRuntimeEvent(
+        "SparseFirstProjection.Forward",
+        "rows=" + std::to_string(sparse_view.rows) +
+            " features=" + std::to_string(sparse_view.columns) +
+            " nnz=" + std::to_string(sparse_view.nnz));
+    return last_predictions_;
+}
+
 Tensor TrainingExecutor::ComputeLossTensor(
     const Tensor& predictions,
     const Tensor& targets) {
@@ -2298,6 +2333,39 @@ void TrainingExecutor::Backward(const Tensor& predictions, const Tensor& targets
 
     // Backward through model
     model_->Backward(grad);
+}
+
+void TrainingExecutor::BackwardBatch(
+    const Tensor& predictions,
+    const Tensor& targets,
+    const Batch& batch) {
+    if (!batch.HasSparseFeatures()) {
+        Backward(predictions, targets);
+        return;
+    }
+    if (!model_ || !model_->SupportsSparseCsrInput()) {
+        throw std::runtime_error(
+            "TrainingExecutor cannot backpropagate sparse features through "
+            "a model without a Linear first projection");
+    }
+    if (!loss_) {
+        throw std::runtime_error(
+            "TrainingExecutor cannot backpropagate without a loss function");
+    }
+
+    Tensor grad = loss_->Backward(predictions, targets);
+    if (grad.Shape() != predictions.Shape() &&
+        grad.NumElements() == predictions.NumElements()) {
+        grad = grad.Reshape(predictions.Shape());
+    }
+    const auto sparse_view = batch.sparse_features->View();
+    model_->BackwardSparseCsr(sparse_view, grad);
+    TrainingTraceCollector::Instance().RecordRuntimeEvent(
+        "SparseFirstProjection.Backward",
+        "rows=" + std::to_string(sparse_view.rows) +
+            " features=" + std::to_string(sparse_view.columns) +
+            " nnz=" + std::to_string(sparse_view.nnz) +
+            " input_gradient=not_materialized");
 }
 
 bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
@@ -2929,7 +2997,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
             TrainingTraceStage::Forward, epoch, batch_num,
             static_cast<int>(total_batches));
         const auto forward_start = std::chrono::steady_clock::now();
-        Tensor predictions = Forward(batch.data);
+        Tensor predictions = ForwardBatch(batch);
         const auto forward_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - forward_start).count();
         TrainingTraceCollector::Instance().RecordStage(
@@ -2944,16 +3012,37 @@ void TrainingExecutor::RunTrainingEpochArrow(
             const ScopedArrayFireHostSyncAttribution debug_sync_attribution(
                 ArrayFireHostSyncCategory::DebugSampleDump,
                 "TrainingExecutor::FirstArrowBatchDebugSampleDump");
-            const float* input_data = batch.data.ReadData<float>();
-            float min_input = input_data[0], max_input = input_data[0];
-            const auto& input_shape = batch.data.Shape();
-            if (input_shape.size() >= 2) {
-                size_t input_size = input_shape[0] * input_shape[1];
-                for (size_t i = 1; i < std::min(input_size, size_t(1000)); ++i) {
-                    min_input = std::min(min_input, input_data[i]);
-                    max_input = std::max(max_input, input_data[i]);
+            if (batch.HasSparseFeatures()) {
+                const auto& sparse = *batch.sparse_features;
+                const double cells = static_cast<double>(sparse.rows) *
+                                     static_cast<double>(sparse.columns);
+                const double density = cells > 0.0
+                    ? static_cast<double>(sparse.values.size()) / cells
+                    : 0.0;
+                spdlog::info(
+                    "DEBUG Arrow: Sparse CSR input rows={}, features={}, "
+                    "nnz={}, density={:.6f}",
+                    sparse.rows,
+                    sparse.columns,
+                    sparse.values.size(),
+                    density);
+            } else {
+                const float* input_data = batch.data.ReadData<float>();
+                float min_input = input_data[0], max_input = input_data[0];
+                const auto& input_shape = batch.data.Shape();
+                if (input_shape.size() >= 2) {
+                    size_t input_size = input_shape[0] * input_shape[1];
+                    for (size_t i = 1;
+                         i < std::min(input_size, size_t(1000));
+                         ++i) {
+                        min_input = std::min(min_input, input_data[i]);
+                        max_input = std::max(max_input, input_data[i]);
+                    }
+                    spdlog::info(
+                        "DEBUG Arrow: Input data range: [{:.4f}, {:.4f}]",
+                        min_input,
+                        max_input);
                 }
-                spdlog::info("DEBUG Arrow: Input data range: [{:.4f}, {:.4f}]", min_input, max_input);
             }
 
             // Debug labels
@@ -3063,7 +3152,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
             TrainingTraceStage::Backward, epoch, batch_num,
             static_cast<int>(total_batches), batch_loss);
         const auto backward_start = std::chrono::steady_clock::now();
-        Backward(predictions, batch.labels);
+        BackwardBatch(predictions, batch.labels, batch);
         const auto backward_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - backward_start).count();
         TrainingTraceCollector::Instance().RecordStage(
@@ -3213,7 +3302,7 @@ ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
         fetch_max_ms = std::max(fetch_max_ms, fetch_ms);
 
         // Forward pass only (no backprop)
-        Tensor predictions = Forward(batch.data);
+        Tensor predictions = ForwardBatch(batch);
 
         // Compute loss
         if (regression_metrics) {

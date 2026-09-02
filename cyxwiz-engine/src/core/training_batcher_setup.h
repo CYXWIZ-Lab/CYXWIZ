@@ -3,6 +3,7 @@
 #include "dataset_batcher.h"
 #include "graph_compiler.h"
 #include "parquet_arrow_batcher.h"
+#include "sparse_feature_dataset_batcher.h"
 
 #include <cstddef>
 #include <memory>
@@ -17,6 +18,7 @@ namespace cyxwiz {
 
 class ArrowDataset;
 class ParquetBackedDataset;
+class SparseFeatureDataset;
 struct ResolvedExternalBatchers;
 
 struct TrainingBatcherSet {
@@ -39,6 +41,9 @@ struct TrainingBatcherSet {
     std::unique_ptr<ParquetArrowBatcher> parquet_train;
     std::unique_ptr<ParquetArrowBatcher> parquet_val;
     std::unique_ptr<ParquetArrowBatcher> parquet_test;
+    std::unique_ptr<SparseFeatureDatasetBatcher> sparse_train;
+    std::unique_ptr<SparseFeatureDatasetBatcher> sparse_val;
+    std::unique_ptr<SparseFeatureDatasetBatcher> sparse_test;
     std::unique_ptr<IBatcher> prefetch_train;
     std::unique_ptr<IBatcher> prefetch_val;
     std::unique_ptr<IBatcher> prefetch_test;
@@ -57,6 +62,9 @@ struct TrainingBatcherSet {
         swap(parquet_train, other.parquet_train);
         swap(parquet_val, other.parquet_val);
         swap(parquet_test, other.parquet_test);
+        swap(sparse_train, other.sparse_train);
+        swap(sparse_val, other.sparse_val);
+        swap(sparse_test, other.sparse_test);
         swap(prefetch_train, other.prefetch_train);
         swap(prefetch_val, other.prefetch_val);
         swap(prefetch_test, other.prefetch_test);
@@ -91,6 +99,9 @@ struct ResolvedTabularDatasets {
     std::shared_ptr<ParquetBackedDataset> dev_parquet;
     std::shared_ptr<ArrowDataset> test_arrow;
     std::shared_ptr<ParquetBackedDataset> test_parquet;
+    std::shared_ptr<const SparseFeatureDataset> train_sparse;
+    std::shared_ptr<const SparseFeatureDataset> dev_sparse;
+    std::shared_ptr<const SparseFeatureDataset> test_sparse;
 };
 
 TrainingInputSizeResolution ResolveTabularTrainingInputSize(
@@ -116,7 +127,17 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
     const std::string& label_column,
     int batch_size);
 
+TrainingBatcherSet BuildSparseTrainingBatchers(
+    const TrainingConfiguration& config,
+    std::shared_ptr<const SparseFeatureDataset> dataset,
+    int batch_size);
+
 ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
+    TrainingConfiguration& config,
+    const ResolvedTabularDatasets& datasets,
+    int batch_size);
+
+ResolvedTabularBatcherBuildResult BuildResolvedSparseTrainingBatchers(
     TrainingConfiguration& config,
     const ResolvedTabularDatasets& datasets,
     int batch_size);

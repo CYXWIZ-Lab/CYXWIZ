@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline_operator.h"
+#include "text_feature_matrix.h"
 #include "../preprocessing_state.h"
 
 namespace cyxwiz {
@@ -46,10 +47,18 @@ public:
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
 
+    arrow::Result<std::shared_ptr<SparseFeatureDataset>> ApplySparse(
+        const std::shared_ptr<arrow::Table>& input,
+        const std::string& dataset_name) override;
+    bool SupportsSparseFeatureOutput() const override { return true; }
+
     void SetProgressCallback(PipelineOperatorProgressCallback callback) override;
 
 private:
     std::map<std::string, std::string> BuildFittedConfiguration() const;
+    arrow::Result<TextVectorizerMaterialization> ApplyConfigured(
+        const std::shared_ptr<arrow::Table>& input,
+        const std::string& sparse_dataset_name);
 
     std::string text_col_;
     std::string label_col_;

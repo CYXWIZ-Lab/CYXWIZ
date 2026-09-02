@@ -11,6 +11,7 @@ enum class DatasetStorageKind {
     Unknown,
     InMemoryArrow,
     DiskBackedParquet,
+    SparseFeatureCSR,
     ImageCached,
     AudioCached,
     TextCached,

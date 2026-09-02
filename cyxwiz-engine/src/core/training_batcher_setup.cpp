@@ -581,6 +581,11 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
         return result;
     }
 
+    if (datasets.train_sparse || datasets.dev_sparse || datasets.test_sparse) {
+        return BuildResolvedSparseTrainingBatchers(
+            config, datasets, batch_size);
+    }
+
     if (!datasets.train_arrow && !datasets.train_parquet) {
         result.error_message = "Training Dataset '" +
             partitions.train.dataset_name +
@@ -743,12 +748,15 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
 ResolvedExternalBatchers TakeResolvedExternalBatchers(TrainingBatcherSet batchers) {
     auto take = [](std::unique_ptr<IBatcher> prefetch,
                    std::unique_ptr<ArrowDatasetBatcher> arrow,
-                   std::unique_ptr<ParquetArrowBatcher> parquet) {
+                   std::unique_ptr<ParquetArrowBatcher> parquet,
+                   std::unique_ptr<SparseFeatureDatasetBatcher> sparse) {
         std::shared_ptr<IBatcher> source;
         if (arrow) {
             source = std::shared_ptr<IBatcher>(std::move(arrow));
         } else if (parquet) {
             source = std::shared_ptr<IBatcher>(std::move(parquet));
+        } else if (sparse) {
+            source = std::shared_ptr<IBatcher>(std::move(sparse));
         }
 
         if (!prefetch) {
@@ -769,13 +777,16 @@ ResolvedExternalBatchers TakeResolvedExternalBatchers(TrainingBatcherSet batcher
     ResolvedExternalBatchers resolved;
     resolved.train = take(std::move(batchers.prefetch_train),
                           std::move(batchers.arrow_train),
-                          std::move(batchers.parquet_train));
+                          std::move(batchers.parquet_train),
+                          std::move(batchers.sparse_train));
     resolved.dev = take(std::move(batchers.prefetch_val),
                         std::move(batchers.arrow_val),
-                        std::move(batchers.parquet_val));
+                        std::move(batchers.parquet_val),
+                        std::move(batchers.sparse_val));
     resolved.test = take(std::move(batchers.prefetch_test),
                          std::move(batchers.arrow_test),
-                         std::move(batchers.parquet_test));
+                         std::move(batchers.parquet_test),
+                         std::move(batchers.sparse_test));
     return resolved;
 }
 } // namespace cyxwiz

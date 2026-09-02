@@ -1406,6 +1406,8 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadCSVToArrow(
 
         std::lock_guard<std::mutex> lock(mutex_);
         arrow_datasets_[unique_name] = dataset;
+        parquet_backed_datasets_.erase(unique_name);
+        sparse_feature_datasets_.erase(unique_name);
         RememberTabularSourcePathUnlocked(unique_name, path);
 
         spdlog::info("LoadCSVToArrow: Loaded '{}' as '{}' ({} rows, {} cols)",
@@ -1598,6 +1600,7 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularCSV(
                     std::lock_guard<std::mutex> lock(mutex_);
                     arrow_datasets_[final_name] = cached_dataset;
                     parquet_backed_datasets_.erase(final_name);
+                    sparse_feature_datasets_.erase(final_name);
                     RememberTabularSourcePathUnlocked(final_name, path);
                 }
                 if (load_status) {
@@ -1716,6 +1719,8 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadParquetToArrow(
 
         std::lock_guard<std::mutex> lock(mutex_);
         arrow_datasets_[unique_name] = dataset;
+        parquet_backed_datasets_.erase(unique_name);
+        sparse_feature_datasets_.erase(unique_name);
         RememberTabularSourcePathUnlocked(unique_name, path);
 
         spdlog::info("LoadParquetToArrow: Loaded '{}' as '{}' ({} rows, {} cols)",
@@ -1821,6 +1826,9 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadImageFolderToArrow(
 
         std::lock_guard<std::mutex> lock(mutex_);
         arrow_datasets_[unique_name] = dataset;
+        parquet_backed_datasets_.erase(unique_name);
+        sparse_feature_datasets_.erase(unique_name);
+        ForgetTabularSourcePathUnlocked(unique_name);
 
         spdlog::info("LoadImageFolderToArrow: Loaded {} images with {} classes from '{}'",
                     image_paths.size(), label_map.size(), path);

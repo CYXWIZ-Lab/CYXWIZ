@@ -3,6 +3,7 @@
 #include "../src/core/data_registry.h"
 #include "../src/core/dataset_batcher.h"
 #include "../src/core/model_builder.h"
+#include "../src/core/node_executors/count_vectorizer_operator.h"
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
 #include "../src/core/parquet_backed_dataset.h"
@@ -10,6 +11,7 @@
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/core/sequence_arrow_batcher.h"
 #include "../src/core/sequence_tag_metrics.h"
+#include "../src/core/sparse_feature_dataset_batcher.h"
 #include "../src/core/training_trace_collector.h"
 #include "../src/core/training_run_comparison.h"
 #include "../src/gui/graph_training_launcher.h"
@@ -563,6 +565,23 @@ gui::MLNode MakeTokenizerNode() {
     return node;
 }
 
+gui::MLNode MakeSparseCountVectorizerNode() {
+    gui::MLNode node;
+    node.id = 5;
+    node.type = gui::NodeType::CountVectorizer;
+    node.category = gui::NodeCategory::TextProcessing;
+    node.name = "Sparse Count Vectorizer";
+    node.parameters = {
+        {"text_col", "text"},
+        {"label_col", "label"},
+        {"max_features", "8"},
+        {"norm", "none"},
+        {"stop_words", "none"},
+        {"output_format", "sparse"},
+    };
+    return node;
+}
+
 gui::MLNode MakeOptimizerNode(
     int id,
     const std::string& name,
@@ -1024,17 +1043,21 @@ std::unique_ptr<IPipelineOperator> PipelineOperatorFactory::Create(
     if (type == gui::NodeType::TextTokenizer) {
         return std::make_unique<TextTokenizerOperator>();
     }
+    if (type == gui::NodeType::CountVectorizer) {
+        return std::make_unique<CountVectorizerOperator>();
+    }
     return nullptr;
 }
 
 bool PipelineOperatorFactory::HasOperator(gui::NodeType type) const {
-    return type == gui::NodeType::TextTokenizer;
+    return type == gui::NodeType::TextTokenizer ||
+           type == gui::NodeType::CountVectorizer;
 }
 
 void PipelineOperatorFactory::RegisterCreator(gui::NodeType, Creator) {}
 
 std::vector<gui::NodeType> PipelineOperatorFactory::GetSupportedTypes() const {
-    return {gui::NodeType::TextTokenizer};
+    return {gui::NodeType::TextTokenizer, gui::NodeType::CountVectorizer};
 }
 
 } // namespace cyxwiz
@@ -1400,6 +1423,94 @@ int main(int argc, char** argv) {
     Check(cache_status_snapshot.materialization_message.find(
               "Preprocessing skipped") != std::string::npos,
           "training dashboard should clearly report skipped preprocessing");
+
+    registry.UnregisterTabularDataset(kMaterializedDatasetName);
+    std::vector<gui::MLNode> sparse_nodes = {
+        MakeDataInputNode(),
+        MakeSparseCountVectorizerNode(),
+    };
+    std::vector<gui::NodeLink> sparse_links = {
+        {3, 1, 0, 5, 0, gui::LinkType::TensorFlow},
+    };
+    auto sparse_config =
+        MakeTrainingConfig(work_dir / "sparse_launch_checkpoints");
+    sparse_config.target.required_by_objective = true;
+    sparse_config.target.origin = cyxwiz::TargetOrigin::DatasetColumn;
+    sparse_config.target.value_kind = cyxwiz::TargetValueKind::Categorical;
+    sparse_config.target.primary_column = "label";
+    sparse_config.target.width = 1;
+    auto sparse_preflight = gui::PreflightGraphMaterialization(
+        sparse_nodes, sparse_links, sparse_config, registry);
+    Check(sparse_preflight.checked && sparse_preflight.estimate_available &&
+              !sparse_preflight.blocked,
+          "sparse vectorizer must expose bounded pre-start memory evidence");
+
+    std::atomic<bool> sparse_dispatch_finished{false};
+    auto sparse_dispatch = [&](
+        cyxwiz::TrainingConfiguration dispatch_config,
+        const std::string& dataset_name,
+        const std::string& label_column,
+        int,
+        int batch_size,
+        std::weak_ptr<cyxwiz::TrainingPlotPanel>,
+        std::function<void(bool)> callback) {
+        Check(dataset_name == kMaterializedDatasetName &&
+                  dispatch_config.dataset_name == kMaterializedDatasetName,
+              "sparse dispatch must use the materialized dataset identity");
+        auto dataset = registry.GetSparseFeatureDataset(dataset_name);
+        Check(dataset != nullptr &&
+                  !registry.IsArrowDataset(dataset_name),
+              "sparse dispatch must resolve typed CSR without a dense table");
+        Check(label_column == dataset->GetLabelName() &&
+                  dispatch_config.target.primary_column == label_column &&
+                  dispatch_config.dataset_roles.train.label_column ==
+                      label_column,
+              "sparse dispatch must reconcile the runtime label truth");
+        Check(dispatch_config.input_size ==
+                  static_cast<size_t>(dataset->GetNumFeatures()) &&
+                  dispatch_config.input_shape ==
+                      std::vector<size_t>({dispatch_config.input_size}),
+              "sparse dispatch must reconcile the model input width from CSR");
+
+        cyxwiz::SparseFeatureDatasetBatcher batcher(
+            dataset, static_cast<size_t>(batch_size), false,
+            dispatch_config.train_ratio, true);
+        batcher.SetOneHotEncoding(dispatch_config.output_size);
+        auto batch = batcher.GetNextBatch();
+        Check(batch.IsValid() && batch.data.Shape()[1] ==
+                  dispatch_config.input_size,
+              "sparse launch must densify only the selected training batch");
+        auto built = cyxwiz::BuildSequentialFromConfig(dispatch_config);
+        Check(built.ok(), "sparse GUI launch should build model/loss/optimizer");
+        auto predictions = built.model->Forward(batch.data);
+        auto loss = built.loss->Forward(predictions, batch.labels);
+        Check(loss.NumElements() == 1,
+              "sparse GUI launch loss should be scalar");
+        CheckFinite(loss.Data<float>()[0],
+                    "sparse GUI launch loss should be finite");
+        auto grad = built.loss->Backward(predictions, batch.labels);
+        built.model->Backward(grad);
+        built.model->UpdateParameters(built.optimizer.get());
+        if (callback) {
+            callback(true);
+            callback(false);
+        }
+        sparse_dispatch_finished.store(true);
+        return true;
+    };
+    auto sparse_result = gui::StartGraphTrainingFromCompiledConfig(
+        sparse_nodes, sparse_links, std::move(sparse_config), registry,
+        std::weak_ptr<cyxwiz::TrainingPlotPanel>{}, [](bool) {},
+        sparse_dispatch, {}, sparse_preflight.evidence, work_dir);
+    Check(sparse_result.started, sparse_result.error_message);
+    Check(WaitFor([&] { return sparse_dispatch_finished.load(); },
+                  std::chrono::seconds(20)),
+          "sparse graph preparation must reach batch/model dispatch");
+    Check(WaitFor(
+              [] { return !HasActiveTaskNamed("Prepare graph training"); },
+              std::chrono::seconds(2)),
+          "sparse graph preparation task should reach a terminal state");
+    registry.UnregisterTabularDataset(kMaterializedDatasetName);
 
     auto sequence_config =
         MakeTrainingConfig(work_dir / "sequence_launch_checkpoints");

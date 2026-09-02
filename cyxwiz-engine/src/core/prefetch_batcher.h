@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <condition_variable>
+#include <exception>
 #include <mutex>
 #include <memory>
 #include <queue>
@@ -40,8 +41,15 @@ public:
 
         std::unique_lock<std::mutex> lock(mutex_);
         not_empty_cv_.wait(lock, [this]() {
-            return stop_requested_ || !queue_.empty() || source_complete_;
+            return stop_requested_ || !queue_.empty() || source_complete_ ||
+                   worker_error_ != nullptr;
         });
+
+        if (worker_error_) {
+            const auto error = worker_error_;
+            lock.unlock();
+            std::rethrow_exception(error);
+        }
 
         if (queue_.empty()) {
             return {};
@@ -61,11 +69,18 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         source_complete_ = false;
         started_ = false;
+        worker_error_ = nullptr;
         ClearQueue();
     }
 
     bool IsEpochComplete() const override {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (worker_error_) {
+            // Keep the consumer loop alive for one more GetNextBatch call so
+            // the stored worker exception is rethrown instead of appearing as
+            // a clean end of epoch.
+            return false;
+        }
         if (!started_) {
             return source_->IsEpochComplete();
         }
@@ -115,6 +130,16 @@ public:
         source_->SetDropLast(drop_last);
     }
 
+    void SetBatchInspectionEnabled(bool enable) override {
+        StopWorker();
+        source_->SetBatchInspectionEnabled(enable);
+    }
+
+    void SetSparseFeatureOutput(bool enable) override {
+        StopWorker();
+        source_->SetSparseFeatureOutput(enable);
+    }
+
     void SetPhase(BatcherPhase phase) override {
         StopWorker();
         source_->SetPhase(phase);
@@ -129,6 +154,7 @@ private:
 
         stop_requested_ = false;
         source_complete_ = false;
+        worker_error_ = nullptr;
         started_ = true;
         worker_ = std::thread([this]() { WorkerLoop(); });
         spdlog::info("PrefetchBatcher '{}': started async queue with depth={}",
@@ -166,7 +192,16 @@ private:
                 }
             }
 
-            Batch batch = source_->GetNextBatch();
+            Batch batch;
+            try {
+                batch = source_->GetNextBatch();
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                worker_error_ = std::current_exception();
+                source_complete_ = true;
+                not_empty_cv_.notify_all();
+                return;
+            }
 
             std::unique_lock<std::mutex> lock(mutex_);
             if (stop_requested_) {
@@ -203,6 +238,7 @@ private:
     bool started_ = false;
     bool stop_requested_ = false;
     bool source_complete_ = false;
+    std::exception_ptr worker_error_;
 };
 
 } // namespace cyxwiz

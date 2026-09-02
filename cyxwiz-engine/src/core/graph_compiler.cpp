@@ -217,6 +217,9 @@ DatasetStorageKind DatasetStorageKindFromRegistry(
     if (registry.GetParquetBackedDataset(dataset_name)) {
         return DatasetStorageKind::DiskBackedParquet;
     }
+    if (registry.IsSparseFeatureDataset(dataset_name)) {
+        return DatasetStorageKind::SparseFeatureCSR;
+    }
     if (registry.IsImageDataset(dataset_name)) {
         return DatasetStorageKind::ImageCached;
     }
@@ -284,11 +287,15 @@ void PopulateDatasetSourceProvenance(DatasetSourceRef& source) {
         source.storage_kind = DatasetStorageKind::DiskBackedParquet;
         source.row_count = parquet_dataset->GetNumRows();
         schema = parquet_dataset->GetSchema();
+    } else if (registry.IsSparseFeatureDataset(source.dataset_name)) {
+        source.storage_kind = DatasetStorageKind::SparseFeatureCSR;
     }
-    source.schema_fingerprint = FingerprintArrowSchema(
-        schema, source.label_column, false);
-    source.feature_schema_fingerprint = FingerprintArrowSchema(
-        schema, source.label_column, true);
+    if (schema) {
+        source.schema_fingerprint = FingerprintArrowSchema(
+            schema, source.label_column, false);
+        source.feature_schema_fingerprint = FingerprintArrowSchema(
+            schema, source.label_column, true);
+    }
     if (auto source_path = registry.GetTabularSourcePath(source.dataset_name)) {
         source.source_fingerprint = FingerprintFileIdentity(*source_path);
     }
@@ -485,17 +492,33 @@ std::string TextVectorizerName(gui::NodeType type) {
     return "TFIDFVectorizer";
 }
 
+bool IsSparseOutputValue(const std::map<std::string, std::string>& parameters) {
+    auto output_format = parameters.find("output_format");
+    if (output_format == parameters.end()) return false;
+    std::string value = output_format->second;
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char ch) {
+                       return static_cast<char>(std::tolower(ch));
+                   });
+    return value == "sparse";
+}
+
 void ValidateDenseTextVectorizerMaterializerMemory(
     TrainingConfiguration& config,
-    const std::vector<gui::MLNode>& nodes) {
+    const std::vector<gui::MLNode>& nodes,
+    const std::unordered_set<int>& training_path_ids) {
     if (config.dataset_name.empty()) {
         return;
     }
 
     const gui::MLNode* vectorizer_node = nullptr;
     for (const auto& node : nodes) {
-        if (node.type == gui::NodeType::TFIDFVectorizer ||
-            node.type == gui::NodeType::CountVectorizer) {
+        if (training_path_ids.count(node.id) == 0) {
+            continue;
+        }
+        if ((node.type == gui::NodeType::TFIDFVectorizer ||
+             node.type == gui::NodeType::CountVectorizer) &&
+            !IsSparseOutputValue(node.parameters)) {
             vectorizer_node = &node;
             break;
         }
@@ -566,6 +589,127 @@ void ValidateDenseTextVectorizerMaterializerMemory(
            "feature path before scaling this graph.";
     AddIssue(config, IssueLevel::Warning, msg.str(),
              vectorizer_node->id, vectorizer_node->name);
+}
+
+bool RequestsSparseFeatureOutput(const gui::MLNode& node) {
+    if (node.type != gui::NodeType::CountVectorizer &&
+        node.type != gui::NodeType::TFIDFVectorizer) {
+        return false;
+    }
+    return IsSparseOutputValue(node.parameters);
+}
+
+bool IsTrainingModelLayerType(gui::NodeType type) {
+    for (const auto& capability :
+         GetPipelineSupportedTrainingRoleCapabilities()) {
+        if (capability.node_type == type &&
+            capability.role == PipelineTrainingSupportRole::ModelLayer) {
+            return true;
+        }
+    }
+    return ResolvePipelineTrainingBackendSupport(type).mode ==
+           PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer;
+}
+
+void ValidateSparseFeatureTrainingContract(
+    TrainingConfiguration& config,
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    const std::unordered_set<int>& training_path_ids,
+    const std::vector<int>& sorted_ids) {
+
+    std::vector<const gui::MLNode*> sparse_vectorizers;
+    for (int node_id : sorted_ids) {
+        if (training_path_ids.count(node_id) == 0) continue;
+        const auto* node = FindNodeById(nodes, node_id);
+        if (node && RequestsSparseFeatureOutput(*node)) {
+            sparse_vectorizers.push_back(node);
+        }
+    }
+    if (sparse_vectorizers.empty()) return;
+
+    const auto* vectorizer = sparse_vectorizers.front();
+    const size_t sparse_width = ParsePositiveSizeParam(
+        *vectorizer, "max_features", 2000);
+    config.text_preprocessing.has_vectorizer_node = true;
+    config.text_preprocessing.max_length = static_cast<int>(sparse_width);
+    config.input_size = sparse_width;
+    config.input_shape = {sparse_width};
+    if (sparse_vectorizers.size() > 1) {
+        AddIssue(config, IssueLevel::Error,
+                 "Sparse feature training supports exactly one reachable "
+                 "CountVectorizer or TFIDFVectorizer on the selected path",
+                 vectorizer->id, vectorizer->name,
+                 errors::Compiler::UnsupportedTrainingNode);
+    }
+
+    if (config.sequence_batch.enabled || config.is_time_series) {
+        AddIssue(config, IssueLevel::Error,
+                 "Sparse feature training currently supports only non-sequence "
+                 "tabular batches; sequence and time-series contracts require "
+                 "a dedicated sparse batch shape owner",
+                 vectorizer->id, vectorizer->name,
+                 errors::Compiler::UnsupportedTrainingNode);
+    }
+
+    const auto downstream = CollectReachableNodeIds(vectorizer->id, links);
+    const gui::MLNode* first_model_layer = nullptr;
+    bool downstream_materializer_reported = false;
+    for (int node_id : sorted_ids) {
+        if (node_id == vectorizer->id ||
+            training_path_ids.count(node_id) == 0 ||
+            downstream.count(node_id) == 0) {
+            continue;
+        }
+        const auto* node = FindNodeById(nodes, node_id);
+        if (!node) continue;
+
+        const auto runtime_support =
+            ResolvePipelineRuntimeSupport(node->type);
+        if (runtime_support.materializer_arrow_table_supported &&
+            !downstream_materializer_reported) {
+            AddIssue(config, IssueLevel::Error,
+                     "Sparse output from node '" + vectorizer->name +
+                         "' must be the final preprocessing output; downstream "
+                         "operator '" + node->name + "' still requires an Arrow table",
+                     node->id, node->name,
+                     errors::Compiler::UnsupportedTrainingNode);
+            downstream_materializer_reported = true;
+        }
+        if (!first_model_layer && IsTrainingModelLayerType(node->type)) {
+            first_model_layer = node;
+        }
+    }
+
+    if (!first_model_layer || first_model_layer->type != gui::NodeType::Dense) {
+        const std::string actual = first_model_layer
+            ? "'" + first_model_layer->name + "'"
+            : "no reachable model layer";
+        AddIssue(config, IssueLevel::Error,
+                 "Sparse feature batches currently require Dense as the first "
+                 "model layer; selected path has " + actual,
+                 first_model_layer ? first_model_layer->id : vectorizer->id,
+                 first_model_layer ? first_model_layer->name : vectorizer->name,
+                 errors::Compiler::UnsupportedTrainingNode);
+    }
+
+    const DatasetSourceRef* external_roles[] = {
+        &config.dataset_roles.dev, &config.dataset_roles.test};
+    const char* role_names[] = {"Development", "Test"};
+    for (size_t index = 0; index < 2; ++index) {
+        const auto& role = *external_roles[index];
+        if (!role.IsSupplied() ||
+            role.storage_kind == DatasetStorageKind::Unknown ||
+            role.storage_kind == DatasetStorageKind::SparseFeatureCSR) {
+            continue;
+        }
+        AddIssue(config, IssueLevel::Error,
+                 std::string(role_names[index]) +
+                     " dataset must use SparseFeatureCSR when the selected "
+                     "training path emits sparse features",
+                 role.source_node_id, role.dataset_name,
+                 errors::Compiler::UnsupportedTrainingNode);
+    }
 }
 
 bool IsLossNodeType(gui::NodeType type) {
@@ -4284,6 +4428,8 @@ TrainingConfiguration GraphCompiler::Compile(
 
     // Get topologically sorted node IDs
     std::vector<int> sorted_ids = TopologicalSort(nodes, links);
+    ValidateSparseFeatureTrainingContract(
+        config, nodes, links, training_path_ids, sorted_ids);
     CollectGraphRuntimeOpNodeIds(
         nodes,
         links,
@@ -4786,7 +4932,8 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
-    ValidateDenseTextVectorizerMaterializerMemory(config, nodes);
+    ValidateDenseTextVectorizerMaterializerMemory(
+        config, nodes, training_path_ids);
 
     // === Domain detection ===
     // The DataInput node carries file_category (tabular / image / audio /
@@ -5551,7 +5698,7 @@ static void ExtractTextTokenizerShape(
                  config.text_preprocessing.max_length);
 }
 
-static void ExtractTFIDFVectorizerShape(
+static void ExtractTextVectorizerShape(
     const gui::MLNode& node,
     TrainingConfiguration& config) {
     config.text_preprocessing.has_vectorizer_node = true;
@@ -5559,7 +5706,7 @@ static void ExtractTFIDFVectorizerShape(
         ParseSizeParam(node.parameters, "max_features", 2000));
     config.text_preprocessing.max_length = std::max(1, max_features);
     spdlog::info(
-        "GraphCompiler: TFIDFVectorizer max_features={} drives text input shape",
+        "GraphCompiler: text vectorizer max_features={} drives text input shape",
         config.text_preprocessing.max_length);
 }
 
@@ -5598,7 +5745,7 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::AudioAugmentation,  PreprocessingDomain::Audio,       ExtractAudioAugmentation},
     // Text (Arrow materializer path; extract shape only)
     {gui::NodeType::TextTokenizer,      PreprocessingDomain::Text,        ExtractTextTokenizerShape},
-    {gui::NodeType::TFIDFVectorizer,    PreprocessingDomain::Text,        ExtractTFIDFVectorizerShape},
+    {gui::NodeType::TFIDFVectorizer,    PreprocessingDomain::Text,        ExtractTextVectorizerShape},
     {gui::NodeType::TextVocabulary,     PreprocessingDomain::Text,        nullptr},
     {gui::NodeType::TextPadding,        PreprocessingDomain::Text,        nullptr},
     {gui::NodeType::NERSequenceBuilder, PreprocessingDomain::General,     nullptr},

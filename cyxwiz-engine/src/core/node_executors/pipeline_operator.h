@@ -17,6 +17,8 @@
 
 namespace cyxwiz {
 
+class SparseFeatureDataset;
+
 /**
  * Pipeline band classification — see CLAUDE.md "Pipeline Architecture: Four Bands".
  *
@@ -135,6 +137,16 @@ public:
      */
     virtual arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) = 0;
+
+    // Bounded typed-output extension for host CSR feature artifacts. Operators
+    // remain Arrow-table operators unless they explicitly opt in.
+    virtual bool SupportsSparseFeatureOutput() const { return false; }
+    virtual arrow::Result<std::shared_ptr<SparseFeatureDataset>> ApplySparse(
+        const std::shared_ptr<arrow::Table>&,
+        const std::string&) {
+        return arrow::Status::NotImplemented(
+            GetName(), " does not support SparseFeatureDataset output");
+    }
 
     virtual void SetProgressCallback(PipelineOperatorProgressCallback callback) {
         (void)callback;

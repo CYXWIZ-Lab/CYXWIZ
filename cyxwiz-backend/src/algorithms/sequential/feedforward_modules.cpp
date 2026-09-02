@@ -25,6 +25,17 @@ Tensor LinearModule::Backward(const Tensor& grad_output) {
     return layer_->Backward(grad_output);
 }
 
+Tensor LinearModule::ForwardSparseCsr(
+    const LinearSparseCsrBatchView& input) {
+    return layer_->ForwardSparseCsr(input);
+}
+
+void LinearModule::BackwardSparseCsr(
+    const LinearSparseCsrBatchView& input,
+    const Tensor& grad_output) {
+    layer_->BackwardSparseCsr(input, grad_output);
+}
+
 std::map<std::string, Tensor> LinearModule::GetParameters() {
     return layer_->GetParameters();
 }

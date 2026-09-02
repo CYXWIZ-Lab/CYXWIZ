@@ -201,6 +201,9 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadArrowTable(
 
     // Store in registry
     arrow_datasets_[dataset_name] = dataset;
+    parquet_backed_datasets_.erase(dataset_name);
+    sparse_feature_datasets_.erase(dataset_name);
+    ForgetTabularSourcePathUnlocked(dataset_name);
     last_access_times_[dataset_name] = std::chrono::steady_clock::now();
 
     spdlog::info("Loaded Arrow dataset '{}': {} rows, {} columns, {} bytes",
@@ -241,6 +244,9 @@ std::shared_ptr<ArrowDataset> DataRegistry::RegisterArrowTable(
 
     // Store in registry
     arrow_datasets_[dataset_name] = dataset;
+    parquet_backed_datasets_.erase(dataset_name);
+    sparse_feature_datasets_.erase(dataset_name);
+    ForgetTabularSourcePathUnlocked(dataset_name);
     last_access_times_[dataset_name] = std::chrono::steady_clock::now();
 
     spdlog::info("Registered Arrow dataset '{}': {} rows, {} columns, {} bytes",
@@ -352,13 +358,6 @@ void DataRegistry::RememberTabularSourcePathUnlocked(
     tabular_dataset_by_source_path_[normalized] = name;
 }
 
-void DataRegistry::ForgetTabularSourcePathUnlocked(const std::string& name) {
-    auto it = tabular_source_paths_by_name_.find(name);
-    if (it == tabular_source_paths_by_name_.end()) return;
-    tabular_dataset_by_source_path_.erase(it->second);
-    tabular_source_paths_by_name_.erase(it);
-}
-
 void DataRegistry::RegisterParquetBacked(
     const std::string& name,
     std::shared_ptr<ParquetBackedDataset> dataset) {
@@ -368,6 +367,8 @@ void DataRegistry::RegisterParquetBacked(
         spdlog::warn("RegisterParquetBacked: overwriting existing dataset '{}'", name);
     }
     parquet_backed_datasets_[name] = dataset;
+    arrow_datasets_.erase(name);
+    sparse_feature_datasets_.erase(name);
     RememberTabularSourcePathUnlocked(name, dataset->GetFilePath());
     spdlog::info("Registered ParquetBackedDataset '{}': {} rows, {} columns, {:.1f} MB on disk",
                  name,
@@ -380,6 +381,7 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
     bool removed_arrow = false;
     bool removed_parquet = false;
+    bool removed_sparse = false;
 
     auto arrow_it = arrow_datasets_.find(name);
     if (arrow_it != arrow_datasets_.end()) {
@@ -393,10 +395,17 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
         removed_parquet = true;
     }
 
+    auto sparse_it = sparse_feature_datasets_.find(name);
+    if (sparse_it != sparse_feature_datasets_.end()) {
+        sparse_feature_datasets_.erase(sparse_it);
+        removed_sparse = true;
+    }
+
     ForgetTabularSourcePathUnlocked(name);
-    if (removed_arrow || removed_parquet) {
-        spdlog::debug("UnregisterTabularDataset '{}': removed arrow={} parquet={}",
-                      name, removed_arrow, removed_parquet);
+    if (removed_arrow || removed_parquet || removed_sparse) {
+        spdlog::debug(
+            "UnregisterTabularDataset '{}': removed arrow={} parquet={} sparse={}",
+            name, removed_arrow, removed_parquet, removed_sparse);
     }
 
     // Cascade: also drop the PipelineMaterializer-produced "__materialized"
@@ -415,6 +424,7 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
         const std::string mat_name = name + kMaterializedSuffix;
         bool mat_arrow = false;
         bool mat_parquet = false;
+        bool mat_sparse = false;
         if (auto it = arrow_datasets_.find(mat_name); it != arrow_datasets_.end()) {
             arrow_datasets_.erase(it);
             mat_arrow = true;
@@ -424,8 +434,13 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
             parquet_backed_datasets_.erase(it);
             mat_parquet = true;
         }
+        if (auto it = sparse_feature_datasets_.find(mat_name);
+            it != sparse_feature_datasets_.end()) {
+            sparse_feature_datasets_.erase(it);
+            mat_sparse = true;
+        }
         ForgetTabularSourcePathUnlocked(mat_name);
-        if (mat_arrow || mat_parquet) {
+        if (mat_arrow || mat_parquet || mat_sparse) {
             spdlog::debug("UnregisterTabularDataset '{}' cascade: dropped materialized variant '{}'",
                           name, mat_name);
         }
@@ -559,6 +574,7 @@ void DataRegistry::RestoreTabularDataset(
     std::lock_guard<std::mutex> lock(mutex_);
     arrow_datasets_.erase(name);
     parquet_backed_datasets_.erase(name);
+    sparse_feature_datasets_.erase(name);
     if (arrow_dataset) {
         arrow_datasets_[name] = std::move(arrow_dataset);
     } else {
@@ -575,23 +591,26 @@ void DataRegistry::ClearAllTabularDatasets() {
 
     size_t arrow_count = arrow_datasets_.size();
     size_t parquet_count = parquet_backed_datasets_.size();
+    size_t sparse_count = sparse_feature_datasets_.size();
     size_t image_count = image_dataset_entries_.size();
     size_t audio_count = audio_dataset_entries_.size();
     size_t text_count = text_dataset_entries_.size();
 
     arrow_datasets_.clear();
     parquet_backed_datasets_.clear();
+    sparse_feature_datasets_.clear();
     tabular_source_paths_by_name_.clear();
     tabular_dataset_by_source_path_.clear();
     image_dataset_entries_.clear();
     audio_dataset_entries_.clear();
     text_dataset_entries_.clear();
 
-    if (arrow_count > 0 || parquet_count > 0 || image_count > 0 ||
+    if (arrow_count > 0 || parquet_count > 0 || sparse_count > 0 ||
+        image_count > 0 ||
         audio_count > 0 || text_count > 0) {
         spdlog::info("ClearAllDatasets: removed {} Arrow + {} Parquet + "
-                     "{} Image + {} Audio + {} Text entries",
-                     arrow_count, parquet_count, image_count,
+                     "{} Sparse + {} Image + {} Audio + {} Text entries",
+                     arrow_count, parquet_count, sparse_count, image_count,
                      audio_count, text_count);
     }
 }

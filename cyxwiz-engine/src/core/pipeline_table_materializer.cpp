@@ -9,6 +9,8 @@
 #include <arrow/table.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cctype>
 #include <map>
 #include <new>
 #include <optional>
@@ -136,6 +138,42 @@ bool IsArrowTableMaterializerOperator(gui::NodeType type) {
     return ResolveArrowTableMaterializerOperatorType(type).has_value();
 }
 
+bool RequestsSparseFeatureOutput(
+    const std::map<std::string, std::string>& params) {
+    auto output_format = params.find("output_format");
+    if (output_format == params.end()) return false;
+    std::string value = output_format->second;
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char ch) {
+                       return static_cast<char>(std::tolower(ch));
+                   });
+    return value == "sparse";
+}
+
+bool HasReachableMaterializerOperator(
+    int node_id,
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    std::unordered_set<int>& visiting);
+
+bool ValidateSparseOutputIsTerminal(
+    const gui::MLNode& node,
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    std::string& error) {
+    for (const auto& link : links) {
+        if (link.from_node != node.id) continue;
+        std::unordered_set<int> visiting;
+        if (HasReachableMaterializerOperator(
+                link.to_node, nodes, links, visiting)) {
+            error = "PipelineMaterializer: sparse output from node '" +
+                    node.name + "' must be the final preprocessing output";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool HasReachableMaterializerOperator(
     int node_id,
     const std::vector<gui::MLNode>& nodes,
@@ -228,6 +266,14 @@ bool ValidateLinearMaterializerOperatorPath(
     while (!queue.empty()) {
         const int node_id = queue.front();
         queue.pop();
+
+        const gui::MLNode* current_node = FindNodeById(node_id, nodes);
+        if (current_node &&
+            RequestsSparseFeatureOutput(current_node->parameters) &&
+            !ValidateSparseOutputIsTerminal(
+                *current_node, nodes, links, error)) {
+            return false;
+        }
 
         std::vector<int> operator_relevant_children;
         for (const auto& link : links) {
@@ -634,10 +680,48 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
                 return result;
             }
 
-            arrow::Result<std::shared_ptr<arrow::Table>> applied =
-                arrow::Status::UnknownError("operator did not run");
+            const bool sparse_output = RequestsSparseFeatureOutput(params);
+            if (sparse_output && !op->SupportsSparseFeatureOutput()) {
+                SetMaterializationFailure(
+                    result,
+                    MaterializationFailureKind::Error,
+                    "PipelineMaterializer: node '" + node->name +
+                        "' requested sparse output but its operator does not "
+                        "support SparseFeatureDataset publication",
+                    node);
+                return result;
+            }
+            if (sparse_output && !ValidateSparseOutputIsTerminal(
+                    *node, nodes, links, err)) {
+                SetMaterializationFailure(
+                    result, MaterializationFailureKind::Error, err, node);
+                return result;
+            }
+
+            arrow::Status apply_status = arrow::Status::OK();
             try {
-                applied = op->Apply(current_table);
+                if (sparse_output) {
+                    std::string sparse_name = source_dataset_name.empty()
+                        ? DatasetNameForNode(*data_input)
+                        : source_dataset_name;
+                    if (sparse_name.empty()) {
+                        sparse_name = "pipeline_sparse_features";
+                    }
+                    sparse_name += PipelineMaterializer::kMaterializedSuffix;
+                    auto applied = op->ApplySparse(current_table, sparse_name);
+                    if (applied.ok()) {
+                        result.sparse_dataset = applied.ValueOrDie();
+                    } else {
+                        apply_status = applied.status();
+                    }
+                } else {
+                    auto applied = op->Apply(current_table);
+                    if (applied.ok()) {
+                        current_table = applied.ValueOrDie();
+                    } else {
+                        apply_status = applied.status();
+                    }
+                }
             } catch (const MaterializationCancelled&) {
                 SetMaterializationFailure(
                     result,
@@ -668,17 +752,17 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
                     node);
                 return result;
             }
-            if (!applied.ok()) {
-                const auto failure_kind = applied.status().IsCancelled()
+            if (!apply_status.ok()) {
+                const auto failure_kind = apply_status.IsCancelled()
                     ? MaterializationFailureKind::Cancelled
-                    : applied.status().IsCapacityError()
+                    : apply_status.IsCapacityError()
                         ? MaterializationFailureKind::Capacity
                         : MaterializationFailureKind::Error;
                 SetMaterializationFailure(
                     result,
                     failure_kind,
                     "PipelineMaterializer: Apply failed for node '" +
-                        node->name + "': " + applied.status().message(),
+                        node->name + "': " + apply_status.message(),
                     node);
                 return result;
             }
@@ -688,7 +772,6 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
                 return result;
             }
 
-            current_table = applied.ValueOrDie();
             ++result.operators_applied;
             spdlog::info("PipelineMaterializer: applied operator '{}' on node '{}'",
                          op->GetName(), node->name);

@@ -926,14 +926,14 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"CountVectorizer", "ngram_range", "1,1", {"1,1", "1,2", "1,3", "2,2", "2,3", "3,3"}},
         {"CountVectorizer", "stop_words", "english", {"english", "none"}},
         {"CountVectorizer", "binary", "false", {"false", "true"}},
-        {"CountVectorizer", "output_format", "dense", {"dense"}},
+        {"CountVectorizer", "output_format", "dense", {"dense", "sparse"}},
         {"CountVectorizer", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
         {"CountVectorizer", "save_state", "false", {"true", "false"}},
         {"CountVectorizer", "state_overwrite", "false", {"true", "false"}},
         {"TFIDFVectorizer", "norm", "l2", {"l1", "l2", "none"}},
         {"TFIDFVectorizer", "ngram_range", "1,1", {"1,1", "1,2", "1,3", "2,2", "2,3", "3,3"}},
         {"TFIDFVectorizer", "stop_words", "english", {"english", "none"}},
-        {"TFIDFVectorizer", "output_format", "dense", {"dense"}},
+        {"TFIDFVectorizer", "output_format", "dense", {"dense", "sparse"}},
         {"TFIDFVectorizer", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
         {"TFIDFVectorizer", "save_state", "false", {"true", "false"}},
         {"TFIDFVectorizer", "state_overwrite", "false", {"true", "false"}},
@@ -1069,10 +1069,10 @@ const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedSequentialModelLayerCapabilities() {
     static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
         {gui::NodeType::Conv1D,
-         "has a native CPU backend primitive and direct SequentialModel adapter but is not supported by ModelBuilder and has no production ArrayFire execution contract",
+         "has an ArrayFire-first backend primitive with tested multi-channel/multi-batch layout, padding/stride, residency, declared dilation fallback behavior, and a direct SequentialModel adapter, but is not supported by ModelBuilder and has no multi-batch Studio training workflow",
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::Conv2D,
-         "has a backend primitive and direct SequentialModel adapter but is not supported by ModelBuilder; its native CPU forward/backward formulas do not establish a production ArrayFire execution contract",
+         "has an ArrayFire-first backend primitive with tested multi-channel/multi-batch layout, padding/stride, residency, and declared fallback behavior plus a direct SequentialModel adapter, but is not supported by ModelBuilder and has no multi-batch Studio training workflow",
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::Conv3D,
          "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path",
@@ -1417,6 +1417,10 @@ GetPipelineMaterializerStorageBackendCapabilities() {
          PipelineMaterializerStorageSupport::None,
          false,
          "PipelineMaterializer only applies Arrow-table operators; text datasets use domain batchers"},
+        {PipelineStorageBackend::SparseFeatureDataset,
+         PipelineMaterializerStorageSupport::None,
+         false,
+         "PipelineMaterializer does not apply table operators to an already materialized sparse CSR artifact"},
     };
     return capabilities;
 }
@@ -1527,6 +1531,8 @@ const char* PipelineStorageBackendName(PipelineStorageBackend backend) {
         return "AudioDataset";
     case PipelineStorageBackend::TextDataset:
         return "TextDataset";
+    case PipelineStorageBackend::SparseFeatureDataset:
+        return "SparseFeatureDataset";
     case PipelineStorageBackend::Unknown:
         return "Unknown";
     }

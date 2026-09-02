@@ -37,29 +37,6 @@ struct CountTermStats {
     int corpus_count = 0;
 };
 
-void NormalizeCountRow(std::vector<float>& values, const std::string& norm) {
-    if (norm == "none") {
-        return;
-    }
-    double denom = 0.0;
-    if (norm == "l1") {
-        for (float value : values) {
-            denom += std::abs(static_cast<double>(value));
-        }
-    } else {
-        for (float value : values) {
-            denom += static_cast<double>(value) * value;
-        }
-        denom = std::sqrt(denom);
-    }
-    if (denom <= 0.0) {
-        return;
-    }
-    for (float& value : values) {
-        value = static_cast<float>(static_cast<double>(value) / denom);
-    }
-}
-
 bool IsStringLikeColumn(const std::shared_ptr<arrow::ChunkedArray>& column,
                         std::string& bad_type) {
     if (!column) {
@@ -160,9 +137,9 @@ bool CountVectorizerOperator::Configure(
     auto output_format = params.find("output_format");
     if (output_format != params.end() && !output_format->second.empty()) {
         output_format_ = NormalizeTextParameterChoice(output_format->second);
-        if (output_format_ != "dense") {
+        if (output_format_ != "dense" && output_format_ != "sparse") {
             error = "CountVectorizer: output_format='" + output_format_ +
-                    "' is not supported yet; current engine supports dense output only";
+                    "' must be 'dense' or 'sparse'";
             return false;
         }
     }
@@ -181,7 +158,6 @@ CountVectorizerOperator::BuildFittedConfiguration() const {
                             std::to_string(ngram_max_)},
         {"stop_words", stop_words_},
         {"binary", binary_ ? "true" : "false"},
-        {"output_format", output_format_},
         {"value_semantics", "sklearn_raw_count_v1"},
     };
 }
@@ -204,6 +180,36 @@ bool CountVectorizerOperator::CollectCacheDependencies(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    if (output_format_ != "dense") {
+        return arrow::Status::Invalid(
+            "CountVectorizer: sparse output requires typed materializer "
+            "publication; the Arrow table path remains fail-closed");
+    }
+    ARROW_ASSIGN_OR_RAISE(auto output, ApplyConfigured(input, {}));
+    return output.dense_table;
+}
+
+arrow::Result<std::shared_ptr<SparseFeatureDataset>>
+CountVectorizerOperator::ApplySparse(
+    const std::shared_ptr<arrow::Table>& input,
+    const std::string& dataset_name) {
+    if (output_format_ != "sparse") {
+        return arrow::Status::Invalid(
+            "CountVectorizer: ApplySparse requires output_format=sparse");
+    }
+    if (dataset_name.empty()) {
+        return arrow::Status::Invalid(
+            "CountVectorizer: sparse dataset name must not be empty");
+    }
+    ARROW_ASSIGN_OR_RAISE(auto output,
+                          ApplyConfigured(input, dataset_name));
+    return output.sparse_dataset;
+}
+
+arrow::Result<TextVectorizerMaterialization>
+CountVectorizerOperator::ApplyConfigured(
+    const std::shared_ptr<arrow::Table>& input,
+    const std::string& sparse_dataset_name) {
     CYXWIZ_PROFILE_ZONE("CyxWiz CountVectorizer Materializer");
     if (!input) {
         return arrow::Status::Invalid("CountVectorizer: input table is null");
@@ -274,23 +280,34 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     const uint64_t planned_features = state_options_.IsTransformOnly()
         ? static_cast<uint64_t>(std::max<size_t>(1, fitted_terms.size()))
         : static_cast<uint64_t>(std::max(1, max_features_));
-    const auto preflight_estimate = EstimateDenseMaterializationMemory(
-        planned_rows, planned_features, static_cast<uint64_t>(sizeof(float)));
+    const bool sparse_output = output_format_ == "sparse";
+    const auto preflight_estimate = sparse_output
+        ? EstimateSparseTextFeatureMemory(
+              planned_rows, 0, !label_col_.empty())
+        : EstimateDenseMaterializationMemory(
+              planned_rows, planned_features,
+              static_cast<uint64_t>(sizeof(float)));
     const auto preflight_decision = EvaluateMaterializationMemory(
         preflight_estimate, GetMaterializationMemoryContext());
     const std::string preflight_message =
         BuildMaterializationMemoryPreflightMessage(
             "CountVectorizer", "max_features",
             preflight_estimate, preflight_decision,
-            "Reduce CountVectorizer max_features, sample fewer rows first, "
-            "or use a sparse/chunked materialization path when supported.");
+            sparse_output
+                ? "This is a CSR lower-bound estimate; exact nnz memory is "
+                  "checked after vocabulary selection."
+                : "Reduce CountVectorizer max_features, sample fewer rows "
+                  "first, or select sparse output once its training path is "
+                  "enabled.");
     uint64_t planned_cells = 0;
     if (!CheckedMulU64(planned_rows, planned_features, planned_cells)) {
         planned_cells = std::numeric_limits<uint64_t>::max();
     }
     if (progress_callback_) {
         PipelineOperatorProgress event;
-        event.stage = "CountVectorizer memory preflight";
+        event.stage = sparse_output
+            ? "CountVectorizer sparse memory preflight"
+            : "CountVectorizer memory preflight";
         event.message = preflight_message;
         event.status = MaterializationMemoryRiskToProgressStatus(
             preflight_decision.risk);
@@ -299,7 +316,7 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         event.memory_risk_level = MaterializationMemoryRiskName(
             preflight_decision.risk);
         event.processed_items = 0;
-        event.total_items = planned_cells;
+        event.total_items = sparse_output ? planned_rows : planned_cells;
         progress_callback_(event);
     }
     if (preflight_decision.blocked) {
@@ -331,10 +348,8 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     // vocabulary capping, and optional l1/l2 row normalization.
     const size_t n = texts.size();
     std::vector<std::unordered_map<std::string, int>> doc_counts;
-    std::vector<size_t> doc_token_counts;
     std::unordered_map<std::string, CountTermStats> term_stats_by_name;
     doc_counts.reserve(n);
-    doc_token_counts.reserve(n);
 
     for (size_t row = 0; row < texts.size(); ++row) {
         if ((row & 1023) == 0) {
@@ -353,8 +368,6 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             : tokenized.tokens;
         auto tokens = text_vectorizer_contract::BuildNGramFeatures(
             base_tokens, ngram_min_, ngram_max_);
-        doc_token_counts.push_back(tokens.size());
-
         std::unordered_map<std::string, int> counts;
         for (const auto& token : tokens) {
             counts[token]++;
@@ -434,12 +447,44 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     for (size_t i = 0; i < kept; ++i) {
         kept_index_by_term[all_terms[i].term] = i;
     }
-    const auto bounded_memory_plan = EstimateDenseMaterializationMemory(
-        static_cast<uint64_t>(n),
-        static_cast<uint64_t>(std::max<size_t>(1, kept)),
-        static_cast<uint64_t>(sizeof(float)));
+    uint64_t expected_nnz = 0;
+    for (const auto& counts : doc_counts) {
+        for (const auto& [term, _] : counts) {
+            if (kept_index_by_term.find(term) != kept_index_by_term.end()) {
+                if (expected_nnz == (std::numeric_limits<uint64_t>::max)()) {
+                    return arrow::Status::CapacityError(
+                        "CountVectorizer: sparse nnz count overflow");
+                }
+                ++expected_nnz;
+            }
+        }
+    }
+    constexpr uint64_t kSparseIndexMax = static_cast<uint64_t>(
+        (std::numeric_limits<int32_t>::max)());
+    if (sparse_output &&
+        (static_cast<uint64_t>(n) > kSparseIndexMax ||
+         static_cast<uint64_t>(kept) > kSparseIndexMax ||
+         expected_nnz > kSparseIndexMax)) {
+        return arrow::Status::CapacityError(
+            "CountVectorizer: output exceeds the int32 CSR contract");
+    }
+    const auto bounded_memory_plan = sparse_output
+        ? EstimateSparseTextFeatureMemory(
+              static_cast<uint64_t>(n), expected_nnz,
+              !label_col_.empty())
+        : EstimateDenseMaterializationMemory(
+              static_cast<uint64_t>(n),
+              static_cast<uint64_t>(std::max<size_t>(1, kept)),
+              static_cast<uint64_t>(sizeof(float)));
+    const auto bounded_memory_decision = EvaluateMaterializationMemory(
+        bounded_memory_plan, GetMaterializationMemoryContext());
     const uint64_t bounded_memory_estimate =
         bounded_memory_plan.estimated_peak_bytes;
+    if (sparse_output && bounded_memory_decision.blocked) {
+        return arrow::Status::CapacityError(
+            "CountVectorizer: sparse CSR materialization blocked: " +
+            bounded_memory_decision.reason);
+    }
     report_progress(
         "Planning count matrix",
         "Planning " + std::to_string(n) + " rows x " +
@@ -447,7 +492,9 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         0.55f,
         bounded_memory_estimate,
         0,
-        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
+        sparse_output
+            ? expected_nnz
+            : static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
 
     std::vector<int> labels;
     std::vector<std::string> class_names;
@@ -473,51 +520,56 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         }
     }
 
-    arrow::MemoryPool* pool = arrow::default_memory_pool();
     report_progress(
-        "Building Arrow columns",
-        "Allocating Arrow builders for CountVectorizer output...",
+        sparse_output ? "Building sparse count rows"
+                      : "Building count feature rows",
+        sparse_output
+            ? "Building canonical CSR values for CountVectorizer output..."
+            : "Building canonical count values for dense output...",
         0.62f,
         bounded_memory_estimate,
         0,
-        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
-    std::vector<std::unique_ptr<arrow::FloatBuilder>> count_builders;
-    count_builders.reserve(kept);
-    for (size_t i = 0; i < kept; ++i) {
-        count_builders.push_back(std::make_unique<arrow::FloatBuilder>(pool));
-        ARROW_RETURN_NOT_OK(count_builders.back()->Reserve(static_cast<int64_t>(n)));
+        sparse_output
+            ? expected_nnz
+            : static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
+
+    TextFeatureMatrix feature_matrix;
+    feature_matrix.num_rows = static_cast<int64_t>(n);
+    feature_matrix.num_features = static_cast<int64_t>(kept);
+    feature_matrix.row_offsets.reserve(n + 1);
+    feature_matrix.column_indices.reserve(
+        static_cast<size_t>(expected_nnz));
+    feature_matrix.values.reserve(static_cast<size_t>(expected_nnz));
+    feature_matrix.feature_names.reserve(kept);
+    for (const auto& term : all_terms) {
+        feature_matrix.feature_names.push_back(term.term);
     }
-    arrow::Int32Builder label_builder(pool);
     if (!labels.empty()) {
-        ARROW_RETURN_NOT_OK(label_builder.Reserve(static_cast<int64_t>(n)));
+        feature_matrix.labels.reserve(labels.size());
+        for (int label : labels) {
+            feature_matrix.labels.push_back(static_cast<int32_t>(label));
+        }
+        feature_matrix.label_name = "y";
     }
 
     for (size_t r = 0; r < n; ++r) {
         if ((r & 1023) == 0) {
             ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         }
-        std::vector<float> row_values(kept, 0.0f);
+        std::vector<TextFeatureEntry> row_entries;
         const auto& counts = doc_counts[r];
-        const size_t token_count = doc_token_counts[r];
-        if (token_count > 0) {
-            for (const auto& pair : counts) {
-                auto kept_it = kept_index_by_term.find(pair.first);
-                if (kept_it == kept_index_by_term.end()) {
-                    continue;
-                }
-                row_values[kept_it->second] = binary_
-                    ? 1.0f
-                    : static_cast<float>(pair.second);
+        row_entries.reserve(std::min(counts.size(), kept));
+        for (const auto& pair : counts) {
+            auto kept_it = kept_index_by_term.find(pair.first);
+            if (kept_it == kept_index_by_term.end()) {
+                continue;
             }
-            NormalizeCountRow(row_values, norm_);
+            row_entries.push_back({
+                static_cast<int32_t>(kept_it->second),
+                binary_ ? 1.0f : static_cast<float>(pair.second)});
         }
-
-        for (size_t c = 0; c < kept; ++c) {
-            ARROW_RETURN_NOT_OK(count_builders[c]->Append(row_values[c]));
-        }
-        if (!labels.empty()) {
-            ARROW_RETURN_NOT_OK(label_builder.Append(labels[r]));
-        }
+        ARROW_RETURN_NOT_OK(AppendNormalizedTextFeatureRow(
+            feature_matrix, std::move(row_entries), norm_));
         if ((r + 1) % 5000 == 0 || r + 1 == n) {
             const float p = 0.65f + 0.25f *
                 (static_cast<float>(r + 1) / static_cast<float>(n));
@@ -532,38 +584,42 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                     " count rows",
                 p,
                 bounded_memory_estimate,
-                static_cast<uint64_t>(r + 1) * static_cast<uint64_t>(kept),
-                static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
+                sparse_output
+                    ? feature_matrix.values.size()
+                    : static_cast<uint64_t>(r + 1) *
+                          static_cast<uint64_t>(kept),
+                sparse_output
+                    ? expected_nnz
+                    : static_cast<uint64_t>(n) *
+                          static_cast<uint64_t>(kept));
         }
     }
 
     report_progress(
-        "Finishing Arrow table",
-        "Finalizing CountVectorizer Arrow table...",
+        sparse_output ? "Finishing sparse dataset"
+                      : "Finishing Arrow table",
+        sparse_output ? "Finalizing CountVectorizer CSR dataset..."
+                      : "Finalizing CountVectorizer Arrow table...",
         0.95f,
         bounded_memory_estimate,
-        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept),
-        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
+        sparse_output ? expected_nnz
+                      : static_cast<uint64_t>(n) *
+                            static_cast<uint64_t>(kept),
+        sparse_output ? expected_nnz
+                      : static_cast<uint64_t>(n) *
+                            static_cast<uint64_t>(kept));
 
-    std::vector<std::shared_ptr<arrow::Array>> arrays;
-    std::vector<std::shared_ptr<arrow::Field>> fields;
-    arrays.reserve(kept + (labels.empty() ? 0 : 1));
-    fields.reserve(kept + (labels.empty() ? 0 : 1));
-    for (size_t i = 0; i < kept; ++i) {
-        std::shared_ptr<arrow::Array> arr;
-        ARROW_RETURN_NOT_OK(count_builders[i]->Finish(&arr));
-        arrays.push_back(std::move(arr));
-        fields.push_back(arrow::field("count_" + std::to_string(i), arrow::float32()));
+    TextVectorizerMaterialization output;
+    if (sparse_output) {
+        ARROW_ASSIGN_OR_RAISE(
+            output.sparse_dataset,
+            BuildSparseTextFeatureDataset(
+                std::move(feature_matrix), sparse_dataset_name));
+    } else {
+        ARROW_ASSIGN_OR_RAISE(
+            output.dense_table,
+            BuildDenseTextFeatureTable(feature_matrix, "count_"));
     }
-    if (!labels.empty()) {
-        std::shared_ptr<arrow::Array> arr;
-        ARROW_RETURN_NOT_OK(label_builder.Finish(&arr));
-        arrays.push_back(std::move(arr));
-        fields.push_back(arrow::field("y", arrow::int32()));
-    }
-
-    auto out_schema = arrow::schema(fields);
-    auto out_table = arrow::Table::Make(out_schema, arrays, static_cast<int64_t>(n));
 
     if (!state_options_.IsTransformOnly() && state_options_.save_state) {
         std::vector<FittedTextVectorizerFeature> state_features;
@@ -591,19 +647,23 @@ CountVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
 
     spdlog::info("CountVectorizer: {} docs x {} features (capped from {}), "
                  "binary={}, norm={}, stop_words={}, ngram_range={},{} "
-                 "classes={}, mode={}",
+                 "classes={}, mode={}, output_format={}, nnz={}",
                  n, kept, full_vocab, binary_, norm_, stop_words_,
                  ngram_min_, ngram_max_, class_names.size(),
-                 state_options_.operation_mode);
+                 state_options_.operation_mode, output_format_, expected_nnz);
     report_progress(
         "CountVectorizer materialization complete",
         "Materialized " + std::to_string(n) + " rows x " +
             std::to_string(kept) + " count features",
         1.0f,
         bounded_memory_estimate,
-        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept),
-        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
-    return out_table;
+        sparse_output ? expected_nnz
+                      : static_cast<uint64_t>(n) *
+                            static_cast<uint64_t>(kept),
+        sparse_output ? expected_nnz
+                      : static_cast<uint64_t>(n) *
+                            static_cast<uint64_t>(kept));
+    return output;
 }
 
 } // namespace cyxwiz

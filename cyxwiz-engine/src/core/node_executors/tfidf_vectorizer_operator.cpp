@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <memory>
 #include <new>
@@ -37,31 +38,6 @@ struct TFIDFTermStats {
     int corpus_count = 0;
     double idf = 1.0;
 };
-
-void NormalizeDenseRow(std::vector<float>& values, const std::string& norm) {
-    if (norm == "none") {
-        return;
-    }
-
-    double denom = 0.0;
-    if (norm == "l1") {
-        for (float value : values) {
-            denom += std::abs(static_cast<double>(value));
-        }
-    } else {
-        for (float value : values) {
-            denom += static_cast<double>(value) * value;
-        }
-        denom = std::sqrt(denom);
-    }
-
-    if (denom <= 0.0) {
-        return;
-    }
-    for (float& value : values) {
-        value = static_cast<float>(static_cast<double>(value) / denom);
-    }
-}
 
 bool IsStringLikeColumn(const std::shared_ptr<arrow::ChunkedArray>& column,
                         std::string& bad_type) {
@@ -183,9 +159,9 @@ bool TFIDFVectorizerOperator::Configure(
     auto output_format = params.find("output_format");
     if (output_format != params.end() && !output_format->second.empty()) {
         output_format_ = NormalizeTextParameterChoice(output_format->second);
-        if (output_format_ != "dense") {
+        if (output_format_ != "dense" && output_format_ != "sparse") {
             error = "TFIDFVectorizer: output_format='" + output_format_ +
-                    "' is not supported yet; current engine supports dense output only";
+                    "' must be 'dense' or 'sparse'";
             return false;
         }
     }
@@ -211,7 +187,6 @@ TFIDFVectorizerOperator::BuildFittedConfiguration() const {
         {"ngram_range", std::to_string(ngram_min_) + "," +
                             std::to_string(ngram_max_)},
         {"stop_words", stop_words_},
-        {"output_format", output_format_},
         {"value_semantics", "sklearn_raw_count_v1"},
     };
 }
@@ -234,6 +209,36 @@ bool TFIDFVectorizerOperator::CollectCacheDependencies(
 
 arrow::Result<std::shared_ptr<arrow::Table>>
 TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    if (output_format_ != "dense") {
+        return arrow::Status::Invalid(
+            "TFIDFVectorizer: sparse output requires typed materializer "
+            "publication; the Arrow table path remains fail-closed");
+    }
+    ARROW_ASSIGN_OR_RAISE(auto output, ApplyConfigured(input, {}));
+    return output.dense_table;
+}
+
+arrow::Result<std::shared_ptr<SparseFeatureDataset>>
+TFIDFVectorizerOperator::ApplySparse(
+    const std::shared_ptr<arrow::Table>& input,
+    const std::string& dataset_name) {
+    if (output_format_ != "sparse") {
+        return arrow::Status::Invalid(
+            "TFIDFVectorizer: ApplySparse requires output_format=sparse");
+    }
+    if (dataset_name.empty()) {
+        return arrow::Status::Invalid(
+            "TFIDFVectorizer: sparse dataset name must not be empty");
+    }
+    ARROW_ASSIGN_OR_RAISE(auto output,
+                          ApplyConfigured(input, dataset_name));
+    return output.sparse_dataset;
+}
+
+arrow::Result<TextVectorizerMaterialization>
+TFIDFVectorizerOperator::ApplyConfigured(
+    const std::shared_ptr<arrow::Table>& input,
+    const std::string& sparse_dataset_name) {
     CYXWIZ_PROFILE_ZONE("CyxWiz TF-IDF Materializer");
     if (!input) {
         return arrow::Status::Invalid("TFIDFVectorizer: input table is null");
@@ -306,22 +311,32 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     const uint64_t planned_features = state_options_.IsTransformOnly()
         ? static_cast<uint64_t>(std::max<size_t>(1, fitted_terms.size()))
         : static_cast<uint64_t>(std::max(1, max_features_));
-    const auto preflight_estimate = EstimateDenseMaterializationMemory(
-        planned_rows, planned_features, static_cast<uint64_t>(sizeof(float)));
+    const bool sparse_output = output_format_ == "sparse";
+    const auto preflight_estimate = sparse_output
+        ? EstimateSparseTextFeatureMemory(
+              planned_rows, 0, !label_col_.empty())
+        : EstimateDenseMaterializationMemory(
+              planned_rows, planned_features,
+              static_cast<uint64_t>(sizeof(float)));
     const auto preflight_decision = EvaluateMaterializationMemory(
         preflight_estimate, GetMaterializationMemoryContext());
     const std::string preflight_message =
         BuildMaterializationMemoryPreflightMessage(
             "TF-IDF", "max_features", preflight_estimate, preflight_decision,
-            "Reduce TF-IDF max_features, sample fewer rows first, or use a "
-            "sparse/chunked materialization path when supported.");
+            sparse_output
+                ? "This is a CSR lower-bound estimate; exact nnz memory is "
+                  "checked after vocabulary selection."
+                : "Reduce TF-IDF max_features, sample fewer rows first, or "
+                  "select sparse output once its training path is enabled.");
     uint64_t planned_cells = 0;
     if (!CheckedMulU64(planned_rows, planned_features, planned_cells)) {
         planned_cells = std::numeric_limits<uint64_t>::max();
     }
     if (progress_callback_) {
         PipelineOperatorProgress event;
-        event.stage = "TF-IDF memory preflight";
+        event.stage = sparse_output
+            ? "TF-IDF sparse memory preflight"
+            : "TF-IDF memory preflight";
         event.message = preflight_message;
         event.status = MaterializationMemoryRiskToProgressStatus(
             preflight_decision.risk);
@@ -330,7 +345,7 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         event.memory_risk_level = MaterializationMemoryRiskName(
             preflight_decision.risk);
         event.processed_items = 0;
-        event.total_items = planned_cells;
+        event.total_items = sparse_output ? planned_rows : planned_cells;
         progress_callback_(event);
     }
     if (preflight_decision.blocked) {
@@ -364,9 +379,7 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         static_cast<uint64_t>(n));
 
     std::vector<std::unordered_map<std::string, int>> doc_counts;
-    std::vector<size_t> doc_token_counts;
     doc_counts.reserve(n);
-    doc_token_counts.reserve(n);
 
     std::unordered_map<std::string, TFIDFTermStats> term_stats_by_name;
     try {
@@ -389,8 +402,6 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                 : tokenized.tokens;
             auto tokens = text_vectorizer_contract::BuildNGramFeatures(
                 base_tokens, ngram_min_, ngram_max_);
-            doc_token_counts.push_back(tokens.size());
-
             std::unordered_map<std::string, int> counts;
             for (const auto& token : tokens) {
                 counts[token]++;
@@ -489,12 +500,6 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     const size_t kept = state_options_.IsTransformOnly()
         ? all_terms.size()
         : std::min(filtered_vocab, static_cast<size_t>(max_features_));
-    const auto bounded_memory_plan = EstimateDenseMaterializationMemory(
-        static_cast<uint64_t>(n),
-        static_cast<uint64_t>(std::max<size_t>(1, kept)),
-        static_cast<uint64_t>(sizeof(float)));
-    const uint64_t bounded_memory_estimate =
-        bounded_memory_plan.estimated_peak_bytes;
     if (!state_options_.IsTransformOnly() && filtered_vocab > kept) {
         std::partial_sort(
             all_terms.begin(),
@@ -520,14 +525,6 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     }
 
     std::unordered_map<std::string, size_t> kept_index_by_term;
-    report_progress(
-        "Planning TF-IDF matrix",
-        "Planning " + std::to_string(n) + " rows x " +
-            std::to_string(kept) + " TF-IDF features",
-        0.55f,
-        bounded_memory_estimate,
-        0,
-        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
     kept_index_by_term.reserve(kept);
     std::vector<double> kept_idf;
     kept_idf.reserve(kept);
@@ -535,6 +532,55 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         kept_index_by_term[all_terms[i].term] = i;
         kept_idf.push_back(all_terms[i].idf);
     }
+
+    uint64_t expected_nnz = 0;
+    for (const auto& counts : doc_counts) {
+        for (const auto& [term, _] : counts) {
+            if (kept_index_by_term.find(term) != kept_index_by_term.end()) {
+                if (expected_nnz == (std::numeric_limits<uint64_t>::max)()) {
+                    return arrow::Status::CapacityError(
+                        "TFIDFVectorizer: sparse nnz count overflow");
+                }
+                ++expected_nnz;
+            }
+        }
+    }
+    constexpr uint64_t kSparseIndexMax = static_cast<uint64_t>(
+        (std::numeric_limits<int32_t>::max)());
+    if (sparse_output &&
+        (static_cast<uint64_t>(n) > kSparseIndexMax ||
+         static_cast<uint64_t>(kept) > kSparseIndexMax ||
+         expected_nnz > kSparseIndexMax)) {
+        return arrow::Status::CapacityError(
+            "TFIDFVectorizer: output exceeds the int32 CSR contract");
+    }
+    const auto bounded_memory_plan = sparse_output
+        ? EstimateSparseTextFeatureMemory(
+              static_cast<uint64_t>(n), expected_nnz,
+              !label_col_.empty())
+        : EstimateDenseMaterializationMemory(
+              static_cast<uint64_t>(n),
+              static_cast<uint64_t>(std::max<size_t>(1, kept)),
+              static_cast<uint64_t>(sizeof(float)));
+    const auto bounded_memory_decision = EvaluateMaterializationMemory(
+        bounded_memory_plan, GetMaterializationMemoryContext());
+    const uint64_t bounded_memory_estimate =
+        bounded_memory_plan.estimated_peak_bytes;
+    if (sparse_output && bounded_memory_decision.blocked) {
+        return arrow::Status::CapacityError(
+            "TFIDFVectorizer: sparse CSR materialization blocked: " +
+            bounded_memory_decision.reason);
+    }
+    report_progress(
+        "Planning TF-IDF matrix",
+        "Planning " + std::to_string(n) + " rows x " +
+            std::to_string(kept) + " TF-IDF features",
+        0.55f,
+        bounded_memory_estimate,
+        0,
+        sparse_output
+            ? expected_nnz
+            : static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
 
     // Read label column if specified.
     std::vector<int> labels;
@@ -561,53 +607,61 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         }
     }
 
-    // Build wide output: tfidf_0..tfidf_{kept-1}, y.
+    // Assemble canonical nonzero rows once. Dense Arrow and sparse CSR output
+    // are both derived from this matrix, so representation choice cannot
+    // change vocabulary order, normalization, or numerical values.
     report_progress(
-        "Building Arrow columns",
-        "Allocating Arrow builders for TF-IDF output...",
+        sparse_output ? "Building sparse TF-IDF rows"
+                      : "Building TF-IDF feature rows",
+        sparse_output
+            ? "Building canonical CSR values for TF-IDF output..."
+            : "Building canonical TF-IDF values for dense output...",
         0.62f,
         bounded_memory_estimate,
         0,
-        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
-    arrow::MemoryPool* pool = arrow::default_memory_pool();
-    std::vector<std::unique_ptr<arrow::FloatBuilder>> tfidf_builders;
-    tfidf_builders.reserve(kept);
-    for (size_t i = 0; i < kept; ++i) {
-        tfidf_builders.push_back(std::make_unique<arrow::FloatBuilder>(pool));
-        ARROW_RETURN_NOT_OK(tfidf_builders.back()->Reserve(static_cast<int64_t>(n)));
+        sparse_output
+            ? expected_nnz
+            : static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
+
+    TextFeatureMatrix feature_matrix;
+    feature_matrix.num_rows = static_cast<int64_t>(n);
+    feature_matrix.num_features = static_cast<int64_t>(kept);
+    feature_matrix.row_offsets.reserve(n + 1);
+    feature_matrix.column_indices.reserve(
+        static_cast<size_t>(expected_nnz));
+    feature_matrix.values.reserve(static_cast<size_t>(expected_nnz));
+    feature_matrix.feature_names.reserve(kept);
+    for (const auto& term : all_terms) {
+        feature_matrix.feature_names.push_back(term.term);
     }
-    arrow::Int32Builder label_builder(pool);
     if (!labels.empty()) {
-        ARROW_RETURN_NOT_OK(label_builder.Reserve(static_cast<int64_t>(n)));
+        feature_matrix.labels.reserve(labels.size());
+        for (int label : labels) {
+            feature_matrix.labels.push_back(static_cast<int32_t>(label));
+        }
+        feature_matrix.label_name = "y";
     }
 
     for (size_t r = 0; r < n; ++r) {
         if ((r & 1023) == 0) {
             ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         }
-        std::vector<float> dense_row(kept, 0.0f);
+        std::vector<TextFeatureEntry> row_entries;
         const auto& counts = doc_counts[r];
-        const size_t token_count = doc_token_counts[r];
-        if (token_count > 0) {
-            for (const auto& pair : counts) {
-                auto kept_it = kept_index_by_term.find(pair.first);
-                if (kept_it == kept_index_by_term.end()) {
-                    continue;
-                }
-                const size_t col = kept_it->second;
-                dense_row[col] =
-                    static_cast<float>(
-                        static_cast<double>(pair.second) * kept_idf[col]);
+        row_entries.reserve(std::min(counts.size(), kept));
+        for (const auto& pair : counts) {
+            auto kept_it = kept_index_by_term.find(pair.first);
+            if (kept_it == kept_index_by_term.end()) {
+                continue;
             }
-            NormalizeDenseRow(dense_row, norm_);
+            const size_t column = kept_it->second;
+            row_entries.push_back({
+                static_cast<int32_t>(column),
+                static_cast<float>(
+                    static_cast<double>(pair.second) * kept_idf[column])});
         }
-
-        for (size_t c = 0; c < kept; ++c) {
-            ARROW_RETURN_NOT_OK(tfidf_builders[c]->Append(dense_row[c]));
-        }
-        if (!labels.empty()) {
-            ARROW_RETURN_NOT_OK(label_builder.Append(labels[r]));
-        }
+        ARROW_RETURN_NOT_OK(AppendNormalizedTextFeatureRow(
+            feature_matrix, std::move(row_entries), norm_));
         if ((r + 1) % 5000 == 0 || r + 1 == n) {
             const float p = 0.65f + 0.25f *
                 (static_cast<float>(r + 1) / static_cast<float>(n));
@@ -622,38 +676,42 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                     " TF-IDF rows",
                 p,
                 bounded_memory_estimate,
-                static_cast<uint64_t>(r + 1) * static_cast<uint64_t>(kept),
-                static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
+                sparse_output
+                    ? feature_matrix.values.size()
+                    : static_cast<uint64_t>(r + 1) *
+                          static_cast<uint64_t>(kept),
+                sparse_output
+                    ? expected_nnz
+                    : static_cast<uint64_t>(n) *
+                          static_cast<uint64_t>(kept));
         }
     }
 
     report_progress(
-        "Finishing Arrow table",
-        "Finalizing TF-IDF Arrow table...",
+        sparse_output ? "Finishing sparse dataset"
+                      : "Finishing Arrow table",
+        sparse_output ? "Finalizing TF-IDF CSR dataset..."
+                      : "Finalizing TF-IDF Arrow table...",
         0.95f,
         bounded_memory_estimate,
-        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept),
-        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
+        sparse_output ? expected_nnz
+                      : static_cast<uint64_t>(n) *
+                            static_cast<uint64_t>(kept),
+        sparse_output ? expected_nnz
+                      : static_cast<uint64_t>(n) *
+                            static_cast<uint64_t>(kept));
 
-    std::vector<std::shared_ptr<arrow::Array>> arrays;
-    std::vector<std::shared_ptr<arrow::Field>> fields;
-    arrays.reserve(kept + (labels.empty() ? 0 : 1));
-    fields.reserve(kept + (labels.empty() ? 0 : 1));
-    for (size_t i = 0; i < kept; ++i) {
-        std::shared_ptr<arrow::Array> arr;
-        ARROW_RETURN_NOT_OK(tfidf_builders[i]->Finish(&arr));
-        arrays.push_back(std::move(arr));
-        fields.push_back(arrow::field("tfidf_" + std::to_string(i), arrow::float32()));
+    TextVectorizerMaterialization output;
+    if (sparse_output) {
+        ARROW_ASSIGN_OR_RAISE(
+            output.sparse_dataset,
+            BuildSparseTextFeatureDataset(
+                std::move(feature_matrix), sparse_dataset_name));
+    } else {
+        ARROW_ASSIGN_OR_RAISE(
+            output.dense_table,
+            BuildDenseTextFeatureTable(feature_matrix, "tfidf_"));
     }
-    if (!labels.empty()) {
-        std::shared_ptr<arrow::Array> arr;
-        ARROW_RETURN_NOT_OK(label_builder.Finish(&arr));
-        arrays.push_back(std::move(arr));
-        fields.push_back(arrow::field("y", arrow::int32()));
-    }
-
-    auto out_schema = arrow::schema(fields);
-    auto out_table = arrow::Table::Make(out_schema, arrays, static_cast<int64_t>(n));
 
     if (!state_options_.IsTransformOnly() && state_options_.save_state) {
         std::vector<FittedTextVectorizerFeature> state_features;
@@ -682,21 +740,26 @@ TFIDFVectorizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     spdlog::info("TFIDFVectorizer: {} docs x {} features (capped from {}, "
                  "filtered from {} with min_df={}), use_idf={}, "
                  "smooth_idf={}, norm={}, stop_words={}, ngram_range={},{} "
-                 "classes={}, mode={}, bounded=true",
+                 "classes={}, mode={}, output_format={}, nnz={}, bounded=true",
                  n, kept, filtered_vocab, full_vocab, min_df_,
                  use_idf_, smooth_idf_, norm_,
                  stop_words_,
                  ngram_min_, ngram_max_,
-                 class_names.size(), state_options_.operation_mode);
+                 class_names.size(), state_options_.operation_mode,
+                 output_format_, expected_nnz);
     report_progress(
         "TF-IDF materialization complete",
         "Materialized " + std::to_string(n) + " rows x " +
             std::to_string(kept) + " TF-IDF features",
         1.0f,
         bounded_memory_estimate,
-        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept),
-        static_cast<uint64_t>(n) * static_cast<uint64_t>(kept));
-    return out_table;
+        sparse_output ? expected_nnz
+                      : static_cast<uint64_t>(n) *
+                            static_cast<uint64_t>(kept),
+        sparse_output ? expected_nnz
+                      : static_cast<uint64_t>(n) *
+                            static_cast<uint64_t>(kept));
+    return output;
 }
 
 } // namespace cyxwiz

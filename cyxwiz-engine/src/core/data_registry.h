@@ -9,6 +9,7 @@
 #include <functional>
 #include <optional>
 #include <chrono>
+#include <cstdint>
 
 #include "dataset_base.h"
 
@@ -22,6 +23,7 @@ namespace cyxwiz {
     struct PreprocessingConfig;
     class AnnotationManager;
     class ArrowDataset;
+    class SparseFeatureDataset;
 
     namespace transforms {
         class Compose;
@@ -32,6 +34,24 @@ namespace cyxwiz {
 
 // Forward declarations
 class DatasetHandle;
+
+/** Immutable snapshot used by debugger and Properties-panel consumers. */
+struct SparseFeatureDatasetInfo {
+    std::string name;
+    int64_t num_rows = 0;
+    int64_t num_features = 0;
+    int64_t nnz = 0;
+    double density = 0.0;
+    uint64_t feature_storage_bytes = 0;
+    uint64_t label_storage_bytes = 0;
+    uint64_t estimated_host_memory_bytes = 0;
+    uint64_t dense_feature_bytes = 0;
+    size_t feature_name_count = 0;
+    bool has_labels = false;
+    std::string label_name;
+    std::string label_type;
+    int64_t label_null_count = 0;
+};
 
 /**
  * Memory statistics for monitoring
@@ -277,6 +297,20 @@ public:
     std::shared_ptr<class ArrowDataset> RegisterArrowTable(std::shared_ptr<arrow::Table> table, const std::string& name);
     std::shared_ptr<class ArrowDataset> GetArrowDataset(const std::string& name);
     bool IsArrowDataset(const std::string& name) const;
+
+    // Immutable host-side CSR datasets produced by sparse text materializers.
+    // These remain separate from the general Tensor contract and are converted
+    // to the selected ArrayFire backend only at the batch/model boundary.
+    bool RegisterSparseFeatureDataset(
+        std::shared_ptr<const SparseFeatureDataset> dataset);
+    std::shared_ptr<const SparseFeatureDataset> GetSparseFeatureDataset(
+        const std::string& name) const;
+    bool IsSparseFeatureDataset(const std::string& name) const;
+    std::optional<SparseFeatureDatasetInfo> InspectSparseFeatureDataset(
+        const std::string& name) const;
+    std::vector<SparseFeatureDatasetInfo> ListSparseFeatureDatasets() const;
+    bool UnregisterSparseFeatureDataset(const std::string& name);
+    size_t ClearAllSparseFeatureDatasets();
 
     // Disk-backed Parquet dataset support — used automatically for files that
     // are larger than available RAM. See LoadTabularCSV below for the
@@ -603,6 +637,12 @@ private:
     // is too large to fit comfortably in RAM. Lookups by name fall through
     // to this map when not found in arrow_datasets_.
     std::map<std::string, std::shared_ptr<class ParquetBackedDataset>> parquet_backed_datasets_;
+
+    // Narrow host CSR ownership for sparse text features. The pointed-to
+    // datasets are immutable, so readers may safely retain a shared snapshot
+    // after the registry lock is released.
+    std::map<std::string, std::shared_ptr<const SparseFeatureDataset>>
+        sparse_feature_datasets_;
 
     // Provenance index for registered tabular datasets. Lets UI callers
     // resolve a selected source/cache path to the registered dataset name

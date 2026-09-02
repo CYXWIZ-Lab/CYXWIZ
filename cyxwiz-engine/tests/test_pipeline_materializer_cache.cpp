@@ -1,5 +1,6 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/data_registry.h"
+#include "../src/core/node_executors/count_vectorizer_operator.h"
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
 #include "../src/core/pipeline_materializer.h"
@@ -89,6 +90,23 @@ gui::MLNode MakeTokenizerNode(std::string max_length = "4") {
     return node;
 }
 
+gui::MLNode MakeSparseCountNode() {
+    gui::MLNode node;
+    node.id = 5;
+    node.type = gui::NodeType::CountVectorizer;
+    node.category = gui::NodeCategory::TextProcessing;
+    node.name = "Sparse Count Vectorizer";
+    node.parameters = {
+        {"text_col", "text"},
+        {"label_col", "label"},
+        {"max_features", "8"},
+        {"norm", "none"},
+        {"stop_words", "none"},
+        {"output_format", "sparse"},
+    };
+    return node;
+}
+
 gui::MLNode MakeStatefulNode() {
     gui::MLNode node;
     node.id = 3;
@@ -168,6 +186,9 @@ std::unique_ptr<IPipelineOperator> PipelineOperatorFactory::Create(
     if (type == gui::NodeType::TextTokenizer) {
         return std::make_unique<TextTokenizerOperator>();
     }
+    if (type == gui::NodeType::CountVectorizer) {
+        return std::make_unique<CountVectorizerOperator>();
+    }
     if (type == gui::NodeType::StandardScaler) {
         return std::make_unique<NonCacheablePassThroughOperator>();
     }
@@ -179,6 +200,7 @@ std::unique_ptr<IPipelineOperator> PipelineOperatorFactory::Create(
 
 bool PipelineOperatorFactory::HasOperator(gui::NodeType type) const {
     return type == gui::NodeType::TextTokenizer ||
+           type == gui::NodeType::CountVectorizer ||
            type == gui::NodeType::StandardScaler ||
            type == gui::NodeType::MinMaxScaler;
 }
@@ -186,7 +208,8 @@ bool PipelineOperatorFactory::HasOperator(gui::NodeType type) const {
 void PipelineOperatorFactory::RegisterCreator(gui::NodeType, Creator) {}
 
 std::vector<gui::NodeType> PipelineOperatorFactory::GetSupportedTypes() const {
-    return {gui::NodeType::TextTokenizer, gui::NodeType::StandardScaler,
+    return {gui::NodeType::TextTokenizer, gui::NodeType::CountVectorizer,
+            gui::NodeType::StandardScaler,
             gui::NodeType::MinMaxScaler};
 }
 
@@ -272,6 +295,24 @@ int main() {
           "cache hit should report manifest column count");
     Check(registry.GetArrowDataset(materialized_name) != nullptr,
           "cache hit should register prepared dataset");
+
+    auto disconnected_sparse_nodes = nodes;
+    auto disconnected_sparse = MakeSparseCountNode();
+    disconnected_sparse.id = 50;
+    disconnected_sparse.name = "Disconnected Sparse Count Vectorizer";
+    disconnected_sparse_nodes.push_back(std::move(disconnected_sparse));
+    registry.UnregisterTabularDataset(materialized_name);
+    auto disconnected_sparse_result =
+        cyxwiz::PipelineMaterializer::Materialize(
+            disconnected_sparse_nodes, links, registry, kDatasetName,
+            cache_config);
+    Check(disconnected_sparse_result.success,
+          disconnected_sparse_result.error_message);
+    Check(disconnected_sparse_result.effective_kind ==
+              cyxwiz::PipelineMaterializerSourceKind::ArrowTable &&
+              registry.IsArrowDataset(materialized_name) &&
+              !registry.IsSparseFeatureDataset(materialized_name),
+          "disconnected sparse vectorizer must not change the selected source representation");
 
     auto changed_nodes = nodes;
     changed_nodes[1] = MakeTokenizerNode("5");
@@ -399,6 +440,54 @@ int main() {
           "require-hit cache policy should fail instead of rebuilding on miss");
     Check(required.cache_status == cyxwiz::MaterializationCacheStatus::Miss,
           "require-hit miss should report miss status");
+
+    registry.UnregisterTabularDataset(materialized_name);
+    std::vector<gui::MLNode> sparse_nodes = {
+        MakeDataInputNode(kDatasetName),
+        MakeSparseCountNode(),
+    };
+    std::vector<gui::NodeLink> sparse_links = {
+        {1, 1, 0, 5, 0, gui::LinkType::TensorFlow},
+    };
+    auto sparse_saved = cyxwiz::PipelineMaterializer::Materialize(
+        sparse_nodes, sparse_links, registry, kDatasetName, cache_config);
+    Check(sparse_saved.success, sparse_saved.error_message);
+    Check(sparse_saved.effective_kind ==
+              cyxwiz::PipelineMaterializerSourceKind::SparseFeatureDataset &&
+              registry.IsSparseFeatureDataset(materialized_name) &&
+              !registry.IsArrowDataset(materialized_name),
+          "sparse vectorizer output must publish only the typed CSR artifact");
+    auto sparse_info = registry.InspectSparseFeatureDataset(materialized_name);
+    Check(sparse_info.has_value() && sparse_info->num_rows == 4 &&
+              sparse_info->num_features > 0 && sparse_info->has_labels,
+          "published sparse artifact must retain rows, features, and labels");
+    Check(sparse_saved.cache_status ==
+              cyxwiz::MaterializationCacheStatus::Saved &&
+              sparse_saved.saved_to_cache &&
+              sparse_saved.cache_artifact_path.ends_with(".csr.arrow"),
+          "sparse materialization must use its versioned CSR cache artifact");
+
+    registry.UnregisterTabularDataset(materialized_name);
+    auto sparse_hit = cyxwiz::PipelineMaterializer::Materialize(
+        sparse_nodes, sparse_links, registry, kDatasetName, cache_config);
+    Check(sparse_hit.success && sparse_hit.loaded_from_cache &&
+              sparse_hit.cache_status ==
+                  cyxwiz::MaterializationCacheStatus::Hit &&
+              registry.IsSparseFeatureDataset(materialized_name),
+          "sparse cache hit must restore the typed CSR registry entry");
+
+    auto invalid_sparse_nodes = sparse_nodes;
+    invalid_sparse_nodes.push_back(MakeTokenizerNode());
+    auto invalid_sparse_links = sparse_links;
+    invalid_sparse_links.push_back(
+        {2, 5, 0, 2, 0, gui::LinkType::TensorFlow});
+    auto invalid_sparse = cyxwiz::PipelineMaterializer::Materialize(
+        invalid_sparse_nodes, invalid_sparse_links, registry,
+        kDatasetName, cache_config);
+    Check(!invalid_sparse.success &&
+              invalid_sparse.error_message.find("final preprocessing output") !=
+                  std::string::npos,
+          "sparse output must fail closed when another materializer follows");
 
     registry.UnregisterTabularDataset(kDatasetName);
     registry.UnregisterTabularDataset(materialized_name);

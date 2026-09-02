@@ -302,6 +302,113 @@ int main() {
     Check(config.layers.size() == 1,
           "linear selected path should still compile one sequential layer");
 
+    auto sparse_count = Node(
+        8,
+        gui::NodeType::CountVectorizer,
+        "Sparse Count Vectorizer",
+        {Pin(801, gui::PinType::Dataset, "Text", true)},
+        {Pin(802, gui::PinType::Dataset, "Vectors", false)});
+    sparse_count.parameters = {
+        {"text_col", "text"},
+        {"label_col", "label"},
+        {"max_features", "64"},
+        {"norm", "none"},
+        {"stop_words", "none"},
+        {"output_format", "sparse"},
+    };
+    auto sparse_nodes = std::vector<gui::MLNode>{
+        data, sparse_count, dense, loss, optimizer};
+    auto sparse_links = std::vector<gui::NodeLink>{
+        Link(1, 1, 101, 8, 801),
+        Link(2, 8, 802, 2, 201),
+        Link(3, 2, 202, 4, 401),
+        Link(4, 1, 102, 4, 402),
+        Link(5, 4, 403, 5, 501),
+    };
+    auto sparse_config = compiler.Compile(sparse_nodes, sparse_links, true);
+    Check(sparse_config.is_valid,
+          "final sparse vectorizer feeding Dense should compile");
+    Check(sparse_config.input_size == 64 &&
+              sparse_config.input_shape == std::vector<size_t>({64}),
+          "sparse vectorizer max_features should define the compiled input width");
+
+    auto embedding = Node(
+        9,
+        gui::NodeType::Embedding,
+        "Embedding",
+        {Pin(901, gui::PinType::Tensor, "Input", true)},
+        {Pin(902, gui::PinType::Tensor, "Output", false)});
+    embedding.parameters = {
+        {"num_embeddings", "128"}, {"embedding_dim", "16"}};
+    auto embedding_nodes = std::vector<gui::MLNode>{
+        data, sparse_count, embedding, dense, loss, optimizer};
+    auto embedding_links = std::vector<gui::NodeLink>{
+        Link(1, 1, 101, 8, 801),
+        Link(2, 8, 802, 9, 901),
+        Link(3, 9, 902, 2, 201),
+        Link(4, 2, 202, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+    auto embedding_config =
+        compiler.Compile(embedding_nodes, embedding_links, true);
+    Check(!embedding_config.is_valid &&
+              HasIssueText(embedding_config,
+                           "require Dense as the first model layer"),
+          "sparse feature path must reject a non-Dense first model layer");
+
+    auto tokenizer = Node(
+        10,
+        gui::NodeType::TextTokenizer,
+        "Downstream Tokenizer",
+        {Pin(1001, gui::PinType::Dataset, "Text", true)},
+        {Pin(1002, gui::PinType::Dataset, "Tokens", false)});
+    tokenizer.parameters = {{"text_col", "text"}, {"max_length", "16"}};
+    auto downstream_nodes = std::vector<gui::MLNode>{
+        data, sparse_count, tokenizer, dense, loss, optimizer};
+    auto downstream_links = std::vector<gui::NodeLink>{
+        Link(1, 1, 101, 8, 801),
+        Link(2, 8, 802, 10, 1001),
+        Link(3, 10, 1002, 2, 201),
+        Link(4, 2, 202, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+    auto downstream_config =
+        compiler.Compile(downstream_nodes, downstream_links, true);
+    Check(!downstream_config.is_valid &&
+              HasIssueText(downstream_config,
+                           "must be the final preprocessing output"),
+          "sparse output must reject downstream Arrow materializers at compile time");
+
+    auto sparse_sequence_data = data;
+    sparse_sequence_data.parameters["token_column"] = "tokens";
+    auto sparse_sequence_nodes = sparse_nodes;
+    sparse_sequence_nodes.front() = sparse_sequence_data;
+    auto sparse_sequence_config =
+        compiler.Compile(sparse_sequence_nodes, sparse_links, true);
+    Check(!sparse_sequence_config.is_valid &&
+              HasIssueText(sparse_sequence_config,
+                           "supports only non-sequence tabular batches"),
+          "sparse feature path must reject sequence batch contracts");
+
+    auto disconnected_sparse = sparse_count;
+    disconnected_sparse.inputs.clear();
+    disconnected_sparse.outputs.clear();
+    auto disconnected_sparse_nodes = std::vector<gui::MLNode>{
+        data, dense, loss, optimizer, disconnected_sparse};
+    auto disconnected_sparse_links = std::vector<gui::NodeLink>{
+        Link(1, 1, 101, 2, 201),
+        Link(2, 2, 202, 4, 401),
+        Link(3, 1, 102, 4, 402),
+        Link(4, 4, 403, 5, 501),
+    };
+    auto disconnected_sparse_config = compiler.Compile(
+        disconnected_sparse_nodes, disconnected_sparse_links, true);
+    Check(disconnected_sparse_config.is_valid &&
+              !HasIssueText(disconnected_sparse_config, "Sparse feature"),
+          "disconnected sparse vectorizer must not affect the selected training path");
+
     auto configured_optimizer = optimizer;
     configured_optimizer.type = gui::NodeType::AdamW;
     configured_optimizer.name = "Configured AdamW";

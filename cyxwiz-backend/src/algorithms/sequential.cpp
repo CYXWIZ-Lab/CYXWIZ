@@ -85,6 +85,62 @@ Tensor SequentialModel::Forward(const Tensor& input) {
     return current;
 }
 
+bool SequentialModel::SupportsSparseCsrInput() const {
+    return !modules_.empty() &&
+           dynamic_cast<const LinearModule*>(modules_.front().get()) != nullptr;
+}
+
+Tensor SequentialModel::ForwardSparseCsr(
+    const LinearSparseCsrBatchView& input) {
+    auto* first = modules_.empty()
+        ? nullptr
+        : dynamic_cast<LinearModule*>(modules_.front().get());
+    if (first == nullptr) {
+        throw std::runtime_error(
+            "SequentialModel sparse CSR input requires Linear as the first module");
+    }
+
+    intermediate_outputs_.clear();
+    intermediate_outputs_.reserve(modules_.size());
+    const bool trace_layers = BackendDebugHooks::HasDebugEventCallback();
+    const auto first_start = std::chrono::steady_clock::now();
+    Tensor current = first->ForwardSparseCsr(input);
+    if (trace_layers) {
+        const auto duration_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - first_start).count();
+        EmitModelLayerTrace(
+            "ModelForwardSparseCsr",
+            0,
+            first->GetName(),
+            {input.rows, input.columns},
+            current.Shape(),
+            duration_ms);
+    }
+    intermediate_outputs_.push_back(current.Clone());
+
+    for (size_t index = 1; index < modules_.size(); ++index) {
+        auto& module = modules_[index];
+        const auto input_shape = trace_layers
+            ? current.Shape()
+            : std::vector<size_t>{};
+        const auto layer_start = std::chrono::steady_clock::now();
+        current = module->Forward(current);
+        if (trace_layers) {
+            const auto duration_ms = std::chrono::duration<float, std::milli>(
+                std::chrono::steady_clock::now() - layer_start).count();
+            EmitModelLayerTrace(
+                "ModelForward",
+                index,
+                module->GetName(),
+                input_shape,
+                current.Shape(),
+                duration_ms);
+        }
+        intermediate_outputs_.push_back(current.Clone());
+    }
+    return current;
+}
+
 Tensor SequentialModel::Backward(const Tensor& grad_output) {
     Tensor grad = grad_output.Clone();
 
@@ -104,6 +160,55 @@ Tensor SequentialModel::Backward(const Tensor& grad_output) {
     }
 
     return grad;
+}
+
+void SequentialModel::BackwardSparseCsr(
+    const LinearSparseCsrBatchView& input,
+    const Tensor& grad_output) {
+    auto* first = modules_.empty()
+        ? nullptr
+        : dynamic_cast<LinearModule*>(modules_.front().get());
+    if (first == nullptr) {
+        throw std::runtime_error(
+            "SequentialModel sparse CSR input requires Linear as the first module");
+    }
+
+    Tensor grad = grad_output.Clone();
+    const bool trace_layers = BackendDebugHooks::HasDebugEventCallback();
+    for (int index = static_cast<int>(modules_.size()) - 1;
+         index >= 1;
+         --index) {
+        const auto input_shape = trace_layers
+            ? grad.Shape()
+            : std::vector<size_t>{};
+        const auto layer_start = std::chrono::steady_clock::now();
+        grad = modules_[static_cast<size_t>(index)]->Backward(grad);
+        if (trace_layers) {
+            const auto duration_ms = std::chrono::duration<float, std::milli>(
+                std::chrono::steady_clock::now() - layer_start).count();
+            EmitModelLayerTrace(
+                "ModelBackward",
+                static_cast<size_t>(index),
+                modules_[static_cast<size_t>(index)]->GetName(),
+                input_shape,
+                grad.Shape(),
+                duration_ms);
+        }
+    }
+
+    const auto layer_start = std::chrono::steady_clock::now();
+    first->BackwardSparseCsr(input, grad);
+    if (trace_layers) {
+        const auto duration_ms = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - layer_start).count();
+        EmitModelLayerTrace(
+            "ModelBackwardSparseCsr",
+            0,
+            first->GetName(),
+            grad.Shape(),
+            {},
+            duration_ms);
+    }
 }
 
 std::map<std::string, Tensor> SequentialModel::GetParameters() {
