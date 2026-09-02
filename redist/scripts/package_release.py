@@ -31,6 +31,10 @@ from backend_pack_target import (  # noqa: E402
     BackendPackTargetError,
     detect_backend_pack_target,
 )
+from elf_runtime_closure import (  # noqa: E402
+    ElfClosureError,
+    close_linux_runtime,
+)
 from macho_runtime_closure import (  # noqa: E402
     MachOClosureError,
     close_macos_runtime,
@@ -433,7 +437,7 @@ def copy_build_payload(
 
 
 def arrayfire_library_dir(root: Path) -> Path:
-    for candidate in (root / "lib", root / "bin", root):
+    for candidate in (root / "lib", root / "lib64", root / "bin", root):
         if candidate.is_dir():
             return candidate
     raise PackageError(f"ArrayFire library directory not found below {root}")
@@ -959,10 +963,10 @@ def build_split_artifact(
     system: str,
     version: str,
 ) -> tuple[Path, Path | None]:
-    if system not in ("windows", "darwin"):
+    if system not in ("windows", "darwin", "linux"):
         raise PackageError("Base/backend-pack artifacts are not yet validated on this platform")
-    if system == "darwin" and args.profile != "base":
-        raise PackageError("Optional backend packs are not yet qualified on macOS")
+    if system in ("darwin", "linux") and args.profile != "base":
+        raise PackageError(f"Optional backend packs are not yet qualified on {system}")
     pack_version = validate_release_version(args.pack_version, "pack")
     arrayfire_root = (args.arrayfire_dir or Path(os.environ.get("ARRAYFIRE_DIR", r"C:\Program Files\ArrayFire\v3"))).resolve()
     require_directory(arrayfire_root, "ArrayFire root")
@@ -1027,12 +1031,17 @@ def build_split_artifact(
             copy_runtime_notices(stage, intel_notices_path, None)
             runtime_versions["python"] = full_python_version
             python_description = f"Bundled Python {full_python_version} runtime."
-        else:
+        elif system == "darwin":
             try:
                 close_macos_runtime(
                     stage, macos_runtime_search_roots(paths, arrayfire_root)
                 )
             except MachOClosureError as error:
+                raise PackageError(str(error)) from error
+        else:
+            try:
+                close_linux_runtime(stage)
+            except ElfClosureError as error:
                 raise PackageError(str(error)) from error
         render_readme(
             paths.templates / "README_BASE.md",

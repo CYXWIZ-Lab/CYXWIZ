@@ -174,6 +174,33 @@ class PackageReleaseTests(unittest.TestCase):
             (stage / "runtime" / "libafopencl.3.dylib").is_file()
         )
 
+    def test_linux_arrayfire_staging_preserves_loader_version_aliases(self) -> None:
+        root = self.root / "arrayfire-linux"
+        library = root / "lib64"
+        licenses = root / "LICENSES"
+        include = root / "include" / "af"
+        library.mkdir(parents=True)
+        licenses.mkdir()
+        include.mkdir(parents=True)
+        (licenses / "LICENSE").write_text("license", encoding="ascii")
+        (include / "version.h").write_text(
+            '#define AF_VERSION "3.10.0"\n', encoding="ascii"
+        )
+        for component in ("af", "afcpu"):
+            for name in (
+                f"lib{component}.so",
+                f"lib{component}.so.3",
+                f"lib{component}.so.3.10.0",
+            ):
+                (library / name).write_bytes(name.encode("ascii"))
+
+        stage = self.root / "linux-stage"
+        package_release.package_arrayfire_base(root, stage, ".so")
+
+        runtime = stage / "arrayfire" / "lib"
+        for name in ("libaf.so.3", "libafcpu.so.3"):
+            self.assertTrue((runtime / name).is_file(), name)
+
     def create_runtime_licenses(self) -> Path:
         root = self.root / "intel-licenses"
         mkl = root / "onemkl-2025.2" / "licensing"

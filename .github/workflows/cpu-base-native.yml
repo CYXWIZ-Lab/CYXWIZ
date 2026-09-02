@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/cpu-base-native.yml"
+      - ".github/workflows/cpu-base-posix.yml"
       - "CMakeLists.txt"
       - "cmake/**"
       - "cyxwiz-backend/**"
@@ -12,6 +13,7 @@ on:
       - "redist/bootstrapper/**"
       - "redist/scripts/backend_pack_contract.py"
       - "redist/scripts/backend_pack_target.py"
+      - "redist/scripts/elf_runtime_closure.py"
       - "redist/scripts/package_release.py"
       - "redist/scripts/macho_runtime_closure.py"
       - "redist/scripts/python_runtime_package.py"
@@ -20,6 +22,7 @@ on:
       - "redist/templates/README_BASE.md"
       - "redist/tests/test_backend_pack_contract.py"
       - "redist/tests/test_backend_pack_target.py"
+      - "redist/tests/test_elf_runtime_closure.py"
       - "redist/tests/test_package_release.py"
       - "redist/tests/test_macho_runtime_closure.py"
       - "redist/tests/test_python_runtime_package.py"
@@ -33,6 +36,7 @@ on:
       - Nodes_Implementation
     paths:
       - ".github/workflows/cpu-base-native.yml"
+      - ".github/workflows/cpu-base-posix.yml"
       - "CMakeLists.txt"
       - "cmake/**"
       - "cyxwiz-backend/**"
@@ -40,6 +44,7 @@ on:
       - "redist/bootstrapper/**"
       - "redist/scripts/backend_pack_contract.py"
       - "redist/scripts/backend_pack_target.py"
+      - "redist/scripts/elf_runtime_closure.py"
       - "redist/scripts/package_release.py"
       - "redist/scripts/macho_runtime_closure.py"
       - "redist/scripts/python_runtime_package.py"
@@ -48,6 +53,7 @@ on:
       - "redist/templates/README_BASE.md"
       - "redist/tests/test_backend_pack_contract.py"
       - "redist/tests/test_backend_pack_target.py"
+      - "redist/tests/test_elf_runtime_closure.py"
       - "redist/tests/test_package_release.py"
       - "redist/tests/test_macho_runtime_closure.py"
       - "redist/tests/test_python_runtime_package.py"
@@ -335,6 +341,9 @@ jobs:
           name: cyxwiz-macos-intel-cpu-base
           path: cpu-base-artifact/
           if-no-files-found: error
+
+  posix-cpu-base:
+    uses: ./.github/workflows/cpu-base-posix.yml
 
   clean-runner-smoke:
     name: Fresh Windows CPU execution

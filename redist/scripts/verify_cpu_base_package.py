@@ -31,6 +31,11 @@ from backend_pack_target import (  # noqa: E402
     BackendPackTargetError,
     detect_backend_pack_target,
 )
+from elf_runtime_closure import (  # noqa: E402
+    is_elf,
+    is_linux_system_library,
+    parse_ldd_dependencies,
+)
 from macho_runtime_closure import (  # noqa: E402
     is_macho,
     is_system_dependency,
@@ -323,6 +328,54 @@ def audit_macos_dependencies(base: Path) -> list[str]:
     return audited
 
 
+def audit_linux_dependencies(
+    base: Path, environment: dict[str, str]
+) -> list[str]:
+    required = (
+        base / "arrayfire" / "lib" / "libaf.so",
+        base / "arrayfire" / "lib" / "libaf.so.3",
+        base / "arrayfire" / "lib" / "libafcpu.so",
+        base / "arrayfire" / "lib" / "libafcpu.so.3",
+    )
+    for path in required:
+        if not path.is_file():
+            raise CpuBaseSmokeError(f"Package-local {path.name} is missing")
+    audited: list[str] = []
+    canonical_base = base.resolve()
+    candidates = [
+        path for path in base.rglob("*")
+        if path.is_file() and is_elf(path)
+    ]
+    for path in candidates:
+        result = subprocess.run(
+            ["ldd", str(path)],
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise CpuBaseSmokeError(
+                f"Cannot inspect packaged ELF file {path.name}: {result.stdout.strip()}"
+            )
+        for dependency in parse_ldd_dependencies(result.stdout):
+            if dependency.path is None:
+                raise CpuBaseSmokeError(
+                    f"{path.name} has unresolved dependency {dependency.name}"
+                )
+            if is_linux_system_library(dependency.path):
+                continue
+            resolved = dependency.path.resolve()
+            if resolved != canonical_base and canonical_base not in resolved.parents:
+                raise CpuBaseSmokeError(
+                    f"{path.name} resolved outside the CPU base: {resolved}"
+                )
+        audited.append(path.relative_to(base).as_posix())
+    return audited
+
+
 def package_inventory(install_root: Path) -> tuple[list[dict[str, Any]], int]:
     files: list[dict[str, Any]] = []
     total = 0
@@ -342,9 +395,9 @@ def verify(
     install_root: Path,
     artifact_id: str,
 ) -> dict[str, Any]:
-    if platform.system() not in ("Windows", "Darwin"):
+    if platform.system() not in ("Windows", "Darwin", "Linux"):
         raise CpuBaseSmokeError(
-            "CPU-base clean-machine verification currently requires Windows or macOS"
+            "CPU-base clean-machine verification requires Windows, Linux, or macOS"
         )
     archive = archive.resolve()
     manifest_path = manifest_path.resolve()
@@ -391,6 +444,10 @@ def verify(
 
     if platform.system() == "Darwin":
         module_paths = audit_macos_dependencies(base)
+    elif platform.system() == "Linux":
+        module_paths = audit_linux_dependencies(
+            base, package_environment(install_root, base)
+        )
     signed = manifest["signed"]
     return {
         "schema_version": 1,

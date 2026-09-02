@@ -193,6 +193,62 @@ class CpuBasePackageVerifierTests(unittest.TestCase):
             ):
                 verify_cpu_base_package.audit_macos_dependencies(base)
 
+    def test_linux_audit_rejects_dependency_outside_package_and_system(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-cpu-base-") as temporary:
+            base = Path(temporary) / "base"
+            runtime = base / "arrayfire" / "lib"
+            runtime.mkdir(parents=True)
+            for name in (
+                "libaf.so",
+                "libaf.so.3",
+                "libafcpu.so",
+                "libafcpu.so.3",
+            ):
+                (runtime / name).write_bytes(b"\x7fELF" + b"fixture")
+            completed = verify_cpu_base_package.subprocess.CompletedProcess(
+                args=["ldd"],
+                returncode=0,
+                stdout="libvendor.so.1 => /opt/vendor/libvendor.so.1 (0x01)\n",
+            )
+
+            with mock.patch.object(
+                verify_cpu_base_package.subprocess, "run", return_value=completed
+            ), self.assertRaisesRegex(
+                verify_cpu_base_package.CpuBaseSmokeError,
+                "outside the CPU base",
+            ):
+                verify_cpu_base_package.audit_linux_dependencies(base, {})
+
+    def test_linux_audit_accepts_package_local_and_system_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-cpu-base-") as temporary:
+            base = Path(temporary) / "base"
+            runtime = base / "arrayfire" / "lib"
+            packaged = base / "lib" / "libvendor.so.1"
+            runtime.mkdir(parents=True)
+            packaged.parent.mkdir()
+            packaged.write_bytes(b"\x7fELFfixture")
+            for name in (
+                "libaf.so",
+                "libaf.so.3",
+                "libafcpu.so",
+                "libafcpu.so.3",
+            ):
+                (runtime / name).write_bytes(b"\x7fELF" + b"fixture")
+            output = (
+                f"libvendor.so.1 => {packaged} (0x01)\n"
+                "libc.so.6 => /usr/lib/libc.so.6 (0x02)\n"
+            )
+            completed = verify_cpu_base_package.subprocess.CompletedProcess(
+                args=["ldd"], returncode=0, stdout=output
+            )
+
+            with mock.patch.object(
+                verify_cpu_base_package.subprocess, "run", return_value=completed
+            ):
+                audited = verify_cpu_base_package.audit_linux_dependencies(base, {})
+
+            self.assertEqual(5, len(audited))
+
 
 if __name__ == "__main__":
     unittest.main()

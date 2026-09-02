@@ -1,0 +1,239 @@
+name: CPU Base POSIX
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_BINARY_SOURCES: >-
+    clear;files,${{ github.workspace }}/vcpkg-binary-cache,readwrite
+
+jobs:
+  build-posix-cpu-base:
+    name: Build ${{ matrix.name }} CPU base
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-22.04
+            artifact: linux-x64
+            package_suffix: linux64-x86_64
+          - name: macOS Apple Silicon
+            os: macos-15
+            artifact: macos-arm64
+            package_suffix: macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run native package contracts
+        run: >-
+          python -B -m unittest
+          redist.tests.test_backend_pack_target
+          redist.tests.test_elf_runtime_closure
+          redist.tests.test_macho_runtime_closure
+          redist.tests.test_package_release.PackageReleaseTests.test_deterministic_zip_preserves_extensionless_executable_mode
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf autoconf-archive automake build-essential cmake curl \
+            libgl1-mesa-dev libgtk-3-dev libtool libwayland-dev \
+            libxext-dev libxi-dev libxinerama-dev libxkbcommon-dev \
+            libxcursor-dev libxrandr-dev ninja-build patchelf pkg-config
+
+      - name: Install ArrayFire 3.10.0 on Linux
+        if: runner.os == 'Linux'
+        run: |
+          curl --fail --location --retry 3 \
+            https://arrayfire.gateway.scarf.sh/linux/3.10.0/ArrayFire.sh \
+            --output ArrayFire.sh
+          chmod +x ArrayFire.sh
+          sudo ./ArrayFire.sh --include-subdir --prefix=/opt
+          test -d /opt/arrayfire
+
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install arrayfire autoconf autoconf-archive automake bison \
+            cmake libtool ninja pkg-config
+          echo "$(brew --prefix libtool)/libexec/gnubin" >> "$GITHUB_PATH"
+
+      - name: Isolate macOS vcpkg dependency build
+        if: runner.os == 'macOS'
+        run: |
+          for formula in fmt spdlog jpeg-turbo; do
+            if brew list --versions "$formula" >/dev/null 2>&1; then
+              brew unlink "$formula"
+            fi
+          done
+          brew_prefix="$(brew --prefix)"
+          for dependency in fmt spdlog; do
+            test ! -e "$brew_prefix/include/$dependency"
+          done
+          for header in jconfig.h jmorecfg.h jpeglib.h; do
+            test ! -e "$brew_prefix/include/$header"
+          done
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@v4
+        with:
+          path: vcpkg-binary-cache
+          key: cpu-base-${{ matrix.artifact }}-vcpkg-v3-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            cpu-base-${{ matrix.artifact }}-vcpkg-v3-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-
+
+      - name: Prepare vcpkg binary cache
+        run: mkdir -p vcpkg-binary-cache
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Use CI vcpkg manifest
+        run: cp vcpkg-ci.json vcpkg.json
+
+      - name: Setup vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git
+          cd vcpkg
+          git checkout 594ad8871e1e8e45f8e626c015fd611163430207
+          ./bootstrap-vcpkg.sh
+          echo "VCPKG_ROOT=$PWD" >> "$GITHUB_ENV"
+
+      - name: Locate ArrayFire
+        run: |
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            arrayfire_root=/opt/arrayfire
+          else
+            arrayfire_root="$(brew --prefix arrayfire)"
+          fi
+          arrayfire_config="$(find -H "$arrayfire_root" -name ArrayFireConfig.cmake -print -quit)"
+          test -n "$arrayfire_config"
+          echo "ARRAYFIRE_ROOT=$arrayfire_root" >> "$GITHUB_ENV"
+          echo "ARRAYFIRE_CONFIG_DIR=$(dirname "$arrayfire_config")" >> "$GITHUB_ENV"
+
+      - name: Configure Release CPU build
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_OVERLAY_PORTS="$GITHUB_WORKSPACE/vcpkg-ports" \
+            -DArrayFire_DIR="$ARRAYFIRE_CONFIG_DIR" \
+            -DCYXWIZ_BUILD_ENGINE=ON \
+            -DCYXWIZ_BUILD_SERVER_NODE=OFF \
+            -DCYXWIZ_BUILD_TESTS=OFF \
+            -DCYXWIZ_BUILD_TUI=OFF \
+            -DCYXWIZ_ENABLE_PYTHON=OFF \
+            -DCYXWIZ_ENABLE_ONNX=OFF \
+            -DCYXWIZ_ENABLE_GGUF=OFF \
+            -DCYXWIZ_ENABLE_PYTORCH=OFF \
+            -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF \
+            -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF \
+            -DCYXWIZ_ENABLE_CUDA=OFF \
+            -DCYXWIZ_ENABLE_OPENCL=OFF
+
+      - name: Save vcpkg binary cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg-binary-cache
+          key: cpu-base-${{ matrix.artifact }}-vcpkg-v3-${{ hashFiles('vcpkg-ci.json', 'vcpkg-ports/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Build production CPU-base targets
+        run: >-
+          cmake --build build --parallel
+          --target cyxwiz-engine cyxwiz-installer
+          cyxwiz-backend-pack-installer cyxwiz-runtime-bootstrapper
+          cyxwiz-product-removal-finalizer
+          cyxwiz-route-probe
+
+      - name: Normalize ArrayFire redistribution input
+        run: |
+          mkdir -p deps/arrayfire/LICENSES deps/arrayfire/lib
+          cp -R "$ARRAYFIRE_ROOT/include" deps/arrayfire/
+          arrayfire_library_dir=""
+          for candidate in "$ARRAYFIRE_ROOT/lib" "$ARRAYFIRE_ROOT/lib64"; do
+            if [[ -d "$candidate" ]]; then
+              arrayfire_library_dir="$candidate"
+              break
+            fi
+          done
+          test -n "$arrayfire_library_dir"
+          cp -R "$arrayfire_library_dir/"* deps/arrayfire/lib/
+          license_file="$(find -H "$ARRAYFIRE_ROOT" -maxdepth 3 -type f -iname 'license*' -print -quit)"
+          test -n "$license_file"
+          cp "$license_file" deps/arrayfire/LICENSES/
+
+      - name: Build deterministic CPU-base artifact
+        run: |
+          python redist/scripts/package_release.py base \
+            --version 0.2.0 \
+            --pack-version 1 \
+            --build-dir build/bin \
+            --arrayfire-dir deps/arrayfire \
+            --generated-utc 2026-08-20T00:00:00Z
+          mkdir -p cpu-base-artifact
+          cp redist/output/cyxwiz-base-0.2.0-1-${{ matrix.package_suffix }}.zip* \
+            cpu-base-artifact/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-${{ matrix.artifact }}-cpu-base
+          path: cpu-base-artifact/
+          if-no-files-found: error
+
+  clean-runner-smoke-posix:
+    name: Fresh ${{ matrix.name }} CPU execution
+    needs: build-posix-cpu-base
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-22.04
+            artifact: linux-x64
+            package_suffix: linux64-x86_64
+          - name: macOS Apple Silicon
+            os: macos-15
+            artifact: macos-arm64
+            package_suffix: macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cyxwiz-${{ matrix.artifact }}-cpu-base
+          path: cpu-base-artifact
+
+      - name: Run CPU-base evidence contract
+        run: >-
+          python -m unittest
+          redist.tests.test_verify_cpu_base_package
+
+      - name: Install and verify on fresh runner
+        run: |
+          python redist/scripts/verify_cpu_base_package.py \
+            cpu-base-artifact/cyxwiz-base-0.2.0-1-${{ matrix.package_suffix }}.zip \
+            --manifest cpu-base-artifact/cyxwiz-base-0.2.0-1-${{ matrix.package_suffix }}.zip.manifest.json \
+            --install-root cpu-base-install \
+            --artifact-id ${{ matrix.artifact }}-cpu-base \
+            --evidence clean-machine-evidence/${{ matrix.artifact }}-cpu-base.json
+
+      - name: Upload clean-machine CPU evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-cpu-base-evidence-${{ matrix.artifact }}
+          path: clean-machine-evidence/${{ matrix.artifact }}-cpu-base.json
+          if-no-files-found: error
