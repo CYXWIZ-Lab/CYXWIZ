@@ -3,6 +3,7 @@
 #include "../panel.h"
 #include "../../data/data_table.h"
 #include <imgui.h>
+#include <cstring>
 #include <string>
 #include <memory>
 #include <vector>
