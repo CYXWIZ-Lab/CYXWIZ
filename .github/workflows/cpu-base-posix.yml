@@ -36,6 +36,7 @@ jobs:
           redist.tests.test_backend_pack_target
           redist.tests.test_elf_runtime_closure
           redist.tests.test_macho_runtime_closure
+          redist.tests.test_normalize_arrayfire_input
           redist.tests.test_package_release.PackageReleaseTests.test_deterministic_zip_preserves_extensionless_executable_mode
 
       - name: Install Linux build dependencies
@@ -131,6 +132,9 @@ jobs:
           echo "ARRAYFIRE_ROOT=$arrayfire_root" >> "$GITHUB_ENV"
           echo "ARRAYFIRE_CONFIG_DIR=$(dirname "$arrayfire_config")" >> "$GITHUB_ENV"
 
+      - name: Validate ArrayFire redistribution inputs before compilation
+        run: python -B redist/scripts/normalize_arrayfire_input.py "$ARRAYFIRE_ROOT"
+
       - name: Configure Release CPU build
         run: |
           cmake -S . -B build -G Ninja \
@@ -165,23 +169,12 @@ jobs:
           cyxwiz-backend-pack-installer cyxwiz-runtime-bootstrapper
           cyxwiz-product-removal-finalizer
           cyxwiz-route-probe
+          -- -k 0
 
       - name: Normalize ArrayFire redistribution input
-        run: |
-          mkdir -p deps/arrayfire/LICENSES deps/arrayfire/lib
-          cp -R "$ARRAYFIRE_ROOT/include" deps/arrayfire/
-          arrayfire_library_dir=""
-          for candidate in "$ARRAYFIRE_ROOT/lib" "$ARRAYFIRE_ROOT/lib64"; do
-            if [[ -d "$candidate" ]]; then
-              arrayfire_library_dir="$candidate"
-              break
-            fi
-          done
-          test -n "$arrayfire_library_dir"
-          cp -R "$arrayfire_library_dir/"* deps/arrayfire/lib/
-          license_file="$(find -H "$ARRAYFIRE_ROOT" -maxdepth 3 -type f -iname 'license*' -print -quit)"
-          test -n "$license_file"
-          cp "$license_file" deps/arrayfire/LICENSES/
+        run: >-
+          python -B redist/scripts/normalize_arrayfire_input.py "$ARRAYFIRE_ROOT"
+          --destination deps/arrayfire
 
       - name: Build deterministic CPU-base artifact
         run: |
