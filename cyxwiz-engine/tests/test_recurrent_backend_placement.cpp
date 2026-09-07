@@ -1067,21 +1067,18 @@ int main() {
           "unclassified placement should reference TimeDistributed node");
     Check(unclassified_placement->node_type == "TimeDistributed",
           "unclassified placement should name the layer");
-    Check(unclassified_placement->status == cyxwiz::BackendPlacementStatus::Unknown,
-          "TimeDistributed wrapper placement should be unknown");
+    Check(unclassified_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "Rank-3 TimeDistributed should be ArrayFire-capable");
     Check(unclassified_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::TimeDistributedSequenceWrapper,
-          "TimeDistributed wrapper placement should use the wrapper reason code");
-    Check(unclassified_placement->NeedsUserAttention(),
-          "TimeDistributed wrapper placement should require user attention");
-    Check(HasWarningText(
-              unclassified_config,
+              cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
+          "Supported TimeDistributed should use the shared ArrayFire reason code");
+    Check(!unclassified_placement->NeedsUserAttention(),
+          "Supported TimeDistributed should not require compatibility attention");
+    Check(!HasWarningText(unclassified_config,
               cyxwiz::BackendPlacementReason::TimeDistributedSequenceWrapper),
-          "TimeDistributed wrapper placement should surface as a compiler warning");
-    const auto unclassified_summary =
-        unclassified_config.SummarizeBackendPlacements();
-    Check(unclassified_summary.unknown == 1,
-          "compiled unclassified layer should count as unknown");
+          "Supported TimeDistributed should not emit the obsolete wrapper warning");
+    Check(unclassified_config.SummarizeBackendPlacements().unknown == 0,
+          "Supported TimeDistributed should not count as unknown");
 
     std::cout << "Recurrent backend placement tests passed\n";
     return 0;

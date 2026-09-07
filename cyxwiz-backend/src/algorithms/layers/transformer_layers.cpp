@@ -1,8 +1,14 @@
 #include "cyxwiz/layers/transformer.h"
-#include "layer_arrayfire_utils.h"
+#include "cyxwiz/activations/relu.h"
+#include "../arrayfire_backend_utils.h"
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#endif
 
 #include <cmath>
 #include <memory>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -17,12 +23,20 @@ namespace cyxwiz {
 
 namespace {
 
+void ValidateTransformerSequence(const Tensor& input, int width) {
+    const auto& shape = input.Shape();
+    if (input.GetDataType() != DataType::Float32 || shape.size() != 3 ||
+        shape[0] == 0 || shape[1] == 0 || shape[2] != static_cast<size_t>(width)) {
+        throw std::invalid_argument("Transformer expects nonempty Float32 [batch, seq_len, d_model]");
+    }
+}
+
 Tensor FlattenTransformerSequenceForDense(const Tensor& input) {
     const auto& shape = input.Shape();
     if (shape.size() != 3) {
         return input;
     }
-    return input.Reshape({shape[0] * shape[1], shape[2]});
+    return input.Reshape({input.NumElements() / shape[2], shape[2]});
 }
 
 Tensor RestoreTransformerSequenceFromDense(const Tensor& input,
@@ -42,14 +56,7 @@ Tensor AddSameShape(const Tensor& lhs, const Tensor& rhs) {
         throw std::runtime_error("Transformer residual backward shape mismatch");
     }
 
-    Tensor result(lhs.Shape(), DataType::Float32);
-    const float* lhs_data = lhs.Data<float>();
-    const float* rhs_data = rhs.Data<float>();
-    float* result_data = result.Data<float>();
-    for (size_t i = 0; i < lhs.NumElements(); ++i) {
-        result_data[i] = lhs_data[i] + rhs_data[i];
-    }
-    return result;
+    return lhs + rhs;
 }
 
 } // namespace
@@ -74,6 +81,7 @@ Tensor TransformerEncoderLayer::Forward(const Tensor& input) {
 }
 
 Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_mask) {
+    ValidateTransformerSequence(input, d_model_);
     cached_input_ = input;
 
     if (norm_first_) {
@@ -85,15 +93,7 @@ Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_m
 
         // Add residual
         const auto& shape = input.Shape();
-        std::vector<size_t> tensor_shape = {shape[0], shape[1], shape[2]};
-        Tensor x(tensor_shape, DataType::Float32);
-        const float* in_data = input.Data<float>();
-        const float* attn_data = attn_out.Data<float>();
-        float* out_data = x.Data<float>();
-        size_t total = shape[0] * shape[1] * shape[2];
-        for (size_t i = 0; i < total; i++) {
-            out_data[i] = in_data[i] + attn_data[i];
-        }
+        Tensor x = AddSameShape(input, attn_out);
         cached_attn_output_ = x;
 
         // FFN
@@ -102,11 +102,7 @@ Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_m
             FlattenTransformerSequenceForDense(normed2));
 
         // ReLU activation
-        float* ffn_data = ffn_out.Data<float>();
-        size_t ffn_total = ffn_out.NumElements();
-        for (size_t i = 0; i < ffn_total; i++) {
-            ffn_data[i] = std::max(0.0f, ffn_data[i]);
-        }
+        ffn_out = ReLU().Forward(ffn_out);
         cached_ffn_mid_ = ffn_out;
 
         ffn_out = linear2_->Forward(ffn_out);
@@ -115,13 +111,7 @@ Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_m
         cached_residual2_ = x;
 
         // Add residual
-        Tensor result(tensor_shape, DataType::Float32);
-        const float* x_data = x.Data<float>();
-        const float* ffn_out_data = ffn_out.Data<float>();
-        float* result_data = result.Data<float>();
-        for (size_t i = 0; i < total; i++) {
-            result_data[i] = x_data[i] + ffn_out_data[i];
-        }
+        Tensor result = AddSameShape(x, ffn_out);
 
         return result;
     } else {
@@ -132,15 +122,7 @@ Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_m
 
         // Add residual and norm
         const auto& shape = input.Shape();
-        std::vector<size_t> tensor_shape = {shape[0], shape[1], shape[2]};
-        Tensor x(tensor_shape, DataType::Float32);
-        const float* in_data = input.Data<float>();
-        const float* attn_data = attn_out.Data<float>();
-        float* out_data = x.Data<float>();
-        size_t total = shape[0] * shape[1] * shape[2];
-        for (size_t i = 0; i < total; i++) {
-            out_data[i] = in_data[i] + attn_data[i];
-        }
+        Tensor x = AddSameShape(input, attn_out);
 
         x = norm1_->Forward(x);
         cached_attn_output_ = x;
@@ -150,11 +132,7 @@ Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_m
             FlattenTransformerSequenceForDense(x));
 
         // ReLU activation
-        float* ffn_data = ffn_out.Data<float>();
-        size_t ffn_total = ffn_out.NumElements();
-        for (size_t i = 0; i < ffn_total; i++) {
-            ffn_data[i] = std::max(0.0f, ffn_data[i]);
-        }
+        ffn_out = ReLU().Forward(ffn_out);
         cached_ffn_mid_ = ffn_out;
 
         ffn_out = linear2_->Forward(ffn_out);
@@ -163,13 +141,7 @@ Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_m
         cached_residual2_ = x;
 
         // Add residual and norm
-        Tensor result(tensor_shape, DataType::Float32);
-        const float* x_data = x.Data<float>();
-        const float* ffn_out_data = ffn_out.Data<float>();
-        float* result_data = result.Data<float>();
-        for (size_t i = 0; i < total; i++) {
-            result_data[i] = x_data[i] + ffn_out_data[i];
-        }
+        Tensor result = AddSameShape(x, ffn_out);
 
         return norm2_->Forward(result);
     }
@@ -189,13 +161,7 @@ Tensor TransformerEncoderLayer::Backward(const Tensor& grad_output) {
     }
     grad_ffn = linear2_->Backward(grad_ffn);
 
-    const float* mid_data = cached_ffn_mid_.Data<float>();
-    float* grad_ffn_data = grad_ffn.Data<float>();
-    for (size_t i = 0; i < grad_ffn.NumElements(); i++) {
-        if (mid_data[i] <= 0.0f) {
-            grad_ffn_data[i] = 0.0f;
-        }
-    }
+    grad_ffn = ReLU().Backward(grad_ffn, cached_ffn_mid_);
 
     grad_ffn = linear1_->Backward(grad_ffn);
     if (grad_shape.size() == 3) {
@@ -317,26 +283,22 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& input) {
     if (shape.size() != 3) {
         throw std::invalid_argument("TransformerDecoderLayer expects [batch, seq_len, d_model] input");
     }
+    ValidateTransformerSequence(input, d_model_);
     cached_input_ = input;
     cached_memory_ = Tensor();
     cached_has_cross_attention_ = false;
 
+    if (shape[1] > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        throw std::invalid_argument("TransformerDecoderLayer sequence exceeds causal-mask size limit");
+    }
     Tensor causal_mask = GenerateCausalMask(static_cast<int>(shape[1]));
-    const size_t total = shape[0] * shape[1] * shape[2];
-    std::vector<size_t> tensor_shape = {shape[0], shape[1], shape[2]};
 
     if (norm_first_) {
         Tensor normed = norm1_->Forward(input);
         Tensor self_attn_out = self_attn_->Forward(normed, normed, normed, &causal_mask);
         self_attn_out = dropout1_->Forward(self_attn_out);
 
-        Tensor x(tensor_shape, DataType::Float32);
-        const float* input_data = input.Data<float>();
-        const float* sa_data = self_attn_out.Data<float>();
-        float* x_data = x.Data<float>();
-        for (size_t i = 0; i < total; i++) {
-            x_data[i] = input_data[i] + sa_data[i];
-        }
+        Tensor x = AddSameShape(input, self_attn_out);
         cached_self_attn_output_ = x;
         cached_cross_attn_output_ = x;
 
@@ -344,37 +306,21 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& input) {
         Tensor ffn_out = linear1_->Forward(
             FlattenTransformerSequenceForDense(normed2));
 
-        float* ffn_data = ffn_out.Data<float>();
-        size_t ffn_total = ffn_out.NumElements();
-        for (size_t i = 0; i < ffn_total; i++) {
-            ffn_data[i] = std::max(0.0f, ffn_data[i]);
-        }
+        ffn_out = ReLU().Forward(ffn_out);
         cached_ffn_mid_ = ffn_out;
 
         ffn_out = linear2_->Forward(ffn_out);
         ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
         ffn_out = dropout3_->Forward(ffn_out);
 
-        Tensor result(tensor_shape, DataType::Float32);
-        const float* x_ptr = x.Data<float>();
-        const float* ffn_ptr = ffn_out.Data<float>();
-        float* result_data = result.Data<float>();
-        for (size_t i = 0; i < total; i++) {
-            result_data[i] = x_ptr[i] + ffn_ptr[i];
-        }
+        Tensor result = AddSameShape(x, ffn_out);
         return result;
     }
 
     Tensor self_attn_out = self_attn_->Forward(input, input, input, &causal_mask);
     self_attn_out = dropout1_->Forward(self_attn_out);
 
-    Tensor x(tensor_shape, DataType::Float32);
-    const float* input_data = input.Data<float>();
-    const float* sa_data = self_attn_out.Data<float>();
-    float* x_data = x.Data<float>();
-    for (size_t i = 0; i < total; i++) {
-        x_data[i] = input_data[i] + sa_data[i];
-    }
+    Tensor x = AddSameShape(input, self_attn_out);
     x = norm1_->Forward(x);
     cached_self_attn_output_ = x;
     cached_cross_attn_output_ = x;
@@ -382,37 +328,27 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& input) {
     Tensor ffn_out = linear1_->Forward(
         FlattenTransformerSequenceForDense(x));
 
-    float* ffn_data = ffn_out.Data<float>();
-    size_t ffn_total = ffn_out.NumElements();
-    for (size_t i = 0; i < ffn_total; i++) {
-        ffn_data[i] = std::max(0.0f, ffn_data[i]);
-    }
+    ffn_out = ReLU().Forward(ffn_out);
     cached_ffn_mid_ = ffn_out;
 
     ffn_out = linear2_->Forward(ffn_out);
     ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
     ffn_out = dropout3_->Forward(ffn_out);
 
-    Tensor result(tensor_shape, DataType::Float32);
-    const float* x_ptr = x.Data<float>();
-    const float* ffn_ptr = ffn_out.Data<float>();
-    float* result_data = result.Data<float>();
-    for (size_t i = 0; i < total; i++) {
-        result_data[i] = x_ptr[i] + ffn_ptr[i];
-    }
+    Tensor result = AddSameShape(x, ffn_out);
 
     return norm2_->Forward(result);
 }
 
 Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
                                          const Tensor* tgt_mask, const Tensor* memory_mask) {
+    ValidateTransformerSequence(tgt, d_model_);
+    ValidateTransformerSequence(memory, d_model_);
     cached_input_ = tgt;
     cached_memory_ = memory;
     cached_has_cross_attention_ = true;
 
     const auto& shape = tgt.Shape();
-    size_t total = shape[0] * shape[1] * shape[2];
-    std::vector<size_t> tensor_shape = {shape[0], shape[1], shape[2]};
 
     if (norm_first_) {
         // Pre-LN decoder
@@ -423,13 +359,7 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
         self_attn_out = dropout1_->Forward(self_attn_out);
 
         // Residual
-        Tensor x(tensor_shape, DataType::Float32);
-        const float* tgt_data = tgt.Data<float>();
-        const float* sa_data = self_attn_out.Data<float>();
-        float* x_data = x.Data<float>();
-        for (size_t i = 0; i < total; i++) {
-            x_data[i] = tgt_data[i] + sa_data[i];
-        }
+        Tensor x = AddSameShape(tgt, self_attn_out);
         cached_self_attn_output_ = x;
 
         // Cross-attention
@@ -438,13 +368,7 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
         cross_attn_out = dropout2_->Forward(cross_attn_out);
 
         // Residual
-        Tensor x2(tensor_shape, DataType::Float32);
-        const float* x_ptr = x.Data<float>();
-        const float* ca_data = cross_attn_out.Data<float>();
-        float* x2_data = x2.Data<float>();
-        for (size_t i = 0; i < total; i++) {
-            x2_data[i] = x_ptr[i] + ca_data[i];
-        }
+        Tensor x2 = AddSameShape(x, cross_attn_out);
         cached_cross_attn_output_ = x2;
 
         // FFN
@@ -453,11 +377,7 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
             FlattenTransformerSequenceForDense(normed3));
 
         // ReLU
-        float* ffn_data = ffn_out.Data<float>();
-        size_t ffn_total = ffn_out.NumElements();
-        for (size_t i = 0; i < ffn_total; i++) {
-            ffn_data[i] = std::max(0.0f, ffn_data[i]);
-        }
+        ffn_out = ReLU().Forward(ffn_out);
         cached_ffn_mid_ = ffn_out;
 
         ffn_out = linear2_->Forward(ffn_out);
@@ -465,13 +385,7 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
         ffn_out = dropout3_->Forward(ffn_out);
 
         // Residual
-        Tensor result(tensor_shape, DataType::Float32);
-        const float* x2_ptr = x2.Data<float>();
-        const float* ffn_ptr = ffn_out.Data<float>();
-        float* result_data = result.Data<float>();
-        for (size_t i = 0; i < total; i++) {
-            result_data[i] = x2_ptr[i] + ffn_ptr[i];
-        }
+        Tensor result = AddSameShape(x2, ffn_out);
 
         return result;
     } else {
@@ -482,13 +396,7 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
         self_attn_out = dropout1_->Forward(self_attn_out);
 
         // Residual + norm
-        Tensor x(tensor_shape, DataType::Float32);
-        const float* tgt_data = tgt.Data<float>();
-        const float* sa_data = self_attn_out.Data<float>();
-        float* x_data = x.Data<float>();
-        for (size_t i = 0; i < total; i++) {
-            x_data[i] = tgt_data[i] + sa_data[i];
-        }
+        Tensor x = AddSameShape(tgt, self_attn_out);
         x = norm1_->Forward(x);
         cached_self_attn_output_ = x;
 
@@ -497,13 +405,7 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
         cross_attn_out = dropout2_->Forward(cross_attn_out);
 
         // Residual + norm
-        Tensor x2(tensor_shape, DataType::Float32);
-        const float* x_ptr = x.Data<float>();
-        const float* ca_data = cross_attn_out.Data<float>();
-        float* x2_data = x2.Data<float>();
-        for (size_t i = 0; i < total; i++) {
-            x2_data[i] = x_ptr[i] + ca_data[i];
-        }
+        Tensor x2 = AddSameShape(x, cross_attn_out);
         x2 = norm2_->Forward(x2);
         cached_cross_attn_output_ = x2;
 
@@ -512,11 +414,7 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
             FlattenTransformerSequenceForDense(x2));
 
         // ReLU
-        float* ffn_data = ffn_out.Data<float>();
-        size_t ffn_total = ffn_out.NumElements();
-        for (size_t i = 0; i < ffn_total; i++) {
-            ffn_data[i] = std::max(0.0f, ffn_data[i]);
-        }
+        ffn_out = ReLU().Forward(ffn_out);
         cached_ffn_mid_ = ffn_out;
 
         ffn_out = linear2_->Forward(ffn_out);
@@ -524,13 +422,7 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
         ffn_out = dropout3_->Forward(ffn_out);
 
         // Residual + norm
-        Tensor result(tensor_shape, DataType::Float32);
-        const float* x2_ptr = x2.Data<float>();
-        const float* ffn_ptr = ffn_out.Data<float>();
-        float* result_data = result.Data<float>();
-        for (size_t i = 0; i < total; i++) {
-            result_data[i] = x2_ptr[i] + ffn_ptr[i];
-        }
+        Tensor result = AddSameShape(x2, ffn_out);
 
         return norm3_->Forward(result);
     }
@@ -550,13 +442,7 @@ Tensor TransformerDecoderLayer::Backward(const Tensor& grad_output) {
     }
     grad_ffn = linear2_->Backward(grad_ffn);
 
-    const float* mid_data = cached_ffn_mid_.Data<float>();
-    float* grad_ffn_data = grad_ffn.Data<float>();
-    for (size_t i = 0; i < grad_ffn.NumElements(); i++) {
-        if (mid_data[i] <= 0.0f) {
-            grad_ffn_data[i] = 0.0f;
-        }
-    }
+    grad_ffn = ReLU().Backward(grad_ffn, cached_ffn_mid_);
 
     grad_ffn = linear1_->Backward(grad_ffn);
     if (grad_shape.size() == 3) {
@@ -706,10 +592,25 @@ Tensor TransformerDecoderLayer::GenerateCausalMask(int size) {
         throw std::invalid_argument("TransformerDecoderLayer causal mask size must be positive");
     }
 
-    // Create upper triangular mask with -inf above diagonal
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const af::dim4 dims(size, size);
+        const af::array mask = (af::range(dims, 1, u32) > af::range(dims, 0, u32)).as(f32) * -1e9f;
+        mask.eval(); // Complete mask generation inside its fallback boundary.
+        return Tensor::FromSemanticArray(mask, {static_cast<size_t>(size), static_cast<size_t>(size)});
+    } catch (const af::exception& e) {
+        ThrowIfArrayFireNativeCpuFallbackForbidden(
+            "TransformerDecoderLayer::GenerateCausalMask",
+            ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
+            BuildArrayFireBackendFallbackContext("size=" + std::to_string(size)));
+    }
+#endif
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "TransformerDecoderLayer::GenerateCausalMask");
+    // Preserve the existing finite additive mask contract above the diagonal.
     std::vector<size_t> shape = {static_cast<size_t>(size), static_cast<size_t>(size)};
     Tensor mask(shape, DataType::Float32);
-    float* data = mask.Data<float>();
+    float* data = mask.MutableData<float>();
 
     for (int i = 0; i < size; i++) {
         for (int j = 0; j < size; j++) {

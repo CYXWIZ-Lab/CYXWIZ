@@ -1124,9 +1124,11 @@ bool ValidateSequenceLaunchColumns(
     std::vector<RequiredColumn> required = {
         {"token", DefaultSequenceColumn(config.sequence_batch.token_column,
                                          "tokens")},
-        {"tag", DefaultSequenceColumn(config.sequence_batch.tag_column,
-                                       "ner_tags")},
     };
+    if (!config.sequence_batch.create_causal_lm_targets) {
+        required.push_back({"tag", DefaultSequenceColumn(
+            config.sequence_batch.tag_column, "ner_tags")});
+    }
     if (!config.sequence_batch.pos_column.empty()) {
         required.push_back({"POS", config.sequence_batch.pos_column});
     }

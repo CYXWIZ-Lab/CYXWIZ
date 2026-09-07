@@ -114,6 +114,7 @@ set(BACKEND_SOURCES
     src/algorithms/layers/batch_norm.cpp
     src/algorithms/layers/embedding.cpp
     src/algorithms/layers/normalization.cpp
+    src/algorithms/layers/layer_norm_arrayfire.cpp
     src/algorithms/layers/conv1d.cpp
     src/algorithms/layers/conv1d_native.cpp
     src/algorithms/layers/conv2d.cpp
@@ -125,6 +126,7 @@ set(BACKEND_SOURCES
     src/algorithms/layers/dense.cpp
     src/algorithms/layers/linear.cpp
     src/algorithms/layers/multi_head_attention.cpp
+    src/algorithms/layers/multi_head_attention_arrayfire.cpp
     src/algorithms/layers/transformer_layers.cpp
     src/algorithms/layers/gru.cpp
     src/algorithms/layers/gru_backward.cpp
@@ -453,7 +455,6 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
         LIBRARY DESTINATION python
     )
 endif()
-
 
 
 

@@ -205,6 +205,7 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
         return result;
     }
 
+    const bool causal_lm = config.sequence_batch.create_causal_lm_targets;
     const std::string token_column =
         DefaultColumn(config.sequence_batch.token_column, "tokens");
     const std::string tag_column =
@@ -216,8 +217,8 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
     std::string error;
     if (!ValidateStringColumn(table, token_column, "token",
                               token_index, error) ||
-        !ValidateStringColumn(table, tag_column, "tag",
-                              tag_index, error)) {
+        (!causal_lm && !ValidateStringColumn(table, tag_column, "tag",
+                                             tag_index, error))) {
         result.error_message = error;
         return result;
     }
@@ -279,8 +280,8 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
         std::string pos_text;
         if (!ReadStringCell(table, token_index, row_index,
                             token_text, error) ||
-            !ReadStringCell(table, tag_index, row_index,
-                            tag_text, error)) {
+            (!causal_lm && !ReadStringCell(table, tag_index, row_index,
+                                           tag_text, error))) {
             result.error_message =
                 "sequence row " + std::to_string(row_index) + ": " + error;
             return result;
@@ -303,7 +304,7 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
     try {
         NERSequenceBuilderConfig builder_config;
         builder_config.use_pos_tags = pos_index >= 0;
-        builder_config.require_tags = true;
+        builder_config.require_tags = !causal_lm;
         builder_config.batcher.batch_size =
             static_cast<size_t>(std::max(1, batch_size));
         builder_config.batcher.max_sequence_length =
@@ -355,7 +356,8 @@ SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
         }
 
         auto build = BuildNERSequenceData(rows, builder_config);
-        result.id_to_label = build.tag_vocabulary.Values();
+        result.id_to_label = causal_lm ? build.token_vocabulary.Values()
+                                       : build.tag_vocabulary.Values();
         result.sample_count = build.samples.size();
         result.sequence_length = ResolveSequenceLength(
             build.samples, build.batcher_config.max_sequence_length);
@@ -380,8 +382,10 @@ void ApplySequenceBatcherBuildResultToTrainingConfig(
         config.input_size = build.sequence_length;
         config.input_shape = {build.sequence_length};
     }
-    if (build.tag_vocabulary_size > 0) {
-        config.output_size = build.tag_vocabulary_size;
+    const size_t output_vocabulary_size = config.sequence_batch.create_causal_lm_targets
+        ? build.token_vocabulary_size : build.tag_vocabulary_size;
+    if (output_vocabulary_size > 0) {
+        config.output_size = output_vocabulary_size;
     }
     config.sequence_batch.word_pad_id = build.word_pad_id;
     config.sequence_batch.pos_pad_id = build.pos_pad_id;
@@ -412,10 +416,13 @@ void ApplySequenceBatcherBuildResultToTrainingConfig(
         }
     }
 
-    if (last_time_distributed >= 0 && build.tag_vocabulary_size > 0) {
+    if (last_time_distributed >= 0 && output_vocabulary_size > 0) {
         auto& head = config.layers[static_cast<size_t>(last_time_distributed)];
-        head.units = static_cast<int>(build.tag_vocabulary_size);
-        head.parameters["units"] = std::to_string(build.tag_vocabulary_size);
+        head.units = static_cast<int>(output_vocabulary_size);
+        head.parameters["units"] = std::to_string(output_vocabulary_size);
+        if (!head.output_shape.empty()) {
+            head.output_shape.back() = output_vocabulary_size;
+        }
     }
 }
 

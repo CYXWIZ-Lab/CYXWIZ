@@ -51,7 +51,9 @@ FormatLogTimestamp(const std::chrono::system_clock::time_point &timestamp) {
       1000;
 
   std::ostringstream output;
-  output << std::put_time(&utc, "%H:%M:%S") << '.' << std::setfill('0')
+  // Keep the full UTC date in every console row. A time-only prefix made rows
+  // appear to disagree with ISO timestamps embedded in runtime event messages.
+  output << std::put_time(&utc, "%Y-%m-%dT%H:%M:%S") << '.' << std::setfill('0')
          << std::setw(3) << milliseconds.count() << 'Z';
   return output.str();
 }

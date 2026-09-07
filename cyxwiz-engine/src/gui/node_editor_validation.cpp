@@ -175,40 +175,7 @@ bool NodeEditor::Expects2DInput(NodeType type) const {
 }
 
 bool NodeEditor::IsGraphValid() const {
-    // Quick check for training readiness
-    // Need: DataInput/DatasetInput node, at least one model layer, and a loss node
-    if (nodes_.empty()) return false;
-
-    bool has_dataset_input = false;
-    bool has_loss = false;
-    bool has_model_layer = false;
-
-    for (const auto& node : nodes_) {
-        // Both smart DataInput and legacy DatasetInput nodes are valid data sources.
-        if (IsGraphInputNode(node.type)) {
-            has_dataset_input = true;
-        }
-        // All loss functions
-        if (node.type == NodeType::CrossEntropyLoss || node.type == NodeType::MSELoss ||
-            node.type == NodeType::BCELoss || node.type == NodeType::BCEWithLogits ||
-            node.type == NodeType::L1Loss || node.type == NodeType::SmoothL1Loss ||
-            node.type == NodeType::HuberLoss || node.type == NodeType::NLLLoss ||
-            node.type == NodeType::SoftDiceLoss ||
-            node.type == NodeType::TverskyLoss ||
-            node.type == NodeType::JaccardLoss) {
-            has_loss = true;
-        }
-        // Model layers
-        if (node.type == NodeType::Dense || node.type == NodeType::Conv2D ||
-            node.type == NodeType::Conv1D || node.type == NodeType::Conv3D ||
-            node.type == NodeType::LSTM || node.type == NodeType::GRU ||
-            node.type == NodeType::RNN || node.type == NodeType::MultiHeadAttention) {
-            has_model_layer = true;
-        }
-    }
-
-    // For training we need: dataset input, model layers, and loss
-    return has_dataset_input && has_model_layer && has_loss;
+    return cyxwiz::HasTrainingGraphStructure(nodes_);
 }
 
 void NodeEditor::ResolveDynamicPins(int node_id) {

@@ -673,9 +673,10 @@ TEST_CASE("GlobalAvgPool2DLayer computes forward and backward values", "[pool][l
     REQUIRE(grad_input_data[7] == Catch::Approx(0.5f));
 }
 
-TEST_CASE("CPU-only attention rejects strict native fallback before compute",
+TEST_CASE("Attention training dropout rejects strict native fallback before compute",
           "[arrayfire][fallback][policy][attention]") {
-    cyxwiz::MultiHeadAttentionLayer attention(2, 1, 0.0f, false);
+    cyxwiz::MultiHeadAttentionLayer attention(2, 1, 0.25f, false);
+    attention.SetTraining(true);
     const float attention_values[] = {
         1.0f, 0.0f,
         0.0f, 1.0f,
@@ -686,6 +687,11 @@ TEST_CASE("CPU-only attention rejects strict native fallback before compute",
     const cyxwiz::ScopedArrayFireFallbackPolicy strict(
         cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
     REQUIRE_THROWS_AS(attention.Forward(attention_input), std::runtime_error);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    attention.SetTraining(false);
+    REQUIRE_NOTHROW(attention.Forward(attention_input));
+    REQUIRE_NOTHROW(attention.Backward(attention_input));
+#endif
 }
 
 TEST_CASE("MultiHeadAttentionLayer causal output matches CPU scaled-dot-product reference",

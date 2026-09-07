@@ -1625,6 +1625,43 @@ int main(int argc, char** argv) {
               std::chrono::seconds(2)),
           "sequence preparation should reach a terminal state");
 
+    // Exercise the GUI preparation boundary with token-only causal-LM data.
+    // The same source must still be rejected for supervised sequence tagging.
+    const std::string causal_dataset_name = "gui_causal_token_only";
+    const auto token_only = MakeSequenceTable()->RemoveColumn(1);
+    Check(token_only.ok(), "token-only fixture must remove the NER column");
+    Check(registry.RegisterArrowTable(*token_only, causal_dataset_name) != nullptr,
+          "token-only causal dataset must register");
+    for (bool causal : {true, false}) {
+        auto causal_launch_config = MakeTrainingConfig(work_dir / "causal_launch_checkpoints");
+        causal_launch_config.dataset_name = causal_dataset_name;
+        causal_launch_config.sequence_batch.enabled = true;
+        causal_launch_config.sequence_batch.token_column = "tokens";
+        causal_launch_config.sequence_batch.tag_column = "ner_tags";
+        causal_launch_config.sequence_batch.create_causal_lm_targets = causal;
+        causal_launch_config.sequence_batch.max_sequence_length = 5;
+        std::atomic<bool> dispatched{false};
+        auto causal_dispatch = [&](cyxwiz::TrainingConfiguration received,
+                            const std::string&, const std::string&, int, int,
+                            std::weak_ptr<cyxwiz::TrainingPlotPanel>,
+                            std::function<void(bool)>) {
+            Check(received.sequence_batch.create_causal_lm_targets,
+                  "token-only causal_dispatch must retain causal targets");
+            dispatched.store(true);
+            return true;
+        };
+        auto launch = gui::StartGraphTrainingFromCompiledConfig(
+            {MakeDataInputNode(causal_dataset_name)}, {}, std::move(causal_launch_config),
+            registry, std::weak_ptr<cyxwiz::TrainingPlotPanel>{}, [](bool) {}, causal_dispatch);
+        Check(launch.started, launch.error_message);
+        Check(WaitFor([] { return !HasActiveTaskNamed("Prepare graph training"); },
+                      std::chrono::seconds(20)),
+              "token-only preparation must reach a terminal state");
+        Check(dispatched.load() == causal,
+              "token-only data must causal_dispatch for causal LM and fail for tagging");
+    }
+    registry.UnregisterTabularDataset(causal_dataset_name);
+
     const auto ner_graph_path =
         repo_root / "examples/cyxgraph/NER/ner_bilstm_sequence_tagger.cyxgraph";
     const auto ner_csv_path =

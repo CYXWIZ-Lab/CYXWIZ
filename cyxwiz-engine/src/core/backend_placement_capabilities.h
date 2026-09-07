@@ -6,6 +6,7 @@
 #include "cyxwiz/backend_placement_observation.h"
 
 #include <string>
+#include <algorithm>
 
 namespace cyxwiz::backend_placement {
 
@@ -189,6 +190,34 @@ inline LayerCapability ClassifyLayer(gui::NodeType type) {
         capability.kind = LayerCapabilityKind::Unclassified;
     }
     return capability;
+}
+
+// Compiler shapes exclude the batch dimension. Leave unproven variants on
+// their conservative compatibility path; runtime still validates dimensions.
+inline LayerCapability ClassifyLayer(const CompiledLayer& layer) {
+    auto result = ClassifyLayer(layer.type);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const auto rank = layer.input_shape.size();
+    const bool nonempty = !layer.input_shape.empty() &&
+        std::all_of(layer.input_shape.begin(), layer.input_shape.end(), [](size_t d) { return d > 0; });
+    bool supported = nonempty && layer.type == gui::NodeType::LayerNorm && rank <= 3;
+    if (nonempty && rank == 2) {
+        supported = supported || layer.type == gui::NodeType::PositionalEncoding ||
+            layer.type == gui::NodeType::TimeDistributed;
+        if (layer.type == gui::NodeType::MultiHeadAttention || layer.type == gui::NodeType::TransformerDecoder) {
+            const auto dropout = layer.parameters.find("dropout");
+            if (dropout != layer.parameters.end()) {
+                try {
+                    size_t consumed = 0;
+                    const float probability = std::stof(dropout->second, &consumed);
+                    supported = consumed == dropout->second.size() && probability == 0.0f;
+                } catch (const std::exception&) { supported = false; }
+            }
+        }
+    }
+    if (supported) result.kind = LayerCapabilityKind::ArrayFireTensor;
+#endif
+    return result;
 }
 
 inline BackendPlacementEntry BuildCpuBackedModelLayerPlacement(

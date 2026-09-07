@@ -2011,4 +2011,22 @@ ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
     return {};
 }
 
+bool HasTrainingGraphStructure(const std::vector<gui::MLNode>& nodes) {
+    bool has_source = false;
+    bool has_model = false;
+    bool has_loss = false;
+    const auto& roles = GetPipelineSupportedTrainingRoleCapabilities();
+    for (const auto& node : nodes) {
+        has_source |= node.type == gui::NodeType::DataInput ||
+                      node.type == gui::NodeType::DatasetInput;
+        for (const auto& capability : roles) {
+            if (capability.node_type != node.type) continue;
+            has_model |= capability.role == PipelineTrainingSupportRole::ModelLayer;
+            has_loss |= capability.role == PipelineTrainingSupportRole::Loss;
+        }
+        if (has_source && has_model && has_loss) return true;
+    }
+    return false;
+}
+
 } // namespace cyxwiz

@@ -1,6 +1,8 @@
 #include "cyxwiz/layers/normalization.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_utils.h"
+#include "../arrayfire_backend_utils.h"
+#include <limits>
 
 #include <cmath>
 #include <stdexcept>
@@ -21,7 +23,7 @@ LayerNormLayer::LayerNormLayer(const std::vector<int>& normalized_shape,
                                float eps, bool elementwise_affine)
     : normalized_shape_(normalized_shape), eps_(eps),
       elementwise_affine_(elementwise_affine) {
-    if (normalized_shape_.empty() || eps_ <= 0.0f) {
+    if (normalized_shape_.empty() || !std::isfinite(eps_) || eps_ <= 0.0f) {
         throw std::invalid_argument("LayerNorm requires a non-empty normalized shape and positive eps");
     }
 
@@ -30,6 +32,9 @@ LayerNormLayer::LayerNormLayer(const std::vector<int>& normalized_shape,
     for (int dim : normalized_shape) {
         if (dim <= 0) {
             throw std::invalid_argument("LayerNorm normalized dimensions must be positive");
+        }
+        if (norm_size > std::numeric_limits<size_t>::max() / static_cast<size_t>(dim)) {
+            throw std::overflow_error("LayerNorm normalized shape overflow");
         }
         norm_size *= static_cast<size_t>(dim);
     }
@@ -43,10 +48,8 @@ LayerNormLayer::LayerNormLayer(const std::vector<int>& normalized_shape,
 }
 
 Tensor LayerNormLayer::Forward(const Tensor& input) {
-    cached_input_ = input;
-
     if (input.GetDataType() != DataType::Float32) {
-        throw std::runtime_error("LayerNorm forward CPU fallback requires Float32 input");
+        throw std::runtime_error("LayerNorm forward requires Float32 input");
     }
     const std::vector<size_t>& shape = input.Shape();
     if (shape.size() < normalized_shape_.size()) {
@@ -75,16 +78,38 @@ Tensor LayerNormLayer::Forward(const Tensor& input) {
         }
     }
 
+    BackendFallbackReason fallback_reason = BackendFallbackReason::UnsupportedShape;
+    std::string fallback_detail = "ArrayFire LayerNorm supports ranks 1 through 4";
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (input.Shape().size() <= 4) {
+        try {
+            return ForwardArrayFire(input, norm_size);
+        } catch (const af::exception& e) {
+            fallback_reason = ClassifyArrayFireBackendFallbackReason(e.what());
+            fallback_detail = e.what();
+        }
+    }
+#else
+    fallback_reason = BackendFallbackReason::UnsupportedOperation;
+    fallback_detail = "ArrayFire is not compiled into this backend";
+#endif
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "LayerNormLayer::Forward", fallback_reason, fallback_detail.c_str(),
+        BuildArrayFireBackendFallbackContext(BuildTensorShapeContext("input", input.Shape())));
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "LayerNormLayer::Forward");
+    cached_input_ = input;
+
     Tensor output(shape, DataType::Float32);
     normalized_ = Tensor(shape, DataType::Float32);
     std_inv_ = Tensor({batch_size}, DataType::Float32);
 
-    const float* input_data = input.Data<float>();
-    const float* gamma_data = elementwise_affine_ ? gamma_.Data<float>() : nullptr;
-    const float* beta_data = elementwise_affine_ ? beta_.Data<float>() : nullptr;
-    float* output_data = output.Data<float>();
-    float* normalized_data = normalized_.Data<float>();
-    float* std_inv_data = std_inv_.Data<float>();
+    const float* input_data = input.ReadData<float>();
+    const float* gamma_data = elementwise_affine_ ? gamma_.ReadData<float>() : nullptr;
+    const float* beta_data = elementwise_affine_ ? beta_.ReadData<float>() : nullptr;
+    float* output_data = output.MutableData<float>();
+    float* normalized_data = normalized_.MutableData<float>();
+    float* std_inv_data = std_inv_.MutableData<float>();
 
     for (size_t batch = 0; batch < batch_size; ++batch) {
         const size_t offset = batch * norm_size;
@@ -117,7 +142,7 @@ Tensor LayerNormLayer::Backward(const Tensor& grad_output) {
     if (grad_output.GetDataType() != DataType::Float32 ||
         normalized_.GetDataType() != DataType::Float32 ||
         std_inv_.GetDataType() != DataType::Float32) {
-        throw std::runtime_error("LayerNorm backward CPU fallback requires Float32 tensors");
+        throw std::runtime_error("LayerNorm backward requires Float32 tensors");
     }
     if (grad_output.Shape() != cached_input_.Shape() || normalized_.Shape() != cached_input_.Shape()) {
         throw std::runtime_error("LayerNorm backward gradient/cache shape mismatch");
@@ -135,6 +160,31 @@ Tensor LayerNormLayer::Backward(const Tensor& grad_output) {
         throw std::runtime_error("LayerNorm backward std_inv cache shape mismatch");
     }
 
+    if (elementwise_affine_ && (gamma_.GetDataType() != DataType::Float32 ||
+        gamma_.Shape() != std::vector<size_t>{norm_size})) {
+        throw std::runtime_error("LayerNorm backward gamma shape mismatch");
+    }
+    BackendFallbackReason fallback_reason = BackendFallbackReason::UnsupportedShape;
+    std::string fallback_detail = "ArrayFire LayerNorm supports ranks 1 through 4";
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (grad_output.Shape().size() <= 4) {
+        try {
+            return BackwardArrayFire(grad_output, norm_size);
+        } catch (const af::exception& e) {
+            fallback_reason = ClassifyArrayFireBackendFallbackReason(e.what());
+            fallback_detail = e.what();
+        }
+    }
+#else
+    fallback_reason = BackendFallbackReason::UnsupportedOperation;
+    fallback_detail = "ArrayFire is not compiled into this backend";
+#endif
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "LayerNormLayer::Backward", fallback_reason, fallback_detail.c_str(),
+        BuildArrayFireBackendFallbackContext(BuildTensorShapeContext("grad_output", grad_output.Shape())));
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "LayerNormLayer::Backward");
+
     Tensor grad_input(grad_output.Shape(), DataType::Float32);
     if (elementwise_affine_) {
         const std::vector<size_t> param_shape{norm_size};
@@ -145,13 +195,13 @@ Tensor LayerNormLayer::Backward(const Tensor& grad_output) {
         grad_beta_ = Tensor(param_shape, DataType::Float32);
     }
 
-    const float* grad_data = grad_output.Data<float>();
-    const float* normalized_data = normalized_.Data<float>();
-    const float* std_inv_data = std_inv_.Data<float>();
-    const float* gamma_data = elementwise_affine_ ? gamma_.Data<float>() : nullptr;
-    float* grad_input_data = grad_input.Data<float>();
-    float* grad_gamma_data = elementwise_affine_ ? grad_gamma_.Data<float>() : nullptr;
-    float* grad_beta_data = elementwise_affine_ ? grad_beta_.Data<float>() : nullptr;
+    const float* grad_data = grad_output.ReadData<float>();
+    const float* normalized_data = normalized_.ReadData<float>();
+    const float* std_inv_data = std_inv_.ReadData<float>();
+    const float* gamma_data = elementwise_affine_ ? gamma_.ReadData<float>() : nullptr;
+    float* grad_input_data = grad_input.MutableData<float>();
+    float* grad_gamma_data = elementwise_affine_ ? grad_gamma_.MutableData<float>() : nullptr;
+    float* grad_beta_data = elementwise_affine_ ? grad_beta_.MutableData<float>() : nullptr;
     const float norm_count = static_cast<float>(norm_size);
 
     for (size_t batch = 0; batch < batch_size; ++batch) {

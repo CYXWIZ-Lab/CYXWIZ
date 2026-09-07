@@ -61,7 +61,7 @@ MultiHeadAttentionLayer::MultiHeadAttentionLayer(int embed_dim, int num_heads,
                                                    float dropout, bool use_bias)
     : embed_dim_(embed_dim), num_heads_(num_heads), dropout_(dropout), use_bias_(use_bias) {
 
-    if (embed_dim_ <= 0 || num_heads_ <= 0 || dropout_ < 0.0f || dropout_ >= 1.0f ||
+    if (embed_dim_ <= 0 || num_heads_ <= 0 || !std::isfinite(dropout_) || dropout_ < 0.0f || dropout_ >= 1.0f ||
         embed_dim_ % num_heads_ != 0) {
         throw std::invalid_argument("MultiHeadAttention requires positive divisible dims and dropout in [0, 1)");
     }
@@ -185,12 +185,13 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
     const auto& v_shape = value.Shape();
     if (query.GetDataType() != DataType::Float32 || key.GetDataType() != DataType::Float32 ||
         value.GetDataType() != DataType::Float32) {
-        throw std::runtime_error("MultiHeadAttention forward CPU fallback requires Float32 inputs");
+        throw std::runtime_error("MultiHeadAttention forward requires Float32 inputs");
     }
     if (q_shape.size() != 3 || k_shape.size() != 3 || v_shape.size() != 3) {
         throw std::invalid_argument("MultiHeadAttention expects [batch, seq_len, embed_dim] tensors");
     }
-    if (q_shape[0] != k_shape[0] || k_shape[0] != v_shape[0] ||
+    if (q_shape[0] == 0 || q_shape[1] == 0 || k_shape[1] == 0 ||
+        q_shape[0] != k_shape[0] || k_shape[0] != v_shape[0] ||
         k_shape[1] != v_shape[1] ||
         q_shape[2] != static_cast<size_t>(embed_dim_) ||
         k_shape[2] != static_cast<size_t>(embed_dim_) ||
@@ -223,11 +224,23 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
         BuildTensorShapeContext("query", q_shape) + "; " +
         BuildTensorShapeContext("key", k_shape) + "; " +
         BuildTensorShapeContext("value", v_shape));
+    BackendFallbackReason fallback_reason = BackendFallbackReason::UnsupportedOperation;
+    std::string fallback_detail = "ArrayFire attention training dropout is not supported";
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (!(training_ && dropout_ > 0.0f)) {
+        try {
+            return ForwardArrayFire(query, key, value, attn_mask);
+        } catch (const af::exception& e) {
+            fallback_reason = ClassifyArrayFireBackendFallbackReason(e.what());
+            fallback_detail = e.what();
+        }
+    }
+#else
+    fallback_detail = "ArrayFire is not compiled into this backend";
+#endif
     ThrowIfArrayFireNativeCpuFallbackForbidden(
-        "MultiHeadAttentionLayer::Forward",
-        BackendFallbackReason::UnsupportedOperation,
-        "ArrayFire implementation unavailable",
-        fallback_context);
+        "MultiHeadAttentionLayer::Forward", fallback_reason,
+        fallback_detail.c_str(), fallback_context);
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LayerCpuPath,
         "MultiHeadAttentionLayer::Forward");
@@ -371,7 +384,7 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
     if (grad_output.GetDataType() != DataType::Float32 || shape.size() != 3 ||
         cached_query_.Shape().size() != 3 || cached_key_.Shape().size() != 3 ||
         cached_value_.Shape().size() != 3) {
-        throw std::runtime_error("MultiHeadAttention backward CPU fallback requires cached 3D Float32 tensors");
+        throw std::runtime_error("MultiHeadAttention backward requires cached 3D Float32 tensors");
     }
 
     const size_t batch_size = shape[0];
@@ -400,11 +413,23 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
 
     const std::string fallback_context = BuildArrayFireBackendFallbackContext(
         BuildTensorShapeContext("grad_output", shape));
+    BackendFallbackReason fallback_reason = BackendFallbackReason::UnsupportedOperation;
+    std::string fallback_detail = "ArrayFire attention training dropout is not supported";
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (!cached_attention_dropout_) {
+        try {
+            return BackwardArrayFire(grad_output);
+        } catch (const af::exception& e) {
+            fallback_reason = ClassifyArrayFireBackendFallbackReason(e.what());
+            fallback_detail = e.what();
+        }
+    }
+#else
+    fallback_detail = "ArrayFire is not compiled into this backend";
+#endif
     ThrowIfArrayFireNativeCpuFallbackForbidden(
-        "MultiHeadAttentionLayer::Backward",
-        BackendFallbackReason::UnsupportedOperation,
-        "ArrayFire implementation unavailable",
-        fallback_context);
+        "MultiHeadAttentionLayer::Backward", fallback_reason,
+        fallback_detail.c_str(), fallback_context);
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LayerCpuPath,
         "MultiHeadAttentionLayer::Backward");

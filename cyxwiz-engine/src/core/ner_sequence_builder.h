@@ -70,14 +70,37 @@ public:
         pos_sequences.reserve(rows.size());
         tag_sequences.reserve(rows.size());
 
-        for (const auto& row : rows) {
-            token_sequences.push_back(row.tokens);
-            if (has_pos) {
-                pos_sequences.push_back(row.pos_tags);
+        // Input vocabularies are fitted only on training rows. All-empty index
+        // lists retain the existing unsplit (all rows are training) contract.
+        const bool split = !config_.batcher.train_indices.empty() ||
+            !config_.batcher.val_indices.empty() || !config_.batcher.test_indices.empty();
+        std::vector<bool> training(rows.size(), !split);
+        if (split) {
+            if (config_.batcher.train_indices.empty()) {
+                throw std::runtime_error("sequence vocabulary requires nonempty training partition");
             }
-            if (has_tags) {
-                tag_sequences.push_back(row.ner_tags);
+            std::vector<bool> assigned(rows.size(), false);
+            for (const auto* indices : {&config_.batcher.train_indices,
+                                       &config_.batcher.val_indices,
+                                       &config_.batcher.test_indices}) {
+                for (const size_t index : *indices) {
+                    if (index >= rows.size() || assigned[index]) {
+                        throw std::runtime_error("sequence partition index is invalid, duplicate or overlapping");
+                    }
+                    assigned[index] = true;
+                }
             }
+            for (const size_t index : config_.batcher.train_indices) training[index] = true;
+        }
+        for (size_t index = 0; index < rows.size(); ++index) {
+            const auto& row = rows[index];
+            if (training[index]) {
+                token_sequences.push_back(row.tokens);
+                if (has_pos) pos_sequences.push_back(row.pos_tags);
+            }
+            // Preserve the existing supervised label taxonomy. Tags have no UNK
+            // category; this is distinct from fitting input token/POS features.
+            if (has_tags) tag_sequences.push_back(row.ner_tags);
         }
 
         NERSequenceBuildResult result;

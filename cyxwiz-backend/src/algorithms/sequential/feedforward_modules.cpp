@@ -1,8 +1,16 @@
 ﻿#include <cyxwiz/sequential.h>
+#include "../arrayfire_backend_utils.h"
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+#include <arrayfire.h>
+#endif
 #include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <utility>
+
+#ifdef max
+#undef max
+#endif
 
 namespace cyxwiz {
 // ============================================================================
@@ -480,7 +488,7 @@ Tensor PositionalEncodingModule::Forward(const Tensor& input) {
     const auto& shape = input.Shape();
     if (input.GetDataType() != DataType::Float32 ||
         shape.size() != 3 ||
-        shape[2] != d_model_) {
+        shape[0] == 0 || shape[1] == 0 || shape[2] != d_model_) {
         throw std::runtime_error(
             "PositionalEncodingModule: input must be Float32 [batch, seq_len, d_model]");
     }
@@ -489,9 +497,38 @@ Tensor PositionalEncodingModule::Forward(const Tensor& input) {
             "PositionalEncodingModule: sequence length exceeds max_sequence_length");
     }
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        // Compute one sinusoidal table for this sequence on the selected
+        // backend. Preserve the native formula's double intermediate and
+        // Float32 encoding before adding it to the model activations.
+        const af::dim4 dims(1, static_cast<dim_t>(shape[1]), static_cast<dim_t>(d_model_));
+        const af::array position = af::range(dims, 1, f64);
+        const af::array dimension = af::range(dims, 2, f64);
+        const af::array angle = position / af::pow(10000.0, 2.0 * af::floor(dimension / 2.0) /
+                                                           static_cast<double>(d_model_));
+        const af::array encoding = af::select(af::mod(dimension, 2.0) == 0.0,
+                                               af::sin(angle), af::cos(angle)).as(f32);
+        const af::array output = input.GetSemanticArray() +
+            af::tile(encoding, af::dim4(static_cast<dim_t>(shape[0])));
+        output.eval(); // Finish the lazy table/addition inside its fallback boundary.
+        return Tensor::FromSemanticArray(output, shape);
+    } catch (const af::exception& e) {
+        ThrowIfArrayFireNativeCpuFallbackForbidden(
+            "PositionalEncodingModule::Forward", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
+            BuildArrayFireBackendFallbackContext(BuildTensorShapeContext("input", shape)));
+    }
+#else
+    ThrowIfArrayFireNativeCpuFallbackForbidden(
+        "PositionalEncodingModule::Forward", BackendFallbackReason::UnsupportedOperation,
+        "ArrayFire is not compiled into this backend", BuildTensorShapeContext("input", shape));
+#endif
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "PositionalEncodingModule::Forward");
+
     Tensor output(shape, DataType::Float32);
-    const float* src = input.Data<float>();
-    float* dst = output.Data<float>();
+    const float* src = input.ReadData<float>();
+    float* dst = output.MutableData<float>();
     const size_t batch = shape[0];
     const size_t seq_len = shape[1];
 

@@ -1,3 +1,4 @@
+#include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/gui/patterns/pattern_library.h"
 #include "../src/gui/node_import_guardrails.h"
 
@@ -428,6 +429,23 @@ void CheckSerializedPinIndexGuard() {
 }
 
 void CheckDataBoundaryVersionGuard() {
+    for (const auto* format : {"1.0", "2.1"}) {
+        auto document = gui::detail::CreateSerializedGraphDocument(format);
+        document["nodes"] = nlohmann::json::array();
+        document["links"] = nlohmann::json::array();
+        const auto loaded = nlohmann::json::parse(document.dump());
+        Check(loaded.at("version") == format,
+              "graph format and pin contract versions must remain independent");
+        Check(!gui::detail::PreserveLegacyDataBoundaryPins(loaded) &&
+              !gui::detail::PreserveLegacyDataValidatorOutputs(loaded) &&
+              !gui::detail::PreserveLegacyEvaluationTableInputs(loaded) &&
+              !gui::detail::PreserveLegacyClassicalTreeTablePins(loaded),
+              "new serialized graph documents must use all current GUI pin contracts");
+        const auto preserved = nlohmann::json::parse(
+            gui::detail::CreateSerializedGraphDocument(format, true).dump());
+        Check(gui::detail::PreserveLegacyDataBoundaryPins(preserved),
+              "saving a legacy data boundary must not silently migrate its pins");
+    }
     nlohmann::json legacy_graph = nlohmann::json::object();
     Check(gui::detail::PreserveLegacyDataBoundaryPins(legacy_graph),
           "unversioned saved graphs must preserve legacy data-boundary pins");
@@ -462,6 +480,32 @@ void CheckDataBoundaryVersionGuard() {
 } // namespace
 
 int main() {
+    const auto training_graph = [](std::initializer_list<gui::NodeType> types) {
+        std::vector<gui::MLNode> nodes;
+        for (auto type : types) {
+            gui::MLNode node;
+            node.type = type;
+            nodes.push_back(node);
+        }
+        return cyxwiz::HasTrainingGraphStructure(nodes);
+    };
+    using gui::NodeType;
+    Check(training_graph({NodeType::DataInput, NodeType::DataSplit, NodeType::DataLoader,
+          NodeType::Embedding, NodeType::PositionalEncoding, NodeType::TransformerDecoder,
+          NodeType::TransformerDecoder, NodeType::LayerNorm, NodeType::TimeDistributed,
+          NodeType::Output, NodeType::CrossEntropyLoss, NodeType::Adam}),
+          "transformer language-model graphs must enable the training entry point");
+    Check(training_graph({NodeType::DatasetInput, NodeType::Dense, NodeType::MSELoss}),
+          "legacy dataset input and dense training must remain eligible");
+    Check(!training_graph({NodeType::DataInput, NodeType::DataSplit, NodeType::DataLoader}),
+          "data-only pipelines must not enable training");
+    Check(!training_graph({NodeType::DataInput, NodeType::CrossEntropyLoss}),
+          "a loss without a model must not enable training");
+    Check(!training_graph({NodeType::Embedding, NodeType::CrossEntropyLoss}),
+          "a graph without a dataset source must not enable training");
+    Check(!training_graph({NodeType::DataInput, NodeType::TransformerDecoder}),
+          "a graph without a loss must not enable training");
+    Check(!training_graph({}), "empty graphs must not enable training");
     auto& library = gui::patterns::PatternLibrary::Instance();
     Check(library.LoadPatternFromFile(WritePattern("guard_dense", "Dense").string()),
           "failed to load implemented-node pattern");

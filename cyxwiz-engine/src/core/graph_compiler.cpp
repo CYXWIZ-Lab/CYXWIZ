@@ -2035,7 +2035,7 @@ size_t EstimateSequenceLength(const CompiledLayer& layer) {
 
 void AddBackendPlacementReports(TrainingConfiguration& config) {
     for (const auto& layer : config.layers) {
-        const auto capability = backend_placement::ClassifyLayer(layer.type);
+        const auto capability = backend_placement::ClassifyLayer(layer);
         switch (capability.kind) {
             case backend_placement::LayerCapabilityKind::ArrayFireTensor:
             {

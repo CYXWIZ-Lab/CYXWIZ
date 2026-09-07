@@ -642,18 +642,7 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
     using json = nlohmann::json;
 
     try {
-        json j;
-        // CyxWiz Studio: Update to v2.1 format with annotations
-        j["version"] = "2.1";
-        j["data_boundary_version"] = HasLegacyDataBoundary()
-            ? detail::kLegacyDataBoundaryVersion
-            : detail::kCurrentDataBoundaryVersion;
-        j["data_validator_contract_version"] =
-            detail::kCurrentDataValidatorContractVersion;
-        j["evaluation_table_contract_version"] =
-            detail::kCurrentEvaluationTableContractVersion;
-        j["classical_tree_table_contract_version"] =
-            detail::kCurrentClassicalTreeTableContractVersion;
+        json j = detail::CreateSerializedGraphDocument("2.1", HasLegacyDataBoundary());
         j["framework"] = static_cast<int>(selected_framework_);
         j["execution_mode"] = static_cast<int>(execution_mode_);  // Save execution mode
 
@@ -1182,17 +1171,7 @@ std::string NodeEditor::GetGraphJson() const {
     using json = nlohmann::json;
 
     try {
-        json j;
-        j["version"] = "1.0";
-        j["data_boundary_version"] = HasLegacyDataBoundary()
-            ? detail::kLegacyDataBoundaryVersion
-            : detail::kCurrentDataBoundaryVersion;
-        j["data_validator_contract_version"] =
-            detail::kCurrentDataValidatorContractVersion;
-        j["evaluation_table_contract_version"] =
-            detail::kCurrentEvaluationTableContractVersion;
-        j["classical_tree_table_contract_version"] =
-            detail::kCurrentClassicalTreeTableContractVersion;
+        json j = detail::CreateSerializedGraphDocument("1.0", HasLegacyDataBoundary());
         j["framework"] = static_cast<int>(selected_framework_);
 
         // Serialize nodes

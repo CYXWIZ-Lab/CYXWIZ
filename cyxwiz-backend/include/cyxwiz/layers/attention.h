@@ -54,6 +54,11 @@ private:
     bool cached_attention_dropout_ = false;
 
     void InitializeWeights();
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    Tensor ForwardArrayFire(const Tensor& query, const Tensor& key,
+                            const Tensor& value, const Tensor* attn_mask);
+    Tensor BackwardArrayFire(const Tensor& grad_output);
+#endif
 };
 
 } // namespace cyxwiz

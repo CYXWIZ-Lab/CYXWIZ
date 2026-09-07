@@ -437,6 +437,24 @@ void EmbeddingLayer::LoadPretrainedWeights(const Tensor& weights, bool freeze) {
 
     // Ensure padding index is zero
     if (padding_idx_ >= 0 && padding_idx_ < num_embeddings_) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+        try {
+            af::array padded = weight_.GetSemanticArray().copy();
+            padded(padding_idx_, af::span) = 0.0f;
+            padded.eval(); // Complete the update within the observed fallback boundary.
+            weight_.SetFromSemanticArray(padded, shape);
+            return;
+        } catch (const af::exception& e) {
+            LogEmbeddingFallbackOnce("EmbeddingLayer::LoadPretrainedWeights", weights,
+                num_embeddings_, embedding_dim_, e.what());
+        }
+#else
+        ThrowIfArrayFireNativeCpuFallbackForbidden(
+            "EmbeddingLayer::LoadPretrainedWeights", BackendFallbackReason::UnsupportedOperation,
+            "ArrayFire is not compiled into this backend", BuildTensorShapeContext("weights", shape));
+#endif
+        const ScopedArrayFireHostSyncAttribution attribution(
+            ArrayFireHostSyncCategory::LayerCpuPath, "EmbeddingLayer::LoadPretrainedWeights");
         float* data = weight_.MutableData<float>();
         for (int i = 0; i < embedding_dim_; i++) {
             data[padding_idx_ * embedding_dim_ + i] = 0.0f;

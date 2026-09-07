@@ -57,6 +57,10 @@ private:
     Tensor grad_beta_;
     Tensor normalized_;
     Tensor std_inv_;
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    Tensor ForwardArrayFire(const Tensor& input, size_t norm_size);
+    Tensor BackwardArrayFire(const Tensor& gradient, size_t norm_size);
+#endif
 };
 
 class CYXWIZ_API InstanceNorm2DLayer : public Layer {

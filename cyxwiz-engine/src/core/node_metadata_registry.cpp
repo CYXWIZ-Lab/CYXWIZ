@@ -2408,8 +2408,12 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::TransformerDecoder, NodeCategory::Attention, "Transformer Decoder", ICON_FA_BULLSEYE,
         {"transformer", "attention", "decoder", "causal"}, 0, false,
-        "One decoder-only causal transformer block",
-        "Connect Float32 [batch, sequence, d_model]. Stack nodes for depth. "
+        "One decoder-only causal transformer block containing masked self-attention "
+        "and an internal Dense/FC feed-forward path.",
+        "Connect Float32 [batch, sequence, d_model]. Internal Q/K/V/output projections "
+        "and Dense(d_model -> dim_feedforward) -> activation -> Dense(dim_feedforward -> d_model) "
+        "are owned by this composite node. Change dim_feedforward for its hidden width; "
+        "stack TransformerDecoder nodes to add depth. "
         "Connected Memory remains fail-closed until seq2seq cross-attention has a graph owner.", "",
         {{"Input", PinType::Tensor, true, "Target Float32 sequence [batch, sequence, d_model]."},
          {"Memory", PinType::Tensor, false, "Reserved optional encoder memory; a connected pin is rejected."}},

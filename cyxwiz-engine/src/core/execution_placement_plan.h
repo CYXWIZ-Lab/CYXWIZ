@@ -383,6 +383,8 @@ inline ExecutionPlacementPlan BuildExecutionPlacementPlan(
         IsSupportedTrainingMetricContract(config);
     const bool sequence_metrics =
         supported_metrics && config.sequence_batch.enabled;
+    const bool native_sequence_metrics = sequence_metrics &&
+        !config.sequence_batch.create_causal_lm_targets;
     AppendExecutionPlacement(plan, MakeExecutionPlacementEntry(
         -3002,
         "metrics",
@@ -396,22 +398,22 @@ inline ExecutionPlacementPlan BuildExecutionPlacementPlan(
         context,
         !supported_metrics
             ? BackendPlacementStatus::Unsupported
-            : (sequence_metrics
+            : (native_sequence_metrics
                    ? BackendPlacementStatus::Cpu
                    : ExecutionPlacementStatus::ArrayFire),
         supported_metrics
-            ? (sequence_metrics
+            ? (native_sequence_metrics
                    ? "metrics_sequence_native_cpu_compatibility"
                    : "metrics_arrayfire_scalar_reduction")
             : "metrics_loss_target_contract_unsupported",
         !supported_metrics
             ? "unavailable"
-            : (sequence_metrics ? "native_cpu" : backend),
+            : (native_sequence_metrics ? "native_cpu" : backend),
         !supported_metrics
             ? "The configured loss and target value kind do not select a "
               "supported training metric contract."
-            : (sequence_metrics
-                   ? "Sequence token accuracy currently materializes logits "
+            : (native_sequence_metrics
+                   ? "Sequence tagging metrics currently materializes logits "
                      "and targets for its declared native CPU compatibility "
                      "implementation."
                    : "Metrics use ArrayFire reductions with bounded scalar "

@@ -17,6 +17,18 @@ inline constexpr int kCurrentDataValidatorContractVersion = 2;
 inline constexpr int kCurrentEvaluationTableContractVersion = 2;
 inline constexpr int kCurrentClassicalTreeTableContractVersion = 2;
 
+// Shared entry point for new graph producers and editor serialization.
+// Only the editor should request legacy data pins when preserving an old graph.
+inline nlohmann::json CreateSerializedGraphDocument(
+    const std::string& format_version, bool preserve_legacy_data_boundary = false) {
+    return {{"version", format_version},
+            {"data_boundary_version", preserve_legacy_data_boundary
+                ? kLegacyDataBoundaryVersion : kCurrentDataBoundaryVersion},
+            {"data_validator_contract_version", kCurrentDataValidatorContractVersion},
+            {"evaluation_table_contract_version", kCurrentEvaluationTableContractVersion},
+            {"classical_tree_table_contract_version", kCurrentClassicalTreeTableContractVersion}};
+}
+
 inline int ReadSerializedDataBoundaryVersion(const nlohmann::json& graph_json) {
     if (!graph_json.contains("data_boundary_version")) {
         return kLegacyDataBoundaryVersion;

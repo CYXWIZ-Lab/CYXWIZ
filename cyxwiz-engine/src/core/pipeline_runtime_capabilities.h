@@ -382,4 +382,7 @@ bool IsPipelineSupportedTrainingRoleNode(gui::NodeType node_type);
 PipelineTrainingBackendSupport
 ResolvePipelineTrainingBackendSupport(gui::NodeType node_type);
 
+// Cheap toolbar eligibility only; compilation and runtime preflight remain required.
+bool HasTrainingGraphStructure(const std::vector<gui::MLNode>& nodes);
+
 } // namespace cyxwiz

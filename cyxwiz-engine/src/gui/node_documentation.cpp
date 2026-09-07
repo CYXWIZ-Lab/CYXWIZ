@@ -795,9 +795,12 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::TransformerDecoder] = {
         "Transformer Decoder",
-        "One CPU-backed decoder-only block with causal self-attention and a "
-        "feedforward network.",
-        "Stack multiple nodes for depth. The Memory pin is reserved and fails "
+        "One decoder-only Transformer block with masked self-attention, residual "
+        "paths, normalization, and an internal feed-forward network. The feed-forward "
+        "path is Dense(d_model -> dim_feedforward) -> activation -> Dense(dim_feedforward -> d_model).",
+        "Stack multiple nodes for depth. Internal attention projections and Dense/FC "
+        "layers are owned by this composite node; edit dim_feedforward to change the "
+        "hidden Dense width. Add another TransformerDecoder node to add a block. The Memory pin is reserved and fails "
         "closed when connected because cross-attention is not yet owned by the "
         "Studio runtime.",
         {
