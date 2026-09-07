@@ -1348,6 +1348,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"output_path", "file", "", "Output data file", {}, cyxwiz::data_convert::ExtensionFilter(cyxwiz::data_convert::Direction::Output, cyxwiz::data_convert::kBuildFeatures, ";", "*.")},
          {"output_format", "enum", "auto", "Output format", cyxwiz::data_convert::PropertyChoices(cyxwiz::data_convert::Direction::Output, cyxwiz::data_convert::kBuildFeatures), ""},
          {"excel_sheet", "string", "", cyxwiz::data_convert::kXlsxRestrictions, {}, "", "XLSX worksheet (blank selects first)"},
+         {"excel_start_column", "string", "A", "XLSX only: first column to read (A to XFD, inclusive). Use with Skip rows to select an offset table. Earlier columns are explicitly excluded; no header detection is performed.", {}, "", "XLSX start column"},
          {"delimiter", "enum", "auto", "CSV delimiter", {"auto", ",", "\\t", ";", "|"}, ""},
          {"decimal_point", "enum", ".", "Input decimal separator", {".", ","}, ""},
          {"header", "bool", "true", "Treat the first selected CSV/TSV/XLSX row as column names", {}, ""},

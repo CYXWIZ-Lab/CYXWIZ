@@ -62,6 +62,39 @@ int main() try {
           "closing UI does not cancel an authorized file write");
     task.reset();
     Check(observer.expired(), "task result storage releases after its final owner");
+    auto preview_state = std::make_shared<cyxwiz::DataConvertPreviewTaskResult>();
+    task = cyxwiz::MakeDataConvertPreviewTask(options, preview_state);
+    options.input_path = "changed-after-preview-queue";
+    worker = std::async(std::launch::async, [task] { task->Execute(); });
+    worker.get();
+    Check(preview_state->done.load() && preview_state->result.ok && preview_state->result.rows == 2,
+          "preview uses captured options and publishes success");
+    Check(task->GetState() == cyxwiz::TaskState::Completed, "successful preview task completes");
+    preview_state = std::make_shared<cyxwiz::DataConvertPreviewTaskResult>();
+    task = cyxwiz::MakeDataConvertPreviewTask(options, preview_state);
+    worker = std::async(std::launch::async, [task] { task->Execute(); });
+    worker.get();
+    Check(preview_state->done.load() && !preview_state->result.ok, "preview failure is published");
+    Check(task->GetState() == cyxwiz::TaskState::Failed, "preview failure must not be reported as Completed");
+    Check(!task->GetErrorMessage().empty() && task->GetErrorMessage() == preview_state->result.error,
+          "preview task and dialog share the actual failure reason");
+    options.input_path = input.string();
+    preview_state = std::make_shared<cyxwiz::DataConvertPreviewTaskResult>();
+    task = cyxwiz::MakeDataConvertPreviewTask(options, preview_state);
+    task->RequestCancel();
+    worker = std::async(std::launch::async, [task] { task->Execute(); });
+    worker.get();
+    Check(task->GetState() == cyxwiz::TaskState::Cancelled && preview_state->done.load() && !preview_state->result.ok,
+          "cancelled preview must not report ready");
+    preview_state = std::make_shared<cyxwiz::DataConvertPreviewTaskResult>();
+    std::weak_ptr<cyxwiz::DataConvertPreviewTaskResult> preview_observer = preview_state;
+    task = cyxwiz::MakeDataConvertPreviewTask(options, preview_state);
+    preview_state.reset();
+    worker = std::async(std::launch::async, [task] { task->Execute(); });
+    worker.get();
+    Check(task->GetState() == cyxwiz::TaskState::Completed, "preview result safely outlives detached UI");
+    task.reset();
+    Check(preview_observer.expired(), "preview storage releases with final owner");
     std::cout << "DataConvert task: " << checks << " checks passed\n";
     return 0;
 } catch (const std::exception& error) {

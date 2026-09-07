@@ -16,4 +16,12 @@ struct DataConvertTaskResult {
 
 std::shared_ptr<AsyncTask> MakeDataConvertTask(
     DataConvertOptions options, std::shared_ptr<DataConvertTaskResult> result);
+
+struct DataConvertPreviewTaskResult {
+    std::atomic<bool> done{false};
+    DataConvertPreview result;
+};
+
+std::shared_ptr<AsyncTask> MakeDataConvertPreviewTask(
+    DataConvertOptions options, std::shared_ptr<DataConvertPreviewTaskResult> result);
 } // namespace cyxwiz

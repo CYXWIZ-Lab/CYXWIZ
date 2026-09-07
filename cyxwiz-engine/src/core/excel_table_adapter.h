@@ -13,6 +13,7 @@ struct ExcelTableReadOptions {
     bool has_header = true;
     int skip_rows = 0;
     uint64_t max_cells = 1000000;
+    std::string start_column = "A"; // Excel label A..XFD, inclusive; no automatic trimming.
 };
 
 // Host file ingress. Reads values only: dates retain their stored numeric serials;

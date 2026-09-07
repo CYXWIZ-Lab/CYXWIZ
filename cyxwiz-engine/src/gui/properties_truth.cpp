@@ -2290,6 +2290,10 @@ void AddDataConvertTruth(NodeTruthReport& report,
         node, "XLSX worksheet", "excel_sheet", "", TruthOwner::Loader,
         true, true, false,
         "Used only for file-backed XLSX input; blank selects the first worksheet. Upstream Arrow input ignores this setting. Values-only workbook restrictions apply."));
+    report.properties.push_back(ResolveStringProperty(
+        node, "XLSX start column", "excel_start_column", "A", TruthOwner::Loader,
+        true, true, false,
+        "File-backed XLSX only: columns before this Excel label are excluded. Combined with Skip rows; no automatic header detection. Other inputs ignore this setting."));
 }
 
 void AddDeployToNodeEditorTruth(NodeTruthReport& report, const MLNode& node) {

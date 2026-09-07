@@ -133,11 +133,13 @@ void RenderParameter(
 
     if (!param.description.empty() && ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
         ImGui::TextUnformatted(param.description.c_str());
         if (!param.default_value.empty()) {
             ImGui::TextDisabled("Default: %s", param.default_value.c_str());
         }
         ImGui::TextDisabled(param.required ? "Required" : "Optional");
+        ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
     }
 

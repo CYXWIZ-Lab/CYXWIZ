@@ -78,6 +78,19 @@ std::shared_ptr<arrow::Table> ReadExcelTable(
 #ifdef CYXWIZ_HAS_XLSX
     std::string location = path;
     try {
+        // Parse a bounded Excel column label without accepting cell addresses,
+        // ranges or numbers. Lowercase labels are equivalent to uppercase.
+        if (options.start_column.empty() || options.start_column.size() > 3)
+            throw std::runtime_error("start column must be an Excel label from A to XFD");
+        uint16_t first_column = 0;
+        for (char ch : options.start_column) {
+            if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
+            if (ch < 'A' || ch > 'Z')
+                throw std::runtime_error("start column must be an Excel label from A to XFD");
+            first_column = static_cast<uint16_t>(first_column * 26 + ch - 'A' + 1);
+        }
+        if (first_column > 16384)
+            throw std::runtime_error("start column must be an Excel label from A to XFD");
         if (options.skip_rows < 0 || options.max_cells == 0 || options.max_cells > 1000000)
             throw std::runtime_error("skip_rows must be non-negative and max_cells must be between 1 and 1000000");
         const std::filesystem::path file_path(std::u8string(path.begin(), path.end()));
@@ -108,14 +121,17 @@ std::shared_ptr<arrow::Table> ReadExcelTable(
             throw std::runtime_error("worksheet has no selected rows");
         if (static_cast<uint64_t>(rows) > options.max_cells / columns)
             throw std::runtime_error("worksheet exceeds the configured cell limit");
+        if (first_column > columns)
+            throw std::runtime_error("start column is beyond the worksheet's last column");
+        const auto selected_columns = static_cast<size_t>(columns - first_column + 1);
 
         const uint32_t first = static_cast<uint32_t>(options.skip_rows) + 1;
         const uint32_t data_first = first + (options.has_header ? 1 : 0);
         std::vector<std::string> names;
         std::set<std::string> unique_names;
         size_t string_bytes = 0;
-        for (uint16_t col = 1; col <= columns; ++col) {
-            std::string field_name = "col_" + std::to_string(col - 1);
+        for (uint16_t col = first_column; col <= columns; ++col) {
+            std::string field_name = "col_" + std::to_string(col - first_column);
             if (options.has_header) {
                 const OpenXLSX::XLCellReference ref(first, col);
                 location = name + "!" + ref.address();
@@ -133,17 +149,17 @@ std::shared_ptr<arrow::Table> ReadExcelTable(
             names.push_back(std::move(field_name));
         }
 
-        std::vector<XLValueType> types(columns, XLValueType::Empty);
+        std::vector<XLValueType> types(selected_columns, XLValueType::Empty);
         bool any_value = options.has_header;
         for (uint32_t row = data_first; row <= rows; ++row) {
-            for (uint16_t col = 1; col <= columns; ++col) {
+            for (uint16_t col = first_column; col <= columns; ++col) {
                 const OpenXLSX::XLCellReference ref(row, col);
                 location = name + "!" + ref.address();
                 auto cell = sheet.findCell(ref);
                 if (cell.empty()) continue;
                 if (cell.hasFormula()) throw std::runtime_error("formula cells are unsupported; export values first");
                 const auto type = cell.value().type();
-                types[col - 1] = MergeType(types[col - 1], type, location);
+                types[col - first_column] = MergeType(types[col - first_column], type, location);
                 any_value = any_value || type != XLValueType::Empty;
             }
         }
@@ -151,8 +167,8 @@ std::shared_ptr<arrow::Table> ReadExcelTable(
 
         std::vector<std::shared_ptr<arrow::Field>> fields;
         std::vector<std::shared_ptr<arrow::Array>> arrays;
-        for (uint16_t col = 1; col <= columns; ++col) {
-            const auto type = ArrowType(types[col - 1]);
+        for (uint16_t col = first_column; col <= columns; ++col) {
+            const auto type = ArrowType(types[col - first_column]);
             std::unique_ptr<arrow::ArrayBuilder> builder;
             CheckArrow(arrow::MakeBuilder(arrow::default_memory_pool(), type, &builder));
             CheckArrow(builder->Reserve(rows - data_first + 1));
@@ -165,7 +181,7 @@ std::shared_ptr<arrow::Table> ReadExcelTable(
             }
             std::shared_ptr<arrow::Array> array;
             CheckArrow(builder->Finish(&array));
-            fields.push_back(arrow::field(names[col - 1], type));
+            fields.push_back(arrow::field(names[col - first_column], type));
             arrays.push_back(std::move(array));
         }
         auto table = arrow::Table::Make(arrow::schema(fields), arrays);

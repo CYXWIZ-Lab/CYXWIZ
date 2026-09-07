@@ -35,6 +35,7 @@ Json Graph(const cyxwiz::DataConvertOptions& options, int id, const fs::path& do
         {"input_path", options.input_path}, {"output_path", options.output_path},
         {"input_format", options.input_format}, {"output_format", options.output_format},
         {"excel_sheet", options.excel_sheet}, {"skip_rows", std::to_string(options.skip_rows)},
+        {"excel_start_column", options.excel_start_column},
         {"has_header", options.has_header ? "true" : "false"},
         {"delimiter", "auto"}, {"overwrite", "false"}, {"write_manifest", "true"}};
     Json next = {{"id", id + 1}, {"type", "DataConvert"}, {"name", "Downstream"}};
@@ -142,9 +143,9 @@ void RunDataConvertPipelineReloadTests(const fs::path& work_dir) {
         first.cell("A2").value() = 99;
         doc.workbook().addWorksheet("Chosen sheet");
         auto chosen = doc.workbook().worksheet("Chosen sheet");
-        chosen.cell("A1").value() = "preamble";
-        chosen.cell("A2").value() = "score";
-        chosen.cell("A3").value() = 7.25;
+        chosen.cell("B1").value() = "preamble";
+        chosen.cell("B2").value() = "score";
+        chosen.cell("B3").value() = 7.25;
         doc.save();
     }
     DataConvertOptions excel;
@@ -152,6 +153,7 @@ void RunDataConvertPipelineReloadTests(const fs::path& work_dir) {
     excel.input_format = "xlsx";
     excel.output_path = (work_dir / "excel.parquet").string();
     excel.excel_sheet = "Chosen sheet";
+    excel.excel_start_column = "B";
     excel.skip_rows = 1;
     excel.auto_detect_delimiter = true;
     auto graph = Graph(excel, id, work_dir / "excel_downstream.parquet");
@@ -162,6 +164,13 @@ void RunDataConvertPipelineReloadTests(const fs::path& work_dir) {
     Check(cached.ok && cached.skipped_fresh_output && !cached.output_table, "XLSX cached graph must reload disk");
     auto second = Run(graph, id, "named XLSX cached run");
     Check(second->Equals(*first, false), "XLSX first/cache parity");
+    graph["nodes"][0]["parameters"]["excel_start_column"] = "A";
+    Forget(id);
+    Forget(id + 1);
+    cyxwiz::PipelineExecutor changed_column;
+    Check(!changed_column.ExecutePipeline(graph.dump()) && !Registered(id),
+          "changed start column cannot reuse previous graph output");
+    graph["nodes"][0]["parameters"]["excel_start_column"] = "B";
     graph["nodes"][0]["parameters"]["excel_sheet"] = "Missing";
     Forget(id);
     Forget(id + 1);

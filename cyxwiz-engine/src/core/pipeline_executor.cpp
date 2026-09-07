@@ -4198,6 +4198,7 @@ bool PipelineExecutor::ExecuteDataConvert(const Node& node, ExecutionContext& ct
     options.input_format = ParameterOrDefault(node.parameters, "input_format", "auto");
     options.output_format = ParameterOrDefault(node.parameters, "output_format", "auto");
     options.excel_sheet = ParameterOrDefault(node.parameters, "excel_sheet");
+    options.excel_start_column = ParameterOrDefault(node.parameters, "excel_start_column", "A");
 
     const std::string delimiter =
         ToLowerAscii(TrimString(ParameterOrDefault(node.parameters,

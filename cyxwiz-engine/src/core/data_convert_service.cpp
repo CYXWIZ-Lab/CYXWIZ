@@ -922,6 +922,7 @@ std::shared_ptr<ArrowDataset> LoadInputDataset(
     if (input_format == DataConvertFormat::Excel) {
         ExcelTableReadOptions excel_options;
         excel_options.sheet_name = options.excel_sheet;
+        excel_options.start_column = options.excel_start_column;
         excel_options.has_header = options.has_header;
         excel_options.skip_rows = options.skip_rows;
         auto table = ReadExcelTable(options.input_path, excel_options, error);
@@ -1568,7 +1569,8 @@ std::string BuildSettingsHashInput(const DataConvertOptions& options,
         << options.parquet_compression << "|"
         << options.row_group_size;
     if (input_format == DataConvertFormat::Excel) {
-        out << "|xlsx-bounded-values-v2|" << options.excel_sheet.size() << ":" << options.excel_sheet;
+        out << "|xlsx-bounded-values-v3|" << options.excel_sheet.size() << ":" << options.excel_sheet
+            << "|" << options.excel_start_column.size() << ":" << options.excel_start_column;
     }
     return out.str();
 }
@@ -1598,6 +1600,7 @@ bool WriteManifest(const DataConvertOptions& options,
         {"input_path", options.input_path},
         {"input_format", FormatName(input_format)},
         {"excel_sheet", options.excel_sheet},
+        {"excel_start_column", options.excel_start_column},
         {"output_path", options.output_path},
         {"output_format", FormatName(output_format)},
         {"rows_read", result.rows_read},

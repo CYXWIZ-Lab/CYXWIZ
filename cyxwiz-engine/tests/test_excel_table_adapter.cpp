@@ -92,6 +92,71 @@ int main() try {
     Check(!cyxwiz::ReadExcelTable(file, options, error), "out-of-range skip rejects");
     options = {};
 
+    const auto offset_file = (workspace.path / "offset.xlsx").string();
+    {
+        XLDocument doc;
+        doc.create(offset_file, XLDoNotOverwrite);
+        auto sheet = doc.workbook().worksheet("Sheet1");
+        sheet.cell("B2").value() = "Report title";
+        sheet.cell("B6").value() = "id";
+        sheet.cell("C6").value() = "score";
+        sheet.cell("B7").value() = 10;
+        sheet.cell("C7").value() = 1.5;
+        sheet.cell("B8").value() = 20; // C8 remains null.
+        doc.workbook().addWorksheet("Wide");
+        auto wide = doc.workbook().worksheet("Wide");
+        wide.cell("AA3").value() = "value";
+        wide.cell("AA4").value() = 42;
+        doc.save();
+    }
+    Check(!cyxwiz::ReadExcelTable(offset_file, options, error) && error.find("!A1") != std::string::npos,
+          "default must not silently locate an offset header");
+    options.skip_rows = 5;
+    Check(!cyxwiz::ReadExcelTable(offset_file, options, error) && error.find("!A6") != std::string::npos,
+          "row skipping must not silently drop blank leading columns");
+    options.start_column = "b";
+    auto offset = cyxwiz::ReadExcelTable(offset_file, options, error);
+    Check(offset && offset->num_rows() == 2 && offset->num_columns() == 2, error);
+    Check(offset->field(0)->name() == "id" && offset->column(1)->null_count() == 1,
+          "offset header and null preserved");
+    Check(offset->column(0)->GetScalar(1).ValueOrDie()->ToString() == "20", "offset integer preserved");
+    options.skip_rows = 6;
+    options.has_header = false;
+    auto no_header = cyxwiz::ReadExcelTable(offset_file, options, error);
+    Check(no_header && no_header->field(0)->name() == "col_0" && no_header->num_rows() == 2,
+          "no-header names are relative to selected columns");
+    for (const auto* invalid : {"", "0", "A1", "A:B", "AAAA", "XFE", " A", "A "}) {
+        options.start_column = invalid;
+        Check(!cyxwiz::ReadExcelTable(offset_file, options, error) && error.find("start column") != std::string::npos,
+              "invalid start column rejects");
+    }
+    options.start_column = "D";
+    Check(!cyxwiz::ReadExcelTable(offset_file, options, error) && error.find("beyond") != std::string::npos,
+          "start after final column rejects");
+    options = {};
+    options.sheet_name = "Wide";
+    options.start_column = "AA";
+    options.skip_rows = 2;
+    auto wide = cyxwiz::ReadExcelTable(offset_file, options, error);
+    Check(wide && wide->num_columns() == 1 && wide->column(0)->GetScalar(0).ValueOrDie()->ToString() == "42",
+          "multi-letter start column and named sheet");
+    options = {};
+
+    cyxwiz::DataConvertOptions offset_conversion;
+    offset_conversion.input_path = offset_file;
+    offset_conversion.output_path = (workspace.path / "offset.parquet").string();
+    offset_conversion.skip_rows = 5;
+    offset_conversion.excel_start_column = "B";
+    Check(cyxwiz::DataConvertService::Preview(offset_conversion).ok, "service offset preview");
+    Check(cyxwiz::DataConvertService::Convert(offset_conversion).ok, "service offset conversion");
+    Check(cyxwiz::DataConvertService::Convert(offset_conversion).skipped_fresh_output, "offset cache reused");
+    offset_conversion.excel_start_column = "C";
+    Check(!cyxwiz::DataConvertService::Convert(offset_conversion).ok, "changed start column cannot reuse old output");
+    offset_conversion.overwrite = true;
+    auto changed_column = cyxwiz::DataConvertService::Convert(offset_conversion);
+    Check(changed_column.ok && !changed_column.skipped_fresh_output && changed_column.columns == 1,
+          "changed start column regenerates selected schema");
+
     cyxwiz::DataConvertOptions conversion;
     conversion.input_path = file;
     conversion.output_path = (workspace.path / "output.parquet").string();

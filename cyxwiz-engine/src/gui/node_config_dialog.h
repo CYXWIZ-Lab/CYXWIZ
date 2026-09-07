@@ -603,10 +603,7 @@ private:
     void SetStatus(std::string message, bool is_error);
     void AddLogLine(const std::string& message);
 
-    struct PreviewLoadState {
-        std::atomic<bool> done{false};
-        cyxwiz::DataConvertPreview result;
-    };
+    using PreviewLoadState = cyxwiz::DataConvertPreviewTaskResult;
     std::shared_ptr<cyxwiz::DataConvertTaskResult> conversion_state_;
 
     char input_path_[512] = {};
@@ -614,6 +611,7 @@ private:
     std::string input_format_ = "auto";
     std::string output_format_ = "auto";
     char excel_sheet_[256] = {};
+    char excel_start_column_[32] = "A";
     char delimiter_[8] = ",";
     char decimal_point_ = '.';
     bool auto_detect_delimiter_ = true;

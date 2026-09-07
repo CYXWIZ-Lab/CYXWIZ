@@ -50,6 +50,7 @@ struct DataConvertOptions {
     bool retain_output_table = false;
     std::shared_ptr<arrow::Table> input_table;
     std::string excel_sheet; // XLSX input only; empty selects the first worksheet.
+    std::string excel_start_column = "A"; // XLSX input only, inclusive Excel column label.
 };
 
 struct DataConvertResult {

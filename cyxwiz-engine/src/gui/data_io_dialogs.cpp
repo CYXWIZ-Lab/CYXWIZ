@@ -265,6 +265,8 @@ void DataConvertDialog::LoadFromNode() {
     output_format_ = ReadStringParamValue(node_->parameters, "output_format", "auto");
     CopyToBuffer(excel_sheet_, sizeof(excel_sheet_),
                  ReadStringParamValue(node_->parameters, "excel_sheet"));
+    CopyToBuffer(excel_start_column_, sizeof(excel_start_column_),
+                 ReadStringParamValue(node_->parameters, "excel_start_column", "A"));
     const std::string delimiter =
         ReadStringParamValue(node_->parameters, "delimiter", "auto");
     auto_detect_delimiter_ = LowerAscii(delimiter) == "auto";
@@ -302,6 +304,7 @@ void DataConvertDialog::Apply() {
     node_->parameters["input_path"] = input_path_;
     node_->parameters["input_format"] = input_format_;
     node_->parameters["excel_sheet"] = excel_sheet_;
+    node_->parameters["excel_start_column"] = excel_start_column_;
     node_->parameters["output_path"] = output_path_;
     node_->parameters["output_format"] = output_format_;
     node_->parameters["delimiter"] =
@@ -436,6 +439,8 @@ void DataConvertDialog::RenderSourceTab() {
         ImGui::BeginDisabled(!dc::kBuildFeatures.xlsx);
         if (ImGui::InputText("Worksheet", excel_sheet_, sizeof(excel_sheet_))) has_changes_ = true;
         ImGui::TextDisabled("Blank selects the first worksheet.");
+        if (ImGui::InputText("Start column", excel_start_column_, sizeof(excel_start_column_))) has_changes_ = true;
+        ImGui::TextWrapped("Excel column label A to XFD (for example B or AA). Read from this column to the worksheet's last column. Set Skip rows under Options; the first remaining row is the header when enabled.");
         ImGui::EndDisabled();
     }
 
@@ -766,6 +771,7 @@ cyxwiz::DataConvertOptions DataConvertDialog::BuildOptions() const {
     options.output_path = output_path_;
     options.input_format = input_format_;
     options.excel_sheet = excel_sheet_;
+    options.excel_start_column = excel_start_column_;
     options.output_format = output_format_;
     options.delimiter = delimiter_[0] == '\0' ? ',' : delimiter_[0];
     options.decimal_point = decimal_point_;
@@ -791,22 +797,16 @@ void DataConvertDialog::PreviewInput() {
     preview_ = {};
     SetStatus("Preview queued in the background.", false);
 
-    preview_task_id_ = cyxwiz::AsyncTaskManager::Instance().RunAsync(
-        "Preview Data Convert source",
-        [state, options](cyxwiz::LambdaTask& task) {
-            task.ReportProgress(0.05f, "Reading source and inferring schema");
-            try {
-                state->result = cyxwiz::DataConvertService::Preview(options);
-            } catch (const std::exception& e) {
-                state->result.error =
-                    std::string("Data Convert preview failed: ") + e.what();
-            } catch (...) {
-                state->result.error =
-                    "Data Convert preview failed with an unknown error.";
-            }
-            task.ReportProgress(1.0f, "Preview ready");
-            state->done.store(true);
-        });
+    try {
+        preview_task_id_ = cyxwiz::AsyncTaskManager::Instance().Submit(
+            cyxwiz::MakeDataConvertPreviewTask(options, state));
+    } catch (const std::exception& error) {
+        preview_load_state_.reset();
+        preview_loading_ = false;
+        preview_task_id_ = 0;
+        SetStatus(std::string("Could not queue preview: ") + error.what(), true);
+        return;
+    }
     spdlog::info("DataConvertDialog: queued async preview task {} for '{}'",
                  preview_task_id_, options.input_path);
 }
