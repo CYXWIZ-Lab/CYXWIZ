@@ -76,7 +76,7 @@ jobs:
       - name: Isolate macOS vcpkg dependency build
         if: runner.os == 'macOS'
         run: |
-          for formula in fmt spdlog jpeg-turbo; do
+          for formula in fmt spdlog jpeg-turbo fftw; do
             if brew list --versions "$formula" >/dev/null 2>&1; then
               brew unlink "$formula"
             fi
@@ -88,6 +88,7 @@ jobs:
           for header in jconfig.h jmorecfg.h jpeglib.h; do
             test ! -e "$brew_prefix/include/$header"
           done
+          test ! -e "$brew_prefix/include/fftw3.h"
 
       - name: Restore vcpkg binary cache
         uses: actions/cache/restore@v4

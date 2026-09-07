@@ -47,7 +47,7 @@ if(NOT TARGET Parquet::parquet_shared AND TARGET Parquet::parquet_static)
 endif()
 
 # DuckDB for zero-copy SQL queries on Arrow tables
-find_package(duckdb CONFIG REQUIRED)
+find_package(DuckDB CONFIG REQUIRED)
 message(STATUS "DuckDB found - SQL query engine enabled")
 if(NOT TARGET duckdb AND TARGET duckdb_static)
     add_library(duckdb ALIAS duckdb_static)
