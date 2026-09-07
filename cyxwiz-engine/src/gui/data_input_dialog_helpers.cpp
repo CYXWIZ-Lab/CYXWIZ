@@ -125,7 +125,7 @@ void DataInputDialog::RefreshColumnList() {
     selected_columns_.clear();
     label_column_idx_ = -1;
 
-    const bool is_delimited = detected_type_ >= 0 && detected_type_ <= 2;
+    const bool is_delimited = data_input::IsDelimitedPreviewSource(file_path_, detected_type_);
     const bool is_tabular_source =
         source_type_ == SourceType::File &&
         (file_category_ == FileCategory::Tabular ||
@@ -174,14 +174,9 @@ bool DataInputDialog::CanPageRegisteredPreview() const {
         return false;
     }
 
-    if (!parameter_matches("file_path", file_path_) ||
-        !parameter_matches("type", data_input::FileTypeParam(detected_type_)) ||
-        !parameter_matches("has_header", has_header_ ? "true" : "false") ||
-        !parameter_matches("delimiter", custom_delimiter_) ||
-        !parameter_matches("decimal_point", std::string(1, decimal_point_)) ||
-        !parameter_matches("missing_value_tokens", missing_value_tokens_) ||
-        !parameter_matches("skip_rows", std::to_string(skip_rows_)) ||
-        !parameter_matches("max_rows", std::to_string(max_rows_))) {
+    if (!data_input::MatchesAppliedTabularPreview(node_->parameters, {
+            file_path_, detected_type_, has_header_, custom_delimiter_,
+            decimal_point_, missing_value_tokens_, skip_rows_, max_rows_})) {
         return false;
     }
 

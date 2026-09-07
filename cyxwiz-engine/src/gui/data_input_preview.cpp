@@ -1,10 +1,46 @@
 #include "data_input_preview.h"
+#include "data_input_capabilities.h"
+#include "../core/data_input_parameters.h"
 #include "loaders/text_csv_preflight.h"
 #include <algorithm>
 #include <fstream>
 #include <map>
 
 namespace gui::data_input {
+
+bool IsDelimitedPreviewSource(const std::string& path, int detected_type) {
+    const int effective_type = detected_type == 0
+        ? DetectFileTypeForPath(path, nullptr) : detected_type;
+    return effective_type == 1 || effective_type == 2;
+}
+
+bool MatchesAppliedTabularPreview(
+    const std::map<std::string, std::string>& parameters,
+    const TabularPreviewSource& source) {
+    std::string format;
+    std::string error;
+    if (!cyxwiz::ResolveDataInputFormatAliases(parameters, format, error)) {
+        return false;
+    }
+    const int applied_type = format == "auto"
+        ? DetectFileTypeForPath(source.path, nullptr)
+        : FileTypeFromParam(format, -1);
+    const int current_type = source.detected_type == 0
+        ? DetectFileTypeForPath(source.path, nullptr) : source.detected_type;
+    if (applied_type <= 0 || applied_type != current_type) return false;
+
+    const auto matches = [&parameters](const char* key, const std::string& value) {
+        const auto it = parameters.find(key);
+        return it != parameters.end() && it->second == value;
+    };
+    return matches("file_path", source.path) &&
+        matches("has_header", source.has_header ? "true" : "false") &&
+        matches("delimiter", source.delimiter) &&
+        matches("decimal_point", std::string(1, source.decimal_point)) &&
+        matches("missing_value_tokens", source.missing_value_tokens) &&
+        matches("skip_rows", std::to_string(source.skip_rows)) &&
+        matches("max_rows", std::to_string(source.max_rows));
+}
 
 PreviewTable LoadDelimitedPreview(
     const std::string& path,
@@ -18,6 +54,12 @@ PreviewTable LoadDelimitedPreview(
         return table;
     }
 
+    if (!IsDelimitedPreviewSource(path, detected_type)) {
+        table.error = "Apply this source first, then refresh Preview to browse the loaded dataset. "
+                      "Only CSV/TSV supports a pre-load source sample.";
+        return table;
+    }
+
     std::ifstream file(path);
     if (!file.is_open()) {
         table.error = "Cannot open file";
@@ -28,7 +70,8 @@ PreviewTable LoadDelimitedPreview(
     if (delim == '\0') {
         delim = ',';
     }
-    if (detected_type == 2) {
+    if (detected_type == 2 ||
+        (detected_type == 0 && DetectFileTypeForPath(path, nullptr) == 2)) {
         delim = '\t';
     }
 

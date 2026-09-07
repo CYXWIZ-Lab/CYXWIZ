@@ -89,6 +89,39 @@ class PackageReleaseTests(unittest.TestCase):
     def args(self, *values: str):
         return package_release.parse_args([*values, "--stage-only"])
 
+    def test_isolated_vcpkg_notices(self) -> None:
+        installed = self.root / "isolated-deps"
+        for name in ("openxlsx", "nowide", "pugixml", "libarchive", "zlib"):
+            notice = installed / "x64-windows" / "share" / name / "copyright"
+            notice.parent.mkdir(parents=True)
+            notice.write_text(name + " notice", encoding="utf-8")
+        stage = self.root / "notice-stage"
+        stage.mkdir()
+        (stage / "OpenXLSX.dll").write_bytes(b"fixture")
+        args = self.args("minimal", "--vcpkg-installed-dir", str(installed))
+        paths = package_release.default_paths(self.script, args)
+        package_release.copy_vcpkg_notices(paths, stage, "windows")
+        self.assertTrue((stage / "THIRD_PARTY_LICENSES/vcpkg/x64-windows-openxlsx.txt").is_file())
+        self.assertFalse((stage / "THIRD_PARTY_LICENSES/vcpkg/x64-windows-fmt.txt").exists())
+        (installed / "x64-windows/share/pugixml/copyright").unlink()
+        with self.assertRaisesRegex(package_release.PackageError, "pugixml"):
+            package_release.copy_vcpkg_notices(paths, stage, "windows")
+        (installed / "x64-windows/share/pugixml/copyright").write_bytes(b"")
+        with self.assertRaisesRegex(package_release.PackageError, "pugixml"):
+            package_release.copy_vcpkg_notices(paths, stage, "windows")
+
+    def test_conflicting_vcpkg_notices_fail_closed(self) -> None:
+        roots = (self.root / "deps-a", self.root / "deps-b")
+        for index, root in enumerate(roots):
+            notice = root / "x64-windows/share/fmt/copyright"
+            notice.parent.mkdir(parents=True)
+            notice.write_text(str(index), encoding="utf-8")
+        args = self.args("minimal", "--vcpkg-installed-dir", str(roots[0]),
+                         "--vcpkg-installed-dir", str(roots[1]))
+        paths = package_release.default_paths(self.script, args)
+        with self.assertRaisesRegex(package_release.PackageError, "Conflicting vcpkg notices"):
+            package_release.copy_vcpkg_notices(paths, self.root / "stage", "windows")
+
     def artifact_args(self, *values: str):
         return package_release.parse_args([*values])
 

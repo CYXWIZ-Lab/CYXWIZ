@@ -3812,6 +3812,7 @@ set_target_properties(test_data_preview_controls PROPERTIES
 add_executable(test_data_preview_service
     tests/test_data_preview_service.cpp
     src/gui/data_input_preview.cpp
+    src/gui/data_input_capabilities.cpp
     src/core/data_preview_service.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
@@ -3823,6 +3824,7 @@ add_executable(test_data_preview_service
 target_include_directories(test_data_preview_service PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+    ${CMAKE_BINARY_DIR}/cyxwiz-backend/include
 )
 
 target_link_libraries(test_data_preview_service PRIVATE

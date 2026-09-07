@@ -380,6 +380,20 @@ The packager rejects a generic or incomplete notice directory.
 The default build directory is `build/bin/Release`. Override it with
 `--build-dir` when using a preset-specific build tree.
 
+For isolated vcpkg installations, pass `--vcpkg-installed-dir` for each installed
+root used by that build (repeat for dependency overlays). This prevents an
+isolated XLSX build from losing the OpenXLSX, nowide and pugixml notices. Without
+explicit roots, the packager searches `build/vcpkg_installed` and
+`vcpkg_installed`; conflicting copies of a notice fail packaging.
+
+The Windows DataConvert payload can be checked separately from device/runtime
+qualification with `scripts/verify_data_convert_package.py --stage <package>
+--tests-dir <standalone-Release-tests> --dumpbin <dumpbin.exe> --report <json>`.
+This checks transitive PE imports, rejects Debug CRT dependencies, requires XLSX
+notices, and runs five local-fixture tests using only staged DLLs and System32
+on PATH. It still requires the supported Windows/MSVC runtime; it does not
+disable networking, qualify the full Engine, or replace a clean-machine test.
+
 ## Commands
 
 Windows minimal:

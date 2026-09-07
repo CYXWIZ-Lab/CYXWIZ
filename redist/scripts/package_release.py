@@ -57,6 +57,7 @@ class PackagePaths:
     resources: Path
     templates: Path
     output_root: Path
+    vcpkg_installed_dirs: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--build-dir", type=Path)
     parser.add_argument("--resources-dir", type=Path)
     parser.add_argument("--output-root", type=Path)
+    parser.add_argument(
+        "--vcpkg-installed-dir", type=Path, action="append", default=[],
+        help="vcpkg installed root used by this build; repeat for isolated dependency overlays",
+    )
     parser.add_argument("--arrayfire-dir", type=Path)
     parser.add_argument("--python-dir", type=Path)
     parser.add_argument("--python-version")
@@ -148,6 +153,7 @@ def default_paths(script: Path, args: argparse.Namespace) -> PackagePaths:
         resources=(args.resources_dir or root / "cyxwiz-engine" / "resources").resolve(),
         templates=(redist / "templates").resolve(),
         output_root=(args.output_root or redist / "output").resolve(),
+        vcpkg_installed_dirs=tuple(path.resolve() for path in args.vcpkg_installed_dir),
     )
 
 
@@ -351,20 +357,41 @@ def backend_runtime(paths: PackagePaths, lib_suffix: str) -> Path:
 
 
 def copy_vcpkg_notices(paths: PackagePaths, stage: Path, system: str) -> None:
-    roots = sorted((paths.root / "build" / "vcpkg_installed").glob("*/share"))
+    installed_dirs = paths.vcpkg_installed_dirs or (
+        paths.root / "build" / "vcpkg_installed",
+        paths.root / "vcpkg_installed",
+    )
+    roots = []
+    for installed in installed_dirs:
+        if paths.vcpkg_installed_dirs:
+            require_directory(installed, "explicit vcpkg installed root")
+        roots.extend(sorted(installed.glob("*/share")))
     notices = []
     for root in roots:
         notices.extend(sorted(root.glob("*/copyright")))
     if not notices:
         if system == "windows":
-            raise PackageError("Missing vcpkg copyright notices below build/vcpkg_installed")
+            raise PackageError("Missing vcpkg copyright notices in selected installed roots")
         return
     destination = stage / "THIRD_PARTY_LICENSES" / "vcpkg"
     destination.mkdir(parents=True, exist_ok=True)
+    copied: dict[str, Path] = {}
     for notice in notices:
         triplet = notice.parents[1].parent.name
         package = notice.parent.name
-        copy_file(notice, destination / f"{triplet}-{package}.txt")
+        name = f"{triplet}-{package}.txt"
+        previous = copied.get(name)
+        if previous is not None and previous.read_bytes() != notice.read_bytes():
+            raise PackageError(f"Conflicting vcpkg notices for {name}: {previous} and {notice}")
+        if previous is None:
+            copy_file(notice, destination / name)
+            copied[name] = notice
+    if system == "windows" and (stage / "OpenXLSX.dll").is_file():
+        required = {"openxlsx", "nowide", "pugixml", "libarchive", "zlib"}
+        available = {notice.parent.name for notice in notices if notice.stat().st_size > 0}
+        missing = required - available
+        if missing:
+            raise PackageError("Missing XLSX dependency notices: " + ", ".join(sorted(missing)))
 
 
 def copy_runtime_notices(

@@ -19,7 +19,10 @@ namespace fs = std::filesystem;
 
 namespace {
 
+int checks = 0;
+
 void Check(bool condition, const std::string& message) {
+    ++checks;
     if (!condition) {
         std::cerr << "FAIL: " << message << "\n";
         std::exit(1);
@@ -66,9 +69,92 @@ std::shared_ptr<arrow::Table> MakePreviewTable() {
         5);
 }
 
+void TestPreviewSourceContract() {
+    using gui::data_input::MatchesAppliedTabularPreview;
+    using gui::data_input::TabularPreviewSource;
+    for (const auto& [format, type] :
+         std::vector<std::pair<std::string, int>>{
+             {"csv", 1}, {"tsv", 2}, {"parquet", 4},
+             {"feather", 7}, {"arrow", 8}, {"ipc", 8}}) {
+        const TabularPreviewSource source{
+            "preview." + format, type, true, ",", '.', "NA", 0, 12};
+        const std::map<std::string, std::string> applied{
+            {"file_path", source.path}, {"file_type", format},
+            {"has_header", "true"}, {"delimiter", ","},
+            {"decimal_point", "."}, {"missing_value_tokens", "NA"},
+            {"skip_rows", "0"}, {"max_rows", "12"}};
+        Check(MatchesAppliedTabularPreview(applied, source),
+              format + ": canonical Apply settings must permit registered preview");
+        auto restored = applied;
+        Check(MatchesAppliedTabularPreview(restored, source),
+              format + ": restored settings must retain registered preview eligibility");
+        restored.erase("file_type");
+        restored["type"] = format;
+        Check(MatchesAppliedTabularPreview(restored, source),
+              format + ": legacy format key must remain compatible");
+        restored["file_type"] = "auto";
+        Check(MatchesAppliedTabularPreview(restored, source),
+              format + ": concrete legacy format must resolve alongside canonical auto");
+        restored["type"] = "auto";
+        Check(MatchesAppliedTabularPreview(restored, source),
+              format + ": auto must resolve from the source extension");
+        restored["file_type"] = format;
+        Check(MatchesAppliedTabularPreview(restored, source),
+              format + ": canonical concrete format must resolve alongside legacy auto");
+        restored["file_type"] = " \t" + format + "\n";
+        Check(MatchesAppliedTabularPreview(restored, source),
+              format + ": normalized aliases must match effective format");
+        restored["type"] = "json";
+        Check(!MatchesAppliedTabularPreview(restored, source),
+              format + ": conflicting concrete aliases must not reuse registered preview");
+        auto changed = source;
+        changed.path = "different." + format;
+        Check(!MatchesAppliedTabularPreview(applied, changed), "changed path must invalidate preview");
+        changed = source;
+        changed.detected_type = 3;
+        Check(!MatchesAppliedTabularPreview(applied, changed), "changed format must invalidate preview");
+        changed = source;
+        changed.has_header = false;
+        Check(!MatchesAppliedTabularPreview(applied, changed), "changed header must invalidate preview");
+        changed = source;
+        changed.delimiter = ";";
+        Check(!MatchesAppliedTabularPreview(applied, changed), "changed delimiter must invalidate preview");
+        changed = source;
+        changed.decimal_point = ',';
+        Check(!MatchesAppliedTabularPreview(applied, changed), "changed decimal point must invalidate preview");
+        changed = source;
+        changed.missing_value_tokens = "null";
+        Check(!MatchesAppliedTabularPreview(applied, changed), "changed null tokens must invalidate preview");
+        changed = source;
+        changed.skip_rows = 5;
+        Check(!MatchesAppliedTabularPreview(applied, changed), "changed skip rows must invalidate preview");
+        changed = source;
+        changed.max_rows = 1;
+        Check(!MatchesAppliedTabularPreview(applied, changed), "changed row limit must invalidate preview");
+        restored = applied;
+        restored["file_type"] = "unknown";
+        Check(!MatchesAppliedTabularPreview(restored, source), "unknown format must fail closed");
+    }
+    const TabularPreviewSource parquet{"preview.parquet", 4, true, ",", '.', "", 0, 0};
+    Check(!MatchesAppliedTabularPreview({}, parquet), "unapplied source cannot reuse registered preview");
+    for (const auto& [extension, type] :
+         std::vector<std::pair<std::string, int>>{
+             {"parquet", 4}, {"feather", 7}, {"arrow", 8}, {"ipc", 8},
+             {"xlsx", 5}, {"json", 3}, {"hdf5", 6}, {"unknown", 0}}) {
+        for (int selected_type : {0, type}) {
+            const auto rejected = gui::data_input::LoadDelimitedPreview(
+                "not-opened." + extension, true, ',', selected_type);
+            Check(rejected.error.find("Apply this source first") != std::string::npos &&
+                      rejected.columns.empty() && rejected.rows.empty(),
+                  extension + ": explicit/auto non-delimited preview must reject before file I/O");
+        }
+    }
+}
+
 } // namespace
 
 int main() {
+    TestPreviewSourceContract();
     gui::data_input::PreviewPageCache page_cache(2, 2);
     page_cache.PutPage(0, {{"r0"}, {"r1"}});
     page_cache.PutPage(2, {{"r2"}, {"r3"}});
@@ -114,6 +200,21 @@ int main() {
     Check(over_skipped_preview.error.find("No tabular rows remain") !=
               std::string::npos,
           "preview should explain when skip_rows consumes the source");
+    const auto auto_csv = gui::data_input::LoadDelimitedPreview(
+        preambled_csv_path.string(), true, ',', 0, 4);
+    Check(auto_csv.error.empty() && auto_csv.rows == preambled_preview.rows,
+          "Auto CSV preview must preserve delimited source sampling");
+
+    const fs::path tsv_path = fs::temp_directory_path() / "cyxwiz_auto_preview.tsv";
+    {
+        std::ofstream tsv(tsv_path);
+        tsv << "first\tsecond\n1\t2\n";
+    }
+    const auto auto_tsv = gui::data_input::LoadDelimitedPreview(tsv_path.string(), true, ',', 0);
+    Check(auto_tsv.error.empty() && auto_tsv.columns.size() == 2 &&
+              auto_tsv.rows == std::vector<std::vector<std::string>>{{"1", "2"}},
+          "Auto TSV preview must use tabs, not the default comma");
+    fs::remove(tsv_path);
 
     const fs::path quoted_csv_path =
         fs::temp_directory_path() / "cyxwiz_quoted_preview.csv";
@@ -227,6 +328,18 @@ int main() {
     auto source_match = registry.FindTabularDatasetBySourcePath(parquet_path.string());
     Check(source_match && *source_match == "preview_parquet",
            "registered Parquet source path should resolve to dataset name");
+    const std::map<std::string, std::string> parquet_parameters{
+        {"file_type", "PARQUET"}, {"file_path", parquet_path.string()},
+        {"has_header", "true"}, {"delimiter", ","}, {"decimal_point", "."},
+        {"missing_value_tokens", ""}, {"skip_rows", "0"}, {"max_rows", "0"}};
+    Check(gui::data_input::MatchesAppliedTabularPreview(parquet_parameters,
+              {parquet_path.string(), 4, true, ",", '.', "", 0, 0}),
+          "applied canonical Parquet must reach registered paging, not CSV sampling");
+    const auto binary_sample = gui::data_input::LoadDelimitedPreview(
+        parquet_path.string(), true, ',', 4);
+    Check(binary_sample.error.find("Apply this source first") != std::string::npos &&
+              binary_sample.rows.empty(),
+          "real Parquet bytes must never be parsed as a delimited preview");
 
     cyxwiz::DataPreviewRequest parquet_request;
     parquet_request.dataset_name = "preview_parquet";
@@ -303,6 +416,6 @@ int main() {
     fs::remove(limited_parquet_path, ec);
     fs::remove(preambled_csv_path, ec);
 
-    std::cout << "Data preview service test passed\n";
+    std::cout << "Data preview service test passed: " << checks << " checks\n";
     return 0;
 }

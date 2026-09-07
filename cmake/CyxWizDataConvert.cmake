@@ -1,7 +1,7 @@
 # Attach the same XLSX adapter to every executable compiling DataConvertService.
 find_package(OpenXLSX CONFIG QUIET)
 if(TARGET OpenXLSX::OpenXLSX)
-    find_package(LibArchive REQUIRED)
+    include("${CMAKE_CURRENT_LIST_DIR}/CyxWizLibArchive.cmake")
 endif()
 function(cyxwiz_target_data_convert target_name)
     target_sources(${target_name} PRIVATE

@@ -1,4 +1,4 @@
-find_package(LibArchive REQUIRED)
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/CyxWizLibArchive.cmake")
 if(NOT WIN32)
     find_package(httplib CONFIG REQUIRED)
 endif()
