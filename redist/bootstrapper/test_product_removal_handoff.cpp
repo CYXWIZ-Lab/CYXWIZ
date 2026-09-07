@@ -144,8 +144,9 @@ void TestLaunchWaitsForExplicitParentClose(
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     Check(!std::filesystem::exists(handoff.result_path),
           "Detached finalizer must not validate before parent EOF");
-    Check(AwaitResult(handoff) == "authorized\n",
-          "An unchanged request must authorize after parent EOF");
+    const auto result = AwaitResult(handoff);
+    Check(result == "authorized\n",
+          "An unchanged request must authorize after parent EOF; observed [" + result + "]");
     RemoveStaging(handoff);
 }
 
@@ -164,8 +165,9 @@ void TestDetachedFinalizerRejectsStateChangedDuringWait(
     Check(cyxwiz::runtime::SaveActiveRuntimeStateAtomic(
               product.runtime_root / "active-runtime.json", changed, error),
           "Changed runtime fixture must publish: " + error);
-    Check(AwaitResult(handoff) == "rejected\n",
-          "Detached finalizer must reject state changed before parent EOF");
+    const auto result = AwaitResult(handoff);
+    Check(result == "rejected\n",
+          "Detached finalizer must reject state changed before parent EOF; observed [" + result + "]");
     RemoveStaging(handoff);
 }
 

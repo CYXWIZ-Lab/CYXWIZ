@@ -38,12 +38,19 @@ bool ParseToken(std::string_view text, std::uintptr_t& token) {
 bool PublishResult(
     const std::filesystem::path& executable,
     std::string_view value) {
-    std::ofstream stream(
-        executable.parent_path() / "result.txt",
-        std::ios::binary | std::ios::trunc);
-    stream.write(value.data(), static_cast<std::streamsize>(value.size()));
-    stream.flush();
-    return static_cast<bool>(stream);
+    const auto destination = executable.parent_path() / "result.txt";
+    const auto pending = executable.parent_path() / "result.pending";
+    {
+        std::ofstream stream(pending, std::ios::binary | std::ios::trunc);
+        stream.write(value.data(), static_cast<std::streamsize>(value.size()));
+        stream.close();
+        if (!stream) return false;
+    }
+    // The parent treats result.txt's presence as completion. Publish only
+    // after the complete result is closed, never while it is being written.
+    std::error_code error;
+    std::filesystem::rename(pending, destination, error);
+    return !error;
 }
 
 }  // namespace
