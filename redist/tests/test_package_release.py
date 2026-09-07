@@ -201,6 +201,7 @@ class PackageReleaseTests(unittest.TestCase):
         for name in dynamic_libraries:
             (library / name).write_bytes(name.encode("ascii"))
         (library / "libafcuda.so.3").write_bytes(b"excluded CUDA backend")
+        (library / "libmkl_sycl_blas.so.5").write_bytes(b"excluded SYCL runtime")
         package_release.package_arrayfire_base(root, stage, ".so")
 
         runtime = stage / "arrayfire" / "lib"
@@ -209,6 +210,7 @@ class PackageReleaseTests(unittest.TestCase):
         for name in dynamic_libraries:
             self.assertEqual((runtime / name).read_bytes(), name.encode("ascii"))
         self.assertFalse((runtime / "libafcuda.so.3").exists())
+        self.assertFalse((runtime / "libmkl_sycl_blas.so.5").exists())
 
     def create_runtime_licenses(self) -> Path:
         root = self.root / "intel-licenses"

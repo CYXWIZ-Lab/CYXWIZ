@@ -558,7 +558,14 @@ def package_arrayfire_base(
         # MKL's dispatcher loads kernels/threading libraries with dlopen; ldd
         # alone cannot discover that runtime family. Preserve bundled providers.
         copy_optional_groups(
-            roots, ("libmkl*.so*", "libiomp5.so*", "libtbb*.so*"), destination,
+            roots,
+            ("libmkl_rt.so*", "libmkl_core.so*", "libmkl_def.so*",
+             "libmkl_mc*.so*", "libmkl_avx*.so*", "libmkl_vml*.so*",
+             "libmkl_intel_lp64.so*", "libmkl_intel_ilp64.so*",
+             "libmkl_intel_thread.so*", "libmkl_gnu_thread.so*",
+             "libmkl_tbb_thread.so*", "libmkl_sequential.so*",
+             "libiomp5.so*", "libtbb*.so*"),
+            destination,
         )
 
     licenses = arrayfire_root / "LICENSES"
