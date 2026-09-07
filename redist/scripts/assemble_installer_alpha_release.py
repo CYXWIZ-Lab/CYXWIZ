@@ -105,6 +105,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--expires-utc", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--openssl", default="openssl")
+    parser.add_argument(
+        "--cpu-only", action="store_true",
+        help="Sign an explicit four-platform CPU-only alpha; reject optional packs",
+    )
     return parser.parse_args(argv)
 
 
@@ -175,7 +179,7 @@ def _load_json(path: Path) -> dict[str, Any]:
     return document
 
 
-def _validate_pack_matrix(repository_root: Path) -> None:
+def _validate_pack_matrix(repository_root: Path, *, cpu_only: bool = False) -> None:
     manifests = repository_root / "bootstrap" / "catalogs" / "manifests"
     packs: list[Mapping[str, Any]] = []
     for path in sorted(manifests.glob("*.json")):
@@ -183,6 +187,8 @@ def _validate_pack_matrix(repository_root: Path) -> None:
         validate_pack_manifest(document)
         packs.append(document["signed"])
     for pack in packs:
+        if cpu_only and pack["pack_kind"] != "base":
+            raise AlphaReleaseError("CPU-only release must not contain optional packs")
         identity = (pack["platform"], pack["architecture"])
         if identity not in TARGET_BY_PACK:
             raise AlphaReleaseError(
@@ -202,9 +208,10 @@ def _validate_pack_matrix(repository_root: Path) -> None:
             if pack["pack_kind"] == "backend_pack"
             and pack["companion_base_id"] in bases
         ]
-        if not bases or not optional:
+        if not bases or (not cpu_only and not optional):
+            requirement = "a base" if cpu_only else "a base and matching optional pack"
             raise AlphaReleaseError(
-                f"{target.key} requires a base and matching optional pack"
+                f"{target.key} requires {requirement}"
             )
 
 
@@ -310,7 +317,7 @@ def assemble(args: argparse.Namespace) -> Path:
             ]
         )
         catalog_url = pack_repository.prepare_repository(repository_args)
-        _validate_pack_matrix(repository_root)
+        _validate_pack_matrix(repository_root, cpu_only=args.cpu_only)
 
         publication = temporary_root / "publication"
         assets = publication / "assets"
@@ -357,7 +364,8 @@ def assemble(args: argparse.Namespace) -> Path:
         checksum_path = assets / "SHA256SUMS.txt"
         checksum_path.write_text(checksums, encoding="ascii", newline="\n")
         inventory_body = {
-            "kind": "cyxwiz-alpha-release-assets",
+            "kind": ("cyxwiz-alpha-cpu-release-assets" if args.cpu_only
+                     else "cyxwiz-alpha-release-assets"),
             "repository": args.repository,
             "release_tag": args.release_tag,
             "asset_base_url": base_url,

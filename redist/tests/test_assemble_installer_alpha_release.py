@@ -335,6 +335,51 @@ class AlphaReleaseAssemblerTests(unittest.TestCase):
             assembler.assemble(self.arguments(filtered))
         self.assertFalse((self.root / "release").exists())
 
+    def test_cpu_only_rejects_optional_packs(self) -> None:
+        args = self.arguments()
+        args.cpu_only = True
+        with self.assertRaisesRegex(assembler.AlphaReleaseError, "must not contain optional"):
+            assembler.assemble(args)
+        self.assertFalse((self.root / "release").exists())
+
+    def test_cpu_only_requires_every_platform(self) -> None:
+        manifests = [p for p in self.manifests
+                     if p.name.startswith("base-") and "macos-arm64" not in p.name]
+        args = self.arguments(manifests)
+        args.cpu_only = True
+        with self.assertRaisesRegex(assembler.AlphaReleaseError, "macos-arm64 requires"):
+            assembler.assemble(args)
+        self.assertFalse((self.root / "release").exists())
+
+    def test_cpu_only_matrix_accepts_four_bases(self) -> None:
+        repository = self.root / "matrix"
+        manifests = repository / "bootstrap" / "catalogs" / "manifests"
+        manifests.mkdir(parents=True)
+        for path in self.manifests:
+            if path.name.startswith("base-"):
+                shutil.copyfile(path, manifests / path.name)
+        assembler._validate_pack_matrix(repository, cpu_only=True)
+        with self.assertRaises(assembler.AlphaReleaseError):
+            assembler._validate_pack_matrix(repository)
+
+    @unittest.skipIf(sys.platform == "win32", "Requires POSIX executable-mode fixtures")
+    def test_cpu_only_assembly_signs_profile_and_rejects_profile_tampering(self) -> None:
+        args = self.arguments([p for p in self.manifests if p.name.startswith("base-")])
+        args.cpu_only = True
+        output = assembler.assemble(args)
+        inventory_path = output / "assets" / "release-inventory.json"
+        document = json.loads(inventory_path.read_text(encoding="utf-8"))
+        self.assertEqual("cyxwiz-alpha-cpu-release-assets", document["signed"]["kind"])
+        self.assertEqual(21, len(document["signed"]["assets"]))
+        self.assertFalse(any("opencl" in item["name"] for item in document["signed"]["assets"]))
+        document["signed"]["kind"] = "cyxwiz-alpha-release-assets"
+        inventory_path.write_text(json.dumps(document), encoding="utf-8")
+        with self.assertRaisesRegex(assembler.publication_contract.AlphaPublicationError, "not trusted"):
+            assembler.publication_contract.validate_upload_directory(
+                output / "assets", self.trust_root, args.repository, args.release_tag,
+                args.cyxwiz_release, args.bundle_version, openssl=args.openssl,
+            )
+
     @unittest.skipIf(
         sys.platform == "win32",
         "Windows cannot represent POSIX executable bits for suffixless fixtures",

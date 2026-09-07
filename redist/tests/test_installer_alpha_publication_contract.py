@@ -45,6 +45,14 @@ class InstallerAlphaPublicationContractTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def test_cpu_only_inventory_kind_is_explicit(self) -> None:
+        document = deepcopy(self.document)
+        document["signed"]["kind"] = "cyxwiz-alpha-cpu-release-assets"
+        contract.validate_inventory_document(document)
+        document["signed"]["kind"] = "cyxwiz-alpha-any-release-assets"
+        with self.assertRaisesRegex(contract.AlphaPublicationError, "kind is invalid"):
+            contract.validate_inventory_document(document)
+
     def _document(self) -> dict[str, object]:
         assets = [
             {

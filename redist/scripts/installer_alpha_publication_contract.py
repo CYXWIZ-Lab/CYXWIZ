@@ -140,7 +140,7 @@ def validate_inventory_document(document: Any) -> dict[str, Any]:
             "assets",
         },
     )
-    if body["kind"] != "cyxwiz-alpha-release-assets":
+    if body["kind"] not in ("cyxwiz-alpha-release-assets", "cyxwiz-alpha-cpu-release-assets"):
         raise AlphaPublicationError("signed release inventory kind is invalid")
     _bounded_string(body["repository"], "repository", REPOSITORY)
     _bounded_string(body["release_tag"], "release tag", GITHUB_RELEASE_TAG, 128)
@@ -299,6 +299,9 @@ def _verify_repository_assets(
                 f"pack release range differs: {pack['pack_id']}"
             )
 
+    cpu_only = body["kind"] == "cyxwiz-alpha-cpu-release-assets"
+    if cpu_only and any(pack["pack_kind"] != "base" for pack in packs):
+        raise AlphaPublicationError("CPU-only release must not contain optional packs")
     for target in PACK_TARGETS:
         target_packs = [
             pack for pack in packs
@@ -312,7 +315,7 @@ def _verify_repository_assets(
             if pack["pack_kind"] == "backend_pack"
             and pack["companion_base_id"] in bases
         ]
-        if not bases or not optional:
+        if not bases or (not cpu_only and not optional):
             raise AlphaPublicationError(
                 f"release repository lacks a complete pack matrix for {target}"
             )
