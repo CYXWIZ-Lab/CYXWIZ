@@ -39,6 +39,8 @@ add_executable(cyxwiz-tests
     unit/test_conv2d_layer.cpp
     unit/test_conv_transpose2d_layer.cpp
     unit/test_pooling_layer.cpp
+    unit/test_upsampling_layer.cpp
+    unit/test_pixel_shuffle_execution.cpp
     unit/test_spatial_modules.cpp
     unit/test_spatial_normalization_modules.cpp
     unit/test_sequence_layers.cpp

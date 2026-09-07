@@ -136,4 +136,49 @@ private:
 
 #endif
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+// Select the requested lane for every numerical test as well as residency.
+class BackendLane {
+public:
+  BackendLane() : original_(af::getActiveBackend()), device_(af::getDevice()) {
+    const char *value = std::getenv("CYXWIZ_TEST_ARRAYFIRE_BACKEND");
+    const std::string requested = value ? value : "cpu";
+    if (requested == "oneapi" && !IsUncertifiedOneAPITrainingEnabled()) {
+      SKIP("oneAPI skipped by existing uncertified-training policy");
+    }
+    size_t matches = 0;
+    for (const auto &info : Device::GetAvailableDevices()) {
+      if (ExpectedBackendName(info.type) != requested ||
+          !info.device_selectable)
+        continue;
+      const auto result = Device(info.type, info.device_id).ActivateExact(true);
+      if (!result.success)
+        continue;
+      REQUIRE(result.effective_type == info.type);
+      REQUIRE(result.effective_device_id == info.device_id);
+      REQUIRE(CurrentArrayFireBackendName() == requested);
+      ++matches;
+      break;
+    }
+    if (matches == 0) {
+      if (requested == "cpu")
+        FAIL("ArrayFire CPU must be available");
+      SKIP("Requested accelerator unavailable");
+    }
+  }
+  ~BackendLane() {
+    af::setBackend(original_);
+    af::setDevice(device_);
+  }
+  BackendLane(const BackendLane &) = delete;
+  BackendLane &operator=(const BackendLane &) = delete;
+
+private:
+  af_backend original_;
+  int device_;
+};
+#else
+struct BackendLane {};
+#endif
+
 } // namespace cyxwiz::test::convolution

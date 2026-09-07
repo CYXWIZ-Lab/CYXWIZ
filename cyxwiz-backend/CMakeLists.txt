@@ -121,6 +121,7 @@ set(BACKEND_SOURCES
     src/algorithms/layers/conv_transpose2d.cpp
     src/algorithms/layers/conv_transpose2d_native.cpp
     src/algorithms/layers/upsampling.cpp
+    src/algorithms/layers/pixel_shuffle.cpp
     src/algorithms/layers/dense.cpp
     src/algorithms/layers/linear.cpp
     src/algorithms/layers/multi_head_attention.cpp

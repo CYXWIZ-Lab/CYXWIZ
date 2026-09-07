@@ -1,6 +1,20 @@
 #include <catch2/catch_test_macros.hpp>
+#include <string>
 
 #include "../../cyxwiz-engine/src/core/pipeline_runtime_capabilities.h"
+
+TEST_CASE("PixelShuffle backend evidence does not promote Studio training support",
+          "[pipeline][capabilities][pixelshuffle]") {
+    const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(gui::NodeType::PixelShuffle);
+    REQUIRE(support.mode == cyxwiz::PipelineTrainingBackendSupportMode::UnsupportedSequentialModelLayer);
+    REQUIRE_FALSE(support.compile_supported);
+    REQUIRE_FALSE(support.training_supported);
+    REQUIRE(support.reason != nullptr);
+    const std::string reason(support.reason);
+    CHECK(reason.find("ArrayFire-first") != std::string::npos);
+    CHECK(reason.find("ModelBuilder") != std::string::npos);
+    CHECK(reason.find("Studio training workflow") != std::string::npos);
+}
 
 TEST_CASE("Training capability registry exposes tested causal LM building blocks",
           "[pipeline][capabilities][language_model]") {

@@ -1103,7 +1103,7 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
          "has native nearest/bilinear backend primitives, a compiler sketch, and a direct SequentialModel adapter but is not constructed by ModelBuilder or ArrayFire-first",
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::PixelShuffle,
-         "has a native depth-to-space backend primitive, compiler sketch, and direct SequentialModel adapter but is not constructed by ModelBuilder or ArrayFire-first",
+         "has an ArrayFire-first depth-to-space backend primitive with tested inverse, gradients, residency, and fallback behavior plus a direct SequentialModel adapter, but is not constructed by ModelBuilder and has no multi-batch Studio training workflow",
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::PolicyNetwork,
          "sketches reinforcement-learning policy training but is not supported by ModelBuilder/SequentialModel yet",
