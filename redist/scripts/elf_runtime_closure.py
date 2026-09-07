@@ -92,8 +92,14 @@ def packaged_rpath(binary: Path, stage: Path) -> str:
     return ":".join(values)
 
 
-def _dependencies(binary: Path, runner: CommandRunner) -> tuple[ElfDependency, ...]:
-    result = runner(("ldd", str(binary)))
+def _dependencies(binary: Path, runner: CommandRunner,
+                  search_roots: Sequence[Path] = ()) -> tuple[ElfDependency, ...]:
+    command = ("ldd", str(binary))
+    if search_roots:
+        # ldd runs on relocated binaries: restore only explicitly supplied input
+        # directories, not an arbitrary developer LD_LIBRARY_PATH.
+        command = ("env", "LD_LIBRARY_PATH=" + ":".join(str(p) for p in search_roots), *command)
+    result = runner(command)
     if result.returncode != 0:
         raise ElfClosureError(
             f"Cannot inspect ELF dependencies for {binary}: {result.stdout.strip()}"
@@ -118,10 +124,14 @@ def _initial_binaries(stage: Path) -> list[PackagedBinary]:
 def close_linux_runtime(
     stage: Path,
     *,
+    search_roots: Sequence[Path] = (),
     runner: CommandRunner = _run,
 ) -> list[Path]:
     """Copy non-system ELF dependencies and assign package-relative RUNPATHs."""
     stage = stage.resolve()
+    search_roots = tuple(path.resolve() for path in search_roots)
+    if search_roots:
+        search_roots = (stage, stage / "lib", stage / "arrayfire" / "lib", *search_roots)
     queue = _initial_binaries(stage)
     packaged_by_name: dict[str, Path] = {}
     for binary in queue:
@@ -139,7 +149,7 @@ def close_linux_runtime(
         if binary.path in processed:
             continue
         processed.add(binary.path)
-        for dependency in _dependencies(binary.source, runner):
+        for dependency in _dependencies(binary.source, runner, search_roots):
             assert dependency.path is not None
             source = dependency.path
             if is_linux_system_library(source):

@@ -554,6 +554,13 @@ def package_arrayfire_base(
             destination,
         )
 
+    if lib_suffix == ".so":
+        # MKL's dispatcher loads kernels/threading libraries with dlopen; ldd
+        # alone cannot discover that runtime family. Preserve bundled providers.
+        copy_optional_groups(
+            roots, ("libmkl*.so*", "libiomp5.so*", "libtbb*.so*"), destination,
+        )
+
     licenses = arrayfire_root / "LICENSES"
     license_destination = stage / "THIRD_PARTY_LICENSES" / "ArrayFire"
     if licenses.is_dir():
@@ -1040,7 +1047,7 @@ def build_split_artifact(
                 raise PackageError(str(error)) from error
         else:
             try:
-                close_linux_runtime(stage)
+                close_linux_runtime(stage, search_roots=[arrayfire_library_dir(arrayfire_root)])
             except ElfClosureError as error:
                 raise PackageError(str(error)) from error
         render_readme(

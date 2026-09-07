@@ -195,11 +195,20 @@ class PackageReleaseTests(unittest.TestCase):
                 (library / name).write_bytes(name.encode("ascii"))
 
         stage = self.root / "linux-stage"
+        dynamic_libraries = ("libmkl_rt.so.2", "libmkl_core.so.2",
+                             "libmkl_avx2.so.2", "libmkl_intel_thread.so.2",
+                             "libiomp5.so", "libtbb.so.12")
+        for name in dynamic_libraries:
+            (library / name).write_bytes(name.encode("ascii"))
+        (library / "libafcuda.so.3").write_bytes(b"excluded CUDA backend")
         package_release.package_arrayfire_base(root, stage, ".so")
 
         runtime = stage / "arrayfire" / "lib"
         for name in ("libaf.so.3", "libafcpu.so.3"):
             self.assertTrue((runtime / name).is_file(), name)
+        for name in dynamic_libraries:
+            self.assertEqual((runtime / name).read_bytes(), name.encode("ascii"))
+        self.assertFalse((runtime / "libafcuda.so.3").exists())
 
     def create_runtime_licenses(self) -> Path:
         root = self.root / "intel-licenses"

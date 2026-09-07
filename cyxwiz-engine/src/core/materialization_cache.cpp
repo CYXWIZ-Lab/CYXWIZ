@@ -2,6 +2,7 @@
 
 #include <cyxwiz/utilities.h>
 #include <nlohmann/json.hpp>
+#include <fmt/format.h>
 
 #include <algorithm>
 #include <cctype>
@@ -491,7 +492,7 @@ std::string MaterializationArtifactIdentity(
     if (ec) return {};
     return manifest.cache_key + "\n" + manifest.artifact_format + "\n" +
            path.string() + "\n" + std::to_string(size) + "\n" +
-           std::to_string(modified.time_since_epoch().count()) + "\n" +
+           fmt::format("{}", modified.time_since_epoch().count()) + "\n" +
            std::to_string(manifest.row_count) + ":" +
            std::to_string(manifest.column_count) + ":" +
            std::to_string(manifest.operators_applied);

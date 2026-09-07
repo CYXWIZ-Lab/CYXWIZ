@@ -135,6 +135,19 @@ jobs:
       - name: Validate ArrayFire redistribution inputs before compilation
         run: python -B redist/scripts/normalize_arrayfire_input.py "$ARRAYFIRE_ROOT"
 
+      - name: Inspect Linux ArrayFire CPU runtime before compilation
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          library_dir="$(python -c 'import os, sys; sys.path.insert(0, "redist/scripts"); from package_release import arrayfire_library_dir; from pathlib import Path; print(arrayfire_library_dir(Path(os.environ["ARRAYFIRE_ROOT"])))')"
+          find "$library_dir" -maxdepth 1 \( -name 'libmkl*.so*' -o -name 'libiomp5.so*' -o -name 'libtbb*.so*' \) -print
+          dependencies="$(env LD_LIBRARY_PATH="$library_dir" ldd "$library_dir/libafcpu.so")"
+          printf '%s\n' "$dependencies"
+          if [[ "$dependencies" == *"not found"* ]]; then
+            echo "ArrayFire CPU distribution has unresolved dependencies in $library_dir" >&2
+            exit 1
+          fi
+
       - name: Configure Release CPU build
         run: |
           cmake -S . -B build -G Ninja \

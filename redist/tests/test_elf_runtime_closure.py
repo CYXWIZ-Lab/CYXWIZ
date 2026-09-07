@@ -100,6 +100,33 @@ class ElfRuntimeClosureTests(unittest.TestCase):
             with self.assertRaisesRegex(elf.ElfClosureError, "libmissing.so.1"):
                 elf.close_linux_runtime(stage, runner=runner)
 
+    def test_relocated_binary_resolves_dependency_from_explicit_input_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cyxwiz-elf-") as temporary:
+            root = Path(temporary).resolve()
+            stage, vendor = root / "stage", root / "vendor"
+            stage.mkdir()
+            vendor.mkdir()
+            (stage / "cyxwiz-engine").write_bytes(b"\x7fELFengine")
+            dependency = vendor / "libmkl_rt.so.2"
+            dependency.write_bytes(b"\x7fELFmkl")
+            inspections = []
+
+            def runner(command):
+                if command[0] == "env":
+                    inspections.append(command)
+                    self.assertEqual("ldd", command[2])
+                    self.assertIn(str(vendor), command[1])
+                    output = (f"libmkl_rt.so.2 => {dependency} (0x01)\n"
+                              if Path(command[3]).name == "cyxwiz-engine" else "")
+                else:
+                    self.assertEqual("patchelf", command[0])
+                    output = ""
+                return subprocess.CompletedProcess(command, 0, output)
+
+            copied = elf.close_linux_runtime(stage, search_roots=[vendor], runner=runner)
+            self.assertEqual([stage / "lib" / "libmkl_rt.so.2"], copied)
+            self.assertEqual(2, len(inspections))
+
 
 if __name__ == "__main__":
     unittest.main()
