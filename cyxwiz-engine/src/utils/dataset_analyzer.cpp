@@ -1,6 +1,7 @@
 #include "dataset_analyzer.h"
 #include "../core/data_registry.h"
 #include <spdlog/spdlog.h>
+#include <fmt/format.h>
 #include <algorithm>
 #include <numeric>
 #include <cmath>
@@ -148,7 +149,7 @@ DatasetAnalytics DatasetAnalyzer::ComputeAnalytics(
 
             if (progress_callback && images.size() % 100 == 0) {
                 float prog = 0.4f + 0.3f * (static_cast<float>(images.size()) / sample_size);
-                progress_callback(prog, std::format("Loaded {}/{} samples", images.size(), sample_size));
+                progress_callback(prog, fmt::format("Loaded {}/{} samples", images.size(), sample_size));
             }
         }
 

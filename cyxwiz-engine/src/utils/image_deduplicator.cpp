@@ -2,6 +2,7 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
+#include <fmt/format.h>
 #include <algorithm>
 #include <cmath>
 #include <bitset>
@@ -73,7 +74,7 @@ std::vector<ImageHash> ImageDeduplicator::ComputeHashes(
 
         if (progress_callback && (i % 10 == 0 || i == images.size() - 1)) {
             float progress = static_cast<float>(i + 1) / images.size();
-            std::string msg = std::format("Hashed {}/{} images", i + 1, images.size());
+            std::string msg = fmt::format("Hashed {}/{} images", i + 1, images.size());
             progress_callback(progress, msg);
         }
     }
