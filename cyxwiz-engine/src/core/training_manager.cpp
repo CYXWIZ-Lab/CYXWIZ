@@ -1108,11 +1108,19 @@ void TrainingManager::TrainingThreadFunc(
                 );
             } catch (const std::exception& error) {
                 final_metrics = exec->GetMetrics();
+                final_metrics.terminal_status = "failed";
+                if (final_metrics.terminal_reason.empty()) {
+                    final_metrics.terminal_reason = error.what();
+                }
                 spdlog::error(
                     "TrainingManager: executor failed without escaping the training thread: {}",
                     error.what());
             } catch (...) {
                 final_metrics = exec->GetMetrics();
+                final_metrics.terminal_status = "failed";
+                if (final_metrics.terminal_reason.empty()) {
+                    final_metrics.terminal_reason = "unknown executor exception";
+                }
                 spdlog::error(
                     "TrainingManager: executor failed with an unknown exception without escaping the training thread");
             }
@@ -1139,7 +1147,7 @@ void TrainingManager::TrainingThreadFunc(
             final_metrics = executor_metrics;
         }
         if (final_metrics.total_epochs == 0) {
-            final_metrics = cached_metrics_;
+            final_metrics.total_epochs = cached_metrics_.total_epochs;
         }
         if (final_metrics.terminal_status.empty() &&
             stop_requested_.load()) {
@@ -1147,6 +1155,14 @@ void TrainingManager::TrainingThreadFunc(
             final_metrics.terminal_reason = "user_cancelled";
             final_metrics.status_message = "Training cancelled";
             final_metrics.is_complete = true;
+        }
+        if (final_metrics.terminal_status.empty()) {
+            final_metrics.terminal_status = "failed";
+            final_metrics.terminal_reason = "Executor returned without a terminal result";
+        }
+        if (final_metrics.terminal_status == "failed") {
+            final_metrics.is_complete = true;
+            final_metrics.status_message = "Training failed: " + final_metrics.terminal_reason;
         }
         final_metrics.is_training = false;
         final_metrics.is_paused = false;

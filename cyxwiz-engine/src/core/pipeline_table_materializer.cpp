@@ -751,6 +751,12 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
                         "'. Reduce input rows or output dimensions and retry.",
                     node);
                 return result;
+            } catch (const std::exception& error) {
+                SetMaterializationFailure(
+                    result, MaterializationFailureKind::Error,
+                    "PipelineMaterializer: node '" + node->name +
+                        "' failed: " + error.what(), node);
+                return result;
             }
             if (!apply_status.ok()) {
                 const auto failure_kind = apply_status.IsCancelled()
@@ -795,6 +801,12 @@ MaterializeTableResult PipelineMaterializer::MaterializeTable(
         MaterializationFailureKind::Capacity,
         "PipelineMaterializer: allocation failed while preparing the operator "
         "pipeline. Reduce input rows or output dimensions and retry.");
+    return result;
+} catch (const std::exception& error) {
+    MaterializeTableResult result;
+    result.table = source_table;
+    SetMaterializationFailure(result, MaterializationFailureKind::Error,
+        "PipelineMaterializer: operator preparation failed: " + std::string(error.what()));
     return result;
 }
 

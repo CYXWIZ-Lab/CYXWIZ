@@ -118,6 +118,11 @@ bool ReadMaterializationCacheManifest(
     MaterializationCacheManifest& manifest,
     std::string* error = nullptr);
 
+// Lightweight disk identity for registry-resident reuse. Empty means the
+// artifact cannot be inspected and must not be reused from memory.
+std::string MaterializationArtifactIdentity(
+    const MaterializationCacheManifest& manifest);
+
 MaterializationCacheValidationResult ValidateMaterializationCacheManifest(
     const MaterializationCacheManifest& manifest,
     const std::string& expected_cache_key,

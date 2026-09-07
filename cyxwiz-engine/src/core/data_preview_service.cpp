@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <map>
 #include <unordered_set>
 
 namespace cyxwiz {
@@ -163,6 +164,42 @@ bool AppendRowsFromTable(const std::shared_ptr<arrow::Table>& table,
     return true;
 }
 
+void SummarizeLabels(const std::shared_ptr<arrow::Table>& table,
+                     const DataPreviewRequest& request, DataPreviewPage& page) {
+    if (request.summarize_label_column.empty()) return;
+    page.label_summary_column = request.summarize_label_column;
+    const auto column = table->GetColumnByName(page.label_summary_column);
+    if (!column) {
+        page.label_summary_error = "Label column is missing or ambiguous";
+        return;
+    }
+    std::map<std::string, size_t> counts;
+    for (const auto& chunk : column->chunks()) {
+        for (int64_t row = 0; row < chunk->length(); ++row) {
+            if (row % 256 == 0 && IsCancelled(request)) {
+                page.label_summary_error = kPreviewCancelled;
+                return;
+            }
+            const auto scalar = chunk->GetScalar(row);
+            if (!scalar.ok()) {
+                page.label_summary_error = scalar.status().ToString();
+                return;
+            }
+            const auto value = ScalarToPreviewString(*scalar);
+            if (value.size() > 8192 || (counts.size() >= 1000 && !counts.contains(value))) {
+                page.label_summary_error = "Label summary exceeds the preview budget (1000 classes, 8192 bytes per label)";
+                return;
+            }
+            ++counts[value];
+        }
+    }
+    page.label_counts.assign(counts.begin(), counts.end());
+    std::sort(page.label_counts.begin(), page.label_counts.end(), [](const auto& a, const auto& b) {
+        return a.second != b.second ? a.second > b.second : a.first < b.first;
+    });
+    page.label_summary_complete = true;
+}
+
 DataPreviewPage PreviewArrowDataset(const std::shared_ptr<ArrowDataset>& dataset,
                                     const DataPreviewRequest& request) {
     if (IsCancelled(request)) {
@@ -210,6 +247,10 @@ DataPreviewPage PreviewArrowDataset(const std::shared_ptr<ArrowDataset>& dataset
 
     page.has_next = offset + page.rows_returned < page.total_rows;
     page.next_offset = page.has_next ? offset + page.rows_returned : page.total_rows;
+    SummarizeLabels(table, request, page);
+    if (IsCancelled(request)) {
+        return FailPreview(request.dataset_name, kPreviewCancelled, DataPreviewStatus::Cancelled);
+    }
     return page;
 }
 

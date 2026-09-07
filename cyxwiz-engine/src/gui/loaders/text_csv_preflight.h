@@ -22,6 +22,9 @@ inline std::string DisplayTextCsvDelimiter(char delimiter) {
     return std::string(1, delimiter);
 }
 
+} // namespace detail
+
+// Shared logical-record reader for loader validation and bounded source previews.
 inline bool ReadTextCsvRow(std::istream& in,
                            char delimiter,
                            std::vector<std::string>& out_fields,
@@ -77,6 +80,8 @@ inline bool ReadTextCsvRow(std::istream& in,
     return true;
 }
 
+namespace detail {
+
 inline bool IsBlankTextCsvRow(const std::vector<std::string>& fields) {
     return fields.size() == 1 && fields[0].empty();
 }
@@ -93,7 +98,7 @@ inline TextCsvPreflightResult ValidateTextCsvRowWidths(
 
     std::vector<std::string> fields;
     std::string parse_error;
-    if (!detail::ReadTextCsvRow(file, delimiter, fields, parse_error)) {
+    if (!ReadTextCsvRow(file, delimiter, fields, parse_error)) {
         if (!parse_error.empty()) {
             return {false, "Text CSV preflight failed: " + parse_error +
                                " in header row"};
@@ -110,7 +115,7 @@ inline TextCsvPreflightResult ValidateTextCsvRowWidths(
     while (true) {
         parse_error.clear();
         const bool has_row =
-            detail::ReadTextCsvRow(file, delimiter, fields, parse_error);
+            ReadTextCsvRow(file, delimiter, fields, parse_error);
         if (!has_row) {
             if (!parse_error.empty()) {
                 std::ostringstream msg;

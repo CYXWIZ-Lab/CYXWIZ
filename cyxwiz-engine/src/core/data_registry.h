@@ -295,6 +295,19 @@ public:
     // Apache Arrow columnar data support (Data Studio foundation)
     std::shared_ptr<class ArrowDataset> LoadArrowTable(const std::string& path, const std::string& name = "");
     std::shared_ptr<class ArrowDataset> RegisterArrowTable(std::shared_ptr<arrow::Table> table, const std::string& name);
+    // Provenance only: no additional ownership of the potentially large table.
+    // Reuse requires the exact source/output snapshots and disk artifact stamp.
+    struct MaterializationProvenance {
+        std::string identity;
+        std::weak_ptr<arrow::Table> source;
+        std::weak_ptr<arrow::Table> table;
+        std::weak_ptr<const SparseFeatureDataset> sparse;
+    };
+    bool MatchesResidentMaterialization(
+        const std::string& name, const std::shared_ptr<arrow::Table>& source,
+        const std::string& identity) const;
+    void RecordMaterialization(const std::string& name,
+                               MaterializationProvenance provenance);
     std::shared_ptr<class ArrowDataset> GetArrowDataset(const std::string& name);
     bool IsArrowDataset(const std::string& name) const;
 
@@ -632,6 +645,7 @@ private:
 
     // Arrow dataset storage (separate for Data Studio columnar data)
     std::map<std::string, std::shared_ptr<class ArrowDataset>> arrow_datasets_;
+    std::map<std::string, MaterializationProvenance> materialization_provenance_;
 
     // Disk-backed Parquet datasets — populated by LoadTabularCSV when a file
     // is too large to fit comfortably in RAM. Lookups by name fall through

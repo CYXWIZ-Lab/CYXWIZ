@@ -120,6 +120,7 @@ private:
     Tensor bias_;
     Tensor grad_weights_;
     Tensor grad_bias_;
+    bool has_forward_ = false;
 };
 
 } // namespace cyxwiz

@@ -43,7 +43,6 @@ const std::vector<LegacyTensorDataOwner>& LegacyTensorDataInventory() {
         {"cyxwiz-backend/src/algorithms/distributed/nccl_backend.cpp", 6, "transport_boundary", "NCCL transport"},
         {"cyxwiz-backend/src/algorithms/feature_importance.cpp", 3, "compatibility_compute", "feature importance"},
         {"cyxwiz-backend/src/algorithms/layers/batch_norm.cpp", 15, "compatibility_compute", "BatchNorm layer"},
-        {"cyxwiz-backend/src/algorithms/layers/conv_transpose2d.cpp", 10, "compatibility_compute", "ConvTranspose2D layer"},
         {"cyxwiz-backend/src/algorithms/layers/gru.cpp", 20, "compatibility_compute", "GRU layer"},
         {"cyxwiz-backend/src/algorithms/layers/gru_backward.cpp", 7, "compatibility_compute", "GRU backward"},
         {"cyxwiz-backend/src/algorithms/layers/lstm.cpp", 35, "compatibility_compute", "LSTM layer"},

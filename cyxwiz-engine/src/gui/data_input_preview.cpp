@@ -1,8 +1,8 @@
 #include "data_input_preview.h"
+#include "loaders/text_csv_preflight.h"
 #include <algorithm>
 #include <fstream>
 #include <map>
-#include <sstream>
 
 namespace gui::data_input {
 
@@ -47,18 +47,20 @@ PreviewTable LoadDelimitedPreview(
     }
 
     int line_count = 0;
-    while (std::getline(file, line) && line_count < max_lines) {
+    while (line_count < max_lines) {
         std::vector<std::string> cells;
-        std::stringstream ss(line);
-        std::string cell;
-
-        while (std::getline(ss, cell, delim)) {
-            const std::size_t start = cell.find_first_not_of(" \t\r\n\"");
-            const std::size_t end = cell.find_last_not_of(" \t\r\n\"");
-            if (start != std::string::npos && end != std::string::npos) {
-                cell = cell.substr(start, end - start + 1);
+        std::string error;
+        if (!cyxwiz::loaders::ReadTextCsvRow(file, delim, cells, error)) {
+            if (!error.empty()) {
+                table.error = "Preview row " + std::to_string(line_count + 1) + ": " + error;
             }
-            cells.push_back(cell);
+            break;
+        }
+        if (cells.size() == 1 && cells.front().empty()) continue;
+        if (line_count > 0 && cells.size() != table.columns.size()) {
+            table.error = "Preview row " + std::to_string(line_count + 1) +
+                " has a different field count from the header; check delimiter and quoting";
+            break;
         }
 
         if (line_count == 0 && has_header) {

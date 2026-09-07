@@ -418,12 +418,20 @@ bool LoadFittedPreprocessingState(
     const std::string& path_text,
     const std::string& expected_operator,
     FittedPreprocessingState& state,
-    std::string& error) {
+    std::string& error) try {
+    state = {};
     if (path_text.empty()) {
         error = "state artifact path is empty";
         return false;
     }
     const std::filesystem::path path(path_text);
+    std::error_code path_error;
+    if (!std::filesystem::is_regular_file(path, path_error) || path_error) {
+        error = "state artifact is missing or is not a readable file at '" +
+                AbsolutePathForMessage(path) +
+                "'. Select an existing fitted-state file or switch to Fit to create one.";
+        return false;
+    }
     std::ifstream input(path, std::ios::binary);
     if (!input) {
         error = "state artifact was not found or is unreadable at '" +
@@ -468,6 +476,12 @@ bool LoadFittedPreprocessingState(
         return false;
     }
     return true;
+} catch (const std::bad_alloc&) {
+    throw;  // Preserve materializer capacity classification.
+} catch (const std::exception& exception) {
+    state = {};
+    error = "could not load state artifact '" + path_text + "': " + exception.what();
+    return false;
 }
 
 bool ValidateFittedPreprocessingStateSchema(

@@ -3771,6 +3771,18 @@ set_target_properties(test_data_convert_service PROPERTIES
 )
 
 # ===== Test: Shared bounded data preview service =====
+add_executable(test_data_preview_controls
+    tests/test_data_preview_controls.cpp
+    src/gui/data_preview_table_renderer.cpp
+)
+target_link_libraries(test_data_preview_controls PRIVATE imgui::imgui)
+if(WIN32)
+    target_compile_definitions(test_data_preview_controls PRIVATE NOMINMAX)
+endif()
+set_target_properties(test_data_preview_controls PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 add_executable(test_data_preview_service
     tests/test_data_preview_service.cpp
     src/gui/data_input_preview.cpp

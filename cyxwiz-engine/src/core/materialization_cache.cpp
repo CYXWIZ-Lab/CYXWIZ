@@ -464,10 +464,13 @@ MaterializationCacheValidationResult ValidateMaterializationCacheManifest(
         result.message = "source schema fingerprint changed";
         return result;
     }
+    std::error_code artifact_error;
     if (manifest.artifact_path.empty() ||
-        !std::filesystem::exists(manifest.artifact_path)) {
+        !std::filesystem::is_regular_file(manifest.artifact_path, artifact_error) ||
+        artifact_error) {
         result.status = MaterializationCacheStatus::Stale;
-        result.message = "cached materialization artifact is missing";
+        result.message = "cached materialization artifact is missing or unreadable: '" +
+                         manifest.artifact_path + "'";
         return result;
     }
 
@@ -475,6 +478,23 @@ MaterializationCacheValidationResult ValidateMaterializationCacheManifest(
     result.usable = true;
     result.message = "cached prepared dataset is valid";
     return result;
+}
+
+std::string MaterializationArtifactIdentity(
+    const MaterializationCacheManifest& manifest) {
+    std::error_code ec;
+    const auto path = std::filesystem::weakly_canonical(manifest.artifact_path, ec);
+    if (ec || !std::filesystem::is_regular_file(path, ec) || ec) return {};
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec) return {};
+    const auto modified = std::filesystem::last_write_time(path, ec);
+    if (ec) return {};
+    return manifest.cache_key + "\n" + manifest.artifact_format + "\n" +
+           path.string() + "\n" + std::to_string(size) + "\n" +
+           std::to_string(modified.time_since_epoch().count()) + "\n" +
+           std::to_string(manifest.row_count) + ":" +
+           std::to_string(manifest.column_count) + ":" +
+           std::to_string(manifest.operators_applied);
 }
 
 } // namespace cyxwiz

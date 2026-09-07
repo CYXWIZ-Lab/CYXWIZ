@@ -292,6 +292,47 @@ bool DataRegistry::IsArrowDataset(const std::string& name) const {
     return arrow_datasets_.find(name) != arrow_datasets_.end();
 }
 
+bool DataRegistry::MatchesResidentMaterialization(
+    const std::string& name, const std::shared_ptr<arrow::Table>& source,
+    const std::string& identity) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto entry = materialization_provenance_.find(name);
+    if (!source || identity.empty() || entry == materialization_provenance_.end() ||
+        entry->second.identity != identity || entry->second.source.lock() != source) {
+        return false;
+    }
+    const auto table = entry->second.table.lock();
+    const auto dense = arrow_datasets_.find(name);
+    if (table && dense != arrow_datasets_.end() &&
+        dense->second->GetArrowTable() == table) {
+        return true;
+    }
+    const auto sparse = entry->second.sparse.lock();
+    const auto registered = sparse_feature_datasets_.find(name);
+    return sparse && registered != sparse_feature_datasets_.end() &&
+           registered->second == sparse;
+}
+
+void DataRegistry::RecordMaterialization(
+    const std::string& name, MaterializationProvenance provenance) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Bound metadata to live registry entries; weak references never keep an
+    // unloaded dataset alive, including snapshots retained by another reader.
+    for (auto it = materialization_provenance_.begin();
+         it != materialization_provenance_.end();) {
+        if (it->second.source.expired() ||
+            (arrow_datasets_.count(it->first) == 0 &&
+             sparse_feature_datasets_.count(it->first) == 0)) {
+            it = materialization_provenance_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (!provenance.identity.empty()) {
+        materialization_provenance_[name] = std::move(provenance);
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Parquet-backed dataset accessors (disk-backed lazy tabular data)
 // -----------------------------------------------------------------------------
@@ -382,6 +423,7 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
     bool removed_arrow = false;
     bool removed_parquet = false;
     bool removed_sparse = false;
+    materialization_provenance_.erase(name);
 
     auto arrow_it = arrow_datasets_.find(name);
     if (arrow_it != arrow_datasets_.end()) {
@@ -422,6 +464,7 @@ void DataRegistry::UnregisterTabularDataset(const std::string& name) {
                      kMaterializedSuffix) == 0;
     if (!already_materialized) {
         const std::string mat_name = name + kMaterializedSuffix;
+        materialization_provenance_.erase(mat_name);
         bool mat_arrow = false;
         bool mat_parquet = false;
         bool mat_sparse = false;
@@ -597,6 +640,7 @@ void DataRegistry::ClearAllTabularDatasets() {
     size_t text_count = text_dataset_entries_.size();
 
     arrow_datasets_.clear();
+    materialization_provenance_.clear();
     parquet_backed_datasets_.clear();
     sparse_feature_datasets_.clear();
     tabular_source_paths_by_name_.clear();

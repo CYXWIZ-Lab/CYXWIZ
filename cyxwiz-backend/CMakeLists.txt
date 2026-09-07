@@ -119,6 +119,7 @@ set(BACKEND_SOURCES
     src/algorithms/layers/conv2d.cpp
     src/algorithms/layers/conv2d_native.cpp
     src/algorithms/layers/conv_transpose2d.cpp
+    src/algorithms/layers/conv_transpose2d_native.cpp
     src/algorithms/layers/upsampling.cpp
     src/algorithms/layers/dense.cpp
     src/algorithms/layers/linear.cpp

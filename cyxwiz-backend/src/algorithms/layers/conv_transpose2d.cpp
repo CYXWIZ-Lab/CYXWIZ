@@ -1,283 +1,314 @@
+#include "../arrayfire_backend_utils.h"
+#include "conv_transpose2d_native.h"
 #include "cyxwiz/layers/convolution.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_utils.h"
 
-#include <algorithm>
-#include <cmath>
-#include <random>
+#include <limits>
 #include <stdexcept>
-#include <string>
-
-#include <spdlog/spdlog.h>
-
-#ifdef max
-#undef max
-#endif
-#ifdef min
-#undef min
-#endif
+#include <utility>
+#include <vector>
 
 namespace cyxwiz {
+namespace {
+constexpr const char *name = "ConvTranspose2D";
+
+size_t OutputExtent(size_t input, int stride, int padding, int kernel,
+                    int extra) {
+  const size_t span = CheckedLayerProduct(
+      input - 1, static_cast<size_t>(stride), name, "strided extent");
+  const size_t tail = static_cast<size_t>(kernel) + static_cast<size_t>(extra);
+  if (span > (std::numeric_limits<size_t>::max)() - tail) {
+    throw std::overflow_error("ConvTranspose2D output extent overflow");
+  }
+  const size_t crop =
+      CheckedLayerProduct(static_cast<size_t>(padding), 2, name, "padding");
+  if (span + tail <= crop) {
+    throw std::runtime_error("ConvTranspose2D output shape is not positive");
+  }
+  return span + tail - crop;
+}
+
+void ValidateBytes(const std::vector<size_t> &shape) {
+  size_t elements = 1;
+  for (size_t dim : shape) {
+    elements = CheckedLayerProduct(elements, dim, name, "element count");
+  }
+  (void)CheckedLayerProduct(elements, sizeof(float), name, "byte count");
+}
+
+std::vector<size_t> WeightShape(int kernel, int outputs, int inputs) {
+  return {static_cast<size_t>(kernel), static_cast<size_t>(kernel),
+          static_cast<size_t>(outputs), static_cast<size_t>(inputs)};
+}
+
+struct Geometry {
+  ConvTranspose2DNativeGeometry native;
+  size_t kernel_area;
+  size_t filter_rows;
+  size_t positions;
+  size_t columns;
+  std::vector<size_t> output_shape;
+};
+
+Geometry Validate(const Tensor &input, const Tensor &weights,
+                  const Tensor &bias, int inputs, int outputs, int kernel,
+                  int stride, int padding, int extra, bool use_bias) {
+  ValidateSpatial4DInput(input, name);
+  if (weights.GetDataType() != DataType::Float32 ||
+      (use_bias && bias.GetDataType() != DataType::Float32)) {
+    throw std::runtime_error("ConvTranspose2D requires Float32 parameters");
+  }
+  if (weights.Shape() != WeightShape(kernel, outputs, inputs)) {
+    throw std::runtime_error("ConvTranspose2D weight shape mismatch");
+  }
+  if (use_bias &&
+      bias.Shape() != std::vector<size_t>{static_cast<size_t>(outputs)}) {
+    throw std::runtime_error("ConvTranspose2D bias shape mismatch");
+  }
+  const auto &s = input.Shape();
+  if (s[2] != static_cast<size_t>(inputs)) {
+    throw std::runtime_error("ConvTranspose2D input channel mismatch");
+  }
+  const size_t h = OutputExtent(s[0], stride, padding, kernel, extra);
+  const size_t w = OutputExtent(s[1], stride, padding, kernel, extra);
+  const size_t area =
+      CheckedLayerProduct(static_cast<size_t>(kernel),
+                          static_cast<size_t>(kernel), name, "kernel area");
+  const size_t rows = CheckedLayerProduct(area, static_cast<size_t>(outputs),
+                                          name, "filter rows");
+  const size_t positions = CheckedLayerProduct(s[0], s[1], name, "positions");
+  const size_t columns = CheckedLayerProduct(positions, s[3], name, "columns");
+  std::vector<size_t> output_shape{h, w, static_cast<size_t>(outputs), s[3]};
+  ValidateBytes(s);
+  ValidateBytes(output_shape);
+  ValidateBytes({rows, columns});
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+  for (size_t dim : {s[0], s[1], s[2], s[3], h, w, rows, positions, columns}) {
+    (void)CheckedIntDim(dim, "ConvTranspose2D dimension");
+  }
+#endif
+  return {{s[0], s[1], s[2], s[3], h, w},
+          area,
+          rows,
+          positions,
+          columns,
+          output_shape};
+}
+
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+bool UseNative(const char *operation, const Tensor &tensor, const Geometry &g,
+               int kernel, int padding) {
+  // wrap/unwrap require padding < window and a window fitting the image
+  // plus one padding side. Other valid layer shapes retain native support.
+  if (padding >= kernel ||
+      g.native.out_h + static_cast<size_t>(padding) <
+          static_cast<size_t>(kernel) ||
+      g.native.out_w + static_cast<size_t>(padding) <
+          static_cast<size_t>(kernel)) {
+    RecordLayerArrayFireFallback(
+        operation, BackendFallbackReason::UnsupportedShape,
+        "ArrayFire wrap/unwrap window and padding limits", tensor, "tensor");
+    return true;
+  }
+  if (ShouldForceArrayFireBackendFallbackForTesting(operation)) {
+    RecordLayerArrayFireFallback(operation,
+                                 "forced ArrayFire backend fallback test hook",
+                                 tensor, "tensor");
+    return true;
+  }
+  return false;
+}
+
+af::array InputColumns(const Tensor &input, const Geometry &g) {
+  return af::moddims(af::reorder(input.GetSemanticArray(), 2, 0, 1, 3),
+                     static_cast<dim_t>(g.native.in_channels),
+                     static_cast<dim_t>(g.columns));
+}
+#endif
+} // namespace
 
 ConvTranspose2DLayer::ConvTranspose2DLayer(int in_channels, int out_channels,
-                                           int kernel_size, int stride, int padding,
-                                           int output_padding, bool use_bias)
+                                           int kernel_size, int stride,
+                                           int padding, int output_padding,
+                                           bool use_bias)
     : in_channels_(in_channels), out_channels_(out_channels),
       kernel_size_(kernel_size), stride_(stride), padding_(padding),
       output_padding_(output_padding), use_bias_(use_bias) {
-    if (in_channels_ <= 0 || out_channels_ <= 0 || kernel_size_ <= 0 ||
-        stride_ <= 0 || padding_ < 0 || output_padding_ < 0 || output_padding_ >= stride_) {
-        throw std::invalid_argument("ConvTranspose2D requires positive channels/kernel/stride, non-negative padding, and output_padding < stride");
-    }
-
+  if (in_channels <= 0 || out_channels <= 0 || kernel_size <= 0 ||
+      stride <= 0 || padding < 0 || output_padding < 0 ||
+      output_padding >= stride) {
+    throw std::invalid_argument(
+        "ConvTranspose2D requires positive channels/kernel/stride, "
+        "non-negative padding, and output_padding < stride");
+  }
+  const auto shape = WeightShape(kernel_size, out_channels, in_channels);
+  ValidateBytes(shape);
+  const size_t fan = CheckedLayerProduct(
+      CheckedLayerProduct(shape[0], shape[1], name, "kernel area"), shape[3],
+      name, "fan-in");
+  if (fan > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+    throw std::overflow_error(
+        "ConvTranspose2D fan-in exceeds initialization limit");
+  }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    // Weights: [kernel_size, kernel_size, out_channels, in_channels]
-    // Note: transposed conv weights are "flipped" relative to conv2d
-    int fan_in = in_channels * kernel_size * kernel_size;
-    af::dim4 weight_dims(kernel_size, kernel_size, out_channels, in_channels);
-    af::array w = KaimingUniform(fan_in, weight_dims);
-    weights_ = AfToTensor(w);
-
-    if (use_bias_) {
-        af::array b = af::constant(0.0f, af::dim4(out_channels));
-        bias_ = AfToTensor(b);
-    }
-
-    grad_weights_ = Tensor::Zeros({static_cast<size_t>(kernel_size),
-                                    static_cast<size_t>(kernel_size),
-                                    static_cast<size_t>(out_channels),
-                                    static_cast<size_t>(in_channels)});
-    if (use_bias_) {
-        grad_bias_ = Tensor::Zeros({static_cast<size_t>(out_channels)});
-    }
+  weights_ = Tensor::FromSemanticArray(
+      KaimingUniform(
+          static_cast<int>(fan),
+          af::dim4(kernel_size, kernel_size, out_channels, in_channels)),
+      shape);
 #else
-    weights_ = Tensor::Random({static_cast<size_t>(kernel_size),
-                                static_cast<size_t>(kernel_size),
-                                static_cast<size_t>(out_channels),
-                                static_cast<size_t>(in_channels)});
-    if (use_bias_) {
-        bias_ = Tensor::Zeros({static_cast<size_t>(out_channels)});
-    }
-    grad_weights_ = Tensor::Zeros({static_cast<size_t>(kernel_size),
-                                    static_cast<size_t>(kernel_size),
-                                    static_cast<size_t>(out_channels),
-                                    static_cast<size_t>(in_channels)});
-    if (use_bias_) {
-        grad_bias_ = Tensor::Zeros({static_cast<size_t>(out_channels)});
-    }
+  weights_ = Tensor::Random(shape);
 #endif
+  grad_weights_ = Tensor::Zeros(shape);
+  if (use_bias_) {
+    bias_ = Tensor::Zeros({static_cast<size_t>(out_channels)});
+    grad_bias_ = Tensor::Zeros({static_cast<size_t>(out_channels)});
+  }
 }
 
-Tensor ConvTranspose2DLayer::Forward(const Tensor& input) {
-    cached_input_ = input;
-
-    ValidateSpatial4DInput(input, "ConvTranspose2D");
-    if (weights_.GetDataType() != DataType::Float32 || (use_bias_ && bias_.GetDataType() != DataType::Float32)) {
-        throw std::runtime_error("ConvTranspose2D forward CPU fallback requires Float32 parameters");
+Tensor ConvTranspose2DLayer::Forward(const Tensor &input) {
+  has_forward_ = false;
+  const auto g =
+      Validate(input, weights_, bias_, in_channels_, out_channels_,
+               kernel_size_, stride_, padding_, output_padding_, use_bias_);
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+  if (!UseNative("ConvTranspose2DLayer::Forward", input, g, kernel_size_,
+                 padding_)) {
+    try {
+      const af::array filters =
+          af::moddims(weights_.GetSemanticArray(),
+                      static_cast<dim_t>(g.filter_rows), in_channels_);
+      // [K*K*Cout, Cin] * [Cin, H*W*N]: one output patch per input pixel.
+      const af::array patches = af::reorder(
+          af::moddims(af::matmul(filters, InputColumns(input, g)),
+                      static_cast<dim_t>(g.kernel_area), out_channels_,
+                      static_cast<dim_t>(g.positions),
+                      static_cast<dim_t>(g.native.batch_size)),
+          0, 2, 1, 3);
+      af::array output =
+          af::wrap(patches, static_cast<dim_t>(g.native.out_h),
+                   static_cast<dim_t>(g.native.out_w), kernel_size_,
+                   kernel_size_, stride_, stride_, padding_, padding_);
+      if (use_bias_) {
+        output += af::tile(
+            af::moddims(bias_.GetSemanticArray(), 1, 1, out_channels_, 1),
+            af::dim4(static_cast<dim_t>(g.native.out_h),
+                     static_cast<dim_t>(g.native.out_w), 1,
+                     static_cast<dim_t>(g.native.batch_size)));
+      }
+      output.eval();
+      Tensor result = Tensor::FromSemanticArray(output, g.output_shape);
+      cached_input_ = input;
+      has_forward_ = true;
+      return result;
+    } catch (const af::exception &error) {
+      RecordLayerArrayFireFallback("ConvTranspose2DLayer::Forward",
+                                   error.what(), input, "input");
     }
-    if (weights_.Shape() != std::vector<size_t>{static_cast<size_t>(kernel_size_),
-                                                static_cast<size_t>(kernel_size_),
-                                                static_cast<size_t>(out_channels_),
-                                                static_cast<size_t>(in_channels_)}) {
-        throw std::runtime_error("ConvTranspose2D forward weight shape mismatch");
-    }
-    if (use_bias_ && bias_.Shape() != std::vector<size_t>{static_cast<size_t>(out_channels_)}) {
-        throw std::runtime_error("ConvTranspose2D forward bias shape mismatch");
-    }
-
-    const std::vector<size_t>& shape = input.Shape();
-    const size_t in_h = shape[0];
-    const size_t in_w = shape[1];
-    const size_t in_channels = shape[2];
-    const size_t batch_size = shape[3];
-    if (in_channels != static_cast<size_t>(in_channels_)) {
-        throw std::runtime_error("ConvTranspose2D forward input channel mismatch");
-    }
-
-    const int out_h_signed = (static_cast<int>(in_h) - 1) * stride_ - 2 * padding_ +
-                             kernel_size_ + output_padding_;
-    const int out_w_signed = (static_cast<int>(in_w) - 1) * stride_ - 2 * padding_ +
-                             kernel_size_ + output_padding_;
-    if (out_h_signed <= 0 || out_w_signed <= 0) {
-        throw std::runtime_error("ConvTranspose2D output shape is not positive");
-    }
-    const size_t out_h = static_cast<size_t>(out_h_signed);
-    const size_t out_w = static_cast<size_t>(out_w_signed);
-
-    Tensor output({out_h, out_w, static_cast<size_t>(out_channels_), batch_size}, DataType::Float32);
-    const float* input_data = input.Data<float>();
-    const float* weight_data = weights_.Data<float>();
-    const float* bias_data = use_bias_ ? bias_.Data<float>() : nullptr;
-    float* output_data = output.Data<float>();
-
-    for (size_t b = 0; b < batch_size; ++b) {
-        for (size_t ic = 0; ic < static_cast<size_t>(in_channels_); ++ic) {
-            for (size_t ih = 0; ih < in_h; ++ih) {
-                for (size_t iw = 0; iw < in_w; ++iw) {
-                    const float value = input_data[Pool4DIndex(ih, iw, ic, b, in_w, in_channels, batch_size)];
-                    for (size_t oc = 0; oc < static_cast<size_t>(out_channels_); ++oc) {
-                        for (int kh = 0; kh < kernel_size_; ++kh) {
-                            for (int kw = 0; kw < kernel_size_; ++kw) {
-                                const int oh = static_cast<int>(ih * static_cast<size_t>(stride_)) - padding_ + kh;
-                                const int ow = static_cast<int>(iw * static_cast<size_t>(stride_)) - padding_ + kw;
-                                if (oh < 0 || ow < 0 || oh >= out_h_signed || ow >= out_w_signed) {
-                                    continue;
-                                }
-                                const size_t weight_index = Pool4DIndex(static_cast<size_t>(kh),
-                                                                        static_cast<size_t>(kw),
-                                                                        oc, ic,
-                                                                        static_cast<size_t>(kernel_size_),
-                                                                        static_cast<size_t>(out_channels_),
-                                                                        static_cast<size_t>(in_channels_));
-                                output_data[Pool4DIndex(static_cast<size_t>(oh),
-                                                       static_cast<size_t>(ow),
-                                                       oc, b,
-                                                       out_w,
-                                                       static_cast<size_t>(out_channels_),
-                                                       batch_size)] += value * weight_data[weight_index];
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (use_bias_) {
-        for (size_t b = 0; b < batch_size; ++b) {
-            for (size_t oc = 0; oc < static_cast<size_t>(out_channels_); ++oc) {
-                for (size_t oh = 0; oh < out_h; ++oh) {
-                    for (size_t ow = 0; ow < out_w; ++ow) {
-                        output_data[Pool4DIndex(oh, ow, oc, b, out_w, static_cast<size_t>(out_channels_), batch_size)] +=
-                            bias_data[oc];
-                    }
-                }
-            }
-        }
-    }
-
-    return output;
+  }
+#else
+  RecordLayerArrayFireFallback("ConvTranspose2DLayer::Forward",
+                               BackendFallbackReason::BackendUnavailable,
+                               "ArrayFire support is not compiled", input,
+                               "input");
+#endif
+  Tensor output = ConvTranspose2DForwardNative(
+      input, weights_, bias_, g.native,
+      {static_cast<size_t>(out_channels_), kernel_size_, stride_, padding_,
+       use_bias_});
+  cached_input_ = input;
+  has_forward_ = true;
+  return output;
 }
 
-Tensor ConvTranspose2DLayer::Backward(const Tensor& grad_output) {
-    ValidateSpatial4DInput(cached_input_, "ConvTranspose2D");
-    if (grad_output.GetDataType() != DataType::Float32 || weights_.GetDataType() != DataType::Float32) {
-        throw std::runtime_error("ConvTranspose2D backward CPU fallback requires Float32 tensors");
+Tensor ConvTranspose2DLayer::Backward(const Tensor &grad_output) {
+  if (!has_forward_) {
+    throw std::logic_error(
+        "ConvTranspose2DLayer::Backward requires a successful Forward call");
+  }
+  const auto g =
+      Validate(cached_input_, weights_, bias_, in_channels_, out_channels_,
+               kernel_size_, stride_, padding_, output_padding_, use_bias_);
+  if (grad_output.GetDataType() != DataType::Float32 ||
+      grad_output.Shape() != g.output_shape) {
+    throw std::runtime_error(
+        "ConvTranspose2D backward gradient dtype or shape mismatch");
+  }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+  if (!UseNative("ConvTranspose2DLayer::Backward", grad_output, g, kernel_size_,
+                 padding_)) {
+    try {
+      const af::array dy = grad_output.GetSemanticArray();
+      const af::array columns = af::moddims(
+          af::reorder(af::unwrap(dy, kernel_size_, kernel_size_, stride_,
+                                 stride_, padding_, padding_),
+                      0, 2, 1, 3),
+          static_cast<dim_t>(g.filter_rows), static_cast<dim_t>(g.columns));
+      const af::array filters =
+          af::moddims(weights_.GetSemanticArray(),
+                      static_cast<dim_t>(g.filter_rows), in_channels_);
+      af::array dx =
+          af::reorder(af::moddims(af::matmulTN(filters, columns), in_channels_,
+                                  static_cast<dim_t>(g.native.in_h),
+                                  static_cast<dim_t>(g.native.in_w),
+                                  static_cast<dim_t>(g.native.batch_size)),
+                      1, 2, 0, 3);
+      af::array dw =
+          af::moddims(af::matmulNT(columns, InputColumns(cached_input_, g)),
+                      kernel_size_, kernel_size_, out_channels_, in_channels_);
+      dx.eval();
+      dw.eval();
+      Tensor new_bias_gradient;
+      if (use_bias_) {
+        af::array db =
+            af::moddims(af::sum(af::sum(af::sum(dy, 0), 1), 3), out_channels_);
+        db.eval();
+        new_bias_gradient =
+            Tensor::FromSemanticArray(db, {static_cast<size_t>(out_channels_)});
+      }
+      Tensor result = Tensor::FromSemanticArray(dx, cached_input_.Shape());
+      grad_weights_ = Tensor::FromSemanticArray(
+          dw, WeightShape(kernel_size_, out_channels_, in_channels_));
+      if (use_bias_)
+        grad_bias_ = std::move(new_bias_gradient);
+      return result;
+    } catch (const af::exception &error) {
+      RecordLayerArrayFireFallback("ConvTranspose2DLayer::Backward",
+                                   error.what(), grad_output, "grad_output");
     }
-    if (weights_.Shape() != std::vector<size_t>{static_cast<size_t>(kernel_size_),
-                                                static_cast<size_t>(kernel_size_),
-                                                static_cast<size_t>(out_channels_),
-                                                static_cast<size_t>(in_channels_)}) {
-        throw std::runtime_error("ConvTranspose2D backward weight shape mismatch");
-    }
-
-    const std::vector<size_t>& input_shape = cached_input_.Shape();
-    const size_t in_h = input_shape[0];
-    const size_t in_w = input_shape[1];
-    const size_t in_channels = input_shape[2];
-    const size_t batch_size = input_shape[3];
-    if (in_channels != static_cast<size_t>(in_channels_)) {
-        throw std::runtime_error("ConvTranspose2D backward cached input channel mismatch");
-    }
-
-    const int out_h_signed = (static_cast<int>(in_h) - 1) * stride_ - 2 * padding_ +
-                             kernel_size_ + output_padding_;
-    const int out_w_signed = (static_cast<int>(in_w) - 1) * stride_ - 2 * padding_ +
-                             kernel_size_ + output_padding_;
-    if (out_h_signed <= 0 || out_w_signed <= 0) {
-        throw std::runtime_error("ConvTranspose2D output shape is not positive");
-    }
-    const size_t out_h = static_cast<size_t>(out_h_signed);
-    const size_t out_w = static_cast<size_t>(out_w_signed);
-    if (grad_output.Shape() != std::vector<size_t>{out_h, out_w, static_cast<size_t>(out_channels_), batch_size}) {
-        throw std::runtime_error("ConvTranspose2D backward gradient shape mismatch");
-    }
-
-    Tensor grad_input(input_shape, DataType::Float32);
-    grad_weights_ = Tensor({static_cast<size_t>(kernel_size_),
-                            static_cast<size_t>(kernel_size_),
-                            static_cast<size_t>(out_channels_),
-                            static_cast<size_t>(in_channels_)},
-                           DataType::Float32);
-    if (use_bias_) {
-        grad_bias_ = Tensor({static_cast<size_t>(out_channels_)}, DataType::Float32);
-    }
-
-    const float* input_data = cached_input_.Data<float>();
-    const float* weight_data = weights_.Data<float>();
-    const float* grad_output_data = grad_output.Data<float>();
-    float* grad_input_data = grad_input.Data<float>();
-    float* grad_weight_data = grad_weights_.Data<float>();
-    float* grad_bias_data = use_bias_ ? grad_bias_.Data<float>() : nullptr;
-
-    for (size_t b = 0; b < batch_size; ++b) {
-        for (size_t ic = 0; ic < static_cast<size_t>(in_channels_); ++ic) {
-            for (size_t ih = 0; ih < in_h; ++ih) {
-                for (size_t iw = 0; iw < in_w; ++iw) {
-                    const float input_value = input_data[Pool4DIndex(ih, iw, ic, b, in_w, in_channels, batch_size)];
-                    for (size_t oc = 0; oc < static_cast<size_t>(out_channels_); ++oc) {
-                        for (int kh = 0; kh < kernel_size_; ++kh) {
-                            for (int kw = 0; kw < kernel_size_; ++kw) {
-                                const int oh = static_cast<int>(ih * static_cast<size_t>(stride_)) - padding_ + kh;
-                                const int ow = static_cast<int>(iw * static_cast<size_t>(stride_)) - padding_ + kw;
-                                if (oh < 0 || ow < 0 || oh >= out_h_signed || ow >= out_w_signed) {
-                                    continue;
-                                }
-
-                                const size_t grad_index = Pool4DIndex(static_cast<size_t>(oh),
-                                                                      static_cast<size_t>(ow),
-                                                                      oc, b,
-                                                                      out_w,
-                                                                      static_cast<size_t>(out_channels_),
-                                                                      batch_size);
-                                const size_t weight_index = Pool4DIndex(static_cast<size_t>(kh),
-                                                                        static_cast<size_t>(kw),
-                                                                        oc, ic,
-                                                                        static_cast<size_t>(kernel_size_),
-                                                                        static_cast<size_t>(out_channels_),
-                                                                        static_cast<size_t>(in_channels_));
-                                const size_t input_index = Pool4DIndex(ih, iw, ic, b, in_w, in_channels, batch_size);
-                                const float grad_value = grad_output_data[grad_index];
-                                grad_input_data[input_index] += grad_value * weight_data[weight_index];
-                                grad_weight_data[weight_index] += input_value * grad_value;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (use_bias_) {
-        for (size_t b = 0; b < batch_size; ++b) {
-            for (size_t oc = 0; oc < static_cast<size_t>(out_channels_); ++oc) {
-                for (size_t oh = 0; oh < out_h; ++oh) {
-                    for (size_t ow = 0; ow < out_w; ++ow) {
-                        grad_bias_data[oc] +=
-                            grad_output_data[Pool4DIndex(oh, ow, oc, b, out_w, static_cast<size_t>(out_channels_), batch_size)];
-                    }
-                }
-            }
-        }
-    }
-
-    return grad_input;
+  }
+#else
+  RecordLayerArrayFireFallback("ConvTranspose2DLayer::Backward",
+                               BackendFallbackReason::BackendUnavailable,
+                               "ArrayFire support is not compiled", grad_output,
+                               "grad_output");
+#endif
+  return ConvTranspose2DBackwardNative(
+      cached_input_, grad_output, weights_, grad_weights_, grad_bias_, g.native,
+      {static_cast<size_t>(out_channels_), kernel_size_, stride_, padding_,
+       use_bias_});
 }
 
 std::map<std::string, Tensor> ConvTranspose2DLayer::GetParameters() {
-    std::map<std::string, Tensor> params;
-    params["weights"] = weights_;
-    params["grad_weights"] = grad_weights_;
-    if (use_bias_) {
-        params["bias"] = bias_;
-        params["grad_bias"] = grad_bias_;
-    }
-    return params;
+  std::map<std::string, Tensor> params{{"weights", weights_},
+                                       {"grad_weights", grad_weights_}};
+  if (use_bias_) {
+    params["bias"] = bias_;
+    params["grad_bias"] = grad_bias_;
+  }
+  return params;
 }
 
-void ConvTranspose2DLayer::SetParameters(const std::map<std::string, Tensor>& params) {
-    if (params.count("weights")) weights_ = params.at("weights");
-    if (params.count("bias") && use_bias_) bias_ = params.at("bias");
+void ConvTranspose2DLayer::SetParameters(
+    const std::map<std::string, Tensor> &params) {
+  if (params.count("weights")) {
+    weights_ = params.at("weights");
+    has_forward_ = false;
+  }
+  if (params.count("bias") && use_bias_) {
+    bias_ = params.at("bias");
+    has_forward_ = false;
+  }
 }
-
 } // namespace cyxwiz

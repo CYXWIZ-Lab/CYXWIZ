@@ -91,7 +91,7 @@ void DataInputDialog::RenderLimitRowsTab() {
     ImGui::Spacing();
 
     bool limit_enabled = max_rows_ > 0;
-    if (ImGui::Checkbox("Limit number of rows", &limit_enabled)) {
+    if (ImGui::Checkbox("Limit dataset rows", &limit_enabled)) {
         max_rows_ = limit_enabled
             ? (max_rows_ > 0 ? max_rows_ : 1000)
             : 0;
@@ -109,14 +109,22 @@ void DataInputDialog::RenderLimitRowsTab() {
             has_changes_ = true;
         }
     }
-    ImGui::TextDisabled(
-        "Caps rows available to splitting/training after Apply; unchecked means all rows.");
-    if (max_rows_ > 0) {
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Dataset loading limit, not a preview display limit.");
+    if (file_category_ == FileCategory::Text) {
+        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+            "The current Text loader does not apply this limit. "
+            "It does not reduce the text data available for training.");
+    } else {
         ImGui::TextDisabled(
-            "CSV ingestion stops after this many data rows for both memory and disk-backed modes.");
+            "For tabular CSV loading, Apply loads at most this many data rows. "
+            "Only those loaded rows are available for splitting and training. "
+            "Unchecked means no row limit.");
     }
+    ImGui::TextDisabled("To change how many preview rows are displayed per page, use Preview > Rows/page.");
     ImGui::TextDisabled(
         "To include or exclude columns by name, use the Transformation tab.");
+    ImGui::PopTextWrapPos();
 
     ImGui::Spacing();
     ImGui::Separator();

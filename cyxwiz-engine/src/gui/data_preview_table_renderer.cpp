@@ -5,6 +5,69 @@
 
 namespace gui {
 
+int64_t RenderDataPreviewControls(DataPreviewViewState& state, int64_t total_rows) {
+    total_rows = std::max<int64_t>(0, total_rows);
+    ImGui::SetNextItemWidth(75.0f);
+    const std::string current = std::to_string(state.rows_per_page);
+    if (ImGui::BeginCombo("Rows/page", current.c_str())) {
+        for (int count : {5, 10, 25, 50}) {
+            if (ImGui::Selectable(std::to_string(count).c_str(), count == state.rows_per_page)) {
+                state.rows_per_page = count;
+                state.offset = 0;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    state.rows_per_page = std::clamp(state.rows_per_page, 1, 50);
+    const int64_t last_offset = total_rows > 0
+        ? ((total_rows - 1) / state.rows_per_page) * state.rows_per_page : 0;
+    state.offset = std::clamp<int64_t>(state.offset, 0, last_offset);
+    ImGui::BeginDisabled(state.offset == 0);
+    if (ImGui::Button("First")) state.offset = 0;
+    ImGui::SameLine();
+    if (ImGui::Button("Previous")) {
+        state.offset = std::max<int64_t>(0, state.offset - state.rows_per_page);
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(state.offset >= last_offset);
+    if (ImGui::Button("Next")) state.offset += state.rows_per_page;
+    ImGui::SameLine();
+    if (ImGui::Button("Last")) state.offset = last_offset;
+    ImGui::EndDisabled();
+    const auto count = std::min<int64_t>(state.rows_per_page, total_rows - state.offset);
+    ImGui::TextDisabled("Rows %lld-%lld of %lld",
+        static_cast<long long>(count ? state.offset + 1 : 0),
+        static_cast<long long>(state.offset + count), static_cast<long long>(total_rows));
+    return count;
+}
+
+void RenderDataPreviewCellDetails(DataPreviewViewState& state) {
+    if (state.inspect_cell) ImGui::OpenPopup("Preview cell");
+    bool open = true;
+    const auto work_size = ImGui::GetMainViewport()->WorkSize;
+    ImGui::SetNextWindowSize(ImVec2(std::min(640.0f, work_size.x * 0.9f),
+                                  std::min(400.0f, work_size.y * 0.8f)), ImGuiCond_FirstUseEver);
+    if (ImGui::BeginPopupModal("Preview cell", &open)) {
+        ImGui::TextWrapped("Row %lld | %s", static_cast<long long>(state.selected_row + 1),
+                           state.selected_column.c_str());
+        if (ImGui::Button("Copy cell")) ImGui::SetClipboardText(state.selected_cell.c_str());
+        ImGui::SameLine();
+        if (ImGui::Button("Close") || ImGui::IsKeyPressed(ImGuiKey_Escape)) open = false;
+        ImGui::InputTextMultiline("##cell_contents", state.selected_cell.data(),
+            state.selected_cell.size() + 1, ImVec2(-1, -1),
+            ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoHorizontalScroll);
+        if (!open) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    if (!open) {
+        state.inspect_cell = false;
+        state.selected_cell.clear();
+        state.selected_column.clear();
+        state.selected_row = -1;
+    }
+}
+
 DataPreviewTableRenderResult RenderDataPreviewTable(
     const char* table_id,
     const std::vector<cyxwiz::DataPreviewColumn>& columns,
@@ -12,7 +75,9 @@ DataPreviewTableRenderResult RenderDataPreviewTable(
     int64_t row_count,
     const DataPreviewRowLookup& lookup,
     const ImVec2& size,
-    bool show_row_numbers) {
+    bool show_row_numbers,
+    const char* wide_column,
+    DataPreviewViewState* view_state) {
     DataPreviewTableRenderResult result;
     if (columns.empty() || !lookup) {
         ImGui::TextDisabled("No data to preview");
@@ -36,7 +101,8 @@ DataPreviewTableRenderResult RenderDataPreviewTable(
             ImGui::TableSetupColumn(
                 columns[static_cast<size_t>(index)].name.c_str(),
                 ImGuiTableColumnFlags_WidthFixed,
-                90.0f);
+                wide_column && columns[static_cast<size_t>(index)].name == wide_column
+                    ? 360.0f : 120.0f);
         }
         ImGui::TableSetupScrollFreeze(show_row_numbers ? 1 : 0, 1);
         ImGui::TableHeadersRow();
@@ -71,8 +137,33 @@ DataPreviewTableRenderResult RenderDataPreviewTable(
                     if (!row) {
                         ImGui::TextDisabled("...");
                     } else if (data_column < static_cast<int>(row->size())) {
-                        ImGui::TextUnformatted(
-                            (*row)[static_cast<size_t>(data_column)].c_str());
+                        const auto& cell = (*row)[static_cast<size_t>(data_column)];
+                        // Keep clipped rows one line high, including multiline CSV fields.
+                        const auto line_end = cell.find_first_of("\r\n");
+                        ImGui::TextUnformatted(cell.data(), cell.data() +
+                            std::min(cell.size(), line_end));
+                        if (ImGui::IsItemHovered()) {
+                            if (view_state && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                                view_state->selected_cell = cell;
+                                view_state->selected_column = columns[static_cast<size_t>(data_column)].name;
+                                view_state->selected_row = absolute_row;
+                                view_state->inspect_cell = true;
+                            }
+                            ImGui::BeginTooltip();
+                            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
+                            ImGui::TextUnformatted(cell.data(), cell.data() +
+                                std::min<size_t>(cell.size(), 4096));
+                            ImGui::PopTextWrapPos();
+                            if (cell.size() > 4096) {
+                                ImGui::TextDisabled("Preview truncated at 4096 bytes.");
+                            }
+                            ImGui::TextDisabled("Right-click to copy the full cell");
+                            if (view_state) ImGui::TextDisabled("Click to open the cell reader");
+                            ImGui::EndTooltip();
+                            if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                                ImGui::SetClipboardText(cell.c_str());
+                            }
+                        }
                     }
                 }
             }

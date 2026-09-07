@@ -264,6 +264,23 @@ int main() {
     CheckTFIDFState(training, inference, tfidf_state);
     CheckCountState(training, inference, count_state, tfidf_state);
 
+    // Both a missing parent directory and a directory selected as a file
+    // must fail cleanly through the shared loader, never refit implicitly.
+    for (const auto& unavailable : {test_root / "missing" / "state.cyxstate.json",
+                                    test_root}) {
+        auto parameters = TFIDFParameters(unavailable);
+        parameters["operation_mode"] = "transform_only";
+        cyxwiz::TFIDFVectorizerOperator vectorizer;
+        std::string error;
+        Check(vectorizer.Configure(parameters, error), error);
+        std::vector<cyxwiz::PipelineOperatorCacheDependency> dependencies;
+        Check(!vectorizer.CollectCacheDependencies(dependencies, error) &&
+                  error.find(unavailable.string()) != std::string::npos,
+              "missing/directory artifact should reject cache lookup with path");
+        const auto applied = vectorizer.Apply(inference);
+        Check(!applied.ok(), "missing artifact must not silently refit");
+    }
+
     fs::remove_all(test_root, remove_error);
     std::cout << "Text vectorizer fitted-state tests passed\n";
     return 0;

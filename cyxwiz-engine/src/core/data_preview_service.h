@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz {
@@ -31,6 +33,8 @@ struct DataPreviewRequest {
     int64_t row_limit = 20;
     std::vector<std::string> selected_columns;
     std::function<bool()> cancel_requested;
+    // Opt-in full label-column summary, computed on the caller's worker.
+    std::string summarize_label_column;
 };
 
 struct DataPreviewPage {
@@ -47,6 +51,10 @@ struct DataPreviewPage {
     int64_t next_offset = 0;
     std::vector<DataPreviewColumn> schema;
     std::vector<std::vector<std::string>> rows;
+    std::string label_summary_column;
+    std::string label_summary_error;
+    bool label_summary_complete = false;
+    std::vector<std::pair<std::string, size_t>> label_counts;
 };
 
 class DataPreviewService {

@@ -1159,11 +1159,14 @@ void Console::RenderInspectorTable(
         if (ImGui::Selectable(timestamp.c_str(), selected,
                               ImGuiSelectableFlags_SpanAllColumns |
                                   ImGuiSelectableFlags_AllowDoubleClick)) {
-          inspector_selected_sequence_ = event.sequence;
           if (ImGui::IsMouseDoubleClicked(0)) {
+            inspector_selected_sequence_ = event.sequence;
             const auto line = FormatRuntimeLogRow(event);
             ImGui::SetClipboardText(line.c_str());
             ShowCopyNotification();
+          } else {
+            inspector_selected_sequence_ =
+                inspector_selected_sequence_ == event.sequence ? 0 : event.sequence;
           }
         }
         if (ImGui::BeginPopupContextItem("RuntimeLogContext")) {
@@ -1220,6 +1223,13 @@ void Console::RenderInspectorDetails(
                      return event.sequence == inspector_selected_sequence_;
                    });
   ImGui::BeginChild("RuntimeLogDetails", ImVec2(0, 0), false);
+  if (ImGui::Button("Close details") ||
+      (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+       ImGui::IsKeyPressed(ImGuiKey_Escape))) {
+    inspector_selected_sequence_ = 0;
+    ImGui::EndChild();
+    return;
+  }
   if (selected == result->query.events.end()) {
     ImGui::TextDisabled("Select a row to inspect structured fields");
     ImGui::EndChild();

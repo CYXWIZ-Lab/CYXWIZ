@@ -83,6 +83,7 @@ struct MaterializeResult {
     int64_t cache_column_count = 0;
     std::string cache_message;
     bool loaded_from_cache = false;
+    bool reused_resident_cache = false;
     bool saved_to_cache = false;
     bool success = true;
     std::string error_message;

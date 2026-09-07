@@ -1,3 +1,4 @@
+#include "convolution_test_support.h"
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -22,17 +23,7 @@
 
 namespace {
 
-void CheckValues(const cyxwiz::Tensor& actual,
-                 const std::vector<size_t>& expected_shape,
-                 const std::vector<float>& expected_values) {
-    REQUIRE(actual.Shape() == expected_shape);
-    REQUIRE(actual.GetDataType() == cyxwiz::DataType::Float32);
-    REQUIRE(actual.NumElements() == expected_values.size());
-    const float* data = actual.ReadData<float>();
-    for (size_t index = 0; index < expected_values.size(); ++index) {
-        CHECK(data[index] == Catch::Approx(expected_values[index]));
-    }
-}
+using namespace cyxwiz::test::convolution;
 
 void ConfigureReferenceConv(cyxwiz::Conv2DLayer& layer) {
     const std::vector<float> weights{
@@ -51,66 +42,6 @@ void ConfigureReferenceConv(cyxwiz::Conv2DLayer& layer) {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 
-size_t conv_host_sync_count = 0;
-size_t conv_fallback_count = 0;
-bool saw_conv_cpu_path = false;
-cyxwiz::ArrayFireNativeCpuFallbackEvent last_conv_fallback;
-
-void CountConvHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
-    ++conv_host_sync_count;
-    saw_conv_cpu_path |= event.attribution_category == "layer_cpu_path";
-}
-
-void CountConvFallback(
-    const cyxwiz::ArrayFireNativeCpuFallbackEvent& event) {
-    ++conv_fallback_count;
-    last_conv_fallback = event;
-}
-
-void ResetConvObservations() {
-    conv_host_sync_count = 0;
-    conv_fallback_count = 0;
-    saw_conv_cpu_path = false;
-    last_conv_fallback = {};
-}
-
-af::dim4 SemanticDims(const std::vector<size_t>& shape) {
-    REQUIRE_FALSE(shape.empty());
-    REQUIRE(shape.size() <= 4);
-    af::dim4 dims(1, 1, 1, 1);
-    for (size_t axis = 0; axis < shape.size(); ++axis) {
-        dims[static_cast<unsigned>(axis)] =
-            static_cast<dim_t>(shape[axis]);
-    }
-    return dims;
-}
-
-cyxwiz::Tensor DeviceOnlyTensor(const std::vector<size_t>& shape,
-                                const std::vector<float>& values) {
-    const cyxwiz::Tensor host(
-        shape, values.data(), cyxwiz::DataType::Float32);
-    af::array semantic = host.GetSemanticArray();
-    semantic.eval();
-    return cyxwiz::Tensor::FromSemanticArray(semantic, shape);
-}
-
-cyxwiz::Tensor DeviceOnlyOnes(const std::vector<size_t>& shape) {
-    af::array values = af::constant(
-        1.0f, SemanticDims(shape), af::dtype::f32);
-    values.eval();
-    return cyxwiz::Tensor::FromSemanticArray(values, shape);
-}
-
-const char* ExpectedBackendName(cyxwiz::DeviceType type) {
-    switch (type) {
-        case cyxwiz::DeviceType::CPU: return "cpu";
-        case cyxwiz::DeviceType::CUDA: return "cuda";
-        case cyxwiz::DeviceType::OPENCL: return "opencl";
-        case cyxwiz::DeviceType::ONEAPI: return "oneapi";
-        default: return "unsupported";
-    }
-}
-
 void ConfigureReferenceConvDeviceOnly(cyxwiz::Conv2DLayer& layer) {
     layer.SetParameters({
         {"weights", DeviceOnlyTensor(
@@ -120,46 +51,6 @@ void ConfigureReferenceConvDeviceOnly(cyxwiz::Conv2DLayer& layer) {
     });
 }
 
-void SetEnvVar(const char* name, const char* value) {
-#ifdef _WIN32
-    _putenv_s(name, value);
-#else
-    setenv(name, value, 1);
-#endif
-}
-
-void ClearEnvVar(const char* name) {
-#ifdef _WIN32
-    _putenv_s(name, "");
-#else
-    unsetenv(name);
-#endif
-}
-
-class ScopedEnvVar {
-public:
-    ScopedEnvVar(const char* name, const char* value) : name_(name) {
-        const char* previous = std::getenv(name);
-        if (previous != nullptr) {
-            had_previous_ = true;
-            previous_ = previous;
-        }
-        SetEnvVar(name_, value);
-    }
-
-    ~ScopedEnvVar() {
-        if (had_previous_) {
-            SetEnvVar(name_, previous_.c_str());
-        } else {
-            ClearEnvVar(name_);
-        }
-    }
-
-private:
-    const char* name_;
-    bool had_previous_ = false;
-    std::string previous_;
-};
 
 #endif
 

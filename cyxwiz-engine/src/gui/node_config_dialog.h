@@ -24,6 +24,7 @@
 #include "node_editor.h"
 #include "data_input_capabilities.h"
 #include "data_preview_page_cache.h"
+#include "data_preview_table_renderer.h"
 #include "loaders/data_loader.h"
 #include "../core/data_convert_service.h"
 #include "../core/data_preview_service.h"
@@ -475,7 +476,10 @@ private:
     std::string preview_backend_;
     std::vector<std::pair<std::string, size_t>> label_distribution_;
     std::string label_distribution_column_;
+    std::string label_distribution_error_;
     size_t label_distribution_total_ = 0;
+    DataPreviewViewState preview_view_;
+    int preview_sample_rows_ = 100;
     bool preview_loaded_ = false;
     std::string preview_error_;
     float estimated_ram_mb_ = 0.0f;

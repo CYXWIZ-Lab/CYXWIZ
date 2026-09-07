@@ -135,14 +135,22 @@ public:
     std::string GetName() const override { return "StandardScaler"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
     bool IsCacheable() const override { return false; }
-    bool Configure(const std::map<std::string, std::string>&,
+    bool Configure(const std::map<std::string, std::string>& parameters,
                    std::string&) override {
+        throw_on_apply_ = parameters.count("throw_on_apply") != 0;
         return true;
     }
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override {
+        if (throw_on_apply_) {
+            throw std::filesystem::filesystem_error(
+                "artifact read failed", std::filesystem::path("missing/state.json"),
+                std::make_error_code(std::errc::no_such_file_or_directory));
+        }
         return input;
     }
+private:
+    bool throw_on_apply_ = false;
 };
 
 class CacheDependentPassThroughOperator final : public IPipelineOperator {
@@ -270,6 +278,13 @@ int main() {
     Check(saved.cache_column_count == saved_dataset->GetArrowTable()->num_columns(),
           "cache save should report prepared column count");
 
+    const auto resident_saved = cyxwiz::PipelineMaterializer::Materialize(
+        nodes, links, registry, kDatasetName, cache_config);
+    Check(resident_saved.success && resident_saved.reused_resident_cache,
+          "freshly saved materialization should be reused in memory");
+    Check(registry.GetArrowDataset(materialized_name) == saved_dataset,
+          "resident reuse must preserve the wrapper and table without re-registration");
+
     registry.UnregisterTabularDataset(materialized_name);
     auto hit = cyxwiz::PipelineMaterializer::Materialize(
         nodes, links, registry, kDatasetName, cache_config);
@@ -277,6 +292,7 @@ int main() {
     Check(hit.cache_status == cyxwiz::MaterializationCacheStatus::Hit,
           "second matching materialization should hit cache");
     Check(hit.loaded_from_cache, "cache hit should report loaded_from_cache");
+    Check(!hit.reused_resident_cache, "unregister must force disk reload");
     Check(hit.cache_message.find("Preprocessing skipped") != std::string::npos,
           "cache hit should explicitly report skipped preprocessing");
     Check(hit.cache_message.find("on disk") != std::string::npos &&
@@ -295,6 +311,55 @@ int main() {
           "cache hit should report manifest column count");
     Check(registry.GetArrowDataset(materialized_name) != nullptr,
           "cache hit should register prepared dataset");
+
+    const auto disk_dataset = registry.GetArrowDataset(materialized_name);
+    const auto resident_hit = cyxwiz::PipelineMaterializer::Materialize(
+        nodes, links, registry, kDatasetName, cache_config);
+    Check(resident_hit.success && resident_hit.reused_resident_cache &&
+              registry.GetArrowDataset(materialized_name) == disk_dataset,
+          "disk-loaded materialization should subsequently reuse the exact table");
+    Check(resident_hit.cache_message.find("disk reload skipped") != std::string::npos,
+          "resident hit must explain that no disk reload occurred");
+    const auto old_time = std::filesystem::last_write_time(hit.cache_artifact_path);
+    std::filesystem::last_write_time(hit.cache_artifact_path,
+                                    old_time + std::chrono::seconds(2));
+    const auto touched = cyxwiz::PipelineMaterializer::Materialize(
+        nodes, links, registry, kDatasetName, cache_config);
+    Check(touched.success && !touched.reused_resident_cache,
+          "changed artifact timestamp must invalidate resident reuse");
+    registry.RegisterArrowTable(MakeTextTable(), kDatasetName);
+    const auto replaced_source = cyxwiz::PipelineMaterializer::Materialize(
+        nodes, links, registry, kDatasetName, cache_config);
+    Check(replaced_source.success && !replaced_source.reused_resident_cache,
+          "replaced source snapshot must invalidate resident provenance");
+    registry.RegisterArrowTable(MakeTextTable(), materialized_name);
+    const auto replaced_output = cyxwiz::PipelineMaterializer::Materialize(
+        nodes, links, registry, kDatasetName, cache_config);
+    Check(replaced_output.success && !replaced_output.reused_resident_cache,
+          "unrelated same-name output must not count as a resident cache hit");
+    auto resident_required_config = cache_config;
+    resident_required_config.mode = cyxwiz::MaterializationCacheMode::RequireHit;
+    std::filesystem::rename(hit.cache_artifact_path, hit.cache_artifact_path + ".held");
+    const auto removed_artifact = cyxwiz::PipelineMaterializer::Materialize(
+        nodes, links, registry, kDatasetName, resident_required_config);
+    Check(!removed_artifact.success && !removed_artifact.reused_resident_cache,
+          "RequireHit must fail when artifact disappears even if table is resident");
+    std::filesystem::rename(hit.cache_artifact_path + ".held", hit.cache_artifact_path);
+
+    auto rebuild_config = cache_config;
+    rebuild_config.mode = cyxwiz::MaterializationCacheMode::Rebuild;
+    const auto rebuilt = cyxwiz::PipelineMaterializer::Materialize(
+        nodes, links, registry, kDatasetName, rebuild_config);
+    Check(rebuilt.success && rebuilt.saved_to_cache && !rebuilt.reused_resident_cache,
+          "explicit Rebuild must not reuse a resident table");
+    cyxwiz::PipelineOperatorExecutionContext cancelled_context;
+    cancelled_context.cancellation_requested = [] { return true; };
+    const auto cancelled = cyxwiz::PipelineMaterializer::Materialize(
+        nodes, links, registry, kDatasetName, cache_config, {}, cancelled_context);
+    Check(!cancelled.success &&
+              cancelled.failure_kind == cyxwiz::MaterializationFailureKind::Cancelled &&
+              !cancelled.reused_resident_cache,
+          "resident output must not turn a cancelled preparation into success");
 
     auto disconnected_sparse_nodes = nodes;
     auto disconnected_sparse = MakeSparseCountNode();
@@ -346,6 +411,15 @@ int main() {
     Check(stateful.cache_message.find("reads or writes fitted state") !=
               std::string::npos,
           "cache bypass should explain the fitted-state boundary");
+
+    auto throwing_nodes = stateful_nodes;
+    throwing_nodes[1].parameters["throw_on_apply"] = "true";
+    const auto throwing_preflight = cyxwiz::PipelineMaterializer::PreflightTable(
+        throwing_nodes, stateful_links,
+        registry.GetArrowDataset(kDatasetName)->GetArrowTable(), kDatasetName);
+    Check(!throwing_preflight.success && throwing_preflight.failed_node_id == 3 &&
+              throwing_preflight.error_message.find("artifact read failed") != std::string::npos,
+          "filesystem exceptions must become node-specific preflight failures");
 
     const auto state_path = cache_root / "fitted_state.cyxstate.json";
     {
@@ -476,6 +550,24 @@ int main() {
               registry.IsSparseFeatureDataset(materialized_name),
           "sparse cache hit must restore the typed CSR registry entry");
 
+    const auto sparse_snapshot = registry.GetSparseFeatureDataset(materialized_name);
+    const auto sparse_resident = cyxwiz::PipelineMaterializer::Materialize(
+        sparse_nodes, sparse_links, registry, kDatasetName, cache_config);
+    Check(sparse_resident.success && sparse_resident.reused_resident_cache &&
+              registry.GetSparseFeatureDataset(materialized_name) == sparse_snapshot,
+          "CSR resident reuse must preserve the exact immutable dataset");
+
+    auto missing_state_nodes = sparse_nodes;
+    missing_state_nodes[1].parameters["operation_mode"] = "transform_only";
+    missing_state_nodes[1].parameters["state_path"] =
+        (cache_root / "absent_parent" / "fitted.cyxstate.json").string();
+    const auto missing_preflight = cyxwiz::PipelineMaterializer::PreflightTable(
+        missing_state_nodes, sparse_links,
+        registry.GetArrowDataset(kDatasetName)->GetArrowTable(), kDatasetName);
+    Check(!missing_preflight.success && missing_preflight.failed_node_id == 5 &&
+              missing_preflight.error_message.find("absent_parent") != std::string::npos,
+          "GUI preflight must return the missing-state path and node, not crash");
+
     auto invalid_sparse_nodes = sparse_nodes;
     invalid_sparse_nodes.push_back(MakeTokenizerNode());
     auto invalid_sparse_links = sparse_links;
@@ -491,6 +583,20 @@ int main() {
 
     registry.UnregisterTabularDataset(kDatasetName);
     registry.UnregisterTabularDataset(materialized_name);
+    std::filesystem::remove_all(cache_root);
+
+    const std::string lifetime_name = "resident_lifetime_source";
+    registry.RegisterArrowTable(MakeTextTable(), lifetime_name);
+    auto lifetime_nodes = nodes;
+    lifetime_nodes[0] = MakeDataInputNode(lifetime_name);
+    const auto lifetime_result = cyxwiz::PipelineMaterializer::Materialize(
+        lifetime_nodes, links, registry, lifetime_name, cache_config);
+    Check(lifetime_result.success, lifetime_result.error_message);
+    const std::weak_ptr<arrow::Table> lifetime_table =
+        registry.GetArrowDataset(lifetime_result.effective_dataset_name)->GetArrowTable();
+    registry.UnregisterTabularDataset(lifetime_name);
+    Check(lifetime_table.expired(),
+          "provenance must not retain materialized memory after source unload");
     std::filesystem::remove_all(cache_root);
 
     std::cout << "Pipeline materializer cache tests passed\n";

@@ -1096,7 +1096,7 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
          "has no backend layer, GraphCompiler extraction, ModelBuilder module, or SequentialModel execution path",
          PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::ConvTranspose2D,
-         "has a native backend primitive, compiler sketch, and direct SequentialModel adapter but is not constructed by ModelBuilder and lacks a production ArrayFire execution contract",
+         "has an ArrayFire-first backend primitive with tested output padding, gradients, residency, and fallback behavior plus a direct SequentialModel adapter, but is not constructed by ModelBuilder and has no multi-batch Studio training workflow",
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::Upsample,
          "has native nearest/bilinear backend primitives, a compiler sketch, and a direct SequentialModel adapter but is not constructed by ModelBuilder or ArrayFire-first",

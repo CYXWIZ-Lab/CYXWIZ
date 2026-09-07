@@ -115,6 +115,39 @@ int main() {
               std::string::npos,
           "preview should explain when skip_rows consumes the source");
 
+    const fs::path quoted_csv_path =
+        fs::temp_directory_path() / "cyxwiz_quoted_preview.csv";
+    {
+        std::ofstream csv(quoted_csv_path, std::ios::binary | std::ios::trunc);
+        csv << "statement,status,optional\r\n"
+            << "\"Good, really \"\"good\"\"\",positive,\r\n"
+            << "\"First line\nsecond line\",negative,001\r\n";
+    }
+    const auto quoted = gui::data_input::LoadDelimitedPreview(
+        quoted_csv_path.string(), true, ',', 1);
+    Check(quoted.error.empty() && quoted.rows.size() == 2,
+          "quoted CSV preview should count logical records, not physical lines");
+    Check(quoted.rows[0] == std::vector<std::string>({"Good, really \"good\"", "positive", ""}) &&
+          quoted.rows[1] == std::vector<std::string>({"First line\nsecond line", "negative", "001"}),
+          "preview must preserve quoted commas, escapes, multiline text, empty and string values");
+    const auto labels = gui::data_input::ComputeLabelDistribution(
+        quoted.columns, quoted.rows, "status");
+    Check(labels.total == 2 && labels.values.size() == 2 &&
+          labels.values[0].first == "negative" && labels.values[1].first == "positive",
+          "sentiment distribution must count labels, not sentence fragments");
+    const auto bounded = gui::data_input::LoadDelimitedPreview(
+        quoted_csv_path.string(), true, ',', 1, 0, 2);
+    Check(bounded.rows.size() == 1, "preview must honor its logical-record limit");
+    {
+        std::ofstream csv(quoted_csv_path, std::ios::trunc);
+        csv << "statement,status\n\"unterminated,positive\n";
+    }
+    const auto malformed = gui::data_input::LoadDelimitedPreview(
+        quoted_csv_path.string(), true, ',', 1);
+    Check(malformed.rows.empty() && malformed.error.find("unterminated") != std::string::npos,
+          "malformed quoted rows must report an error, not fabricated preview data");
+    fs::remove(quoted_csv_path);
+
     const fs::path limited_parquet_path =
         fs::temp_directory_path() / "cyxwiz_limited_csv_cache.parquet";
     Check(cyxwiz::ParquetBackedDataset::ConvertCsvToParquet(
@@ -211,6 +244,47 @@ int main() {
     Check(parquet_page.rows[0][0] == "40" &&
               parquet_page.rows[1][0] == "50",
           "Parquet preview should read only requested tail rows");
+
+    // Sorted labels deliberately place every second class beyond the old 24-row preview.
+    arrow::StringBuilder text_builder;
+    arrow::StringBuilder class_builder;
+    for (int row = 0; row < 60; ++row) {
+        Check(text_builder.Append("Document " + std::to_string(row)).ok(), "append raw text");
+        Check(class_builder.Append(row < 40 ? "class-one" : "class-two").ok(), "append class");
+    }
+    std::shared_ptr<arrow::Array> texts, classes;
+    Check(text_builder.Finish(&texts).ok() && class_builder.Finish(&classes).ok(), "finish text fixture");
+    auto text_table = arrow::Table::Make(arrow::schema({
+        arrow::field("body", arrow::utf8()), arrow::field("category", arrow::utf8())}),
+        {texts, classes});
+    Check(registry.RegisterArrowTable(text_table, "generic_text_preview") != nullptr, "register raw text");
+    cyxwiz::DataPreviewRequest text_request;
+    text_request.dataset_name = "generic_text_preview";
+    text_request.row_limit = 10;
+    text_request.summarize_label_column = "category";
+    const auto text_page = cyxwiz::DataPreviewService::PreviewRegisteredTabular(registry, text_request);
+    Check(text_page.ok && text_page.rows_returned == 10 && text_page.total_rows == 60 && text_page.has_next,
+          "text page must retain actual dataset extent beyond its first rows");
+    Check(text_page.label_summary_complete && text_page.label_counts ==
+          std::vector<std::pair<std::string, size_t>>({{"class-one", 40}, {"class-two", 20}}),
+          "full class distribution must include classes absent from the first page");
+    text_request.offset = 50;
+    text_request.summarize_label_column.clear();
+    const auto text_tail = cyxwiz::DataPreviewService::PreviewRegisteredTabular(registry, text_request);
+    Check(text_tail.ok && text_tail.rows.front()[0] == "Document 50" && !text_tail.has_next &&
+          text_tail.label_counts.empty(), "later text pages must navigate without recomputing full class statistics");
+    text_request.offset = 0;
+    text_request.summarize_label_column = "missing";
+    const auto missing_label = cyxwiz::DataPreviewService::PreviewRegisteredTabular(registry, text_request);
+    Check(missing_label.ok && !missing_label.label_summary_complete && !missing_label.label_summary_error.empty(),
+          "invalid label column must explain missing distribution without blocking row preview");
+    text_request.summarize_label_column = "category";
+    int cancellation_checks = 0;
+    text_request.cancel_requested = [&] { return ++cancellation_checks > 2; };
+    const auto cancelled_labels = cyxwiz::DataPreviewService::PreviewRegisteredTabular(registry, text_request);
+    Check(cancelled_labels.status == cyxwiz::DataPreviewStatus::Cancelled,
+          "cancelled text summary must not be published as complete");
+    registry.UnregisterTabularDataset("generic_text_preview");
 
     cyxwiz::DataPreviewRequest unknown_request;
     unknown_request.dataset_name = "not_registered";

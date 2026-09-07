@@ -565,7 +565,17 @@ MaterializeResult PipelineMaterializer::Materialize(
                     bool cache_loaded = false;
                     uint64_t expanded_bytes = 0;
                     std::string cache_load_error;
-                    if (validation.manifest.artifact_format ==
+                    const auto resident_identity =
+                        MaterializationArtifactIdentity(validation.manifest);
+                    const bool resident = registry.MatchesResidentMaterialization(
+                        materialized_name, source_table, resident_identity);
+                    if (resident) {
+                        cache_loaded = true;
+                        result.reused_resident_cache = true;
+                        result.effective_kind = sparse_materialization_requested
+                            ? PipelineMaterializerSourceKind::SparseFeatureDataset
+                            : PipelineMaterializerSourceKind::ArrowTable;
+                    } else if (validation.manifest.artifact_format ==
                         kSparseCacheArtifactFormat) {
                         auto cached = SparseFeatureDatasetCache::Load(
                             validation.manifest.artifact_path);
@@ -585,6 +595,10 @@ MaterializeResult PipelineMaterializer::Materialize(
                                 cached.ValueOrDie());
                             expanded_bytes =
                                 cached.ValueOrDie()->GetEstimatedHostMemoryBytes();
+                            if (cache_loaded) {
+                                registry.RecordMaterialization(materialized_name,
+                                    {resident_identity, source_table, {}, cached.ValueOrDie()});
+                            }
                             result.effective_kind =
                                 PipelineMaterializerSourceKind::SparseFeatureDataset;
                         }
@@ -601,6 +615,10 @@ MaterializeResult PipelineMaterializer::Materialize(
                                     cached->GetArrowTable(), materialized_name));
                             expanded_bytes = static_cast<uint64_t>(
                                 cached->GetMemoryUsage());
+                            if (cache_loaded) {
+                                registry.RecordMaterialization(materialized_name,
+                                    {resident_identity, source_table, cached->GetArrowTable(), {}});
+                            }
                             result.effective_kind =
                                 PipelineMaterializerSourceKind::ArrowTable;
                         } else {
@@ -645,7 +663,9 @@ MaterializeResult PipelineMaterializer::Materialize(
                                                  expanded_bytes)
                                           << " in memory";
                         }
-                        cache_message << ", loaded in "
+                        cache_message << (resident
+                            ? ", already resident; disk reload skipped, checked in "
+                            : ", loaded in ")
                                       << std::fixed << std::setprecision(1)
                                       << static_cast<double>(cache_load_ms) /
                                              1000.0
@@ -657,7 +677,7 @@ MaterializeResult PipelineMaterializer::Materialize(
                             "PipelineMaterializer: cache hit; skipped {} "
                             "preprocessing operator(s) by reusing '{}' -> '{}' "
                             "(rows={}, columns={}, artifact_bytes={}, "
-                            "expanded_bytes={}, load_ms={}, path='{}')",
+                            "expanded_bytes={}, load_ms={}, resident={}, path='{}')",
                             result.operators_applied,
                             source_dataset_name,
                             materialized_name,
@@ -666,6 +686,7 @@ MaterializeResult PipelineMaterializer::Materialize(
                             safe_artifact_bytes,
                             expanded_bytes,
                             cache_load_ms,
+                            resident,
                             result.cache_artifact_path);
                         return result;
                     }
@@ -675,7 +696,10 @@ MaterializeResult PipelineMaterializer::Materialize(
                         : "cached materialization artifact could not be loaded: " +
                               cache_load_error;
                 }
-            } else if (std::filesystem::exists(manifest_path)) {
+            } else if ([&] {
+                std::error_code ec;
+                return std::filesystem::exists(manifest_path, ec) || ec;
+            }()) {
                 result.cache_status = MaterializationCacheStatus::Corrupt;
                 result.cache_message = "cache manifest is corrupt: " + read_error;
             } else {
@@ -815,6 +839,15 @@ MaterializeResult PipelineMaterializer::Materialize(
         return result;
     }
 
+    if (result.saved_to_cache) {
+        MaterializationCacheManifest manifest;
+        if (ReadMaterializationCacheManifest(result.cache_manifest_path, manifest)) {
+            registry.RecordMaterialization(materialized_name,
+                {MaterializationArtifactIdentity(manifest), source_table,
+                 table_result.table, table_result.sparse_dataset});
+        }
+    }
+
     spdlog::info("PipelineMaterializer: materialized '{}' -> '{}' ({} operators applied)",
                  source_dataset_name, materialized_name, result.operators_applied);
     return result;
@@ -827,6 +860,12 @@ MaterializeResult PipelineMaterializer::Materialize(
         "PipelineMaterializer: allocation failed while preparing dataset '" +
             source_dataset_name +
             "'. Reduce input rows or output dimensions and retry.");
+    return result;
+} catch (const std::exception& error) {
+    MaterializeResult result;
+    result.effective_dataset_name = source_dataset_name;
+    SetMaterializationFailure(result, MaterializationFailureKind::Error,
+        "PipelineMaterializer: dataset preparation failed: " + std::string(error.what()));
     return result;
 }
 

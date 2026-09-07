@@ -858,24 +858,6 @@ void TrainingExecutor::Train(
             ? ArrayFireFallbackPolicy::ForbidNativeCpuFallback
             : ArrayFireFallbackPolicy::AllowNativeCpuFallback;
     const ScopedArrayFireFallbackPolicy fallback_policy(fallback_policy_value);
-    ExecutionDeviceContext execution_context;
-    try {
-        execution_context =
-            PrepareExecutionDeviceForRun(fallback_policy_value);
-        spdlog::info(
-            "TrainingExecutor: ArrayFire device preflight completed: {}",
-            execution_context.Describe());
-    } catch (const std::exception& e) {
-        is_training_.store(false);
-        spdlog::error(
-            "TrainingExecutor: ArrayFire device preflight failed: {}",
-            e.what());
-        throw;
-    }
-    const ScopedExecutionDeviceContext execution_context_scope(
-        execution_context);
-    const ScopedActiveExecutionDeviceContext active_execution_context_scope;
-
     if (config_.forbid_native_cpu_fallback) {
         spdlog::info(
             "TrainingExecutor: strict ArrayFire residency enabled; native CPU fallback is forbidden");
@@ -900,31 +882,6 @@ void TrainingExecutor::Train(
             "TrainingSetup",
             "Training executor attached to existing preparation trace");
     }
-    CrashRunRecorder::Instance().MarkBackendEvent(
-        "ExecutionDeviceContext.Bind",
-        execution_context.Describe());
-    training_trace.RecordExecutionDeviceContext(execution_context);
-    AppendExecutionDeviceLifecycleEvent(execution_context, training_run_id);
-    const auto execution_placement_plan =
-        BuildExecutionPlacementPlan(config_, execution_context);
-    TrainingTraceCollector::Instance().RecordPlacementPlan(
-        execution_placement_plan.fingerprint,
-        static_cast<uint64_t>(execution_placement_plan.entries.size()),
-        execution_placement_plan.summary,
-        fmt::format("placement_entries={} fingerprint={} summary={}",
-                    execution_placement_plan.entries.size(),
-                    execution_placement_plan.fingerprint,
-                    execution_placement_plan.summary));
-    const ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
-        &RecordArrayFireNativeCpuFallbackForActiveTrace);
-    const ScopedArrayFireHostSyncObserver host_sync_observer(
-        &RecordArrayFireHostSyncForActiveTrace);
-    TrainingTraceCollector::Instance().RecordRuntimeEvent(
-        "TrainingDevicePolicy",
-        config_.forbid_native_cpu_fallback
-            ? "ArrayFire-first execution; native CPU fallback forbidden"
-            : "ArrayFire-first execution; native CPU fallback allowed and recorded");
-    RecordDeclaredScalarLossOutputBoundary();
     auto fail_run = [&](const std::string& reason) {
         UpdateMetrics([&](TrainingMetrics& m) {
             m.total_epochs = epochs;
@@ -948,6 +905,49 @@ void TrainingExecutor::Train(
         is_paused_.store(false);
         is_training_.store(false);
     };
+
+    // Pre-device failures must close the same run as later setup/epoch failures.
+    // Do not publish an effective device until preflight actually succeeds.
+    ExecutionDeviceContext execution_context;
+    try {
+        execution_context = PrepareExecutionDeviceForRun(fallback_policy_value);
+        spdlog::info("TrainingExecutor: ArrayFire device preflight completed: {}",
+                     execution_context.Describe());
+    } catch (const std::exception& e) {
+        const std::string reason = std::string("device_preflight_failed: ") + e.what();
+        spdlog::error("TrainingExecutor: {}", reason);
+        fail_run(reason);
+        throw;
+    } catch (...) {
+        fail_run("device_preflight_failed: unknown exception");
+        throw;
+    }
+    const ScopedExecutionDeviceContext execution_context_scope(execution_context);
+    const ScopedActiveExecutionDeviceContext active_execution_context_scope;
+    CrashRunRecorder::Instance().MarkBackendEvent(
+        "ExecutionDeviceContext.Bind", execution_context.Describe());
+    training_trace.RecordExecutionDeviceContext(execution_context);
+    AppendExecutionDeviceLifecycleEvent(execution_context, training_run_id);
+    const auto execution_placement_plan =
+        BuildExecutionPlacementPlan(config_, execution_context);
+    training_trace.RecordPlacementPlan(
+        execution_placement_plan.fingerprint,
+        static_cast<uint64_t>(execution_placement_plan.entries.size()),
+        execution_placement_plan.summary,
+        fmt::format("placement_entries={} fingerprint={} summary={}",
+                    execution_placement_plan.entries.size(),
+                    execution_placement_plan.fingerprint,
+                    execution_placement_plan.summary));
+    const ScopedArrayFireNativeCpuFallbackObserver fallback_observer(
+        &RecordArrayFireNativeCpuFallbackForActiveTrace);
+    const ScopedArrayFireHostSyncObserver host_sync_observer(
+        &RecordArrayFireHostSyncForActiveTrace);
+    training_trace.RecordRuntimeEvent(
+        "TrainingDevicePolicy",
+        config_.forbid_native_cpu_fallback
+            ? "ArrayFire-first execution; native CPU fallback forbidden"
+            : "ArrayFire-first execution; native CPU fallback allowed and recorded");
+    RecordDeclaredScalarLossOutputBoundary();
 
     if (!execution_placement_plan.IsExecutable()) {
         const std::string reason =

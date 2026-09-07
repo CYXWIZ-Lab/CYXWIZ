@@ -551,6 +551,52 @@ int main() {
           "preflight failure should not claim active-model provenance");
     CheckTerminalTrace(failure_metrics, "failed");
 
+    // Fail before any device context or model exists: this used to be reported
+    // as successful completion after zero epochs.
+    cyxwiz::ClearRouteQualificationSnapshot();
+    start_callbacks.store(0);
+    end_callbacks.store(0);
+    progress_callbacks.store(0);
+    callback_success.store(true);
+    auto device_failure_panel = std::make_shared<cyxwiz::TrainingPlotPanel>();
+    auto device_failure_config = MakeConfig(work_dir / "device_failure_checkpoints");
+    Check(manager.StartTrainingArrow(device_failure_config, MakeDataset(), "label",
+              1, 2, device_failure_panel), "accept device-preflight failure fixture");
+    const auto device_failure_task = WaitForTerminalTask(manager, tasks,
+        manager.GetCurrentTaskId(), "device preflight failure");
+    const auto device_failure = manager.GetCurrentMetrics();
+    Check(device_failure.terminal_status == "failed" && device_failure.is_complete &&
+          device_failure.terminal_reason.find("device_preflight_failed") != std::string::npos &&
+          device_failure.last_executed_epoch == 0 && device_failure.total_epochs == 1,
+          "device-preflight exception must preserve failed zero-epoch terminal truth");
+    Check(device_failure_task->GetState() == cyxwiz::TaskState::Failed &&
+          device_failure_task->GetInfo().status_message.find(device_failure.terminal_reason) != std::string::npos,
+          "task must expose the device-preflight failure reason");
+    Check(end_callbacks.load() == 1 && !callback_success.load() && progress_callbacks.load() == 0 &&
+          !manager.HasTrainedModel(), "device-preflight failure must not publish progress, success or a model");
+    const auto device_failure_dashboard = device_failure_panel->GetStatusSnapshot();
+    Check(device_failure_dashboard.terminal_status == "failed" &&
+          device_failure_dashboard.terminal_reason == device_failure.terminal_reason,
+          "dashboard must retain the exact device-preflight failure");
+    const auto device_failure_trace = cyxwiz::TrainingTraceCollector::Instance().Snapshot();
+    Check(device_failure_trace.available && device_failure_trace.status == "failed" &&
+          !device_failure_trace.execution_validated,
+          "device-preflight trace must terminate without claiming a validated device");
+    int device_terminal_events = 0;
+    for (const auto& event : device_failure_trace.recent_events) {
+        if (event.stage == "TrainingTerminal" && event.status == "failed" &&
+            event.terminal_reason == device_failure.terminal_reason) {
+            ++device_terminal_events;
+        }
+    }
+    Check(device_terminal_events == 1, "device-preflight failure must emit one canonical terminal event");
+    const auto device_crash_run = cyxwiz::CrashRunRecorder::LoadLastRun();
+    Check(device_crash_run && device_crash_run->status == "failed" &&
+          device_crash_run->terminal_reason == device_failure.terminal_reason,
+          "persisted run must retain the device-preflight failure");
+    cyxwiz::test::InstallQualifiedRouteSnapshot();
+    device_failure_panel.reset();
+
     manager.SetOnTrainingStart(nullptr);
     manager.SetOnTrainingEnd(nullptr);
     manager.SetOnProgress(nullptr);

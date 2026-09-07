@@ -33,6 +33,7 @@ void DataInputDialog::DetectFileCategory() {
 
 void DataInputDialog::LoadPreview() {
     ResetPreviewPaging();
+    preview_view_ = {};
     preview_error_.clear();
     preview_columns_.clear();
     preview_data_.clear();
@@ -43,6 +44,7 @@ void DataInputDialog::LoadPreview() {
     label_distribution_.clear();
     label_distribution_column_.clear();
     label_distribution_total_ = 0;
+    label_distribution_error_.clear();
 
     if (!IsPreviewSupported()) {
         preview_error_ = PreviewUnavailableMessage();
@@ -63,6 +65,13 @@ void DataInputDialog::LoadPreview() {
         (file_category_ == FileCategory::Tabular ||
          file_category_ == FileCategory::Text ||
          file_category_ == FileCategory::TimeSeries)) {
+        if (file_category_ == FileCategory::Text &&
+            (text_layout_ == TextLayout::CorpusSubdirs || detected_type_ > 2)) {
+            preview_error_ = "Apply this text source first, then refresh Preview to browse its registered raw text table. "
+                             "Only CSV/TSV has a pre-load source sample.";
+            preview_loaded_ = true;
+            return;
+        }
         LoadColumnList();
     }
     preview_loaded_ = true;
@@ -79,20 +88,24 @@ void DataInputDialog::LoadColumnList() {
         has_header_,
         custom_delimiter_[0],
         detected_type_,
-        skip_rows_);
+        skip_rows_,
+        file_category_ == FileCategory::Text
+            ? preview_sample_rows_ + (has_header_ ? 1 : 0) : 25);
     if (!table.error.empty()) {
         preview_error_ = table.error;
         return;
     }
 
     preview_columns_ = table.columns;
+    if (available_columns_ != table.columns || selected_columns_.size() != table.columns.size()) {
+        selected_columns_.assign(table.columns.size(), true);
+    }
     available_columns_ = table.columns;
     preview_data_ = table.rows;
     preview_total_rows_ = static_cast<int64_t>(table.rows.size());
     preview_next_offset_ = preview_total_rows_;
     preview_has_next_ = false;
     preview_backend_ = "Source";
-    selected_columns_.assign(table.columns.size(), true);
 
     UpdateTextLabelDistribution();
 }
@@ -134,6 +147,23 @@ void DataInputDialog::RefreshColumnList() {
 }
 
 bool DataInputDialog::CanPageRegisteredPreview() const {
+    if (!node_) return false;
+    const auto parameter_matches = [this](const char* key, const std::string& value) {
+        const auto it = node_->parameters.find(key);
+        return it != node_->parameters.end() && it->second == value;
+    };
+    if (source_type_ == SourceType::File && file_category_ == FileCategory::Text &&
+        data_load_state_ == DataLoadState::InMemory && loaded_backend_ == 5) {
+        auto& registry = cyxwiz::DataRegistry::Instance();
+        // Compare against the dialog's applied source contract; do not retain
+        // registry entry pointers after the registry mutex is released.
+        return parameter_matches(text_layout_ == TextLayout::CorpusSubdirs ? "folder_path" : "file_path",
+                                 CurrentSourcePath()) &&
+            parameter_matches("text_column", text_column_) &&
+            parameter_matches("text_label_column", text_label_column_) &&
+            registry.IsTextDataset(loaded_dataset_name_) &&
+            registry.IsArrowDataset(loaded_dataset_name_);
+    }
     if (source_type_ != SourceType::File ||
         (file_category_ != FileCategory::Tabular &&
          file_category_ != FileCategory::TimeSeries) ||
@@ -144,11 +174,6 @@ bool DataInputDialog::CanPageRegisteredPreview() const {
         return false;
     }
 
-    const auto parameter_matches = [this](const char* key,
-                                           const std::string& value) {
-        const auto it = node_->parameters.find(key);
-        return it != node_->parameters.end() && it->second == value;
-    };
     if (!parameter_matches("file_path", file_path_) ||
         !parameter_matches("type", data_input::FileTypeParam(detected_type_)) ||
         !parameter_matches("has_header", has_header_ ? "true" : "false") ||
@@ -195,6 +220,9 @@ void DataInputDialog::RequestPreviewPage(int64_t row_index) {
     request.dataset_name = loaded_dataset_name_;
     request.offset = offset;
     request.row_limit = preview_page_cache_.PageSize();
+    if (file_category_ == FileCategory::Text && offset == 0) {
+        request.summarize_label_column = text_label_column_;
+    }
     // The dialog renders the complete registered schema. Leave the column
     // selection empty so each page is resolved by stable column position.
     // Round-tripping names here can change the result for legal schemas that
@@ -263,8 +291,10 @@ void DataInputDialog::PollPreviewPageResult() {
 
     if (preview_columns_.empty()) {
         preview_columns_ = page_columns;
+        if (available_columns_ != preview_columns_ || selected_columns_.size() != preview_columns_.size()) {
+            selected_columns_.assign(preview_columns_.size(), true);
+        }
         available_columns_ = preview_columns_;
-        selected_columns_.assign(preview_columns_.size(), true);
     } else if (page_columns != preview_columns_) {
         // The registered dataset may have been refreshed while a page was in
         // flight. Treat the result as a new preview generation instead of
@@ -288,6 +318,13 @@ void DataInputDialog::PollPreviewPageResult() {
     }
 
     preview_backend_ = page.backend;
+    if (!page.label_summary_column.empty()) {
+        label_distribution_column_ = page.label_summary_column;
+        label_distribution_error_ = page.label_summary_error;
+        label_distribution_ = std::move(page.label_counts);
+        label_distribution_total_ = page.label_summary_complete
+            ? static_cast<size_t>(page.total_rows) : 0;
+    }
     preview_total_rows_ = page.total_rows;
     preview_next_offset_ = page.next_offset;
     preview_has_next_ = page.has_next;
