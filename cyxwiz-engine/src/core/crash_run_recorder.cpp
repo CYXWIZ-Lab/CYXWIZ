@@ -481,12 +481,12 @@ std::string CrashRunRecorder::NowIso8601() {
     const std::time_t time = std::chrono::system_clock::to_time_t(now);
     std::tm tm{};
 #ifdef _WIN32
-    localtime_s(&tm, &time);
+    gmtime_s(&tm, &time);
 #else
-    localtime_r(&time, &tm);
+    gmtime_r(&time, &tm);
 #endif
     std::ostringstream out;
-    out << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+    out << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
     return out.str();
 }
 
