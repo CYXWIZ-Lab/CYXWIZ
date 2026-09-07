@@ -6,6 +6,7 @@
 #endif
 
 #include <cstdlib>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -64,9 +65,10 @@ void WriteNpyFloat64Matrix(const std::filesystem::path& path,
 int main() {
     namespace fs = std::filesystem;
 
-    const fs::path work_dir = fs::temp_directory_path() / "cyxwiz_data_convert_test";
-    fs::remove_all(work_dir);
-    fs::create_directories(work_dir);
+    const fs::path work_dir = fs::temp_directory_path() /
+        ("cyxwiz_data_convert_test_" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    Check(fs::create_directory(work_dir), "test workspace must be unique");
 
     const fs::path csv_path = work_dir / "input.csv";
     const fs::path parquet_path = work_dir / "output.parquet";

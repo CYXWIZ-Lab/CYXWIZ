@@ -27,6 +27,7 @@
 #include "data_preview_table_renderer.h"
 #include "loaders/data_loader.h"
 #include "../core/data_convert_service.h"
+#include "../core/data_convert_task.h"
 #include "../core/data_preview_service.h"
 #include "../core/dataset_partitions.h"
 #include "../core/training_parameter_contract.h"
@@ -579,7 +580,7 @@ public:
     ~DataConvertDialog() override;
     void Apply() override;
     void Reset() override;
-    bool IsBusy() const override { return preview_loading_; }
+    bool IsBusy() const override { return preview_loading_ || conversion_state_ != nullptr; }
     ImVec2 GetDefaultSize() const override { return ImVec2(820, 620); }
 
 protected:
@@ -598,6 +599,7 @@ private:
     void PollPreviewResult();
     void CancelPreview();
     void RunConversion();
+    void PollConversionResult();
     void SetStatus(std::string message, bool is_error);
     void AddLogLine(const std::string& message);
 
@@ -605,11 +607,13 @@ private:
         std::atomic<bool> done{false};
         cyxwiz::DataConvertPreview result;
     };
+    std::shared_ptr<cyxwiz::DataConvertTaskResult> conversion_state_;
 
     char input_path_[512] = {};
     char output_path_[512] = {};
-    int input_format_ = 0;
-    int output_format_ = 0;
+    std::string input_format_ = "auto";
+    std::string output_format_ = "auto";
+    char excel_sheet_[256] = {};
     char delimiter_[8] = ",";
     char decimal_point_ = '.';
     bool auto_detect_delimiter_ = true;

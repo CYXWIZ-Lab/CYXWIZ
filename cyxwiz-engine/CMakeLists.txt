@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 project(cyxwiz-engine)
 
 option(CYXWIZ_ENABLE_TRACY "Enable optional Tracy profiler integration when Tracy is installed" OFF)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/CyxWizDataConvert.cmake")
 
 # Find packages
 find_package(imgui CONFIG REQUIRED)
@@ -341,6 +342,7 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_source_options.cpp
     src/gui/data_input_dialog_apply.cpp
     src/gui/data_io_dialogs.cpp
+    src/core/data_convert_task.cpp
     src/gui/data_input_dialog.cpp
     src/gui/loaders/audio_loader.cpp
     src/gui/loaders/data_loader.cpp
@@ -2612,6 +2614,7 @@ set_target_properties(test_pipeline_operator_materializer_parity PROPERTIES
 # ===== Test: DataConvert upstream dataset input =====
 add_executable(test_data_convert_pipeline_input
     tests/test_data_convert_pipeline_input.cpp
+    tests/test_data_convert_pipeline_reload.cpp
     src/core/preprocessing_state.cpp
     src/core/arrow_dataset.cpp
     src/core/data_registry.cpp
@@ -3734,41 +3737,64 @@ set_target_properties(test_training_batcher_setup PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-# ===== Test: DataConvert CSV -> Parquet =====
-add_executable(test_data_convert_service
-    tests/test_data_convert_service.cpp
+# ===== Tests: DataConvert service, workbook adapter and disk reload =====
+foreach(data_convert_test IN ITEMS
+        test_data_convert_service test_excel_table_adapter test_data_convert_reload)
+    add_executable(${data_convert_test}
+        tests/${data_convert_test}.cpp
+        src/core/data_convert_service.cpp
+        src/core/arrow_dataset.cpp
+    )
+    target_include_directories(${data_convert_test} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+    )
+    target_link_libraries(${data_convert_test} PRIVATE
+        Arrow::arrow_shared
+        Parquet::parquet_shared
+        spdlog::spdlog
+        fmt::fmt
+        nlohmann_json::nlohmann_json
+    )
+    if(HighFive_FOUND)
+        target_link_libraries(${data_convert_test} PRIVATE HighFive)
+        target_compile_definitions(${data_convert_test} PRIVATE CYXWIZ_HAS_HDF5)
+    endif()
+    if(WIN32)
+        target_compile_definitions(${data_convert_test} PRIVATE
+            _CRT_SECURE_NO_WARNINGS
+            NOMINMAX
+        )
+    endif()
+    set_target_properties(${data_convert_test} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+endforeach()
+
+target_sources(test_excel_table_adapter PRIVATE tests/test_xlsx_archive_guard.cpp)
+
+add_executable(test_data_convert_task
+    tests/test_data_convert_task.cpp
+    src/core/data_convert_task.cpp
     src/core/data_convert_service.cpp
     src/core/arrow_dataset.cpp
+    src/core/async_task_manager.cpp
+    src/core/training_trace_collector.cpp
+    src/core/crash_run_recorder.cpp
 )
-
-target_include_directories(test_data_convert_service PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
-)
-
-target_link_libraries(test_data_convert_service PRIVATE
-    Arrow::arrow_shared
-    Parquet::parquet_shared
-    spdlog::spdlog
-    fmt::fmt
-    nlohmann_json::nlohmann_json
-)
-
-if(HighFive_FOUND)
-    target_link_libraries(test_data_convert_service PRIVATE HighFive)
-    target_compile_definitions(test_data_convert_service PRIVATE CYXWIZ_HAS_HDF5)
-endif()
-
+target_include_directories(test_data_convert_task PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_data_convert_task PRIVATE
+    cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared
+    spdlog::spdlog nlohmann_json::nlohmann_json)
+cyxwiz_target_data_convert(test_data_convert_task)
 if(WIN32)
-    target_compile_definitions(test_data_convert_service PRIVATE
-        _CRT_SECURE_NO_WARNINGS
-        NOMINMAX
-    )
+    target_compile_definitions(test_data_convert_task PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
+set_target_properties(test_data_convert_task PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-set_target_properties(test_data_convert_service PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
+add_executable(test_data_convert_format_controls tests/test_data_convert_format_controls.cpp)
+target_link_libraries(test_data_convert_format_controls PRIVATE imgui::imgui)
+set_target_properties(test_data_convert_format_controls PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: Shared bounded data preview service =====
 add_executable(test_data_preview_controls
@@ -4609,6 +4635,19 @@ endif()
 set_target_properties(test_large_text_file PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+foreach(data_convert_target IN ITEMS cyxwiz-engine test_data_convert_service
+        test_excel_table_adapter test_data_convert_reload
+        test_data_convert_pipeline_input test_pipeline_executor_operator_routing
+        test_pipeline_operator_materializer_parity)
+    cyxwiz_target_data_convert(${data_convert_target})
+endforeach()
+if(HighFive_FOUND)
+    foreach(data_convert_pipeline_test IN ITEMS test_data_convert_pipeline_input
+            test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity)
+        target_sources(${data_convert_pipeline_test} PRIVATE src/core/datasets/hdf5_dataset.cpp)
+    endforeach()
+endif()
+
 # ===== ASan Memory Test (standalone, no vcpkg deps) =====
 if(CYXWIZ_ENABLE_ASAN)
     add_executable(test_asan_memory

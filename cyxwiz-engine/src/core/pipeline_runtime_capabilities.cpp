@@ -1,4 +1,5 @@
 #include "pipeline_runtime_capabilities.h"
+#include "data_convert_formats.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -899,8 +900,8 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"DataInput", "file_type", "auto", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}},
         {"DataOutput", "format", "csv", {"csv", "parquet"}},
         {"DataOutput", "file_type", "csv", {"csv", "parquet"}},
-        {"DataConvert", "input_format", "auto", {"auto", "csv", "tsv", "json", "jsonl", "ndjson", "txt", "text", "arff", "npy", "h5", "hdf5", "parquet", "feather", "arrow", "ipc"}},
-        {"DataConvert", "output_format", "auto", {"auto", "csv", "tsv", "json", "jsonl", "ndjson", "txt", "text", "arff", "npy", "h5", "hdf5", "parquet", "feather", "arrow", "ipc"}},
+        {"DataConvert", "input_format", "auto", data_convert::AllowedNames(data_convert::Direction::Input, data_convert::kBuildFeatures)},
+        {"DataConvert", "output_format", "auto", data_convert::AllowedNames(data_convert::Direction::Output, data_convert::kBuildFeatures)},
         {"DataConvert", "decimal_point", ".", {".", ","}},
         {"DataConvert", "compression", "snappy", {"none", "snappy", "gzip", "zstd", "brotli"}},
         {"SaveDataset", "format", "csv", {"csv", "parquet"}},
@@ -1859,6 +1860,14 @@ ResolvePipelineIntegerParameters(const std::string& legacy_type_name) {
     for (const auto& capability : capabilities) {
         if (legacy_type_name == capability.legacy_type_name) {
             result.push_back(capability);
+            // PACF still consumes this serialized alias. Validate it with the
+            // canonical bounds without exposing a second GUI property.
+            if (legacy_type_name == "PACFNode" &&
+                std::string(capability.parameter_name) == "max_lag") {
+                auto alias = capability;
+                alias.parameter_name = "lags";
+                result.push_back(alias);
+            }
         }
     }
     return result;

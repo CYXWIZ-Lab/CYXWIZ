@@ -2253,7 +2253,7 @@ void AddDataConvertTruth(NodeTruthReport& report,
         true,
         true,
         true,
-        "DataConvert writes a file and registers the typed in-memory result without reparsing it."));
+        "DataConvert registers the persisted output representation. Non-IPC outputs are reloaded when a retained table is requested."));
     report.properties.push_back(ResolveStringProperty(
         node,
         "Input format",
@@ -2285,7 +2285,11 @@ void AddDataConvertTruth(NodeTruthReport& report,
         "Runtime result",
         "convert_result",
         "file plus registered dataset",
-        "On success, DataConvert writes the output file and registers the typed table as ds_dataconvert_<node id>. A fresh cached output is reparsed only when no in-memory table exists."));
+        "On success, DataConvert registers the persisted representation as ds_dataconvert_<node id>. Feather/Arrow IPC can retain the source table; other formats reload their written representation. Fresh-cache results are loaded from disk when no table is returned."));
+    report.properties.push_back(ResolveStringProperty(
+        node, "XLSX worksheet", "excel_sheet", "", TruthOwner::Loader,
+        true, true, false,
+        "Used only for file-backed XLSX input; blank selects the first worksheet. Upstream Arrow input ignores this setting. Values-only workbook restrictions apply."));
 }
 
 void AddDeployToNodeEditorTruth(NodeTruthReport& report, const MLNode& node) {

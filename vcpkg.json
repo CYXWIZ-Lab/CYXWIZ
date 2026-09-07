@@ -47,6 +47,7 @@
     "nativefiledialog-extended",
     "libvterm",
     "duckdb",
+    "openxlsx",
     "libsndfile",
     "fftw3",
     {

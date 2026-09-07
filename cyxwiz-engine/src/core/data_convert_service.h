@@ -45,8 +45,11 @@ struct DataConvertOptions {
     bool create_parent_dirs = true;
     bool write_manifest = true;
     int preview_rows = 20;
+    // Returned table describes persisted output; non-IPC formats require a
+    // disk reload. A fresh-cache result can still omit the table.
     bool retain_output_table = false;
     std::shared_ptr<arrow::Table> input_table;
+    std::string excel_sheet; // XLSX input only; empty selects the first worksheet.
 };
 
 struct DataConvertResult {

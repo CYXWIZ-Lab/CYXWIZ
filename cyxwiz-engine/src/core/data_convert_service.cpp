@@ -1,8 +1,10 @@
 #include "data_convert_service.h"
+#include "data_convert_formats.h"
 
 #include "arrow_dataset.h"
 #include "csv_ingestion_options.h"
 #include "error_codes.h"
+#include "excel_table_adapter.h"
 
 #include <arrow/api.h>
 #include <arrow/csv/api.h>
@@ -34,19 +36,7 @@
 namespace cyxwiz {
 namespace {
 
-enum class DataConvertFormat {
-    Unknown,
-    Csv,
-    Tsv,
-    JsonLines,
-    Text,
-    Arff,
-    Numpy,
-    Hdf5,
-    Parquet,
-    Feather,
-    ArrowIpc
-};
+using DataConvertFormat = data_convert::Format;
 
 std::string LowerAscii(std::string value) {
     for (char& c : value) {
@@ -82,47 +72,9 @@ std::string NowIsoLikeUtc() {
     return out.str();
 }
 
-DataConvertFormat FormatFromName(const std::string& raw_name) {
-    const std::string name = LowerAscii(TrimAscii(raw_name));
-    if (name == "csv") return DataConvertFormat::Csv;
-    if (name == "tsv") return DataConvertFormat::Tsv;
-    if (name == "json" || name == "jsonl" || name == "ndjson") {
-        return DataConvertFormat::JsonLines;
-    }
-    if (name == "txt" || name == "text") return DataConvertFormat::Text;
-    if (name == "arff") return DataConvertFormat::Arff;
-    if (name == "npy") return DataConvertFormat::Numpy;
-    if (name == "h5" || name == "hdf5" || name == "hdf") {
-        return DataConvertFormat::Hdf5;
-    }
-    if (name == "parquet" || name == "pq") return DataConvertFormat::Parquet;
-    if (name == "feather" || name == "fea") return DataConvertFormat::Feather;
-    if (name == "arrow" || name == "ipc" || name == "arrowipc") {
-        return DataConvertFormat::ArrowIpc;
-    }
-    return DataConvertFormat::Unknown;
-}
-
-DataConvertFormat FormatFromPath(const std::filesystem::path& path) {
-    return FormatFromName(path.extension().string().empty()
-                              ? std::string{}
-                              : path.extension().string().substr(1));
-}
-
 std::string FormatName(DataConvertFormat format) {
-    switch (format) {
-        case DataConvertFormat::Csv: return "csv";
-        case DataConvertFormat::Tsv: return "tsv";
-        case DataConvertFormat::JsonLines: return "jsonl";
-        case DataConvertFormat::Text: return "txt";
-        case DataConvertFormat::Arff: return "arff";
-        case DataConvertFormat::Numpy: return "npy";
-        case DataConvertFormat::Hdf5: return "hdf5";
-        case DataConvertFormat::Parquet: return "parquet";
-        case DataConvertFormat::Feather: return "feather";
-        case DataConvertFormat::ArrowIpc: return "ipc";
-        default: return "unknown";
-    }
+    const auto* info = data_convert::Find(format);
+    return info ? info->name : "unknown";
 }
 
 bool IsDelimitedFormat(DataConvertFormat format) {
@@ -131,7 +83,8 @@ bool IsDelimitedFormat(DataConvertFormat format) {
 }
 
 bool IsSupportedFormat(DataConvertFormat format) {
-    return format != DataConvertFormat::Unknown;
+    return data_convert::Available(format, data_convert::Direction::Input,
+                                  data_convert::kBuildFeatures);
 }
 
 bool IsAutoFormat(const std::string& value) {
@@ -140,84 +93,42 @@ bool IsAutoFormat(const std::string& value) {
 }
 
 DataConvertFormat ResolveInputFormat(const DataConvertOptions& options) {
-    if (!IsAutoFormat(options.input_format)) {
-        return FormatFromName(options.input_format);
-    }
-    return FormatFromPath(options.input_path);
+    return data_convert::Resolve(options.input_format,
+        std::filesystem::path(options.input_path).extension().string());
 }
 
 DataConvertFormat ResolveOutputFormat(const DataConvertOptions& options) {
-    if (!IsAutoFormat(options.output_format)) {
-        return FormatFromName(options.output_format);
-    }
-    return FormatFromPath(options.output_path);
+    return data_convert::Resolve(options.output_format,
+        std::filesystem::path(options.output_path).extension().string());
 }
 
-std::string SupportedFormatList() {
-    return "csv, tsv, json/jsonl, txt, arff, npy, hdf5, parquet, feather, arrow, or ipc";
+std::string SupportedFormatList(bool for_output = false) {
+    std::string result;
+    for (const auto& info : data_convert::kFormats) {
+        if (!data_convert::Available(info.format, for_output ? data_convert::Direction::Output
+                                                            : data_convert::Direction::Input,
+                                    data_convert::kBuildFeatures)) continue;
+        if (!result.empty()) result += ", ";
+        result += info.name;
+    }
+    return result;
 }
 
-bool OutputExtensionMatchesFormat(const std::filesystem::path& output_path,
-                                  DataConvertFormat output_format) {
-    std::string extension = output_path.extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-    switch (output_format) {
-        case DataConvertFormat::Csv:
-            return extension == ".csv";
-        case DataConvertFormat::Tsv:
-            return extension == ".tsv";
-        case DataConvertFormat::JsonLines:
-            return extension == ".json" || extension == ".jsonl" ||
-                   extension == ".ndjson";
-        case DataConvertFormat::Text:
-            return extension == ".txt" || extension == ".text";
-        case DataConvertFormat::Arff:
-            return extension == ".arff";
-        case DataConvertFormat::Numpy:
-            return extension == ".npy";
-        case DataConvertFormat::Hdf5:
-            return extension == ".h5" || extension == ".hdf5" ||
-                   extension == ".hdf";
-        case DataConvertFormat::Parquet:
-            return extension == ".parquet" || extension == ".pq";
-        case DataConvertFormat::Feather:
-            return extension == ".feather" || extension == ".fea";
-        case DataConvertFormat::ArrowIpc:
-            return extension == ".arrow" || extension == ".ipc";
-        case DataConvertFormat::Unknown:
-            return true;
-    }
-    return true;
+bool OutputExtensionMatchesFormat(const std::filesystem::path& path,
+                                  DataConvertFormat format) {
+    return data_convert::ExtensionMatches(path.extension().string(), format);
 }
 
-std::string ExpectedExtensionsForFormat(DataConvertFormat output_format) {
-    switch (output_format) {
-        case DataConvertFormat::Csv:
-            return ".csv";
-        case DataConvertFormat::Tsv:
-            return ".tsv";
-        case DataConvertFormat::JsonLines:
-            return ".jsonl, .json, or .ndjson";
-        case DataConvertFormat::Text:
-            return ".txt";
-        case DataConvertFormat::Arff:
-            return ".arff";
-        case DataConvertFormat::Numpy:
-            return ".npy";
-        case DataConvertFormat::Hdf5:
-            return ".h5 or .hdf5";
-        case DataConvertFormat::Parquet:
-            return ".parquet or .pq";
-        case DataConvertFormat::Feather:
-            return ".feather or .fea";
-        case DataConvertFormat::ArrowIpc:
-            return ".arrow or .ipc";
-        case DataConvertFormat::Unknown:
-            return "";
+std::string ExpectedExtensionsForFormat(DataConvertFormat format) {
+    std::string result;
+    const auto* info = data_convert::Find(format);
+    if (info) for (const char* extension : info->extensions) {
+        if (!extension) continue;
+        if (!result.empty()) result += ", ";
+        result += ".";
+        result += extension;
     }
-    return "";
+    return result;
 }
 
 int CountDelimiterOutsideQuotes(const std::string& line, char delimiter) {
@@ -1008,6 +919,14 @@ std::shared_ptr<ArrowDataset> LoadInputDataset(
     if (input_format == DataConvertFormat::Hdf5) {
         return LoadHdf5(options, error);
     }
+    if (input_format == DataConvertFormat::Excel) {
+        ExcelTableReadOptions excel_options;
+        excel_options.sheet_name = options.excel_sheet;
+        excel_options.has_header = options.has_header;
+        excel_options.skip_rows = options.skip_rows;
+        auto table = ReadExcelTable(options.input_path, excel_options, error);
+        return table ? std::make_shared<ArrowDataset>(table, "data_convert_input") : nullptr;
+    }
 
     auto dataset = ArrowDataset::FromFile(options.input_path,
                                           "data_convert_input");
@@ -1623,7 +1542,7 @@ bool WriteOutputDataset(const std::shared_ptr<arrow::Table>& table,
         case DataConvertFormat::ArrowIpc:
             return WriteArrowIpc(table, options, error);
         default:
-            error = "Unsupported output format. Choose " + SupportedFormatList() + ".";
+            error = "Unsupported output format. Choose " + SupportedFormatList(true) + ".";
             return false;
     }
 }
@@ -1648,6 +1567,9 @@ std::string BuildSettingsHashInput(const DataConvertOptions& options,
         << options.skip_rows << "|"
         << options.parquet_compression << "|"
         << options.row_group_size;
+    if (input_format == DataConvertFormat::Excel) {
+        out << "|xlsx-bounded-values-v2|" << options.excel_sheet.size() << ":" << options.excel_sheet;
+    }
     return out.str();
 }
 
@@ -1671,9 +1593,11 @@ bool WriteManifest(const DataConvertOptions& options,
 
     nlohmann::json manifest = {
         {"node", "DataConvert"},
-        {"version", 2},
+        {"version", 3},
+        {"input_source", options.input_table ? "arrow_table" : "file"},
         {"input_path", options.input_path},
         {"input_format", FormatName(input_format)},
+        {"excel_sheet", options.excel_sheet},
         {"output_path", options.output_path},
         {"output_format", FormatName(output_format)},
         {"rows_read", result.rows_read},
@@ -1692,7 +1616,7 @@ bool WriteManifest(const DataConvertOptions& options,
     };
 
     std::error_code ec;
-    if (!options.input_path.empty() && std::filesystem::exists(input_path, ec)) {
+    if (!options.input_table && !options.input_path.empty() && std::filesystem::exists(input_path, ec)) {
         manifest["input_size"] =
             static_cast<int64_t>(std::filesystem::file_size(input_path, ec));
         const auto write_time = std::filesystem::last_write_time(input_path, ec);
@@ -1704,6 +1628,11 @@ bool WriteManifest(const DataConvertOptions& options,
     if (std::filesystem::exists(output_path, ec)) {
         manifest["output_size"] =
             static_cast<int64_t>(std::filesystem::file_size(output_path, ec));
+        const auto write_time = std::filesystem::last_write_time(output_path, ec);
+        if (!ec) {
+            manifest["output_modified_time_native"] =
+                static_cast<int64_t>(write_time.time_since_epoch().count());
+        }
     }
 
     const std::string manifest_path = BuildManifestPath(options.output_path);
@@ -1720,8 +1649,8 @@ bool WriteManifest(const DataConvertOptions& options,
 bool TryUseFreshOutput(const DataConvertOptions& options,
                        DataConvertFormat input_format,
                        DataConvertFormat output_format,
-                       DataConvertResult& result) {
-    if (!options.write_manifest || options.input_path.empty()) {
+                       DataConvertResult& result) try {
+    if (!options.write_manifest || options.input_path.empty() || options.input_table) {
         return false;
     }
 
@@ -1749,7 +1678,8 @@ bool TryUseFreshOutput(const DataConvertOptions& options,
 
     const int manifest_version = manifest.value("version", 0);
     if (manifest.value("node", "") != "DataConvert" ||
-        manifest_version < 1 ||
+        manifest_version != 3 ||
+        manifest.value("input_source", "") != "file" ||
         manifest.value("input_path", "") != options.input_path ||
         manifest.value("output_path", "") != options.output_path ||
         manifest.value("output_format", "") != FormatName(output_format)) {
@@ -1787,18 +1717,28 @@ bool TryUseFreshOutput(const DataConvertOptions& options,
         manifest.value("output_size", int64_t{-1}) != current_output_size) {
         return false;
     }
+    const auto output_time = std::filesystem::last_write_time(output_path, ec);
+    if (ec || manifest.value("output_modified_time_native", int64_t{-1}) !=
+                  static_cast<int64_t>(output_time.time_since_epoch().count())) {
+        return false;
+    }
 
-    result.ok = true;
-    result.skipped_fresh_output = true;
-    result.output_path = options.output_path;
-    result.manifest_path = manifest_path.string();
-    result.rows_read = manifest.value("rows_read", int64_t{0});
-    result.rows_written = manifest.value("rows_written", int64_t{0});
-    result.columns = manifest.value("columns", int64_t{0});
-    result.bytes_written = current_output_size;
+    DataConvertResult cached;
+    cached.ok = true;
+    cached.skipped_fresh_output = true;
+    cached.output_path = options.output_path;
+    cached.manifest_path = manifest_path.string();
+    cached.rows_read = manifest.value("rows_read", int64_t{0});
+    cached.rows_written = manifest.value("rows_written", int64_t{0});
+    cached.columns = manifest.value("columns", int64_t{0});
+    cached.bytes_written = current_output_size;
     const std::string delimiter = manifest.value("delimiter", ",");
-    result.detected_delimiter = delimiter.empty() ? ',' : delimiter.front();
+    cached.detected_delimiter = delimiter.empty() ? ',' : delimiter.front();
+    result = std::move(cached);
     return true;
+} catch (const nlohmann::json::exception&) {
+    // Malformed or wrongly typed cache metadata is a cache miss, not a crash.
+    return false;
 }
 
 void FillPreviewFromTable(const std::shared_ptr<arrow::Table>& table,
@@ -1907,7 +1847,7 @@ DataConvertPreview DataConvertService::Preview(const DataConvertOptions& options
             errors::File::NotFound,
             "Input file does not exist: " + options.input_path);
     }
-    if (!IsSupportedFormat(input_format)) {
+    if (!options.input_table && !IsSupportedFormat(input_format)) {
         return FailPreview(
             errors::File::UnsupportedFormat,
             "Input format is not supported. Choose " +
@@ -1956,11 +1896,15 @@ DataConvertResult DataConvertService::Convert(const DataConvertOptions& options)
             errors::File::PathMissing,
             "Output path is empty. Choose where to write the converted file.");
     }
+    if (output_format == DataConvertFormat::Excel) {
+        return FailConvert(errors::File::UnsupportedFormat,
+                           "XLSX export is not supported. Choose a supported table output format.");
+    }
     if (!IsSupportedFormat(output_format)) {
         return FailConvert(
             errors::File::UnsupportedFormat,
             "Output format is not supported. Choose " +
-                SupportedFormatList() + ".");
+                SupportedFormatList(true) + ".");
     }
     if (!IsAutoFormat(options.output_format) &&
         !OutputExtensionMatchesFormat(output_path, output_format)) {
@@ -2014,7 +1958,25 @@ DataConvertResult DataConvertService::Convert(const DataConvertOptions& options)
     result.rows_written = table->num_rows();
     result.columns = table->num_columns();
     if (options.retain_output_table) {
-        result.output_table = table;
+        if (output_format == DataConvertFormat::Feather ||
+            output_format == DataConvertFormat::ArrowIpc) {
+            result.output_table = table;
+        } else {
+            // Retention must expose the written format's schema and values,
+            // not the source representation. This explicit output reload keeps
+            // first execution consistent with the fresh-cache graph path.
+            DataConvertOptions reload;
+            reload.input_path = options.output_path;
+            reload.auto_detect_delimiter = true;
+            auto written = LoadInputDataset(reload, output_format, error);
+            if (!written || !written->GetArrowTable()) {
+                return FailConvert(errors::File::ReadFailed,
+                    "Output was written but could not be reloaded: " + error);
+            }
+            result.output_table = written->GetArrowTable();
+            result.rows_written = result.output_table->num_rows();
+            result.columns = result.output_table->num_columns();
+        }
     }
     result.output_path = options.output_path;
     if (std::filesystem::exists(output_path, ec)) {

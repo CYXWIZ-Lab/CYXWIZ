@@ -1,4 +1,5 @@
 #include "node_metadata_registry.h"
+#include "data_convert_formats.h"
 #include "pipeline_runtime_capabilities.h"
 #include "training_parameter_contract.h"
 #include "simulation_runtime_capabilities.h"
@@ -1342,13 +1343,14 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         "Convert datasets between supported table file formats", "", "",
         {{"Input", PinType::Dataset, false, "Optional input dataset artifact; input_path is used when disconnected"}},
         {{"Output", PinType::Dataset, true, "Converted dataset artifact"}},
-        {{"input_path", "file", "", "Input data file", {}, "*.csv;*.tsv;*.parquet;*.pq;*.feather;*.fea;*.arrow;*.ipc"},
-         {"input_format", "enum", "auto", "Input format", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}, ""},
-         {"output_path", "file", "", "Output data file", {}, "*.csv;*.tsv;*.parquet;*.pq;*.feather;*.fea;*.arrow;*.ipc"},
-         {"output_format", "enum", "auto", "Output format", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}, ""},
+        {{"input_path", "file", "", "Input data file", {}, cyxwiz::data_convert::ExtensionFilter(cyxwiz::data_convert::Direction::Input, cyxwiz::data_convert::kBuildFeatures, ";", "*.")},
+         {"input_format", "enum", "auto", "Input format", cyxwiz::data_convert::PropertyChoices(cyxwiz::data_convert::Direction::Input, cyxwiz::data_convert::kBuildFeatures), ""},
+         {"output_path", "file", "", "Output data file", {}, cyxwiz::data_convert::ExtensionFilter(cyxwiz::data_convert::Direction::Output, cyxwiz::data_convert::kBuildFeatures, ";", "*.")},
+         {"output_format", "enum", "auto", "Output format", cyxwiz::data_convert::PropertyChoices(cyxwiz::data_convert::Direction::Output, cyxwiz::data_convert::kBuildFeatures), ""},
+         {"excel_sheet", "string", "", cyxwiz::data_convert::kXlsxRestrictions, {}, "", "XLSX worksheet (blank selects first)"},
          {"delimiter", "enum", "auto", "CSV delimiter", {"auto", ",", "\\t", ";", "|"}, ""},
          {"decimal_point", "enum", ".", "Input decimal separator", {".", ","}, ""},
-         {"header", "bool", "true", "Treat the first delimited row as column names", {}, ""},
+         {"header", "bool", "true", "Treat the first selected CSV/TSV/XLSX row as column names", {}, ""},
          {"allow_newlines_in_values", "bool", "true", "Allow quoted multiline CSV values", {}, ""},
          {"skip_rows", "int", "0", "Rows skipped before parsing", {}, ">=0"},
          {"compression", "enum", "snappy", "Parquet compression", {"none", "snappy", "gzip", "zstd", "brotli"}, ""},

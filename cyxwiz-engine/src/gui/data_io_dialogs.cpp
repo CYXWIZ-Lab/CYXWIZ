@@ -1,7 +1,9 @@
 // Data output, loader, and split node dialog implementations.
 
 #include "node_config_dialog.h"
+#include "data_convert_format_controls.h"
 #include "../core/async_task_manager.h"
+#include "../core/data_convert_formats.h"
 #include "../core/file_dialogs.h"
 #include "../core/graph_compiler.h"
 #include "../core/training_parameter_contract.h"
@@ -82,70 +84,20 @@ const char* CompressionNameFromIndex(int index) {
     return kCompressions[index];
 }
 
-int DataFormatIndexFromName(const std::string& value) {
-    const std::string normalized = LowerAscii(value);
-    if (normalized == "csv") return 1;
-    if (normalized == "tsv") return 2;
-    if (normalized == "json" || normalized == "jsonl" || normalized == "ndjson") return 3;
-    if (normalized == "txt" || normalized == "text") return 4;
-    if (normalized == "arff") return 5;
-    if (normalized == "npy") return 6;
-    if (normalized == "h5" || normalized == "hdf5" || normalized == "hdf") return 7;
-    if (normalized == "parquet" || normalized == "pq") return 8;
-    if (normalized == "feather" || normalized == "fea") return 9;
-    if (normalized == "arrow") return 10;
-    if (normalized == "ipc") return 11;
-    return 0;
+namespace dc = cyxwiz::data_convert;
+
+bool IsDelimitedDataInput(const std::string& format, const char* path) {
+    const auto effective = dc::Resolve(format, std::filesystem::path(path).extension().string());
+    return effective == dc::Format::Csv || effective == dc::Format::Tsv;
+}
+const char* DataFormatExtension(const std::string& name) {
+    const auto* info = dc::Find(name);
+    return info ? info->default_extension : ".parquet";
 }
 
-const char* DataFormatNameFromIndex(int index) {
-    static const char* kFormats[] = {
-        "auto", "csv", "tsv", "jsonl", "txt", "arff", "npy", "hdf5", "parquet", "feather", "arrow", "ipc"
-    };
-    if (index < 0 || index >= 12) return "auto";
-    return kFormats[index];
-}
-
-const char* DataFormatExtensionFromIndex(int index) {
-    static const char* kExtensions[] = {
-        ".parquet", ".csv", ".tsv", ".jsonl", ".txt", ".arff", ".npy", ".h5", ".parquet", ".feather", ".arrow", ".ipc"
-    };
-    if (index < 0 || index >= 12) return ".parquet";
-    return kExtensions[index];
-}
-
-bool DataFormatExtensionMatchesIndex(const std::filesystem::path& path,
-                                     int format_index) {
-    if (format_index == 0 || path.empty()) return true;
-    std::string extension = LowerAscii(path.extension().string());
-    switch (format_index) {
-        case 1:
-            return extension == ".csv";
-        case 2:
-            return extension == ".tsv";
-        case 3:
-            return extension == ".json" || extension == ".jsonl" ||
-                   extension == ".ndjson";
-        case 4:
-            return extension == ".txt" || extension == ".text";
-        case 5:
-            return extension == ".arff";
-        case 6:
-            return extension == ".npy";
-        case 7:
-            return extension == ".h5" || extension == ".hdf5" ||
-                   extension == ".hdf";
-        case 8:
-            return extension == ".parquet" || extension == ".pq";
-        case 9:
-            return extension == ".feather" || extension == ".fea";
-        case 10:
-            return extension == ".arrow";
-        case 11:
-            return extension == ".ipc";
-        default:
-            return true;
-    }
+bool DataFormatExtensionMatches(const std::filesystem::path& path, const std::string& name) {
+    if (dc::Normalize(name) == "auto" || name.empty() || path.empty()) return true;
+    return dc::ExtensionMatches(path.extension().string(), dc::FromName(name));
 }
 
 std::string DelimiterLabel(char delimiter) {
@@ -160,11 +112,8 @@ std::string DelimiterLabel(char delimiter) {
 
 bool BrowseDataInput(char* destination, std::size_t destination_size) {
     const auto filters = cyxwiz::FileDialogs::FilterList{
-        {"Supported Data Files", "csv,tsv,json,jsonl,ndjson,txt,text,arff,npy,h5,hdf5,hdf,parquet,pq,feather,fea,arrow,ipc"},
-        {"CSV/TSV Files", "csv,tsv"}, {"JSON Lines Files", "json,jsonl,ndjson"},
-        {"Text Files", "txt,text"}, {"ARFF Files", "arff"}, {"NumPy Files", "npy"},
-        {"HDF5 Files", "h5,hdf5,hdf"}, {"Parquet Files", "parquet,pq"},
-        {"Arrow IPC/Feather Files", "feather,fea,arrow,ipc"}, {"All Files", "*"}};
+        {"Supported Data Files", dc::ExtensionFilter(dc::Direction::Input, dc::kBuildFeatures)},
+        {"All Files", "*"}};
     if (auto selected = cyxwiz::FileDialogs::OpenFile(
             "Select Data File", filters, destination[0] == '\0' ? nullptr : destination)) {
         CopyToBuffer(destination, destination_size, *selected);
@@ -175,19 +124,16 @@ bool BrowseDataInput(char* destination, std::size_t destination_size) {
 
 bool BrowseDataOutput(char* destination,
                       std::size_t destination_size,
-                      int output_format_index) {
+                      const std::string& output_format) {
     const auto filters = cyxwiz::FileDialogs::FilterList{
-        {"Supported Data Files", "csv,tsv,json,jsonl,ndjson,txt,text,arff,npy,h5,hdf5,hdf,parquet,pq,feather,fea,arrow,ipc"},
-        {"CSV Files", "csv"}, {"TSV Files", "tsv"}, {"JSON Lines Files", "json,jsonl,ndjson"},
-        {"Text Files", "txt,text"}, {"ARFF Files", "arff"}, {"NumPy Files", "npy"},
-        {"HDF5 Files", "h5,hdf5,hdf"}, {"Parquet Files", "parquet,pq"},
-        {"Arrow IPC/Feather Files", "feather,fea,arrow,ipc"}, {"All Files", "*"}};
+        {"Supported Data Files", dc::ExtensionFilter(dc::Direction::Output, dc::kBuildFeatures)},
+        {"All Files", "*"}};
     const std::filesystem::path existing_path(destination);
     const std::string default_path = existing_path.has_parent_path()
         ? existing_path.parent_path().string()
         : std::string{};
     const std::string default_name = existing_path.filename().empty()
-        ? "output" + std::string(DataFormatExtensionFromIndex(output_format_index))
+        ? "output" + std::string(DataFormatExtension(output_format))
         : existing_path.filename().string();
     if (auto selected = cyxwiz::FileDialogs::SaveFile(
             "Save Data File", filters, default_path.empty() ? nullptr : default_path.c_str(), default_name.c_str())) {
@@ -276,7 +222,7 @@ void DataOutputDialog::RenderSettingsTab() {
     }
     ImGui::SameLine();
     if (ImGui::Button("Browse", ImVec2(70, 0))) {
-        const int dialog_format = output_type_ == 1 ? 8 : 1;
+        const std::string dialog_format = output_type_ == 1 ? "parquet" : "csv";
         if (BrowseDataOutput(file_path_, sizeof(file_path_), dialog_format)) {
             has_changes_ = true;
         }
@@ -315,10 +261,10 @@ void DataConvertDialog::LoadFromNode() {
                  ReadStringParamValue(node_->parameters, "input_path"));
     CopyToBuffer(output_path_, sizeof(output_path_),
                  ReadStringParamValue(node_->parameters, "output_path"));
-    input_format_ = DataFormatIndexFromName(
-        ReadStringParamValue(node_->parameters, "input_format", "auto"));
-    output_format_ = DataFormatIndexFromName(
-        ReadStringParamValue(node_->parameters, "output_format", "auto"));
+    input_format_ = ReadStringParamValue(node_->parameters, "input_format", "auto");
+    output_format_ = ReadStringParamValue(node_->parameters, "output_format", "auto");
+    CopyToBuffer(excel_sheet_, sizeof(excel_sheet_),
+                 ReadStringParamValue(node_->parameters, "excel_sheet"));
     const std::string delimiter =
         ReadStringParamValue(node_->parameters, "delimiter", "auto");
     auto_detect_delimiter_ = LowerAscii(delimiter) == "auto";
@@ -351,12 +297,13 @@ void DataConvertDialog::LoadFromNode() {
 }
 
 void DataConvertDialog::Apply() {
-    if (!node_) return;
+    if (!node_ || IsBusy()) return;
 
     node_->parameters["input_path"] = input_path_;
-    node_->parameters["input_format"] = DataFormatNameFromIndex(input_format_);
+    node_->parameters["input_format"] = input_format_;
+    node_->parameters["excel_sheet"] = excel_sheet_;
     node_->parameters["output_path"] = output_path_;
-    node_->parameters["output_format"] = DataFormatNameFromIndex(output_format_);
+    node_->parameters["output_format"] = output_format_;
     node_->parameters["delimiter"] =
         auto_detect_delimiter_ ? "auto" : std::string(delimiter_);
     node_->parameters["decimal_point"] = std::string(1, decimal_point_);
@@ -391,6 +338,10 @@ void DataConvertDialog::Apply() {
 void DataConvertDialog::Reset() {
     if (!node_) return;
     CancelPreview();
+    // The task manager owns any active file write. Closing/resetting only
+    // detaches its UI result; it must not falsely report that output was cancelled.
+    conversion_state_.reset();
+    last_result_ = {};
     node_->parameters = original_params_;
     LoadFromNode();
     has_changes_ = false;
@@ -398,11 +349,17 @@ void DataConvertDialog::Reset() {
 
 void DataConvertDialog::RenderContent() {
     PollPreviewResult();
+    PollConversionResult();
 
     ImGui::TextWrapped(
         "Convert source data between supported table file formats and write "
         "an optional sidecar manifest.");
     ImGui::Spacing();
+
+    if (conversion_state_) {
+        ImGui::TextWrapped("Conversion is running in the background. Closing or cancelling "
+                           "this dialog does not cancel the file write. See Tasks for completion.");
+    }
 
     if (!status_message_.empty()) {
         const ImVec4 color = status_is_error_
@@ -414,15 +371,21 @@ void DataConvertDialog::RenderContent() {
 
     if (ImGui::BeginTabBar("DataConvertTabs")) {
         if (ImGui::BeginTabItem("Source")) {
+            ImGui::BeginDisabled(IsBusy());
             RenderSourceTab();
+            ImGui::EndDisabled();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Output")) {
+            ImGui::BeginDisabled(IsBusy());
             RenderOutputTab();
+            ImGui::EndDisabled();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Options")) {
+            ImGui::BeginDisabled(IsBusy());
             RenderOptionsTab();
+            ImGui::EndDisabled();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Preview")) {
@@ -455,24 +418,29 @@ void DataConvertDialog::RenderSourceTab() {
     }
 
     ImGui::Spacing();
-    const char* formats[] = {
-        "Auto", "CSV", "TSV", "JSONL", "Plain Text (one column)", "ARFF", "NumPy", "HDF5", "Parquet", "Feather", "Arrow", "IPC"
-    };
     ImGui::Text("Input format");
     ImGui::SameLine(130.0f);
     ImGui::SetNextItemWidth(160.0f);
-    if (ImGui::Combo("##input_format", &input_format_, formats, 12)) {
+    if (RenderDataConvertFormatCombo("##input_format", input_format_, dc::Direction::Input, dc::kBuildFeatures)) {
         has_changes_ = true;
     }
     ImGui::SameLine();
     ImGui::TextDisabled("Auto detects from extension.");
-
-    const std::string selected_format = DataFormatNameFromIndex(input_format_);
-    const std::string extension = LowerAscii(
+    const auto effective_format = dc::Resolve(input_format_,
         std::filesystem::path(input_path_).extension().string());
-    const bool effective_plain_text = selected_format == "txt" ||
-        (selected_format == "auto" && extension == ".txt");
-    if (effective_plain_text) {
+    if (effective_format == dc::Format::Excel) {
+        ImGui::Spacing();
+        if (!dc::Available(effective_format, dc::Direction::Input, dc::kBuildFeatures))
+            ImGui::TextWrapped("XLSX is unavailable in this build (OpenXLSX is required).");
+        ImGui::TextWrapped("%s", dc::kXlsxRestrictions);
+        ImGui::BeginDisabled(!dc::kBuildFeatures.xlsx);
+        if (ImGui::InputText("Worksheet", excel_sheet_, sizeof(excel_sheet_))) has_changes_ = true;
+        ImGui::TextDisabled("Blank selects the first worksheet.");
+        ImGui::EndDisabled();
+    }
+
+
+    if (effective_format == dc::Format::Text) {
         ImGui::Spacing();
         ImGui::TextColored(
             ImVec4(1.0f, 0.65f, 0.20f, 1.0f),
@@ -483,23 +451,18 @@ void DataConvertDialog::RenderSourceTab() {
 }
 
 void DataConvertDialog::RenderOptionsTab() {
-    const std::string selected_format = DataFormatNameFromIndex(input_format_);
-    const std::string extension = LowerAscii(
-        std::filesystem::path(input_path_).extension().string());
-    const bool delimited_input = selected_format == "csv" ||
-        selected_format == "tsv" ||
-        (selected_format == "auto" &&
-         (extension == ".csv" || extension == ".tsv"));
-
+    const auto input = dc::Resolve(input_format_, std::filesystem::path(input_path_).extension().string());
+    const bool delimited_input = input == dc::Format::Csv || input == dc::Format::Tsv;
+    const bool excel_input = input == dc::Format::Excel;
     ImGui::Spacing();
-    ImGui::Text("Delimited input parsing");
+    ImGui::Text("Input parsing");
     ImGui::Separator();
     ImGui::Spacing();
 
     if (!delimited_input) {
         ImGui::TextColored(
             ImVec4(1.0f, 0.65f, 0.20f, 1.0f),
-            "Delimiter and header settings are inactive for this input format.");
+            "Delimiter settings apply only to CSV/TSV. Headers also apply to XLSX.");
         ImGui::TextWrapped(
             "Select CSV for comma-, semicolon-, or pipe-delimited data, including delimited files whose extension is .txt.");
         ImGui::Spacing();
@@ -538,17 +501,22 @@ void DataConvertDialog::RenderOptionsTab() {
     ImGui::SameLine();
     ImGui::TextDisabled("Used while parsing numeric input values.");
 
-    if (ImGui::Checkbox("First row contains headers", &has_header_)) {
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!delimited_input && !excel_input);
+    if (ImGui::Checkbox("First selected row contains headers", &has_header_)) {
         has_changes_ = true;
     }
     ImGui::EndDisabled();
+    ImGui::BeginDisabled(!delimited_input);
     if (ImGui::Checkbox("Allow quoted multiline values",
                         &allow_newlines_in_values_)) {
         has_changes_ = true;
     }
     ImGui::SameLine();
     ImGui::TextDisabled("Needed for text columns that contain line breaks.");
+    ImGui::EndDisabled();
 
+    ImGui::BeginDisabled(!delimited_input && !excel_input && input != dc::Format::Text);
     ImGui::Text("Skip rows");
     ImGui::SameLine(130.0f);
     ImGui::SetNextItemWidth(90.0f);
@@ -556,12 +524,15 @@ void DataConvertDialog::RenderOptionsTab() {
         if (skip_rows_ < 0) skip_rows_ = 0;
         has_changes_ = true;
     }
+    ImGui::EndDisabled();
 
     ImGui::Spacing();
     ImGui::Text("Parquet writer");
     ImGui::Separator();
     ImGui::Spacing();
 
+    const auto output = dc::Resolve(output_format_, std::filesystem::path(output_path_).extension().string());
+    ImGui::BeginDisabled(output != dc::Format::Parquet);
     const char* compressions[] = {
         "None", "Snappy", "Gzip", "Zstd", "Brotli"
     };
@@ -579,6 +550,7 @@ void DataConvertDialog::RenderOptionsTab() {
         if (row_group_size_ < 1) row_group_size_ = 1;
         has_changes_ = true;
     }
+    ImGui::EndDisabled();
 }
 
 void DataConvertDialog::RenderOutputTab() {
@@ -595,16 +567,13 @@ void DataConvertDialog::RenderOutputTab() {
     }
 
     ImGui::Spacing();
-    const char* formats[] = {
-        "Auto", "CSV", "TSV", "JSONL", "Text", "ARFF", "NumPy", "HDF5", "Parquet", "Feather", "Arrow", "IPC"
-    };
     ImGui::Text("Output format");
     ImGui::SameLine(130.0f);
     ImGui::SetNextItemWidth(160.0f);
-    if (ImGui::Combo("##output_format", &output_format_, formats, 12)) {
-        if (output_format_ != 0 && output_path_[0] != '\0') {
+    if (RenderDataConvertFormatCombo("##output_format", output_format_, dc::Direction::Output, dc::kBuildFeatures)) {
+        if (!output_format_.empty() && output_format_ != "auto" && output_path_[0] != '\0') {
             std::filesystem::path out(output_path_);
-            out.replace_extension(DataFormatExtensionFromIndex(output_format_));
+            out.replace_extension(DataFormatExtension(output_format_));
             CopyToBuffer(output_path_, sizeof(output_path_), out.string());
         }
         has_changes_ = true;
@@ -613,19 +582,19 @@ void DataConvertDialog::RenderOutputTab() {
     if (ImGui::Button("Use input name + selected extension")) {
         std::filesystem::path in(input_path_);
         if (!in.empty()) {
-            in.replace_extension(DataFormatExtensionFromIndex(output_format_));
+            in.replace_extension(DataFormatExtension(output_format_));
             CopyToBuffer(output_path_, sizeof(output_path_), in.string());
             has_changes_ = true;
         }
     }
 
-    if (output_format_ != 0 && output_path_[0] != '\0' &&
-        !DataFormatExtensionMatchesIndex(std::filesystem::path(output_path_),
+    if (!output_format_.empty() && output_format_ != "auto" && output_path_[0] != '\0' &&
+        !DataFormatExtensionMatches(std::filesystem::path(output_path_),
                                          output_format_)) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.20f, 1.0f),
                            "Output extension does not match the selected format. Expected %s.",
-                           DataFormatExtensionFromIndex(output_format_));
+                           DataFormatExtension(output_format_));
     }
 
     ImGui::Spacing();
@@ -642,7 +611,7 @@ void DataConvertDialog::RenderOutputTab() {
 
 void DataConvertDialog::RenderPreviewTab() {
     ImGui::Spacing();
-    ImGui::BeginDisabled(preview_loading_);
+    ImGui::BeginDisabled(IsBusy());
     if (ImGui::Button("Preview schema")) {
         PreviewInput();
     }
@@ -731,9 +700,11 @@ void DataConvertDialog::RenderRunTab() {
     ImGui::Spacing();
     ImGui::TextWrapped(
         "Run conversion when the source and output settings are correct. "
-        "Downstream nodes can consume the generated output directly.");
+        "Downstream nodes can consume the generated output directly. "
+        "Once queued, the file write runs to completion even if this dialog closes.");
     ImGui::Spacing();
 
+    ImGui::BeginDisabled(IsBusy());
     if (ImGui::Button("Run conversion", ImVec2(160.0f, 0.0f))) {
         RunConversion();
     }
@@ -741,6 +712,7 @@ void DataConvertDialog::RenderRunTab() {
     if (ImGui::Button("Apply settings")) {
         Apply();
     }
+    ImGui::EndDisabled();
 
     ImGui::Spacing();
     if (last_result_.ok) {
@@ -792,8 +764,9 @@ cyxwiz::DataConvertOptions DataConvertDialog::BuildOptions() const {
     cyxwiz::DataConvertOptions options;
     options.input_path = input_path_;
     options.output_path = output_path_;
-    options.input_format = DataFormatNameFromIndex(input_format_);
-    options.output_format = DataFormatNameFromIndex(output_format_);
+    options.input_format = input_format_;
+    options.excel_sheet = excel_sheet_;
+    options.output_format = output_format_;
     options.delimiter = delimiter_[0] == '\0' ? ',' : delimiter_[0];
     options.decimal_point = decimal_point_;
     options.auto_detect_delimiter = auto_detect_delimiter_;
@@ -809,7 +782,7 @@ cyxwiz::DataConvertOptions DataConvertDialog::BuildOptions() const {
 }
 
 void DataConvertDialog::PreviewInput() {
-    if (preview_loading_) return;
+    if (IsBusy()) return;
 
     auto state = std::make_shared<PreviewLoadState>();
     const auto options = BuildOptions();
@@ -851,7 +824,7 @@ void DataConvertDialog::PollPreviewResult() {
         std::ostringstream msg;
         msg << "Preview loaded: " << preview_.rows << " rows, "
             << preview_.columns << " columns.";
-        if (auto_detect_delimiter_) {
+        if (auto_detect_delimiter_ && IsDelimitedDataInput(input_format_, input_path_)) {
             msg << " Detected delimiter: "
                 << DelimiterLabel(preview_.detected_delimiter) << ".";
         }
@@ -874,7 +847,25 @@ void DataConvertDialog::CancelPreview() {
 }
 
 void DataConvertDialog::RunConversion() {
-    last_result_ = cyxwiz::DataConvertService::Convert(BuildOptions());
+    if (IsBusy()) return;
+    const auto options = BuildOptions();
+    auto state = std::make_shared<cyxwiz::DataConvertTaskResult>();
+    auto task = cyxwiz::MakeDataConvertTask(options, state);
+    try {
+        cyxwiz::AsyncTaskManager::Instance().Submit(task);
+        last_result_ = {};
+        conversion_state_ = state;
+        SetStatus("Conversion queued in the background; file writes cannot be cancelled.", false);
+    } catch (const std::exception& error) {
+        SetStatus(std::string("Could not queue conversion: ") + error.what(), true);
+    }
+}
+
+void DataConvertDialog::PollConversionResult() {
+    auto state = conversion_state_;
+    if (!state || !state->done.load()) return;
+    last_result_ = std::move(state->result);
+    conversion_state_.reset();
     if (last_result_.ok) {
         std::ostringstream msg;
         if (last_result_.skipped_fresh_output) {
@@ -884,7 +875,7 @@ void DataConvertDialog::RunConversion() {
             msg << "Conversion complete: " << last_result_.rows_written
                 << " rows written to " << last_result_.output_path << ".";
         }
-        if (auto_detect_delimiter_) {
+        if (auto_detect_delimiter_ && IsDelimitedDataInput(input_format_, input_path_)) {
             msg << " Detected delimiter: "
                 << DelimiterLabel(last_result_.detected_delimiter) << ".";
         }

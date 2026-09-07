@@ -1,5 +1,6 @@
 #include "../src/core/node_executors/pipeline_operator_factory.h"
 #include "../src/core/node_metadata_registry.h"
+#include "../src/core/data_convert_formats.h"
 #include "../src/gui/activation_codegen_contract.h"
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/core/simulation_runtime_capabilities.h"
@@ -6392,6 +6393,59 @@ int main() {
           HasParameter(ts_split, "test_ratio"),
           "TimeSeriesSplit should expose train/val/test ratio parameters");
 
+    const auto pacf_support = cyxwiz::ResolvePipelineRuntimeSupport("PACFNode");
+    const auto* pacf_metadata = metadata.GetMetadata(gui::NodeType::PACFNode);
+    Check(pacf_metadata && HasParameter(pacf_metadata, "max_lag") &&
+              !HasParameter(pacf_metadata, "lags"),
+          "PACF legacy alias must not become a duplicate GUI property");
+    for (const char* key : {"max_lag", "lags"}) {
+        for (const char* value : {"-2", "0", "1.5", "bad", "", "9223372036854775808"}) {
+            std::string error;
+            Check(!cyxwiz::ValidatePipelineRuntimeParameterCapabilities(
+                      "PACFNode", {{key, value}}, {}, pacf_support.integer_parameters,
+                      {}, "pipeline", error) &&
+                      error.find(std::string("PACFNode ") + key) != std::string::npos,
+                  std::string("PACF preflight must reject invalid ") + key + "=" + value);
+        }
+        for (const char* value : {"-1", "1", "12"}) {
+            std::string error;
+            Check(cyxwiz::ValidatePipelineRuntimeParameterCapabilities(
+                      "PACFNode", {{key, value}}, {}, pacf_support.integer_parameters,
+                      {}, "pipeline", error),
+                  std::string("PACF preflight must accept valid ") + key + "=" + value);
+        }
+    }
+
+    const auto* convert = metadata.GetMetadata(gui::NodeType::DataConvert);
+    Check(convert && HasParameter(convert, "excel_sheet"), "DataConvert must declare persisted worksheet selection");
+    gui::MLNode convert_node{};
+    convert_node.type = gui::NodeType::DataConvert;
+    convert_node.parameters["excel_sheet"] = "Named Sheet";
+    const auto convert_truth = gui::properties_truth::ResolveNodeTruth(convert_node);
+    bool worksheet_truth = false, persisted_truth = false;
+    for (const auto& property : convert_truth.properties) {
+        if (property.canonical_key == "excel_sheet")
+            worksheet_truth = property.effective_value == "Named Sheet";
+        if (property.canonical_key == "convert_result")
+            persisted_truth = property.message.find("persisted representation") != std::string::npos;
+        Check(property.message.find("without reparsing") == std::string::npos,
+              "DataConvert properties must not promise source-table reuse for every format");
+    }
+    Check(worksheet_truth && persisted_truth, "DataConvert property truth must describe sheet selection and persisted results");
+    for (const auto direction : {cyxwiz::data_convert::Direction::Input, cyxwiz::data_convert::Direction::Output}) {
+        const std::string key = direction == cyxwiz::data_convert::Direction::Input ? "input_format" : "output_format";
+        const auto expected = cyxwiz::data_convert::PropertyChoices(direction, cyxwiz::data_convert::kBuildFeatures);
+        for (const auto& parameter : convert->parameters)
+            if (parameter.name == key) Check(parameter.enum_values == expected, "DataConvert property catalog drift: " + key);
+        bool found = false;
+        for (const auto& runtime : cyxwiz::GetPipelineAllowedParameterValuesRuntimeCapabilities()) {
+            if (std::string(runtime.legacy_type_name) != "DataConvert" || std::string(runtime.parameter_name) != key) continue;
+            found = true;
+            Check(std::vector<std::string>(runtime.allowed_values.begin(), runtime.allowed_values.end()) == expected,
+                  "DataConvert runtime/property catalog disagreement: " + key);
+        }
+        Check(found, "DataConvert runtime format constraint must exist: " + key);
+    }
     std::cout << "Pipeline operator metadata drift guard passed\n";
     return 0;
 }

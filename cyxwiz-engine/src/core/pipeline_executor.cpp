@@ -2671,10 +2671,13 @@ bool HasSupportedParameterValues(
 
     if (node_type == "DataConvert") {
         const auto skip_rows_it = parameters.find("skip_rows");
-        if (skip_rows_it != parameters.end() && !skip_rows_it->second.empty() &&
-            !IsIntegerAtLeast(skip_rows_it->second, 0)) {
-            error = "DataConvert skip_rows must be a non-negative integer";
-            return false;
+        if (skip_rows_it != parameters.end() && !skip_rows_it->second.empty()) {
+            int64_t parsed = 0;
+            if (!TryParseInteger(skip_rows_it->second, parsed) || parsed < 0 ||
+                parsed > std::numeric_limits<int>::max()) {
+                error = "DataConvert skip_rows must be an integer between 0 and INT_MAX";
+                return false;
+            }
         }
         const auto row_group_it = parameters.find("row_group_size");
         if (row_group_it != parameters.end() && !row_group_it->second.empty() &&
@@ -4194,6 +4197,7 @@ bool PipelineExecutor::ExecuteDataConvert(const Node& node, ExecutionContext& ct
     options.output_path = ParameterOrDefault(node.parameters, "output_path");
     options.input_format = ParameterOrDefault(node.parameters, "input_format", "auto");
     options.output_format = ParameterOrDefault(node.parameters, "output_format", "auto");
+    options.excel_sheet = ParameterOrDefault(node.parameters, "excel_sheet");
 
     const std::string delimiter =
         ToLowerAscii(TrimString(ParameterOrDefault(node.parameters,

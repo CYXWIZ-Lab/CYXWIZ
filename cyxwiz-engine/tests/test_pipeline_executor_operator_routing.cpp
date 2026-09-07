@@ -6402,12 +6402,16 @@ int main(int argc, char** argv) {
     cyxwiz::PipelineExecutor count_vectorizer_sparse_executor;
     Check(!count_vectorizer_sparse_executor.ExecutePipeline(
               count_vectorizer_sparse_json),
-          "CountVectorizer output_format=sparse should fail validation");
+          "CountVectorizer sparse output must fail on the Arrow-only pipeline path");
     Check(count_vectorizer_sparse_executor.GetLastError().find(
-              "CountVectorizer output_format 'sparse' is not supported") !=
+              "CountVectorizer: sparse output requires typed materializer "
+              "publication; the Arrow table path remains fail-closed") !=
               std::string::npos,
           "CountVectorizer sparse output validation should be specific: " +
               count_vectorizer_sparse_executor.GetLastError());
+    Check(!cyxwiz::DataRegistry::Instance().GetArrowDataset(
+              "ds_operator_CountVectorizer_224"),
+          "rejected sparse output must not publish an Arrow dataset");
 
     const std::string tfidf_vectorizer_min_df_json =
         R"({"nodes":[)"

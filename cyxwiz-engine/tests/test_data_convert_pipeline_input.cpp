@@ -3,17 +3,20 @@
 #include "core/pipeline_executor.h"
 
 #include <cstdlib>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <stdexcept>
+
+void RunDataConvertPipelineReloadTests(const std::filesystem::path& work_dir);
 
 namespace {
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
-        std::cerr << "FAIL: " << message << '\n';
-        std::exit(1);
+        throw std::runtime_error(message);
     }
 }
 
@@ -28,17 +31,18 @@ std::string JsonEscapePath(const std::string& path) {
 
 } // namespace
 
-int main() {
+int main() try {
     namespace fs = std::filesystem;
-
-    const fs::path csv_path =
-        fs::temp_directory_path() / "cyxwiz_data_convert_pipeline_input.csv";
-    const fs::path parquet_path =
-        fs::temp_directory_path() / "cyxwiz_data_convert_pipeline_input.parquet";
-
-    fs::remove(csv_path);
-    fs::remove(parquet_path);
-    fs::remove(parquet_path.string() + ".manifest.json");
+    const fs::path work_dir = fs::temp_directory_path() /
+        ("cyxwiz_convert_graph_" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    Check(fs::create_directory(work_dir), "fixture workspace must be unique");
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove_all(path, ec); }
+    } cleanup{work_dir};
+    const fs::path csv_path = work_dir / "input.csv";
+    const fs::path parquet_path = work_dir / "upstream.parquet";
 
     {
         std::ofstream csv(csv_path, std::ios::binary);
@@ -59,6 +63,7 @@ int main() {
         R"(],"links":[{"start_node":1,"end_node":2}]})";
 
     cyxwiz::PipelineExecutor executor;
+    executor.SetIngestionCacheRoot((work_dir / "ingestion").string());
     Check(executor.ExecutePipeline(graph_json),
           "DataConvert should accept an upstream dataset without input_path: " +
               executor.GetLastError());
@@ -77,8 +82,9 @@ int main() {
     Check(dataset->GetNumColumns() == 3,
           "DataConvert output dataset should preserve column count");
 
-    fs::remove(csv_path);
-    fs::remove(parquet_path);
-    fs::remove(parquet_path.string() + ".manifest.json");
+    RunDataConvertPipelineReloadTests(work_dir);
     return 0;
+} catch (const std::exception& error) {
+    std::cerr << "FAIL: " << error.what() << '\n';
+    return 1;
 }
