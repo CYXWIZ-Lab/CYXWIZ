@@ -80,6 +80,7 @@ on:
       - "redist/tests/test_backend_pack_contract.py"
       - "redist/tests/test_prepare_installer_release_configuration.py"
       - "redist/tests/test_installer_setup.py"
+      - "redist/tests/test_installer_setup_release_trust.py"
       - "redist/tests/test_prepare_backend_pack_repository.py"
       - "redist/tests/test_verify_installer_package.py"
       - "vcpkg-installer.json"
@@ -113,6 +114,7 @@ on:
       - "redist/tests/test_backend_pack_contract.py"
       - "redist/tests/test_prepare_installer_release_configuration.py"
       - "redist/tests/test_installer_setup.py"
+      - "redist/tests/test_installer_setup_release_trust.py"
       - "redist/tests/test_prepare_backend_pack_repository.py"
       - "redist/tests/test_verify_installer_package.py"
       - "vcpkg-installer.json"
@@ -121,8 +123,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: installer-native-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: installer-native-${{ github.workflow }}-${{ github.ref }}-${{ inputs.release_mode == true && 'release' || 'development' }}
+  cancel-in-progress: ${{ inputs.release_mode != true }}
 
 env:
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
@@ -219,6 +221,7 @@ jobs:
           redist.tests.test_prepare_backend_pack_repository
           redist.tests.test_prepare_installer_release_configuration
           redist.tests.test_installer_bundle
+          redist.tests.test_installer_setup_release_trust
 
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@v7
@@ -354,22 +357,9 @@ jobs:
 
       - name: Prove embedded setup trust cannot be replaced
         if: inputs.release_mode == true
-        shell: pwsh
-        run: |
-          if ('${{ runner.os }}' -eq 'Windows') {
-            $setup = 'build/bin/Release/cyxwiz-setup.exe'
-          } else {
-            $setup = 'build/bin/cyxwiz-setup'
-          }
-          $output = & $setup `
-            --trust-store $env:CYXWIZ_RELEASE_TRUST_STORE `
-            --descriptor missing-descriptor.json 2>&1 | Out-String
-          if ($LASTEXITCODE -ne 4) {
-            throw "embedded-trust rejection returned $LASTEXITCODE`: $output"
-          }
-          if ($output -notmatch '--trust-store is disabled') {
-            throw "embedded-trust rejection was not explicit: $output"
-          }
+        run: >-
+          python -B redist/tests/test_installer_setup_release_trust.py
+          --setup ${{ runner.os == 'Windows' && 'build/bin/Release/cyxwiz-setup.exe' || 'build/bin/cyxwiz-setup' }}
 
       - name: Stage installer package
         run: >-
