@@ -362,6 +362,18 @@ class AlphaReleaseAssemblerTests(unittest.TestCase):
         with self.assertRaises(assembler.AlphaReleaseError):
             assembler._validate_pack_matrix(repository)
 
+    def test_cpu_only_rejects_diagnostic_base_before_publication(self) -> None:
+        repository = self.root / "diagnostic-matrix"
+        manifests = repository / "bootstrap" / "catalogs" / "manifests"
+        manifests.mkdir(parents=True)
+        for path in self.manifests:
+            if path.name.startswith("base-"):
+                document = json.loads(path.read_text(encoding="utf-8"))
+                document["signed"]["compatibility"]["support_status"] = "diagnostic"
+                (manifests / path.name).write_text(json.dumps(document), encoding="utf-8")
+        with self.assertRaisesRegex(assembler.AlphaReleaseError, "supported CPU base"):
+            assembler._validate_pack_matrix(repository, cpu_only=True)
+
     @unittest.skipIf(sys.platform == "win32", "Requires POSIX executable-mode fixtures")
     def test_cpu_only_assembly_signs_profile_and_rejects_profile_tampering(self) -> None:
         args = self.arguments([p for p in self.manifests if p.name.startswith("base-")])

@@ -37,4 +37,18 @@ std::filesystem::path BackendPackNativeRelativePath(std::string_view value) {
     return std::filesystem::path(utf8);
 }
 
+std::filesystem::path BackendPackIoPath(const std::filesystem::path& path) {
+#ifdef _WIN32
+    if (!path.is_absolute()) return path;
+    const auto native = path.lexically_normal().make_preferred().native();
+    if (native.starts_with(L"\\\\?\\")) return std::filesystem::path(native);
+    if (native.starts_with(L"\\\\")) {
+        return std::filesystem::path(L"\\\\?\\UNC\\" + native.substr(2));
+    }
+    return std::filesystem::path(L"\\\\?\\" + native);
+#else
+    return path;
+#endif
+}
+
 }  // namespace cyxwiz::runtime

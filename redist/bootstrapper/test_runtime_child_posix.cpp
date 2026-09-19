@@ -1,4 +1,6 @@
 #include <cstdlib>
+#include "engine_runtime_ownership.h"
+#include "backend_pack_platform.h"
 #include <filesystem>
 #include <string>
 
@@ -13,6 +15,14 @@ std::string EnvironmentValue(const char* name) {
 
 int main(int argc, char** argv) {
     const auto runtime_root = EnvironmentValue("CYXWIZ_ACTIVE_RUNTIME_ROOT");
+    cyxwiz::runtime::RuntimeOperationLock engine_ownership;
+    if (argc == 1) {
+        std::string error;
+        if (!cyxwiz::runtime::AcquirePackagedEngineOwnership(
+                std::filesystem::path(runtime_root) / "base/base-v1" /
+                    cyxwiz::runtime::CurrentEngineExecutableName(),
+                runtime_root, engine_ownership, error)) return 13;
+    }
     if (runtime_root.empty() ||
         EnvironmentValue("CYXWIZ_RUNTIME_SET_ID") != "set-v1" ||
         EnvironmentValue("CYXWIZ_RUNTIME_GENERATION") != "1" ||

@@ -1,4 +1,5 @@
 #include "backend_pack_platform.h"
+#include "backend_pack_path.h"
 #include "product_removal_cleanup.h"
 #include "product_removal_request.h"
 
@@ -195,6 +196,29 @@ void TestPayloadFailurePreservesRecoveryEvidence() {
 #endif
 }
 
+#ifdef _WIN32
+void TestRemovesLongPaths() {
+    for (const bool deep_directory : {false, true}) {
+        TemporaryDirectory temporary;
+        QuarantineFixture product(temporary.path());
+        auto directory = product.quarantined.quarantine_root /
+            "licenses" / std::string(60, 'd');
+        if (deep_directory) directory /= std::string(80, 'e');
+        const auto payload = directory / (std::string(100, 'p') + ".txt");
+        Check(payload.native().size() > MAX_PATH,
+              "Long cleanup fixture must exceed the classic Windows path limit");
+        Touch(cyxwiz::runtime::BackendPackIoPath(payload));
+        cyxwiz::runtime::ProductRemovalCleanupResult result;
+        std::string error;
+        const bool cleaned = cyxwiz::runtime::CleanupQuarantinedProductInstallation(
+            product.quarantined, result, error);
+        Check(cleaned && result.complete &&
+                  !std::filesystem::exists(product.quarantined.quarantine_root),
+              "Cleanup must remove long files and directories: " + error);
+    }
+}
+#endif
+
 }  // namespace
 
 int main() {
@@ -202,6 +226,9 @@ int main() {
     TestRejectsChangedQuarantineIdentity();
     TestCompletesRecoveryAfterRequestWasAlreadyRemoved();
     TestPayloadFailurePreservesRecoveryEvidence();
+#ifdef _WIN32
+    TestRemovesLongPaths();
+#endif
     std::cout << "Product removal cleanup contracts passed\n";
     return 0;
 }

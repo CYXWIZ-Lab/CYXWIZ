@@ -2,6 +2,7 @@
 #include "backend_pack_hash.h"
 #include "backend_pack_path.h"
 #include "backend_pack_progress_cadence.h"
+#include "base_repair_publication.h"
 #include "runtime_mutation_gate.h"
 
 #include <algorithm>
@@ -188,11 +189,19 @@ BackendPackInstallResult BackendPackInstaller::StageRepair(
         InstallTarget::OptionalPack);
 }
 
+BackendPackInstallResult BackendPackInstaller::RepairBase(
+    const VerifiedBackendPackPayload& payload, std::uint64_t disk_budget_bytes) {
+    return Apply(payload, disk_budget_bytes, true, true, InstallTarget::BaseRepair);
+}
+
 BackendPackInstallResult BackendPackInstaller::AdoptVerifiedPrivateExtraction(
     const VerifiedBackendPackPayload& payload,
     std::uint64_t disk_budget_bytes,
     PrivateExtractionAction action) {
     switch (action) {
+        case PrivateExtractionAction::RepairBase:
+            return Apply(payload, disk_budget_bytes, true, true, InstallTarget::BaseRepair,
+                         PayloadStagingMode::AdoptVerifiedPrivateExtraction);
         case PrivateExtractionAction::InstallOptionalPack:
             return Apply(
                 payload, disk_budget_bytes, false, false,
@@ -227,6 +236,10 @@ BackendPackInstallResult BackendPackInstaller::Apply(
     InstallTarget target,
     PayloadStagingMode staging_mode) {
     const bool base = target != InstallTarget::OptionalPack;
+    const bool base_repair = target == InstallTarget::BaseRepair;
+    if (base_repair && !execution_active_)
+        return {BackendPackInstallStatus::InvalidRequest,
+                "CPU repair requires an explicit execution-active guard"};
     std::unique_lock<std::mutex> install_lock(
         install_mutex_, std::try_to_lock);
     if (!install_lock.owns_lock()) {
@@ -272,7 +285,7 @@ BackendPackInstallResult BackendPackInstaller::Apply(
                           active_error.message()
                     : "A CPU base is already active");
         }
-    } else if (target == InstallTarget::BaseUpdate) {
+    } else if (target == InstallTarget::BaseUpdate || base_repair) {
         if (!LoadActiveRuntimeState(
                 runtime_root_ / "active-runtime.json", active, error)) {
             return Finish(
@@ -280,6 +293,10 @@ BackendPackInstallResult BackendPackInstaller::Apply(
                 error.empty() ? "A CPU base must be active before update"
                               : error);
         }
+        if (base_repair && (active.base_pack_id != payload.pack_id ||
+                            active.runtime_set_id != payload.runtime_set_id))
+            return Finish(BackendPackInstallStatus::InvalidRequest,
+                          "CPU repair requires the exact active base identity");
     } else if (!LoadActiveRuntimeState(
                    runtime_root_ / "active-runtime.json", active, error) ||
                active.runtime_set_id != payload.runtime_set_id ||
@@ -386,7 +403,7 @@ BackendPackInstallResult BackendPackInstaller::Apply(
     const bool destination_exists =
         std::filesystem::exists(destination, filesystem_error) &&
         !filesystem_error;
-    if (repair && !destination_exists) {
+    if (repair && !destination_exists && !base_repair) {
         return Finish(
             BackendPackInstallStatus::InvalidRequest,
             "The requested backend pack is not installed");
@@ -394,7 +411,7 @@ BackendPackInstallResult BackendPackInstaller::Apply(
     bool already_installed = false;
     bool replace_existing = false;
     std::unique_ptr<RuntimeMutationLease> mutation_lease;
-    if (destination_exists) {
+    if (destination_exists && !base_repair) {
         bool valid = EnumerateExactPayload(destination, expected_paths, error);
         for (const auto& component : payload.components) {
             if (valid && !ValidateFile(
@@ -584,6 +601,15 @@ BackendPackInstallResult BackendPackInstaller::Apply(
             return Finish(
                 BackendPackInstallStatus::ExecutionActive,
                 "Execution started before pack publication");
+        }
+
+        if (base_repair) {
+            progress.stage = BackendPackInstallStage::PublishingPack;
+            progress.message = "Repairing CPU base with a retained recovery backup";
+            SetProgress(progress);
+            const auto result = PublishBaseRepair(runtime_root_, staging_root, active,
+                execution_active_, checkpoint_, cancel_requested_);
+            return Finish(result.status, result.message, result.installed_directory, result.activation);
         }
 
         progress.stage = BackendPackInstallStage::PublishingPack;

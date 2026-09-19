@@ -144,7 +144,8 @@ EvaluateBackendPackAction(BackendPackAction action,
     }
     return record->update_available
                ? BackendPackActionDecision{true, {}}
-               : Disabled("No catalog-authorized update is available");
+               : Disabled(record->update_decision ? record->update_decision->message
+                           : "No catalog-authorized update is available");
   case BackendPackAction::Verify:
   case BackendPackAction::Remove:
   case BackendPackAction::Details:
@@ -235,6 +236,10 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
     const std::vector<BackendPackManagerRecord> &catalog_records,
     CyxWizInstallerMode mode) {
   BackendPackInstallerPlan plan;
+  if (mode == CyxWizInstallerMode::RecoveryRequired) {
+    plan.message = "Recovery is required before this installation can be modified";
+    return plan;
+  }
   if (!selection.valid) {
     plan.message = selection.message.empty()
                        ? "The installer selection is invalid"
@@ -316,6 +321,12 @@ BackendPackInstallerPlan BuildBackendPackInstallerPlan(
                  record->companion_base_id != base->pack_id)) {
       plan.message = "A selected backend pack does not belong to the required "
                      "CPU base runtime set";
+      return plan;
+    }
+    if (record->installed && record->update_decision &&
+        record->update_decision->disposition != runtime::BackendPackUpdateDisposition::Upgrade &&
+        record->update_decision->disposition != runtime::BackendPackUpdateDisposition::SamePackage) {
+      plan.message = record->update_decision->message;
       return plan;
     }
     if (record->installed && record->active && !record->update_available) {

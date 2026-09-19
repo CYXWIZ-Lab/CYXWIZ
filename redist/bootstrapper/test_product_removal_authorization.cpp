@@ -193,6 +193,30 @@ void TestRejectsMissingReleaseIdentity() {
           "A product without signed release identity must not authorize removal");
 }
 
+void TestCpuReleaseRemovalAuthorization() {
+    TemporaryDirectory temporary;
+    ProductFixture product(temporary.path());
+    const auto versions = product.runtime_root / "base" / "base-v1" /
+        "RUNTIME_VERSIONS.json";
+    for (const auto* document : {
+             R"({"arrayfire":"3.10.0","cyxwiz":"0.2.0","python":"3.12.8","python_scripting":"disabled"})",
+             R"({"arrayfire":"3.10.0","cyxwiz":"0.2.0","python_scripting":"disabled"})"}) {
+        WriteFixture(versions, document);
+        cyxwiz::runtime::ProductRemovalAuthorization authorization;
+        std::string error;
+        const bool captured = cyxwiz::runtime::CaptureProductRemovalAuthorization(
+            product.root, cyxwiz::runtime::ProductInstallScope::CurrentUser,
+            authorization, error);
+        Check(captured && authorization.product_version == "0.2.0",
+              "Current CPU release metadata must permit removal authorization: " + error);
+        const bool validated = cyxwiz::runtime::ValidateProductRemovalAuthorization(
+            authorization, error);
+        Check(validated, "CPU release removal identity must revalidate: " + error);
+        Check(std::filesystem::exists(versions),
+              "Removal authorization must not remove installed files");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -200,6 +224,7 @@ int main() {
     TestRejectsChangedReceiptAndScope();
     TestRejectsMissingStableProductBoundary();
     TestRejectsMissingReleaseIdentity();
+    TestCpuReleaseRemovalAuthorization();
     std::cout << "Product removal authorization contracts passed\n";
     return 0;
 }

@@ -17,12 +17,17 @@ struct InstallerProductRemovalState {
   std::string message;
 };
 
-InstallerProductRemovalState InspectInstallerProductRemoval(
-    const std::filesystem::path &runtime_root,
-    bool stable_bootstrapper_host);
+InstallerProductRemovalState
+InspectInstallerProductRemoval(const std::filesystem::path &runtime_root,
+                               bool external_session);
 
-bool QueueInstallerProductRemoval(
-    const InstallerProductRemovalState &state,
-    std::string &message);
+struct InstallerProductRemovalResult {
+  bool succeeded = false;
+  std::string message;
+};
+
+InstallerProductRemovalResult
+RemoveInstallerProduct(const InstallerProductRemovalState &state,
+                       const std::filesystem::path &executable_directory);
 
 } // namespace cyxwiz::installer

@@ -203,6 +203,13 @@ def _validate_pack_matrix(repository_root: Path, *, cpu_only: bool = False) -> N
             pack["pack_id"] for pack in target_packs
             if pack["pack_kind"] == "base"
         }
+        if len(bases) != 1 or any(
+            pack["compatibility"]["support_status"] != "supported"
+            for pack in target_packs if pack["pack_kind"] == "base"
+        ):
+            raise AlphaReleaseError(
+                f"{target.key} requires exactly one supported CPU base for installation"
+            )
         optional = [
             pack for pack in target_packs
             if pack["pack_kind"] == "backend_pack"

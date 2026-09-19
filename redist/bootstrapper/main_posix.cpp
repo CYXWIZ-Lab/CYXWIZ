@@ -1,8 +1,9 @@
 #include "runtime_layout.h"
+#include "runtime_operation_lock.h"
+#include <optional>
+#include <cstdlib>
 #include "backend_pack_maintenance_request.h"
 #include "backend_pack_platform.h"
-#include "product_removal_handoff.h"
-#include "product_removal_protocol.h"
 
 #include <cerrno>
 #include <cstdint>
@@ -139,7 +140,8 @@ ChildResult LaunchAndWait(
     const std::filesystem::path& executable,
     std::vector<std::string> arguments,
     const std::filesystem::path& working_directory,
-    const cyxwiz::runtime::ActiveRuntime& runtime) {
+    const cyxwiz::runtime::ActiveRuntime& runtime,
+    bool wait_for_exit = true) {
     ChildResult result;
     int error_pipe[2] = {-1, -1};
     if (::pipe(error_pipe) != 0 ||
@@ -194,6 +196,10 @@ ChildResult LaunchAndWait(
                   std::string(std::strerror(child_error));
     }
 
+    if (result.started && !wait_for_exit) {
+        result.exit_code = 0;
+        return result;
+    }
     int status = 0;
     if (::waitpid(child, &status, 0) < 0) {
         result.message = "Waiting for the CyxWiz child failed: " +
@@ -263,6 +269,17 @@ int main(int argc, char** argv) {
 
     cyxwiz::runtime::ActiveRuntime runtime;
     std::string error;
+    std::optional<cyxwiz::runtime::RuntimeOperationLock> engine_ownership;
+    if (installer_mode && ::unsetenv("CYXWIZ_RUNTIME_USE_TOKEN") != 0)
+        return Fail(runtime_root, "Cannot clear inherited Engine ownership metadata");
+    if (!installer_mode) {
+        engine_ownership.emplace();
+        if (engine_ownership->AcquireEngineUse(runtime_root, error) !=
+                cyxwiz::runtime::RuntimeOperationLockStatus::Acquired ||
+            !engine_ownership->AllowEngineChildInheritance(error)) {
+            return Fail(runtime_root, "Engine launch is blocked: " + error);
+        }
+    }
     if (!cyxwiz::runtime::ResolveActiveRuntime(runtime_root, runtime, error)) {
         return Fail(runtime_root, error);
     }
@@ -289,8 +306,11 @@ int main(int argc, char** argv) {
     }
     const auto child = LaunchAndWait(
         launched_executable, std::move(child_arguments),
-        runtime.base_directory, runtime);
+        runtime.base_directory, runtime, !installer_mode);
     if (!child.started) return Fail(runtime.runtime_root, child.message);
+    engine_ownership.reset();
+    if (::unsetenv("CYXWIZ_RUNTIME_USE_TOKEN") != 0)
+        return Fail(runtime.runtime_root, "Cannot clear completed Engine ownership metadata");
 
     cyxwiz::runtime::AppendBootstrapDiagnostic(
         runtime.runtime_root,
@@ -299,22 +319,6 @@ int main(int argc, char** argv) {
             runtime.runtime_set_id +
             " generation=" + std::to_string(runtime.generation) +
             " base=" + runtime.base_pack_id);
-    if (installer_mode && child.exit_code ==
-            cyxwiz::runtime::kProductRemovalRequestedExitCode) {
-        auto handoff = cyxwiz::runtime::SchedulePendingProductRemoval(
-            executable_directory, error);
-        if (handoff.status != cyxwiz::runtime::
-                ProductRemovalHandoffStatus::Scheduled) {
-            return Fail(
-                runtime.runtime_root,
-                "cannot schedule queued product removal: " + error);
-        }
-        cyxwiz::runtime::AppendBootstrapDiagnostic(
-            runtime.runtime_root,
-            "product removal queued; detached finalizer is waiting for exit");
-        handoff.parent_lifetime.PreserveUntilProcessExit();
-        return 0;
-    }
     if (!installer_mode) {
         cyxwiz::runtime::ActiveRuntimeState launched_runtime;
         launched_runtime.runtime_set_id = runtime.runtime_set_id;

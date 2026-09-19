@@ -1,4 +1,5 @@
 #include "runtime_layout.h"
+#include "runtime_operation_lock.h"
 #include "backend_pack_platform.h"
 
 #include <filesystem>
@@ -236,6 +237,14 @@ int main() {
             diagnostic.find("launched runtime_set=set-v1") != std::string::npos &&
                 diagnostic.find("engine DLL search configured") != std::string::npos,
             "successful launch must record package-local runtime diagnostics");
+        {
+            cyxwiz::runtime::RuntimeOperationLock maintenance;
+            std::string ownership_error;
+            failures += !Expect(maintenance.Acquire(fixture.root, ownership_error) ==
+                    cyxwiz::runtime::RuntimeOperationLockStatus::Acquired &&
+                    RunBootstrapper(bootstrapper, fixture.root) == 78,
+                "The actual launcher must reject Engine startup while maintenance owns the product");
+        }
 
         std::filesystem::copy_file(
             child,

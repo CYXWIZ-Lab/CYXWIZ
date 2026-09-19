@@ -42,6 +42,7 @@ struct InstallerViewState {
   bool review_requested = false;
   bool launch_after_install = true;
   bool install_completed = false;
+  bool uninstall_completed = false;
   bool engine_launched = false;
   bool cancellation_requested = false;
   bool close_confirmation_requested = false;

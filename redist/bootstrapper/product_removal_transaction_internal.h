@@ -31,4 +31,12 @@ bool ExecuteProductRemovalTransactionWithOperations(
     ProductRemovalTransactionResult& result,
     std::string& error);
 
+// The production boundary: validate, acquire helper/repair ownership, validate
+// again under that ownership, and retain sibling ownership through cleanup.
+bool ExecuteGuardedProductRemovalTransactionWithOperations(
+    const ProductRemovalAuthorization& authorization,
+    const ProductRemovalTransactionOperations& operations,
+    ProductRemovalTransactionResult& result,
+    std::string& error);
+
 }  // namespace cyxwiz::runtime::detail

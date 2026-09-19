@@ -111,6 +111,11 @@ public:
     BackendPackInstallResult Repair(
         const VerifiedBackendPackPayload& payload,
         std::uint64_t disk_budget_bytes);
+    // Requires valid existing activation identity and an execution-active guard.
+    // The signed lifecycle boundary must authorize the exact installed payload.
+    BackendPackInstallResult RepairBase(
+        const VerifiedBackendPackPayload& payload,
+        std::uint64_t disk_budget_bytes);
     BackendPackInstallResult StageRepair(
         const VerifiedBackendPackPayload& payload,
         std::uint64_t disk_budget_bytes);
@@ -124,13 +129,15 @@ private:
         InstallOptionalPack,
         RepairOptionalPack,
         InstallFreshBase,
-        UpdateBase
+        UpdateBase,
+        RepairBase
     };
 
     enum class InstallTarget {
         OptionalPack,
         FreshBase,
-        BaseUpdate
+        BaseUpdate,
+        BaseRepair
     };
 
     enum class PayloadStagingMode {

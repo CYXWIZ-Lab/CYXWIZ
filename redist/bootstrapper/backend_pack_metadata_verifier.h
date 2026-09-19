@@ -24,6 +24,13 @@ enum class BackendPackManifestKind {
     Base
 };
 
+// Catalog discovery may authenticate other targets, but delivery must use
+// CurrentClient (the default) before any package is installed.
+enum class BackendPackManifestTargetScope {
+    CurrentClient,
+    CatalogDiscovery
+};
+
 enum class TrustedMetadataRole {
     Catalog,
     Pack,
@@ -140,9 +147,24 @@ public:
         VerifiedBackendPackManifest& output,
         std::string& error,
         BackendPackManifestKind expected_kind =
-            BackendPackManifestKind::BackendPack) const;
+            BackendPackManifestKind::BackendPack,
+        BackendPackManifestTargetScope target_scope =
+            BackendPackManifestTargetScope::CurrentClient) const;
+
+    // Historical signed identity only. Never authorizes delivery or activation.
+    // No current-catalog/time requirement; current trust revocations still apply.
+    bool VerifyInstalledManifest(const std::filesystem::path& manifest_path,
+        const std::string& pack_id, BackendPackManifestKind kind,
+        VerifiedBackendPackManifest& output, std::string& error) const;
 
 private:
+    bool VerifyManifestInternal(
+        const std::filesystem::path& manifest_path,
+        const BackendPackCatalogEntry& catalog_entry,
+        VerifiedBackendPackManifest& output, std::string& error,
+        BackendPackManifestKind expected_kind,
+        BackendPackManifestTargetScope target_scope, bool installed_evidence) const;
+
     BackendPackTrustStore trust_store_;
     std::string client_version_;
     std::string platform_;

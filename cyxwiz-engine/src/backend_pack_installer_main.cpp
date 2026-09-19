@@ -455,6 +455,12 @@ int wmain(int argc, wchar_t** argv) {
 #else
 int main(int argc, char** argv) {
 #endif
+    // Loader-only acceptance check: do not parse an operation, open a session,
+    // create directories, or mutate any installation.
+    if (argc == 2 && std::filesystem::path(argv[1]) == "--dependency-smoke") {
+        std::cout << "CyxWiz installation helper dependency smoke passed\n";
+        return 0;
+    }
     Options options;
     std::string error;
     if (!ParseOptions(argc, argv, options, error)) {

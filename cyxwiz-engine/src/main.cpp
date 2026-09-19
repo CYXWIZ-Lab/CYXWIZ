@@ -1,4 +1,6 @@
 #include "application.h"
+#include "engine_runtime_ownership.h"
+#include "backend_pack_platform.h"
 #include "plugin/plugin_manager.h"
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
@@ -18,6 +20,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <string_view>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -33,12 +36,12 @@ namespace {
 
 std::filesystem::path GetExecutableDir() {
 #ifdef _WIN32
-    char buffer[MAX_PATH];
-    DWORD len = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
-    if (len == 0 || len == MAX_PATH) {
+    std::vector<wchar_t> buffer(32768);
+    DWORD len = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (len == 0 || len >= buffer.size()) {
         return {};
     }
-    return std::filesystem::path(std::string(buffer, len)).parent_path();
+    return std::filesystem::path(std::wstring(buffer.data(), len)).parent_path();
 #elif defined(__APPLE__)
     char exec_path[PATH_MAX];
     uint32_t size = sizeof(exec_path);
@@ -74,6 +77,15 @@ bool IsPackageSmokeRequested(int argc, char** argv) {
 const char* EnvironmentValue(const char* name) {
     const char* value = std::getenv(name);
     return value != nullptr ? value : "";
+}
+
+std::filesystem::path EnvironmentRuntimeRoot() {
+#ifdef _WIN32
+    const auto* value = ::_wgetenv(L"CYXWIZ_ACTIVE_RUNTIME_ROOT");
+    return value ? std::filesystem::path(value) : std::filesystem::path{};
+#else
+    return EnvironmentValue("CYXWIZ_ACTIVE_RUNTIME_ROOT");
+#endif
 }
 
 int RunPackageSmoke() {
@@ -156,6 +168,14 @@ int RunPackageSmoke() {
 } // namespace
 
 int main(int argc, char** argv) {
+    cyxwiz::runtime::RuntimeOperationLock engine_ownership;
+    std::string ownership_error;
+    if (!cyxwiz::runtime::AcquirePackagedEngineOwnership(
+            GetExecutableDir() / cyxwiz::runtime::CurrentEngineExecutableName(),
+            EnvironmentRuntimeRoot(), engine_ownership, ownership_error)) {
+        std::cerr << "CyxWiz Engine launch is blocked: " << ownership_error << '\n';
+        return 78;
+    }
 #ifdef _WIN32
     std::string runtime_search_error;
     if (!cyxwiz::runtime::ConfigureActiveRuntimeDllSearchFromEnvironment(

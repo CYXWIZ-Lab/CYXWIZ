@@ -53,6 +53,14 @@ std::string RemediationAction(runtime::BackendPackRemediation remediation) {
 InstallerPackPresentation BuildInstallerPackPresentation(
     const BackendPackManagerRecord& record) {
     InstallerPackPresentation result;
+    if (record.installed && record.update_decision &&
+        record.update_decision->disposition != runtime::BackendPackUpdateDisposition::Upgrade &&
+        record.update_decision->disposition != runtime::BackendPackUpdateDisposition::SamePackage) {
+        result.status = "Update blocked";
+        result.explanation = record.update_decision->message;
+        result.tone = InstallerPackPresentationTone::Warning;
+        return result;
+    }
     if (!record.delivery_metadata_available && !record.installed) {
         result.status = "Unavailable";
         result.explanation = record.delivery_metadata_error.empty()

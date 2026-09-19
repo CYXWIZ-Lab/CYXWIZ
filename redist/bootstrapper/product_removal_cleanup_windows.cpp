@@ -1,4 +1,5 @@
 #include "product_removal_cleanup_platform.h"
+#include "backend_pack_path.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -42,13 +43,20 @@ bool IsEvidenceName(const wchar_t* name) {
 OwnedHandle OpenEntry(
     const std::filesystem::path& path,
     bool directory,
+    std::string& error,
     DWORD access = FILE_READ_ATTRIBUTES) {
-    return OwnedHandle(::CreateFileW(
-        path.c_str(), access,
+    const HANDLE handle = ::CreateFileW(
+        BackendPackIoPath(path).c_str(), access,
         FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT |
             (directory ? FILE_FLAG_BACKUP_SEMANTICS : 0),
-        nullptr));
+        nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        const DWORD code = ::GetLastError();
+        error = "Cannot open exact quarantine entry " + path.generic_string() +
+            "; Win32 error " + std::to_string(code);
+    }
+    return OwnedHandle(handle);
 }
 
 bool ReadAttributes(
@@ -69,12 +77,13 @@ bool Enumerate(
     const auto& operation,
     std::string& error) {
     WIN32_FIND_DATAW entry{};
-    const auto pattern = directory / "*";
+    const auto pattern = BackendPackIoPath(directory / "*");
     const HANDLE search = ::FindFirstFileW(pattern.c_str(), &entry);
     if (search == INVALID_HANDLE_VALUE) {
         const DWORD code = ::GetLastError();
         if (code == ERROR_FILE_NOT_FOUND) return true;
-        error = "Cannot enumerate the product quarantine; Win32 error " +
+        error = "Cannot enumerate product quarantine " + directory.generic_string() +
+            "; Win32 error " +
             std::to_string(code);
         return false;
     }
@@ -110,7 +119,7 @@ bool InspectTree(
         error = "Product cleanup exceeded its directory-depth bound";
         return false;
     }
-    auto opened = OpenEntry(directory, true);
+    auto opened = OpenEntry(directory, true, error);
     FILE_ATTRIBUTE_TAG_INFO attributes{};
     if (!opened.valid() || !ReadAttributes(opened.get(), attributes, error) ||
         (attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
@@ -144,7 +153,7 @@ bool DeleteExactEntry(
     bool require_regular,
     std::string& error) {
     auto opened = OpenEntry(
-        path, directory, DELETE | FILE_READ_ATTRIBUTES);
+        path, directory, error, DELETE | FILE_READ_ATTRIBUTES);
     FILE_ATTRIBUTE_TAG_INFO attributes{};
     if (!opened.valid() || !ReadAttributes(opened.get(), attributes, error)) {
         if (error.empty()) {
@@ -178,7 +187,7 @@ bool RemoveTree(
     bool preserve_evidence,
     ProductRemovalCleanupResult& result,
     std::string& error) {
-    auto opened = OpenEntry(directory, true);
+    auto opened = OpenEntry(directory, true, error);
     FILE_ATTRIBUTE_TAG_INFO directory_attributes{};
     if (!opened.valid() ||
         !ReadAttributes(opened.get(), directory_attributes, error) ||
@@ -216,7 +225,7 @@ bool DeleteEvidenceIfPresent(
     bool required,
     ProductRemovalCleanupResult& result,
     std::string& error) {
-    const DWORD attributes = ::GetFileAttributesW(path.c_str());
+    const DWORD attributes = ::GetFileAttributesW(BackendPackIoPath(path).c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES) {
         if (!required && ::GetLastError() == ERROR_FILE_NOT_FOUND) return true;
         error = "Required product removal evidence is missing";
@@ -233,7 +242,8 @@ bool CleanupQuarantineNoFollow(
     const QuarantinedProductInstallation& quarantined,
     ProductRemovalCleanupResult& result,
     std::string& error) {
-    auto root = OpenEntry(quarantined.quarantine_root, true, DELETE | FILE_READ_ATTRIBUTES);
+    auto root = OpenEntry(quarantined.quarantine_root, true, error,
+                          DELETE | FILE_READ_ATTRIBUTES);
     FILE_ATTRIBUTE_TAG_INFO root_attributes{};
     if (!root.valid() || !ReadAttributes(root.get(), root_attributes, error) ||
         (root_attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||

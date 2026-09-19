@@ -11,6 +11,8 @@
 #include <archive_entry.h>
 
 #include <fstream>
+#include <cerrno>
+#include <system_error>
 #include <limits>
 #include <map>
 #include <memory>
@@ -35,7 +37,7 @@ std::string ArchiveError(archive* value, const char* action) {
 class RemoveIncompleteExtraction {
 public:
     explicit RemoveIncompleteExtraction(std::filesystem::path path)
-        : path_(std::move(path)) {}
+        : path_(BackendPackIoPath(path)) {}
     ~RemoveIncompleteExtraction() {
         if (keep_) return;
         std::error_code error;
@@ -308,20 +310,24 @@ BackendPackExtractionResult BackendPackArchiveExtractor::ExtractInternal(
                 BackendPackExtractionStatus::IntegrityFailure,
                 "ZIP entries differ from the exact signed component inventory");
         }
-        const auto target =
-            destination / BackendPackNativeRelativePath(relative);
+        const auto target = BackendPackIoPath(
+            destination / BackendPackNativeRelativePath(relative));
         std::filesystem::create_directories(
             target.parent_path(), filesystem_error);
         if (filesystem_error) {
             return Finish(
                 BackendPackExtractionStatus::FilesystemFailure,
-                "Cannot create extracted component directory");
+                "Cannot create directory for extracted component '" + relative +
+                    "': " + filesystem_error.message());
         }
+        errno = 0;
         std::ofstream output(target, std::ios::binary | std::ios::trunc);
         if (!output) {
+            const auto open_error = std::error_code(errno, std::generic_category());
             return Finish(
                 BackendPackExtractionStatus::FilesystemFailure,
-                "Cannot create extracted component file");
+                "Cannot create extracted component file '" + relative +
+                    "': " + (open_error ? open_error.message() : "file open failed"));
         }
         Sha256Stream component_hash;
         std::uint64_t written = 0;

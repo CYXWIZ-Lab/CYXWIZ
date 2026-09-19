@@ -344,6 +344,42 @@ int main() {
         return 1;
     }
 
+    auto foreign_body = BaseManifest(pack_key)["signed"];
+    foreign_body["platform"] = "macos";
+    foreign_body["architecture"] = "arm64";
+    const auto foreign_path = temporary.Path() / "foreign-base.json";
+    const auto foreign_bytes = WriteJson(foreign_path, Envelope(
+        "cyxwiz-backend-pack-manifest", foreign_body, "pack-2026", pack_key));
+    auto foreign_entry = base_catalog.packs.front();
+    foreign_entry.manifest_sha256 = Sha256(foreign_bytes);
+    if (!Expect(!verifier.VerifyManifest(
+                    foreign_path, foreign_entry, base_manifest, error,
+                    BackendPackManifestKind::Base),
+                "delivery accepted a foreign target") ||
+        !Expect(verifier.VerifyManifest(
+                    foreign_path, foreign_entry, base_manifest, error,
+                    BackendPackManifestKind::Base,
+                    BackendPackManifestTargetScope::CatalogDiscovery),
+                error.c_str()) ||
+        !Expect(base_manifest.platform == "macos" &&
+                    base_manifest.architecture == "arm64",
+                "catalog discovery lost authenticated target identity")) return 1;
+    foreign_entry.manifest_sha256 = std::string(64, '0');
+    if (!Expect(!verifier.VerifyManifest(
+                    foreign_path, foreign_entry, base_manifest, error,
+                    BackendPackManifestKind::Base,
+                    BackendPackManifestTargetScope::CatalogDiscovery),
+                "catalog discovery bypassed manifest hash verification")) return 1;
+    auto forged = Envelope("cyxwiz-backend-pack-manifest", foreign_body,
+                           "pack-2026", pack_key);
+    forged["signed"]["package_version"] = "forged";
+    foreign_entry.manifest_sha256 = Sha256(WriteJson(foreign_path, forged));
+    if (!Expect(!verifier.VerifyManifest(
+                    foreign_path, foreign_entry, base_manifest, error,
+                    BackendPackManifestKind::Base,
+                    BackendPackManifestTargetScope::CatalogDiscovery),
+                "catalog discovery accepted an invalid signature")) return 1;
+
     auto large_body = Manifest(pack_key)["signed"];
     auto& large_components = large_body["components"];
     for (std::uint64_t index = 0; index < 18000; ++index) {
@@ -466,6 +502,29 @@ int main() {
             "a pack for a newer CyxWiz release was accepted after downgrade")) {
         return 1;
     }
+
+    if (!Expect(verifier.VerifyInstalledManifest(manifest_path, "opencl-v1",
+                    BackendPackManifestKind::BackendPack, manifest, error),
+                "Historical signed identity must survive an installer version change") ||
+        !Expect(!verifier.VerifyInstalledManifest(manifest_path, "wrong-id",
+                    BackendPackManifestKind::BackendPack, manifest, error),
+                "Historical evidence must bind the active package ID") ||
+        !Expect(!revoked_verifier.VerifyInstalledManifest(manifest_path, "opencl-v1",
+                    BackendPackManifestKind::BackendPack, manifest, error),
+                "Historical evidence must honor current signer revocations")) return 1;
+
+    auto historical_body = future_pack["signed"];
+    historical_body["architecture"] = "arm64";
+    WriteJson(manifest_path, Envelope("cyxwiz-backend-pack-manifest",
+        historical_body, "pack-2026", pack_key));
+    if (!Expect(!verifier.VerifyInstalledManifest(manifest_path, "opencl-v1",
+                    BackendPackManifestKind::BackendPack, manifest, error),
+                "Historical evidence must match the local target")) return 1;
+    future_pack["signed"]["package_version"] = "9.0.0";
+    WriteJson(manifest_path, future_pack);
+    if (!Expect(!verifier.VerifyInstalledManifest(manifest_path, "opencl-v1",
+                    BackendPackManifestKind::BackendPack, manifest, error),
+                "Historical evidence must reject tampering without a catalog hash")) return 1;
 
     WriteJson(trust_path, TrustRoot(catalog_key, pack_key));
     trust = BackendPackTrustStore::Load(trust_path, error);

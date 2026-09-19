@@ -1,6 +1,10 @@
 #include "backend_pack_lifecycle_service.h"
+#include "runtime_operation_lock.h"
 
 #include "base_stable_tool_publisher.h"
+#include "backend_pack_installed_metadata.h"
+#include "runtime_installation_inspection.h"
+#include "backend_pack_update_policy.h"
 
 #include <algorithm>
 #include <chrono>
@@ -131,6 +135,22 @@ bool BackendPackLifecycleService::ReadManifest(
         manifest_path, catalog_entry, output, error);
 }
 
+void BackendPackLifecycleService::ReadInstalledMetadata(
+    const std::filesystem::path& root, const ActiveRuntimeState& active,
+    VerifiedBackendPackCatalogSnapshot& output) const {
+    output.installed_manifests.clear();
+    const auto read = [&](const std::string& id, BackendPackManifestKind kind) {
+        VerifiedBackendPackManifest manifest;
+        std::string error;
+        if (!id.empty() && ReadInstalledBackendPackMetadata(root, id, kind,
+                metadata_verifier_, manifest, error))
+            output.installed_manifests.push_back(std::move(manifest));
+        // Missing/invalid evidence remains unknown, never an inferred update.
+    };
+    read(active.base_pack_id, BackendPackManifestKind::Base);
+    for (const auto& pack : active.packs) read(pack.pack_id, BackendPackManifestKind::BackendPack);
+}
+
 bool BackendPackLifecycleService::ReadCatalogSnapshot(
     const std::string& current_utc,
     VerifiedBackendPackCatalogSnapshot& output,
@@ -158,22 +178,30 @@ bool BackendPackLifecycleService::ReadCatalogSnapshot(
                 "Catalog policy blocks this backend pack";
         } else {
             VerifiedBackendPackManifest manifest;
-            if (ReadManifest(
+            if (metadata_verifier_.VerifyManifest(
                     record.manifest_path, entry, manifest,
-                    record.manifest_error)) {
+                    record.manifest_error, BackendPackManifestKind::BackendPack,
+                    BackendPackManifestTargetScope::CatalogDiscovery)) {
                 record.manifest = std::move(manifest);
             } else {
                 std::string base_error;
                 if (metadata_verifier_.VerifyManifest(
                         record.manifest_path, entry, manifest, base_error,
-                        BackendPackManifestKind::Base)) {
+                        BackendPackManifestKind::Base,
+                        BackendPackManifestTargetScope::CatalogDiscovery)) {
                     record.manifest = std::move(manifest);
                     record.manifest_error.clear();
+                } else {
+                    record.manifest_error += "; base manifest: " + base_error;
                 }
             }
         }
         output.records.push_back(std::move(record));
     }
+    ActiveRuntimeState active;
+    std::string active_error;
+    if (LoadActiveRuntimeState(runtime_root_ / "active-runtime.json", active, active_error))
+        ReadInstalledMetadata(runtime_root_, active, output);
     error.clear();
     return true;
 }
@@ -213,12 +241,24 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverBaseUpdate(
     return DeliverInternal(request, nullptr, DeliveryTarget::BaseUpdate);
 }
 
+BackendPackLifecycleResult BackendPackLifecycleService::DeliverBaseRepair(
+    const BackendPackDeliveryRequest& request, BackendPackArtifactSource& source,
+    const RuntimeOperationLock* ownership) {
+    return DeliverInternal(request, &source, DeliveryTarget::BaseRepair, ownership);
+}
+
+BackendPackLifecycleResult BackendPackLifecycleService::DeliverBaseRepair(
+    const BackendPackDeliveryRequest& request, const RuntimeOperationLock* ownership) {
+    return DeliverInternal(request, nullptr, DeliveryTarget::BaseRepair, ownership);
+}
+
 BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     const BackendPackDeliveryRequest& request,
     BackendPackArtifactSource* source,
-    DeliveryTarget target) {
+    DeliveryTarget target, const RuntimeOperationLock* ownership) {
     const bool base = target != DeliveryTarget::OptionalPack;
     const bool updating_base = target == DeliveryTarget::BaseUpdate;
+    const bool repairing_base = target == DeliveryTarget::BaseRepair;
     std::unique_lock<std::mutex> operation_lock(
         operation_mutex_, std::try_to_lock);
     if (!operation_lock.owns_lock()) {
@@ -243,7 +283,13 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             "Runtime root, signed metadata paths, time, and pack ID are required",
             request.pack_id);
     }
-    if (request.repair && request.route_verification ==
+    if (repairing_base && (!execution_active_ || request.route_verification !=
+            BackendPackRouteVerificationPolicy::DeferredToEngine)) {
+        return Finish(BackendPackLifecycleStatus::InvalidRequest,
+            "CPU repair requires an execution guard and deferred Engine device verification",
+            request.pack_id);
+    }
+    if (!repairing_base && request.repair && request.route_verification ==
             BackendPackRouteVerificationPolicy::DeferredToEngine) {
         return Finish(
             BackendPackLifecycleStatus::InvalidRequest,
@@ -251,8 +297,25 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             request.pack_id);
     }
 
-    VerifiedBackendPackCatalog catalog;
     std::string error;
+    RuntimeOperationLock repair_ownership;
+    if (repairing_base) {
+        if (ownership && !ownership->Owns(runtime_root_)) {
+            return Finish(BackendPackLifecycleStatus::InvalidRequest,
+                "CPU repair requires live installation ownership for this runtime",
+                request.pack_id);
+        }
+        if (!ownership) {
+            const auto locked = repair_ownership.Acquire(runtime_root_, error);
+            if (locked != RuntimeOperationLockStatus::Acquired) {
+                return Finish(locked == RuntimeOperationLockStatus::Busy
+                        ? BackendPackLifecycleStatus::Busy
+                        : BackendPackLifecycleStatus::InstallationFailure,
+                    error, request.pack_id);
+            }
+        }
+    }
+    VerifiedBackendPackCatalog catalog;
     if (!metadata_verifier_.VerifyCatalog(
             request.catalog_path, request.current_utc, catalog, error)) {
         return Finish(
@@ -296,6 +359,63 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     progress.backend = manifest.backend;
     SetProgress(progress);
 
+    std::optional<ActiveRuntimeState> repair_identity;
+    if (repairing_base) {
+        ActiveRuntimeState active;
+        VerifiedBackendPackManifest previous;
+        if (!LoadActiveRuntimeState(runtime_root_ / "active-runtime.json", active, error) ||
+            active.base_pack_id != manifest.pack_id || active.runtime_set_id != manifest.runtime_set_id ||
+            !ReadInstalledBackendPackMetadata(runtime_root_, active.base_pack_id,
+                BackendPackManifestKind::Base, metadata_verifier_, previous, error) ||
+            EvaluateBackendPackUpdate(previous, manifest).disposition !=
+                BackendPackUpdateDisposition::SamePackage) {
+            return Finish(BackendPackLifecycleStatus::PolicyRejected,
+                "CPU repair requires valid activation and the exact signed installed package: " + error,
+                manifest.pack_id, manifest.backend);
+        }
+        if (execution_active_()) return Finish(BackendPackLifecycleStatus::PolicyRejected,
+            "Close CyxWiz Engine before repairing its CPU base", manifest.pack_id, manifest.backend);
+        repair_identity = active;
+    }
+    if (target == DeliveryTarget::FreshBase) {
+        const auto installation = InspectRuntimeInstallation(runtime_root_);
+        if (installation.condition != RuntimeInstallationCondition::Fresh) {
+            return Finish(BackendPackLifecycleStatus::PolicyRejected,
+                installation.condition == RuntimeInstallationCondition::Active
+                    ? "CyxWiz is already installed at this location; use Manage"
+                    : installation.message,
+                manifest.pack_id, manifest.backend);
+        }
+    }
+    if (updating_base || !base) {
+        ActiveRuntimeState active;
+        if (!LoadActiveRuntimeState(runtime_root_ / "active-runtime.json", active, error))
+            return Finish(BackendPackLifecycleStatus::PolicyRejected,
+                          "Cannot establish the installed runtime before update: " + error,
+                          manifest.pack_id, manifest.backend);
+        std::string previous_id = updating_base ? active.base_pack_id : std::string{};
+        if (!base) {
+            for (const auto& pack : active.packs)
+                if (pack.backend == manifest.backend) previous_id = pack.pack_id;
+        }
+        if (updating_base && previous_id == manifest.pack_id)
+            return Finish(BackendPackLifecycleStatus::PolicyRejected,
+                "Already installed; the same CPU base does not require an update",
+                manifest.pack_id, manifest.backend);
+        if (!previous_id.empty() && previous_id != manifest.pack_id) {
+            VerifiedBackendPackManifest previous;
+            if (!ReadInstalledBackendPackMetadata(runtime_root_, previous_id, manifest.kind,
+                                                  metadata_verifier_, previous, error))
+                return Finish(BackendPackLifecycleStatus::PolicyRejected,
+                    "Installed version evidence is unavailable; update is blocked: " + error,
+                    manifest.pack_id, manifest.backend);
+            const auto decision = EvaluateBackendPackUpdate(previous, manifest);
+            if (decision.disposition != BackendPackUpdateDisposition::Upgrade)
+                return Finish(BackendPackLifecycleStatus::PolicyRejected, decision.message,
+                              manifest.pack_id, manifest.backend);
+        }
+    }
+
     const auto installed_directory = base
         ? runtime_root_ / "base" / manifest.pack_id
         : runtime_root_ / "packs" / manifest.backend / manifest.pack_id;
@@ -311,6 +431,17 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     }
     const auto artifact = runtime_root_ / "cache" / "artifacts" /
         manifest.pack_id / manifest.archive.file_name;
+    const auto discard_successful_artifact = [&](std::string& message) {
+        if (!request.discard_artifact_on_success) return;
+        std::error_code cleanup_error;
+        std::filesystem::remove(artifact, cleanup_error);
+        if (cleanup_error) {
+            message += "; the verified package cache could not be removed: " + cleanup_error.message();
+        } else {
+            std::error_code directory_error;
+            std::filesystem::remove(artifact.parent_path(), directory_error); // Empty directory only.
+        }
+    };
     const auto discard_cancelled_operation =
         [&](bool artifact_downloaded, bool installed_published) {
             if (!request.discard_operation_data_on_cancel) return;
@@ -400,14 +531,23 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             extracted.message, manifest.pack_id, manifest.backend);
     }
     RemovePrivateStaging cleanup(extraction);
+    if (repair_identity) {
+        ActiveRuntimeState current;
+        if (!LoadActiveRuntimeState(runtime_root_ / "active-runtime.json", current, error) ||
+            !SameRuntimeState(*repair_identity, current))
+            return Finish(BackendPackLifecycleStatus::PolicyRejected,
+                "Runtime identity changed while preparing CPU repair", manifest.pack_id, manifest.backend);
+    }
     const auto payload = manifest.BindExtractedDirectory(extraction);
-    if (base && request.repair) {
+    if (base && request.repair && !repairing_base) {
         return Finish(
             BackendPackLifecycleStatus::InvalidRequest,
             "CPU-base delivery does not accept repair mode",
             manifest.pack_id, manifest.backend);
     }
-    const auto install_action = updating_base
+    const auto install_action = repairing_base
+        ? BackendPackInstaller::PrivateExtractionAction::RepairBase
+        : updating_base
         ? BackendPackInstaller::PrivateExtractionAction::UpdateBase
         : (base
               ? BackendPackInstaller::PrivateExtractionAction::InstallFreshBase
@@ -431,6 +571,14 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             installed.message, manifest.pack_id, manifest.backend,
             installed.installed_directory);
     }
+    if (repairing_base) {
+        // Repair commits activation with its directory transaction. A late
+        // cancellation must not relabel or remove a successfully repaired base.
+        auto message = installed.message;
+        discard_successful_artifact(message);
+        return Finish(BackendPackLifecycleStatus::InstalledAndActivated,
+            std::move(message), manifest.pack_id, manifest.backend, installed.installed_directory);
+    }
     const bool verification_deferred = request.route_verification ==
         BackendPackRouteVerificationPolicy::DeferredToEngine;
     if (cancel_requested_.load()) {
@@ -449,23 +597,11 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     const auto activate_installed = [&] (
         std::optional<BackendPackQualificationDecision> qualification,
         bool deferred) -> BackendPackLifecycleResult {
-        if (target == DeliveryTarget::FreshBase) {
-            SetStage(
-                BackendPackLifecycleStage::Activating,
-                "Publishing the verified stable product tools before activation");
-            const auto stable_tools = PublishVerifiedBaseStableTools(
-                manifest, installed.installed_directory, runtime_root_);
-            if (!stable_tools.published) {
-                return Finish(
-                    BackendPackLifecycleStatus::InstallationFailure,
-                    stable_tools.message, manifest.pack_id, manifest.backend,
-                    installed.installed_directory, qualification);
-            }
-            // Publishing stable tools is the base transaction's commit point.
-            // A cancellation observed before this point is cleaned up above;
-            // once publication succeeds, complete activation atomically.
-        }
-
+        if (!RetainInstalledBackendPackMetadata(runtime_root_, request.manifest_path,
+                *catalog_entry, manifest.kind, metadata_verifier_, error))
+            return Finish(BackendPackLifecycleStatus::MetadataFailure,
+                "Cannot preserve signed installed-version evidence: " + error,
+                manifest.pack_id, manifest.backend, installed.installed_directory, qualification);
         SetStage(
             BackendPackLifecycleStage::Activating,
             deferred
@@ -475,14 +611,38 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
                         : "Activating the locally qualified backend pack"));
         BackendPackStateService state_service(
             runtime_root_, execution_active_);
-        const auto activation = updating_base
-            ? state_service.UpdateBase(
-                  manifest.runtime_set_id, manifest.pack_id)
-            : (base
-                  ? state_service.InitializeBase(
-                        manifest.runtime_set_id, manifest.pack_id)
-                  : state_service.ActivateOptionalPack(
-                        manifest.backend, manifest.pack_id));
+        BackendPackStateResult activation;
+        bool activation_attempted = false;
+        const auto commit_activation = [&](std::string& reason) {
+            activation_attempted = true;
+            activation = updating_base
+                ? state_service.UpdateBase(
+                      manifest.runtime_set_id, manifest.pack_id)
+                : (base
+                      ? state_service.InitializeBase(
+                            manifest.runtime_set_id, manifest.pack_id)
+                      : state_service.ActivateOptionalPack(
+                            manifest.backend, manifest.pack_id));
+            reason = activation.message;
+            return activation.status == BackendPackStateStatus::Completed;
+        };
+        std::string tool_warning;
+        if (target == DeliveryTarget::FreshBase || updating_base) {
+            // Retain both old tools until the actual activation commit resolves.
+            const auto tools = PublishVerifiedBaseStableTools(
+                manifest, installed.installed_directory, runtime_root_, commit_activation);
+            if (!tools.published) {
+                return Finish(
+                    activation_attempted ? BackendPackLifecycleStatus::ActivationFailure
+                                         : BackendPackLifecycleStatus::InstallationFailure,
+                    tools.message, manifest.pack_id, manifest.backend,
+                    installed.installed_directory, qualification);
+            }
+            if (!tools.recovery_directory.empty()) tool_warning = tools.message;
+        } else {
+            std::string reason;
+            commit_activation(reason);
+        }
         if (activation.status != BackendPackStateStatus::Completed) {
             return Finish(
                 BackendPackLifecycleStatus::ActivationFailure,
@@ -510,20 +670,8 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
                       ? "CPU base installed, qualified, and activated"
                       : "Backend pack installed, qualified, and activated");
         }
-        if (request.discard_artifact_on_success) {
-            std::error_code cleanup_error;
-            std::filesystem::remove(artifact, cleanup_error);
-            if (cleanup_error) {
-                message += "; the verified package cache could not be removed: " +
-                    cleanup_error.message();
-            } else {
-                // Pack identities own separate cache directories. Remove the
-                // directory only when it is now empty; never recurse here.
-                std::error_code directory_error;
-                std::filesystem::remove(
-                    artifact.parent_path(), directory_error);
-            }
-        }
+        if (!tool_warning.empty()) message += "; " + tool_warning;
+        discard_successful_artifact(message);
         return Finish(
             BackendPackLifecycleStatus::InstalledAndActivated,
             std::move(message), manifest.pack_id, manifest.backend,

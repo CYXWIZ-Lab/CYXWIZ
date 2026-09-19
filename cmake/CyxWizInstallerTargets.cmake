@@ -2,6 +2,7 @@ if(DEFINED CYXWIZ_INSTALLER_TARGETS_INCLUDED)
     return()
 endif()
 set(CYXWIZ_INSTALLER_TARGETS_INCLUDED ON)
+include("${CMAKE_CURRENT_LIST_DIR}/CyxWizLibArchive.cmake")
 
 set(_cyxwiz_installer_engine_dir "${CMAKE_SOURCE_DIR}/cyxwiz-engine")
 set(_cyxwiz_installer_backend_dir "${CMAKE_SOURCE_DIR}/cyxwiz-backend")
@@ -108,6 +109,7 @@ if(CYXWIZ_BUILD_TESTS)
 
     add_executable(test_backend_pack_manager_model
         "${_cyxwiz_installer_engine_dir}/tests/test_backend_pack_manager_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/tests/backend_pack_catalog_acceptance.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_catalog_adapter.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/installer_pack_presentation.cpp"
@@ -155,6 +157,8 @@ if(CYXWIZ_BUILD_TESTS)
     add_executable(test_installer_product_removal
         "${_cyxwiz_installer_engine_dir}/tests/test_installer_product_removal.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/installer/installer_external_session.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/installer/installer_external_session_platform.cpp"
     )
     target_include_directories(test_installer_product_removal PRIVATE
         "${_cyxwiz_installer_engine_dir}/src"
@@ -162,6 +166,8 @@ if(CYXWIZ_BUILD_TESTS)
     )
     target_link_libraries(test_installer_product_removal PRIVATE
         cyxwiz-runtime-bootstrap
+        LibArchive::LibArchive
+        ${CMAKE_DL_LIBS}
     )
     set_target_properties(test_installer_product_removal PROPERTIES
         CXX_STANDARD 20
@@ -170,6 +176,10 @@ if(CYXWIZ_BUILD_TESTS)
     add_test(
         NAME installer_product_removal_contract
         COMMAND test_installer_product_removal
+    )
+    add_test(
+        NAME installer_helper_dependency_smoke
+        COMMAND cyxwiz-backend-pack-installer --dependency-smoke
     )
 
     add_executable(test_product_registration
@@ -347,6 +357,8 @@ set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_view.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_operation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_external_session.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/installer/installer_external_session_platform.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_removal_view.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_catalog_adapter.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_decision_reconciliation.cpp"
@@ -370,6 +382,7 @@ target_include_directories(cyxwiz-installer PRIVATE
     "${CMAKE_SOURCE_DIR}/redist/bootstrapper"
 )
 target_link_libraries(cyxwiz-installer PRIVATE
+    LibArchive::LibArchive
     imgui::imgui
     glfw
     glad::glad

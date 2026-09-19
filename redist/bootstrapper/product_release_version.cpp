@@ -25,6 +25,21 @@ bool HasExactKeys(
     return true;
 }
 
+bool HasSupportedRuntimeSchema(const Json& document) {
+    // Legacy bundles require Python. CPU qualification bundles explicitly
+    // disable scripting and only Windows currently bundles a Python runtime.
+    if (HasExactKeys(document, {"arrayfire", "cyxwiz", "python"})) {
+        return document["python"].is_string();
+    }
+    const bool cpu_bundle =
+        HasExactKeys(document, {"arrayfire", "cyxwiz", "python_scripting"}) ||
+        HasExactKeys(document,
+                     {"arrayfire", "cyxwiz", "python", "python_scripting"});
+    return cpu_bundle && document["python_scripting"].is_string() &&
+        document["python_scripting"] == "disabled" &&
+        (!document.contains("python") || document["python"].is_string());
+}
+
 }  // namespace
 
 bool IsSafeProductVersion(std::string_view value) {
@@ -57,10 +72,9 @@ bool LoadProductReleaseVersion(
     std::ifstream stream(path, std::ios::binary);
     const Json document = Json::parse(stream, nullptr, false);
     if (stream.bad() || document.is_discarded() ||
-        !HasExactKeys(document, {"arrayfire", "cyxwiz", "python"}) ||
+        !HasSupportedRuntimeSchema(document) ||
         !document["arrayfire"].is_string() ||
-        !document["cyxwiz"].is_string() ||
-        !document["python"].is_string()) {
+        !document["cyxwiz"].is_string()) {
         error = "The active base runtime version identity schema is invalid";
         return false;
     }

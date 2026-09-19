@@ -648,7 +648,29 @@ bool BackendPackMetadataVerifier::VerifyManifest(
     const BackendPackCatalogEntry& catalog_entry,
     VerifiedBackendPackManifest& output,
     std::string& error,
-    BackendPackManifestKind expected_kind) const {
+    BackendPackManifestKind expected_kind,
+    BackendPackManifestTargetScope target_scope) const {
+    return VerifyManifestInternal(manifest_path, catalog_entry, output, error,
+                                  expected_kind, target_scope, false);
+}
+
+bool BackendPackMetadataVerifier::VerifyInstalledManifest(
+    const std::filesystem::path& path, const std::string& pack_id,
+    BackendPackManifestKind kind, VerifiedBackendPackManifest& output,
+    std::string& error) const {
+    BackendPackCatalogEntry identity;
+    identity.pack_id = pack_id;
+    identity.support_status = BackendPackSupportStatus::Supported;
+    return VerifyManifestInternal(path, identity, output, error, kind,
+                                  BackendPackManifestTargetScope::CurrentClient, true);
+}
+
+bool BackendPackMetadataVerifier::VerifyManifestInternal(
+    const std::filesystem::path& manifest_path,
+    const BackendPackCatalogEntry& catalog_entry,
+    VerifiedBackendPackManifest& output, std::string& error,
+    BackendPackManifestKind expected_kind,
+    BackendPackManifestTargetScope target_scope, bool installed_evidence) const {
     output = {};
     if (catalog_entry.support_status == BackendPackSupportStatus::Blocked ||
         catalog_entry.support_status == BackendPackSupportStatus::Revoked) {
@@ -659,15 +681,15 @@ bool BackendPackMetadataVerifier::VerifyManifest(
     std::string bytes;
     if (!ReadDocument(manifest_path, document, bytes, error)) return false;
     std::string manifest_digest;
-    if (!Sha256Bytes(bytes, manifest_digest, error) ||
-        manifest_digest != catalog_entry.manifest_sha256) {
+    if (!installed_evidence && (!Sha256Bytes(bytes, manifest_digest, error) ||
+        manifest_digest != catalog_entry.manifest_sha256)) {
         error = "Manifest SHA-256 differs from the signed catalog";
         return false;
     }
     const Json* signed_body = nullptr;
     if (!ValidateEnvelope(
             document, "cyxwiz-backend-pack-manifest", trust_store_,
-            catalog_entry.signing_key_id, TrustedMetadataRole::Pack,
+            installed_evidence ? std::nullopt : std::optional<std::string>(catalog_entry.signing_key_id), TrustedMetadataRole::Pack,
             signed_body, error)) {
         return false;
     }
@@ -685,11 +707,14 @@ bool BackendPackMetadataVerifier::VerifyManifest(
         !ReadVersion(
             *signed_body, "package_version", output.package_version, error) ||
         !ReadString(*signed_body, "platform", output.platform, error) ||
-        !IsAllowedPlatform(output.platform) || output.platform != platform_ ||
+        !IsAllowedPlatform(output.platform) ||
+        (target_scope == BackendPackManifestTargetScope::CurrentClient &&
+         output.platform != platform_) ||
         !ReadString(
             *signed_body, "architecture", output.architecture, error) ||
         !IsAllowedArchitecture(output.architecture) ||
-        output.architecture != architecture_ ||
+        (target_scope == BackendPackManifestTargetScope::CurrentClient &&
+         output.architecture != architecture_) ||
         !ReadIdentifier(
             *signed_body, "runtime_set_id", output.runtime_set_id, error) ||
         !ReadString(*signed_body, "generated_utc", output.generated_utc, error) ||
@@ -724,8 +749,9 @@ bool BackendPackMetadataVerifier::VerifyManifest(
             release, "minimum", output.minimum_cyxwiz_release, error) ||
         !ReadVersion(
             release, "maximum", output.maximum_cyxwiz_release, error) ||
-        !VersionAtLeast(client_version_, output.minimum_cyxwiz_release) ||
-        !VersionAtMost(client_version_, output.maximum_cyxwiz_release)) {
+        (!installed_evidence &&
+         (!VersionAtLeast(client_version_, output.minimum_cyxwiz_release) ||
+          !VersionAtMost(client_version_, output.maximum_cyxwiz_release)))) {
         error = "Backend pack does not support this CyxWiz release";
         return false;
     }
@@ -795,7 +821,7 @@ bool BackendPackMetadataVerifier::VerifyManifest(
         }
     }
     const auto support = ParseSupportStatus(compatibility["support_status"]);
-    if (!support || *support != catalog_entry.support_status) {
+    if (!support || (!installed_evidence && *support != catalog_entry.support_status)) {
         error = "Manifest and catalog support policy differ";
         return false;
     }

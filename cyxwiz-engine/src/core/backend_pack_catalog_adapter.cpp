@@ -41,6 +41,28 @@ const runtime::ActivePackState* FindActivePack(
     return match == active_runtime.packs.end() ? nullptr : &*match;
 }
 
+void ApplyUpdatePolicy(BackendPackManagerRecord& record,
+    const runtime::VerifiedBackendPackManifest& candidate,
+    const runtime::VerifiedBackendPackCatalogSnapshot& snapshot) {
+    const auto previous = std::find_if(snapshot.installed_manifests.begin(),
+        snapshot.installed_manifests.end(), [&](const auto& manifest) {
+            return manifest.pack_id == record.installed_pack_id;
+        });
+    if (previous != snapshot.installed_manifests.end()) {
+        record.update_decision = runtime::EvaluateBackendPackUpdate(*previous, candidate);
+    } else if (record.installed_pack_id == record.pack_id) {
+        record.update_decision = runtime::BackendPackUpdateDecision{
+            runtime::BackendPackUpdateDisposition::SamePackage,
+            "Already installed; no package download is needed"};
+    } else {
+        record.update_decision = runtime::BackendPackUpdateDecision{
+            runtime::BackendPackUpdateDisposition::Unknown,
+            "Installed version evidence is unavailable; update is blocked"};
+    }
+    record.update_available = record.update_decision->disposition ==
+        runtime::BackendPackUpdateDisposition::Upgrade;
+}
+
 runtime::BackendPackCompatibilityContext BuildDefaultCompatibilityContext(
     const runtime::VerifiedBackendPackCatalogSnapshot& catalog,
     const runtime::ActiveRuntimeState& active_runtime) {
@@ -78,6 +100,8 @@ runtime::BackendPackCompatibilityContext BuildDefaultCompatibilityContext(
         if (!candidate.manifest ||
             candidate.manifest->kind !=
                 runtime::BackendPackManifestKind::Base ||
+            candidate.manifest->platform != context.platform ||
+            candidate.manifest->architecture != context.architecture ||
             candidate.manifest->compatibility.support_status !=
                 runtime::BackendPackSupportStatus::Supported) {
             continue;
@@ -110,6 +134,11 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
     std::vector<BackendPackManagerRecord> records;
     records.reserve(catalog.records.size() + active_runtime.packs.size());
     for (const auto& candidate : catalog.records) {
+        if (candidate.manifest &&
+            (candidate.manifest->platform != compatibility_context.platform ||
+             candidate.manifest->architecture != compatibility_context.architecture)) {
+            continue;
+        }
         BackendPackManagerRecord record;
         record.pack_id = candidate.catalog_entry.pack_id;
         record.catalog_path = catalog.catalog_path;
@@ -137,8 +166,7 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
                     record.installed_pack_id = active_runtime.base_pack_id;
                     record.active =
                         record.installed_pack_id == record.pack_id;
-                    record.update_available =
-                        record.installed_pack_id != record.pack_id;
+                    ApplyUpdatePolicy(record, *candidate.manifest, catalog);
                 }
             } else {
                 installed = FindActiveBackend(active_runtime, record.backend);
@@ -151,9 +179,7 @@ std::vector<BackendPackManagerRecord> BuildBackendPackCatalogRecords(
             record.installed = true;
             record.installed_pack_id = installed->pack_id;
             record.active = record.installed_pack_id == record.pack_id;
-            record.update_available =
-                record.delivery_metadata_available &&
-                record.installed_pack_id != record.pack_id;
+            if (candidate.manifest) ApplyUpdatePolicy(record, *candidate.manifest, catalog);
         }
         records.push_back(std::move(record));
     }

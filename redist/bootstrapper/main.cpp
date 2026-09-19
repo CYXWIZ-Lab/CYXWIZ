@@ -1,8 +1,9 @@
 #include "runtime_layout.h"
+#include "runtime_operation_lock.h"
+#include <optional>
+#include <cstdlib>
 #include "backend_pack_maintenance_request.h"
 #include "backend_pack_platform.h"
-#include "product_removal_handoff.h"
-#include "product_removal_protocol.h"
 
 #include <filesystem>
 #include <iostream>
@@ -252,6 +253,17 @@ int wmain(int argc, wchar_t** argv) {
 
     cyxwiz::runtime::ActiveRuntime runtime;
     std::string error;
+    std::optional<cyxwiz::runtime::RuntimeOperationLock> engine_ownership;
+    if (installer_mode && ::_putenv_s("CYXWIZ_RUNTIME_USE_TOKEN", "") != 0)
+        return Fail(runtime_root, "Cannot clear inherited Engine ownership metadata");
+    if (!installer_mode) {
+        engine_ownership.emplace();
+        if (engine_ownership->AcquireEngineUse(runtime_root, error) !=
+                cyxwiz::runtime::RuntimeOperationLockStatus::Acquired ||
+            !engine_ownership->AllowEngineChildInheritance(error)) {
+            return Fail(runtime_root, "Engine launch is blocked: " + error);
+        }
+    }
     if (!cyxwiz::runtime::ResolveActiveRuntime(runtime_root, runtime, error)) {
         return Fail(runtime_root, error);
     }
@@ -323,7 +335,7 @@ int wmain(int argc, wchar_t** argv) {
     PROCESS_INFORMATION process{};
     // Preserve the caller's standard streams so command-line verification and
     // diagnostics emitted by the Engine remain observable through this stable
-    // launcher. The bootstrapper owns no other inheritable handles here.
+    // launcher. Engine mode also inherits the shared product-ownership handle.
     const BOOL created = ::CreateProcessW(
         launched_executable.c_str(), mutable_command.data(), nullptr, nullptr,
         TRUE, 0, nullptr, runtime.base_directory.c_str(), &startup, &process);
@@ -341,6 +353,11 @@ int wmain(int argc, wchar_t** argv) {
             " generation=" + std::to_string(runtime.generation) +
             " base=" + runtime.base_pack_id);
 
+    // Do not pin this installed launcher while the external manager uninstalls.
+    if (installer_mode) {
+        ::CloseHandle(process.hProcess);
+        return 0;
+    }
     const DWORD wait_result = ::WaitForSingleObject(process.hProcess, INFINITE);
     DWORD exit_code = 78;
     if (wait_result == WAIT_OBJECT_0) {
@@ -352,23 +369,9 @@ int wmain(int argc, wchar_t** argv) {
                 std::to_string(::GetLastError()));
     }
     ::CloseHandle(process.hProcess);
-    if (wait_result == WAIT_OBJECT_0 && installer_mode &&
-        exit_code == static_cast<DWORD>(
-            cyxwiz::runtime::kProductRemovalRequestedExitCode)) {
-        auto handoff = cyxwiz::runtime::SchedulePendingProductRemoval(
-            executable_directory, error);
-        if (handoff.status != cyxwiz::runtime::
-                ProductRemovalHandoffStatus::Scheduled) {
-            return Fail(
-                runtime.runtime_root,
-                "cannot schedule queued product removal: " + error);
-        }
-        cyxwiz::runtime::AppendBootstrapDiagnostic(
-            runtime.runtime_root,
-            "product removal queued; detached finalizer is waiting for exit");
-        handoff.parent_lifetime.PreserveUntilProcessExit();
-        return 0;
-    }
+    engine_ownership.reset();
+    if (::_putenv_s("CYXWIZ_RUNTIME_USE_TOKEN", "") != 0)
+        return Fail(runtime.runtime_root, "Cannot clear completed Engine ownership metadata");
     if (wait_result == WAIT_OBJECT_0 && !installer_mode) {
         const auto maintenance =
             cyxwiz::runtime::ApplyPendingBackendPackMaintenance(

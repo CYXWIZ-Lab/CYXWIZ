@@ -62,15 +62,15 @@ InstallerRemovalViewAction RenderInstallerRemovalControl(
   ImGui::TextWrapped(
       "Projects and datasets stored outside this folder are not removed.");
   ImGui::TextWrapped(
-      "The installed manager will close so its files can be removed. A "
-      "windowless finalizer completes cleanup in the background.");
+      "This window stays open during removal and shows the final result. "
+      "Once removal begins, wait for cleanup to finish before closing.");
   ImGui::Checkbox("I understand that this cannot be undone",
                   &view_state.acknowledged);
   ImGui::BeginDisabled(!view_state.acknowledged || operation_running);
   ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.12f, 0.17f, 1.0f));
   ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                         ImVec4(0.76f, 0.16f, 0.22f, 1.0f));
-  if (ImGui::Button("Uninstall all and close", ImVec2(210.0f, 36.0f))) {
+  if (ImGui::Button("Uninstall all", ImVec2(210.0f, 36.0f))) {
     action = InstallerRemovalViewAction::RemoveProduct;
     ImGui::CloseCurrentPopup();
   }

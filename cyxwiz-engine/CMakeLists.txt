@@ -908,6 +908,7 @@ add_executable(cyxwiz-engine
     ${ENGINE_SOURCES}
     ${ENGINE_HEADERS}
 )
+target_link_libraries(cyxwiz-engine PRIVATE cyxwiz-runtime-bootstrap)
 target_sources(cyxwiz-engine PRIVATE
     src/core/backend_pack_qualification_adapter.cpp
 )

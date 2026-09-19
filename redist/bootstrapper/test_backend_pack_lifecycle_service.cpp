@@ -1,8 +1,10 @@
 #include "backend_pack_hash.h"
+#include "backend_pack_installed_metadata.h"
 #include "backend_pack_lifecycle_service.h"
 #include "backend_pack_metadata_cache.h"
 #include "backend_pack_metadata_refresh.h"
 #include "backend_pack_platform.h"
+#include "runtime_operation_lock.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -186,6 +188,8 @@ public:
     ~Fixture() {
         std::error_code error;
         std::filesystem::remove_all(root, error);
+        // All fixture services/owners have already been destroyed.
+        std::filesystem::remove(RuntimeOperationLock::LocationLockPath(runtime), error);
     }
 
     void WriteMetadata(const std::string& support) {
@@ -249,7 +253,7 @@ public:
     void PrepareBase(
         const std::string& pack_id = "base-v1",
         const std::string& runtime_set_id = "set-v1",
-        bool fresh = true) {
+        bool fresh = true, const std::string& revision = "1.0.0") {
         std::error_code error;
         if (fresh) {
             std::filesystem::remove(runtime / "active-runtime.json", error);
@@ -276,10 +280,10 @@ public:
         }
         Json body = {
             {"pack_id", pack_id}, {"pack_kind", "base"},
-            {"backend", "cpu"}, {"package_version", "1.0.0"},
+            {"backend", "cpu"}, {"package_version", revision},
             {"platform", "win64"}, {"architecture", "x86_64"},
             {"runtime_set_id", runtime_set_id},
-            {"cyxwiz_release", {{"minimum", "0.2.0"}, {"maximum", "0.2.x"}}},
+            {"cyxwiz_release", {{"minimum", "0.2.0"}, {"maximum", "0.2.0"}}},
             {"arrayfire", {{"version", "3.10.0"}, {"abi", "arrayfire-3.10"}}},
             {"companion_base_id", nullptr}, {"conflicts", Json::array()},
             {"compatibility", {
@@ -375,9 +379,9 @@ public:
         return state;
     }
 
-    static void Touch(const std::filesystem::path& path) {
+    static void Touch(const std::filesystem::path& path, char value = '\0') {
         std::filesystem::create_directories(path.parent_path());
-        std::ofstream(path, std::ios::binary).put('\0');
+        std::ofstream(path, std::ios::binary).put(value);
     }
 
     static char ReadByte(const std::filesystem::path& path) {
@@ -459,6 +463,42 @@ private:
 
 int main() {
     int failures = 0;
+    for (const bool prior_tools : {false, true}) {
+        Fixture fixture;
+        fixture.PrepareBase();
+        const auto launcher = fixture.root / std::string(CurrentRuntimeBootstrapperExecutableName());
+        const auto finalizer = fixture.root / std::string(CurrentProductRemovalFinalizerExecutableName());
+        bool rejected_after_publication = false;
+        BackendPackLifecycleService service(
+            fixture.runtime, fixture.Verifier(),
+            [&] {
+                const bool published = std::filesystem::is_regular_file(launcher) &&
+                    std::filesystem::is_regular_file(finalizer) &&
+                    Fixture::ReadByte(launcher) == '\0' && Fixture::ReadByte(finalizer) == '\0';
+                rejected_after_publication = rejected_after_publication || published;
+                return published;
+            },
+            [&](const auto&, const auto&, const auto&) {
+                // Seed prior tools after fresh-target inspection, before publication.
+                if (prior_tools) {
+                    std::ofstream(launcher, std::ios::binary).put('p');
+                    std::ofstream(finalizer, std::ios::binary).put('p');
+                }
+                return BackendPackQualificationDecision{
+                    BackendPackQualificationDisposition::Qualified, "Fixture qualified"};
+            });
+        auto request = fixture.Request();
+        request.pack_id = "base-v1";
+        OfflineBackendPackArtifactSource source(fixture.archive);
+        const auto result = service.DeliverBase(request, source);
+        const bool restored = prior_tools
+            ? (Fixture::ReadByte(launcher) == 'p' && Fixture::ReadByte(finalizer) == 'p')
+            : (!std::filesystem::exists(launcher) && !std::filesystem::exists(finalizer));
+        failures += !Expect(rejected_after_publication && restored &&
+                result.status == BackendPackLifecycleStatus::ActivationFailure &&
+                !std::filesystem::exists(fixture.runtime / "active-runtime.json"),
+            "Real activation rejection after tool publication must restore both prior tool states");
+    }
     {
         Fixture fixture;
         constexpr const char* catalog_url =
@@ -581,6 +621,76 @@ int main() {
     {
         Fixture fixture;
         fixture.PrepareBase();
+        bool inspecting_repair = false;
+        bool observed_locked_stage = false;
+        bool lost_ownership = false;
+        BackendPackLifecycleService service(fixture.runtime, fixture.Verifier(), [] { return false; }, {},
+            [&](const BackendPackLifecycleProgress& progress) {
+                if (!inspecting_repair || (progress.stage != BackendPackLifecycleStage::Acquiring &&
+                        progress.stage != BackendPackLifecycleStage::Installing &&
+                        progress.stage != BackendPackLifecycleStage::Complete)) return;
+                RuntimeOperationLock contender;
+                std::string lock_error;
+                observed_locked_stage = true;
+                lost_ownership |= contender.Acquire(fixture.runtime, lock_error) !=
+                    RuntimeOperationLockStatus::Busy;
+            });
+        auto request = fixture.Request();
+        request.pack_id = "base-v1";
+        request.route_verification = BackendPackRouteVerificationPolicy::DeferredToEngine;
+        OfflineBackendPackArtifactSource source(fixture.archive);
+        const auto installed = service.DeliverBase(request, source);
+        const auto engine = fixture.runtime / "base/base-v1" / CurrentEngineExecutableName();
+        Fixture::Touch(engine, 'x');
+        inspecting_repair = true;
+        request.discard_artifact_on_success = true;
+        {
+            RuntimeOperationLock helper;
+            RuntimeOperationLock unowned;
+            std::string ownership_error;
+            failures += !Expect(helper.Acquire(fixture.runtime, ownership_error) ==
+                    RuntimeOperationLockStatus::Acquired,
+                "Helper fixture must own the repair runtime");
+            failures += !Expect(service.DeliverBaseRepair(request, source).status ==
+                    BackendPackLifecycleStatus::Busy && Fixture::ReadByte(engine) == 'x',
+                "Repair must reject an overlapping helper before changing files");
+            failures += !Expect(service.DeliverBaseRepair(request, source, &unowned).status ==
+                    BackendPackLifecycleStatus::InvalidRequest,
+                "An unowned lock must not bypass repair exclusion");
+            RuntimeOperationLock wrong_root;
+            failures += !Expect(wrong_root.Acquire(fixture.root / "other-product/runtime", ownership_error) ==
+                    RuntimeOperationLockStatus::Acquired &&
+                service.DeliverBaseRepair(request, source, &wrong_root).status ==
+                    BackendPackLifecycleStatus::InvalidRequest,
+                "A lock for another runtime must not authorize repair");
+            failures += !Expect(service.DeliverBaseRepair(request, source, &helper).status ==
+                    BackendPackLifecycleStatus::InstalledAndActivated && helper.Owns(fixture.runtime),
+                "Repair borrows live helper ownership without deadlock or releasing it");
+        }
+        Fixture::Touch(engine, 'x');
+        const auto repaired = service.DeliverBaseRepair(request, source);
+        failures += !Expect(installed.status == BackendPackLifecycleStatus::InstalledAndActivated &&
+                repaired.status == BackendPackLifecycleStatus::InstalledAndActivated &&
+                Fixture::ReadByte(engine) == '\0' && fixture.Active().generation == 3 &&
+                !std::filesystem::exists(fixture.runtime / "cache/artifacts/base-v1/base-v1.zip") &&
+                observed_locked_stage && !lost_ownership,
+            "Signed CPU repair must restore the exact installed package via verified extraction");
+        fixture.PrepareBase("base-other", "set-other", false, "2.0.0");
+        auto wrong = fixture.Request();
+        wrong.pack_id = "base-other";
+        wrong.route_verification = BackendPackRouteVerificationPolicy::DeferredToEngine;
+        OfflineBackendPackArtifactSource missing(fixture.root / "missing.zip");
+        failures += !Expect(service.DeliverBaseRepair(wrong, missing).status ==
+                BackendPackLifecycleStatus::PolicyRejected && fixture.Active().generation == 3,
+            "Repair must reject a different signed package before acquisition");
+        std::filesystem::remove(fixture.runtime / "active-runtime.json");
+        failures += !Expect(service.DeliverBaseRepair(wrong, missing).status ==
+                BackendPackLifecycleStatus::PolicyRejected,
+            "Repair must not guess an installation identity when activation is missing");
+    }
+    for (const bool reject_activation : {false, true}) {
+        Fixture fixture;
+        fixture.PrepareBase();
         BackendPackLifecycleService initial_service(
             fixture.runtime, fixture.Verifier(), [] { return false; },
             [](const auto&, const auto&, const auto&) {
@@ -598,10 +708,20 @@ int main() {
             std::string(CurrentRuntimeBootstrapperExecutableName());
         std::ofstream(stable_launcher, std::ios::binary | std::ios::trunc)
             .put('p');
-        fixture.PrepareBase("base-v2", "set-v2", false);
+        const auto stable_finalizer = fixture.root /
+            std::string(CurrentProductRemovalFinalizerExecutableName());
+        std::ofstream(stable_finalizer, std::ios::binary | std::ios::trunc).put('p');
+        fixture.PrepareBase("base-v2", "set-v2", false, "2.0.0");
         bool saw_update_candidate = false;
+        bool rejected_after_publication = false;
         BackendPackLifecycleService update_service(
-            fixture.runtime, fixture.Verifier(), [] { return false; },
+            fixture.runtime, fixture.Verifier(), [&] {
+                const bool block = reject_activation &&
+                    Fixture::ReadByte(stable_launcher) == '\0' &&
+                    Fixture::ReadByte(stable_finalizer) == '\0';
+                rejected_after_publication = rejected_after_publication || block;
+                return block;
+            },
             [&](const auto& manifest, const auto&, const auto& candidate) {
                 saw_update_candidate =
                     manifest.pack_id == "base-v2" &&
@@ -618,6 +738,36 @@ int main() {
         const auto updated = update_service.DeliverBaseUpdate(
             update_request, update_source);
         const auto active = fixture.Active();
+        if (reject_activation) {
+            failures += !Expect(
+                initial.status == BackendPackLifecycleStatus::InstalledAndActivated &&
+                    saw_update_candidate && rejected_after_publication &&
+                    updated.status == BackendPackLifecycleStatus::ActivationFailure &&
+                    active.runtime_set_id == "set-v1" && active.base_pack_id == "base-v1" &&
+                    active.generation == 1 &&
+                    Fixture::ReadByte(stable_launcher) == 'p' &&
+                    Fixture::ReadByte(stable_finalizer) == 'p',
+                "Rejected base update must restore both tools and preserve the previous active runtime");
+            failures += !Expect(std::filesystem::is_directory(
+                    fixture.runtime / "base/base-v2"),
+                "Rejected activation must retain the completed update candidate for retry");
+            BackendPackLifecycleService retry_service(
+                fixture.runtime, fixture.Verifier(), [] { return false; },
+                [](const auto&, const auto&, const auto&) {
+                    return BackendPackQualificationDecision{
+                        BackendPackQualificationDisposition::Qualified, "Retry qualified"};
+                });
+            OfflineBackendPackArtifactSource retry_source(fixture.archive);
+            const auto retried = retry_service.DeliverBaseUpdate(update_request, retry_source);
+            failures += !Expect(
+                retried.status == BackendPackLifecycleStatus::InstalledAndActivated &&
+                    fixture.Active().base_pack_id == "base-v2" &&
+                    fixture.Active().generation == 2 &&
+                    Fixture::ReadByte(stable_launcher) == '\0' &&
+                    Fixture::ReadByte(stable_finalizer) == '\0',
+                "New lifecycle service must complete retry with the previous candidate already on disk");
+            continue;
+        }
         failures += !Expect(
             initial.status ==
                     BackendPackLifecycleStatus::InstalledAndActivated &&
@@ -629,20 +779,64 @@ int main() {
                 std::filesystem::is_regular_file(
                     fixture.runtime / "rollback" / "set-v2" /
                     "previous-active-runtime.json") &&
-                Fixture::ReadByte(stable_launcher) == 'p',
-            "base update must qualify and activate the new CPU runtime without replacing the running stable launcher");
+                Fixture::ReadByte(stable_launcher) == '\0' &&
+                Fixture::ReadByte(stable_finalizer) == '\0',
+            "base update must refresh both stable tools and activate the new CPU runtime");
+
+        VerifiedBackendPackManifest retained;
+        std::string evidence_error;
+        failures += !Expect(ReadInstalledBackendPackMetadata(
+            fixture.runtime, "base-v1", BackendPackManifestKind::Base,
+            fixture.Verifier(), retained, evidence_error) && retained.package_version == "1.0.0",
+            "Catalog replacement must not erase the previous signed installed-version evidence");
+        failures += !Expect(update_service.DeliverBaseUpdate(update_request, update_source).status ==
+                BackendPackLifecycleStatus::PolicyRejected && fixture.Active().generation == 2,
+            "Repeated same-ID base update must be a no-op rejection");
+        bool repeated_acquisition = false;
+        BackendPackLifecycleService repeated_service(
+            fixture.runtime, fixture.Verifier(), [] { return false; }, {},
+            [&](const BackendPackLifecycleProgress& progress) {
+                repeated_acquisition = repeated_acquisition ||
+                    progress.stage == BackendPackLifecycleStage::Acquiring;
+            });
+        failures += !Expect(repeated_service.DeliverBase(update_request, update_source).status ==
+                BackendPackLifecycleStatus::PolicyRejected && !repeated_acquisition &&
+                fixture.Active().generation == 2,
+            "Fresh-install entry point must not redownload or replace an existing installation");
+
+        for (const auto& revision : {"1.0.0", "2.0.0", "3.0.0"}) {
+            fixture.PrepareBase("base-replacement", "set-replacement", false, revision);
+            auto replacement = fixture.Request();
+            replacement.pack_id = "base-replacement";
+            // Deliberately missing source: a policy rejection must happen before acquisition.
+            OfflineBackendPackArtifactSource missing_source(fixture.root / "missing.zip");
+            bool acquired = false;
+            BackendPackLifecycleService checked_service(
+                fixture.runtime, fixture.Verifier(), [] { return false; }, {},
+                [&](const BackendPackLifecycleProgress& progress) {
+                    acquired = acquired || progress.stage == BackendPackLifecycleStage::Acquiring;
+                });
+            if (std::string(revision) == "3.0.0") {
+                std::ofstream(fixture.runtime / "installed-metadata/base-v2.json",
+                              std::ios::trunc) << "{}";
+            }
+            const auto rejected = checked_service.DeliverBaseUpdate(replacement, missing_source);
+            failures += !Expect(rejected.status == BackendPackLifecycleStatus::PolicyRejected &&
+                    !acquired && fixture.Active().generation == 2 &&
+                    fixture.Active().base_pack_id == "base-v2",
+                "Downgrade, equal-version replacement, or untrusted installed evidence must reject before download");
+        }
     }
     {
         Fixture fixture;
         fixture.PrepareBase();
         const auto published_launcher = fixture.root /
             std::string(CurrentRuntimeBootstrapperExecutableName());
-        std::ofstream(
-            published_launcher, std::ios::binary | std::ios::trunc)
-            .put('p');
         BackendPackLifecycleService service(
             fixture.runtime, fixture.Verifier(), [] { return false; },
             [&](const auto&, const auto& installed, const auto&) {
+                std::ofstream(published_launcher, std::ios::binary | std::ios::trunc)
+                    .put('p');
                 std::ofstream(
                     installed /
                         std::string(
@@ -664,6 +858,27 @@ int main() {
                     fixture.runtime / "active-runtime.json", active_error) &&
                 !active_error && Fixture::ReadByte(published_launcher) == 'p',
             "post-qualification launcher tampering must block activation and preserve the previous app-level launcher");
+    }
+    {
+        Fixture fixture;
+        fixture.PrepareBase();
+        const auto retained_file = fixture.runtime / "base" / "incomplete-base" / "user-data.txt";
+        Fixture::Touch(retained_file);
+        bool acquired = false;
+        BackendPackLifecycleService service(
+            fixture.runtime, fixture.Verifier(), [] { return false; }, {},
+            [&](const BackendPackLifecycleProgress& progress) {
+                acquired = acquired || progress.stage == BackendPackLifecycleStage::Acquiring;
+            });
+        auto request = fixture.Request();
+        request.pack_id = "base-v1";
+        OfflineBackendPackArtifactSource source(fixture.root / "missing.zip");
+        const auto rejected = service.DeliverBase(request, source);
+        failures += !Expect(rejected.status == BackendPackLifecycleStatus::PolicyRejected &&
+                rejected.message.find("Recovery required") != std::string::npos && !acquired &&
+                Fixture::ReadByte(retained_file) == '\0' &&
+                !std::filesystem::exists(fixture.runtime / "active-runtime.json"),
+            "Missing activation with installed files must require recovery before acquisition, without deleting data");
     }
     {
         Fixture fixture;

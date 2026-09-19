@@ -2,6 +2,7 @@
 #include "backend_pack_archive_extractor.h"
 #include "backend_pack_hash.h"
 #include "backend_pack_platform.h"
+#include "backend_pack_path.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -224,6 +225,15 @@ bool Expect(bool condition, const std::string& message) {
 }  // namespace
 
 int main() {
+#ifdef _WIN32
+    if (!Expect(BackendPackIoPath(L"C:\\packs\\file.bin").native() ==
+                    L"\\\\?\\C:\\packs\\file.bin" &&
+                BackendPackIoPath(L"\\\\server\\share\\file.bin").native() ==
+                    L"\\\\?\\UNC\\server\\share\\file.bin" &&
+                BackendPackIoPath(L"\\\\?\\C:\\packs\\file.bin").native() ==
+                    L"\\\\?\\C:\\packs\\file.bin",
+                "Windows extended-path conversion differs")) return 1;
+#endif
     TemporaryDirectory temporary;
 
     std::string archive_url;
@@ -453,6 +463,24 @@ int main() {
                 extracted.extracted_directory / "runtime" /
                     CurrentArrayFireBackendPluginName("opencl")),
             "valid component was not extracted")) return 1;
+
+    const std::string long_relative = "licenses/" + std::string(100, 'a') +
+        "/" + std::string(100, 'b') + "/LICENSE.txt";
+    const auto long_archive = temporary.Path() / "long-path.zip";
+    if (!Expect(WriteZip(long_archive, {{long_relative, "license"}}),
+                "cannot create long-path ZIP fixture")) return 1;
+    const auto long_manifest = Manifest(
+        long_archive, {{long_relative, 7, Hash("license")}});
+    const auto long_destination = temporary.Path() / "extract-long";
+    const auto long_result = extractor.Extract(
+        long_archive, long_manifest, long_destination, 1024);
+    if (!Expect(long_result.status == BackendPackExtractionStatus::Extracted,
+                "long-path extraction failed: " + long_result.message)) return 1;
+    std::string long_digest;
+    std::string long_error;
+    if (!Expect(Sha256File(long_destination / long_relative, long_digest, long_error) &&
+                    long_digest == Hash("license"),
+                "long extracted path could not be verified: " + long_error)) return 1;
 
     const auto extra_archive =
         temporary.Path() / "extra" / "opencl-v1.zip";

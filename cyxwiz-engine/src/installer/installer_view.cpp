@@ -27,7 +27,7 @@ const char *BackendName(std::string_view backend) {
     return "OpenCL";
   if (backend == "oneapi")
     return "Intel oneAPI";
-  return "Compute backend";
+  return "Unavailable package";
 }
 
 const char *BackendIcon(std::string_view backend) {
@@ -276,7 +276,7 @@ void RenderComponents(InstallerViewState &state,
     const auto providers = Join(record.provider_requirements);
     ImGui::TextDisabled("Version %s  |  %s  |  Requires: %s",
                         record.package_version.empty()
-                            ? "not published"
+                            ? "unavailable"
                             : record.package_version.c_str(),
                         size.c_str(), providers.c_str());
     ImGui::TextWrapped("%s", presentation.explanation.c_str());
@@ -529,6 +529,8 @@ void RenderHeader(const InstallerCatalogState &catalog,
   ImGui::TextDisabled("%s  |  %s", platform_name.c_str(),
                       catalog.mode == CyxWizInstallerMode::FreshInstall
                           ? "Fresh installation"
+                          : catalog.mode == CyxWizInstallerMode::RecoveryRequired
+                          ? "Recovery required"
                           : "Modify installation");
   ImGui::EndGroup();
 
@@ -538,7 +540,8 @@ void RenderHeader(const InstallerCatalogState &catalog,
   ImGui::TextColored(
       catalog.available ? kSuccess : kWarning, "%s %s",
       catalog.available ? ICON_FA_SHIELD : ICON_FA_TRIANGLE_EXCLAMATION,
-      catalog.available ? "Catalog verified" : "Catalog unavailable");
+      catalog.mode == CyxWizInstallerMode::RecoveryRequired ? "Recovery required"
+          : catalog.available ? "Catalog verified" : "Catalog unavailable");
   ImGui::BeginDisabled(operation_running);
   const char *refresh_label =
       catalog.mode == CyxWizInstallerMode::Maintenance
@@ -608,8 +611,12 @@ void RenderSummary(InstallerViewState &state,
                            static_cast<int>(progress * 100.0f)) +
                        "% overall";
     }
-    ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f),
-                       progress_label.c_str());
+    if (operation_progress.total_steps == 0) {
+      ImGui::ProgressBar(-static_cast<float>(ImGui::GetTime()),
+                         ImVec2(-1.0f, 0.0f), "Working...");
+    } else {
+      ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f), progress_label.c_str());
+    }
     if (operation_progress.package_count != 0) {
       std::string package_text =
           "Package " + std::to_string(operation_progress.package_index) +
@@ -660,16 +667,20 @@ void RenderSummary(InstallerViewState &state,
                          install_location.valid && !operation_running;
   const bool maintenance =
       catalog.mode == CyxWizInstallerMode::Maintenance;
-  const bool show_launch = maintenance || state.install_completed;
+  const bool recovery = catalog.mode == CyxWizInstallerMode::RecoveryRequired;
+  const bool show_launch = !recovery && (maintenance || state.install_completed);
   const float footer_height = maintenance
                                   ? (has_changes ? 228.0f : 184.0f)
                                   : (state.install_completed ? 160.0f
                                                              : 116.0f);
   ImGui::SetCursorPosY(std::max(
       ImGui::GetCursorPosY(), ImGui::GetWindowHeight() - footer_height));
-  if (state.install_completed) {
+  if (state.install_completed && !recovery) {
     ImGui::TextColored(kSuccess, "%s Installation complete",
                        ICON_FA_CIRCLE_CHECK);
+  }
+  if (state.uninstall_completed) {
+    ImGui::TextColored(kSuccess, "%s Uninstalled successfully", ICON_FA_CIRCLE_CHECK);
   }
   if (show_launch) {
     ImGui::BeginDisabled(operation_running);
@@ -696,7 +707,9 @@ void RenderSummary(InstallerViewState &state,
     ImGui::EndDisabled();
   } else if (has_changes) {
     ImGui::BeginDisabled(!can_apply);
-    const char *review_label = plan.update_base
+    const char *review_label = state.uninstall_completed
+                                   ? ICON_FA_DOWNLOAD " Install again"
+                                   : plan.update_base
                                    ? ICON_FA_DOWNLOAD " Review & update"
                                    : ICON_FA_DOWNLOAD " Review & install";
     if (ImGui::Button(review_label, ImVec2(-1.0f, 38.0f))) {
@@ -732,9 +745,9 @@ void RenderCloseConfirmation(InstallerViewState &state,
                               ImGuiWindowFlags_AlwaysAutoResize)) {
     return;
   }
-  ImGui::TextWrapped(
-      "CyxWiz is still applying installation changes. Closing now must "
-      "first cancel the operation and wait for safe cleanup.");
+  ImGui::TextWrapped(operation_cancellable
+      ? "CyxWiz is still applying changes. Closing must first cancel the operation and wait for safe cleanup."
+      : "CyxWiz is finishing an operation that cannot be cancelled safely. Please wait for the result before closing.");
   ImGui::Spacing();
   if (operation_cancellable) {
     if (ImGui::Button("Cancel installation and close",
@@ -744,7 +757,7 @@ void RenderCloseConfirmation(InstallerViewState &state,
     }
     ImGui::SameLine();
   }
-  if (ImGui::Button("Continue installation", ImVec2(190.0f, 36.0f))) {
+  if (ImGui::Button("Keep window open", ImVec2(190.0f, 36.0f))) {
     ImGui::CloseCurrentPopup();
   }
   ImGui::EndPopup();
@@ -847,7 +860,11 @@ InstallerViewAction RenderInstallerView(
 
   RenderHeader(catalog, platform_name, operation_running, assets, action);
   if (!catalog.message.empty()) {
-    ImGui::TextDisabled("%s", catalog.message.c_str());
+    ImGui::PushStyleColor(ImGuiCol_Text,
+        catalog.mode == CyxWizInstallerMode::RecoveryRequired ? kWarning
+            : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s", catalog.message.c_str());
+    ImGui::PopStyleColor();
   }
   ImGui::Dummy(ImVec2(0.0f, 6.0f));
 

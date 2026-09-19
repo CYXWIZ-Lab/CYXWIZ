@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend_pack_compatibility.h"
+#include "backend_pack_update_policy.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -12,7 +13,7 @@ namespace cyxwiz {
 
 enum class BackendPackInstallChoice { Recommended, CpuOnly, Custom };
 
-enum class CyxWizInstallerMode { FreshInstall, Maintenance };
+enum class CyxWizInstallerMode { FreshInstall, Maintenance, RecoveryRequired };
 
 enum class CyxWizInstallScope { CurrentUser, AllUsers };
 
@@ -63,6 +64,7 @@ struct BackendPackManagerRecord {
   bool qualification_evidence_available = false;
   bool training_authorized = false;
   bool update_available = false;
+  std::optional<runtime::BackendPackUpdateDecision> update_decision;
   bool delivery_metadata_available = false;
   std::string delivery_metadata_error;
   std::optional<runtime::BackendPackCompatibilityDecision> compatibility;

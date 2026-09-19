@@ -15,6 +15,10 @@
 #include <iterator>
 #include <string>
 #include <vector>
+#include <utility>
+
+int RunBackendPackCatalogAcceptance(const char* root, const char* current_utc,
+                                   const char* archive, const char* destination);
 
 namespace {
 
@@ -402,6 +406,40 @@ void TestPackPlatformIdentity() {
 #endif
 }
 
+void TestMultiTargetCpuCatalogPlan() {
+  cyxwiz::runtime::VerifiedBackendPackCatalogSnapshot snapshot;
+  for (const auto &target : std::vector<std::pair<std::string, std::string>>{
+           {"win64", "x86_64"}, {"linux64", "x86_64"},
+           {"macos", "x86_64"}, {"macos", "arm64"}}) {
+    cyxwiz::runtime::VerifiedBackendPackCatalogRecord record;
+    record.catalog_entry.pack_id = target.first + "-" + target.second;
+    record.catalog_entry.support_status = cyxwiz::runtime::BackendPackSupportStatus::Supported;
+    record.manifest.emplace();
+    auto &manifest = *record.manifest;
+    manifest.pack_id = record.catalog_entry.pack_id;
+    manifest.backend = "cpu";
+    manifest.kind = cyxwiz::runtime::BackendPackManifestKind::Base;
+    manifest.platform = target.first;
+    manifest.architecture = target.second;
+    manifest.runtime_set_id = "runtime-" + manifest.pack_id;
+    manifest.arrayfire_abi = "arrayfire-3.10";
+    manifest.compatibility.support_status = record.catalog_entry.support_status;
+    snapshot.records.push_back(std::move(record));
+  }
+  auto records = cyxwiz::BuildBackendPackCatalogRecords(snapshot, {});
+  Check(records.size() == 1 && records.front().backend == "cpu",
+        "Four-platform catalog must expose exactly this machine's CPU base");
+  const auto selection = cyxwiz::ResolveBackendPackInstallerSelection(
+      cyxwiz::BackendPackInstallChoice::CpuOnly, records);
+  Check(cyxwiz::BuildBackendPackInstallerPlan(selection, records,
+            cyxwiz::CyxWizInstallerMode::FreshInstall).valid,
+        "Supported multi-platform CPU catalog must yield a fresh install plan");
+  records.front().catalog_support = cyxwiz::BackendPackCatalogSupport::Diagnostic;
+  Check(!cyxwiz::BuildBackendPackInstallerPlan(selection, records,
+             cyxwiz::CyxWizInstallerMode::FreshInstall).valid,
+        "Diagnostic CPU packages must not silently become installable");
+}
+
 void TestCatalogAdapter() {
   cyxwiz::runtime::VerifiedBackendPackCatalogSnapshot snapshot;
   snapshot.catalog_path = "C:/CyxWiz/runtime/catalogs/current.json";
@@ -463,6 +501,17 @@ void TestCatalogAdapter() {
   device.identity_confidence =
       cyxwiz::runtime::BackendPackIdentityConfidence::StableHardware;
   compatibility_context.devices.push_back(std::move(device));
+  const auto unknown_records = cyxwiz::BuildBackendPackCatalogRecords(
+      snapshot, active, compatibility_context);
+  Check(!unknown_records.front().update_available &&
+            unknown_records.front().update_decision &&
+            unknown_records.front().update_decision->disposition ==
+                cyxwiz::runtime::BackendPackUpdateDisposition::Unknown,
+        "Different package IDs alone must not authorize an update");
+  auto installed_manifest = *candidate.manifest;
+  installed_manifest.pack_id = "opencl-v1";
+  installed_manifest.package_version = "1.0.0";
+  snapshot.installed_manifests.push_back(installed_manifest);
   const auto records = cyxwiz::BuildBackendPackCatalogRecords(
       snapshot, active, compatibility_context);
   Check(records.size() == 4, "Catalog view must retain the required base and "
@@ -512,6 +561,31 @@ void TestCatalogAdapter() {
                                            context, &records[1])
              .enabled,
         "Missing verified manifest metadata must disable delivery");
+
+  cyxwiz::BackendPackInstallerSelection selection;
+  selection.valid = true;
+  selection.pack_ids = {"opencl-v2"};
+  auto blocked_snapshot = snapshot;
+  blocked_snapshot.installed_manifests.front().package_version = "3.0.0";
+  const auto blocked_records = cyxwiz::BuildBackendPackCatalogRecords(
+      blocked_snapshot, active, compatibility_context);
+  Check(!blocked_records.front().update_available &&
+            !cyxwiz::EvaluateBackendPackAction(cyxwiz::BackendPackAction::Update,
+                context, &blocked_records.front()).enabled &&
+            !cyxwiz::BuildBackendPackInstallerPlan(selection, blocked_records,
+                cyxwiz::CyxWizInstallerMode::Maintenance).valid &&
+            cyxwiz::BuildInstallerPackPresentation(blocked_records.front()).status == "Update blocked",
+        "An older candidate must be blocked in actions, plans, and presentation");
+  auto same_active = active;
+  same_active.packs.front().pack_id = "opencl-v2";
+  auto same_snapshot = snapshot;
+  same_snapshot.installed_manifests = {*candidate.manifest};
+  const auto same_records = cyxwiz::BuildBackendPackCatalogRecords(
+      same_snapshot, same_active, compatibility_context);
+  const auto same_plan = cyxwiz::BuildBackendPackInstallerPlan(selection, same_records,
+      cyxwiz::CyxWizInstallerMode::Maintenance);
+  Check(same_plan.valid && same_plan.pack_ids.empty() && same_plan.download_size_bytes == 0,
+        "Re-selecting the identical installed package must not schedule another download");
 }
 
 void TestDisplayFormatting() {
@@ -557,6 +631,15 @@ void TestMaintenanceBaseUpdatePlan() {
   base.delivery_metadata_available = true;
   base.download_size_bytes = 1000;
 
+  cyxwiz::BackendPackInstallerSelection recovery_selection;
+  recovery_selection.valid = true;
+  recovery_selection.deactivate_optional_backends = true;
+  const auto recovery = cyxwiz::BuildBackendPackInstallerPlan(
+      recovery_selection, std::vector{base}, cyxwiz::CyxWizInstallerMode::RecoveryRequired);
+  Check(!recovery.valid && !recovery.install_base && !recovery.update_base &&
+            recovery.pack_ids.empty() && recovery.deactivate_backends.empty(),
+        "Recovery mode must not build install, update, or deactivation plans");
+
   auto optional =
       Pack("opencl-v2", cyxwiz::BackendPackCatalogSupport::Supported);
   optional.runtime_set_id = "set-v2";
@@ -589,8 +672,9 @@ void TestInstallerProgressChannel() {
   Check(cyxwiz::installer::IsInstallerProgressToken(token) &&
             !cyxwiz::installer::IsInstallerProgressToken("../escape"),
         "Progress tokens must be bounded path-safe identities");
-  const auto root = std::filesystem::temp_directory_path() /
-                    ("cyxwiz-progress-test-" + token);
+  const auto product_root = std::filesystem::temp_directory_path() /
+                            ("cyxwiz-progress-test-" + token);
+  const auto root = product_root / "runtime";
   const auto path = cyxwiz::installer::InstallerProgressPath(root, token);
   const cyxwiz::installer::InstallerHelperProgress expected{
       "acquiring", 64, 128, 0, 0, "Downloading test package"};
@@ -620,8 +704,13 @@ void TestInstallerProgressChannel() {
               !overlapping.Open(
                   root, cyxwiz::installer::CurrentInstallerProcessId(),
                   session_error) &&
-              session_error.find("still active") != std::string::npos,
+              session_error.find("CyxWiz is in use.") != std::string::npos,
           "Only one helper may own an installation root at a time");
+    cyxwiz::runtime::RuntimeOperationLock repair;
+    Check(first.OperationLock().Owns(root) &&
+              repair.Acquire(root, session_error) ==
+                  cyxwiz::runtime::RuntimeOperationLockStatus::Busy,
+          "Helper and CPU repair must share one operation lock identity");
   }
   {
     cyxwiz::installer::InstallerHelperSession after_release;
@@ -632,7 +721,9 @@ void TestInstallerProgressChannel() {
           "A completed helper must release the installation operation lock");
   }
   std::error_code cleanup_error;
-  std::filesystem::remove_all(root, cleanup_error);
+  std::filesystem::remove_all(product_root, cleanup_error);
+  std::filesystem::remove(
+      cyxwiz::runtime::RuntimeOperationLock::LocationLockPath(root), cleanup_error);
 }
 
 void TestInstallerTransactionJournal() {
@@ -926,7 +1017,13 @@ void TestInstallerBaseUpdateExecution() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  if (argc == 4 && std::string(argv[1]) == "--catalog-root")
+    return RunBackendPackCatalogAcceptance(argv[2], argv[3], nullptr, nullptr);
+  if (argc == 7 && std::string(argv[1]) == "--catalog-root" &&
+      std::string(argv[4]) == "--extract")
+    return RunBackendPackCatalogAcceptance(argv[2], argv[3], argv[5], argv[6]);
+  if (argc != 1) return 2;
   TestInstallerChoices();
   TestActionPolicy();
   TestInstallerPlan();
@@ -934,6 +1031,7 @@ int main() {
   TestMaintenanceBaseUpdatePlan();
   TestPackPlatformIdentity();
   TestCatalogAdapter();
+  TestMultiTargetCpuCatalogPlan();
   TestDisplayFormatting();
   TestInstallLocation();
   TestInstallerProgressChannel();

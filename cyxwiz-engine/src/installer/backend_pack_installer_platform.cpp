@@ -33,6 +33,7 @@
 #include "backend_pack_lifecycle_service.h"
 #include "backend_pack_metadata_refresh.h"
 #include "backend_pack_state_service.h"
+#include "runtime_installation_inspection.h"
 #include "core/backend_pack_catalog_adapter.h"
 #include "core/backend_pack_decision_reconciliation.h"
 #include "core/compute_runtime_paths.h"
@@ -176,6 +177,17 @@ int WaitForHelper(
             error = previous->message;
         }
         ::CloseHandle(process);
+        if (exit_code > static_cast<DWORD>(std::numeric_limits<int>::max()) &&
+            error.empty()) {
+            if (exit_code == 0xC0000135UL) {
+                error = "The installation helper cannot start because a required runtime DLL is missing";
+            } else {
+                std::ostringstream status;
+                status << "The installation helper failed with Windows status 0x"
+                       << std::hex << std::uppercase << exit_code;
+                error = status.str();
+            }
+        }
         return exit_code <= static_cast<DWORD>(
                    std::numeric_limits<int>::max())
             ? static_cast<int>(exit_code) : -1;
@@ -370,35 +382,16 @@ public:
     InstallerCatalogState Refresh() override {
         InstallerCatalogState state;
         state.cuda_prerequisite = DetectInstallerCudaPrerequisite();
-        if (!runtime_root_.is_absolute()) {
-            state.message = "The CyxWiz runtime root must be absolute";
+        const auto installation = runtime::InspectRuntimeInstallation(runtime_root_);
+        if (installation.condition == runtime::RuntimeInstallationCondition::RecoveryRequired) {
+            state.mode = CyxWizInstallerMode::RecoveryRequired;
+            state.message = installation.message;
             return state;
         }
-        runtime::ActiveRuntimeState active;
+        state.mode = installation.condition == runtime::RuntimeInstallationCondition::Active
+            ? CyxWizInstallerMode::Maintenance : CyxWizInstallerMode::FreshInstall;
+        const auto& active = installation.active;
         std::string error;
-        const auto active_path = runtime_root_ / "active-runtime.json";
-        std::error_code filesystem_error;
-        const bool active_exists =
-            std::filesystem::exists(active_path, filesystem_error);
-        if (filesystem_error) {
-            state.message = "Cannot inspect the installation state: " +
-                filesystem_error.message();
-            return state;
-        }
-        if (active_exists) {
-            if (!std::filesystem::is_regular_file(
-                    active_path, filesystem_error) || filesystem_error ||
-                !runtime::LoadActiveRuntimeState(
-                    active_path, active, error)) {
-                state.message =
-                    "The existing installation is incomplete or invalid: " +
-                    (error.empty() ? filesystem_error.message() : error);
-                return state;
-            }
-            state.mode = CyxWizInstallerMode::Maintenance;
-        } else {
-            state.mode = CyxWizInstallerMode::FreshInstall;
-        }
         RuntimeQualificationIdentity active_identity;
         active_identity.runtime_set_id = active.runtime_set_id;
         active_identity.generation = active.generation;
@@ -442,6 +435,7 @@ public:
             state.message = "Cannot verify the current pack catalog: " + error;
             return state;
         }
+        lifecycle.ReadInstalledMetadata(runtime_root_, active, snapshot);
         state.records = BuildBackendPackCatalogRecords(snapshot, active);
         ReconcileBackendPackDecisionEvidence(
             state.records, state.verification);

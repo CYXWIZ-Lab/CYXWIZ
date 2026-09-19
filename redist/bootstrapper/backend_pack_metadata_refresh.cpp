@@ -207,11 +207,14 @@ BackendPackMetadataRefreshResult RefreshBackendPackMetadata(
         }
         VerifiedBackendPackManifest manifest;
         if (!verifier.VerifyManifest(
-                record.manifest_path, entry, manifest, error)) {
+                record.manifest_path, entry, manifest, error,
+                BackendPackManifestKind::BackendPack,
+                BackendPackManifestTargetScope::CatalogDiscovery)) {
             std::string base_error;
             if (!verifier.VerifyManifest(
                     record.manifest_path, entry, manifest, base_error,
-                    BackendPackManifestKind::Base)) {
+                    BackendPackManifestKind::Base,
+                    BackendPackManifestTargetScope::CatalogDiscovery)) {
                 return Finish(
                     BackendPackMetadataRefreshStatus::VerificationFailure,
                     "Downloaded manifest for " + entry.pack_id +

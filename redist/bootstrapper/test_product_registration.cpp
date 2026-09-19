@@ -1,6 +1,7 @@
 #include "product_registration.h"
 
 #include "backend_pack_platform.h"
+#include "product_release_version.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -74,6 +75,38 @@ void TestValidation() {
     Check(!invalid_unregistration.unregistered &&
               !invalid_unregistration.message.empty(),
           "Product unregistration must reject a relative installation root");
+}
+
+void TestReleaseVersionSchemas() {
+    TemporaryDirectory temporary;
+    const auto identity = temporary.path() / "RUNTIME_VERSIONS.json";
+    const auto load = [&](const std::string& document, bool expected) {
+        {
+            std::ofstream stream(identity, std::ios::binary | std::ios::trunc);
+            stream << document;
+            Check(static_cast<bool>(stream), "Version fixture must be written");
+        }
+        std::string version = "stale";
+        std::string error;
+        const bool loaded = cyxwiz::runtime::LoadProductReleaseVersion(
+            temporary.path(), version, error);
+        Check(loaded == expected,
+              "Release version schema result: " + document + "; " + error);
+        Check(expected ? version == "0.2.0" && error.empty()
+                       : version.empty() && !error.empty(),
+              "Version reader must publish only a validated identity");
+    };
+    // Original bundles, current Windows CPU base, and current POSIX CPU base.
+    load(R"({"arrayfire":"3.10.0","cyxwiz":"0.2.0","python":"3.12.8"})", true);
+    load(R"({"arrayfire":"3.10.0","cyxwiz":"0.2.0","python":"3.12.8","python_scripting":"disabled"})", true);
+    load(R"({"arrayfire":"3.10.0","cyxwiz":"0.2.0","python_scripting":"disabled"})", true);
+    load(R"({"arrayfire":"3.10.0","cyxwiz":"0.2.0"})", false);
+    load(R"({"arrayfire":"3.10.0","cyxwiz":"0.2.0","python":false})", false);
+    load(R"({"arrayfire":"3.10.0","cyxwiz":"0.2.0","python_scripting":false})", false);
+    load(R"({"arrayfire":"3.10.0","cyxwiz":"0.2.0","python_scripting":"unknown"})", false);
+    load(R"({"arrayfire":"3.10.0","cyxwiz":"0.2.0","python":"3.12.8","python_scripting":"disabled","unknown":true})", false);
+    load(R"({"arrayfire":"3.10.0","cyxwiz":"../unsafe","python_scripting":"disabled"})", false);
+    load("{", false);
 }
 
 #ifndef _WIN32
@@ -203,6 +236,7 @@ void TestUnmanagedRegistrationProtection() {
 
 int main() {
     TestValidation();
+    TestReleaseVersionSchemas();
 #ifndef _WIN32
     TestNativeRegistration();
     TestUnmanagedRegistrationProtection();

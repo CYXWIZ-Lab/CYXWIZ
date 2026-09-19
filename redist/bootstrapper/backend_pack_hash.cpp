@@ -1,4 +1,5 @@
 #include "backend_pack_hash.h"
+#include "backend_pack_path.h"
 
 #include <openssl/evp.h>
 
@@ -113,7 +114,7 @@ bool Sha256File(
     std::string& digest,
     std::string& error,
     const Sha256FileProgress& progress) {
-    std::ifstream stream(path, std::ios::binary);
+    std::ifstream stream(BackendPackIoPath(path), std::ios::binary);
     if (!stream) {
         error = "Cannot open file for hashing: " + path.string();
         return false;

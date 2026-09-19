@@ -5,6 +5,7 @@ endif()
 
 add_library(cyxwiz-runtime-bootstrap STATIC
     atomic_file_publisher.cpp
+    backend_pack_path.cpp
     backend_pack_state_service.cpp
     product_installation_receipt.cpp
     product_registration.cpp
@@ -17,6 +18,9 @@ add_library(cyxwiz-runtime-bootstrap STATIC
     product_removal_request.cpp
     product_removal_transaction.cpp
     runtime_layout.cpp
+    runtime_installation_inspection.cpp
+    engine_runtime_ownership.cpp
+    runtime_operation_lock.cpp
 )
 if(WIN32)
     target_sources(cyxwiz-runtime-bootstrap PRIVATE
@@ -56,11 +60,14 @@ target_link_libraries(cyxwiz-backend-pack-maintenance PUBLIC
 )
 
 add_library(cyxwiz-backend-pack-service STATIC
+    backend_pack_update_policy.cpp
+    backend_pack_installed_metadata.cpp
     backend_pack_acquisition.cpp
     backend_pack_archive_extractor.cpp
     backend_pack_compatibility.cpp
     backend_pack_compatibility_names.cpp
     base_stable_tool_publisher.cpp
+    base_repair_publication.cpp
     backend_pack_hash.cpp
     backend_pack_https_source.cpp
     github_release_redirect_policy.cpp
@@ -69,7 +76,6 @@ add_library(cyxwiz-backend-pack-service STATIC
     backend_pack_metadata_cache.cpp
     backend_pack_metadata_refresh.cpp
     backend_pack_metadata_verifier.cpp
-    backend_pack_path.cpp
     installer_bundle_verifier.cpp
     installer_setup_service.cpp
 )
@@ -213,6 +219,8 @@ install(FILES "${CMAKE_SOURCE_DIR}/LICENSE"
 # static CRT and the finalizer never depends on DLLs inside the product root.
 add_executable(cyxwiz-product-removal-finalizer
     product_removal_finalizer_main.cpp
+    runtime_operation_lock.cpp
+    backend_pack_path.cpp
     product_removal_finalizer.cpp
     product_removal_transaction.cpp
     product_removal_quarantine.cpp
@@ -331,6 +339,27 @@ if(CYXWIZ_BUILD_TESTS)
         test_runtime_bootstrapper_child
     )
     add_test(NAME runtime_bootstrapper_contract COMMAND test_runtime_bootstrapper)
+
+    add_executable(test_runtime_installation_inspection test_runtime_installation_inspection.cpp)
+    target_link_libraries(test_runtime_installation_inspection PRIVATE cyxwiz-runtime-bootstrap)
+    set_target_properties(test_runtime_installation_inspection PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    add_test(NAME runtime_installation_inspection_contract COMMAND test_runtime_installation_inspection)
+    add_executable(test_runtime_operation_lock test_runtime_operation_lock.cpp)
+    target_link_libraries(test_runtime_operation_lock PRIVATE cyxwiz-runtime-bootstrap)
+    set_target_properties(test_runtime_operation_lock PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    add_test(NAME runtime_operation_lock_contract COMMAND test_runtime_operation_lock)
+    add_executable(test_engine_runtime_ownership test_engine_runtime_ownership.cpp)
+    target_link_libraries(test_engine_runtime_ownership PRIVATE cyxwiz-runtime-bootstrap)
+    set_target_properties(test_engine_runtime_ownership PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    add_test(NAME engine_runtime_ownership_contract COMMAND test_engine_runtime_ownership)
+    add_executable(test_product_removal_ownership test_product_removal_ownership.cpp)
+    target_link_libraries(test_product_removal_ownership PRIVATE cyxwiz-runtime-bootstrap)
+    set_target_properties(test_product_removal_ownership PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    add_test(NAME product_removal_ownership_contract COMMAND test_product_removal_ownership)
     unset(_cyxwiz_runtime_child_source)
     unset(_cyxwiz_runtime_contract_source)
 
@@ -435,6 +464,22 @@ if(CYXWIZ_BUILD_TESTS)
         NAME backend_pack_maintenance_request_contract
         COMMAND test_backend_pack_maintenance_request
     )
+
+    add_executable(test_backend_pack_update_policy test_backend_pack_update_policy.cpp)
+    add_executable(test_base_repair test_base_repair.cpp)
+    target_link_libraries(test_base_repair PRIVATE cyxwiz-backend-pack-service)
+    set_target_properties(test_base_repair PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    add_test(NAME base_repair_contract COMMAND test_base_repair)
+    add_executable(test_base_stable_tool_publisher test_base_stable_tool_publisher.cpp)
+    target_link_libraries(test_base_stable_tool_publisher PRIVATE cyxwiz-backend-pack-service)
+    set_target_properties(test_base_stable_tool_publisher PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    add_test(NAME base_stable_tool_publisher_contract COMMAND test_base_stable_tool_publisher)
+    target_link_libraries(test_backend_pack_update_policy PRIVATE cyxwiz-backend-pack-service)
+    set_target_properties(test_backend_pack_update_policy PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    add_test(NAME backend_pack_update_policy_contract COMMAND test_backend_pack_update_policy)
 
     add_executable(test_backend_pack_lifecycle_service
         test_backend_pack_lifecycle_service.cpp

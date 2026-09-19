@@ -18,6 +18,8 @@
 
 namespace cyxwiz::runtime {
 
+class RuntimeOperationLock;
+
 enum class BackendPackQualificationDisposition {
     Qualified,
     InstalledUnqualified,
@@ -75,6 +77,7 @@ struct VerifiedBackendPackCatalogSnapshot {
     std::filesystem::path catalog_path;
     VerifiedBackendPackCatalog catalog;
     std::vector<VerifiedBackendPackCatalogRecord> records;
+    std::vector<VerifiedBackendPackManifest> installed_manifests;
 };
 
 enum class BackendPackLifecycleStage {
@@ -174,6 +177,8 @@ public:
         const std::string& current_utc,
         VerifiedBackendPackCatalogSnapshot& output,
         std::string& error) const;
+    void ReadInstalledMetadata(const std::filesystem::path& installed_runtime_root,
+        const ActiveRuntimeState& active, VerifiedBackendPackCatalogSnapshot& output) const;
     BackendPackLifecycleResult Deliver(
         const BackendPackDeliveryRequest& request,
         BackendPackArtifactSource& source);
@@ -192,6 +197,14 @@ public:
     BackendPackLifecycleResult Remove(
         std::string backend,
         std::string pack_id);
+    // Exact installed CPU base only. Requires a valid activation record and an
+    // execution guard. Acquires exclusive helper ownership, or borrows a live
+    // matching helper session lock for this synchronous call only.
+    BackendPackLifecycleResult DeliverBaseRepair(
+        const BackendPackDeliveryRequest& request, BackendPackArtifactSource& source,
+        const RuntimeOperationLock* ownership = nullptr);
+    BackendPackLifecycleResult DeliverBaseRepair(const BackendPackDeliveryRequest& request,
+        const RuntimeOperationLock* ownership = nullptr);
     BackendPackLifecycleResult Rollback();
 
     void Cancel();
@@ -201,13 +214,14 @@ private:
     enum class DeliveryTarget {
         OptionalPack,
         FreshBase,
-        BaseUpdate
+        BaseUpdate,
+        BaseRepair
     };
 
     BackendPackLifecycleResult DeliverInternal(
         const BackendPackDeliveryRequest& request,
         BackendPackArtifactSource* source,
-        DeliveryTarget target);
+        DeliveryTarget target, const RuntimeOperationLock* ownership = nullptr);
     BackendPackLifecycleResult Finish(
         BackendPackLifecycleStatus status,
         std::string message,

@@ -1,4 +1,5 @@
 #include "windows_dll_search.h"
+#include "engine_runtime_ownership.h"
 
 #include <iostream>
 #include <string>
@@ -23,6 +24,18 @@ std::wstring EnvironmentValue(const wchar_t* name) {
 }  // namespace
 
 int main() {
+    cyxwiz::runtime::RuntimeOperationLock engine_ownership;
+    if (!EnvironmentValue(L"CYXWIZ_RUNTIME_USE_TOKEN").empty()) {
+        std::vector<wchar_t> executable(32768);
+        const auto length = ::GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
+        std::string error;
+        if (!length || length >= executable.size() ||
+            !cyxwiz::runtime::AcquirePackagedEngineOwnership(std::wstring(executable.data(), length),
+                EnvironmentValue(L"CYXWIZ_ACTIVE_RUNTIME_ROOT"), engine_ownership, error)) {
+            std::cerr << "child ownership failed: " << error << '\n';
+            return 6;
+        }
+    }
     if (EnvironmentValue(L"CYXWIZ_ACTIVE_RUNTIME_ROOT").empty()) {
         std::cerr << "child did not receive the active runtime root\n";
         return 1;

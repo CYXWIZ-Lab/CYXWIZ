@@ -310,6 +310,13 @@ def _verify_repository_assets(
         bases = {
             pack["pack_id"] for pack in target_packs if pack["pack_kind"] == "base"
         }
+        if len(bases) != 1 or any(
+            pack["compatibility"]["support_status"] != "supported"
+            for pack in target_packs if pack["pack_kind"] == "base"
+        ):
+            raise AlphaPublicationError(
+                f"{target} requires exactly one supported CPU base for installation"
+            )
         optional = [
             pack for pack in target_packs
             if pack["pack_kind"] == "backend_pack"

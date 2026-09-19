@@ -3,11 +3,11 @@
 #include "installer/installer_frame_pacing.h"
 #include "installer/installer_operation.h"
 #include "installer/installer_product_removal.h"
+#include "installer/installer_external_session.h"
 #include "installer/installer_progress_channel.h"
 #include "installer/installer_theme.h"
 #include "installer/installer_transaction_journal.h"
 #include "installer/installer_view.h"
-#include "product_removal_protocol.h"
 
 // glad must own the OpenGL declarations before GLFW includes platform headers.
 // clang-format off
@@ -52,7 +52,7 @@
 
 namespace {
 
-enum class AsyncOperation { None, InstallPlan, CatalogRefresh };
+enum class AsyncOperation { None, InstallPlan, CatalogRefresh, ProductRemoval };
 
 struct Arguments {
   std::filesystem::path runtime_root;
@@ -215,22 +215,37 @@ int RunInstaller(const std::vector<std::string> &arguments,
   if (parsed.package_smoke) {
     const auto metadata_root =
         std::filesystem::absolute(executable_directory / "runtime");
+    std::error_code smoke_error;
+    const auto temporary_root = std::filesystem::temp_directory_path(smoke_error);
+    const auto smoke_product = temporary_root /
+        ("cyxwiz-installer-smoke-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    if (smoke_error || !std::filesystem::create_directory(smoke_product, smoke_error)) {
+      std::cerr << "Cannot create isolated installer smoke target: "
+                << smoke_error.message() << '\n';
+      return 1;
+    }
+    struct EmptySmokeTarget {
+      std::filesystem::path path;
+      ~EmptySmokeTarget() {
+        std::error_code error;
+        // Refresh is read-only. Never recursively remove unexpected contents.
+        std::filesystem::remove(path, error);
+        if (error) std::cerr << "Cannot remove smoke target: " << error.message() << '\n';
+      }
+    } smoke_target{smoke_product};
     auto smoke_platform = cyxwiz::installer::CreateBackendPackInstallerPlatform(
-        metadata_root, metadata_root, executable_directory,
+        smoke_product / "runtime", metadata_root, executable_directory,
         cyxwiz::CyxWizInstallScope::CurrentUser);
     const auto smoke_catalog = smoke_platform->Refresh();
-    const bool base_available =
-        std::any_of(smoke_catalog.records.begin(), smoke_catalog.records.end(),
-                    [](const auto &record) {
-                      return record.backend == "cpu" &&
-                             record.delivery_metadata_available &&
-                             record.catalog_support ==
-                                 cyxwiz::BackendPackCatalogSupport::Supported;
-                    });
-    if (!smoke_catalog.available || !base_available ||
-        !cyxwiz::HasSelectableCustomBackendPack(smoke_catalog.records)) {
+    const auto smoke_selection = cyxwiz::ResolveBackendPackInstallerSelection(
+        cyxwiz::BackendPackInstallChoice::CpuOnly, smoke_catalog.records);
+    const auto smoke_plan = cyxwiz::BuildBackendPackInstallerPlan(
+        smoke_selection, smoke_catalog.records,
+        cyxwiz::CyxWizInstallerMode::FreshInstall);
+    if (!smoke_catalog.available || !smoke_plan.valid || !smoke_plan.install_base) {
       std::cerr << "CyxWiz installer package smoke failed: "
-                << smoke_catalog.message << '\n';
+                << smoke_catalog.message << "; " << smoke_plan.message << '\n';
       for (const auto &record : smoke_catalog.records) {
         std::cerr << "  pack=" << record.pack_id
                   << " backend="
@@ -262,9 +277,23 @@ int RunInstaller(const std::vector<std::string> &arguments,
     return 0;
   }
 
+  const auto session = cyxwiz::installer::PrepareExternalInstallerSession(
+      executable_directory, parsed.runtime_root, parsed.metadata_root,
+      arguments, argument_error);
+  if (session == cyxwiz::installer::ExternalInstallerSession::Relaunched) return 0;
+  if (session == cyxwiz::installer::ExternalInstallerSession::Failed) {
+    ShowFatal(argument_error);
+    return 78;
+  }
+  std::error_code directory_error;
+  std::filesystem::current_path(executable_directory, directory_error);
+  if (directory_error) {
+    ShowFatal("Cannot set the external installer's working directory");
+    return 78;
+  }
   auto product_removal =
       cyxwiz::installer::InspectInstallerProductRemoval(
-          parsed.runtime_root, parsed.product_removal_host);
+          parsed.runtime_root, true);
   if (product_removal.installed) {
     parsed.scope = InstallerScope(product_removal.scope);
   }
@@ -352,6 +381,8 @@ int RunInstaller(const std::vector<std::string> &arguments,
   std::future<cyxwiz::installer::InstallerPlanExecutionResult> operation;
   std::future<cyxwiz::installer::InstallerCatalogRefreshResult>
       catalog_refresh;
+  std::future<cyxwiz::installer::InstallerProductRemovalResult> removal_operation;
+  std::chrono::steady_clock::time_point removal_started;
   std::shared_ptr<SharedInstallProgress> shared_progress;
   bool operation_running = false;
   bool launch_when_complete = false;
@@ -364,7 +395,6 @@ int RunInstaller(const std::vector<std::string> &arguments,
   std::string operation_message;
   if (!visual_warning.empty())
     operation_message = visual_warning;
-  int requested_exit_code = 0;
 
   while (!glfwWindowShouldClose(window)) {
     cyxwiz::installer::gui::WaitForInstallerFrame(
@@ -372,6 +402,24 @@ int RunInstaller(const std::vector<std::string> &arguments,
     if (operation_running && glfwWindowShouldClose(window)) {
       glfwSetWindowShouldClose(window, GLFW_FALSE);
       view_state.close_confirmation_requested = true;
+    }
+    if (operation_running && async_operation == AsyncOperation::ProductRemoval &&
+        removal_operation.valid() &&
+        removal_operation.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+      const auto result = removal_operation.get();
+      operation_running = false;
+      async_operation = AsyncOperation::None;
+      operation_message = result.message;
+      view_state.uninstall_completed = result.succeeded;
+      std::cout << "CyxWiz uninstall: " << result.message << std::endl;
+      view_state.install_completed = false;
+      view_state.engine_launched = false;
+      view_state.custom_selection.clear();
+      shared_progress.reset();
+      catalog = platform->Refresh();
+      product_removal = cyxwiz::installer::InspectInstallerProductRemoval(
+          install_location.runtime_root, !cyxwiz::installer::InstallerPathWithin(
+              executable_directory, install_location.install_root));
     }
     if (operation_running && async_operation == AsyncOperation::InstallPlan &&
         operation.valid() &&
@@ -405,8 +453,8 @@ int RunInstaller(const std::vector<std::string> &arguments,
       catalog = platform->Refresh();
       product_removal = cyxwiz::installer::InspectInstallerProductRemoval(
           install_location.runtime_root,
-          parsed.product_removal_host &&
-              install_location.runtime_root == parsed.runtime_root);
+          !cyxwiz::installer::InstallerPathWithin(
+              executable_directory, install_location.install_root));
       view_state.install_completed = result.succeeded;
       if (result.succeeded && launch_when_complete) {
         const auto launched = platform->LaunchEngine();
@@ -448,6 +496,12 @@ int RunInstaller(const std::vector<std::string> &arguments,
       const std::scoped_lock lock(shared_progress->mutex);
       operation_progress = shared_progress->value;
     }
+    if (operation_running && async_operation == AsyncOperation::ProductRemoval) {
+      const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+          std::chrono::steady_clock::now() - removal_started).count();
+      operation_progress.activity = "Removing CyxWiz files and registration... " +
+          std::to_string(elapsed) + " seconds elapsed";
+    }
 
     const auto action = cyxwiz::installer::gui::RenderInstallerView(
         view_state, catalog, install_location, product_removal,
@@ -483,8 +537,8 @@ int RunInstaller(const std::vector<std::string> &arguments,
         product_removal =
             cyxwiz::installer::InspectInstallerProductRemoval(
                 install_location.runtime_root,
-                parsed.product_removal_host &&
-                    install_location.runtime_root == parsed.runtime_root);
+                !cyxwiz::installer::InstallerPathWithin(
+                    executable_directory, install_location.install_root));
         view_state.custom_selection.clear();
         view_state.choice = cyxwiz::BackendPackInstallChoice::Recommended;
         view_state.install_location_dirty = false;
@@ -493,6 +547,7 @@ int RunInstaller(const std::vector<std::string> &arguments,
     }
     case cyxwiz::installer::gui::InstallerViewActionKind::ApplyPlan:
       operation_message.clear();
+      view_state.uninstall_completed = false;
       view_state.install_completed = false;
       view_state.engine_launched = false;
       view_state.cancellation_requested = false;
@@ -549,12 +604,16 @@ int RunInstaller(const std::vector<std::string> &arguments,
       break;
     }
     case cyxwiz::installer::gui::InstallerViewActionKind::RemoveProduct:
-      if (cyxwiz::installer::QueueInstallerProductRemoval(
-              product_removal, operation_message)) {
-        requested_exit_code =
-            cyxwiz::runtime::kProductRemovalRequestedExitCode;
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
-      }
+      operation_message.clear();
+      shared_progress.reset();
+      removal_started = std::chrono::steady_clock::now();
+      removal_operation = std::async(std::launch::async,
+          [product_removal, executable_directory] {
+            return cyxwiz::installer::RemoveInstallerProduct(
+                product_removal, executable_directory);
+          });
+      async_operation = AsyncOperation::ProductRemoval;
+      operation_running = true;
       break;
     case cyxwiz::installer::gui::InstallerViewActionKind::Close:
       if (operation_running) {
@@ -584,6 +643,8 @@ int RunInstaller(const std::vector<std::string> &arguments,
   } else if (async_operation == AsyncOperation::CatalogRefresh &&
              catalog_refresh.valid()) {
     catalog_refresh.wait();
+  } else if (removal_operation.valid()) {
+    removal_operation.wait();
   }
   cyxwiz::installer::gui::DestroyInstallerVisualAssets(visual_assets);
   ImGui_ImplOpenGL3_Shutdown();
@@ -591,7 +652,7 @@ int RunInstaller(const std::vector<std::string> &arguments,
   ImGui::DestroyContext();
   glfwDestroyWindow(window);
   glfwTerminate();
-  return requested_exit_code;
+  return 0;
 }
 
 #ifdef _WIN32
