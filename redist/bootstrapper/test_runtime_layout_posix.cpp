@@ -1,5 +1,6 @@
 #include "runtime_layout.h"
 #include "backend_pack_platform.h"
+#include "runtime_operation_lock.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -7,6 +8,7 @@
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <stdexcept>
 #include <vector>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -21,9 +23,16 @@ namespace {
 class Fixture {
 public:
     Fixture() {
-        root = std::filesystem::temp_directory_path() /
+        workspace = std::filesystem::temp_directory_path() /
             ("cyxwiz-runtime-posix-test-" + std::to_string(::getpid()) +
              "-" + std::to_string(++sequence));
+        if (!std::filesystem::create_directory(workspace)) {
+            throw std::runtime_error("Cannot create exclusive runtime test workspace");
+        }
+        workspace = std::filesystem::canonical(workspace);
+        // Match the installed product layout. Its sibling operation lock must
+        // belong to this fixture, not to / (when the temp directory is /tmp).
+        root = workspace / "CyxWiz" / "runtime";
         std::filesystem::create_directories(root / "base" / "base-v1");
         std::ofstream(root / "active-runtime.json", std::ios::binary)
             << "{\"schema_version\":1,\"runtime_set_id\":\"set-v1\","
@@ -51,10 +60,11 @@ public:
 
     ~Fixture() {
         std::error_code error;
-        std::filesystem::remove_all(root, error);
+        std::filesystem::remove_all(workspace, error);
     }
 
     std::filesystem::path root;
+    std::filesystem::path workspace;
     static inline int sequence = 0;
 };
 
@@ -136,6 +146,10 @@ int main() {
     const auto child = binary_directory / "test_runtime_bootstrapper_child";
     {
         Fixture fixture;
+        failures += !Expect(
+            cyxwiz::runtime::RuntimeOperationLock::LocationLockPath(fixture.root)
+                    .parent_path() == fixture.workspace,
+            "Product operation lock must stay inside the private test workspace");
         const auto base = fixture.root / "base" / "base-v1";
         std::filesystem::create_directories(
             base / "arrayfire" /
