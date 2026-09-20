@@ -27,7 +27,7 @@ jobs:
       matrix:
         include:
           - name: Windows x64 warnings
-            os: windows-latest
+            os: windows-2022
             platform: windows
             artifact: windows-x64
           - name: Linux x64 warnings
@@ -72,12 +72,13 @@ jobs:
           sudo apt-get install -y build-essential cmake ninja-build pkg-config \
             libgl1-mesa-dev libxrandr-dev libxinerama-dev libxcursor-dev \
             libxi-dev libxext-dev libwayland-dev libxkbcommon-dev \
-            libgtk-3-dev autoconf automake libtool libcrypt-dev gperf
+            libgtk-3-dev autoconf autoconf-archive automake libtool libcrypt-dev gperf
 
       - name: Install macOS build dependencies
         if: runner.os == 'macOS'
         run: |
-          brew install arrayfire autoconf automake bison cmake libtool ninja pkg-config
+          brew install arrayfire autoconf autoconf-archive automake bison cmake libtool ninja pkg-config
+          echo "$(brew --prefix libtool)/libexec/gnubin" >> "$GITHUB_PATH"
           echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
 
       - name: Use CI vcpkg manifest on Windows
