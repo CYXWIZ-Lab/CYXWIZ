@@ -310,6 +310,7 @@ set(ENGINE_SOURCES
     src/gui/node_editor_io.cpp
     src/gui/node_editor_subgraph.cpp
     src/gui/subgraph_document.cpp
+    src/gui/subgraph_presentation.cpp
     src/gui/node_type_import_registry.cpp
     src/gui/node_editor_nodes.cpp
     src/gui/node_editor_validation.cpp
@@ -4896,3 +4897,25 @@ target_compile_definitions(test_subgraph_document PRIVATE CYXWIZ_NODE_FACTORY_ON
 target_link_libraries(test_subgraph_document PRIVATE imgui::imgui nlohmann_json::nlohmann_json
     spdlog::spdlog cyxwiz-backend)
 set_target_properties(test_subgraph_document PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# Expanded subgraph presentation and boundary projection, with headless ImGui input.
+add_executable(test_subgraph_presentation tests/test_subgraph_presentation.cpp
+    src/gui/subgraph_presentation.cpp external/imnodes/imnodes.cpp)
+target_include_directories(test_subgraph_presentation PRIVATE src external/imnodes)
+target_link_libraries(test_subgraph_presentation PRIVATE imgui::imgui nlohmann_json::nlohmann_json)
+set_target_properties(test_subgraph_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# Shared task cancellation gate; real task and trace implementations.
+add_executable(test_async_task_cancellation tests/test_async_task_cancellation.cpp
+    src/core/async_task_manager.cpp src/core/training_trace_collector.cpp
+    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp
+    src/core/route_qualification_snapshot.cpp)
+target_include_directories(test_async_task_cancellation PRIVATE src
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+target_link_libraries(test_async_task_cancellation PRIVATE cyxwiz-backend
+    spdlog::spdlog nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_link_libraries(test_async_task_cancellation PRIVATE Psapi)
+    target_compile_definitions(test_async_task_cancellation PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_async_task_cancellation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

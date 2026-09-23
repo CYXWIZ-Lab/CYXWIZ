@@ -104,6 +104,10 @@ int main(int argc, char** argv) {
             Reject([&]{ FlattenSubgraphDocument(bad); }, "legacy wrapper-only graph rejected");
             bad = original; bad["subgraph_contract_version"] = 9;
             Reject([&]{ FlattenSubgraphDocument(bad); }, "future version rejected");
+            bad = original; bad["subgraph_contract_version"] = 1.5;
+            Reject([&]{ FlattenSubgraphDocument(bad); }, "fractional version rejected");
+            bad = original; bad["subgraphs"][0]["inputs"][0]["pin_index"] = 0.5;
+            Reject([&]{ FlattenSubgraphDocument(bad); }, "fractional pin index rejected");
             bad = original; bad["subgraphs"][0]["node_id"] = 900;
             Reject([&]{ FlattenSubgraphDocument(bad); }, "missing wrapper rejected");
             bad = original; bad["subgraphs"].push_back(bad["subgraphs"][0]);

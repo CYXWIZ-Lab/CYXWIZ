@@ -134,6 +134,7 @@ json FlattenSubgraphDocument(const json& document) {
     if (!has_wrapper && !document.contains("subgraphs") && !document.contains("subgraph_contract_version")) return flat;
     std::set<int> wrappers, node_ids, link_ids, owners;
     auto unique_id = [](const json& object, std::set<int>& ids) {
+        if (!object.at("id").is_number_integer()) Invalid("node/link id must be an integer");
         const int id = object.at("id").get<int>();
         if (id <= 0 || id == std::numeric_limits<int>::max() || !ids.insert(id).second)
             Invalid("invalid or duplicate node/link id");
@@ -149,9 +150,12 @@ json FlattenSubgraphDocument(const json& document) {
             Invalid("missing subgraph contents; this legacy file saved only a wrapper. Recreate the subgraph from the original nodes.");
         return flat;
     }
-    if (document.value("subgraph_contract_version", 0) != 1) Invalid("unsupported contract version");
+    if (!document.contains("subgraph_contract_version") ||
+        !document.at("subgraph_contract_version").is_number_integer() ||
+        document.at("subgraph_contract_version").get<int>() != 1) Invalid("unsupported contract version");
     if (!document.at("subgraphs").is_array()) Invalid("subgraphs must be an array");
     for (const auto& record : document.at("subgraphs")) {
+        if (!record.at("node_id").is_number_integer()) Invalid("owner id must be an integer");
         const int owner = record.at("node_id").get<int>();
         if (!wrappers.count(owner) || !owners.insert(owner).second) Invalid("missing or duplicate subgraph owner");
         (void)record.at("expanded").get<bool>();
@@ -173,6 +177,8 @@ json FlattenSubgraphDocument(const json& document) {
         for (const char* side : {"inputs", "outputs"}) {
             if (!record.at(side).is_array()) Invalid("boundary must be an array");
             for (const auto& binding : record.at(side)) {
+                if (!binding.at("node_id").is_number_integer() || !binding.at("pin_index").is_number_integer())
+                    Invalid("boundary node id and pin index must be integers");
                 if (!ids.count(binding.at("node_id").get<int>()) || binding.at("pin_index").get<int>() < 0)
                     Invalid("invalid boundary target");
             }

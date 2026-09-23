@@ -1,4 +1,5 @@
 #include "node_editor.h"
+#include "subgraph_presentation.h"
 #include "node_documentation.h"
 #include "graph_replacement_policy.h"
 #include "../core/test_manager.h"
@@ -72,6 +73,9 @@ void NodeEditor::FocusNode(int node_id) {
 
     // Defer the actual ImNodes interaction until Render(), where the editor
     // context is definitely active.
+    if (const auto* data = GetSubgraphData(node_id); data && data->expanded && !data->internal_nodes.empty()) {
+        node_id = data->internal_nodes.front().id;
+    }
     pending_focus_node_id_ = node_id;
 }
 
@@ -390,6 +394,8 @@ void NodeEditor::Render() {
         RenderFrames();
 
         RenderNodes();
+        const int collapse_subgraph = detail::DrawExpandedSubgraphFrames(
+            nodes_, subgraphs_, zoom_, GetGraphReplacementBlockReason());
 
         // Handle mouse wheel zoom (skip if mouse is over minimap)
         if (ImGui::IsWindowHovered() && !mouse_in_minimap_bounds) {
@@ -442,7 +448,8 @@ void NodeEditor::Render() {
         // This is needed because GetNodeGridSpacePos only works inside this scope
         cached_node_positions_.clear();
         for (const auto& node : nodes_) {
-            cached_node_positions_[node.id] = ImNodes::GetNodeGridSpacePos(node.id);
+            if (!detail::IsExpandedSubgraph(node.id, subgraphs_))
+                cached_node_positions_[node.id] = ImNodes::GetNodeGridSpacePos(node.id);
         }
 
         ImNodes::EndNodeEditor();
@@ -642,6 +649,8 @@ void NodeEditor::Render() {
 
         // Handle interactions AFTER EndNodeEditor() - this is when ImNodes processes them
         HandleInteractions();
+        // Frame controls queue mutations until ImNodes has finished this frame.
+        if (collapse_subgraph >= 0) CollapseSubgraph(collapse_subgraph);
 
         // Handle keyboard shortcuts (Ctrl+Z, Ctrl+C, etc.)
         HandleKeyboardShortcuts();
@@ -1515,6 +1524,7 @@ void NodeEditor::RenderMinimap() {
     float max_x = -FLT_MAX, max_y = -FLT_MAX;
 
     for (const auto& node : nodes_) {
+        if (detail::IsExpandedSubgraph(node.id, subgraphs_)) continue;
         ImVec2 node_pos = ImNodes::GetNodeGridSpacePos(node.id);
         ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
 
@@ -1555,7 +1565,10 @@ void NodeEditor::RenderMinimap() {
     ImVec2 minimap_content_max = ImVec2(window_pos.x + window_size.x, window_pos.y + window_size.y);
 
     // Draw links first (underneath nodes)
-    for (const auto& link : links_) {
+    for (const auto& saved_link : links_) {
+        const auto display = detail::DisplaySubgraphLink(saved_link, nodes_, subgraphs_);
+        if (!display) continue;
+        const auto& link = *display;
         // Find source and destination nodes
         const MLNode* from_node = nullptr;
         const MLNode* to_node = nullptr;
@@ -1598,6 +1611,7 @@ void NodeEditor::RenderMinimap() {
 
     // Draw nodes
     for (const auto& node : nodes_) {
+        if (detail::IsExpandedSubgraph(node.id, subgraphs_)) continue;
         ImVec2 node_pos = ImNodes::GetNodeGridSpacePos(node.id);
         ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
 
@@ -1889,8 +1903,9 @@ void NodeEditor::RenderNodes() {
         }
     }
 
-    // Render all nodes
+    // Expanded wrappers are represented by frames, not separate canvas nodes.
     for (const auto& node : nodes_) {
+        if (detail::IsExpandedSubgraph(node.id, subgraphs_)) continue;
         // Unified Canvas Phase 6: Check execution state for highlighting
         auto exec_state_it = node_execution_states_.find(node.id);
         bool has_exec_state = (exec_state_it != node_execution_states_.end());
@@ -2950,7 +2965,8 @@ void NodeEditor::RenderNodes() {
         ImNodes::PushColorStyle(ImNodesCol_LinkHovered, link_hovered);
         ImNodes::PushColorStyle(ImNodesCol_LinkSelected, link_selected);
 
-        ImNodes::Link(link.id, link.from_pin, link.to_pin);
+        const auto display = detail::DisplaySubgraphLink(link, nodes_, subgraphs_);
+        if (display) ImNodes::Link(display->id, display->from_pin, display->to_pin);
 
         ImNodes::PopColorStyle();
         ImNodes::PopColorStyle();
@@ -3060,7 +3076,9 @@ void NodeEditor::HandleInteractions() {
     if (ImNodes::IsLinkCreated(&from_node, &from_pin, &to_node, &to_pin)) {
         // Validate the link before creating it
         std::string error_message;
-        if (ValidateLink(from_pin, to_pin, error_message)) {
+        const bool crosses_boundary = detail::CrossesExpandedSubgraphBoundary(from_node, to_node, subgraphs_);
+        if (crosses_boundary) error_message = "Collapse the subgraph before changing external connections.";
+        if (!crosses_boundary && ValidateLink(from_pin, to_pin, error_message)) {
             SaveUndoState();  // Save state before creating link
 
             NodeLink link;
@@ -3296,6 +3314,9 @@ void NodeEditor::NavigateToMatch(int direction) {
 
     // Get the matched node ID
     int node_id = search_state_.matching_node_ids[search_state_.current_match_index];
+    if (const auto* data = GetSubgraphData(node_id); data && data->expanded && !data->internal_nodes.empty()) {
+        node_id = data->internal_nodes.front().id;
+    }
 
     // Select the node
     ImNodes::ClearNodeSelection();

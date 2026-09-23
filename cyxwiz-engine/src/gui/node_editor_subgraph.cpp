@@ -1,4 +1,5 @@
 #include "node_editor.h"
+#include "subgraph_presentation.h"
 #include "subgraph_document.h"
 #include "properties.h"
 #include <imnodes.h>
@@ -223,6 +224,8 @@ void NodeEditor::CreateSubgraphFromSelection(const std::string& name) {
     selected_node_ids_.push_back(subgraph_node.id);
 
     ImNodes::ClearNodeSelection();
+    // SelectNode requires an existing ImNodes object, even before the first draw.
+    ImNodes::SetNodeGridSpacePos(subgraph_node.id, ImVec2(center_x, center_y));
     ImNodes::SelectNode(subgraph_node.id);
     RebuildPinLookup();
     ClearValidationState();
@@ -252,6 +255,13 @@ void NodeEditor::ExpandSubgraph(int node_id) {
         base_pos = pos_it->second;
     }
 
+    if (auto* wrapper = FindNodeById(node_id)) {
+        wrapper->initial_pos_x = base_pos.x;
+        wrapper->initial_pos_y = base_pos.y;
+        wrapper->has_initial_position = true;
+    }
+    ClearSelection();
+
     // Add internal nodes back to the main graph
     float offset_x = 0, offset_y = 50;
     for (auto& internal_node : data->internal_nodes) {
@@ -275,7 +285,7 @@ void NodeEditor::ExpandSubgraph(int node_id) {
     pending_positions_frames_ = 3;
     RebuildPinLookup();
     ClearValidationState();
-    spdlog::info("Expanded subgraph {} ({} internal nodes, {} internal links; container remains visible)", node_id, data->internal_nodes.size(), data->internal_links.size());
+    spdlog::info("Expanded subgraph {} ({} internal nodes, {} internal links; shown in an expanded frame)", node_id, data->internal_nodes.size(), data->internal_links.size());
 }
 
 void NodeEditor::CollapseSubgraph(int node_id) {
@@ -332,6 +342,12 @@ void NodeEditor::CollapseSubgraph(int node_id) {
     ImNodes::ClearLinkSelection();
     RebuildPinLookup();
     ClearValidationState();
+    if (const auto* wrapper = FindNodeById(node_id)) {
+        const ImVec2 position(wrapper->initial_pos_x, wrapper->initial_pos_y);
+        pending_positions_[node_id] = position;
+        pending_positions_frames_ = 3;
+        ImNodes::SetNodeGridSpacePos(node_id, position);
+    }
     spdlog::info("Collapsed subgraph {}", node_id);
 }
 

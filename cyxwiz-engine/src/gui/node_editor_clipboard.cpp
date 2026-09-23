@@ -1,4 +1,5 @@
 #include "node_editor.h"
+#include "subgraph_presentation.h"
 #include "properties.h"
 #include <imgui.h>
 #include <imnodes.h>
@@ -140,6 +141,7 @@ void NodeEditor::SelectAll() {
     selected_node_ids_.clear();
 
     for (const auto& node : nodes_) {
+        if (detail::IsExpandedSubgraph(node.id, subgraphs_)) continue;
         ImNodes::SelectNode(node.id);
         selected_node_ids_.push_back(node.id);
     }
@@ -204,6 +206,7 @@ ImVec2 NodeEditor::FindEmptyPosition() {
     // Collect all existing node positions
     std::vector<ImVec2> node_positions;
     for (const auto& node : nodes_) {
+        if (detail::IsExpandedSubgraph(node.id, subgraphs_)) continue;
         auto it = cached_node_positions_.find(node.id);
         ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
         node_positions.push_back(pos);
@@ -548,6 +551,7 @@ void NodeEditor::FrameAll() {
     float max_x = -FLT_MAX, max_y = -FLT_MAX;
 
     for (const auto& node : nodes_) {
+        if (detail::IsExpandedSubgraph(node.id, subgraphs_)) continue;
         auto it = cached_node_positions_.find(node.id);
         ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
         ImVec2 dims = ImNodes::GetNodeDimensions(node.id);

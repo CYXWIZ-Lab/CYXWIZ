@@ -6,6 +6,7 @@
 // new connections, and manage connection limits.
 
 #include "node_editor.h"
+#include "subgraph_presentation.h"
 #include <vector>
 #include <string>
 
@@ -32,7 +33,9 @@ const NodePin* NodeEditor::FindPinById(int pin_id) const {
 int NodeEditor::GetConnectionCount(int pin_id) const {
     int count = 0;
     for (const auto& link : links_) {
-        if (link.from_pin == pin_id || link.to_pin == pin_id) {
+        const auto display = detail::DisplaySubgraphLink(link, nodes_, subgraphs_);
+        if (link.from_pin == pin_id || link.to_pin == pin_id ||
+            (display && (display->from_pin == pin_id || display->to_pin == pin_id))) {
             count++;
         }
     }
