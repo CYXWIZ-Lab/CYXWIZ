@@ -657,6 +657,13 @@ int main() {
     Check(training_build.success(),
           "saved NER training sequence batcher should build: " +
               training_build.error_message);
+    // Product order (StartTrainingFromGraph): the executor trains with the
+    // batcher whose vocabulary sizes were applied to the config. The
+    // training build uses the full-data training config, so its
+    // vocabularies can be larger than the first (split-configured) build
+    // that sized the model above; apply THIS build before training.
+    cyxwiz::ApplySequenceBatcherBuildResultToTrainingConfig(training_build,
+                                                            training_config);
 
     cyxwiz::TrainingExecutor executor(
         training_config,

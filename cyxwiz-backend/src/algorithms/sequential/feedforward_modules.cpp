@@ -234,7 +234,11 @@ Tensor EmbeddingModule::Forward(const Tensor& input) {
                 const int64_t value = int64_ids[i];
                 if (value < 0 || value > static_cast<int64_t>(vocab_max)) {
                     throw std::runtime_error(
-                        "EmbeddingModule: Int64 token id is outside vocabulary range");
+                        "EmbeddingModule: Int64 token id " +
+                        std::to_string(value) +
+                        " is outside vocabulary range [0, " +
+                        std::to_string(num_embeddings_) + ") at position " +
+                        std::to_string(i));
                 }
                 idx = static_cast<int32_t>(value);
                 break;
