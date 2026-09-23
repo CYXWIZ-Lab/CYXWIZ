@@ -334,9 +334,15 @@ void TestNativeProviderSelectionPlacement() {
           "opencl-targeted run must keep its portable placement reason");
     Check(opencl_placement.expected_backend == "CPU",
           "opencl-targeted run must keep its portable expected backend");
+    // Either no tenant serves OpenCL (mismatch note) or the OpenCL tenant
+    // is registered and declines the fixture tuple itself; both are
+    // explained, and neither selects the CUDA stub.
     Check(opencl_placement.explanation.find("do not serve the run's target "
                                             "device (opencl)") !=
-              std::string::npos,
+                  std::string::npos ||
+              opencl_placement.explanation.find(
+                  "Native provider (cyxwiz.opencl-cell) declined") !=
+                  std::string::npos,
           "mismatch must be explained, not silent");
 }
 

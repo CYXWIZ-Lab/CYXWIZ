@@ -103,18 +103,17 @@ TEST_CASE("Neural provider registry answers truthfully",
         const auto capability =
             provider->QueryCapability(MakeUnsupportedProbe());
         CHECK_FALSE(capability.supported);
-        CHECK(capability.reason ==
-              cyxwiz::BackendFallbackReason::
-                  NvidiaProviderUnsupportedContract);
+        // Each tenant answers with ITS OWN unsupported-contract code.
+        CHECK(std::string(cyxwiz::BackendFallbackReasonName(capability.reason))
+                  .find("_provider_unsupported_contract") != std::string::npos);
         CHECK_FALSE(capability.detail.empty());
 
         auto request = MakeUnsupportedProbe();
         cyxwiz::NeuralOpBuffers buffers;
         const auto status = provider->Execute(request, buffers);
         CHECK_FALSE(status.ok);
-        CHECK(status.reason ==
-              cyxwiz::BackendFallbackReason::
-                  NvidiaProviderUnsupportedContract);
+        CHECK(std::string(cyxwiz::BackendFallbackReasonName(status.reason))
+                  .find("_provider_unsupported_contract") != std::string::npos);
 
         CHECK_FALSE(provider->Version().empty());
         CHECK(std::string(provider->ProviderId()).find("cyxwiz.") == 0);

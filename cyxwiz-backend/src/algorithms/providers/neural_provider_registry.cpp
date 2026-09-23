@@ -22,6 +22,11 @@ void SetNeuralProvidersDisabledForTesting(bool disabled) {
 // runtime probe succeeds. No-op stub otherwise.
 void RegisterNvidiaCublasNeuralProvider(NeuralProviderRegistry& registry);
 #endif
+#ifdef CYXWIZ_HAS_OPENCL_DNN_PROVIDER
+// Defined in opencl_cell_provider.cpp; registers when an OpenCL GPU device
+// is enumerated. Tenant #2 of the device-keyed dispatch.
+void RegisterOpenclCellNeuralProvider(NeuralProviderRegistry& registry);
+#endif
 
 const char* NeuralOpName(NeuralOp op) {
     switch (op) {
@@ -85,6 +90,9 @@ NeuralProviderRegistry& NeuralProviderRegistry::Instance() {
     std::call_once(built_ins_registered, [] {
 #ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER
         RegisterNvidiaCublasNeuralProvider(registry);
+#endif
+#ifdef CYXWIZ_HAS_OPENCL_DNN_PROVIDER
+        RegisterOpenclCellNeuralProvider(registry);
 #endif
     });
     return registry;

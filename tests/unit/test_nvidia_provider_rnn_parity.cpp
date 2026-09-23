@@ -388,7 +388,13 @@ TEST_CASE("NVIDIA provider refuses out-of-contract rnn_forward tuples",
                                 cyxwiz::DeviceType::CPU}) {
         auto other_device_request = request;
         other_device_request.target = {platform, 0};
-        CHECK(registry.FindSupporting(other_device_request) == nullptr);
+        // Another tenant (e.g. the OpenCL provider) may serve this
+        // family; the invariant is that it is never the CUDA provider.
+        if (const auto picked = registry.FindSupporting(other_device_request)) {
+            CHECK(std::string(picked->ProviderId()) !=
+                  "cyxwiz.nvidia-cublas-cell");
+            CHECK(picked->Platform() == platform);
+        }
         // Other test fixtures may register stubs for other families in this
         // process; the invariant is that the CUDA provider is never among
         // the providers serving a non-CUDA target.

@@ -77,6 +77,10 @@ const std::vector<cyxwiz::BackendFallbackReason>& AllReasons() {
         cyxwiz::BackendFallbackReason::NvidiaProviderUnsupportedContract,
         cyxwiz::BackendFallbackReason::NvidiaProviderWorkspaceExhausted,
         cyxwiz::BackendFallbackReason::NvidiaProviderExecutionFailed,
+        cyxwiz::BackendFallbackReason::OpenclProviderUnavailable,
+        cyxwiz::BackendFallbackReason::OpenclProviderUnsupportedContract,
+        cyxwiz::BackendFallbackReason::OpenclProviderWorkspaceExhausted,
+        cyxwiz::BackendFallbackReason::OpenclProviderExecutionFailed,
     };
     return reasons;
 }
@@ -133,6 +137,18 @@ TEST_CASE("Backend fallback reason names pin the persisted taxonomy contract",
     CHECK(std::string(BackendFallbackReasonName(
               BackendFallbackReason::NvidiaProviderExecutionFailed)) ==
           "nvidia_provider_execution_failed");
+    CHECK(std::string(BackendFallbackReasonName(
+              BackendFallbackReason::OpenclProviderUnavailable)) ==
+          "opencl_provider_unavailable");
+    CHECK(std::string(BackendFallbackReasonName(
+              BackendFallbackReason::OpenclProviderUnsupportedContract)) ==
+          "opencl_provider_unsupported_contract");
+    CHECK(std::string(BackendFallbackReasonName(
+              BackendFallbackReason::OpenclProviderWorkspaceExhausted)) ==
+          "opencl_provider_workspace_exhausted");
+    CHECK(std::string(BackendFallbackReasonName(
+              BackendFallbackReason::OpenclProviderExecutionFailed)) ==
+          "opencl_provider_execution_failed");
 
     // The observation-facing namespace must be the same pointers/values as
     // the authority, not a re-typed copy.

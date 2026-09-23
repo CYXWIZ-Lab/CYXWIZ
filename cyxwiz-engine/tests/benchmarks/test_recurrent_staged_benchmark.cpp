@@ -112,9 +112,10 @@ double MeasureProviderForward(const BenchShape& shape,
                               const cyxwiz::Tensor& input,
                               int warmup_runs,
                               int measured_runs,
-                              std::string& provider_version) {
+                              std::string& provider_version,
+                              cyxwiz::DeviceType platform) {
     cyxwiz::NeuralOpRequest request;
-    request.target = {cyxwiz::DeviceType::CUDA, 0};
+    request.target = {platform, 0};
     request.op = cyxwiz::NeuralOp::LstmForward;
     request.training = false;
     request.dtype = cyxwiz::DataType::Float32;
@@ -297,7 +298,12 @@ int main(int argc, char** argv) {
             MeasurePath(shape, input, true, kWarmup, kMeasured);
         std::string provider_version;
         const double provider_fwd_ms = MeasureProviderForward(
-            shape, input, kWarmup, kMeasured, provider_version);
+            shape, input, kWarmup, kMeasured, provider_version,
+            cyxwiz::DeviceType::CUDA);
+        std::string opencl_provider_version;
+        const double opencl_provider_fwd_ms = MeasureProviderForward(
+            shape, input, kWarmup, kMeasured, opencl_provider_version,
+            cyxwiz::DeviceType::OPENCL);
         double gru_native_fwd_ms = 0.0;
         double gru_provider_fwd_ms = -1.0;
         MeasureGruForwardLeg(shape, input, kWarmup, kMeasured,
@@ -324,6 +330,12 @@ int main(int argc, char** argv) {
                                 std::to_string(native.forward_ms /
                                                provider_fwd_ms)
                           : std::string(" provider=unavailable"))
+                  << " opencl_provider_fwd_ms=" << opencl_provider_fwd_ms
+                  << (opencl_provider_fwd_ms > 0.0
+                          ? " opencl_provider_speedup_vs_native=" +
+                                std::to_string(native.forward_ms /
+                                               opencl_provider_fwd_ms)
+                          : std::string(" opencl_provider=unavailable"))
                   << " gru_native_fwd_ms=" << gru_native_fwd_ms
                   << " gru_provider_fwd_ms=" << gru_provider_fwd_ms
                   << (gru_provider_fwd_ms > 0.0
@@ -348,6 +360,8 @@ int main(int argc, char** argv) {
              << ", \"native_forward_ms\": " << native.forward_ms
              << ", \"native_backward_ms\": " << native.backward_ms
              << ", \"provider_forward_ms\": " << provider_fwd_ms
+             << ", \"opencl_provider_forward_ms\": " << opencl_provider_fwd_ms
+             << ", \"opencl_provider\": \"" << opencl_provider_version << "\""
              << ", \"gru_native_forward_ms\": " << gru_native_fwd_ms
              << ", \"gru_provider_forward_ms\": " << gru_provider_fwd_ms
              << ", \"provider\": \"" << provider_version << "\"}"

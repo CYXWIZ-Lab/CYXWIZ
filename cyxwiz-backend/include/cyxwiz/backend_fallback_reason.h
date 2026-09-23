@@ -26,6 +26,11 @@ enum class BackendFallbackReason {
     NvidiaProviderUnsupportedContract,
     NvidiaProviderWorkspaceExhausted,
     NvidiaProviderExecutionFailed,
+    // OpenCL provider (device-keyed dispatch tenant #2), same four shapes.
+    OpenclProviderUnavailable,
+    OpenclProviderUnsupportedContract,
+    OpenclProviderWorkspaceExhausted,
+    OpenclProviderExecutionFailed,
 };
 
 constexpr const char* BackendFallbackReasonName(BackendFallbackReason reason) {
@@ -58,6 +63,14 @@ constexpr const char* BackendFallbackReasonName(BackendFallbackReason reason) {
         return "nvidia_provider_workspace_exhausted";
     case BackendFallbackReason::NvidiaProviderExecutionFailed:
         return "nvidia_provider_execution_failed";
+    case BackendFallbackReason::OpenclProviderUnavailable:
+        return "opencl_provider_unavailable";
+    case BackendFallbackReason::OpenclProviderUnsupportedContract:
+        return "opencl_provider_unsupported_contract";
+    case BackendFallbackReason::OpenclProviderWorkspaceExhausted:
+        return "opencl_provider_workspace_exhausted";
+    case BackendFallbackReason::OpenclProviderExecutionFailed:
+        return "opencl_provider_execution_failed";
     }
     return "backend_internal_error";
 }

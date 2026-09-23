@@ -51,6 +51,7 @@ const std::vector<LegacyTensorDataOwner>& LegacyTensorDataInventory() {
         {"cyxwiz-backend/src/algorithms/layers/normalization.cpp", 26, "compatibility_compute", "normalization layers"},
         {"cyxwiz-backend/src/algorithms/layers/rnn.cpp", 8, "compatibility_compute", "vanilla RNN CPU reference layer (tofix68 phase 3 parity oracle)"},
         {"cyxwiz-backend/src/algorithms/providers/nvidia_cublas_provider.cpp", 9, "transport_boundary", "NVIDIA neural provider host/device boundary copies (reviewed 2026-09-23, contract 0.6.0: rnn/lstm/gru forward outputs + optional stacked final states, lstm/gru backward dx and per-layer weight/bias gradients; explicit v1 boundary copies)"},
+        {"cyxwiz-backend/src/algorithms/providers/opencl_cell_provider.cpp", 9, "transport_boundary", "OpenCL neural provider host/device boundary copies (reviewed 2026-09-23, contract 0.6.0 mirror of the NVIDIA provider: forward outputs + optional stacked final states, backward dx and per-layer gradients)"},
         {"cyxwiz-backend/src/algorithms/model_interpretability.cpp", 10, "compatibility_compute", "model interpretability"},
         {"cyxwiz-backend/src/algorithms/sequential/feedforward_modules.cpp", 9, "compatibility_compute", "feed-forward modules"},
         {"cyxwiz-backend/src/algorithms/sequential/normalization_modules.cpp", 21, "compatibility_compute", "normalization modules"},

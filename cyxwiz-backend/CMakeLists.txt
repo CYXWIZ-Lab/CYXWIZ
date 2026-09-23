@@ -405,6 +405,31 @@ if(CYXWIZ_HAS_ARRAYFIRE)
     target_link_libraries(cyxwiz-backend PUBLIC ArrayFire::af)
     target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_ARRAYFIRE)
 
+    # Optional OpenCL neural-network provider (tofix68, device-keyed dispatch
+    # tenant #2): hand-written tiled OpenCL GEMMs + fused cell kernels behind
+    # the same INeuralNetworkProvider boundary as the NVIDIA provider. OFF by
+    # default; independent of CUDA (an OpenCL ICD is the only requirement).
+    option(CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER
+           "Enable the optional OpenCL neural-network provider" OFF)
+    if(CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER)
+        find_package(OpenCL QUIET)
+        if(OpenCL_FOUND)
+            message(STATUS "OpenCL DNN provider enabled (OpenCL ${OpenCL_VERSION_STRING})")
+            target_sources(cyxwiz-backend PRIVATE
+                src/algorithms/providers/opencl_cell_provider.cpp
+            )
+            target_link_libraries(cyxwiz-backend PUBLIC OpenCL::OpenCL)
+            target_compile_definitions(cyxwiz-backend PUBLIC
+                CYXWIZ_HAS_OPENCL_DNN_PROVIDER)
+            set(CYXWIZ_HAS_OPENCL_DNN_PROVIDER TRUE)
+        else()
+            message(WARNING
+                "CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER=ON but no OpenCL SDK was "
+                "found - provider disabled")
+            set(CYXWIZ_HAS_OPENCL_DNN_PROVIDER FALSE)
+        endif()
+    endif()
+
     if(CYXWIZ_ENABLE_CUDA)
         # Keep CUDA backend support runtime-selected via ArrayFire.
         # Do not link CUDA runtime directly to avoid requiring cudart on non-NVIDIA systems.

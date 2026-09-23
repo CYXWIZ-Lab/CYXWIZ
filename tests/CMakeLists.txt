@@ -28,6 +28,7 @@ add_executable(cyxwiz-tests
     unit/test_placement_observation_key_alignment.cpp
     unit/test_neural_provider_registry.cpp
     unit/test_nvidia_provider_rnn_parity.cpp
+    unit/test_opencl_provider_parity.cpp
     unit/test_rnn_layer.cpp
     unit/test_arrayfire_host_materialization.cpp
     unit/test_arrayfire_backend_utils.cpp
