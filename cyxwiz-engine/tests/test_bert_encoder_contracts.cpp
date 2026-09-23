@@ -241,22 +241,30 @@ void TestBertSequenceClassificationGraphContract() {
               "Float32[batch,classes]",
           "BERT sequence graph should expose classifier output contract");
     const auto* positional_placement = FindPlacement(config, 3);
+    // Since ce76ea05 the compiler promotes a rank-2 PositionalEncoding to
+    // the ArrayFire tensor path (ClassifyLayer(const CompiledLayer&)); the
+    // BERT sequence graph gives it a rank-2 input, so GPU-capable is the
+    // truthful placement here.
     Check(positional_placement != nullptr &&
               positional_placement->status ==
-                  cyxwiz::BackendPlacementStatus::Cpu &&
+                  cyxwiz::BackendPlacementStatus::Gpu &&
               positional_placement->reason_code ==
-                  cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked,
-          "BERT positional encoding should truthfully report native CPU placement");
+                  cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
+          "BERT positional encoding should report the ArrayFire tensor placement "
+          "for rank-2 input");
     const auto* encoder_placement = FindPlacement(config, 4);
     Check(encoder_placement != nullptr,
           "BERT sequence graph should report TransformerEncoder placement");
     Check(encoder_placement->node_type == "TransformerEncoder",
           "BERT sequence placement should name TransformerEncoder");
-    Check(encoder_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
-          "BERT sequence TransformerEncoder should be reported CPU-backed");
+    // Same ce76ea05 rule: a rank-2 TransformerEncoder with explicit dropout
+    // probabilities is ArrayFire tensor capable.
+    Check(encoder_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "BERT sequence TransformerEncoder should report the ArrayFire tensor "
+          "placement");
     Check(encoder_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked,
-          "BERT sequence TransformerEncoder should use CPU-backed reason");
+              cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
+          "BERT sequence TransformerEncoder should use the ArrayFire tensor reason");
 }
 
 void TestBertTokenClassificationGraphContract() {
@@ -312,20 +320,24 @@ void TestBertTokenClassificationGraphContract() {
     const auto* encoder_placement = FindPlacement(config, 4);
     Check(encoder_placement != nullptr,
           "BERT token graph should report TransformerEncoder placement");
-    Check(encoder_placement->status == cyxwiz::BackendPlacementStatus::Cpu,
-          "BERT token TransformerEncoder should be reported CPU-backed");
+    Check(encoder_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "BERT token TransformerEncoder should report the ArrayFire tensor "
+          "placement");
     const auto* head_placement = FindPlacement(config, 5);
     Check(head_placement != nullptr,
           "BERT token graph should report TimeDistributed placement");
     Check(head_placement->node_type == "TimeDistributed",
           "BERT token head placement should name TimeDistributed");
-    Check(head_placement->status == cyxwiz::BackendPlacementStatus::Unknown,
-          "BERT token TimeDistributed wrapper should remain explicit unknown");
+    // ce76ea05 also made the rank-2 TimeDistributed wrapper ArrayFire tensor
+    // capable, so it is no longer reported as an explicit unknown.
+    Check(head_placement->status == cyxwiz::BackendPlacementStatus::Gpu,
+          "BERT token TimeDistributed wrapper should report the ArrayFire tensor "
+          "placement");
     Check(head_placement->reason_code ==
-              cyxwiz::BackendPlacementReason::TimeDistributedSequenceWrapper,
-          "BERT token TimeDistributed should use wrapper reason");
-    Check(HasIssueText(config, "TimeDistributed"),
-          "BERT token TimeDistributed placement warning should surface");
+              cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
+          "BERT token TimeDistributed should use the ArrayFire tensor reason");
+    // No placement warning is raised for the wrapper any more: it is a
+    // capable ArrayFire tensor layer rather than an explicit unknown.
 }
 
 void TestBertGraphRejectsUnsupportedSegmentIds() {

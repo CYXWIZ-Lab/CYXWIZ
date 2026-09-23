@@ -2406,15 +2406,17 @@ int main(int argc, char** argv) {
         R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":361,"type":"TextTokenizer","name":"BadTokenizerType","parameters":{)"
-        R"("text_col":"phrase","tokenizer_type":"4"}})"
+        R"("text_col":"phrase","tokenizer_type":"9"}})"
         R"(],"links":[{"start_node":360,"end_node":361}]})";
 
     cyxwiz::PipelineExecutor bad_text_tokenizer_type_executor;
     Check(!bad_text_tokenizer_type_executor.ExecutePipeline(
               bad_text_tokenizer_type_json),
           "TextTokenizer unsupported tokenizer_type should fail validation");
+    // tokenizer_type 4 (WordPiece) became a supported native family, so an
+    // out-of-range family is the build-independent central rejection now.
     Check(bad_text_tokenizer_type_executor.GetLastError().find(
-              "TextTokenizer tokenizer_type '4' is not supported by PipelineExecutor") !=
+              "TextTokenizer tokenizer_type '9' is not supported by PipelineExecutor") !=
               std::string::npos,
           "TextTokenizer tokenizer_type validation should be central and specific: " +
               bad_text_tokenizer_type_executor.GetLastError());
@@ -6439,7 +6441,7 @@ int main(int argc, char** argv) {
         R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":163,"type":"TextTokenize","name":"BadTokenizeMethod","parameters":{)"
-        R"("text_col":"phrase","tokenizer_type":"4"}})"
+        R"("text_col":"phrase","tokenizer_type":"9"}})"
         R"(],"links":[{"start_node":162,"end_node":163}]})";
 
     cyxwiz::PipelineExecutor bad_text_tokenize_method_executor;
@@ -6447,7 +6449,7 @@ int main(int argc, char** argv) {
               bad_text_tokenize_method_json),
           "TextTokenize unsupported tokenizer_type should fail validation");
     Check(bad_text_tokenize_method_executor.GetLastError().find(
-              "TextTokenize tokenizer_type '4' is not supported") !=
+              "TextTokenize tokenizer_type '9' is not supported") !=
               std::string::npos,
           "TextTokenize unsupported tokenizer_type error should be specific: " +
               bad_text_tokenize_method_executor.GetLastError());
@@ -6456,7 +6458,7 @@ int main(int argc, char** argv) {
     // present. Both routes must accept BPE; the string-only transform is separate.
     for (const std::string runtime_name : {"TextTokenize", "TextTokenizer"}) {
         std::string bpe_json = bad_text_tokenize_method_json;
-        const std::string old_setting = R"("tokenizer_type":"4")";
+        const std::string old_setting = R"("tokenizer_type":"9")";
         bpe_json.replace(bpe_json.find(old_setting), old_setting.size(),
             R"("tokenizer_type":"3","lowercase":"false","min_word_freq":"1","max_vocab_size":"512","max_length":"32")");
         const std::string old_type = R"("type":"TextTokenize")";

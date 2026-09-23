@@ -673,7 +673,7 @@ TEST_CASE("GlobalAvgPool2DLayer computes forward and backward values", "[pool][l
     REQUIRE(grad_input_data[7] == Catch::Approx(0.5f));
 }
 
-TEST_CASE("Attention training dropout rejects strict native fallback before compute",
+TEST_CASE("Attention training dropout stays on ArrayFire under strict native fallback policy",
           "[arrayfire][fallback][policy][attention]") {
     cyxwiz::MultiHeadAttentionLayer attention(2, 1, 0.25f, false);
     attention.SetTraining(true);
@@ -686,11 +686,17 @@ TEST_CASE("Attention training dropout rejects strict native fallback before comp
 
     const cyxwiz::ScopedArrayFireFallbackPolicy strict(
         cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback);
-    REQUIRE_THROWS_AS(attention.Forward(attention_input), std::runtime_error);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
+    // The ArrayFire attention path applies training dropout itself and caches
+    // the mask for backward, so the strict policy must not see a CPU fallback
+    // in either mode.
+    REQUIRE_NOTHROW(attention.Forward(attention_input));
+    REQUIRE_NOTHROW(attention.Backward(attention_input));
     attention.SetTraining(false);
     REQUIRE_NOTHROW(attention.Forward(attention_input));
     REQUIRE_NOTHROW(attention.Backward(attention_input));
+#else
+    REQUIRE_THROWS_AS(attention.Forward(attention_input), std::runtime_error);
 #endif
 }
 

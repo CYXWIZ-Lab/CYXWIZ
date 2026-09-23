@@ -242,13 +242,17 @@ void TestSharedEncoderSequentialReplayAccumulatesGradients() {
     Check(it != accumulated.end(),
           "sequential replay backward should expose accumulated weight gradient");
     const float* weight_grad = it->second.Data<float>();
-    CheckNear(weight_grad[0], 13.0f, 1e-4f,
+    // DenseLayer reports dW = grad_out^T @ x summed over the batch (the loss
+    // owns any 1/N). Branch a: rows [1,2],[5,6] with grad 1 -> [6, 8];
+    // branch b: rows [3,4],[7,8] with grad 2 -> [20, 24]; replay sums the two
+    // branches -> [26, 32] on every output row (both grad rows are equal).
+    CheckNear(weight_grad[0], 26.0f, 1e-4f,
               "sequential replay should sum first branch and second branch dW[0]");
-    CheckNear(weight_grad[1], 16.0f, 1e-4f,
+    CheckNear(weight_grad[1], 32.0f, 1e-4f,
               "sequential replay should sum first branch and second branch dW[1]");
-    CheckNear(weight_grad[2], 13.0f, 1e-4f,
+    CheckNear(weight_grad[2], 26.0f, 1e-4f,
               "sequential replay should sum accumulated gradients for output row 1");
-    CheckNear(weight_grad[3], 16.0f, 1e-4f,
+    CheckNear(weight_grad[3], 32.0f, 1e-4f,
               "sequential replay should sum accumulated gradients for output row 1");
 }
 

@@ -264,15 +264,34 @@ void TestCountVectorizerBinaryModeEmitsPresenceValues() {
           "binary CountVectorizer should set beta to presence 1");
 }
 
-void TestCountVectorizerRejectsSparseOutputFormat() {
+void TestCountVectorizerSparseOutputFormatStaysOnTypedPath() {
     cyxwiz::CountVectorizerOperator op;
     std::string error;
     Check(!op.Configure({
         {"text_col", "text"},
+        {"output_format", "coo"},
+    }, error), "CountVectorizer unknown output_format should fail closed");
+    Check(error.find("must be 'dense' or 'sparse'") != std::string::npos,
+          "CountVectorizer unknown output_format error should name the choices: " +
+              error);
+
+    // Since 78eccb67 (sparse text training path) output_format=sparse is a
+    // valid configuration that publishes through the typed materializer
+    // (ApplySparse); the Arrow table path stays fail-closed for it.
+    error.clear();
+    Check(op.Configure({
+        {"text_col", "text"},
         {"output_format", "sparse"},
-    }, error), "CountVectorizer output_format=sparse should fail closed");
-    Check(error.find("supports dense output only") != std::string::npos,
-          "CountVectorizer sparse output error should be specific: " + error);
+    }, error),
+          "CountVectorizer output_format=sparse should configure for the typed "
+          "materializer path: " + error);
+    const auto input = MakeTextTable();
+    const auto result = op.Apply(input);
+    Check(!result.ok(),
+          "CountVectorizer sparse output must fail closed on the Arrow table path");
+    Check(result.status().ToString().find("typed materializer") != std::string::npos,
+          "CountVectorizer sparse Arrow-path rejection should explain the typed "
+          "materializer requirement: " + result.status().ToString());
 }
 
 void TestCountVectorizerBlocksBeforeAllocationHeavyWork() {
@@ -674,7 +693,7 @@ int main() {
     TestCountVectorizerPrefersNGramRangeWhenDefaultsArePresent();
     TestTextVectorizerNGramContractRejectsMalformedRanges();
     TestCountVectorizerBinaryModeEmitsPresenceValues();
-    TestCountVectorizerRejectsSparseOutputFormat();
+    TestCountVectorizerSparseOutputFormatStaysOnTypedPath();
     TestCountVectorizerBlocksBeforeAllocationHeavyWork();
     TestKMeansEmitsMemoryPreflight();
     TestPcaEmitsMemoryPreflight();

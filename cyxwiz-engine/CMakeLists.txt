@@ -3197,6 +3197,7 @@ set_target_properties(test_graph_executable_model PROPERTIES
 # ===== Test: Text Arrow Materializer =====
 add_executable(test_text_arrow_materializer
     tests/test_text_arrow_materializer.cpp
+    src/core/materialization_cache.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
@@ -3236,6 +3237,7 @@ set_target_properties(test_text_arrow_materializer PROPERTIES
 # ===== Test: Text Arrow Runtime Training Launch =====
 add_executable(test_text_arrow_training_launch
     tests/test_text_arrow_training_launch.cpp
+    src/core/materialization_cache.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
