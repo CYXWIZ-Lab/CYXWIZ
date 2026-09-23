@@ -412,10 +412,9 @@ void TestRecurrentConfigurationFailClosed() {
     cfg.layers = {recurrent};
 
     auto built = BuildSequentialFromConfig(cfg);
-    ExpectTrue(!built.ok() &&
-                   built.error_message.find("reverse-direction backward") !=
-                       std::string::npos,
-               "ModelBuilder must reject bidirectional LSTM if compiler validation is bypassed");
+    ExpectTrue(built.ok(),
+               "ModelBuilder must build bidirectional LSTM through the split "
+               "forward/reverse path");
 
     recurrent.type = gui::NodeType::GRU;
     recurrent.name = "Unsupported GRU Dropout";

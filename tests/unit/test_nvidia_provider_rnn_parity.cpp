@@ -7,6 +7,7 @@
 
 #include <cyxwiz/layers/recurrent.h>
 #include <cyxwiz/neural_provider.h>
+#include <cyxwiz/sequential.h>
 #include <cyxwiz/recurrent_cuda_placement.h>
 #include <cyxwiz/tensor.h>
 
@@ -1032,6 +1033,85 @@ TEST_CASE("Stacked RNN layers route training through the provider with parity",
         }
         REQUIRE(actual_h.Shape() == std::vector<size_t>{3, 10});
         compare(actual_h, expected_h, (tag + " h_n").c_str());
+    }
+}
+
+
+TEST_CASE("Split bidirectional LSTMModule routes both branches through the provider with parity",
+          "[gpu_execution][neural_provider][parity][bidirectional]") {
+    auto& registry = cyxwiz::NeuralProviderRegistry::Instance();
+    cyxwiz::NeuralOpRequest probe;
+    probe.target = {cyxwiz::DeviceType::CUDA, 0};
+    probe.op = cyxwiz::NeuralOp::LstmBackward;
+    probe.training = true;
+    probe.batch = 3;
+    probe.seq = 6;
+    probe.input = 5;
+    probe.hidden = 8;
+    if (!registry.FindSupporting(probe)) {
+        WARN("no provider supports lstm training on this machine; bidirectional "
+             "routing not exercised");
+        return;
+    }
+    struct SelectedBackendGuard {
+        af::Backend previous = AF_BACKEND_CPU;
+        int previous_device = 0;
+        bool active = false;
+        ~SelectedBackendGuard() {
+            if (active) {
+                try {
+                    af::setBackend(previous);
+                    af::setDevice(previous_device);
+                } catch (...) {
+                }
+            }
+        }
+    } backend_guard;
+    try {
+        backend_guard.previous = af::getActiveBackend();
+        backend_guard.previous_device = af::getDevice();
+        af::setBackend(AF_BACKEND_CUDA);
+        af::setDevice(0);
+        backend_guard.active = true;
+    } catch (...) {
+        WARN("ArrayFire CUDA backend cannot be selected; not exercised");
+        return;
+    }
+    const auto input = FilledTensor({3, 6, 5}, 0.5f, 0.2f);
+    const auto upstream = FilledTensor({3, 6, 16}, 0.25f, 1.1f);
+    cyxwiz::LSTMModule module(5, 8, 2, /*bidirectional=*/true,
+                              /*return_sequences=*/true);
+
+    cyxwiz::SetNeuralProvidersDisabledForTesting(true);
+    cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
+    module.Forward(input);  // settles weights
+    const auto expected = module.Forward(input);
+    const auto expected_dx = module.Backward(upstream);
+    const auto oracle = module.GetGradients();
+    cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
+    cyxwiz::SetNeuralProvidersDisabledForTesting(false);
+
+    const auto actual = module.Forward(input);
+    const auto actual_dx = module.Backward(upstream);
+    const auto routed = module.GetGradients();
+    const auto compare = [](const cyxwiz::Tensor& a, const cyxwiz::Tensor& e,
+                            const std::string& label) {
+        REQUIRE(a.NumElements() == e.NumElements());
+        const float* pa = a.ReadData<float>();
+        const float* pe = e.ReadData<float>();
+        float max_abs_diff = 0.0f;
+        for (size_t i = 0; i < a.NumElements(); ++i) {
+            max_abs_diff = std::max(max_abs_diff, std::fabs(pa[i] - pe[i]));
+        }
+        INFO(label << " max_abs_diff=" << max_abs_diff);
+        CHECK(max_abs_diff <= 5e-4f);
+    };
+    REQUIRE(actual.Shape() == std::vector<size_t>{3, 6, 16});
+    compare(actual, expected, "split BiLSTM forward");
+    compare(actual_dx, expected_dx, "split BiLSTM dx");
+    REQUIRE(routed.size() == oracle.size());
+    for (const auto& [name, grad] : oracle) {
+        compare(routed.at(name), grad, name);
     }
 }
 

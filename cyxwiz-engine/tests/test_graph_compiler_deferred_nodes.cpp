@@ -745,12 +745,12 @@ int main() {
         Link(4, 4, 403, 5, 501),
     };
     config = compiler.Compile(nodes, links, true);
-    Check(!config.is_valid &&
-              HasIssueText(config, "reverse-direction backward gradients"),
-          "bidirectional LSTM training should fail closed at compile time");
-    Check(HasIssueCode(config,
-                       cyxwiz::errors::Compiler::UnsupportedTrainingNode),
-          "bidirectional LSTM should expose the unsupported-node code");
+    Check(config.is_valid &&
+              !HasIssueText(config, "reverse-direction backward gradients"),
+          "bidirectional LSTM training should compile through the split path");
+    Check(!HasIssueCode(config,
+                        cyxwiz::errors::Compiler::UnsupportedTrainingNode),
+          "bidirectional LSTM must not carry the unsupported-node code");
 
     recurrent.parameters["bidirectional"] = "false";
     recurrent.parameters["dropout"] = "0.1";

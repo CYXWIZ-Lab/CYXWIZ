@@ -1781,13 +1781,9 @@ void CheckImplementedRecurrentConfigurationContract(
 
     auto bidirectional = supported;
     bidirectional["bidirectional"] = "true";
-    const auto lstm_bidirectional =
-        cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
-            gui::NodeType::LSTM, bidirectional);
-    Check(lstm_bidirectional &&
-              lstm_bidirectional->find("reverse-direction backward") !=
-                  std::string::npos,
-          "bidirectional LSTM should expose its exact backward gap");
+    Check(!cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+               gui::NodeType::LSTM, bidirectional),
+          "split-path bidirectional LSTM should be supported");
     Check(!cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
                gui::NodeType::GRU, bidirectional),
           "split-path bidirectional GRU should remain supported");

@@ -538,6 +538,14 @@ public:
 
 private:
     std::unique_ptr<LSTMLayer> layer_;
+    // Split bidirectional path (2026-09-23, mirror of GRUModule): each level
+    // runs an independent forward and a time-reversed LSTMLayer whose
+    // outputs are concatenated, so bidirectional training uses the proven
+    // single-direction backward on both branches and each branch routes to
+    // the native neural provider on its own.
+    std::vector<std::unique_ptr<LSTMLayer>> forward_layers_;
+    std::vector<std::unique_ptr<LSTMLayer>> reverse_layers_;
+    bool split_bidirectional_path_ = false;
     size_t input_size_;
     size_t hidden_size_;
     size_t num_layers_;

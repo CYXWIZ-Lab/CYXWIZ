@@ -3053,31 +3053,26 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
             TruthOwner::Runtime,
             true,
             false,
-            node.type == NodeType::LSTM
-                ? "Engine LSTM training currently supports only one direction."
-                : (node.type == NodeType::RNN
-                       ? "Engine simple-RNN training supports only one direction."
+            node.type == NodeType::RNN
+                ? "Engine simple-RNN training supports only one direction."
+                : (node.type == NodeType::LSTM
+                       ? "LSTM uses explicit forward and reverse branches when enabled."
                        : "GRU uses explicit forward and reverse branches when enabled."));
-        if (node.type == NodeType::LSTM &&
+        if (node.type == NodeType::RNN &&
             bidirectional.effective_value == "true") {
-            bidirectional.statuses.clear();
-            AddStatus(bidirectional, TruthStatus::Unsupported);
-            bidirectional.message =
-                "Reverse-direction LSTM backward gradients are not implemented; "
-                "Engine training fails closed for bidirectional=true.";
-        } else if (node.type == NodeType::RNN &&
-                   bidirectional.effective_value == "true") {
             bidirectional.statuses.clear();
             AddStatus(bidirectional, TruthStatus::Unsupported);
             bidirectional.message =
                 "The simple RNN layer implements one direction only; "
                 "Engine training fails closed for bidirectional=true.";
-        } else if (node.type == NodeType::GRU &&
+        } else if ((node.type == NodeType::GRU || node.type == NodeType::LSTM) &&
                    bidirectional.effective_value == "true") {
             AddStatus(bidirectional, TruthStatus::RuntimeOnly);
             bidirectional.message =
-                "Engine training uses the split forward/reverse GRU "
-                "path; current placement is native CPU.";
+                std::string("Engine training uses the split forward/reverse ") +
+                (node.type == NodeType::GRU ? "GRU" : "LSTM") +
+                " path; each branch is placed independently (native CPU "
+                "reference or the native neural provider).";
         }
         report.properties.push_back(std::move(bidirectional));
 

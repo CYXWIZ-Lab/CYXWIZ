@@ -55,7 +55,7 @@ const std::vector<LegacyTensorDataOwner>& LegacyTensorDataInventory() {
         {"cyxwiz-backend/src/algorithms/model_interpretability.cpp", 10, "compatibility_compute", "model interpretability"},
         {"cyxwiz-backend/src/algorithms/sequential/feedforward_modules.cpp", 9, "compatibility_compute", "feed-forward modules"},
         {"cyxwiz-backend/src/algorithms/sequential/normalization_modules.cpp", 21, "compatibility_compute", "normalization modules"},
-        {"cyxwiz-backend/src/algorithms/sequential/recurrent_modules.cpp", 15, "compatibility_compute", "recurrent modules"},
+        {"cyxwiz-backend/src/algorithms/sequential/recurrent_modules.cpp", 11, "compatibility_compute", "recurrent modules"},
         {"cyxwiz-engine/src/core/graph_executable_model.cpp", 8, "compatibility_compute", "graph executable model"},
         {"cyxwiz-engine/src/core/sequence_tag_metrics.h", 3, "compatibility_compute", "sequence metrics"},
         {"cyxwiz-engine/src/core/smoke_run_executor.cpp", 2, "compatibility_compute", "smoke-run metrics"},

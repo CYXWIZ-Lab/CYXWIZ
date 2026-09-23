@@ -416,6 +416,69 @@ TEST_CASE("BiLSTMLayer - Concatenates forward and reverse reference outputs", "[
     REQUIRE_THAT(output.Data<float>()[1], WithinAbs(LstmOneStepRef(0.5f, 0.5f), 1e-5f));
 }
 
+
+TEST_CASE("LSTMModule split bidirectional path matches the bidirectional reference forward and checks numerically",
+          "[lstm][bidirectional][module]") {
+    // Forward parity: the split path with weights mapped onto an LSTMLayer
+    // constructed bidirectional must give the same [batch, seq, 2H] output.
+    LSTMModule module(3, 4, 1, /*bidirectional=*/true, /*return_sequences=*/true);
+    const auto module_params = module.GetParameters();
+    REQUIRE(module_params.count("layer0.forward.W_ih") == 1);
+    REQUIRE(module_params.count("layer0.reverse.W_hh") == 1);
+
+    LSTMLayer reference(3, 4, 1, true, true, 0.0f);
+    std::map<std::string, Tensor> mapped;
+    for (const char* key : {"W_ih", "W_hh", "b_ih", "b_hh"}) {
+        mapped[std::string("layer0_") + key] =
+            module_params.at(std::string("layer0.forward.") + key);
+        mapped[std::string("layer0_") + key + "_reverse"] =
+            module_params.at(std::string("layer0.reverse.") + key);
+    }
+    reference.SetParameters(mapped);
+
+    Tensor input = Tensor::Random({2, 5, 3});
+    const Tensor expected = reference.Forward(input);
+    const Tensor actual = module.Forward(input);
+    REQUIRE(ShapesEqual(actual.Shape(), {2, 5, 8}));
+    REQUIRE(TensorsApproxEqual(actual, expected, 1e-5f));
+
+    // Last-step reduction keeps [batch, 2H].
+    LSTMModule last_step(3, 4, 1, true, false);
+    REQUIRE(ShapesEqual(last_step.Forward(input).Shape(), {2, 8}));
+    REQUIRE(last_step.GetName() == "BiLSTM(3 -> 8, last)");
+
+    // Numerical check of the split-path backward: dL/dx for L = sum(y * U)
+    // against central differences on the input.
+    Tensor upstream = Tensor::Random({2, 5, 8});
+    const Tensor dx = module.Backward(upstream);
+    REQUIRE(ShapesEqual(dx.Shape(), {2, 5, 3}));
+    const auto loss = [&](const Tensor& x) {
+        LSTMModule probe(3, 4, 1, true, true);
+        probe.SetParameters(module_params);
+        const Tensor y = probe.Forward(x);
+        const float* py = y.ReadData<float>();
+        const float* pu = upstream.ReadData<float>();
+        double total = 0.0;
+        for (size_t i = 0; i < y.NumElements(); ++i) total += double(py[i]) * pu[i];
+        return total;
+    };
+    const float* dx_data = dx.ReadData<float>();
+    const float eps = 1e-3f;
+    for (size_t i : {size_t{0}, size_t{7}, size_t{16}, size_t{29}}) {
+        Tensor plus = input.Clone();
+        Tensor minus = input.Clone();
+        plus.MutableData<float>()[i] += eps;
+        minus.MutableData<float>()[i] -= eps;
+        const double numeric = (loss(plus) - loss(minus)) / (2.0 * eps);
+        REQUIRE_THAT(dx_data[i], WithinAbs(static_cast<float>(numeric), 2e-3f));
+    }
+    // Gradients exist for both branches.
+    const auto grads = module.GetGradients();
+    REQUIRE(grads.count("layer0.forward.W_ih") == 1);
+    REQUIRE(grads.count("layer0.reverse.W_ih") == 1);
+    REQUIRE(grads.at("layer0.reverse.W_ih").NumElements() == 16 * 3);
+}
+
 TEST_CASE("LSTMLayer - State persistence", "[lstm][state]") {
     LSTMLayer lstm(4, 8, 1, true, false, 0.0f);
 

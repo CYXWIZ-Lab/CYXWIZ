@@ -1312,10 +1312,10 @@ int main() {
         const auto* bidirectional = FindProperty(report, "bidirectional");
         Check(bidirectional != nullptr &&
                   HasStatus(*bidirectional,
-                            gui::properties_truth::TruthStatus::Unsupported) &&
-                  bidirectional->message.find("backward gradients") !=
+                            gui::properties_truth::TruthStatus::RuntimeOnly) &&
+                  bidirectional->message.find("split forward/reverse LSTM") !=
                       std::string::npos,
-              "bidirectional LSTM should surface the reverse-gradient blocker");
+              "bidirectional LSTM should disclose its split runtime path");
         const auto* dropout = FindProperty(report, "dropout");
         Check(dropout != nullptr &&
                   HasStatus(*dropout,

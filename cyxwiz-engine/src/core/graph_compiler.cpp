@@ -2250,8 +2250,19 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
             provider_request.seq = request.seq_len;
             provider_request.input = request.input_size;
             provider_request.hidden = request.hidden_size;
-            provider_request.layers = request.num_layers;
-            provider_request.directions = request.bidirectional ? 2 : 1;
+            // Split-path bidirectional (LSTMModule/GRUModule): each
+            // direction and level runs as an independent single-direction,
+            // single-layer tuple, so that is what the provider is asked
+            // about (first level shown; deeper levels have input 2*hidden).
+            provider_request.layers =
+                request.bidirectional ? 1 : request.num_layers;
+            provider_request.directions = 1;
+            if (request.bidirectional) {
+                placement.explanation +=
+                    " Bidirectional runs as split forward/reverse branches; "
+                    "the native provider verdict below applies per branch "
+                    "(first level).";
+            }
             backend_placement::ApplyNativeProviderPlacement(
                 placement, provider_request);
         }

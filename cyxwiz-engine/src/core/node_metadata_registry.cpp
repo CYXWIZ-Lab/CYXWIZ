@@ -2200,9 +2200,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
     RegisterNode({NodeType::LSTM, NodeCategory::Recurrent, "LSTM", ICON_FA_REPEAT,
         {"lstm", "recurrent", "sequence"}, 0, false,
         "Trainable long short-term memory sequence layer",
-        "Engine training supports unidirectional LSTM with dropout=0.0. "
-        "Bidirectional forward exists, but reverse-direction backward gradients "
-        "are not implemented, so bidirectional training fails closed.", "",
+        "Engine training supports unidirectional and split-path bidirectional "
+        "LSTM with dropout=0.0; each direction runs as an independent "
+        "single-direction LSTM on the native CPU reference or the native "
+        "neural provider when one serves the run's device.", "",
         {{"Input", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
         {{"Output", PinType::Tensor, true,
@@ -2215,7 +2216,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           "Hidden Size", "Recurrent", true, false},
          {"num_layers", "int", "1", "Number of stacked recurrent layers", {}, "1-1048576",
           "Layers", "Recurrent", true, false},
-         {"bidirectional", "bool", "false", "Two-direction intent; unavailable for Engine training", {}, "",
+         {"bidirectional", "bool", "false", "Run explicit forward and reverse LSTM branches", {}, "",
           "Bidirectional", "Recurrent", true, false},
          {"return_sequences", "bool", "false", "Return every timestep instead of the final timestep", {}, "",
           "Return Sequences", "Output", true, false},
@@ -2227,8 +2228,9 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {"gru", "recurrent", "sequence"}, 0, false,
         "Trainable gated recurrent unit sequence layer",
         "Engine training supports unidirectional and split-path bidirectional "
-        "GRU with dropout=0.0. Bidirectional GRU currently uses the declared "
-        "native CPU recurrent path.", "",
+        "GRU with dropout=0.0; each direction runs as an independent "
+        "single-direction GRU on the native CPU reference or the native "
+        "neural provider when one serves the run's device.", "",
         {{"Input", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
         {{"Output", PinType::Tensor, true,
