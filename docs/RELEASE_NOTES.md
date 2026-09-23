@@ -22,6 +22,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- Environment switch `CYXWIZ_DISABLE_NEURAL_PROVIDERS=1` forces every
+  recurrent layer onto the portable path for the process, as an escape
+  hatch when diagnosing a GPU provider.
 - Native neural providers for recurrent training on NVIDIA (CUDA) and
   OpenCL GPUs, selected per run by the device you choose. Stacked and
   bidirectional RNN, LSTM and GRU train on the GPU; the placement audit

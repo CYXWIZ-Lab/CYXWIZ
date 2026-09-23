@@ -1,6 +1,7 @@
 #include "cyxwiz/neural_provider.h"
 
 #include <atomic>
+#include <cstdlib>
 #include <mutex>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -108,9 +109,20 @@ void NeuralProviderRegistry::Register(
     state.providers.push_back(std::move(provider));
 }
 
+// Operator escape hatch: CYXWIZ_DISABLE_NEURAL_PROVIDERS=1 hides every
+// provider for the process (portable path everywhere). Read once.
+static bool NeuralProvidersDisabledByEnvironment() {
+    static const bool disabled = [] {
+        const char* value = std::getenv("CYXWIZ_DISABLE_NEURAL_PROVIDERS");
+        return value != nullptr && value[0] != '\0' && value[0] != '0';
+    }();
+    return disabled;
+}
+
 std::vector<std::shared_ptr<INeuralNetworkProvider>>
 NeuralProviderRegistry::List() const {
-    if (g_neural_providers_disabled_for_testing.load()) {
+    if (g_neural_providers_disabled_for_testing.load() ||
+        NeuralProvidersDisabledByEnvironment()) {
         return {};
     }
     auto& state = GetState();

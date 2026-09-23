@@ -3754,6 +3754,7 @@ set_target_properties(test_cyxmodel_causal_lm_generation_roundtrip PROPERTIES
 add_executable(test_saved_ner_sequence_smoke
     tests/test_saved_ner_sequence_smoke.cpp
     src/core/graph_compiler.cpp
+    src/core/training_scheduler_controller.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
     src/core/node_metadata_registry.cpp
