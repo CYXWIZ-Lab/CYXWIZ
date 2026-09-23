@@ -33,22 +33,31 @@ Tensor GRULayer::Backward(const Tensor& grad_output) {
         provider_request.seq = in_shape[1];
         provider_request.input = in_shape[2];
         provider_request.hidden = static_cast<size_t>(hidden_size_);
+        provider_request.layers = static_cast<size_t>(num_layers_);
         if (auto provider = NeuralProviderRegistry::Instance()
                                 .FindSupporting(provider_request)) {
             const size_t gate_width =
                 static_cast<size_t>(3 * hidden_size_);
-            grad_W_ih_[0] = Tensor::Zeros({gate_width, in_shape[2]});
-            grad_W_hh_[0] = Tensor::Zeros(
-                {gate_width, static_cast<size_t>(hidden_size_)});
-            grad_b_ih_[0] = Tensor::Zeros({gate_width});
-            grad_b_hh_[0] = Tensor::Zeros({gate_width});
+            const size_t hidden = static_cast<size_t>(hidden_size_);
             Tensor grad_input(in_shape);
             NeuralOpBuffers buffers;
             buffers.inputs = {&cached_input_, &grad_output};
-            buffers.weights = {&W_ih_[0], &W_hh_[0], &b_ih_[0], &b_hh_[0]};
             buffers.outputs = {&grad_input};
-            buffers.gradients = {&grad_W_ih_[0], &grad_W_hh_[0],
-                                 &grad_b_ih_[0], &grad_b_hh_[0]};
+            for (size_t l = 0; l < static_cast<size_t>(num_layers_); ++l) {
+                const size_t in = l == 0 ? in_shape[2] : hidden;
+                grad_W_ih_[l] = Tensor::Zeros({gate_width, in});
+                grad_W_hh_[l] = Tensor::Zeros({gate_width, hidden});
+                grad_b_ih_[l] = Tensor::Zeros({gate_width});
+                grad_b_hh_[l] = Tensor::Zeros({gate_width});
+                buffers.weights.push_back(&W_ih_[l]);
+                buffers.weights.push_back(&W_hh_[l]);
+                buffers.weights.push_back(&b_ih_[l]);
+                buffers.weights.push_back(&b_hh_[l]);
+                buffers.gradients.push_back(&grad_W_ih_[l]);
+                buffers.gradients.push_back(&grad_W_hh_[l]);
+                buffers.gradients.push_back(&grad_b_ih_[l]);
+                buffers.gradients.push_back(&grad_b_hh_[l]);
+            }
             const auto status =
                 provider->Execute(provider_request, buffers);
             if (status.ok) {

@@ -29,9 +29,9 @@ cyxwiz::NeuralOpRequest MakeUnsupportedProbe() {
 }
 
 // Device-keyed dispatch fixtures: one stub per device family, both
-// claiming the SAME deliberately absurd tuple (layers==3 keeps them
-// outside the real provider's single-layer contract). They obey the
-// registry-wide truths the first test asserts for every provider.
+// claiming the SAME deliberately absurd tuple (Float64 keeps it outside
+// the real provider's Float32 contract; the stubs ignore dtype). They obey
+// the registry-wide truths the first test asserts for every provider.
 class PlatformStubProvider final : public cyxwiz::INeuralNetworkProvider {
 public:
     PlatformStubProvider(const char* id, cyxwiz::DeviceType platform)
@@ -78,6 +78,7 @@ private:
 cyxwiz::NeuralOpRequest MakeFixtureRequest(cyxwiz::DeviceType platform) {
     cyxwiz::NeuralOpRequest request;
     request.target = {platform, 0};
+    request.dtype = cyxwiz::DataType::Float64;  // real provider refuses
     request.op = cyxwiz::NeuralOp::LstmForward;
     request.batch = 7777;
     request.seq = 4;

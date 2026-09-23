@@ -27,6 +27,7 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -35,7 +36,7 @@ namespace cyxwiz {
 namespace {
 
 constexpr const char* kProviderId = "cyxwiz.nvidia-cublas-cell";
-constexpr const char* kProviderSemver = "0.5.1-lstm-cell-state";
+constexpr const char* kProviderSemver = "0.6.0-stacked";
 
 // Fused cell kernels. Layout conventions shared with the CyxWiz CPU
 // references: x is [batch, seq, features] row-major, so the row index of
@@ -493,8 +494,16 @@ public:
             capability.detail = "contract is Float32 only";
             return capability;
         }
-        if (request.layers != 1 || request.directions != 1) {
-            capability.detail = "contract is single-layer, single-direction";
+        if (request.directions != 1) {
+            capability.detail = "contract is single-direction";
+            return capability;
+        }
+        if (request.layers < 1) {
+            capability.detail = "layers must be positive";
+            return capability;
+        }
+        if (is_rnn && request.layers != 1) {
+            capability.detail = "rnn_forward is single-layer";
             return capability;
         }
         if (is_rnn && request.activation != NeuralActivation::Tanh &&
@@ -522,61 +531,52 @@ public:
 
     NeuralResourceEstimate EstimateResources(
         const NeuralOpRequest& request) const override {
-        // Mirrors the DeviceBuffer lists in the Execute* bodies exactly;
-        // keep them in step. reserve_bytes stays 0: the backward op is a
-        // self-contained recompute-forward + BPTT call, so nothing is
-        // retained between forward and backward (no reserve space).
+        // Mirrors the DeviceBuffer lists in the Execute* bodies (per layer
+        // where applicable); keep them in step. reserve_bytes stays 0: the
+        // backward ops are self-contained recompute-forward + BPTT calls,
+        // so nothing is retained between forward and backward.
         NeuralResourceEstimate estimate;
         const size_t f = sizeof(float);
         const bool is_lstm = request.op == NeuralOp::LstmForward ||
                              request.op == NeuralOp::LstmBackward;
         const bool is_gru = request.op == NeuralOp::GruForward ||
                             request.op == NeuralOp::GruBackward;
+        const bool backward = request.op == NeuralOp::LstmBackward ||
+                              request.op == NeuralOp::GruBackward;
         const size_t gates = is_lstm ? 4 : (is_gru ? 3 : 1);
+        const size_t layers = std::max<size_t>(1, request.layers);
         const size_t rows = request.batch * request.seq;
         const size_t gate_width = gates * request.hidden;
-        // Shared by every op: x, W_ih, W_hh, b_ih, b_hh, input projection,
-        // recurrent projection, h, c/state.
+        size_t weight_elems = 0;
+        size_t input_elems = 0;  // per-layer input sequences (dx staging)
+        for (size_t l = 0; l < layers; ++l) {
+            const size_t in = l == 0 ? request.input : request.hidden;
+            weight_elems += gate_width * in + gate_width * request.hidden +
+                            2 * gate_width;
+            input_elems += rows * in;
+        }
+        // x, weights, input projection, recurrent projection, h, c, one
+        // output sequence per layer.
         estimate.workspace_bytes =
-            rows * request.input * f +
-            gate_width * request.input * f +
-            gate_width * request.hidden * f +
-            2 * gate_width * f +
-            rows * gate_width * f +
-            request.batch * gate_width * f +
-            2 * request.batch * request.hidden * f;
-        if (request.op == NeuralOp::LstmBackward) {
-            // y, activated gates, cell cache, dy, dA, dh_rec, dx, dW_ih,
-            // dW_hh, db, ones.
+            rows * request.input * f + weight_elems * f +
+            rows * gate_width * f + request.batch * gate_width * f +
+            2 * request.batch * request.hidden * f +
+            layers * rows * request.hidden * f;
+        if (backward) {
+            // dy, per-layer gate caches (4H) and LSTM cell caches, gate
+            // gradients (LSTM one buffer, GRU two), dh_rec, per-layer dx,
+            // weight/bias gradients, ones.
             estimate.workspace_bytes +=
                 rows * request.hidden * f +
-                rows * gate_width * f +
-                rows * request.hidden * f +
-                rows * request.hidden * f +
-                rows * gate_width * f +
-                request.batch * request.hidden * f +
-                rows * request.input * f +
-                gate_width * request.input * f +
-                gate_width * request.hidden * f +
-                gate_width * f +
-                rows * f;
-        } else if (request.op == NeuralOp::GruBackward) {
-            // y, [r,z,n,hn_pre] cache (4H), dy, dgates_x, dgates_h,
-            // dh_rec, dx, dW_ih, dW_hh, db_ih, db_hh, ones.
-            estimate.workspace_bytes +=
-                rows * request.hidden * f +
-                rows * 4 * request.hidden * f +
-                rows * request.hidden * f +
-                2 * rows * gate_width * f +
-                request.batch * request.hidden * f +
-                rows * request.input * f +
-                gate_width * request.input * f +
-                gate_width * request.hidden * f +
-                2 * gate_width * f +
-                rows * f;
+                layers * rows * 4 * request.hidden * f +
+                (is_lstm ? layers * rows * request.hidden * f : 0) +
+                (is_lstm ? 1 : 2) * rows * gate_width * f +
+                request.batch * request.hidden * f + input_elems * f +
+                weight_elems * f + rows * f;
         } else {
-            // output sequence
-            estimate.workspace_bytes += rows * request.hidden * f;
+            // final-state staging for the optional state outputs
+            estimate.workspace_bytes +=
+                (is_lstm ? 2 : 1) * layers * request.batch * request.hidden * f;
         }
         return estimate;
     }
@@ -590,217 +590,142 @@ public:
             status.detail = capability.detail;
             return status;
         }
-        if (request.op == NeuralOp::LstmBackward) {
-            return ExecuteLstmBackward(request, buffers);
+        switch (request.op) {
+        case NeuralOp::RnnForward:
+            return ExecuteRnnForward(request, buffers);
+        case NeuralOp::LstmForward:
+            return ExecuteStackedForward(request, buffers, CellKind::Lstm);
+        case NeuralOp::LstmBackward:
+            return ExecuteStackedBackward(request, buffers, CellKind::Lstm);
+        case NeuralOp::GruForward:
+            return ExecuteStackedForward(request, buffers, CellKind::Gru);
+        case NeuralOp::GruBackward:
+            return ExecuteStackedBackward(request, buffers, CellKind::Gru);
+        default:
+            break;
         }
-        if (request.op == NeuralOp::GruForward) {
-            return ExecuteGruForward(request, buffers);
-        }
-        if (request.op == NeuralOp::GruBackward) {
-            return ExecuteGruBackward(request, buffers);
-        }
-        // Shared recurrent forward buffer contract:
-        //   inputs[0]  = x      [batch, seq, input]
-        //   weights    = { W_ih [gates*hidden, input],
-        //                  W_hh [gates*hidden, hidden],
-        //                  b_ih [gates*hidden], b_hh [gates*hidden] }
-        //   outputs[0] = h_seq  [batch, seq, hidden]
-        //   outputs[1] = c_n    [batch, hidden]   (LSTM only, OPTIONAL:
-        //                final cell state, so the layer's c_n_ is not
-        //                stale on the provider path)
-        // gates = 1 (RNN) or 4 (LSTM, gate order i,f,g,o).
-        const size_t gates = request.op == NeuralOp::LstmForward ? 4 : 1;
-        const size_t batch = request.batch;
-        const size_t seq = request.seq;
-        const size_t input = request.input;
-        const size_t hidden = request.hidden;
-        const size_t gate_width = gates * hidden;
-        const bool wants_cell_state = buffers.outputs.size() == 2;
-        if (buffers.inputs.size() != 1 || buffers.weights.size() != 4 ||
-            (buffers.outputs.size() != 1 && !wants_cell_state) ||
-            (wants_cell_state &&
-             (gates != 4 || !buffers.outputs[1] ||
-              buffers.outputs[1]->NumElements() != batch * hidden)) ||
-            !buffers.inputs[0] || !buffers.outputs[0] ||
-            buffers.inputs[0]->NumElements() != batch * seq * input ||
-            buffers.weights[0]->NumElements() != gate_width * input ||
-            buffers.weights[1]->NumElements() != gate_width * hidden ||
-            buffers.weights[2]->NumElements() != gate_width ||
-            buffers.weights[3]->NumElements() != gate_width ||
-            buffers.outputs[0]->NumElements() != batch * seq * hidden) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderUnsupportedContract;
-            status.detail = "recurrent forward buffer contract violated";
-            return status;
-        }
-
-        std::string failure;
-        if (!state_.Ensure(probe_.cc_major, probe_.cc_minor, failure)) {
-            status.reason = BackendFallbackReason::NvidiaProviderUnavailable;
-            status.detail = failure;
-            return status;
-        }
-        std::lock_guard<std::mutex> lock(state_.ExecuteMutex());
-
-        const size_t f = sizeof(float);
-        DeviceBuffer d_x, d_wih, d_whh, d_bih, d_bhh, d_gih, d_ghh, d_h,
-            d_c, d_out;
-        const bool need_cell = gates == 4;
-        if (!d_x.Allocate(batch * seq * input * f) ||
-            !d_wih.Allocate(gate_width * input * f) ||
-            !d_whh.Allocate(gate_width * hidden * f) ||
-            !d_bih.Allocate(gate_width * f) ||
-            !d_bhh.Allocate(gate_width * f) ||
-            !d_gih.Allocate(batch * seq * gate_width * f) ||
-            !d_ghh.Allocate(batch * gate_width * f) ||
-            !d_h.Allocate(batch * hidden * f) ||
-            (need_cell && !d_c.Allocate(batch * hidden * f)) ||
-            !d_out.Allocate(batch * seq * hidden * f)) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderWorkspaceExhausted;
-            status.detail = "device workspace allocation failed";
-            return status;
-        }
-        const bool uploaded =
-            cudaMemcpy(d_x.ptr, buffers.inputs[0]->ReadData<float>(),
-                       batch * seq * input * f,
-                       cudaMemcpyHostToDevice) == cudaSuccess &&
-            cudaMemcpy(d_wih.ptr, buffers.weights[0]->ReadData<float>(),
-                       gate_width * input * f,
-                       cudaMemcpyHostToDevice) == cudaSuccess &&
-            cudaMemcpy(d_whh.ptr, buffers.weights[1]->ReadData<float>(),
-                       gate_width * hidden * f,
-                       cudaMemcpyHostToDevice) == cudaSuccess &&
-            cudaMemcpy(d_bih.ptr, buffers.weights[2]->ReadData<float>(),
-                       gate_width * f, cudaMemcpyHostToDevice) ==
-                cudaSuccess &&
-            cudaMemcpy(d_bhh.ptr, buffers.weights[3]->ReadData<float>(),
-                       gate_width * f, cudaMemcpyHostToDevice) ==
-                cudaSuccess &&
-            cudaMemset(d_h.ptr, 0, batch * hidden * f) == cudaSuccess &&
-            (!need_cell ||
-             cudaMemset(d_c.ptr, 0, batch * hidden * f) == cudaSuccess);
-        if (!uploaded) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderExecutionFailed;
-            status.detail = "host-to-device transfer failed";
-            return status;
-        }
-
-        // All input projections in one GEMM over [batch*seq, input].
-        if (!GemmRowMajorABt(state_.Cublas(),
-                             static_cast<int>(batch * seq),
-                             static_cast<int>(gate_width),
-                             static_cast<int>(input), d_x.Float(),
-                             d_wih.Float(), d_gih.Float())) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderExecutionFailed;
-            status.detail = "input-projection GEMM failed";
-            return status;
-        }
-
-        const int total = static_cast<int>(batch * hidden);
-        const int block = 256;
-        const int grid = (total + block - 1) / block;
-        const int use_tanh =
-            request.activation == NeuralActivation::Tanh ? 1 : 0;
-        for (size_t t = 0; t < seq; ++t) {
-            if (!GemmRowMajorABt(state_.Cublas(), static_cast<int>(batch),
-                                 static_cast<int>(gate_width),
-                                 static_cast<int>(hidden), d_h.Float(),
-                                 d_whh.Float(), d_ghh.Float())) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "recurrent-projection GEMM failed";
-                return status;
-            }
-            int t_arg = static_cast<int>(t);
-            int seq_arg = static_cast<int>(seq);
-            int hidden_arg = static_cast<int>(hidden);
-            int total_arg = total;
-            int tanh_arg = use_tanh;
-            void* gih_ptr = d_gih.ptr;
-            void* ghh_ptr = d_ghh.ptr;
-            void* bih_ptr = d_bih.ptr;
-            void* bhh_ptr = d_bhh.ptr;
-            void* c_ptr = d_c.ptr;
-            void* h_ptr = d_h.ptr;
-            void* out_ptr = d_out.ptr;
-            CUresult launch;
-            if (need_cell) {
-                void* null_cache = nullptr;
-                void* args[] = {&gih_ptr, &ghh_ptr, &bih_ptr, &bhh_ptr,
-                                &c_ptr,   &h_ptr,   &out_ptr, &null_cache,
-                                &null_cache, &t_arg, &seq_arg, &hidden_arg,
-                                &total_arg};
-                launch = cuLaunchKernel(state_.LstmKernel(), grid, 1, 1,
-                                        block, 1, 1, 0, nullptr, args,
-                                        nullptr);
-            } else {
-                void* args[] = {&gih_ptr, &ghh_ptr, &bih_ptr, &bhh_ptr,
-                                &h_ptr,   &out_ptr, &t_arg,   &seq_arg,
-                                &hidden_arg, &total_arg, &tanh_arg};
-                launch = cuLaunchKernel(state_.RnnKernel(), grid, 1, 1,
-                                        block, 1, 1, 0, nullptr, args,
-                                        nullptr);
-            }
-            if (launch != CUDA_SUCCESS) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "cell kernel launch failed";
-                return status;
-            }
-        }
-        if (cudaDeviceSynchronize() != cudaSuccess ||
-            cudaMemcpy(buffers.outputs[0]->Data<float>(), d_out.ptr,
-                       batch * seq * hidden * f,
-                       cudaMemcpyDeviceToHost) != cudaSuccess ||
-            (wants_cell_state &&
-             cudaMemcpy(buffers.outputs[1]->Data<float>(), d_c.ptr,
-                        batch * hidden * f,
-                        cudaMemcpyDeviceToHost) != cudaSuccess)) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderExecutionFailed;
-            status.detail = "device execution or readback failed";
-            return status;
-        }
-        status.ok = true;
-        status.reason = BackendFallbackReason::BackendInternalError;
-        status.detail.clear();
+        status.reason = BackendFallbackReason::NvidiaProviderUnsupportedContract;
+        status.detail = "op is not executable by this provider";
         return status;
     }
 
 private:
-    // Self-contained training step gradient (recompute-forward + BPTT).
-    // Contract:
-    //   inputs    = { x [b,s,in], grad_output dY [b,s,H] }
-    //   weights   = { W_ih [4H,in], W_hh [4H,H], b_ih [4H], b_hh [4H] }
-    //   outputs   = { dx [b,s,in] }
-    //   gradients = { dW_ih [4H,in], dW_hh [4H,H], db_ih [4H], db_hh [4H] }
-    // db_ih and db_hh receive the same column-sum (bias gradients are
-    // identical for this cell, matching the CPU reference).
+    // ------------------------------------------------------------ helpers
+    enum class CellKind { Lstm, Gru };
+    static size_t GatesFor(CellKind kind) {
+        return kind == CellKind::Lstm ? 4 : 3;
+    }
 
-    // ---------------------------------------------------------------- GRU
-    // Shared GRU device pipeline: one input-projection GEMM over the
-    // stacked sequence, then per timestep a recurrent GEMM + fused cell.
-    // With gate_cache non-null (training) the cell also records
-    // [r, z, n, hn_pre] for BPTT. Returns false with `detail` set on
-    // failure; the caller maps it to a typed status.
-    bool RunGruForwardOnDevice(size_t batch, size_t seq, size_t input,
-                               size_t hidden, const DeviceBuffer& d_x,
-                               const DeviceBuffer& d_wih,
-                               const DeviceBuffer& d_whh,
-                               const DeviceBuffer& d_bih,
-                               const DeviceBuffer& d_bhh,
-                               DeviceBuffer& d_gih, DeviceBuffer& d_ghh,
-                               DeviceBuffer& d_h, DeviceBuffer& d_y,
-                               void* gate_cache_ptr, std::string& detail) {
-        const size_t gate_width = 3 * hidden;
+    static NeuralOpStatus Fail(BackendFallbackReason reason,
+                               const std::string& detail) {
+        NeuralOpStatus status;
+        status.ok = false;
+        status.reason = reason;
+        status.detail = detail;
+        return status;
+    }
+
+    static NeuralOpStatus Ok() {
+        NeuralOpStatus status;
+        status.ok = true;
+        status.reason = BackendFallbackReason::BackendInternalError;
+        return status;
+    }
+
+    struct LayerDeviceWeights {
+        DeviceBuffer w_ih, w_hh, b_ih, b_hh;
+        size_t in_features = 0;
+    };
+
+    // Stacked weight list contract: weights = { W_ih, W_hh, b_ih, b_hh } per
+    // layer, layer 0 first; layer l>0 consumes the previous layer's
+    // [batch, seq, hidden] output, so its W_ih is [G, hidden].
+    static bool StackedWeightsMatch(const std::vector<const Tensor*>& weights,
+                                    size_t layers, size_t gate_width,
+                                    size_t input, size_t hidden) {
+        if (weights.size() != 4 * layers) return false;
+        for (size_t l = 0; l < layers; ++l) {
+            const size_t in = l == 0 ? input : hidden;
+            const Tensor* w_ih = weights[4 * l];
+            const Tensor* w_hh = weights[4 * l + 1];
+            const Tensor* b_ih = weights[4 * l + 2];
+            const Tensor* b_hh = weights[4 * l + 3];
+            if (!w_ih || !w_hh || !b_ih || !b_hh ||
+                w_ih->NumElements() != gate_width * in ||
+                w_hh->NumElements() != gate_width * hidden ||
+                b_ih->NumElements() != gate_width ||
+                b_hh->NumElements() != gate_width) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static bool UploadStackedWeights(const std::vector<const Tensor*>& weights,
+                                     size_t layers, size_t gate_width,
+                                     size_t input, size_t hidden,
+                                     std::vector<LayerDeviceWeights>& out,
+                                     NeuralOpStatus& failure) {
+        const size_t f = sizeof(float);
+        out.clear();
+        out.resize(layers);
+        for (size_t l = 0; l < layers; ++l) {
+            auto& w = out[l];
+            w.in_features = l == 0 ? input : hidden;
+            if (!w.w_ih.Allocate(gate_width * w.in_features * f) ||
+                !w.w_hh.Allocate(gate_width * hidden * f) ||
+                !w.b_ih.Allocate(gate_width * f) ||
+                !w.b_hh.Allocate(gate_width * f)) {
+                failure = Fail(BackendFallbackReason::NvidiaProviderWorkspaceExhausted,
+                               "device workspace allocation failed (weights)");
+                return false;
+            }
+            const bool uploaded =
+                cudaMemcpy(w.w_ih.ptr, weights[4 * l]->ReadData<float>(),
+                           gate_width * w.in_features * f,
+                           cudaMemcpyHostToDevice) == cudaSuccess &&
+                cudaMemcpy(w.w_hh.ptr, weights[4 * l + 1]->ReadData<float>(),
+                           gate_width * hidden * f,
+                           cudaMemcpyHostToDevice) == cudaSuccess &&
+                cudaMemcpy(w.b_ih.ptr, weights[4 * l + 2]->ReadData<float>(),
+                           gate_width * f, cudaMemcpyHostToDevice) ==
+                    cudaSuccess &&
+                cudaMemcpy(w.b_hh.ptr, weights[4 * l + 3]->ReadData<float>(),
+                           gate_width * f, cudaMemcpyHostToDevice) ==
+                    cudaSuccess;
+            if (!uploaded) {
+                failure = Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                               "host-to-device transfer failed (weights)");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // One layer's forward over the whole sequence from a ZERO initial
+    // state: one input-projection GEMM over the stacked sequence, then per
+    // timestep a recurrent GEMM + fused cell. gate_cache/cell_cache are
+    // null for inference and written for the training recompute.
+    bool RunStackedLayerForward(CellKind kind, size_t batch, size_t seq,
+                                size_t hidden, const float* d_input,
+                                const LayerDeviceWeights& w,
+                                DeviceBuffer& d_gih, DeviceBuffer& d_ghh,
+                                DeviceBuffer& d_h, DeviceBuffer& d_c,
+                                float* d_y, float* gate_cache,
+                                float* cell_cache, std::string& detail) {
+        const size_t f = sizeof(float);
+        const size_t gate_width = GatesFor(kind) * hidden;
         const size_t rows = batch * seq;
+        if (cudaMemset(d_h.ptr, 0, batch * hidden * f) != cudaSuccess ||
+            (kind == CellKind::Lstm &&
+             cudaMemset(d_c.ptr, 0, batch * hidden * f) != cudaSuccess)) {
+            detail = "state reset failed";
+            return false;
+        }
         if (!GemmRowMajorABt(state_.Cublas(), static_cast<int>(rows),
                              static_cast<int>(gate_width),
-                             static_cast<int>(input), d_x.Float(),
-                             d_wih.Float(), d_gih.Float())) {
+                             static_cast<int>(w.in_features), d_input,
+                             w.w_ih.Float(), d_gih.Float())) {
             detail = "input-projection GEMM failed";
             return false;
         }
@@ -814,243 +739,372 @@ private:
             if (!GemmRowMajorABt(state_.Cublas(), static_cast<int>(batch),
                                  static_cast<int>(gate_width),
                                  static_cast<int>(hidden), d_h.Float(),
-                                 d_whh.Float(), d_ghh.Float())) {
+                                 w.w_hh.Float(), d_ghh.Float())) {
                 detail = "recurrent-projection GEMM failed";
                 return false;
             }
             int t_arg = static_cast<int>(t);
             void* gih_ptr = d_gih.ptr;
             void* ghh_ptr = d_ghh.ptr;
-            void* bih_ptr = d_bih.ptr;
-            void* bhh_ptr = d_bhh.ptr;
+            void* bih_ptr = w.b_ih.ptr;
+            void* bhh_ptr = w.b_hh.ptr;
+            void* c_ptr = d_c.ptr;
             void* h_ptr = d_h.ptr;
-            void* y_ptr = d_y.ptr;
-            void* cache_ptr = gate_cache_ptr;
-            void* args[] = {&gih_ptr, &ghh_ptr, &bih_ptr, &bhh_ptr,
-                            &h_ptr,   &y_ptr,   &cache_ptr, &t_arg,
-                            &seq_arg, &hidden_arg, &total_arg};
-            if (cuLaunchKernel(state_.GruKernel(), grid, 1, 1, block, 1, 1,
-                               0, nullptr, args, nullptr) != CUDA_SUCCESS) {
-                detail = "gru cell launch failed";
+            void* y_ptr = d_y;
+            void* gate_cache_ptr = gate_cache;
+            void* cell_cache_ptr = cell_cache;
+            CUresult launch;
+            if (kind == CellKind::Lstm) {
+                void* args[] = {&gih_ptr, &ghh_ptr, &bih_ptr, &bhh_ptr,
+                                &c_ptr,   &h_ptr,   &y_ptr,   &gate_cache_ptr,
+                                &cell_cache_ptr, &t_arg, &seq_arg,
+                                &hidden_arg, &total_arg};
+                launch = cuLaunchKernel(state_.LstmKernel(), grid, 1, 1,
+                                        block, 1, 1, 0, nullptr, args,
+                                        nullptr);
+            } else {
+                void* args[] = {&gih_ptr, &ghh_ptr, &bih_ptr, &bhh_ptr,
+                                &h_ptr,   &y_ptr,   &gate_cache_ptr, &t_arg,
+                                &seq_arg, &hidden_arg, &total_arg};
+                launch = cuLaunchKernel(state_.GruKernel(), grid, 1, 1,
+                                        block, 1, 1, 0, nullptr, args,
+                                        nullptr);
+            }
+            if (launch != CUDA_SUCCESS) {
+                detail = "cell kernel launch failed";
                 return false;
             }
         }
         return true;
     }
 
-    // gru_forward buffer contract (same shape as the LSTM/RNN forward):
-    //   inputs[0] = x [batch, seq, input]; weights = {W_ih [3H, input],
-    //   W_hh [3H, H], b_ih [3H], b_hh [3H]}; outputs[0] = h_seq
-    //   [batch, seq, hidden]. Gate order r, z, n. Initial hidden state is
-    //   zero (see the P2/P3 note on hidden-state carry-over in track68).
-    NeuralOpStatus ExecuteGruForward(const NeuralOpRequest& request,
+    // ------------------------------------------------------- RNN forward
+    // rnn_forward (pilot op, inference-only, single layer):
+    //   inputs[0] = x [batch, seq, input]; weights = {W_ih [H, input],
+    //   W_hh [H, H], b_ih [H], b_hh [H]}; outputs[0] = h_seq [batch, seq, H].
+    NeuralOpStatus ExecuteRnnForward(const NeuralOpRequest& request,
                                      NeuralOpBuffers& buffers) {
-        NeuralOpStatus status;
         const size_t batch = request.batch;
         const size_t seq = request.seq;
         const size_t input = request.input;
         const size_t hidden = request.hidden;
-        const size_t gate_width = 3 * hidden;
         const size_t rows = batch * seq;
-        if (buffers.inputs.size() != 1 || buffers.weights.size() != 4 ||
-            buffers.outputs.size() != 1 || !buffers.inputs[0] ||
-            !buffers.outputs[0] ||
+        if (buffers.inputs.size() != 1 || buffers.outputs.size() != 1 ||
+            !buffers.inputs[0] || !buffers.outputs[0] ||
             buffers.inputs[0]->NumElements() != rows * input ||
-            buffers.weights[0]->NumElements() != gate_width * input ||
-            buffers.weights[1]->NumElements() != gate_width * hidden ||
-            buffers.weights[2]->NumElements() != gate_width ||
-            buffers.weights[3]->NumElements() != gate_width ||
-            buffers.outputs[0]->NumElements() != rows * hidden) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderUnsupportedContract;
-            status.detail = "gru_forward buffer contract violated";
-            return status;
+            buffers.outputs[0]->NumElements() != rows * hidden ||
+            !StackedWeightsMatch(buffers.weights, 1, hidden, input, hidden)) {
+            return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
+                        "recurrent forward buffer contract violated");
         }
         std::string failure;
         if (!state_.Ensure(probe_.cc_major, probe_.cc_minor, failure)) {
-            status.reason = BackendFallbackReason::NvidiaProviderUnavailable;
-            status.detail = failure;
-            return status;
+            return Fail(BackendFallbackReason::NvidiaProviderUnavailable, failure);
         }
         std::lock_guard<std::mutex> lock(state_.ExecuteMutex());
 
         const size_t f = sizeof(float);
-        DeviceBuffer d_x, d_wih, d_whh, d_bih, d_bhh, d_gih, d_ghh, d_h, d_y;
+        NeuralOpStatus weight_failure;
+        std::vector<LayerDeviceWeights> weights;
+        if (!UploadStackedWeights(buffers.weights, 1, hidden, input, hidden,
+                                  weights, weight_failure)) {
+            return weight_failure;
+        }
+        DeviceBuffer d_x, d_gih, d_ghh, d_h, d_out;
         if (!d_x.Allocate(rows * input * f) ||
-            !d_wih.Allocate(gate_width * input * f) ||
-            !d_whh.Allocate(gate_width * hidden * f) ||
-            !d_bih.Allocate(gate_width * f) ||
-            !d_bhh.Allocate(gate_width * f) ||
-            !d_gih.Allocate(rows * gate_width * f) ||
-            !d_ghh.Allocate(batch * gate_width * f) ||
+            !d_gih.Allocate(rows * hidden * f) ||
+            !d_ghh.Allocate(batch * hidden * f) ||
             !d_h.Allocate(batch * hidden * f) ||
-            !d_y.Allocate(rows * hidden * f)) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderWorkspaceExhausted;
-            status.detail = "device workspace allocation failed";
-            return status;
+            !d_out.Allocate(rows * hidden * f)) {
+            return Fail(BackendFallbackReason::NvidiaProviderWorkspaceExhausted,
+                        "device workspace allocation failed");
         }
-        const bool uploaded =
-            cudaMemcpy(d_x.ptr, buffers.inputs[0]->ReadData<float>(),
+        if (cudaMemcpy(d_x.ptr, buffers.inputs[0]->ReadData<float>(),
                        rows * input * f,
-                       cudaMemcpyHostToDevice) == cudaSuccess &&
-            cudaMemcpy(d_wih.ptr, buffers.weights[0]->ReadData<float>(),
-                       gate_width * input * f,
-                       cudaMemcpyHostToDevice) == cudaSuccess &&
-            cudaMemcpy(d_whh.ptr, buffers.weights[1]->ReadData<float>(),
-                       gate_width * hidden * f,
-                       cudaMemcpyHostToDevice) == cudaSuccess &&
-            cudaMemcpy(d_bih.ptr, buffers.weights[2]->ReadData<float>(),
-                       gate_width * f, cudaMemcpyHostToDevice) ==
-                cudaSuccess &&
-            cudaMemcpy(d_bhh.ptr, buffers.weights[3]->ReadData<float>(),
-                       gate_width * f, cudaMemcpyHostToDevice) ==
-                cudaSuccess &&
-            cudaMemset(d_h.ptr, 0, batch * hidden * f) == cudaSuccess;
-        if (!uploaded) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderExecutionFailed;
-            status.detail = "host-to-device transfer failed";
-            return status;
+                       cudaMemcpyHostToDevice) != cudaSuccess ||
+            cudaMemset(d_h.ptr, 0, batch * hidden * f) != cudaSuccess) {
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                        "host-to-device transfer failed");
         }
-        std::string detail;
-        if (!RunGruForwardOnDevice(batch, seq, input, hidden, d_x, d_wih,
-                                   d_whh, d_bih, d_bhh, d_gih, d_ghh, d_h,
-                                   d_y, nullptr, detail)) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderExecutionFailed;
-            status.detail = detail;
-            return status;
+        if (!GemmRowMajorABt(state_.Cublas(), static_cast<int>(rows),
+                             static_cast<int>(hidden),
+                             static_cast<int>(input), d_x.Float(),
+                             weights[0].w_ih.Float(), d_gih.Float())) {
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                        "input-projection GEMM failed");
+        }
+        const int total = static_cast<int>(batch * hidden);
+        const int block = 256;
+        const int grid = (total + block - 1) / block;
+        int seq_arg = static_cast<int>(seq);
+        int hidden_arg = static_cast<int>(hidden);
+        int total_arg = total;
+        int tanh_arg = request.activation == NeuralActivation::Tanh ? 1 : 0;
+        for (size_t t = 0; t < seq; ++t) {
+            if (!GemmRowMajorABt(state_.Cublas(), static_cast<int>(batch),
+                                 static_cast<int>(hidden),
+                                 static_cast<int>(hidden), d_h.Float(),
+                                 weights[0].w_hh.Float(), d_ghh.Float())) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                            "recurrent-projection GEMM failed");
+            }
+            int t_arg = static_cast<int>(t);
+            void* gih_ptr = d_gih.ptr;
+            void* ghh_ptr = d_ghh.ptr;
+            void* bih_ptr = weights[0].b_ih.ptr;
+            void* bhh_ptr = weights[0].b_hh.ptr;
+            void* h_ptr = d_h.ptr;
+            void* out_ptr = d_out.ptr;
+            void* args[] = {&gih_ptr, &ghh_ptr, &bih_ptr, &bhh_ptr,
+                            &h_ptr,   &out_ptr, &t_arg,   &seq_arg,
+                            &hidden_arg, &total_arg, &tanh_arg};
+            if (cuLaunchKernel(state_.RnnKernel(), grid, 1, 1, block, 1, 1,
+                               0, nullptr, args, nullptr) != CUDA_SUCCESS) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                            "cell kernel launch failed");
+            }
         }
         if (cudaDeviceSynchronize() != cudaSuccess ||
-            cudaMemcpy(buffers.outputs[0]->Data<float>(), d_y.ptr,
+            cudaMemcpy(buffers.outputs[0]->Data<float>(), d_out.ptr,
                        rows * hidden * f,
                        cudaMemcpyDeviceToHost) != cudaSuccess) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderExecutionFailed;
-            status.detail = "device execution or readback failed";
-            return status;
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                        "device execution or readback failed");
         }
-        status.ok = true;
-        status.reason = BackendFallbackReason::BackendInternalError;
-        status.detail.clear();
-        return status;
+        return Ok();
     }
 
-    // gru_backward buffer contract (mirrors lstm_backward): inputs = {x,
-    // dy}; weights = {W_ih, W_hh, b_ih, b_hh}; outputs = {dx}; gradients =
-    // {dW_ih, dW_hh, db_ih, db_hh}. Self-contained recompute-forward +
-    // BPTT; unlike LSTM, db_ih != db_hh (the n-gate bias gradients differ
-    // by the reset gate), so both column sums are computed.
-    NeuralOpStatus ExecuteGruBackward(const NeuralOpRequest& request,
-                                      NeuralOpBuffers& buffers) {
-        NeuralOpStatus status;
+    // ----------------------------------------------- stacked forward
+    // lstm_forward / gru_forward, `layers` stacked layers (0.6.0):
+    //   inputs[0]  = x [batch, seq, input]
+    //   weights    = { W_ih, W_hh, b_ih, b_hh } per layer (see
+    //                StackedWeightsMatch)
+    //   outputs    = { y [batch, seq, hidden] }                       or
+    //                { y, h_n [layers, batch, hidden] }                (GRU) or
+    //                { y, h_n, c_n [layers, batch, hidden] }          (LSTM)
+    // Initial state is zero (layers are stateless per call). Layer l>0
+    // consumes layer l-1's full output sequence on the device — no host
+    // round trip between layers.
+    NeuralOpStatus ExecuteStackedForward(const NeuralOpRequest& request,
+                                         NeuralOpBuffers& buffers,
+                                         CellKind kind) {
+        const size_t layers = request.layers;
         const size_t batch = request.batch;
         const size_t seq = request.seq;
         const size_t input = request.input;
         const size_t hidden = request.hidden;
-        const size_t gate_width = 3 * hidden;
+        const size_t gate_width = GatesFor(kind) * hidden;
         const size_t rows = batch * seq;
-        if (buffers.inputs.size() != 2 || buffers.weights.size() != 4 ||
-            buffers.outputs.size() != 1 || buffers.gradients.size() != 4 ||
-            !buffers.inputs[0] || !buffers.inputs[1] ||
+        const size_t state_count = layers * batch * hidden;
+        const size_t state_outputs = kind == CellKind::Lstm ? 2 : 1;
+        const bool wants_states = buffers.outputs.size() == 1 + state_outputs;
+        bool states_ok = true;
+        if (wants_states) {
+            for (size_t i = 1; i <= state_outputs; ++i) {
+                states_ok = states_ok && buffers.outputs[i] &&
+                            buffers.outputs[i]->NumElements() == state_count;
+            }
+        }
+        if (buffers.inputs.size() != 1 || !buffers.inputs[0] ||
+            (buffers.outputs.size() != 1 && !wants_states) || !states_ok ||
             !buffers.outputs[0] ||
             buffers.inputs[0]->NumElements() != rows * input ||
-            buffers.inputs[1]->NumElements() != rows * hidden ||
-            buffers.weights[0]->NumElements() != gate_width * input ||
-            buffers.weights[1]->NumElements() != gate_width * hidden ||
-            buffers.weights[2]->NumElements() != gate_width ||
-            buffers.weights[3]->NumElements() != gate_width ||
-            buffers.outputs[0]->NumElements() != rows * input ||
-            !buffers.gradients[0] || !buffers.gradients[1] ||
-            !buffers.gradients[2] || !buffers.gradients[3] ||
-            buffers.gradients[0]->NumElements() != gate_width * input ||
-            buffers.gradients[1]->NumElements() != gate_width * hidden ||
-            buffers.gradients[2]->NumElements() != gate_width ||
-            buffers.gradients[3]->NumElements() != gate_width) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderUnsupportedContract;
-            status.detail = "gru_backward buffer contract violated";
-            return status;
+            buffers.outputs[0]->NumElements() != rows * hidden ||
+            !StackedWeightsMatch(buffers.weights, layers, gate_width, input,
+                                 hidden)) {
+            return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
+                        std::string(NeuralOpName(request.op)) +
+                            " buffer contract violated");
         }
         std::string failure;
         if (!state_.Ensure(probe_.cc_major, probe_.cc_minor, failure)) {
-            status.reason = BackendFallbackReason::NvidiaProviderUnavailable;
-            status.detail = failure;
-            return status;
+            return Fail(BackendFallbackReason::NvidiaProviderUnavailable, failure);
         }
         std::lock_guard<std::mutex> lock(state_.ExecuteMutex());
 
         const size_t f = sizeof(float);
-        DeviceBuffer d_x, d_wih, d_whh, d_bih, d_bhh, d_gih, d_ghh, d_h,
-            d_y, d_gates, d_dy, d_dgx, d_dgh, d_dhrec, d_dx, d_dwih,
-            d_dwhh, d_dbih, d_dbhh, d_ones;
-        if (!d_x.Allocate(rows * input * f) ||
-            !d_wih.Allocate(gate_width * input * f) ||
-            !d_whh.Allocate(gate_width * hidden * f) ||
-            !d_bih.Allocate(gate_width * f) ||
-            !d_bhh.Allocate(gate_width * f) ||
-            !d_gih.Allocate(rows * gate_width * f) ||
-            !d_ghh.Allocate(batch * gate_width * f) ||
-            !d_h.Allocate(batch * hidden * f) ||
-            !d_y.Allocate(rows * hidden * f) ||
-            !d_gates.Allocate(rows * 4 * hidden * f) ||
-            !d_dy.Allocate(rows * hidden * f) ||
-            !d_dgx.Allocate(rows * gate_width * f) ||
-            !d_dgh.Allocate(rows * gate_width * f) ||
-            !d_dhrec.Allocate(batch * hidden * f) ||
-            !d_dx.Allocate(rows * input * f) ||
-            !d_dwih.Allocate(gate_width * input * f) ||
-            !d_dwhh.Allocate(gate_width * hidden * f) ||
-            !d_dbih.Allocate(gate_width * f) ||
-            !d_dbhh.Allocate(gate_width * f) ||
-            !d_ones.Allocate(rows * f)) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderWorkspaceExhausted;
-            status.detail = "device workspace allocation failed";
-            return status;
+        NeuralOpStatus weight_failure;
+        std::vector<LayerDeviceWeights> weights;
+        if (!UploadStackedWeights(buffers.weights, layers, gate_width, input,
+                                  hidden, weights, weight_failure)) {
+            return weight_failure;
         }
-        const bool uploaded =
-            cudaMemcpy(d_x.ptr, buffers.inputs[0]->ReadData<float>(),
+        DeviceBuffer d_x, d_gih, d_ghh, d_h, d_c, d_hn, d_cn;
+        std::vector<DeviceBuffer> d_y(layers);
+        bool allocated = d_x.Allocate(rows * input * f) &&
+                         d_gih.Allocate(rows * gate_width * f) &&
+                         d_ghh.Allocate(batch * gate_width * f) &&
+                         d_h.Allocate(batch * hidden * f) &&
+                         d_hn.Allocate(state_count * f) &&
+                         (kind != CellKind::Lstm ||
+                          (d_c.Allocate(batch * hidden * f) &&
+                           d_cn.Allocate(state_count * f)));
+        for (size_t l = 0; allocated && l < layers; ++l) {
+            allocated = d_y[l].Allocate(rows * hidden * f);
+        }
+        if (!allocated) {
+            return Fail(BackendFallbackReason::NvidiaProviderWorkspaceExhausted,
+                        "device workspace allocation failed");
+        }
+        if (cudaMemcpy(d_x.ptr, buffers.inputs[0]->ReadData<float>(),
                        rows * input * f,
-                       cudaMemcpyHostToDevice) == cudaSuccess &&
+                       cudaMemcpyHostToDevice) != cudaSuccess) {
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                        "host-to-device transfer failed");
+        }
+        for (size_t l = 0; l < layers; ++l) {
+            const float* d_input = l == 0 ? d_x.Float() : d_y[l - 1].Float();
+            std::string detail;
+            if (!RunStackedLayerForward(kind, batch, seq, hidden, d_input,
+                                        weights[l], d_gih, d_ghh, d_h, d_c,
+                                        d_y[l].Float(), nullptr, nullptr,
+                                        detail)) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                            "layer " + std::to_string(l) + ": " + detail);
+            }
+            if (cudaMemcpy(d_hn.Float() + l * batch * hidden, d_h.ptr,
+                           batch * hidden * f,
+                           cudaMemcpyDeviceToDevice) != cudaSuccess ||
+                (kind == CellKind::Lstm &&
+                 cudaMemcpy(d_cn.Float() + l * batch * hidden, d_c.ptr,
+                            batch * hidden * f,
+                            cudaMemcpyDeviceToDevice) != cudaSuccess)) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                            "final state capture failed");
+            }
+        }
+        bool downloaded =
+            cudaDeviceSynchronize() == cudaSuccess &&
+            cudaMemcpy(buffers.outputs[0]->Data<float>(),
+                       d_y[layers - 1].ptr, rows * hidden * f,
+                       cudaMemcpyDeviceToHost) == cudaSuccess;
+        if (downloaded && wants_states) {
+            downloaded =
+                cudaMemcpy(buffers.outputs[1]->Data<float>(), d_hn.ptr,
+                           state_count * f,
+                           cudaMemcpyDeviceToHost) == cudaSuccess &&
+                (kind != CellKind::Lstm ||
+                 cudaMemcpy(buffers.outputs[2]->Data<float>(), d_cn.ptr,
+                            state_count * f,
+                            cudaMemcpyDeviceToHost) == cudaSuccess);
+        }
+        if (!downloaded) {
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                        "device execution or readback failed");
+        }
+        return Ok();
+    }
+
+    // ---------------------------------------------- stacked backward
+    // lstm_backward / gru_backward, `layers` stacked layers (0.6.0):
+    //   inputs    = { x [batch, seq, input], dy [batch, seq, hidden] }
+    //   weights   = { W_ih, W_hh, b_ih, b_hh } per layer
+    //   outputs   = { dx [batch, seq, input] }
+    //   gradients = { dW_ih, dW_hh, db_ih, db_hh } per layer, same order
+    // Self-contained: recomputes every layer's forward with caches on the
+    // device, then runs BPTT top-down; layer l's dx is layer l-1's dy.
+    // LSTM: db_ih == db_hh (identical column sums, matching the CPU
+    // reference). GRU: db_ih and db_hh differ in the n slot.
+    NeuralOpStatus ExecuteStackedBackward(const NeuralOpRequest& request,
+                                          NeuralOpBuffers& buffers,
+                                          CellKind kind) {
+        const size_t layers = request.layers;
+        const size_t batch = request.batch;
+        const size_t seq = request.seq;
+        const size_t input = request.input;
+        const size_t hidden = request.hidden;
+        const size_t gate_width = GatesFor(kind) * hidden;
+        const size_t rows = batch * seq;
+        bool grads_ok = buffers.gradients.size() == 4 * layers;
+        for (size_t l = 0; grads_ok && l < layers; ++l) {
+            const size_t in = l == 0 ? input : hidden;
+            grads_ok = buffers.gradients[4 * l] && buffers.gradients[4 * l + 1] &&
+                       buffers.gradients[4 * l + 2] && buffers.gradients[4 * l + 3] &&
+                       buffers.gradients[4 * l]->NumElements() == gate_width * in &&
+                       buffers.gradients[4 * l + 1]->NumElements() ==
+                           gate_width * hidden &&
+                       buffers.gradients[4 * l + 2]->NumElements() == gate_width &&
+                       buffers.gradients[4 * l + 3]->NumElements() == gate_width;
+        }
+        if (buffers.inputs.size() != 2 || buffers.outputs.size() != 1 ||
+            !buffers.inputs[0] || !buffers.inputs[1] || !buffers.outputs[0] ||
+            buffers.inputs[0]->NumElements() != rows * input ||
+            buffers.inputs[1]->NumElements() != rows * hidden ||
+            buffers.outputs[0]->NumElements() != rows * input || !grads_ok ||
+            !StackedWeightsMatch(buffers.weights, layers, gate_width, input,
+                                 hidden)) {
+            return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
+                        std::string(NeuralOpName(request.op)) +
+                            " buffer contract violated");
+        }
+        std::string failure;
+        if (!state_.Ensure(probe_.cc_major, probe_.cc_minor, failure)) {
+            return Fail(BackendFallbackReason::NvidiaProviderUnavailable, failure);
+        }
+        std::lock_guard<std::mutex> lock(state_.ExecuteMutex());
+
+        const size_t f = sizeof(float);
+        const bool lstm = kind == CellKind::Lstm;
+        NeuralOpStatus weight_failure;
+        std::vector<LayerDeviceWeights> weights;
+        if (!UploadStackedWeights(buffers.weights, layers, gate_width, input,
+                                  hidden, weights, weight_failure)) {
+            return weight_failure;
+        }
+        // Shared per-layer scratch + per-layer caches for the recompute.
+        DeviceBuffer d_x, d_dy, d_gih, d_ghh, d_h, d_c, d_dhrec, d_dgx, d_dgh,
+            d_ones;
+        std::vector<DeviceBuffer> d_y(layers), d_gates(layers),
+            d_ccache(layers), d_dx(layers), d_dwih(layers), d_dwhh(layers),
+            d_dbih(layers), d_dbhh(layers);
+        bool allocated = d_x.Allocate(rows * input * f) &&
+                         d_dy.Allocate(rows * hidden * f) &&
+                         d_gih.Allocate(rows * gate_width * f) &&
+                         d_ghh.Allocate(batch * gate_width * f) &&
+                         d_h.Allocate(batch * hidden * f) &&
+                         d_c.Allocate(batch * hidden * f) &&
+                         d_dhrec.Allocate(batch * hidden * f) &&
+                         d_dgx.Allocate(rows * gate_width * f) &&
+                         (lstm || d_dgh.Allocate(rows * gate_width * f)) &&
+                         d_ones.Allocate(rows * f);
+        for (size_t l = 0; allocated && l < layers; ++l) {
+            const size_t in = l == 0 ? input : hidden;
+            allocated = d_y[l].Allocate(rows * hidden * f) &&
+                        d_gates[l].Allocate(rows * 4 * hidden * f) &&
+                        (!lstm || d_ccache[l].Allocate(rows * hidden * f)) &&
+                        d_dx[l].Allocate(rows * in * f) &&
+                        d_dwih[l].Allocate(gate_width * in * f) &&
+                        d_dwhh[l].Allocate(gate_width * hidden * f) &&
+                        d_dbih[l].Allocate(gate_width * f) &&
+                        d_dbhh[l].Allocate(gate_width * f);
+        }
+        if (!allocated) {
+            return Fail(BackendFallbackReason::NvidiaProviderWorkspaceExhausted,
+                        "device workspace allocation failed");
+        }
+        if (cudaMemcpy(d_x.ptr, buffers.inputs[0]->ReadData<float>(),
+                       rows * input * f,
+                       cudaMemcpyHostToDevice) != cudaSuccess ||
             cudaMemcpy(d_dy.ptr, buffers.inputs[1]->ReadData<float>(),
                        rows * hidden * f,
-                       cudaMemcpyHostToDevice) == cudaSuccess &&
-            cudaMemcpy(d_wih.ptr, buffers.weights[0]->ReadData<float>(),
-                       gate_width * input * f,
-                       cudaMemcpyHostToDevice) == cudaSuccess &&
-            cudaMemcpy(d_whh.ptr, buffers.weights[1]->ReadData<float>(),
-                       gate_width * hidden * f,
-                       cudaMemcpyHostToDevice) == cudaSuccess &&
-            cudaMemcpy(d_bih.ptr, buffers.weights[2]->ReadData<float>(),
-                       gate_width * f, cudaMemcpyHostToDevice) ==
-                cudaSuccess &&
-            cudaMemcpy(d_bhh.ptr, buffers.weights[3]->ReadData<float>(),
-                       gate_width * f, cudaMemcpyHostToDevice) ==
-                cudaSuccess &&
-            cudaMemset(d_h.ptr, 0, batch * hidden * f) == cudaSuccess &&
-            cudaMemset(d_dhrec.ptr, 0, batch * hidden * f) == cudaSuccess &&
-            cudaMemset(d_dwih.ptr, 0, gate_width * input * f) ==
-                cudaSuccess &&
-            cudaMemset(d_dwhh.ptr, 0, gate_width * hidden * f) ==
-                cudaSuccess;
-        if (!uploaded) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderExecutionFailed;
-            status.detail = "host-to-device transfer failed";
-            return status;
+                       cudaMemcpyHostToDevice) != cudaSuccess) {
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                        "host-to-device transfer failed");
         }
 
-        // Recompute forward with the [r, z, n, hn_pre] cache.
-        std::string detail;
-        if (!RunGruForwardOnDevice(batch, seq, input, hidden, d_x, d_wih,
-                                   d_whh, d_bih, d_bhh, d_gih, d_ghh, d_h,
-                                   d_y, d_gates.ptr, detail)) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderExecutionFailed;
-            status.detail = "training forward: " + detail;
-            return status;
+        // Recompute every layer's forward with caches.
+        for (size_t l = 0; l < layers; ++l) {
+            const float* d_input = l == 0 ? d_x.Float() : d_y[l - 1].Float();
+            std::string detail;
+            if (!RunStackedLayerForward(kind, batch, seq, hidden, d_input,
+                                        weights[l], d_gih, d_ghh, d_h, d_c,
+                                        d_y[l].Float(), d_gates[l].Float(),
+                                        lstm ? d_ccache[l].Float() : nullptr,
+                                        detail)) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                            "training forward layer " + std::to_string(l) +
+                                ": " + detail);
+            }
         }
 
         const int total = static_cast<int>(batch * hidden);
@@ -1060,80 +1114,6 @@ private:
         int hidden_arg = static_cast<int>(hidden);
         int total_arg = total;
         const int ld_gates = static_cast<int>(seq * gate_width);
-        for (size_t t = seq; t-- > 0;) {
-            int t_arg = static_cast<int>(t);
-            void* dy_ptr = d_dy.ptr;
-            void* dhrec_ptr = d_dhrec.ptr;
-            void* gates_ptr = d_gates.ptr;
-            void* y_ptr = d_y.ptr;
-            void* dgx_ptr = d_dgx.ptr;
-            void* dgh_ptr = d_dgh.ptr;
-            void* args[] = {&dy_ptr,  &dhrec_ptr, &gates_ptr, &y_ptr,
-                            &dgx_ptr, &dgh_ptr,   &t_arg,     &seq_arg,
-                            &hidden_arg, &total_arg};
-            if (cuLaunchKernel(state_.GruBackwardKernel(), grid, 1, 1,
-                               block, 1, 1, 0, nullptr, args,
-                               nullptr) != CUDA_SUCCESS) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "gru backward cell launch failed";
-                return status;
-            }
-            const float* dgx_t = d_dgx.Float() + t * gate_width;
-            const float* dgh_t = d_dgh.Float() + t * gate_width;
-            // dh for t-1 = direct part (written by the cell) + dgh_t @ W_hh.
-            if (!GemmRowMajorABAccum(state_.Cublas(), static_cast<int>(batch),
-                                     static_cast<int>(hidden),
-                                     static_cast<int>(gate_width), dgh_t,
-                                     ld_gates, d_whh.Float(),
-                                     static_cast<int>(hidden),
-                                     d_dhrec.Float(),
-                                     static_cast<int>(hidden))) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "recurrent gradient GEMM failed";
-                return status;
-            }
-            // dW_ih += dgx_t^T x_t.
-            if (!GemmRowMajorAtBAccum(
-                    state_.Cublas(), static_cast<int>(batch),
-                    static_cast<int>(gate_width), static_cast<int>(input),
-                    dgx_t, ld_gates, d_x.Float() + t * input,
-                    static_cast<int>(seq * input), d_dwih.Float(),
-                    static_cast<int>(input))) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "input weight-gradient GEMM failed";
-                return status;
-            }
-            // dW_hh += dgh_t^T h_{t-1} (h_0 = 0 contributes nothing).
-            if (t > 0 &&
-                !GemmRowMajorAtBAccum(
-                    state_.Cublas(), static_cast<int>(batch),
-                    static_cast<int>(gate_width), static_cast<int>(hidden),
-                    dgh_t, ld_gates, d_y.Float() + (t - 1) * hidden,
-                    static_cast<int>(seq * hidden), d_dwhh.Float(),
-                    static_cast<int>(hidden))) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "hidden weight-gradient GEMM failed";
-                return status;
-            }
-        }
-
-        // dx = DGX * W_ih over the full stacked sequence.
-        if (!GemmRowMajorAB(state_.Cublas(), static_cast<int>(rows),
-                            static_cast<int>(input),
-                            static_cast<int>(gate_width), d_dgx.Float(),
-                            static_cast<int>(gate_width), d_wih.Float(),
-                            static_cast<int>(input), d_dx.Float(),
-                            static_cast<int>(input))) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderExecutionFailed;
-            status.detail = "input gradient GEMM failed";
-            return status;
-        }
-        // db_ih = colsum(DGX), db_hh = colsum(DGH) via ones-vector GEMVs.
         {
             void* ones_ptr = d_ones.ptr;
             float one_value = 1.0f;
@@ -1143,347 +1123,168 @@ private:
             if (cuLaunchKernel(state_.FillKernel(), fill_grid, 1, 1, block,
                                1, 1, 0, nullptr, args,
                                nullptr) != CUDA_SUCCESS) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "ones fill launch failed";
-                return status;
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                            "ones fill launch failed");
             }
+        }
+
+        // BPTT, top layer first; each layer's dx feeds the layer below.
+        const float* d_dy_cur = d_dy.Float();
+        for (size_t li = layers; li-- > 0;) {
+            const LayerDeviceWeights& w = weights[li];
+            const size_t in = w.in_features;
+            const float* d_input = li == 0 ? d_x.Float() : d_y[li - 1].Float();
+            if (cudaMemset(d_dhrec.ptr, 0, batch * hidden * f) != cudaSuccess ||
+                cudaMemset(d_c.ptr, 0, batch * hidden * f) != cudaSuccess ||
+                cudaMemset(d_dwih[li].ptr, 0, gate_width * in * f) != cudaSuccess ||
+                cudaMemset(d_dwhh[li].ptr, 0, gate_width * hidden * f) !=
+                    cudaSuccess) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                            "gradient reset failed");
+            }
+            for (size_t t = seq; t-- > 0;) {
+                int t_arg = static_cast<int>(t);
+                void* dy_ptr = const_cast<float*>(d_dy_cur);
+                void* dhrec_ptr = d_dhrec.ptr;
+                void* dc_ptr = d_c.ptr;
+                void* gates_ptr = d_gates[li].ptr;
+                void* ccache_ptr = d_ccache[li].ptr;
+                void* y_ptr = d_y[li].ptr;
+                void* dgx_ptr = d_dgx.ptr;
+                void* dgh_ptr = d_dgh.ptr;
+                CUresult launch;
+                if (lstm) {
+                    void* args[] = {&dy_ptr, &dhrec_ptr, &dc_ptr, &gates_ptr,
+                                    &ccache_ptr, &dgx_ptr, &t_arg, &seq_arg,
+                                    &hidden_arg, &total_arg};
+                    launch = cuLaunchKernel(state_.LstmBackwardKernel(), grid,
+                                            1, 1, block, 1, 1, 0, nullptr,
+                                            args, nullptr);
+                } else {
+                    void* args[] = {&dy_ptr,  &dhrec_ptr, &gates_ptr, &y_ptr,
+                                    &dgx_ptr, &dgh_ptr,   &t_arg,     &seq_arg,
+                                    &hidden_arg, &total_arg};
+                    launch = cuLaunchKernel(state_.GruBackwardKernel(), grid,
+                                            1, 1, block, 1, 1, 0, nullptr,
+                                            args, nullptr);
+                }
+                if (launch != CUDA_SUCCESS) {
+                    return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                                "backward cell launch failed");
+                }
+                // x-side gate gradients drive dx/dW_ih; h-side drive
+                // dh_rec/dW_hh (they coincide for LSTM).
+                const float* dgx_t = d_dgx.Float() + t * gate_width;
+                const float* dgh_t =
+                    lstm ? dgx_t : d_dgh.Float() + t * gate_width;
+                const bool dh_ok =
+                    lstm ? GemmRowMajorAB(state_.Cublas(),
+                                          static_cast<int>(batch),
+                                          static_cast<int>(hidden),
+                                          static_cast<int>(gate_width), dgh_t,
+                                          ld_gates, w.w_hh.Float(),
+                                          static_cast<int>(hidden),
+                                          d_dhrec.Float(),
+                                          static_cast<int>(hidden))
+                         : GemmRowMajorABAccum(state_.Cublas(),
+                                               static_cast<int>(batch),
+                                               static_cast<int>(hidden),
+                                               static_cast<int>(gate_width),
+                                               dgh_t, ld_gates, w.w_hh.Float(),
+                                               static_cast<int>(hidden),
+                                               d_dhrec.Float(),
+                                               static_cast<int>(hidden));
+                if (!dh_ok) {
+                    return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                                "recurrent gradient GEMM failed");
+                }
+                if (!GemmRowMajorAtBAccum(
+                        state_.Cublas(), static_cast<int>(batch),
+                        static_cast<int>(gate_width), static_cast<int>(in),
+                        dgx_t, ld_gates, d_input + t * in,
+                        static_cast<int>(seq * in), d_dwih[li].Float(),
+                        static_cast<int>(in))) {
+                    return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                                "input weight-gradient GEMM failed");
+                }
+                if (t > 0 &&
+                    !GemmRowMajorAtBAccum(
+                        state_.Cublas(), static_cast<int>(batch),
+                        static_cast<int>(gate_width), static_cast<int>(hidden),
+                        dgh_t, ld_gates, d_y[li].Float() + (t - 1) * hidden,
+                        static_cast<int>(seq * hidden), d_dwhh[li].Float(),
+                        static_cast<int>(hidden))) {
+                    return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                                "hidden weight-gradient GEMM failed");
+                }
+            }
+            // dx_l = DGX * W_ih over the stacked sequence.
+            if (!GemmRowMajorAB(state_.Cublas(), static_cast<int>(rows),
+                                static_cast<int>(in),
+                                static_cast<int>(gate_width), d_dgx.Float(),
+                                static_cast<int>(gate_width), w.w_ih.Float(),
+                                static_cast<int>(in), d_dx[li].Float(),
+                                static_cast<int>(in))) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                            "input gradient GEMM failed");
+            }
+            // Bias gradients = column sums via ones-vector GEMVs.
             const float alpha = 1.0f;
             const float beta = 0.0f;
             if (cublasSgemv(state_.Cublas(), CUBLAS_OP_N,
                             static_cast<int>(gate_width),
                             static_cast<int>(rows), &alpha, d_dgx.Float(),
                             static_cast<int>(gate_width), d_ones.Float(), 1,
-                            &beta, d_dbih.Float(),
-                            1) != CUBLAS_STATUS_SUCCESS ||
-                cublasSgemv(state_.Cublas(), CUBLAS_OP_N,
-                            static_cast<int>(gate_width),
-                            static_cast<int>(rows), &alpha, d_dgh.Float(),
-                            static_cast<int>(gate_width), d_ones.Float(), 1,
-                            &beta, d_dbhh.Float(),
+                            &beta, d_dbih[li].Float(),
                             1) != CUBLAS_STATUS_SUCCESS) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "bias gradient GEMV failed";
-                return status;
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                            "bias gradient GEMV failed");
             }
+            if (lstm) {
+                if (cudaMemcpy(d_dbhh[li].ptr, d_dbih[li].ptr, gate_width * f,
+                               cudaMemcpyDeviceToDevice) != cudaSuccess) {
+                    return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                                "bias gradient copy failed");
+                }
+            } else if (cublasSgemv(state_.Cublas(), CUBLAS_OP_N,
+                                   static_cast<int>(gate_width),
+                                   static_cast<int>(rows), &alpha,
+                                   d_dgh.Float(), static_cast<int>(gate_width),
+                                   d_ones.Float(), 1, &beta,
+                                   d_dbhh[li].Float(),
+                                   1) != CUBLAS_STATUS_SUCCESS) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                            "bias gradient GEMV failed");
+            }
+            d_dy_cur = d_dx[li].Float();
         }
 
-        const bool downloaded =
+        bool downloaded =
             cudaDeviceSynchronize() == cudaSuccess &&
-            cudaMemcpy(buffers.outputs[0]->Data<float>(), d_dx.ptr,
+            cudaMemcpy(buffers.outputs[0]->Data<float>(), d_dx[0].ptr,
                        rows * input * f,
-                       cudaMemcpyDeviceToHost) == cudaSuccess &&
-            cudaMemcpy(buffers.gradients[0]->Data<float>(), d_dwih.ptr,
-                       gate_width * input * f,
-                       cudaMemcpyDeviceToHost) == cudaSuccess &&
-            cudaMemcpy(buffers.gradients[1]->Data<float>(), d_dwhh.ptr,
-                       gate_width * hidden * f,
-                       cudaMemcpyDeviceToHost) == cudaSuccess &&
-            cudaMemcpy(buffers.gradients[2]->Data<float>(), d_dbih.ptr,
-                       gate_width * f, cudaMemcpyDeviceToHost) ==
-                cudaSuccess &&
-            cudaMemcpy(buffers.gradients[3]->Data<float>(), d_dbhh.ptr,
-                       gate_width * f, cudaMemcpyDeviceToHost) ==
-                cudaSuccess;
+                       cudaMemcpyDeviceToHost) == cudaSuccess;
+        for (size_t l = 0; downloaded && l < layers; ++l) {
+            const size_t in = l == 0 ? input : hidden;
+            downloaded =
+                cudaMemcpy(buffers.gradients[4 * l]->Data<float>(),
+                           d_dwih[l].ptr, gate_width * in * f,
+                           cudaMemcpyDeviceToHost) == cudaSuccess &&
+                cudaMemcpy(buffers.gradients[4 * l + 1]->Data<float>(),
+                           d_dwhh[l].ptr, gate_width * hidden * f,
+                           cudaMemcpyDeviceToHost) == cudaSuccess &&
+                cudaMemcpy(buffers.gradients[4 * l + 2]->Data<float>(),
+                           d_dbih[l].ptr, gate_width * f,
+                           cudaMemcpyDeviceToHost) == cudaSuccess &&
+                cudaMemcpy(buffers.gradients[4 * l + 3]->Data<float>(),
+                           d_dbhh[l].ptr, gate_width * f,
+                           cudaMemcpyDeviceToHost) == cudaSuccess;
+        }
         if (!downloaded) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderExecutionFailed;
-            status.detail = "device execution or readback failed";
-            return status;
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed,
+                        "device execution or readback failed");
         }
-        status.ok = true;
-        status.reason = BackendFallbackReason::BackendInternalError;
-        status.detail.clear();
-        return status;
-    }
-
-    NeuralOpStatus ExecuteLstmBackward(const NeuralOpRequest& request,
-                                       NeuralOpBuffers& buffers) {
-        NeuralOpStatus status;
-        const size_t batch = request.batch;
-        const size_t seq = request.seq;
-        const size_t input = request.input;
-        const size_t hidden = request.hidden;
-        const size_t gate_width = 4 * hidden;
-        const size_t rows = batch * seq;
-        if (buffers.inputs.size() != 2 || buffers.weights.size() != 4 ||
-            buffers.outputs.size() != 1 || buffers.gradients.size() != 4 ||
-            !buffers.inputs[0] || !buffers.inputs[1] ||
-            !buffers.outputs[0] ||
-            buffers.inputs[0]->NumElements() != rows * input ||
-            buffers.inputs[1]->NumElements() != rows * hidden ||
-            buffers.weights[0]->NumElements() != gate_width * input ||
-            buffers.weights[1]->NumElements() != gate_width * hidden ||
-            buffers.weights[2]->NumElements() != gate_width ||
-            buffers.weights[3]->NumElements() != gate_width ||
-            buffers.outputs[0]->NumElements() != rows * input ||
-            !buffers.gradients[0] || !buffers.gradients[1] ||
-            !buffers.gradients[2] || !buffers.gradients[3] ||
-            buffers.gradients[0]->NumElements() != gate_width * input ||
-            buffers.gradients[1]->NumElements() != gate_width * hidden ||
-            buffers.gradients[2]->NumElements() != gate_width ||
-            buffers.gradients[3]->NumElements() != gate_width) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderUnsupportedContract;
-            status.detail = "lstm_backward buffer contract violated";
-            return status;
-        }
-
-        std::string failure;
-        if (!state_.Ensure(probe_.cc_major, probe_.cc_minor, failure)) {
-            status.reason = BackendFallbackReason::NvidiaProviderUnavailable;
-            status.detail = failure;
-            return status;
-        }
-        std::lock_guard<std::mutex> lock(state_.ExecuteMutex());
-
-        const size_t f = sizeof(float);
-        DeviceBuffer d_x, d_wih, d_whh, d_bih, d_bhh, d_gih, d_ghh, d_h,
-            d_c, d_y, d_gates, d_ccache, d_dy, d_da, d_dhrec, d_dx, d_dwih,
-            d_dwhh, d_db, d_ones;
-        if (!d_x.Allocate(rows * input * f) ||
-            !d_wih.Allocate(gate_width * input * f) ||
-            !d_whh.Allocate(gate_width * hidden * f) ||
-            !d_bih.Allocate(gate_width * f) ||
-            !d_bhh.Allocate(gate_width * f) ||
-            !d_gih.Allocate(rows * gate_width * f) ||
-            !d_ghh.Allocate(batch * gate_width * f) ||
-            !d_h.Allocate(batch * hidden * f) ||
-            !d_c.Allocate(batch * hidden * f) ||
-            !d_y.Allocate(rows * hidden * f) ||
-            !d_gates.Allocate(rows * gate_width * f) ||
-            !d_ccache.Allocate(rows * hidden * f) ||
-            !d_dy.Allocate(rows * hidden * f) ||
-            !d_da.Allocate(rows * gate_width * f) ||
-            !d_dhrec.Allocate(batch * hidden * f) ||
-            !d_dx.Allocate(rows * input * f) ||
-            !d_dwih.Allocate(gate_width * input * f) ||
-            !d_dwhh.Allocate(gate_width * hidden * f) ||
-            !d_db.Allocate(gate_width * f) ||
-            !d_ones.Allocate(rows * f)) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderWorkspaceExhausted;
-            status.detail = "device workspace allocation failed";
-            return status;
-        }
-        const bool uploaded =
-            cudaMemcpy(d_x.ptr, buffers.inputs[0]->ReadData<float>(),
-                       rows * input * f,
-                       cudaMemcpyHostToDevice) == cudaSuccess &&
-            cudaMemcpy(d_dy.ptr, buffers.inputs[1]->ReadData<float>(),
-                       rows * hidden * f,
-                       cudaMemcpyHostToDevice) == cudaSuccess &&
-            cudaMemcpy(d_wih.ptr, buffers.weights[0]->ReadData<float>(),
-                       gate_width * input * f,
-                       cudaMemcpyHostToDevice) == cudaSuccess &&
-            cudaMemcpy(d_whh.ptr, buffers.weights[1]->ReadData<float>(),
-                       gate_width * hidden * f,
-                       cudaMemcpyHostToDevice) == cudaSuccess &&
-            cudaMemcpy(d_bih.ptr, buffers.weights[2]->ReadData<float>(),
-                       gate_width * f, cudaMemcpyHostToDevice) ==
-                cudaSuccess &&
-            cudaMemcpy(d_bhh.ptr, buffers.weights[3]->ReadData<float>(),
-                       gate_width * f, cudaMemcpyHostToDevice) ==
-                cudaSuccess &&
-            cudaMemset(d_h.ptr, 0, batch * hidden * f) == cudaSuccess &&
-            cudaMemset(d_c.ptr, 0, batch * hidden * f) == cudaSuccess &&
-            cudaMemset(d_dhrec.ptr, 0, batch * hidden * f) == cudaSuccess &&
-            cudaMemset(d_dwih.ptr, 0, gate_width * input * f) ==
-                cudaSuccess &&
-            cudaMemset(d_dwhh.ptr, 0, gate_width * hidden * f) ==
-                cudaSuccess;
-        if (!uploaded) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderExecutionFailed;
-            status.detail = "host-to-device transfer failed";
-            return status;
-        }
-        // dc is reused in place across the backward loop; starts at zero.
-        cudaMemset(d_c.ptr, 0, batch * hidden * f);
-
-        const int total = static_cast<int>(batch * hidden);
-        const int block = 256;
-        const int grid = (total + block - 1) / block;
-        int seq_arg = static_cast<int>(seq);
-        int hidden_arg = static_cast<int>(hidden);
-        int total_arg = total;
-
-        // Recompute forward with activated-gate and cell caches.
-        if (!GemmRowMajorABt(state_.Cublas(), static_cast<int>(rows),
-                             static_cast<int>(gate_width),
-                             static_cast<int>(input), d_x.Float(),
-                             d_wih.Float(), d_gih.Float())) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderExecutionFailed;
-            status.detail = "input-projection GEMM failed";
-            return status;
-        }
-        for (size_t t = 0; t < seq; ++t) {
-            if (!GemmRowMajorABt(state_.Cublas(), static_cast<int>(batch),
-                                 static_cast<int>(gate_width),
-                                 static_cast<int>(hidden), d_h.Float(),
-                                 d_whh.Float(), d_ghh.Float())) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "recurrent-projection GEMM failed";
-                return status;
-            }
-            int t_arg = static_cast<int>(t);
-            void* gih_ptr = d_gih.ptr;
-            void* ghh_ptr = d_ghh.ptr;
-            void* bih_ptr = d_bih.ptr;
-            void* bhh_ptr = d_bhh.ptr;
-            void* c_ptr = d_c.ptr;
-            void* h_ptr = d_h.ptr;
-            void* y_ptr = d_y.ptr;
-            void* gates_ptr = d_gates.ptr;
-            void* ccache_ptr = d_ccache.ptr;
-            void* args[] = {&gih_ptr, &ghh_ptr, &bih_ptr, &bhh_ptr,
-                            &c_ptr,   &h_ptr,   &y_ptr,   &gates_ptr,
-                            &ccache_ptr, &t_arg, &seq_arg, &hidden_arg,
-                            &total_arg};
-            if (cuLaunchKernel(state_.LstmKernel(), grid, 1, 1, block, 1, 1,
-                               0, nullptr, args, nullptr) != CUDA_SUCCESS) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "training forward cell launch failed";
-                return status;
-            }
-        }
-
-        // BPTT: dc reuses d_c (reset to zero above after the forward
-        // consumed it — reset again since forward mutated it).
-        cudaMemset(d_c.ptr, 0, batch * hidden * f);
-        for (size_t t = seq; t-- > 0;) {
-            int t_arg = static_cast<int>(t);
-            void* dy_ptr = d_dy.ptr;
-            void* dhrec_ptr = d_dhrec.ptr;
-            void* dc_ptr = d_c.ptr;
-            void* gates_ptr = d_gates.ptr;
-            void* ccache_ptr = d_ccache.ptr;
-            void* da_ptr = d_da.ptr;
-            void* args[] = {&dy_ptr, &dhrec_ptr, &dc_ptr, &gates_ptr,
-                            &ccache_ptr, &da_ptr, &t_arg, &seq_arg,
-                            &hidden_arg, &total_arg};
-            if (cuLaunchKernel(state_.LstmBackwardKernel(), grid, 1, 1,
-                               block, 1, 1, 0, nullptr, args,
-                               nullptr) != CUDA_SUCCESS) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "backward cell launch failed";
-                return status;
-            }
-            const float* da_t = d_da.Float() + t * gate_width;
-            const int lda = static_cast<int>(seq * gate_width);
-            // dh_recurrent for t-1.
-            if (!GemmRowMajorAB(state_.Cublas(), static_cast<int>(batch),
-                                static_cast<int>(hidden),
-                                static_cast<int>(gate_width), da_t, lda,
-                                d_whh.Float(), static_cast<int>(hidden),
-                                d_dhrec.Float(),
-                                static_cast<int>(hidden))) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "recurrent gradient GEMM failed";
-                return status;
-            }
-            // dW_ih += da_t^T x_t.
-            if (!GemmRowMajorAtBAccum(
-                    state_.Cublas(), static_cast<int>(batch),
-                    static_cast<int>(gate_width), static_cast<int>(input),
-                    da_t, lda, d_x.Float() + t * input,
-                    static_cast<int>(seq * input), d_dwih.Float(),
-                    static_cast<int>(input))) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "input weight-gradient GEMM failed";
-                return status;
-            }
-            // dW_hh += da_t^T h_{t-1} (h_0 = 0 contributes nothing).
-            if (t > 0 &&
-                !GemmRowMajorAtBAccum(
-                    state_.Cublas(), static_cast<int>(batch),
-                    static_cast<int>(gate_width), static_cast<int>(hidden),
-                    da_t, lda, d_y.Float() + (t - 1) * hidden,
-                    static_cast<int>(seq * hidden), d_dwhh.Float(),
-                    static_cast<int>(hidden))) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "hidden weight-gradient GEMM failed";
-                return status;
-            }
-        }
-
-        // dx = DA * W_ih over the full stacked sequence.
-        if (!GemmRowMajorAB(state_.Cublas(), static_cast<int>(rows),
-                            static_cast<int>(input),
-                            static_cast<int>(gate_width), d_da.Float(),
-                            static_cast<int>(gate_width), d_wih.Float(),
-                            static_cast<int>(input), d_dx.Float(),
-                            static_cast<int>(input))) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderExecutionFailed;
-            status.detail = "input gradient GEMM failed";
-            return status;
-        }
-        // db = column sums of DA via ones-vector GEMV.
-        {
-            void* ones_ptr = d_ones.ptr;
-            float one_value = 1.0f;
-            int count = static_cast<int>(rows);
-            const int fill_grid = (count + block - 1) / block;
-            void* args[] = {&ones_ptr, &one_value, &count};
-            if (cuLaunchKernel(state_.FillKernel(), fill_grid, 1, 1, block,
-                               1, 1, 0, nullptr, args,
-                               nullptr) != CUDA_SUCCESS) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "ones fill launch failed";
-                return status;
-            }
-            const float alpha = 1.0f;
-            const float beta = 0.0f;
-            if (cublasSgemv(state_.Cublas(), CUBLAS_OP_N,
-                            static_cast<int>(gate_width),
-                            static_cast<int>(rows), &alpha, d_da.Float(),
-                            static_cast<int>(gate_width), d_ones.Float(), 1,
-                            &beta, d_db.Float(),
-                            1) != CUBLAS_STATUS_SUCCESS) {
-                status.reason =
-                    BackendFallbackReason::NvidiaProviderExecutionFailed;
-                status.detail = "bias gradient GEMV failed";
-                return status;
-            }
-        }
-
-        const bool downloaded =
-            cudaDeviceSynchronize() == cudaSuccess &&
-            cudaMemcpy(buffers.outputs[0]->Data<float>(), d_dx.ptr,
-                       rows * input * f,
-                       cudaMemcpyDeviceToHost) == cudaSuccess &&
-            cudaMemcpy(buffers.gradients[0]->Data<float>(), d_dwih.ptr,
-                       gate_width * input * f,
-                       cudaMemcpyDeviceToHost) == cudaSuccess &&
-            cudaMemcpy(buffers.gradients[1]->Data<float>(), d_dwhh.ptr,
-                       gate_width * hidden * f,
-                       cudaMemcpyDeviceToHost) == cudaSuccess &&
-            cudaMemcpy(buffers.gradients[2]->Data<float>(), d_db.ptr,
-                       gate_width * f, cudaMemcpyDeviceToHost) ==
-                cudaSuccess &&
-            cudaMemcpy(buffers.gradients[3]->Data<float>(), d_db.ptr,
-                       gate_width * f, cudaMemcpyDeviceToHost) ==
-                cudaSuccess;
-        if (!downloaded) {
-            status.reason =
-                BackendFallbackReason::NvidiaProviderExecutionFailed;
-            status.detail = "device execution or readback failed";
-            return status;
-        }
-        status.ok = true;
-        status.reason = BackendFallbackReason::BackendInternalError;
-        status.detail.clear();
-        return status;
+        return Ok();
     }
 
     NvidiaRuntimeProbe probe_;

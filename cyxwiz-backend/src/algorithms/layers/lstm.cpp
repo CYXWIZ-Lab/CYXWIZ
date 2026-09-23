@@ -104,8 +104,7 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
     // selection truthful. Failure records placement evidence and falls
     // through to the AF/native paths below.
     provider_forward_used_ = false;
-    if (num_layers_ == 1 && !bidirectional_ && batch_first_ &&
-        !provider_disabled_after_failure_) {
+    if (!bidirectional_ && batch_first_ && !provider_disabled_after_failure_) {
         NeuralOpRequest provider_request;
         provider_request.target = CaptureCurrentNeuralDeviceTarget();
         provider_request.op = NeuralOp::LstmForward;
@@ -115,34 +114,31 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
         provider_request.seq = input_shape[1];
         provider_request.input = input_shape[2];
         provider_request.hidden = static_cast<size_t>(hidden_size_);
+        provider_request.layers = static_cast<size_t>(num_layers_);
         if (auto provider = NeuralProviderRegistry::Instance()
                                 .FindSupporting(provider_request)) {
-            Tensor output(std::vector<size_t>{
-                input_shape[0], input_shape[1],
-                static_cast<size_t>(hidden_size_)});
-            // Final states in the CPU path's [layers*directions, batch,
-            // hidden] layout; the provider writes c_n through the optional
-            // second output (contract 0.5.1), h_n is the last output step.
             const size_t hidden = static_cast<size_t>(hidden_size_);
-            Tensor final_cell(std::vector<size_t>{1, input_shape[0], hidden});
+            const size_t layers = static_cast<size_t>(num_layers_);
+            Tensor output(std::vector<size_t>{
+                input_shape[0], input_shape[1], hidden});
+            // Final states come back from the provider (contract 0.6.0)
+            // in the CPU path's [layers*directions, batch, hidden] layout.
+            Tensor final_hidden(std::vector<size_t>{layers, input_shape[0], hidden});
+            Tensor final_cell(std::vector<size_t>{layers, input_shape[0], hidden});
             NeuralOpBuffers buffers;
             buffers.inputs = {&input};
-            buffers.weights = {&W_ih_[0], &W_hh_[0], &b_ih_[0], &b_hh_[0]};
-            buffers.outputs = {&output, &final_cell};
+            for (size_t l = 0; l < layers; ++l) {
+                buffers.weights.push_back(&W_ih_[l]);
+                buffers.weights.push_back(&W_hh_[l]);
+                buffers.weights.push_back(&b_ih_[l]);
+                buffers.weights.push_back(&b_hh_[l]);
+            }
+            buffers.outputs = {&output, &final_hidden, &final_cell};
             const auto status = provider->Execute(provider_request, buffers);
             if (status.ok) {
                 provider_forward_used_ = true;
-                const size_t seq = input_shape[1];
-                h_n_ = Tensor::Zeros({1, input_shape[0], hidden});
+                h_n_ = final_hidden;
                 c_n_ = final_cell;
-                const float* y = output.ReadData<float>();
-                float* hn = h_n_.Data<float>();
-                for (size_t b = 0; b < input_shape[0]; ++b) {
-                    for (size_t j = 0; j < hidden; ++j) {
-                        hn[b * hidden + j] =
-                            y[(b * seq + (seq - 1)) * hidden + j];
-                    }
-                }
                 return output;
             }
             RecurrentCudaPlacementRequest evidence_request;

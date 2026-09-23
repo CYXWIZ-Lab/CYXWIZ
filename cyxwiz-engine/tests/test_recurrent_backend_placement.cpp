@@ -260,8 +260,9 @@ public:
     }
     cyxwiz::NeuralCapability QueryCapability(
         const cyxwiz::NeuralOpRequest& request) const override {
-        // layers==3 keeps this fixture outside the REAL provider's
-        // single-layer contract, so only the stub can claim it.
+        // The fixture is Float64 (see the request below), which the REAL
+        // provider refuses, so only the stub can claim it; the stub itself
+        // ignores dtype.
         cyxwiz::NeuralCapability capability;
         capability.supported =
             request.op == cyxwiz::NeuralOp::LstmForward &&
@@ -292,6 +293,7 @@ void TestNativeProviderSelectionPlacement() {
 
     cyxwiz::NeuralOpRequest request;
     request.target = {cyxwiz::DeviceType::CUDA, 0};
+    request.dtype = cyxwiz::DataType::Float64;  // real provider refuses
     request.op = cyxwiz::NeuralOp::LstmForward;
     request.training = true;
     request.batch = 7777;

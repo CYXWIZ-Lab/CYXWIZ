@@ -482,13 +482,14 @@ TEST_CASE("NVIDIA provider gru_forward matches the CPU GRU reference",
     INFO("gru_forward max_abs_diff=" << max_abs_diff);
     CHECK(max_abs_diff <= 1e-4f);
 
-    // The optional cell-state output is an LSTM-only contract: a GRU call
-    // offering a second output is refused typed, not silently ignored.
-    cyxwiz::Tensor bogus_cell(std::vector<size_t>{request.batch, request.hidden});
+    // GRU accepts {y} or {y, h_n}; the three-output LSTM form (with a
+    // cell state) is refused typed, not silently ignored.
+    cyxwiz::Tensor bogus_hidden(std::vector<size_t>{1, request.batch, request.hidden});
+    cyxwiz::Tensor bogus_cell(std::vector<size_t>{1, request.batch, request.hidden});
     cyxwiz::NeuralOpBuffers two_outputs;
     two_outputs.inputs = {&input};
     two_outputs.weights = {&W_ih, &W_hh, &b_ih, &b_hh};
-    two_outputs.outputs = {&actual, &bogus_cell};
+    two_outputs.outputs = {&actual, &bogus_hidden, &bogus_cell};
     const auto refused = provider->Execute(request, two_outputs);
     CHECK_FALSE(refused.ok);
     CHECK(refused.reason ==
@@ -761,6 +762,185 @@ TEST_CASE("NVIDIA provider repeated gru training runs do not leak device memory"
                         << " drop=" << drop << " bytes over " << kIterations
                         << " gru forward+backward runs");
     CHECK(drop <= kToleranceBytes);
+}
+
+
+// ---------------------------------------------------------- stacked (0.6.0)
+
+TEST_CASE("Stacked LSTM and GRU layers route training through the provider with parity",
+          "[gpu_execution][neural_provider][parity][stacked]") {
+    auto& registry = cyxwiz::NeuralProviderRegistry::Instance();
+    cyxwiz::NeuralOpRequest probe;
+    probe.target = {cyxwiz::DeviceType::CUDA, 0};
+    probe.op = cyxwiz::NeuralOp::LstmBackward;
+    probe.training = true;
+    probe.batch = 3;
+    probe.seq = 7;
+    probe.input = 5;
+    probe.hidden = 10;
+    probe.layers = 3;
+    if (!registry.FindSupporting(probe)) {
+        WARN("no provider supports stacked lstm training on this machine; "
+             "routing not exercised");
+        return;
+    }
+    struct SelectedBackendGuard {
+        af::Backend previous = AF_BACKEND_CPU;
+        int previous_device = 0;
+        bool active = false;
+        ~SelectedBackendGuard() {
+            if (active) {
+                try {
+                    af::setBackend(previous);
+                    af::setDevice(previous_device);
+                } catch (...) {
+                }
+            }
+        }
+    } backend_guard;
+    try {
+        backend_guard.previous = af::getActiveBackend();
+        backend_guard.previous_device = af::getDevice();
+        af::setBackend(AF_BACKEND_CUDA);
+        af::setDevice(0);
+        backend_guard.active = true;
+    } catch (...) {
+        WARN("ArrayFire CUDA backend cannot be selected in this process; "
+             "stacked routing not exercised");
+        return;
+    }
+    const auto input = FilledTensor({3, 7, 5}, 0.5f, 0.2f);
+    const auto upstream = FilledTensor({3, 7, 10}, 0.25f, 1.1f);
+    const auto compare = [](const cyxwiz::Tensor& a, const cyxwiz::Tensor& e,
+                            const char* label) {
+        REQUIRE(a.NumElements() == e.NumElements());
+        const float* pa = a.ReadData<float>();
+        const float* pe = e.ReadData<float>();
+        float max_abs_diff = 0.0f;
+        for (size_t i = 0; i < a.NumElements(); ++i) {
+            max_abs_diff = std::max(max_abs_diff, std::fabs(pa[i] - pe[i]));
+        }
+        INFO(label << " max_abs_diff=" << max_abs_diff);
+        CHECK(max_abs_diff <= 5e-4f);
+    };
+    const char* grad_names[] = {
+        "layer0_grad_W_ih", "layer0_grad_W_hh", "layer0_grad_b_ih",
+        "layer0_grad_b_hh", "layer1_grad_W_ih", "layer1_grad_W_hh",
+        "layer1_grad_b_ih", "layer1_grad_b_hh", "layer2_grad_W_ih",
+        "layer2_grad_W_hh", "layer2_grad_b_ih", "layer2_grad_b_hh"};
+
+    {
+        cyxwiz::LSTMLayer layer(5, 10, 3);
+        cyxwiz::SetNeuralProvidersDisabledForTesting(true);
+        cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
+        layer.Forward(input);  // settles weights
+        const auto expected = layer.Forward(input);
+        const auto expected_h_n = layer.GetHiddenState();
+        const auto expected_c_n = layer.GetCellState();
+        const auto expected_dx = layer.Backward(upstream);
+        const auto oracle = layer.GetParameters();
+        cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
+        cyxwiz::SetNeuralProvidersDisabledForTesting(false);
+
+        const auto actual = layer.Forward(input);
+        const auto actual_h_n = layer.GetHiddenState();
+        const auto actual_c_n = layer.GetCellState();
+        const auto actual_dx = layer.Backward(upstream);
+        const auto routed = layer.GetParameters();
+        compare(actual, expected, "stacked LSTM forward");
+        compare(actual_dx, expected_dx, "stacked LSTM dx");
+        for (const char* name : grad_names) {
+            compare(routed.at(name), oracle.at(name), name);
+        }
+        REQUIRE(actual_h_n.Shape() == std::vector<size_t>{3, 3, 10});
+        REQUIRE(actual_c_n.Shape() == std::vector<size_t>{3, 3, 10});
+        compare(actual_h_n, expected_h_n, "stacked LSTM h_n (all layers)");
+        compare(actual_c_n, expected_c_n, "stacked LSTM c_n (all layers)");
+    }
+    {
+        cyxwiz::GRULayer layer(5, 10, 3);
+        cyxwiz::SetNeuralProvidersDisabledForTesting(true);
+        cyxwiz::SetForceNativeRecurrentForwardForTesting(true);
+        layer.Forward(input);  // settles weights
+        const auto expected = layer.Forward(input);
+        const auto expected_h_n = layer.GetHiddenState();
+        const auto expected_dx = layer.Backward(upstream);
+        const auto oracle = layer.GetParameters();
+        cyxwiz::SetForceNativeRecurrentForwardForTesting(false);
+        cyxwiz::SetNeuralProvidersDisabledForTesting(false);
+
+        const auto actual = layer.Forward(input);
+        const auto actual_h_n = layer.GetHiddenState();
+        const auto actual_dx = layer.Backward(upstream);
+        const auto routed = layer.GetParameters();
+        compare(actual, expected, "stacked GRU forward");
+        compare(actual_dx, expected_dx, "stacked GRU dx");
+        for (const char* name : grad_names) {
+            compare(routed.at(name), oracle.at(name), name);
+        }
+        REQUIRE(actual_h_n.Shape() == std::vector<size_t>{3, 3, 10});
+        compare(actual_h_n, expected_h_n, "stacked GRU h_n (all layers)");
+    }
+}
+
+TEST_CASE("Stacked provider ops validate the per-layer buffer contract",
+          "[gpu_execution][neural_provider][stacked]") {
+    auto& registry = cyxwiz::NeuralProviderRegistry::Instance();
+    cyxwiz::NeuralOpRequest request;
+    request.target = {cyxwiz::DeviceType::CUDA, 0};
+    request.op = cyxwiz::NeuralOp::LstmForward;
+    request.batch = 2;
+    request.seq = 3;
+    request.input = 4;
+    request.hidden = 6;
+    request.layers = 2;
+    auto provider = registry.FindSupporting(request);
+    if (!provider) {
+        WARN("no provider on this machine; contract checks not exercised");
+        return;
+    }
+    // Two-layer LSTM: 8 weights, layer 1 W_ih is [4H, hidden].
+    const auto x = FilledTensor({2, 3, 4}, 0.1f, 0.3f);
+    const auto w0_ih = FilledTensor({24, 4}, 0.1f, 0.1f);
+    const auto w1_ih_wrong = FilledTensor({24, 4}, 0.1f, 0.2f);  // should be [24, 6]
+    const auto w1_ih = FilledTensor({24, 6}, 0.1f, 0.2f);
+    const auto w_hh = FilledTensor({24, 6}, 0.1f, 0.4f);
+    const auto b = FilledTensor({24}, 0.01f, 0.5f);
+    cyxwiz::Tensor y(std::vector<size_t>{2, 3, 6});
+
+    cyxwiz::NeuralOpBuffers wrong;
+    wrong.inputs = {&x};
+    wrong.weights = {&w0_ih, &w_hh, &b, &b, &w1_ih_wrong, &w_hh, &b, &b};
+    wrong.outputs = {&y};
+    const auto refused = provider->Execute(request, wrong);
+    CHECK_FALSE(refused.ok);
+    CHECK(refused.reason ==
+          cyxwiz::BackendFallbackReason::NvidiaProviderUnsupportedContract);
+
+    cyxwiz::NeuralOpBuffers right;
+    right.inputs = {&x};
+    right.weights = {&w0_ih, &w_hh, &b, &b, &w1_ih, &w_hh, &b, &b};
+    right.outputs = {&y};
+    CHECK(provider->Execute(request, right).ok);
+
+    // State outputs are [layers, batch, hidden]: a single-layer-sized
+    // state buffer on a two-layer request is refused.
+    cyxwiz::Tensor h_n_small(std::vector<size_t>{1, 2, 6});
+    cyxwiz::Tensor c_n_small(std::vector<size_t>{1, 2, 6});
+    right.outputs = {&y, &h_n_small, &c_n_small};
+    CHECK_FALSE(provider->Execute(request, right).ok);
+    cyxwiz::Tensor h_n(std::vector<size_t>{2, 2, 6});
+    cyxwiz::Tensor c_n(std::vector<size_t>{2, 2, 6});
+    right.outputs = {&y, &h_n, &c_n};
+    CHECK(provider->Execute(request, right).ok);
+
+    // rnn_forward stays single-layer.
+    auto rnn = request;
+    rnn.op = cyxwiz::NeuralOp::RnnForward;
+    rnn.activation = cyxwiz::NeuralActivation::Tanh;
+    CHECK(registry.FindSupporting(rnn) == nullptr);
+    rnn.layers = 1;
+    CHECK(registry.FindSupporting(rnn) != nullptr);
 }
 
 TEST_CASE("NVIDIA provider repeated lstm training runs do not leak device memory",
