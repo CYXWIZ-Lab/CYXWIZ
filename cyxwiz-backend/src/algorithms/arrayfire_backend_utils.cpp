@@ -14,6 +14,23 @@
 #endif
 
 namespace cyxwiz {
+
+std::string SeedCurrentArrayFireRandomEngine(uint64_t seed) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    const auto type = af::getDefaultRandomEngine().getType();
+    int major = 0, minor = 0, patch = 0;
+    const af_err version_status = af_get_version(&major, &minor, &patch);
+    if (version_status != AF_SUCCESS)
+        throw std::runtime_error("Cannot identify ArrayFire RNG runtime version");
+    af::setSeed(seed);
+    return "arrayfire/" + std::to_string(major) + "." + std::to_string(minor) + "." +
+        std::to_string(patch) + "/default_type=" + std::to_string(static_cast<int>(type));
+#else
+    (void)seed;
+    throw std::runtime_error("Model RNG seed requires an ArrayFire runtime; native RNGs are not controlled");
+#endif
+}
+
 namespace {
 
 std::mutex g_backend_fallback_log_mutex;
@@ -182,32 +199,6 @@ void NotifyArrayFireHostSync(ArrayFireHostSyncEvent event) {
         event.selected_backend = CurrentArrayFireBackendName();
     }
     observer(event);
-}
-
-const char* BackendFallbackReasonName(BackendFallbackReason reason) {
-    switch (reason) {
-    case BackendFallbackReason::BackendUnavailable:
-        return "backend_unavailable";
-    case BackendFallbackReason::CudaJitParamOverflow:
-        return "cuda_jit_param_overflow";
-    case BackendFallbackReason::ArrayFireJitCompileFailure:
-        return "arrayfire_jit_compile_failure";
-    case BackendFallbackReason::GpuBackendException:
-        return "gpu_backend_exception";
-    case BackendFallbackReason::GpuOutOfMemory:
-        return "gpu_out_of_memory";
-    case BackendFallbackReason::UnsupportedDtype:
-        return "unsupported_dtype";
-    case BackendFallbackReason::UnsupportedShape:
-        return "unsupported_shape";
-    case BackendFallbackReason::UnsupportedOperation:
-        return "unsupported_operation";
-    case BackendFallbackReason::BackendCompileTimeout:
-        return "backend_compile_timeout";
-    case BackendFallbackReason::BackendInternalError:
-        return "backend_internal_error";
-    }
-    return "backend_internal_error";
 }
 
 bool IsCudaJitFormalParameterOverflow(const char* message) {

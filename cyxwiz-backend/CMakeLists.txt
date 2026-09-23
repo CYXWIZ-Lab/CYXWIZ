@@ -31,6 +31,62 @@ find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
+set(CYXWIZ_HAS_SENTENCEPIECE FALSE)
+set(CYXWIZ_SENTENCEPIECE_TARGET "")
+if(CYXWIZ_ENABLE_SENTENCEPIECE)
+    find_package(sentencepiece CONFIG QUIET)
+    if(TARGET sentencepiece::sentencepiece)
+        set(CYXWIZ_SENTENCEPIECE_TARGET sentencepiece::sentencepiece)
+    elseif(TARGET sentencepiece)
+        set(CYXWIZ_SENTENCEPIECE_TARGET sentencepiece)
+    elseif(TARGET sentencepiece-static)
+        set(CYXWIZ_SENTENCEPIECE_TARGET sentencepiece-static)
+    else()
+        find_path(CYXWIZ_SENTENCEPIECE_INCLUDE_DIR
+            NAMES sentencepiece_processor.h)
+        if(CYXWIZ_SENTENCEPIECE_INCLUDE_DIR)
+            cmake_path(GET CYXWIZ_SENTENCEPIECE_INCLUDE_DIR PARENT_PATH CYXWIZ_SENTENCEPIECE_ROOT_DIR)
+            find_library(CYXWIZ_SENTENCEPIECE_LIBRARY_RELEASE
+                NAMES sentencepiece
+                PATHS "${CYXWIZ_SENTENCEPIECE_ROOT_DIR}/lib"
+                NO_DEFAULT_PATH)
+            find_library(CYXWIZ_SENTENCEPIECE_LIBRARY_DEBUG
+                NAMES sentencepiece
+                PATHS "${CYXWIZ_SENTENCEPIECE_ROOT_DIR}/debug/lib"
+                NO_DEFAULT_PATH)
+        endif()
+        if(NOT CYXWIZ_SENTENCEPIECE_LIBRARY_RELEASE)
+            find_library(CYXWIZ_SENTENCEPIECE_LIBRARY_RELEASE
+                NAMES sentencepiece
+                PATH_SUFFIXES lib)
+        endif()
+        if(NOT CYXWIZ_SENTENCEPIECE_LIBRARY_DEBUG)
+            find_library(CYXWIZ_SENTENCEPIECE_LIBRARY_DEBUG
+                NAMES sentencepiece
+                PATH_SUFFIXES debug/lib)
+        endif()
+        if(NOT CYXWIZ_SENTENCEPIECE_INCLUDE_DIR OR
+           NOT CYXWIZ_SENTENCEPIECE_LIBRARY_RELEASE)
+            message(FATAL_ERROR
+                "CYXWIZ_ENABLE_SENTENCEPIECE=ON but the official SentencePiece "
+                "headers/library were not found. Install the manifest feature "
+                "with: vcpkg install --x-feature=sentencepiece")
+        endif()
+        add_library(cyxwiz-sentencepiece UNKNOWN IMPORTED)
+        set_target_properties(cyxwiz-sentencepiece PROPERTIES
+            IMPORTED_LOCATION "${CYXWIZ_SENTENCEPIECE_LIBRARY_RELEASE}"
+            IMPORTED_LOCATION_RELEASE "${CYXWIZ_SENTENCEPIECE_LIBRARY_RELEASE}"
+            INTERFACE_INCLUDE_DIRECTORIES "${CYXWIZ_SENTENCEPIECE_INCLUDE_DIR}")
+        if(CYXWIZ_SENTENCEPIECE_LIBRARY_DEBUG)
+            set_target_properties(cyxwiz-sentencepiece PROPERTIES
+                IMPORTED_LOCATION_DEBUG "${CYXWIZ_SENTENCEPIECE_LIBRARY_DEBUG}")
+        endif()
+        set(CYXWIZ_SENTENCEPIECE_TARGET cyxwiz-sentencepiece)
+    endif()
+    set(CYXWIZ_HAS_SENTENCEPIECE TRUE)
+    message(STATUS "SentencePiece tokenizer provider target: ${CYXWIZ_SENTENCEPIECE_TARGET}")
+endif()
+
 # pybind11 is optional - controlled by parent CYXWIZ_HAS_PYTHON
 if(CYXWIZ_HAS_PYTHON)
     find_package(pybind11 CONFIG QUIET)
@@ -92,6 +148,7 @@ set(BACKEND_SOURCES
     src/algorithms/arrayfire_backend_utils.cpp
     src/algorithms/arrayfire_host_materialization.cpp
     src/algorithms/backend_placement_observation.cpp
+    src/algorithms/providers/neural_provider_registry.cpp
     src/algorithms/optimizers/optimizer_utils.cpp
     src/algorithms/optimizers/sgd.cpp
     src/algorithms/optimizers/adam_family.cpp
@@ -131,6 +188,7 @@ set(BACKEND_SOURCES
     src/algorithms/layers/gru.cpp
     src/algorithms/layers/gru_backward.cpp
     src/algorithms/layers/lstm.cpp
+    src/algorithms/layers/rnn.cpp
     src/algorithms/layers/lstm_state_parameters.cpp
     src/algorithms/layers/lstm_initialization.cpp
     src/algorithms/layers/lstm_backward.cpp
@@ -198,6 +256,7 @@ set(BACKEND_SOURCES
     src/algorithms/text_processing_utilities.cpp
     src/algorithms/tokenizer.cpp
     src/algorithms/tokenizer/vocabulary_persistence.cpp
+    src/algorithms/tokenizer/byte_bpe.cpp
     src/algorithms/audio_processing.cpp
     src/algorithms/utilities.cpp
     src/algorithms/rl_interface.cpp
@@ -321,6 +380,13 @@ target_link_libraries(cyxwiz-backend PUBLIC
     cyxwiz-protocol
 )
 
+if(CYXWIZ_HAS_SENTENCEPIECE)
+    target_link_libraries(cyxwiz-backend PRIVATE ${CYXWIZ_SENTENCEPIECE_TARGET})
+    target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_SENTENCEPIECE=1)
+else()
+    target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_SENTENCEPIECE=0)
+endif()
+
 # Utilities exposes SHA/MD5 file and text hashing. Keep its advertised result
 # truthful: enable the existing OpenSSL implementation when Crypto is
 # available; callers that require SHA fail closed when it is unavailable.
@@ -345,8 +411,32 @@ if(CYXWIZ_HAS_ARRAYFIRE)
         target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_CUDA)
         message(STATUS "CUDA backend support enabled (runtime-selected via ArrayFire)")
 
+        # Optional NVIDIA neural-network provider (tofix68): cuBLAS GEMMs +
+        # fused cell kernels behind the INeuralNetworkProvider boundary.
+        # OFF by default so portable builds never require the CUDA Toolkit.
+        option(CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER
+               "Enable the optional NVIDIA cuBLAS neural-network provider" OFF)
+        if(CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER)
+            find_package(CUDAToolkit QUIET)
+            if(CUDAToolkit_FOUND)
+                message(STATUS "NVIDIA DNN provider enabled (CUDA Toolkit ${CUDAToolkit_VERSION})")
+                target_sources(cyxwiz-backend PRIVATE
+                    src/algorithms/providers/nvidia_cublas_provider.cpp
+                )
+                target_link_libraries(cyxwiz-backend PUBLIC
+                    CUDA::cudart CUDA::cublas CUDA::nvrtc CUDA::cuda_driver)
+                target_compile_definitions(cyxwiz-backend PUBLIC
+                    CYXWIZ_HAS_NVIDIA_DNN_PROVIDER)
+                set(CYXWIZ_HAS_NVIDIA_DNN_PROVIDER TRUE)
+            else()
+                message(WARNING
+                    "CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER=ON but the CUDA "
+                    "Toolkit was not found - provider disabled")
+                set(CYXWIZ_HAS_NVIDIA_DNN_PROVIDER FALSE)
+            endif()
+        endif()
+
         # NCCL for distributed GPU training (optional).
-        # This is the only path that requires direct CUDA Toolkit linkage.
         option(CYXWIZ_ENABLE_NCCL "Enable NCCL for distributed GPU training" ON)
         if(CYXWIZ_ENABLE_NCCL)
             find_package(CUDAToolkit QUIET)
@@ -455,8 +545,6 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
         LIBRARY DESTINATION python
     )
 endif()
-
-
 
 
 

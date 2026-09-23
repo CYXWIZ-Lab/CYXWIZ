@@ -2,6 +2,7 @@
 #include "node_editor.h"
 #include "visualization/bar_chart_dialog.h"
 #include "../core/file_dialogs.h"
+#include <cyxwiz/tokenizer.h>
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <sstream>
@@ -637,6 +638,8 @@ const char* MethodNameFromType(int tokenizer_type) {
     switch (tokenizer_type) {
         case 0: return "whitespace";
         case 2: return "character";
+        case 3: return "byte_bpe";
+        case 4: return "wordpiece";
         case 1:
         default:
             return "word";
@@ -852,6 +855,10 @@ void TokenizerDialog::LoadFromNode() {
     if (!node_) return;
 
     tokenizer_type_ = 1;
+    token_output_mode_ = 0;
+    std::copy_n("document_id", sizeof("document_id"), document_id_col_);
+    std::copy_n("split", sizeof("split"), split_col_);
+    std::copy_n("token_ids", sizeof("token_ids"), token_ids_col_);
     max_length_ = IsPaddingNode() ? 512 : 256;
     max_vocab_size_ = IsVocabularyNode() ? -1 : 10000;
     min_word_freq_ = IsVocabularyNode() ? 1 : 2;
@@ -873,6 +880,10 @@ void TokenizerDialog::LoadFromNode() {
         if (method->second == "whitespace") tokenizer_type_ = 0;
         else if (method->second == "word") tokenizer_type_ = 1;
         else if (method->second == "character") tokenizer_type_ = 2;
+        else if (method->second == "byte_bpe") tokenizer_type_ = 3;
+        else if (method->second == "wordpiece") tokenizer_type_ = 4;
+        else if (method->second == "sentencepiece_bpe") tokenizer_type_ = 5;
+        else if (method->second == "sentencepiece_unigram") tokenizer_type_ = 6;
     }
 
     if (node_->parameters.count("text_col")) {
@@ -884,6 +895,15 @@ void TokenizerDialog::LoadFromNode() {
     CopyParam(node_, "vocab_file", vocab_file_, sizeof(vocab_file_));
     CopyParam(node_, "source_csv", source_csv_, sizeof(source_csv_));
 
+    if (auto mode=node_->parameters.find("output_mode"); mode!=node_->parameters.end()) {
+        if (mode->second == "causal_windows") token_output_mode_ = 1;
+        else if (mode->second == "decode") token_output_mode_ = 2;
+        else if (mode->second == "roundtrip") token_output_mode_ = 3;
+        else token_output_mode_ = 0;
+    }
+    CopyParam(node_, "document_id_col", document_id_col_, sizeof(document_id_col_));
+    CopyParam(node_, "split_col", split_col_, sizeof(split_col_));
+    CopyParam(node_, "token_ids_col", token_ids_col_, sizeof(token_ids_col_));
     ReadIntParam(node_, "tokenizer_type", tokenizer_type_);
     ReadIntParam(node_, "max_length", max_length_);
     ReadIntParam(node_, "max_vocab_size", max_vocab_size_);
@@ -891,12 +911,13 @@ void TokenizerDialog::LoadFromNode() {
     ReadIntParam(node_, "min_freq", min_word_freq_);
     ReadIntParam(node_, "min_frequency", min_word_freq_);
     ReadIntParam(node_, "pad_value", pad_value_);
+    if (tokenizer_type_ == 3) lowercase_ = false;
     ReadBoolParam(node_, "lowercase", lowercase_);
     ReadBoolParam(node_, "padding", padding_);
     ReadBoolParam(node_, "truncation", truncation_);
     ReadBoolParam(node_, "vocab_build_if_missing", vocab_build_if_missing_);
 
-    if (tokenizer_type_ < 0 || tokenizer_type_ > 2) tokenizer_type_ = 1;
+    if (tokenizer_type_ < 0 || tokenizer_type_ > 6) tokenizer_type_ = 1;
     if (max_length_ < 1) max_length_ = 1;
     if (min_word_freq_ < 1) min_word_freq_ = 1;
 }
@@ -905,6 +926,14 @@ void TokenizerDialog::Apply() {
     if (!node_) return;
 
     if (IsTokenizerNode()) {
+        const char* output_mode = "wide";
+        if (token_output_mode_ == 1) output_mode = "causal_windows";
+        else if (token_output_mode_ == 2) output_mode = "decode";
+        else if (token_output_mode_ == 3) output_mode = "roundtrip";
+        node_->parameters["output_mode"] = output_mode;
+        node_->parameters["document_id_col"] = document_id_col_;
+        node_->parameters["split_col"] = split_col_;
+        node_->parameters["token_ids_col"] = token_ids_col_;
         node_->parameters["text_col"] = text_col_;
         node_->parameters["label_col"] = label_col_;
         node_->parameters["text_column"] = text_col_;
@@ -947,6 +976,11 @@ void TokenizerDialog::Apply() {
 }
 
 bool TokenizerDialog::BuildVocabularyFile() {
+    if (tokenizer_type_ == 3) {
+        status_message_ = "Fit Byte BPE using Run Pipeline with vocab_build_if_missing enabled. This keeps fitting off the GUI thread.";
+        status_is_error_ = true;
+        return false;
+    }
     namespace fs = std::filesystem;
     const fs::path csv_path(source_csv_);
     const fs::path out_path(vocab_file_);
@@ -984,61 +1018,41 @@ bool TokenizerDialog::BuildVocabularyFile() {
         return false;
     }
 
-    std::unordered_map<std::string, int> counts;
+    std::vector<std::string> documents;
     std::string line;
-    size_t rows = 0;
     while (ReadCsvRecord(in, line)) {
         const auto fields = SplitCsvLineSimple(line);
         if (text_idx >= static_cast<int>(fields.size())) continue;
-        const auto tokens = TokenizePreviewText(fields[static_cast<size_t>(text_idx)],
-                                                tokenizer_type_, lowercase_);
-        if (tokens.empty()) continue;
-        ++rows;
-        for (const auto& token : tokens) {
-            ++counts[token];
-        }
+        const auto& document = fields[static_cast<size_t>(text_idx)];
+        if (!document.empty()) documents.push_back(document);
     }
-
-    std::vector<std::pair<std::string, int>> sorted(counts.begin(), counts.end());
-    std::sort(sorted.begin(), sorted.end(),
-              [](const auto& a, const auto& b) {
-                  if (a.second != b.second) return a.second > b.second;
-                  return a.first < b.first;
-              });
-
-    const std::vector<std::string> specials = {"[PAD]", "[UNK]", "[BOS]", "[EOS]"};
-    std::set<std::string> emitted(specials.begin(), specials.end());
-    std::vector<std::string> vocab = specials;
-    const int cap = max_vocab_size_ > 0 ? max_vocab_size_ : std::numeric_limits<int>::max();
-    for (const auto& [token, count] : sorted) {
-        if (count < min_word_freq_) continue;
-        if (emitted.count(token) > 0) continue;
-        if (static_cast<int>(vocab.size()) >= cap) break;
-        emitted.insert(token);
-        vocab.push_back(token);
+    if (in.bad()) {
+        status_message_ = "Failed to read source CSV: " + csv_path.string();
+        status_is_error_ = true;
+        return false;
     }
+    cyxwiz::Tokenizer tokenizer(static_cast<cyxwiz::TokenizerType>(tokenizer_type_));
+    tokenizer.SetLowercase(lowercase_);
+    tokenizer.Train(documents, min_word_freq_, max_vocab_size_);
+    const auto& vocabulary = tokenizer.GetVocabulary();
+    const size_t rows = documents.size();
 
     if (out_path.has_parent_path()) {
         std::error_code ec;
         fs::create_directories(out_path.parent_path(), ec);
     }
-    std::ofstream out(out_path, std::ios::binary);
-    if (!out.is_open()) {
+    if (!vocabulary.SaveToFile(out_path.string())) {
         status_message_ = "Could not write vocab file: " + out_path.string();
         status_is_error_ = true;
         return false;
     }
-    for (const auto& token : vocab) {
-        out << token << '\n';
-    }
-
-    max_vocab_size_ = static_cast<int>(vocab.size());
+    max_vocab_size_ = static_cast<int>(vocabulary.Size());
     if (node_) {
         node_->parameters["max_vocab_size"] = std::to_string(max_vocab_size_);
         node_->parameters["vocab_file"] = vocab_file_;
         node_->parameters["source_csv"] = source_csv_;
     }
-    status_message_ = "Built " + std::to_string(vocab.size()) +
+    status_message_ = "Built " + std::to_string(vocabulary.Size()) +
                       " vocabulary entries from " + std::to_string(rows) +
                       " non-empty text rows.";
     status_is_error_ = false;
@@ -1051,18 +1065,13 @@ bool TokenizerDialog::InspectVocabularyFile() {
         status_is_error_ = true;
         return false;
     }
-    std::ifstream in(vocab_file_);
-    if (!in.is_open()) {
-        status_message_ = "Could not open vocab file: " + std::string(vocab_file_);
+    cyxwiz::Vocabulary vocabulary;
+    if (!vocabulary.LoadFromFile(vocab_file_)) {
+        status_message_ = "Could not read valid vocabulary: " + std::string(vocab_file_);
         status_is_error_ = true;
         return false;
     }
-    size_t count = 0;
-    std::string line;
-    while (std::getline(in, line)) {
-        if (!line.empty()) ++count;
-    }
-    status_message_ = "Vocab file contains " + std::to_string(count) + " entries.";
+    status_message_ = "Vocab file contains " + std::to_string(vocabulary.Size()) + " entries.";
     status_is_error_ = false;
     return true;
 }
@@ -1072,6 +1081,10 @@ void TokenizerDialog::Reset() {
     node_->parameters = original_params_;
     LoadFromNode();
     preview_tokens_.clear();
+    preview_token_ids_.clear();
+    preview_decoded_text_.clear();
+    preview_roundtrip_ok_ = false;
+    preview_has_roundtrip_ = false;
     has_changes_ = false;
 }
 
@@ -1124,17 +1137,22 @@ void TokenizerDialog::RenderTokenizerTab() {
 
     ImGui::Text("Tokenizer:");
     HelpTooltip("Controls how raw text is split before vocabulary lookup: whitespace splits on spaces, word keeps words and punctuation, character emits one token per character.");
-    const char* methods[] = { "Whitespace", "Word", "Character" };
+    const char* methods[] = { "Whitespace", "Word", "Character", "Byte BPE", "WordPiece" };
     ImGui::SetNextItemWidth(200.0f);
-    if (ImGui::Combo("##tokenizer_type", &tokenizer_type_, methods, 3)) {
+    if (ImGui::Combo("##tokenizer_type", &tokenizer_type_, methods, 5)) {
+        if (tokenizer_type_ == 3) lowercase_ = false;
         has_changes_ = true;
     }
 
     ImGui::Spacing();
-
+    ImGui::BeginDisabled(tokenizer_type_ == 3);
     if (ImGui::Checkbox("Convert to lowercase", &lowercase_)) {
         has_changes_ = true;
     }
+    ImGui::EndDisabled();
+    if (tokenizer_type_ == 3) ImGui::TextWrapped("Byte BPE preserves case and whitespace. Fit and save the vocabulary through Run Pipeline; reuse that artifact for validation, test and generation.");
+    if (tokenizer_type_ == 4) ImGui::TextWrapped("WordPiece uses ## continuation pieces and greedy longest-match encoding. Fit and save the vocabulary before using it for training or generation.");
+    if (tokenizer_type_ == 5 || tokenizer_type_ == 6) ImGui::TextWrapped("SentencePiece is reserved for the optional provider path and is not enabled in this build yet. Run Pipeline will fail clearly instead of silently falling back.");
     HelpTooltip("Lowercasing reduces duplicate vocabulary entries like 'Happy' and 'happy'. Disable it when capitalization carries meaning.");
 }
 
@@ -1210,10 +1228,28 @@ void TokenizerDialog::RenderVocabularyTab() {
 }
 
 void TokenizerDialog::RenderPaddingTab() {
+    const char* outputs[] = {
+        "Padded token columns",
+        "Causal document windows",
+        "Decode token IDs",
+        "Round-trip check"
+    };
+    if (ImGui::Combo("Output", &token_output_mode_, outputs, 4)) has_changes_ = true;
+
+    if (token_output_mode_ == 1) {
+        if (ImGui::InputText("Document ID column", document_id_col_, sizeof(document_id_col_))) has_changes_ = true;
+        if (ImGui::InputText("Split column", split_col_, sizeof(split_col_))) has_changes_ = true;
+        ImGui::TextWrapped("Max length is the model context. Each unpadded window carries up to context + 1 IDs; EOS and short tails are retained. Export as Parquet or Arrow. Leave Label column empty.");
+    } else if (token_output_mode_ == 2) {
+        if (ImGui::InputText("Token IDs column", token_ids_col_, sizeof(token_ids_col_))) has_changes_ = true;
+        ImGui::TextWrapped("Decodes an existing token ID column back to text using the selected vocabulary file. If the column is absent, the node reads wide tok_0..tok_n columns up to Maximum sequence length. Text and Label columns are ignored; leave Label column empty.");
+    } else if (token_output_mode_ == 3) {
+        ImGui::TextWrapped("Encodes the text column, decodes it with the same tokenizer artifact, and emits input_text, encoded_ids, decoded_text and roundtrip_ok. Exact round-trip is expected for byte-safe tokenizers when Maximum sequence length does not truncate the sample. Leave Label column empty.");
+    }
     ImGui::Spacing();
 
     ImGui::Text("Maximum sequence length:");
-    HelpTooltip("Fixed token count emitted for each sample. Short sequences are padded; long sequences can be truncated.");
+    HelpTooltip("For padded output this is the emitted token count. For causal windows this is the context length. For decode mode it bounds tok_0..tok_n column scanning when no token ID list column is present.");
     ImGui::SetNextItemWidth(150.0f);
     if (ImGui::InputInt("##max_length", &max_length_)) {
         if (max_length_ < 1) max_length_ = 1;
@@ -1221,6 +1257,8 @@ void TokenizerDialog::RenderPaddingTab() {
     }
 
     ImGui::Spacing();
+    if (token_output_mode_ == 1 || token_output_mode_ == 2) return;
+
     ImGui::Text("Pad value:");
     HelpTooltip("Token id used to fill short sequences. Use 0 when the vocabulary starts with [PAD] and the Embedding padding index is 0.");
     ImGui::SetNextItemWidth(150.0f);
@@ -1234,7 +1272,7 @@ void TokenizerDialog::RenderPaddingTab() {
         if (ImGui::Checkbox("Pad sequences", &padding_)) {
             has_changes_ = true;
         }
-        HelpTooltip("Pads shorter token sequences to the maximum sequence length so batches have a stable tensor shape.");
+        HelpTooltip("Pads shorter token sequences to the maximum sequence length so batches have a stable tensor shape. Disable for round-trip checks when you want to inspect raw encoded lengths.");
     }
     if (ImGui::Checkbox("Truncate long sequences", &truncation_)) {
         has_changes_ = true;
@@ -1250,55 +1288,90 @@ void TokenizerDialog::RenderPreviewTab() {
     ImGui::SetNextItemWidth(-1);
     if (ImGui::InputTextMultiline("##sample", sample_text_, sizeof(sample_text_), ImVec2(0, 100))) {
         preview_tokens_.clear();
+        preview_token_ids_.clear();
+        preview_decoded_text_.clear();
+        preview_has_roundtrip_ = false;
     }
 
     ImGui::Spacing();
 
     if (ImGui::Button("Tokenize Preview")) {
         preview_tokens_.clear();
+        preview_token_ids_.clear();
+        preview_decoded_text_.clear();
+        preview_roundtrip_ok_ = false;
+        preview_has_roundtrip_ = false;
+        status_message_.clear();
+        status_is_error_ = false;
 
-        std::string text = sample_text_;
-        if (lowercase_) {
-            std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
-                return static_cast<char>(std::tolower(c));
-            });
-        }
+        try {
+            cyxwiz::TokenizerType tokenizer_type = cyxwiz::TokenizerType::Word;
+            if (tokenizer_type_ == 0) tokenizer_type = cyxwiz::TokenizerType::Whitespace;
+            else if (tokenizer_type_ == 2) tokenizer_type = cyxwiz::TokenizerType::Character;
+            else if (tokenizer_type_ == 3) tokenizer_type = cyxwiz::TokenizerType::ByteBPE;
+            else if (tokenizer_type_ == 4) tokenizer_type = cyxwiz::TokenizerType::WordPiece;
+            else if (tokenizer_type_ == 5) tokenizer_type = cyxwiz::TokenizerType::SentencePieceBPE;
+            else if (tokenizer_type_ == 6) tokenizer_type = cyxwiz::TokenizerType::SentencePieceUnigram;
 
-        if (tokenizer_type_ == 2) {
-            for (char c : text) {
-                if (!std::isspace(static_cast<unsigned char>(c))) {
-                    preview_tokens_.push_back(std::string(1, c));
+            cyxwiz::Tokenizer tokenizer(tokenizer_type);
+            tokenizer.SetLowercase(lowercase_);
+            tokenizer.SetMaxLength(max_length_);
+            tokenizer.SetPadding(false);
+            tokenizer.SetTruncation(truncation_);
+
+            const std::string vocab_file(vocab_file_);
+            if (!vocab_file.empty() && std::filesystem::exists(vocab_file)) {
+                if (!tokenizer.GetVocabulary().LoadFromFile(vocab_file)) {
+                    throw std::runtime_error("Could not load tokenizer vocabulary: " + vocab_file);
                 }
-            }
-        } else if (tokenizer_type_ == 1) {
-            std::string token;
-            for (char c : text) {
-                unsigned char uc = static_cast<unsigned char>(c);
-                if (std::isalnum(uc) || c == '_') {
-                    token.push_back(c);
-                } else if (!token.empty()) {
-                    preview_tokens_.push_back(token);
-                    token.clear();
+                tokenizer.ValidateVocabulary();
+            } else {
+                if (tokenizer_type_ == 3) {
+                    throw std::runtime_error("Build and select a Byte BPE vocabulary before previewing. Byte BPE preview uses the exact saved backend artifact.");
                 }
+                tokenizer.Train({std::string(sample_text_)}, min_word_freq_, max_vocab_size_);
+                tokenizer.ValidateVocabulary();
+                status_message_ = "Preview fitted a temporary backend vocabulary from the sample. Select a vocab file to preview the saved artifact exactly.";
+                status_is_error_ = false;
             }
-            if (!token.empty()) {
-                preview_tokens_.push_back(token);
-            }
-        } else {
-            std::stringstream ss(text);
-            std::string token;
-            while (ss >> token) {
-                if (!token.empty()) {
-                    preview_tokens_.push_back(token);
-                }
-            }
+
+            const auto tokenized = tokenizer.Tokenize(sample_text_);
+            preview_tokens_ = tokenized.tokens;
+            preview_token_ids_ = tokenized.token_ids;
+            preview_decoded_text_ = tokenizer.Decode(preview_token_ids_);
+            preview_roundtrip_ok_ = preview_decoded_text_ == std::string(sample_text_);
+            preview_has_roundtrip_ = true;
+        } catch (const std::exception& e) {
+            status_message_ = e.what();
+            status_is_error_ = true;
         }
     }
-    HelpTooltip("Runs the selected tokenizer settings against the sample text and shows the resulting tokens.");
+    HelpTooltip("Runs the selected tokenizer settings through the backend Tokenizer, then decodes the produced IDs to verify the artifact path.");
+    if (!status_message_.empty()) {
+        ValidationMessage(status_message_, status_is_error_);
+    }
 
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
+
+    if (preview_has_roundtrip_) {
+        ImGui::Text("Encoded IDs (%d):", static_cast<int>(preview_token_ids_.size()));
+        std::ostringstream ids;
+        for (size_t i = 0; i < preview_token_ids_.size(); ++i) {
+            if (i > 0) ids << ' ';
+            ids << preview_token_ids_[i];
+        }
+        ImGui::TextWrapped("%s", ids.str().c_str());
+        ImGui::Spacing();
+        ImGui::Text("Decoded text:");
+        ImGui::TextWrapped("%s", preview_decoded_text_.c_str());
+        ImGui::Spacing();
+        ValidationMessage(preview_roundtrip_ok_ ? "Round-trip OK: decoded text matches the sample exactly."
+                                                : "Round-trip differs: decoded text does not exactly match the sample.",
+                          !preview_roundtrip_ok_);
+        ImGui::Spacing();
+    }
 
     // Show tokens
     if (!preview_tokens_.empty()) {

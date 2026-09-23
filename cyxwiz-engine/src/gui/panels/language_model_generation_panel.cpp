@@ -15,6 +15,7 @@
 #include <cyxwiz/tokenizer.h>
 
 #include <imgui.h>
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cctype>
@@ -123,13 +124,16 @@ void LanguageModelGenerationPanel::RenderPrompt() {
             }
         }
 
-        const char* tokenizer_types[] = {"Whitespace", "Word", "Character"};
+        const char* tokenizer_types[] = {"Whitespace", "Word", "Character", "Byte BPE", "WordPiece", "SentencePiece BPE (optional)", "SentencePiece Unigram (optional)"};
         if (use_packaged_tokenizer_) {
             ImGui::BeginDisabled();
         }
-        ImGui::Combo("Tokenizer", &tokenizer_type_idx_, tokenizer_types, 3);
+        if (ImGui::Combo("Tokenizer", &tokenizer_type_idx_, tokenizer_types, 7) && tokenizer_type_idx_ == 3)
+            lowercase_ = false;
         ImGui::SameLine();
+        ImGui::BeginDisabled(tokenizer_type_idx_ == 3);
         ImGui::Checkbox("Lowercase", &lowercase_);
+        ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::Checkbox("BOS", &add_bos_);
         ImGui::SameLine();
@@ -281,7 +285,7 @@ void LanguageModelGenerationPanel::RunGeneration() {
         if (use_text_prompt_) {
             tokenizer = BuildTokenizer();
             prompt = EncodeTextTokenIdsForGeneration(*tokenizer, text_prompt_);
-            tokenizer_vocab_size = tokenizer->GetVocabulary().Size();
+            tokenizer_vocab_size = tokenizer->GetVocabularySize();
             max_sequence_length = static_cast<size_t>(std::max(0, tokenizer->GetMaxLength()));
         } else {
             prompt = ParsePromptIds();
@@ -394,7 +398,7 @@ void LanguageModelGenerationPanel::CheckModelCompatibility() {
         if (use_text_prompt_) {
             tokenizer = BuildTokenizer();
             prompt = EncodeTextTokenIdsForGeneration(*tokenizer, text_prompt_);
-            tokenizer_vocab_size = tokenizer->GetVocabulary().Size();
+            tokenizer_vocab_size = tokenizer->GetVocabularySize();
             max_sequence_length = static_cast<size_t>(std::max(0, tokenizer->GetMaxLength()));
         } else {
             prompt = ParsePromptIds();
@@ -433,7 +437,7 @@ void LanguageModelGenerationPanel::CheckModelCompatibility() {
                     ", eos=" + std::to_string(imported_model_contract_.eos_token_id);
             } else if (tokenizer) {
                 compatibility_status_ +=
-                    ", eos=" + std::to_string(tokenizer->GetVocabulary().EosIndex());
+                    ", eos=" + std::to_string(tokenizer->GetEosId());
             }
         }
         compatibility_status_ += ".";
@@ -466,9 +470,11 @@ void LanguageModelGenerationPanel::LoadTokenizerFromCyxModel() {
         formats::CyxModelFormat format;
         std::string config_json;
         std::string vocab_text;
+        std::string model_data;
         if (!format.ExtractTextTokenizerAssets(cyxmodel_path_,
                                                config_json,
-                                               vocab_text)) {
+                                               vocab_text,
+                                               model_data)) {
             throw std::runtime_error(
                 "No tokenizer assets found in package: " +
                 format.GetLastError());
@@ -476,38 +482,44 @@ void LanguageModelGenerationPanel::LoadTokenizerFromCyxModel() {
 
         TextTokenizerPackage package;
         std::string error;
-        if (!LoadTextTokenizerPackage(config_json, vocab_text, package, error)) {
+        if (!LoadTextTokenizerPackage(config_json, vocab_text, model_data, package, error)) {
             throw std::runtime_error(error);
         }
-        if (!package.has_vocabulary) {
+        if (!package.has_vocabulary && !package.has_model_artifact) {
             throw std::runtime_error(
-                "Package tokenizer assets do not include a vocabulary");
+                "Package tokenizer assets do not include a vocabulary or model artifact");
         }
 
         if (package.tokenizer) {
-            eos_token_id_ = package.tokenizer->GetVocabulary().EosIndex();
+            eos_token_id_ = package.tokenizer->GetEosId();
             max_length_ = package.tokenizer->GetMaxLength();
             lowercase_ = package.tokenizer->GetLowercase();
             switch (package.tokenizer->GetType()) {
                 case TokenizerType::Whitespace: tokenizer_type_idx_ = 0; break;
                 case TokenizerType::Word: tokenizer_type_idx_ = 1; break;
                 case TokenizerType::Character: tokenizer_type_idx_ = 2; break;
+                case TokenizerType::ByteBPE: tokenizer_type_idx_ = 3; break;
+                case TokenizerType::WordPiece: tokenizer_type_idx_ = 4; break;
+                case TokenizerType::SentencePieceBPE: tokenizer_type_idx_ = 5; break;
+                case TokenizerType::SentencePieceUnigram: tokenizer_type_idx_ = 6; break;
             }
             packaged_tokenizer_summary_ =
                 "packaged tokenizer: vocab=" +
-                std::to_string(package.tokenizer->GetVocabulary().Size()) +
+                std::to_string(package.tokenizer->GetVocabularySize()) +
                 ", max_len=" + std::to_string(max_length_) +
                 ", eos=" + std::to_string(eos_token_id_);
         }
 
         packaged_tokenizer_config_json_ = std::move(config_json);
         packaged_tokenizer_vocab_text_ = std::move(vocab_text);
+        packaged_tokenizer_model_data_ = std::move(model_data);
         use_packaged_tokenizer_ = true;
         status_ = "Loaded packaged tokenizer assets from .cyxmodel.";
     } catch (const std::exception& e) {
         use_packaged_tokenizer_ = false;
         packaged_tokenizer_config_json_.clear();
         packaged_tokenizer_vocab_text_.clear();
+        packaged_tokenizer_model_data_.clear();
         packaged_tokenizer_summary_.clear();
         status_ = std::string("Failed to load packaged tokenizer: ") + e.what();
     }
@@ -539,6 +551,7 @@ void LanguageModelGenerationPanel::LoadModelAndTokenizerFromCyxModel() {
         std::string contract_tokenizer_error;
         if (!LoadTextTokenizerPackage(packaged_tokenizer_config_json_,
                                       packaged_tokenizer_vocab_text_,
+                                      packaged_tokenizer_model_data_,
                                       contract_tokenizer_package,
                                       contract_tokenizer_error)) {
             throw std::runtime_error(contract_tokenizer_error);
@@ -573,6 +586,8 @@ void LanguageModelGenerationPanel::LoadModelAndTokenizerFromCyxModel() {
               "validate the active runtime graph."
             : "Package contract failed: " + package_contract.error;
         use_imported_model_ = true;
+        spdlog::info("Language Model Generation: loaded '{}' ({} layers); {}",
+                     imported_model_source_, imported_model_->Size(), compatibility_status_);
         status_ = package_contract.compatible
             ? "Loaded model and tokenizer assets from .cyxmodel."
             : "Loaded model package, but generation contract failed: " +
@@ -584,6 +599,7 @@ void LanguageModelGenerationPanel::LoadModelAndTokenizerFromCyxModel() {
         imported_model_contract_ = {};
         use_imported_model_ = false;
         status_ = std::string("Failed to load model package: ") + e.what();
+        spdlog::error("Language Model Generation: {}", status_);
     }
 }
 
@@ -628,7 +644,8 @@ std::vector<int64_t> LanguageModelGenerationPanel::CurrentPromptIdsForProbe() co
 std::unique_ptr<Tokenizer> LanguageModelGenerationPanel::BuildTokenizer() const {
     if (use_packaged_tokenizer_) {
         if (packaged_tokenizer_config_json_.empty() ||
-            packaged_tokenizer_vocab_text_.empty()) {
+            (packaged_tokenizer_vocab_text_.empty() &&
+             packaged_tokenizer_model_data_.empty())) {
             throw std::invalid_argument(
                 "Packaged tokenizer mode is enabled but no package assets are loaded");
         }
@@ -636,13 +653,15 @@ std::unique_ptr<Tokenizer> LanguageModelGenerationPanel::BuildTokenizer() const 
         std::string error;
         if (!LoadTextTokenizerPackage(packaged_tokenizer_config_json_,
                                       packaged_tokenizer_vocab_text_,
+                                      packaged_tokenizer_model_data_,
                                       package,
                                       error)) {
             throw std::runtime_error(error);
         }
-        if (!package.has_vocabulary || !package.tokenizer) {
+        if ((!package.has_vocabulary && !package.has_model_artifact) ||
+            !package.tokenizer) {
             throw std::runtime_error(
-                "Packaged tokenizer does not contain a usable vocabulary");
+                "Packaged tokenizer does not contain a usable vocabulary or model artifact");
         }
         return std::move(package.tokenizer);
     }
@@ -652,6 +671,14 @@ std::unique_ptr<Tokenizer> LanguageModelGenerationPanel::BuildTokenizer() const 
         type = TokenizerType::Whitespace;
     } else if (tokenizer_type_idx_ == 2) {
         type = TokenizerType::Character;
+    } else if (tokenizer_type_idx_ == 3) {
+        type = TokenizerType::ByteBPE;
+    } else if (tokenizer_type_idx_ == 4) {
+        type = TokenizerType::WordPiece;
+    } else if (tokenizer_type_idx_ == 5) {
+        type = TokenizerType::SentencePieceBPE;
+    } else if (tokenizer_type_idx_ == 6) {
+        type = TokenizerType::SentencePieceUnigram;
     }
 
     auto tokenizer = std::make_unique<Tokenizer>(type);
@@ -669,6 +696,7 @@ std::unique_ptr<Tokenizer> LanguageModelGenerationPanel::BuildTokenizer() const 
         throw std::runtime_error(
             "Failed to load vocabulary file: " + std::string(vocab_file_));
     }
+    tokenizer->ValidateVocabulary();
     return tokenizer;
 }
 

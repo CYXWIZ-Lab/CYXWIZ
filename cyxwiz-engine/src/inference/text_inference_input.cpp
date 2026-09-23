@@ -20,6 +20,10 @@ TokenizerType ParseTokenizerType(const json& config) {
         const std::string method = effective["method"].get<std::string>();
         if (method == "whitespace") return TokenizerType::Whitespace;
         if (method == "character") return TokenizerType::Character;
+        if (method == "byte_bpe") return TokenizerType::ByteBPE;
+        if (method == "wordpiece") return TokenizerType::WordPiece;
+        if (method == "sentencepiece_bpe") return TokenizerType::SentencePieceBPE;
+        if (method == "sentencepiece_unigram") return TokenizerType::SentencePieceUnigram;
         return TokenizerType::Word;
     }
 
@@ -37,6 +41,10 @@ TokenizerType ParseTokenizerType(const json& config) {
 
         if (value == 0) return TokenizerType::Whitespace;
         if (value == 2) return TokenizerType::Character;
+        if (value == 3) return TokenizerType::ByteBPE;
+        if (value == 4) return TokenizerType::WordPiece;
+        if (value == 5) return TokenizerType::SentencePieceBPE;
+        if (value == 6) return TokenizerType::SentencePieceUnigram;
     }
 
     return TokenizerType::Word;
@@ -75,18 +83,9 @@ bool ReadBoolConfig(const json& effective, const char* key, bool fallback) {
 }
 
 std::vector<std::string> ParseVocabularyWordsImpl(const std::string& vocab_text) {
-    // Parse one vocabulary token per line, trimming CRLF line endings.
     std::vector<std::string> words;
     std::istringstream stream(vocab_text);
-    std::string line;
-    while (std::getline(stream, line)) {
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-        if (!line.empty()) {
-            words.push_back(line);
-        }
-    }
+    if (!Vocabulary::ReadTokens(stream, words)) return {};
     return words;
 }
 
@@ -104,6 +103,15 @@ TextTokenizerPackage& TextTokenizerPackage::operator=(TextTokenizerPackage&&) no
 bool LoadTextTokenizerPackage(
     const std::string& config_json,
     const std::string& vocab_text,
+    TextTokenizerPackage& out,
+    std::string& error) {
+    return LoadTextTokenizerPackage(config_json, vocab_text, std::string{}, out, error);
+}
+
+bool LoadTextTokenizerPackage(
+    const std::string& config_json,
+    const std::string& vocab_text,
+    const std::string& model_artifact,
     TextTokenizerPackage& out,
     std::string& error) {
 
@@ -129,22 +137,50 @@ bool LoadTextTokenizerPackage(
             ? tokenizer_config["effective"]
             : tokenizer_config;
 
-    tokenizer->SetLowercase(ReadBoolConfig(effective, "lowercase", true));
+    tokenizer->SetLowercase(ReadBoolConfig(effective, "lowercase", tokenizer->GetType() != TokenizerType::ByteBPE));
     tokenizer->SetMaxLength(ReadIntConfig(effective, "max_length", 512));
     tokenizer->SetPadding(true);
     tokenizer->SetTruncation(true);
 
-    bool has_vocabulary = false;
-    if (!vocab_text.empty()) {
-        const auto words = ParseVocabularyWords(vocab_text);
-        if (!words.empty()) {
-            tokenizer->GetVocabulary().SetVocabulary(words);
-            has_vocabulary = true;
+    if (IsSentencePieceTokenizerType(tokenizer->GetType())) {
+        if (model_artifact.empty()) {
+            error = "SentencePiece tokenizer package requires tokenizer/model.spm";
+            return false;
         }
+        try {
+            tokenizer->LoadSentencePieceModelFromSerialized(model_artifact);
+        } catch (const std::exception& e) {
+            error = e.what();
+            return false;
+        }
+        out.tokenizer = std::move(tokenizer);
+        out.has_model_artifact = true;
+        out.has_vocabulary = false;
+        return true;
     }
 
+    bool has_vocabulary = false;
+    if (!vocab_text.empty()) {
+        Vocabulary vocabulary;
+        std::istringstream input(vocab_text);
+        if (!vocabulary.LoadFromStream(input)) {
+            error = "Invalid or unsupported tokenizer vocabulary artifact";
+            return false;
+        }
+        if (vocabulary.IsByteBPE()) tokenizer->SetVocabulary(vocabulary);
+        else tokenizer->GetVocabulary().SetVocabulary(vocabulary.GetWords());
+        try { tokenizer->ValidateVocabulary(); }
+        catch (const std::exception& e) { error = e.what(); return false; }
+        has_vocabulary = true;
+    }
+
+    if (tokenizer->GetType() == TokenizerType::ByteBPE && !has_vocabulary) {
+        error = "Byte BPE requires a fitted vocabulary artifact";
+        return false;
+    }
     out.tokenizer = std::move(tokenizer);
     out.has_vocabulary = has_vocabulary;
+    out.has_model_artifact = !model_artifact.empty();
     return true;
 }
 
@@ -172,12 +208,12 @@ std::vector<int64_t> EncodeTextTokenIdsForGeneration(
         token_ids.push_back(static_cast<int64_t>(token_id));
     }
 
-    const int pad_id = tokenizer.GetVocabulary().PadIndex();
-    while (!token_ids.empty() && token_ids.back() == pad_id) {
+    const int pad_id = tokenizer.GetPadId();
+    while (pad_id >= 0 && !token_ids.empty() && token_ids.back() == pad_id) {
         token_ids.pop_back();
     }
     if (token_ids.empty()) {
-        token_ids.push_back(static_cast<int64_t>(tokenizer.GetVocabulary().UnkIndex()));
+        token_ids.push_back(static_cast<int64_t>(tokenizer.GetUnkId()));
     }
 
     return token_ids;

@@ -1,6 +1,7 @@
 #include "language_model_generation.h"
 
 #include <cyxwiz/sequential.h>
+#include "algorithms/arrayfire_backend_utils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -270,6 +271,10 @@ LanguageModelGenerationResult GenerateTokenIdsWithReport(
 
     std::mt19937 rng(seed);
     for (size_t step = 0; step < config.max_new_tokens; ++step) {
+        if (config.should_cancel && config.should_cancel()) {
+            result.stop_reason = LanguageModelGenerationStopReason::UserCancelled;
+            break;
+        }
         if (config.max_context_tokens > 0 &&
             generated.size() >= config.max_context_tokens) {
             break;
@@ -285,12 +290,18 @@ LanguageModelGenerationResult GenerateTokenIdsWithReport(
                 "GenerateTokenIdsWithReport model must return Float32 [1, seq, vocab] logits");
         }
 
-        const float* data = logits.ReadData<float>();
-        const std::vector<float> logits_values(data, data + logits.NumElements());
+        // Sampling consumes only the final position. Keep the prefix logits on
+        // device and materialize one vocabulary row at this output boundary.
+        const Tensor next_logits = logits.Slice(1, -1);
+        const ScopedArrayFireHostSyncAttribution attribution(
+            ArrayFireHostSyncCategory::OutputMaterialization,
+            "GenerateTokenIdsWithReport::NextTokenLogits");
+        const float* data = next_logits.ReadData<float>();
+        const std::vector<float> logits_values(data, data + next_logits.NumElements());
         const auto selection = SelectNextTokenFromLogits(
             logits_values,
-            shape[0],
-            shape[1],
+            1,
+            1,
             shape[2],
             config,
             rng,

@@ -14,10 +14,15 @@
 
 namespace cyxwiz {
 
+// Encoder/decoder constructors reject invalid dimensions or dropout before
+// weight initialization. Width must be divisible by a positive head count.
 class CYXWIZ_API TransformerEncoderLayer : public Layer {
 public:
     TransformerEncoderLayer(int d_model, int nhead, int dim_feedforward = 2048,
                             float dropout = 0.1f, bool norm_first = false);
+    // Explicit FFN hidden dropout; legacy construction keeps this at zero.
+    TransformerEncoderLayer(int d_model, int nhead, int dim_feedforward,
+                            float dropout, bool norm_first, float ffn_dropout);
 
     Tensor Forward(const Tensor& input) override;
     Tensor Forward(const Tensor& input, const Tensor* src_mask);
@@ -41,6 +46,7 @@ private:
     std::unique_ptr<LayerNormLayer> norm2_;
     std::unique_ptr<DenseLayer> linear1_;
     std::unique_ptr<DenseLayer> linear2_;
+    std::unique_ptr<DropoutLayer> ffn_dropout_;
     std::unique_ptr<DropoutLayer> dropout1_;
     std::unique_ptr<DropoutLayer> dropout2_;
 
@@ -54,6 +60,9 @@ class CYXWIZ_API TransformerDecoderLayer : public Layer {
 public:
     TransformerDecoderLayer(int d_model, int nhead, int dim_feedforward = 2048,
                             float dropout = 0.1f, bool norm_first = false);
+    // Explicit FFN hidden dropout; legacy construction keeps this at zero.
+    TransformerDecoderLayer(int d_model, int nhead, int dim_feedforward,
+                            float dropout, bool norm_first, float ffn_dropout);
 
     Tensor Forward(const Tensor& input) override;
     Tensor Forward(const Tensor& tgt, const Tensor& memory,
@@ -84,6 +93,7 @@ private:
     std::unique_ptr<LayerNormLayer> norm3_;
     std::unique_ptr<DenseLayer> linear1_;
     std::unique_ptr<DenseLayer> linear2_;
+    std::unique_ptr<DropoutLayer> ffn_dropout_;
     std::unique_ptr<DropoutLayer> dropout1_;
     std::unique_ptr<DropoutLayer> dropout2_;
     std::unique_ptr<DropoutLayer> dropout3_;

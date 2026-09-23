@@ -1,4 +1,6 @@
 #include "pipeline_executor.h"
+#include "archive_text_source.h"
+#include "html_document_text.h"
 #include "error_codes.h"
 #include "duckdb_connector.h"
 #include "data_registry.h"
@@ -839,6 +841,7 @@ enum class FilterConditionTokenKind {
     Identifier,
     StringLiteral,
     NumericLiteral,
+    BooleanLiteral,
     ComparisonOperator,
     And,
     Or,
@@ -878,6 +881,8 @@ bool TokenizeFilterRowsCondition(const std::string& condition,
             const std::string upper_value = ToUpperAscii(value);
             if (upper_value == "AND") {
                 tokens.push_back({FilterConditionTokenKind::And, value});
+            } else if (upper_value == "TRUE" || upper_value == "FALSE") {
+                tokens.push_back({FilterConditionTokenKind::BooleanLiteral, upper_value});
             } else if (upper_value == "OR") {
                 tokens.push_back({FilterConditionTokenKind::Or, value});
             } else {
@@ -1101,6 +1106,21 @@ private:
         const std::string op = Consume().value;
 
         const auto field = table_->schema()->field(column_index);
+        if (field->type()->id() == arrow::Type::BOOL) {
+            if (op != "=" && op != "!=" && op != "<>") {
+                error = "FilterRows: boolean column '" + column +
+                        "' only supports equality comparisons (=, !=, <>)";
+                return false;
+            }
+            if (Peek().kind != FilterConditionTokenKind::BooleanLiteral) {
+                error = "FilterRows: boolean column '" + column +
+                        "' requires an unquoted true or false literal";
+                return false;
+            }
+            expression = QuoteSqlIdentifier(column) + " " + op + " " + Consume().value;
+            return true;
+        }
+
         if (IsNumericArrowType(field->type())) {
             if (Peek().kind != FilterConditionTokenKind::NumericLiteral) {
                 error = "FilterRows: column '" + column +
@@ -1624,12 +1644,13 @@ bool IsAllowedAggregateFunction(const std::string& function_name) {
     return function_name == "COUNT" || function_name == "SUM" ||
            function_name == "AVG" || function_name == "MIN" ||
            function_name == "MAX" || function_name == "MEDIAN" ||
-           function_name == "MODE";
+           function_name == "MODE" || function_name == "STRING_AGG";
 }
 
 bool BuildGroupByAggregationExpression(
     const std::shared_ptr<arrow::Table>& table,
     const std::string& aggregation,
+    const std::map<std::string, std::string>& parameters,
     std::string& expression,
     std::string& error) {
     const std::string spec = TrimString(aggregation);
@@ -1689,6 +1710,43 @@ bool BuildGroupByAggregationExpression(
     }
 
     expression = function_name + "(" + quoted_argument + ")";
+    if (function_name == "STRING_AGG") {
+        if (!RequireRoleColumnKind(table, "GroupBy", argument, "text aggregation",
+                                   "string/large_string", IsStringArrowType, error)) {
+            return false;
+        }
+        const std::string order_by = ParameterOrDefault(parameters, "text_order_by", "");
+        if (TrimString(order_by).empty()) {
+            error = "GroupBy: STRING_AGG requires 'text_order_by' columns";
+            return false;
+        }
+        std::vector<std::string> order_columns;
+        if (!ResolveExistingColumns(table, "GroupBy text_order_by", order_by,
+                                    order_columns, error)) {
+            return false;
+        }
+        std::string order_expression;
+        for (const auto& column : order_columns) {
+            const auto type = table->schema()->GetFieldByName(column)->type();
+            if (!IsNumericArrowType(type) && !IsStringArrowType(type)) {
+                error = "GroupBy: text_order_by column '" + column +
+                        "' must be numeric or text";
+                return false;
+            }
+            if (!order_expression.empty()) order_expression += ", ";
+            order_expression += QuoteSqlIdentifier(column) + " ASC NULLS LAST";
+        }
+        const std::string separator = ParameterOrDefault(parameters, "text_separator", " ");
+        if (separator.find('\0') != std::string::npos) {
+            error = "GroupBy: text_separator cannot contain NUL";
+            return false;
+        }
+        // A text tie-break makes equal order keys independent of input row order.
+        // DuckDB STRING_AGG skips null text, retaining NULL for all-null groups.
+        expression = "STRING_AGG(" + quoted_argument + ", " +
+                     QuoteSqlStringLiteral(separator) + " ORDER BY " + order_expression +
+                     ", " + quoted_argument + " ASC NULLS LAST)";
+    }
 
     const std::string suffix = TrimString(spec.substr(close + 1));
     if (!suffix.empty()) {
@@ -1711,6 +1769,7 @@ bool BuildGroupByAggregationExpression(
 bool BuildGroupByAggregationExpressions(
     const std::shared_ptr<arrow::Table>& table,
     const std::string& aggregations,
+    const std::map<std::string, std::string>& parameters,
     std::string& expressions,
     std::string& error) {
     const std::vector<std::string> specs = ParseCommaSeparatedNames(aggregations);
@@ -1723,7 +1782,7 @@ bool BuildGroupByAggregationExpressions(
     built.reserve(specs.size());
     for (const auto& spec : specs) {
         std::string expression;
-        if (!BuildGroupByAggregationExpression(table, spec, expression, error)) {
+        if (!BuildGroupByAggregationExpression(table, spec, parameters, expression, error)) {
             return false;
         }
         built.push_back(expression);
@@ -2533,6 +2592,24 @@ bool HasSupportedParameterValues(
                 parameters, node_type, "remove_stopwords", error)) {
             return false;
         }
+        const auto mode_it = parameters.find("html_mode");
+        const std::string mode = mode_it == parameters.end() || mode_it->second.empty() ? "legacy_tags" : mode_it->second;
+        if (mode != "legacy_tags" && mode != "parsed_html") {
+            error = node_type + " html_mode must be legacy_tags or parsed_html";
+            return false;
+        }
+        if (mode == "parsed_html") {
+            if (!HtmlDocumentParserAvailable()) {
+                error = node_type + " parsed HTML unavailable: enable html-parser feature and CYXWIZ_ENABLE_HTML_PARSER";
+                return false;
+            }
+            if (!OptionalBooleanParameterIsTrue(parameters,"remove_html") ||
+                OptionalBooleanParameterIsTrue(parameters,"lowercase") ||
+                OptionalBooleanParameterIsTrue(parameters,"remove_special_chars")) {
+                error = node_type + " parsed_html requires Remove HTML=true, Lowercase=false and Normalize special characters=false; it preserves paragraph boundaries and punctuation";
+                return false;
+            }
+        }
         const auto remove_stopwords_it = parameters.find("remove_stopwords");
         if (remove_stopwords_it != parameters.end() &&
             OptionalBooleanParameterIsTrue(parameters, "remove_stopwords")) {
@@ -2632,6 +2709,13 @@ bool HasSupportedParameterValues(
             !IsIntegerAtLeast(skip_rows_it->second, 0)) {
             error = "DataInput skip_rows must be a non-negative integer";
             return false;
+        }
+        if (source_type == "file" && file_type == "zip_text") {
+            const auto member = parameters.find("archive_member");
+            if (member == parameters.end() || member->second.empty()) {
+                error = "DataInput ZIP text requires archive_member (exact path inside ZIP)";
+                return false;
+            }
         }
         const auto sheet_idx_it = parameters.find("sheet_idx");
         if (source_type == "file" && file_type == "excel" &&
@@ -4083,6 +4167,21 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                         "implemented.");
                     return false;
                 }
+            } else if (file_type == "zip_text") {
+                const auto member = node.parameters.find("archive_member");
+                if (member == node.parameters.end() || member->second.empty()) {
+                    ReportError("DataInput ZIP text: set archive_member to an exact UTF-8 member path");
+                    return false;
+                }
+                auto table = LoadZipTextSelection(file_path, member->second, {},
+                    [this] { return cancel_requested_.load(); });
+                arrow_dataset = registry.RegisterArrowTable(table, dataset_name);
+                if (arrow_dataset && !selected_columns.empty()) {
+                    auto selected = arrow_dataset->SelectColumns(selected_columns);
+                    if (!selected || selected->GetNumColumns() != static_cast<int64_t>(selected_columns.size()))
+                        throw std::runtime_error("DataInput ZIP text: selected columns do not match document schema");
+                    arrow_dataset = registry.RegisterArrowTable(selected->GetArrowTable(), dataset_name);
+                }
             } else if (file_type == "parquet") {
                 arrow_dataset = registry.LoadParquetToArrow(file_path, dataset_name);
             } else if (file_type == "auto" || file_type == "feather" ||
@@ -5229,7 +5328,7 @@ bool PipelineExecutor::ExecuteGroupBy(const Node& node, ExecutionContext& ctx) {
         }
         const std::string quoted_group_columns = JoinQuotedColumns(selected_columns);
         std::string aggregation_expressions;
-        if (!BuildGroupByAggregationExpressions(input_table, aggregations,
+        if (!BuildGroupByAggregationExpressions(input_table, aggregations, node.parameters,
                                                 aggregation_expressions,
                                                 schema_error)) {
             ReportError(schema_error);
@@ -5645,6 +5744,21 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
                                "string", IsStringArrowType, schema_error)) {
             ReportError(schema_error);
             return false;
+        }
+        if (const auto mode = node.parameters.find("html_mode");
+            mode != node.parameters.end() && mode->second == "parsed_html") {
+            const auto parameter = [&](const char* key) {
+                const auto value = node.parameters.find(key);
+                return value == node.parameters.end() ? std::string{} : value->second;
+            };
+            auto table = CleanHtmlDocumentTable(input_table, text_column,
+                parameter("html_begin_comment"), parameter("html_end_comment"),
+                [this] { return cancel_requested_.load(); });
+            if (!registry.RegisterArrowTable(table, output_dataset_name))
+                throw std::runtime_error("Failed to register parsed HTML result");
+            ctx.node_results[node.id] = output_dataset_name;
+            spdlog::info("[Data Studio] {} parsed HTML completed: {} rows; original text and source fields preserved", diagnostic_name, table->num_rows());
+            return true;
         }
         const std::string quoted_text_column = QuoteSqlIdentifier(text_column);
         const std::string quoted_output_column =

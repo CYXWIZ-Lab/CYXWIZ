@@ -5,6 +5,7 @@
 #include "dataset_partitions.h"
 #include "metric_learning_graph_contract.h"
 #include "training_parameter_contract.h"
+#include "training_generation_preview_settings.h"
 #include <core/regression_target_transform.h>
 #include "../gui/node_editor.h"
 #include "../preprocessing/preprocessing_config.h"
@@ -176,7 +177,7 @@ struct AudioPreprocessingConfig {
 struct TextPreprocessingConfig {
     bool has_tokenizer_node = false;
     bool has_vectorizer_node = false;
-    // tokenizer_type: 0=Whitespace, 1=Word, 2=Character
+    // tokenizer_type: 0=Whitespace, 1=Word, 2=Character, 3=ByteBPE
     int tokenizer_type = 1;
     bool lowercase = true;
     bool do_padding = true;
@@ -198,6 +199,10 @@ struct TextPreprocessingConfig {
 // named payloads. Runtime training must enter through StartTrainingSequence
 // with a prebuilt ISequenceBatcher; generic tabular dispatch still fails closed.
 struct SequenceBatchConfig {
+    // Runtime-only identity captured when preparing the active model.
+    std::vector<std::string> expected_token_vocabulary;
+    std::string tokenizer_config_json;
+    std::string tokenizer_vocabulary_artifact;
     bool enabled = false;
     std::string token_column;
     std::string pos_column;
@@ -312,6 +317,8 @@ inline constexpr const char* TimeDistributedSequenceWrapper =
     "timedistributed_sequence_wrapper";
 inline constexpr const char* UnsupportedSequentialModelLayer =
     "unsupported_sequential_model_layer";
+inline constexpr const char* NativeProviderSelected =
+    "native_provider_selected";
 } // namespace BackendPlacementReason
 
 struct BackendPlacementEntry {
@@ -333,6 +340,10 @@ struct BackendPlacementEntry {
     std::string observation_timestamp;
     std::string observation_probe_outcome;
     std::string observation_probe_scope;
+    // GpuExecutionModeName of the owning operation family's declared mode
+    // (cyxwiz/gpu_execution_modes.h); empty when the node has no audited
+    // family yet.
+    std::string declared_execution_mode;
 
     bool NeedsUserAttention() const {
         return status == BackendPlacementStatus::Cpu ||
@@ -467,8 +478,10 @@ struct TrainingConfiguration {
     int prefetch_factor = 0;            // bounded async batch queue depth; 0 disables prefetch
     int log_interval = 10;              // batch metric/log cadence; 0 samples first/final only
     int validation_freq = 1;            // epoch-based validation cadence; final epoch always validates
+    int model_seed = -1;               // optional model initialization/dropout seed; -1 leaves RNG unchanged
     int dataloader_seed = 42;           // deterministic DataLoader split/shuffle seed
     int grad_accum_steps = training_contract::kGradientAccumulationStepsDefault;
+    TrainingGenerationPreviewSettings generation_preview;
     bool balance_classes = false;       // rebalance training split batches when supported
     std::string balance_mode = "none";  // none|oversample|undersample|weighted_sampler
     std::string balance_target = "max"; // max|median|min|number
@@ -648,6 +661,7 @@ inline bool UsesContinuousTargetMetrics(
 class GraphCompiler {
 public:
     GraphCompiler() = default;
+    enum class Purpose { Training, ModelImport };
 
     /**
      * Compile the node graph into a training configuration
@@ -659,7 +673,8 @@ public:
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,
         bool allow_unloaded_data = false,
-        const std::string& placement_observation_cache_path = {}
+        const std::string& placement_observation_cache_path = {},
+        Purpose purpose = Purpose::Training
     );
 
     /**

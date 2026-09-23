@@ -28,6 +28,10 @@ TextDatasetConfig BuildTextDatasetConfig(
     switch (entry.tokenizer_type) {
         case 0: cfg.tokenizer_type = TokenizerType::Whitespace; break;
         case 2: cfg.tokenizer_type = TokenizerType::Character; break;
+        case 3: cfg.tokenizer_type = TokenizerType::ByteBPE; break;
+        case 4: cfg.tokenizer_type = TokenizerType::WordPiece; break;
+        case 5: cfg.tokenizer_type = TokenizerType::SentencePieceBPE; break;
+        case 6: cfg.tokenizer_type = TokenizerType::SentencePieceUnigram; break;
         case 1:
         default: cfg.tokenizer_type = TokenizerType::Word; break;
     }
@@ -43,6 +47,8 @@ TextDatasetConfig BuildTextDatasetConfig(
         switch (preprocess_config.tokenizer_type) {
             case 0: cfg.tokenizer_type = TokenizerType::Whitespace; break;
             case 2: cfg.tokenizer_type = TokenizerType::Character; break;
+            case 3: cfg.tokenizer_type = TokenizerType::ByteBPE; break;
+            case 4: cfg.tokenizer_type = TokenizerType::WordPiece; break;
             case 1:
             default: cfg.tokenizer_type = TokenizerType::Word; break;
         }
@@ -79,6 +85,10 @@ int TokenizerTypeToParam(TokenizerType type) {
     switch (type) {
         case TokenizerType::Whitespace: return 0;
         case TokenizerType::Character: return 2;
+        case TokenizerType::ByteBPE: return 3;
+        case TokenizerType::WordPiece: return 4;
+        case TokenizerType::SentencePieceBPE: return 5;
+        case TokenizerType::SentencePieceUnigram: return 6;
         case TokenizerType::Word:
         default: return 1;
     }

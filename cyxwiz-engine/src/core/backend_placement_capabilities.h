@@ -4,9 +4,12 @@
 #include "dense_activation_configuration_policy.h"
 #include "pipeline_runtime_capabilities.h"
 #include "cyxwiz/backend_placement_observation.h"
+#include "cyxwiz/gpu_execution_modes.h"
+#include "cyxwiz/neural_provider.h"
 
 #include <string>
 #include <algorithm>
+#include <cmath>
 
 namespace cyxwiz::backend_placement {
 
@@ -166,7 +169,8 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
 }
 
 inline bool IsKnownCpuBackedModelLayer(gui::NodeType type) {
-    return type == gui::NodeType::LayerNorm ||
+    return type == gui::NodeType::RNN ||
+           type == gui::NodeType::LayerNorm ||
            type == gui::NodeType::MultiHeadAttention ||
            type == gui::NodeType::TransformerEncoder ||
            type == gui::NodeType::TransformerDecoder ||
@@ -200,24 +204,95 @@ inline LayerCapability ClassifyLayer(const CompiledLayer& layer) {
     const auto rank = layer.input_shape.size();
     const bool nonempty = !layer.input_shape.empty() &&
         std::all_of(layer.input_shape.begin(), layer.input_shape.end(), [](size_t d) { return d > 0; });
+    const auto parse_probability = [&layer](const char* key, bool required) -> bool {
+        const auto value = layer.parameters.find(key);
+        if (value == layer.parameters.end()) {
+            return !required;
+        }
+        try {
+            size_t consumed = 0;
+            const float probability = std::stof(value->second, &consumed);
+            return consumed == value->second.size() && std::isfinite(probability) &&
+                   probability >= 0.0f && probability < 1.0f;
+        } catch (const std::exception&) {
+            return false;
+        }
+    };
+    const bool is_transformer_sequence_layer =
+        layer.type == gui::NodeType::MultiHeadAttention ||
+        layer.type == gui::NodeType::TransformerEncoder ||
+        layer.type == gui::NodeType::TransformerDecoder;
     bool supported = nonempty && layer.type == gui::NodeType::LayerNorm && rank <= 3;
     if (nonempty && rank == 2) {
         supported = supported || layer.type == gui::NodeType::PositionalEncoding ||
             layer.type == gui::NodeType::TimeDistributed;
-        if (layer.type == gui::NodeType::MultiHeadAttention || layer.type == gui::NodeType::TransformerDecoder) {
-            const auto dropout = layer.parameters.find("dropout");
-            if (dropout != layer.parameters.end()) {
-                try {
-                    size_t consumed = 0;
-                    const float probability = std::stof(dropout->second, &consumed);
-                    supported = consumed == dropout->second.size() && probability == 0.0f;
-                } catch (const std::exception&) { supported = false; }
-            }
+        if (is_transformer_sequence_layer) {
+            supported = parse_probability("dropout", true) &&
+                        parse_probability("ffn_dropout", false);
         }
     }
     if (supported) result.kind = LayerCapabilityKind::ArrayFireTensor;
 #endif
     return result;
+}
+
+inline std::string BuildTransformerPlacementCompatibilityNote(
+    const CompiledLayer& layer) {
+    if (layer.type != gui::NodeType::TransformerDecoder &&
+        layer.type != gui::NodeType::TransformerEncoder &&
+        layer.type != gui::NodeType::MultiHeadAttention) {
+        return "";
+    }
+    const auto describe_probability_issue = [&layer](const char* key, bool required) -> std::string {
+        const auto value = layer.parameters.find(key);
+        if (value == layer.parameters.end()) {
+            return required
+                ? std::string(" Missing ") + key +
+                      " parameter; strict ArrayFire transformer placement requires an explicit probability in [0,1)."
+                : std::string();
+        }
+        try {
+            size_t consumed = 0;
+            const float probability = std::stof(value->second, &consumed);
+            if (consumed == value->second.size() && std::isfinite(probability) &&
+                probability >= 0.0f && probability < 1.0f) {
+                return "";
+            }
+        } catch (const std::exception&) {
+        }
+        return std::string(" ") + key + " value '" + value->second +
+               "' is invalid; strict ArrayFire transformer placement requires a finite probability in [0,1).";
+    };
+    if (const std::string issue = describe_probability_issue("dropout", true);
+        !issue.empty()) {
+        return issue;
+    }
+    if (const std::string issue = describe_probability_issue("ffn_dropout", false);
+        !issue.empty()) {
+        return issue;
+    }
+    if (layer.input_shape.size() != 2) {
+        return " This transformer layer compiled with non-sequence feature shape rank " +
+               std::to_string(layer.input_shape.size()) +
+               "; strict ArrayFire classification expects [sequence, features] "
+               "after excluding the batch dimension.";
+    }
+    return "";
+}
+
+// tofix67 slice 4: the declared execution mode a placement builder stamps on
+// its entries is the owning strategy from cyxwiz/gpu_execution_modes.h. The
+// CPU-backed builder serves exactly the attention/normalization family; the
+// ArrayFire-tensor and graph-runtime builders serve families that all
+// declare direct ArrayFire (cross-checked by the [gpu_execution] unit
+// tests). Evidence may still route an exact key to CPU — the mode records
+// the family's declared strategy, the status records the decision.
+inline void StampDeclaredExecutionMode(BackendPlacementEntry& placement,
+                                       cyxwiz::GpuExecutionMode mode) {
+    placement.declared_execution_mode = cyxwiz::GpuExecutionModeName(mode);
+    placement.explanation +=
+        std::string(" Declared execution mode: ") +
+        placement.declared_execution_mode + ".";
 }
 
 inline BackendPlacementEntry BuildCpuBackedModelLayerPlacement(
@@ -231,12 +306,37 @@ inline BackendPlacementEntry BuildCpuBackedModelLayerPlacement(
     placement.fallback_backend = "CPU";
     placement.status = BackendPlacementStatus::Cpu;
     placement.reason_code = BackendPlacementReason::GraphRuntimeCpuBacked;
+    if (layer.type == gui::NodeType::RNN) {
+        // tofix68 Studio RNN wiring: the simple RNN runs on the native CPU
+        // reference layer (phase 3). There is no ArrayFire RNN path, and
+        // the native neural provider offers rnn_forward for inference
+        // only, so training stays on the CPU reference by design.
+        placement.explanation =
+            "RNN is supported by ModelBuilder/SequentialModel through the "
+            "native CPU simple-RNN reference layer. There is no ArrayFire "
+            "RNN path and the native neural provider serves rnn_forward for "
+            "inference only, so training runs on the CPU reference and this "
+            "layer is not GPU-resident.";
+        placement.suggested_action =
+            "No correctness action needed. For GPU recurrent training use "
+            "LSTM or GRU, which the native neural provider accelerates.";
+        StampDeclaredExecutionMode(
+            placement,
+            cyxwiz::DeclaredGpuExecutionMode(
+                cyxwiz::GpuOperationFamily::Recurrent));
+        return placement;
+    }
     placement.explanation =
         std::string(placement.node_type) +
         " is supported by ModelBuilder/SequentialModel, but the current "
         "module implementation is CPU-backed. Training is correct, but this "
         "layer should not be counted as GPU-resident until a focused ArrayFire "
         "implementation and residency/parity test are added.";
+    placement.explanation += BuildTransformerPlacementCompatibilityNote(layer);
+    StampDeclaredExecutionMode(
+        placement,
+        cyxwiz::DeclaredGpuExecutionMode(
+            cyxwiz::GpuOperationFamily::AttentionNormalization));
     if (layer.type == gui::NodeType::MultiHeadAttention) {
         placement.suggested_action =
             "No correctness action needed for single-input self-attention. "
@@ -296,9 +396,7 @@ inline std::string BuildArrayFireTensorPlacementShapeSignature(
             layer.input_shape,
             "float32");
     }
-    return BuildTensorLayerPlacementShapeSignature(
-        layer.input_shape,
-        layer.output_shape);
+    return BuildTensorLayerPlacementShapeSignature(layer.input_shape);
 }
 
 inline const char* BuildArrayFireTensorPlacementObservationDtype(
@@ -368,6 +466,8 @@ inline BackendPlacementEntry BuildArrayFireTensorPlacement(
             "is unsupported, or a backend operation fails.";
         placement.suggested_action = "No action needed.";
     }
+    StampDeclaredExecutionMode(placement,
+                               cyxwiz::GpuExecutionMode::DirectArrayFire);
     return placement;
 }
 
@@ -391,6 +491,7 @@ inline BackendPlacementEntry BuildUnsupportedSequentialModelPlacement(
     placement.suggested_action =
         "Replace this node with a supported layer or keep it disconnected from "
         "the selected training path until backend support lands.";
+    StampDeclaredExecutionMode(placement, cyxwiz::GpuExecutionMode::Unsupported);
     return placement;
 }
 
@@ -438,6 +539,64 @@ inline BackendPlacementEntry BuildTimeDistributedSequenceWrapperPlacement(
         "sequence models, validate the reshape and Linear runtime placement "
         "before relying on GPU residency.";
     return placement;
+}
+
+// tofix68 placement wiring: consult the neural provider registry with the
+// EXACT tuple the run needs. Selection rewrites the decision fields
+// (expected backend, status, reason) and names the provider; refusal is
+// recorded in the explanation so the debugger shows the provider's verdict
+// instead of silence. The declared_execution_mode field is NOT touched —
+// it records the family's declared strategy, while provider selection is a
+// per-key decision (slice-4 semantics). No placement change when no
+// provider is registered (portable builds / no CUDA device).
+//
+// Device-keyed dispatch (tofix68 rule, 2026-09-23): request.target carries
+// the run's SELECTED device; only providers serving that device family are
+// consulted, so a CUDA provider is never selected for an OpenCL/oneAPI/CPU
+// run on a machine that happens to have a CUDA device. The placement label
+// is derived from the provider, never hard-coded.
+inline void ApplyNativeProviderPlacement(
+    BackendPlacementEntry& placement,
+    const cyxwiz::NeuralOpRequest& request) {
+    auto& registry = cyxwiz::NeuralProviderRegistry::Instance();
+    const auto providers = registry.List();
+    if (providers.empty()) {
+        return;
+    }
+    const auto serving = registry.ListServing(request.target);
+    if (serving.empty()) {
+        std::string registered;
+        for (const auto& provider : providers) {
+            if (!registered.empty()) {
+                registered += ", ";
+            }
+            registered += std::string(provider->ProviderId()) + ": " +
+                          cyxwiz::NeuralDevicePlatformName(
+                              provider->Platform());
+        }
+        placement.explanation +=
+            std::string(" Native provider(s) registered (") + registered +
+            ") do not serve the run's target device (" +
+            cyxwiz::NeuralDevicePlatformName(request.target.platform) +
+            "); portable path retained.";
+        return;
+    }
+    if (const auto provider = registry.FindSupporting(request)) {
+        placement.expected_backend =
+            std::string("native provider ") + provider->ProviderId();
+        placement.fallback_backend = "CPU";
+        placement.status = BackendPlacementStatus::Gpu;
+        placement.reason_code = BackendPlacementReason::NativeProviderSelected;
+        placement.explanation +=
+            std::string(" Native provider selected for this exact "
+                        "contract: ") +
+            provider->Version() + ".";
+        return;
+    }
+    const auto capability = serving.front()->QueryCapability(request);
+    placement.explanation +=
+        std::string(" Native provider (") + serving.front()->ProviderId() +
+        ") declined this contract: " + capability.detail + ".";
 }
 
 inline bool IsMixedArrayFireGraphRuntimeOp(gui::NodeType type) {
@@ -516,6 +675,10 @@ inline BackendPlacementEntry BuildGraphRuntimePlacement(
         placement.suggested_action =
             "No correctness action needed. Treat performance as workload-specific "
             "and use focused benchmarks before making a GPU speed claim.";
+        StampDeclaredExecutionMode(
+            placement,
+            cyxwiz::DeclaredGpuExecutionMode(
+                cyxwiz::GpuOperationFamily::GraphTensorOp));
         return placement;
     }
 

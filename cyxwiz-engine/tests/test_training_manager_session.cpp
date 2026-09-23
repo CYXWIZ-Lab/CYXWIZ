@@ -6,6 +6,7 @@
 #include "../src/core/training_trace_collector.h"
 #include "../src/gui/panels/training_plot_panel.h"
 #include "route_qualification_test_fixture.h"
+#include "../src/core/execution_device_preferences.h"
 
 #include <arrow/api.h>
 
@@ -21,6 +22,7 @@
 #include <vector>
 
 namespace {
+std::string expected_backend;
 
 void Check(bool condition, const std::string& message) {
     if (!condition) {
@@ -142,6 +144,10 @@ void CheckTerminalTrace(const cyxwiz::TrainingMetrics& metrics,
           "debugger trace should publish the expected terminal status");
     Check(!trace.effective_backend.empty() && trace.execution_validated,
           "debugger trace should publish validated effective backend truth");
+    if (!expected_backend.empty()) {
+        Check(trace.effective_backend == expected_backend && trace.requested_backend == expected_backend,
+              "worker must use the requested test backend");
+    }
     Check(trace.native_cpu_fallback_count == 0,
           "supported manager session should not use native CPU fallback");
 
@@ -182,7 +188,7 @@ void CheckTerminalTrace(const cyxwiz::TrainingMetrics& metrics,
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     namespace fs = std::filesystem;
 
     const auto work_dir = fs::temp_directory_path() /
@@ -193,10 +199,48 @@ int main() {
         work_dir / "debug_runs");
     cyxwiz::test::InstallQualifiedRouteSnapshot();
 
+    if (argc == 2) {
+        const std::string backend = argv[1];
+        Check(backend == "cpu" || backend == "cuda" || backend == "opencl", "backend argument");
+        const auto type = backend == "cpu" ? cyxwiz::DeviceType::CPU :
+            backend == "cuda" ? cyxwiz::DeviceType::CUDA : cyxwiz::DeviceType::OPENCL;
+        const auto activation = cyxwiz::Device(type, 0).ActivateExact(true);
+        Check(activation.success && activation.execution_validated, "exact backend activation");
+        cyxwiz::CommitExecutionDeviceSelectionState({type, 0, {}});
+        expected_backend = cyxwiz::ExecutionDeviceSelectionBackendName(type);
+    } else Check(argc == 1, "Usage: test_training_manager_session [cpu|cuda|opencl]");
+
     auto& tasks = cyxwiz::AsyncTaskManager::Instance();
     tasks.Initialize(1);
     auto& manager = cyxwiz::TrainingManager::Instance();
     manager.ClearTrainedModel();
+
+    // Hold completion open to deterministically expose the restart interval.
+    // Release and join before asserting so old code fails without deadlocking.
+    std::atomic<bool> completion_entered{false}, release_completion{false};
+    manager.SetOnTrainingEnd([&](bool, const cyxwiz::TrainingMetrics&) {
+        completion_entered.store(true);
+        while (!release_completion.load()) std::this_thread::yield();
+    });
+    auto restart_config = MakeConfig(work_dir / "restart_checkpoints");
+    Check(manager.StartTrainingArrow(restart_config, MakeDataset(), "label", 1, 2, {}),
+          "restart fixture should start");
+    const auto restart_task_id = manager.GetCurrentTaskId();
+    const bool reached_completion = WaitFor([&] { return completion_entered.load(); }, std::chrono::seconds(60));
+    const bool admission_closed = manager.IsTrainingActive();
+    bool restart_rejected = false;
+    if (reached_completion && admission_closed) {
+        restart_rejected = !manager.StartTrainingArrow(restart_config, MakeDataset(), "label", 1, 2, {});
+    }
+    release_completion.store(true);
+    manager.WaitForTrainingStop();
+    Check(reached_completion && admission_closed && restart_rejected,
+          "training must reject restart until completion and model cleanup finish");
+    Check(manager.HasTrainedModel(), "inactive training must expose its preserved model");
+    WaitForTerminalTask(manager, tasks, restart_task_id, "restart barrier");
+    manager.SetOnTrainingEnd(nullptr);
+    manager.ClearTrainedModel();
+    std::cout << "PASS: completion barrier rejects premature restart; inactive model is ready\n";
 
     std::atomic<int> start_callbacks{0};
     std::atomic<int> end_callbacks{0};

@@ -51,7 +51,7 @@ inline bool IsSupportedTabularFileType(const std::string& file_type) {
     return normalized == "auto" || normalized == "csv" ||
            normalized == "tsv" || normalized == "parquet" ||
            normalized == "feather" || normalized == "arrow" ||
-           normalized == "ipc";
+           normalized == "ipc" || normalized == "zip_text";
 }
 
 inline bool IsUnsupportedTabularFileType(const std::string& file_type) {

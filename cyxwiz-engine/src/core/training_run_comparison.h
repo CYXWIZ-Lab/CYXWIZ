@@ -418,9 +418,12 @@ inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
     record.model_family = record.primary_layer_type;
     for (const auto& layer : config.layers) {
         if (layer.type == gui::NodeType::GRU ||
-            layer.type == gui::NodeType::LSTM) {
+            layer.type == gui::NodeType::LSTM ||
+            layer.type == gui::NodeType::RNN) {
             record.model_family =
-                layer.type == gui::NodeType::GRU ? "GRU" : "LSTM";
+                layer.type == gui::NodeType::GRU
+                    ? "GRU"
+                    : (layer.type == gui::NodeType::LSTM ? "LSTM" : "RNN");
 
             auto hidden_it = layer.parameters.find("hidden_size");
             if (hidden_it != layer.parameters.end()) {

@@ -16,6 +16,7 @@ namespace cyxwiz {
  * Checkpoint metadata stored alongside model weights
  */
 struct CheckpointMetadata {
+    TrainingRandomness randomness; // Seed provenance, not random-stream continuation.
     // Training state
     int epoch = 0;
     int global_step = 0;

@@ -440,7 +440,7 @@ public:
 
         // Dialog-baked defaults — overridable by graph preprocessing
         // nodes (TextTokenizer / TextVocabulary / TextPadding).
-        // tokenizer_type: 0=Whitespace, 1=Word, 2=Character
+        // tokenizer_type: 0=Whitespace, 1=Word, 2=Character, 3=ByteBPE
         int tokenizer_type = 1;
         int max_length = 512;
         bool lowercase = true;

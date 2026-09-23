@@ -7,6 +7,7 @@
 #include <cyxwiz/tensor.h>
 #include <nlohmann/json.hpp>
 
+#include <arrayfire.h>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -61,7 +62,7 @@ void CheckNear(float actual,
                float expected,
                float tolerance,
                const std::string& message) {
-    if (std::fabs(actual - expected) > tolerance) {
+    if (!std::isfinite(actual) || !std::isfinite(expected) || std::fabs(actual - expected) > tolerance) {
         std::cerr << "FAIL: " << message << ": expected=" << expected
                   << " actual=" << actual << "\n";
         std::exit(1);
@@ -93,6 +94,7 @@ std::string BuildTransformerEncoderGraphJson() {
             {"num_heads", "2"},
             {"dim_feedforward", "8"},
             {"dropout", "0"},
+            {"ffn_dropout", "0.25"},
             {"norm_first", "false"}
         }}
     });
@@ -350,7 +352,7 @@ int main() {
     fs::create_directories(root);
 
     cyxwiz::SequentialModel source;
-    source.Add<cyxwiz::TransformerEncoderModule>(4, 2, 8, 0.0f, false);
+    source.Add<cyxwiz::TransformerEncoderModule>(4, 2, 8, 0.0f, false, 0.25f);
     source.Add<cyxwiz::LinearModule>(16, 2, true);
 
     const auto source_params = source.GetParameters();
@@ -394,6 +396,18 @@ int main() {
     CheckParameterRoundTrip(source_params,
                             imported_params,
                             "TransformerEncoder");
+    // With the same device RNG seed, serialization must preserve FFN dropout
+    // behavior as well as weights. Evaluation alone cannot catch a lost p.
+    cyxwiz::Tensor sample(std::vector<size_t>{1,4,4});
+    for(size_t i=0;i<sample.NumElements();++i) sample.MutableData<float>()[i]=std::sin(static_cast<float>(i));
+    source.SetTraining(true);imported.SetTraining(true);
+    af::setSeed(52);const auto source_training=source.GetModule(0)->Forward(sample);
+    const af::array source_next=af::randu(8);source_next.eval();
+    af::setSeed(52);const auto imported_training=imported.GetModule(0)->Forward(sample);
+    const af::array imported_next=af::randu(8);imported_next.eval();
+    CheckTensorValues(imported_training,source_training,"FFN dropout training round-trip");
+    Check(af::allTrue<bool>(source_next==imported_next),"FFN dropout RNG consumption must round-trip");
+
 
     cyxwiz::SequentialModel bert_sequence_source;
     bert_sequence_source.Add<cyxwiz::EmbeddingModule>(16, 4, 0);

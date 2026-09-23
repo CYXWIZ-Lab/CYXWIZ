@@ -1,9 +1,11 @@
 #include "graph_compiler.h"
+#include "training_randomness.h"
 #include "error_codes.h"
 #include "backend_placement_capabilities.h"
 #include "execution_placement_plan.h"
 #include "data_registry.h"
 #include "dense_activation_configuration_policy.h"
+#include "upsampling_configuration_policy.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
 #include "label_column_resolver.h"
@@ -28,6 +30,7 @@
 #include <set>
 #include <sstream>
 #include <stack>
+#include <thread>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -2196,6 +2199,28 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
             : (decision.should_attempt_arrayfire_cuda
                    ? "No action needed."
                    : "Training can continue. To keep this recurrent step on GPU, use a future fused/native CUDA recurrent kernel or exact backend probe; reducing hidden_size, sequence length, layers, or bidirectionality may help only for LSTM estimator-limited shapes.");
+        backend_placement::StampDeclaredExecutionMode(
+            placement,
+            DeclaredGpuExecutionMode(GpuOperationFamily::Recurrent));
+        placement.explanation += std::string(" Staged plan: ") +
+                                 RecurrentStagedArrayFirePlanName + ".";
+        {
+            NeuralOpRequest provider_request;
+            provider_request.target = CaptureCurrentNeuralDeviceTarget();
+            provider_request.op = layer.type == gui::NodeType::GRU
+                ? NeuralOp::GruForward
+                : NeuralOp::LstmForward;
+            provider_request.training = true;  // this is the training path
+            provider_request.dtype = DataType::Float32;
+            provider_request.batch = request.batch_size;
+            provider_request.seq = request.seq_len;
+            provider_request.input = request.input_size;
+            provider_request.hidden = request.hidden_size;
+            provider_request.layers = request.num_layers;
+            provider_request.directions = request.bidirectional ? 2 : 1;
+            backend_placement::ApplyNativeProviderPlacement(
+                placement, provider_request);
+        }
         config.backend_placements.push_back(placement);
 
         if (decision.should_attempt_arrayfire_cuda &&
@@ -3700,15 +3725,26 @@ TrainingConfiguration GraphCompiler::Compile(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
     bool allow_unloaded_data,
-    const std::string& placement_observation_cache_path)
+    const std::string& placement_observation_cache_path,
+    Purpose purpose)
 {
+    const auto compile_started = std::chrono::steady_clock::now();
+    auto stage_start = compile_started;
+    std::vector<std::pair<const char*, double>> stage_ms;
+    auto timing = [&](const char* name) {
+        const auto now = std::chrono::steady_clock::now();
+        stage_ms.emplace_back(name, std::chrono::duration<double, std::milli>(now-stage_start).count());
+        stage_start = now;
+    };
     TrainingConfiguration config;
+    timing("configuration");
 
     // === Structural validation ===
     // Collect all structural errors at once (the old ValidateGraph stopped
     // at the first one). is_valid is determined at the end of Compile by
     // checking whether config.issues contains any Error-level entries.
     const gui::MLNode* dataset_node = FindDatasetInputNode(nodes, links);
+    timing("dataset_topology");
     const std::unordered_set<int> dataset_reachable =
         dataset_node
             ? CollectReachableNodeIds(dataset_node->id, links)
@@ -3727,8 +3763,10 @@ TrainingConfiguration GraphCompiler::Compile(
             }
         }
     }
+    timing("path_resolution");
     config.target = InferTargetContract(
         nodes, training_path_ids, loss_node);
+    timing("target_contract");
     if (config.target.IsGeneratedByGraph()) {
         spdlog::info(
             "GraphCompiler: target contract resolved from graph node '{}' "
@@ -3810,6 +3848,7 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
+    timing("structural_validation");
     // Extract dataset configuration
     if (dataset_node) {
         // dataset_name parameter is what DataInputDialog::Apply writes when
@@ -4210,6 +4249,15 @@ TrainingConfiguration GraphCompiler::Compile(
     if (const gui::MLNode* loader_node = FindFirstReachableNodeOfType(
             nodes, dataset_reachable, gui::NodeType::DataLoader)) {
         config.has_data_loader = true;
+        if (const auto seed = loader_node->parameters.find("model_seed");
+            seed != loader_node->parameters.end()) {
+            try {
+                config.model_seed = ParseModelRandomSeed(seed->second);
+            } catch (const std::exception& error) {
+                AddIssue(config, IssueLevel::Error, error.what(), loader_node->id, loader_node->name);
+            }
+        }
+        spdlog::info("GraphCompiler: Model RNG seed={} (-1 means unset)", config.model_seed);
         try {
             if (loader_node->parameters.count("batch_size"))
                 config.batch_size = std::stoi(loader_node->parameters.at("batch_size"));
@@ -4552,7 +4600,8 @@ TrainingConfiguration GraphCompiler::Compile(
                          errors::Compiler::UnsupportedTrainingNode);
             }
             if ((node->type == gui::NodeType::LSTM ||
-                 node->type == gui::NodeType::GRU) &&
+                 node->type == gui::NodeType::GRU ||
+                 node->type == gui::NodeType::RNN) &&
                 HasConnectedSelectedOutputPinNamed(
                     *node, links, training_path_ids, "Hidden")) {
                 AddIssue(
@@ -4566,7 +4615,31 @@ TrainingConfiguration GraphCompiler::Compile(
             }
 
             // Infer output shape
-            if (node->type == gui::NodeType::Reshape ||
+            if (node->type == gui::NodeType::Upsample ||
+                node->type == gui::NodeType::PixelShuffle) {
+                // Diagnostic geometry does not promote Studio executability.
+                // Keep unsupported-node issues until the batch/head path is qualified.
+                layer.output_shape = current_shape;
+                UpsamplingConfiguration resolved;
+                if (const auto reason = ResolveUpsamplingConfiguration(
+                        node->type, layer.parameters, resolved)) {
+                    AddIssue(config, IssueLevel::Error, *reason, node->id,
+                             node->name, errors::Compiler::InvalidParameter);
+                } else {
+                    layer.scale_factor = resolved.factor;
+                    layer.upsample_mode = resolved.mode;
+                    try {
+                        layer.output_shape = InferUpsamplingSampleShape(
+                            node->type, resolved, current_shape);
+                    } catch (const std::logic_error& error) {
+                        AddIssue(config, IssueLevel::Error, error.what(), node->id,
+                                 node->name, errors::Compiler::TensorShapeMismatch);
+                    } catch (const std::overflow_error& error) {
+                        AddIssue(config, IssueLevel::Error, error.what(), node->id,
+                                 node->name, errors::Compiler::TensorShapeMismatch);
+                    }
+                }
+            } else if (node->type == gui::NodeType::Reshape ||
                 node->type == gui::NodeType::View ||
                 node->type == gui::NodeType::Squeeze ||
                 node->type == gui::NodeType::Unsqueeze ||
@@ -4865,6 +4938,7 @@ TrainingConfiguration GraphCompiler::Compile(
                          cache_error);
         }
     }
+    timing("data_and_layers");
     AddBackendPlacementReports(config);
     config.compiler_placement_fingerprint =
         FingerprintPlacementEntries(config.backend_placements);
@@ -4883,7 +4957,7 @@ TrainingConfiguration GraphCompiler::Compile(
                 << ", test=" << config.test_ratio;
             AddIssue(config, IssueLevel::Warning, msg.str());
         }
-        if (config.val_ratio < 1e-6f) {
+        if (config.val_ratio < 1e-6f && !config.dataset_roles.dev.IsSupplied()) {
             AddIssue(config, IssueLevel::Warning,
                      "Validation split is 0 - training will run without validation metrics",
                      -1,
@@ -5156,6 +5230,48 @@ TrainingConfiguration GraphCompiler::Compile(
                      "defaults from the registered dataset");
     }
 
+    // Import rebuilds weights/architecture; training previews require live data
+    // only when compiling a training run. All training callers retain validation.
+    if (const gui::MLNode* loader_node = FindFirstReachableNodeOfType(
+            nodes, dataset_reachable, gui::NodeType::DataLoader);
+        loader_node && purpose == Purpose::Training) {
+        try {
+            config.generation_preview = ParseTrainingGenerationPreview(loader_node->parameters);
+            auto& preview = config.generation_preview;
+            if (preview.enabled) {
+                if (!config.sequence_batch.create_causal_lm_targets)
+                    throw std::invalid_argument("Generation previews require causal next-token targets");
+                auto dataset = DataRegistry::Instance().GetArrowDataset(config.dataset_name);
+                auto metadata = dataset ? dataset->GetSchema()->metadata() : nullptr;
+                auto get = [&](const char* key) -> std::string {
+                    if (!metadata) throw std::invalid_argument("Generation previews require an Arrow token-window dataset with vocabulary metadata");
+                    auto value = metadata->Get(key);
+                    if (!value.ok()) throw std::invalid_argument(std::string("Generation preview missing metadata: ") + key);
+                    return *value;
+                };
+                if (get("cyxwiz.token_windows.version") != "1")
+                    throw std::invalid_argument("Generation preview token-window version is unsupported");
+                preview.vocabulary_artifact = get("cyxwiz.token_windows.vocabulary");
+                const auto type = get("cyxwiz.token_windows.tokenizer_type");
+                if (type!="0" && type!="1" && type!="2" && type!="3")
+                    throw std::invalid_argument("Generation preview tokenizer strategy is invalid");
+                preview.tokenizer_type = type[0]-'0';
+                const auto lowercase = get("cyxwiz.token_windows.lowercase");
+                if (lowercase!="true" && lowercase!="false") throw std::invalid_argument("Generation preview lowercase metadata is invalid");
+                preview.lowercase = lowercase=="true";
+                const auto context = get("cyxwiz.token_windows.context");
+                size_t consumed=0;
+                preview.context = std::stoi(context,&consumed);
+                if(consumed!=context.size() || preview.context<2 || preview.context>65536 ||
+                   preview.context!=static_cast<int>(config.sequence_batch.max_sequence_length))
+                    throw std::invalid_argument("Generation preview context differs from training context");
+            }
+        } catch (const std::exception& error) {
+            AddIssue(config, IssueLevel::Error, std::string("Generation preview: ")+error.what(),
+                     loader_node->id, loader_node->name, errors::Compiler::InvalidParameter);
+        }
+    }
+
     // Final verdict: is_valid is the absence of any Error-level issue.
     // Warnings and Info don't block training.
     config.is_valid = !config.HasErrors();
@@ -5211,6 +5327,12 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
 
+    timing("placement_and_final_validation");
+    std::ostringstream timing_text;
+    for (const auto& [name, elapsed] : stage_ms) timing_text << name << "=" << elapsed << "ms ";
+    spdlog::info("GraphCompiler timing: thread={} total_ms={:.3f} {}",
+        std::hash<std::thread::id>{}(std::this_thread::get_id()),
+        std::chrono::duration<double, std::milli>(stage_start-compile_started).count(), timing_text.str());
     return config;
 }
 
@@ -5685,7 +5807,7 @@ static void ExtractTextTokenizerShape(
             static_cast<int>(ParseSizeParam(node.parameters, "tokenizer_type", 1));
     }
     config.text_preprocessing.lowercase =
-        ParseBoolParam(node.parameters, "lowercase", true);
+        ParseBoolParam(node.parameters, "lowercase", config.text_preprocessing.tokenizer_type != 3);
     config.text_preprocessing.do_padding =
         ParseBoolParam(node.parameters, "padding", true);
     config.text_preprocessing.do_truncation =
@@ -5788,7 +5910,7 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
 
     // Unsupported sequential layers are retained in the compiled inventory so
     // placement and diagnostics can identify them. Do not interpret their
-    // parameters: legacy graphs may contain design-era encodings (for example
+    // parameters here: legacy graphs may contain design-era encodings (for example
     // Conv2D padding="same") that have no executable ModelBuilder contract.
     const auto training_support =
         ResolvePipelineTrainingBackendSupport(node.type);
@@ -5885,15 +6007,9 @@ CompiledLayer GraphCompiler::ExtractLayerConfig(const gui::MLNode& node) const {
             break;
 
         case gui::NodeType::Upsample:
-            if (node.parameters.count("scale_factor"))
-                layer.scale_factor = std::stoi(node.parameters.at("scale_factor"));
-            if (node.parameters.count("mode"))
-                layer.upsample_mode = std::stoi(node.parameters.at("mode"));
-            break;
-
         case gui::NodeType::PixelShuffle:
-            if (node.parameters.count("upscale_factor"))
-                layer.scale_factor = std::stoi(node.parameters.at("upscale_factor"));
+            // The shared exact policy resolves parameters with sample shapes
+            // in Compile, including diagnostics for nodes still Studio-blocked.
             break;
 
         default:

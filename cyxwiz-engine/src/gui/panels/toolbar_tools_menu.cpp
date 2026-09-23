@@ -33,10 +33,10 @@ void ToolbarPanel::RenderToolsMenu() {
         // ==================== Model Export ====================
         if (ImGui::BeginMenu(ICON_FA_FILE_EXPORT " Model Export")) {
             if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save Trained Model...", "Ctrl+Shift+S")) {
-                if (save_model_callback_) save_model_callback_();
+                if (export_model_callback_) export_model_callback_(0);  // 0 = CyxModel native package
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Save the trained model weights to a binary .cyxmodel file");
+                ImGui::SetTooltip("Open the native export dialog for a single-file .cyxmodel package");
             }
 
             ImGui::Separator();
@@ -46,14 +46,14 @@ void ToolbarPanel::RenderToolsMenu() {
                 if (convert_binary_to_dir_callback_) convert_binary_to_dir_callback_();
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Convert binary .cyxmodel file to directory format\n(for use with Deploy > Export Model)");
+                ImGui::SetTooltip("Convert a single-file .cyxmodel package to directory format\n(for inspection or legacy compatibility)");
             }
 
             if (ImGui::MenuItem(ICON_FA_FILE " Directory to Binary...")) {
                 if (convert_dir_to_binary_callback_) convert_dir_to_binary_callback_();
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Convert .cyxmodel directory to binary file format\n(for smaller, single-file storage)");
+                ImGui::SetTooltip("Convert a .cyxmodel directory package to the native single-file format");
             }
 
             ImGui::EndMenu();

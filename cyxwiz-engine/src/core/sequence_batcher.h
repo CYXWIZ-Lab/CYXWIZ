@@ -64,7 +64,7 @@ public:
 
         auto& active_indices = ActiveIndices();
         const size_t remaining = active_indices.size() - current_index_;
-        if (config_.drop_last && remaining < config_.batch_size) {
+        if (config_.drop_last && current_phase_ == BatcherPhase::Train && remaining < config_.batch_size) {
             current_index_ = active_indices.size();
             return {};
         }
@@ -159,7 +159,7 @@ public:
         if (active_indices.empty() || sequence_length_ == 0) {
             return 0;
         }
-        if (config_.drop_last) {
+        if (config_.drop_last && current_phase_ == BatcherPhase::Train) {
             return active_indices.size() / config_.batch_size;
         }
         return (active_indices.size() + config_.batch_size - 1) /

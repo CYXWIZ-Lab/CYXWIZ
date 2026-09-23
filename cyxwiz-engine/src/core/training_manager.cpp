@@ -10,6 +10,7 @@
 #include "training_batcher_setup.h"
 #include "training_trace_collector.h"
 #include "training_run_comparison.h"
+#include "placement_observation_cache_session.h"
 #include "worker_defaults.h"
 #include "../gui/panels/training_plot_panel.h"
 #include <spdlog/spdlog.h>
@@ -421,6 +422,7 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
                 ? config.target.primary_column
                 : config.dataset_roles.train.label_column;
         active_model_info_.checkpoint_metadata = *metadata;
+        active_model_info_.evaluation_config = config;
     }
 
     result.success = true;
@@ -994,13 +996,19 @@ void TrainingManager::TrainingThreadFunc(
             if (sequence_mode) {
                 panel->AddCustomMetric("Train Token Accuracy", epoch,
                     static_cast<double>(seq_metrics.train_token_accuracy) * 100.0);
-                panel->AddCustomMetric("Train Entity F1", epoch,
-                    static_cast<double>(seq_metrics.train_entity_f1) * 100.0);
+                const bool entity_metrics =
+                    !exec->GetConfig().sequence_batch.create_causal_lm_targets;
+                if (entity_metrics) {
+                    panel->AddCustomMetric("Train Entity F1", epoch,
+                        static_cast<double>(seq_metrics.train_entity_f1) * 100.0);
+                }
                 if (val_loss >= 0.0f || val_acc >= 0.0f) {
                     panel->AddCustomMetric("Val Token Accuracy", epoch,
                         static_cast<double>(seq_metrics.val_token_accuracy) * 100.0);
-                    panel->AddCustomMetric("Val Entity F1", epoch,
-                        static_cast<double>(seq_metrics.val_entity_f1) * 100.0);
+                    if (entity_metrics) {
+                        panel->AddCustomMetric("Val Entity F1", epoch,
+                            static_cast<double>(seq_metrics.val_entity_f1) * 100.0);
+                    }
                 }
             }
             spdlog::info("TrainingPlotPanel: Updated state - epoch={}/{}, time={:.1f}s, sps={:.0f}",
@@ -1200,8 +1208,7 @@ void TrainingManager::TrainingThreadFunc(
         final_metrics.terminal_status == "cancelled";
     const bool failed = final_metrics.terminal_status == "failed";
     const bool success = !cancelled && !failed;
-    is_training_.store(false);
-    current_task_id_.store(0);
+    // Keep admission closed until callbacks and owned cleanup finish.
 
     // Deactivate node editor animation
     if (node_editor_callback) {
@@ -1212,6 +1219,12 @@ void TrainingManager::TrainingThreadFunc(
     if (on_training_end_) {
         on_training_end_(success, final_metrics);
     }
+
+    // Persist any placement evidence this run recorded (runtime GPU
+    // fallbacks) so the next compile — including in a future session —
+    // routes around the observed device/shape keys. Runs on the training
+    // worker thread; the store snapshot is mutex-guarded.
+    SavePlacementObservationCache();
 
     // Preserve trained model for export before clearing executor
     {
@@ -1225,6 +1238,7 @@ void TrainingManager::TrainingThreadFunc(
             active_model_info_.origin = ActiveModelOrigin::TrainedInSession;
             active_model_info_.checkpoint_path = final_metrics.checkpoint_used;
             const auto& completed_config = current_executor_->GetConfig();
+            active_model_info_.evaluation_config = completed_config;
             active_model_info_.effective_dataset_name =
                 completed_config.dataset_name;
             active_model_info_.effective_label_column =
@@ -1247,6 +1261,11 @@ void TrainingManager::TrainingThreadFunc(
     } else {
         spdlog::info("TrainingManager: Training stopped");
     }
+
+    current_task_id_.store(0);
+    // The next start may join us while holding mutex_. No callbacks, manager
+    // access or cleanup requiring that mutex may follow this publication.
+    is_training_.store(false);
 }
 
 void TrainingManager::ClearTrainedModel() {

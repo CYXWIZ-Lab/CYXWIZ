@@ -10,7 +10,8 @@ namespace cyxwiz {
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 std::string BuildRecurrentFormalParameterOverflowFallbackMessage(const char* layer_name);
-void DisableArrayFireCudaRecurrentAfterFailure(
+// Exported so placement-evidence tests can exercise the recording path.
+CYXWIZ_API void DisableArrayFireCudaRecurrentAfterFailure(
     RecurrentLayerKind kind,
     const char* layer_name,
     size_t batch_size,

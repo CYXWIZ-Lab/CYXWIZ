@@ -17,7 +17,10 @@ void TestResultsPanel::SetResults(const TestingMetrics& results) {
     std::lock_guard<std::mutex> lock(results_mutex_);
     results_ = results;
     has_results_ = true;
-    if (results.regression_mode) {
+    if (results.causal_lm_mode) {
+        spdlog::info("TestResultsPanel: Received causal LM results: {} windows, {} tokens",
+            results.total_samples, results.total_target_values);
+    } else if (results.regression_mode) {
         spdlog::info(
             "TestResultsPanel: Received regression results (MAE={:.6f}, "
             "RMSE={:.6f})",
@@ -50,12 +53,14 @@ void TestResultsPanel::Render() {
             bool failed = false;
             std::string failure_message;
             bool regression_mode = false;
+            bool causal_lm_mode = false;
             {
                 std::lock_guard<std::mutex> lock(results_mutex_);
                 failed = !results_.is_complete &&
                          !results_.status_message.empty();
                 failure_message = results_.status_message;
                 regression_mode = results_.regression_mode;
+                causal_lm_mode = results_.causal_lm_mode;
             }
             if (failed) {
                 ImGui::TextColored(ImVec4(0.95f, 0.3f, 0.3f, 1.0f),
@@ -82,21 +87,21 @@ void TestResultsPanel::Render() {
                     ImGui::EndTabItem();
                 }
 
-                if (!regression_mode &&
+                if (!regression_mode && !causal_lm_mode &&
                     ImGui::BeginTabItem(ICON_FA_TABLE " Confusion Matrix")) {
                     selected_tab_ = 1;
                     RenderConfusionMatrixTab();
                     ImGui::EndTabItem();
                 }
 
-                if (!regression_mode &&
+                if (!regression_mode && !causal_lm_mode &&
                     ImGui::BeginTabItem(ICON_FA_LIST_UL " Per-Class Metrics")) {
                     selected_tab_ = 2;
                     RenderPerClassTab();
                     ImGui::EndTabItem();
                 }
 
-                if (!regression_mode &&
+                if (!regression_mode && !causal_lm_mode &&
                     ImGui::BeginTabItem(ICON_FA_MAGNIFYING_GLASS " Predictions")) {
                     selected_tab_ = 3;
                     RenderPredictionsTab();
@@ -148,6 +153,17 @@ void TestResultsPanel::RenderToolbar() {
 
 void TestResultsPanel::RenderOverviewTab() {
     std::lock_guard<std::mutex> lock(results_mutex_);
+
+    if (results_.causal_lm_mode) {
+        ImGui::Text("Next-token evaluation");
+        ImGui::Separator();
+        ImGui::Text("Test loss: %.6f", results_.test_loss);
+        ImGui::Text("Token accuracy: %.2f%%", results_.test_accuracy * 100);
+        ImGui::Text("Windows: %d", results_.total_samples);
+        ImGui::Text("Valid target tokens: %zu", results_.total_target_values);
+        ImGui::Text("Time: %.3fs", results_.total_time_seconds);
+        return;
+    }
 
     // Main metrics section
     ImGui::BeginChild("OverviewMetrics", ImVec2(0, 0), true);

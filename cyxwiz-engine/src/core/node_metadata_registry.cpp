@@ -1264,8 +1264,9 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         "",
         {}, {{"Dataset", PinType::Dataset, true,
               "Loaded dataset with source, schema, column-role, row-count, and backing-store metadata."}},
-        {{"file_path", "file", "", "Initial file selected by the dialog", {}, "*.csv;*.tsv;*.parquet;*.feather;*.fea;*.arrow;*.ipc"},
-         {"file_type", "enum", "auto", "Input format", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}, ""},
+        {{"file_path", "file", "", "Initial file selected by the dialog", {}, "*.csv;*.tsv;*.parquet;*.feather;*.fea;*.arrow;*.ipc;*.zip"},
+         {"file_type", "enum", "auto", "Input format", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc", "zip_text"}, ""},
+         {"archive_member", "string", "", "Exact ZIP member paths, one per line; original UTF-8 rows in selection order with SHA-256 provenance; up to 4096 selections / 64 MiB combined text", {}, ""},
          {"configured", "bool", "false", "Whether the dialog has applied a source contract", {}, "", "", "", false, false,
           ParameterConsumption::UiOnly}},
         NodeImplementationStatus::Implemented, 0}, NodePropertiesEditor::Dialog));
@@ -1295,6 +1296,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"log_interval", "int", "10", "Training metric and log interval in batches", {}, "0-100000", "", "Training", false, true},
          {"validation_freq", "int", "1", "Validation frequency in epochs", {}, "1-10000", "", "Training", false, true},
          {"seed", "int", "42", "Batching random seed", {}, "0-2147483647", "", "Training", false, true},
+         {"model_seed", "int", "-1", "Model RNG seed: -1 leaves unset; seeds fresh-run ArrayFire initialization and dropout, not checkpoint continuation", {}, "-1-2147483647", "", "Training", false, true},
          {training_contract::kGradientAccumulationStepsKey,
           "int",
           training_contract::kGradientAccumulationStepsDefaultValue,
@@ -1305,6 +1307,10 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
           "Training",
           false,
           true},
+         {"generation_preview_enabled", "bool", "false", "Generate samples between training epochs", {}, "", "", "Generation previews", false, false},
+         {"generation_preview_every_epochs", "int", "20", "Generate every N completed epochs", {}, "1-10000", "", "Generation previews", false, false},
+         {"generation_preview_max_new_tokens", "int", "32", "Maximum generated tokens per prompt", {}, "1-128", "", "Generation previews", false, false},
+         {"generation_preview_prompts", "string", "", "One prompt per line; 1-8 prompts. Uses the training token-window vocabulary, greedy decoding, console and run artifacts.", {}, "", "", "Generation previews", false, false},
          {"balance_classes", "bool", "false", "Apply training-only class balancing", {}, "", "", "Balancing", false, true},
          {"balance_mode", "enum", "none", "Class balancing mode", {"none", "oversample", "undersample", "weighted_sampler"}, "", "", "Balancing", false, true},
          {"balance_target", "string", "max", "Class balancing target", {}, "", "", "Balancing", false, true},
@@ -1367,6 +1373,14 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
           ParameterConsumption::UiOnly}},
         NodeImplementationStatus::Implemented, 0}, NodePropertiesEditor::Dialog));
 
+    // SQL remains blocked in pipelines; QueryEditor owns exploration.
+    RegisterNode({NodeType::SQLQuery, NodeCategory::DataSources, "SQL Query", ICON_FA_DATABASE,
+        {"sql", "query", "database"}, 0, false, "Execute SQL query", "", "",
+        {{"Source", PinType::Dataset, false, "Input table"}},
+        {{"Result", PinType::Dataset, true, "Query result"}},
+        {{"query", "string", "SELECT * FROM data", "SQL query", {}, ""}},
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
     // ===== Legacy File Format Nodes (hidden - use DataInput/DataOutput instead) =====
     // Note: Commented out to clean up Node Browser - functionality consolidated into DataInput/DataOutput
     /*
@@ -1396,12 +1410,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         {{"file_path", "file", "", "JSON file", {}, "*.json"}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
-    RegisterNode({NodeType::SQLQuery, NodeCategory::DataSources, "SQL Query", ICON_FA_DATABASE,
-        {"sql", "query", "database"}, 0, false, "Execute SQL query", "", "",
-        {{"Source", PinType::Dataset, false, "Input table"}},
-        {{"Result", PinType::Dataset, true, "Query result"}},
-        {{"query", "string", "SELECT * FROM data", "SQL query", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+
 
     RegisterNode({NodeType::HDF5Dataset, NodeCategory::DataSources, "HDF5 Reader", ICON_FA_HARD_DRIVE,
         {"hdf5", "h5", "scientific"}, 0, false, "Read HDF5 dataset", "", "",
@@ -1557,11 +1566,13 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GroupByAggregate, NodeCategory::DataTransform, "GroupBy", ICON_FA_OBJECT_GROUP,
-        {"group", "aggregate", "sum"}, 0, false, "Group and aggregate", "", "",
+        {"group", "aggregate", "sum", "text", "concatenate"}, 0, false, "Group rows and aggregate numbers or ordered text", "", "",
         {{"Table", PinType::Dataset, true, "Input"}},
         {{"Grouped", PinType::Dataset, true, "Aggregated"}},
         {{"group_columns", "string", "", "Comma-separated grouping columns", {}, "", "Group columns", "Grouping", true},
-         {"aggregations", "string", "", "Comma-separated COUNT, SUM, AVG, MIN, or MAX expressions with optional aliases", {}, "", "Aggregations", "Grouping", true}},
+         {"aggregations", "string", "", "Comma-separated COUNT, SUM, AVG, MIN, MAX, MEDIAN, MODE or STRING_AGG(column) expressions; optional AS alias", {}, "", "Aggregations", "Grouping", true},
+         {"text_order_by", "string", "", "Required for STRING_AGG: comma-separated numeric/text columns, ascending, nulls last. Equal keys use text as tie-break. Null text is skipped; all-null groups return null.", {}, "", "Text order columns", "Text aggregation"},
+         {"text_separator", "string", " ", "Literal separator for STRING_AGG; default is one space. Empty joins without a separator.", {}, "", "Text separator", "Text aggregation"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SortRows, NodeCategory::DataTransform, "Sorter", ICON_FA_ARROW_DOWN_LONG,
@@ -2240,27 +2251,31 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
 
     RegisterNode({NodeType::RNN, NodeCategory::Recurrent, "RNN", ICON_FA_REPEAT,
         {"rnn", "recurrent", "sequence"}, 0, false,
-        "Blocked simple-RNN compatibility node",
-        "Studio has no RNN backend layer, Python binding, ModelBuilder module, "
-        "or training owner. It must not be approximated with a GRU.", "",
-        {{"Input", PinType::Tensor, true, "Legacy sequence input [batch, sequence, features]."}},
-        {{"Output", PinType::Tensor, true, "Legacy recurrent output; unavailable while blocked."},
-         {"Hidden", PinType::Tensor, false, "Optional legacy hidden state; unavailable while blocked."}},
-        {{"input_size", "int", "0", "Legacy auto-derived feature count", {}, "Derived from the previous layer output.",
+        "Trainable simple (Elman) recurrent sequence layer",
+        "Engine training supports unidirectional, stacked simple RNN with "
+        "tanh or relu nonlinearity and dropout=0.0 on the native CPU "
+        "recurrent reference layer. bidirectional=true fails closed.", "",
+        {{"Input", PinType::Tensor, true,
+          "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
+        {{"Output", PinType::Tensor, true,
+          "Full sequence [batch, sequence, hidden] when return_sequences=true; otherwise [batch, hidden]."},
+         {"Hidden", PinType::Tensor, false,
+          "Legacy compatibility pin only. Engine SequentialModel does not route a separate h_n output; leave disconnected."}},
+        {{"input_size", "int", "0", "Auto-derived input feature count", {}, "Derived from the previous layer output.",
           "Input Size", "Recurrent", true, true},
-         {"hidden_size", "int", "256", "Legacy hidden-state width", {}, "1-1048576",
+         {"hidden_size", "int", "256", "Hidden-state width", {}, "1-1048576",
           "Hidden Size", "Recurrent", true, false},
-         {"num_layers", "int", "1", "Legacy stacked-layer count", {}, "1-1048576",
+         {"num_layers", "int", "1", "Number of stacked recurrent layers", {}, "1-1048576",
           "Layers", "Recurrent", true, false},
-         {"bidirectional", "bool", "false", "Legacy bidirectional intent", {}, "",
+         {"bidirectional", "bool", "false", "Must remain false; reverse-direction RNN is not implemented", {}, "",
           "Bidirectional", "Recurrent", true, false},
-         {"return_sequences", "bool", "false", "Legacy full-sequence output intent", {}, "",
+         {"return_sequences", "bool", "false", "Return every timestep instead of the final timestep", {}, "",
           "Return Sequences", "Output", true, false},
-         {"dropout", "float", "0.0", "Legacy inter-layer dropout", {}, "0.0-1.0",
+         {"dropout", "float", "0.0", "Must remain 0.0; use an explicit Dropout node", {}, "0.0-0.0",
           "Dropout", "Regularization", true, false},
-         {"nonlinearity", "string", "tanh", "Legacy activation intent from registry-era graphs", {}, "",
+         {"nonlinearity", "string", "tanh", "Cell nonlinearity: tanh or relu", {"tanh", "relu"}, "",
           "Nonlinearity", "Recurrent", true, false}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Bidirectional, NodeCategory::Recurrent, "Bidirectional", ICON_FA_REPEAT,
         {"bidirectional", "wrapper", "sequence"}, 0, false,
@@ -2402,6 +2417,8 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           "Feed-forward Width", "Transformer", true, false},
          {"dropout", "float", "0.1", "Training dropout probability", {}, "0.0-0.999",
           "Dropout", "Regularization", false, false},
+         {"ffn_dropout", "float", "0.0", "Dropout after FFN activation, before its second Dense; zero preserves legacy blocks", {}, "0.0-0.999",
+          "FFN Hidden Dropout", "Regularization", false, false},
          {"norm_first", "bool", "false", "Apply normalization before each sublayer", {}, "",
           "Pre-Norm", "Transformer", false, true}},
         NodeImplementationStatus::Implemented, 0});
@@ -2424,8 +2441,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           "Attention Heads", "Transformer", true, false},
          {"dim_feedforward", "int", "2048", "Inner feed-forward feature width", {}, "1-1048576",
           "Feed-forward Width", "Transformer", true, false},
-         {"dropout", "float", "0.1", "Training dropout probability", {}, "0.0-0.999",
+         {"dropout", "float", "0.0", "Training dropout probability. Keep zero for strict ArrayFire causal-LM training; nonzero dropout remains a compatibility path until transformer-dropout residency is proven for this graph contract.", {}, "0.0-0.999",
           "Dropout", "Regularization", false, false},
+         {"ffn_dropout", "float", "0.0", "Dropout after FFN activation, before its second Dense; zero preserves legacy blocks", {}, "0.0-0.999",
+          "FFN Hidden Dropout", "Regularization", false, false},
          {"norm_first", "bool", "false", "Apply normalization before each sublayer", {}, "",
           "Pre-Norm", "Transformer", false, true}},
         NodeImplementationStatus::Implemented, 0});
@@ -2598,9 +2617,9 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
     RegisterNode({NodeType::Upsample, NodeCategory::Upsampling, "Upsample", ICON_FA_EXPAND,
         {"upsample", "resize", "interpolate"}, 0, false,
         "Blocked spatial upsampling layer retained for graph compatibility",
-        "A native nearest/bilinear backend primitive exists, but GraphCompiler, "
-        "ModelBuilder, and SequentialModel do not construct it for Studio training. "
-        "The numeric mode field is retained only for saved-graph compatibility.",
+        "ArrayFire-first nearest/bilinear execution and exact ModelBuilder construction exist. "
+        "Studio remains blocked pending spatial batch-layout and saved-graph training integration. "
+        "Interpolation codes remain 0=nearest and 1=bilinear for saved-graph compatibility.",
         "",
         {{"Input", PinType::Tensor, true,
           "Legacy image feature-map input; no executable Engine layout contract exists yet."}},
@@ -2615,9 +2634,9 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
     RegisterNode({NodeType::PixelShuffle, NodeCategory::Upsampling, "Pixel Shuffle", ICON_FA_EXPAND,
         {"pixel", "shuffle", "subpixel", "upsample"}, 0, false,
         "Blocked depth-to-space layer retained for graph compatibility",
-        "A native backend primitive exists, but GraphCompiler, ModelBuilder, "
-        "and SequentialModel do not construct it for Studio training. Input "
-        "channel divisibility and ArrayFire-first execution remain unowned.",
+        "ArrayFire-first depth-to-space execution, channel-divisibility validation, "
+        "and exact ModelBuilder construction exist. Studio remains blocked pending "
+        "spatial batch-layout and saved-graph training integration.",
         "",
         {{"Input", PinType::Tensor, true,
           "Legacy image feature map whose channels must be divisible by upscale_factor squared."}},
@@ -3403,12 +3422,16 @@ void NodeMetadataRegistry::InitializeDNNNodes() {
 void NodeMetadataRegistry::InitializeTextNodes() {
     RegisterNode({NodeType::TextCleanNode, NodeCategory::TextProcessing, "Text Clean", ICON_FA_ERASER,
         {"clean", "text", "normalize", "lowercase", "html"}, 0, false,
-        "Clean one text column with lowercase, HTML removal, and special-character normalization", "", "",
+        "Clean one text column; optional parsed HTML preserves source text, entities and paragraph boundaries",
+        "Legacy mode keeps existing behavior. Parsed HTML requires Remove HTML on, Lowercase and special-character normalization off. Appends cleaned text, HTML title and versioned policy; original columns remain unchanged. Optional paired comment markers exclude surrounding navigation. No scripts are executed or URLs fetched.", "",
         {{"Text", PinType::Dataset, true, "Input text table"}},
         {{"Cleaned", PinType::Dataset, true, "Input table plus cleaned text column"}},
         {{"text_column", "string", "", "Text column", {}, ""},
          {"lowercase", "bool", "true", "Lowercase text", {}, ""},
          {"remove_html", "bool", "true", "Remove HTML tags", {}, ""},
+         {"html_mode", "enum", "legacy_tags", "HTML handling: legacy tag regex or optional parsed body with entities and paragraph boundaries", {"legacy_tags", "parsed_html"}, ""},
+         {"html_begin_comment", "string", "", "Parsed HTML: exact opening comment text (without delimiters); supply both markers or neither", {}, ""},
+         {"html_end_comment", "string", "", "Parsed HTML: exact closing comment text; missing/duplicate markers fail", {}, ""},
          {"remove_special_chars", "bool", "true", "Normalize special characters", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
@@ -3417,8 +3440,12 @@ void NodeMetadataRegistry::InitializeTextNodes() {
         "Tokenize text, build/load vocabulary, and pad/truncate sequences", "", "",
         {{"Text", PinType::Dataset, true, "Text"}},
         {{"Tokens", PinType::Tensor, true, "Token indices"}},
-        {{"tokenizer_type", "enum", "1", "Mode", {"0", "1", "2"}, ""},
-         {"text_col", "string", "", "Text column", {}, ""},
+        {{"tokenizer_type", "enum", "1", "Mode (3: Byte BPE; 4: WordPiece; 5/6: optional SentencePiece; Byte BPE lowercase=false)", {"0", "1", "2", "3", "4", "5", "6"}, ""},
+         {"text_col", "string", "", "Text column", {}, "Required for encoding and round-trip modes; ignored by decode mode."},
+         {"output_mode", "enum", "wide", "Token output", {"wide", "causal_windows", "decode", "roundtrip"}, ""},
+         {"document_id_col", "string", "", "Unique document ID column (windows)", {}, ""},
+         {"split_col", "string", "split", "Source split column (windows)", {}, ""},
+         {"token_ids_col", "string", "token_ids", "Token ID list column (decode)", {}, "String column containing IDs separated by spaces or commas; decode mode falls back to tok_0..tok_n when absent."},
          {"label_col", "string", "", "Label column", {}, ""},
          {"max_length", "int", "256", "Max sequence length", {}, ""},
          {"lowercase", "bool", "true", "Convert text to lowercase", {}, ""},

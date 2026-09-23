@@ -144,8 +144,11 @@ int main() {
 
     {
         const auto& covered = gui::properties_truth::SpecializedTruthCoverageNodeTypes();
-        Check(covered.size() == 76,
+        // 76 tofix48 baseline nodes + RNN (tofix68 Studio RNN wiring).
+        Check(covered.size() == 77,
               "tofix48 baseline should record each specialized truth-covered node");
+        Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::RNN),
+              "RNN should be in specialized truth coverage");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::DataInput),
               "DataInput should be in specialized truth coverage");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::DataOutput),
@@ -1003,10 +1006,23 @@ int main() {
                   HasStatus(*depth,
                             gui::properties_truth::TruthStatus::CompilerOnly),
               "legacy num_layers=1 should be visible as compatibility-only");
-        Check(contract != nullptr && contract->effective_value.find("one CPU") !=
+        Check(contract != nullptr && contract->effective_value.find("one attention block") !=
                   std::string::npos,
-              "Transformer truth should disclose one CPU-backed block");
+              "Transformer truth should disclose one block with selected-backend execution");
 
+
+        const auto* ffn = FindProperty(report, "ffn_dropout");
+        Check(ffn != nullptr && std::stod(ffn->effective_value)==0.0,
+              "old graph FFN dropout defaults to zero");
+        encoder.parameters["ffn_dropout"] = "0.25";
+        const auto explicit_ffn = gui::properties_truth::ResolveNodeTruth(encoder);
+        ffn = FindProperty(explicit_ffn, "ffn_dropout");
+        Check(!explicit_ffn.has_issue && ffn != nullptr && std::stod(ffn->effective_value)==0.25,
+              "FFN dropout must expose effective runtime value");
+        encoder.parameters["ffn_dropout"] = "nan";
+        Check(gui::properties_truth::ResolveNodeTruth(encoder).has_issue,
+              "invalid FFN dropout cannot be executable");
+        encoder.parameters.erase("ffn_dropout");
         encoder.parameters["num_layers"] = "6";
         const auto invalid = gui::properties_truth::ResolveNodeTruth(encoder);
         const auto* invalid_contract =
@@ -1609,6 +1625,21 @@ int main() {
               "legacy min_freq alias should be cleared after canonical edit");
     }
 
+    {
+        auto loader = MakeNode(900, gui::NodeType::DataLoader, "Seed settings");
+        auto report = gui::properties_truth::ResolveNodeTruth(loader);
+        const auto* seed = FindProperty(report, "model_seed");
+        Check(seed && seed->effective_value == "-1", "old graph model seed remains unset");
+        loader.parameters["model_seed"] = "52";
+        report = gui::properties_truth::ResolveNodeTruth(loader);
+        seed = FindProperty(report, "model_seed");
+        Check(seed && seed->effective_value == "52" && seed->owner == gui::properties_truth::TruthOwner::Runtime,
+              "model seed is runtime-owned and distinct from data seed");
+        loader.parameters["model_seed"] = "52oops";
+        report = gui::properties_truth::ResolveNodeTruth(loader);
+        seed = FindProperty(report, "model_seed");
+        Check(seed && HasStatus(*seed, gui::properties_truth::TruthStatus::Conflicting), "invalid seed must be visible in Properties");
+    }
     std::cout << "Properties truth resolver tests passed\n";
     return 0;
 }

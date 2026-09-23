@@ -141,6 +141,7 @@ struct TransformerConfiguration {
     size_t feedforward_width = 2048;
     size_t max_sequence_length = 5000;
     float dropout = 0.1f;
+    float ffn_dropout = 0.0f;
     bool use_bias = true;
     bool norm_first = false;
 };
@@ -233,6 +234,14 @@ inline std::optional<std::string> ResolveTransformerConfiguration(
         return std::nullopt;
     }
 
+    if (const std::string* text = FindNonEmpty(parameters, "ffn_dropout")) {
+        const auto probability = ParseFiniteDouble(*text);
+        if (!probability || *probability < 0.0 || *probability >= 1.0 ||
+            static_cast<float>(*probability) >= 1.0f) {
+            return std::string(layer_name) + " ffn_dropout must be a finite value in [0,1).";
+        }
+        configuration.ffn_dropout = static_cast<float>(*probability);
+    }
     long long feedforward_width = model_width * 4;
     if (const auto error = ValidatePositiveIntegerAliases(
             parameters, layer_name, "dim_feedforward",

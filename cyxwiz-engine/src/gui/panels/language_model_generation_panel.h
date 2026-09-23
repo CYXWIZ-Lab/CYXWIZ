@@ -52,6 +52,7 @@ private:
     bool use_imported_model_ = false;
     std::string packaged_tokenizer_config_json_;
     std::string packaged_tokenizer_vocab_text_;
+    std::string packaged_tokenizer_model_data_;
     std::string packaged_tokenizer_summary_;
     std::unique_ptr<SequentialModel> imported_model_;
     std::string imported_model_source_;

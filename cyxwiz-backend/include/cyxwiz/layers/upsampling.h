@@ -25,6 +25,8 @@ public:
     explicit Upsample2DLayer(int scale_factor = 2, UpsampleMode mode = UpsampleMode::Nearest);
 
     Tensor Forward(const Tensor& input) override;
+    // Requires the latest Forward to have succeeded. A failed Forward clears
+    // that context; a rejected gradient leaves it available for correction.
     Tensor Backward(const Tensor& grad_output) override;
     std::map<std::string, Tensor> GetParameters() override { return {}; }
     void SetParameters(const std::map<std::string, Tensor>&) override {}

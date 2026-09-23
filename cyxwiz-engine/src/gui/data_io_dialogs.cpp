@@ -975,6 +975,7 @@ DataLoaderDialog::DataLoaderDialog(MLNode* node)
         if (validation_freq_ < 1) validation_freq_ = 1;
         ReadIntParam(node_->parameters, "seed", seed_);
         if (seed_ < 0) seed_ = 0;
+        ReadIntParam(node_->parameters, "model_seed", model_seed_);
         ReadIntParam(node_->parameters,
                      cyxwiz::training_contract::kGradientAccumulationStepsKey,
                      grad_accum_steps_);
@@ -1000,6 +1001,16 @@ DataLoaderDialog::DataLoaderDialog(MLNode* node)
         CopyToBuffer(checkpoint_dir_, sizeof(checkpoint_dir_),
                      ReadStringParamValue(node_->parameters, "checkpoint_dir"));
     }
+    if (node_) {
+    generation_preview_enabled_ = false;
+    generation_preview_every_epochs_ = 20;
+    generation_preview_max_new_tokens_ = 32;
+    ReadBoolParam(node_->parameters, "generation_preview_enabled", generation_preview_enabled_);
+    ReadIntParam(node_->parameters, "generation_preview_every_epochs", generation_preview_every_epochs_);
+    ReadIntParam(node_->parameters, "generation_preview_max_new_tokens", generation_preview_max_new_tokens_);
+    CopyToBuffer(generation_preview_prompts_, sizeof(generation_preview_prompts_),
+                 ReadStringParamValue(node_->parameters, "generation_preview_prompts"));
+    }
 }
 
 void DataLoaderDialog::Apply() {
@@ -1013,6 +1024,7 @@ void DataLoaderDialog::Apply() {
     node_->parameters["log_interval"] = std::to_string(log_interval_);
     node_->parameters["validation_freq"] = std::to_string(validation_freq_);
     node_->parameters["seed"] = std::to_string(seed_);
+    node_->parameters["model_seed"] = std::to_string(model_seed_);
     node_->parameters[cyxwiz::training_contract::kGradientAccumulationStepsKey] =
         std::to_string(
             cyxwiz::training_contract::ClampGradientAccumulationSteps(
@@ -1025,6 +1037,10 @@ void DataLoaderDialog::Apply() {
     node_->parameters["save_best_checkpoint"] = save_best_checkpoint_ ? "true" : "false";
     node_->parameters["early_stopping_patience"] = std::to_string(early_stopping_patience_);
     node_->parameters["checkpoint_dir"] = checkpoint_dir_;
+    node_->parameters["generation_preview_enabled"] = generation_preview_enabled_ ? "true" : "false";
+    node_->parameters["generation_preview_every_epochs"] = std::to_string(generation_preview_every_epochs_);
+    node_->parameters["generation_preview_max_new_tokens"] = std::to_string(generation_preview_max_new_tokens_);
+    node_->parameters["generation_preview_prompts"] = generation_preview_prompts_;
     node_->description = "epochs=" + std::to_string(epochs_) +
                           ", batch=" + std::to_string(batch_size_) +
                           (shuffle_ ? ", shuffled" : ", ordered") +
@@ -1047,6 +1063,7 @@ void DataLoaderDialog::Reset() {
     log_interval_ = 10;
     validation_freq_ = 1;
     seed_ = 42;
+    model_seed_ = -1;
     grad_accum_steps_ =
         cyxwiz::training_contract::kGradientAccumulationStepsDefault;
     balance_classes_ = false;
@@ -1070,6 +1087,7 @@ void DataLoaderDialog::Reset() {
     if (validation_freq_ < 1) validation_freq_ = 1;
     ReadIntParam(original_params_, "seed", seed_);
     if (seed_ < 0) seed_ = 0;
+    ReadIntParam(original_params_, "model_seed", model_seed_);
     ReadIntParam(original_params_,
                  cyxwiz::training_contract::kGradientAccumulationStepsKey,
                  grad_accum_steps_);
@@ -1095,9 +1113,28 @@ void DataLoaderDialog::Reset() {
     CopyToBuffer(checkpoint_dir_, sizeof(checkpoint_dir_),
                  ReadStringParamValue(original_params_, "checkpoint_dir"));
     has_changes_ = false;
+    generation_preview_enabled_ = false;
+    generation_preview_every_epochs_ = 20;
+    generation_preview_max_new_tokens_ = 32;
+    ReadBoolParam(original_params_, "generation_preview_enabled", generation_preview_enabled_);
+    ReadIntParam(original_params_, "generation_preview_every_epochs", generation_preview_every_epochs_);
+    ReadIntParam(original_params_, "generation_preview_max_new_tokens", generation_preview_max_new_tokens_);
+    CopyToBuffer(generation_preview_prompts_, sizeof(generation_preview_prompts_),
+                 ReadStringParamValue(original_params_, "generation_preview_prompts"));
+
 }
 
 void DataLoaderDialog::RenderContent() {
+    if (ImGui::CollapsingHeader("Generation previews")) {
+        if (ImGui::Checkbox("Generate samples during training", &generation_preview_enabled_)) has_changes_ = true;
+        ImGui::BeginDisabled(!generation_preview_enabled_);
+        if (ImGui::InputInt("Every N completed epochs", &generation_preview_every_epochs_)) has_changes_ = true;
+        if (ImGui::InputInt("Maximum new tokens (1-128)", &generation_preview_max_new_tokens_)) has_changes_ = true;
+        if (ImGui::InputTextMultiline("Prompts", generation_preview_prompts_, sizeof(generation_preview_prompts_), ImVec2(-1,100))) has_changes_ = true;
+        ImGui::TextWrapped("One prompt per line (1-8). Greedy previews use the causal token-window vocabulary. Training pauses between epochs; results appear in the Console and run artifacts.");
+        ImGui::EndDisabled();
+    }
+
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 accent = style.Colors[ImGuiCol_HeaderActive];
 
@@ -1176,6 +1213,15 @@ void DataLoaderDialog::RenderContent() {
     }
     ImGui::SameLine();
     ImGui::TextDisabled("(split/shuffle order)");
+    ImGui::Spacing();
+    ImGui::Text("Model RNG seed:");
+    ImGui::SameLine(130);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("##model_rng_seed", &model_seed_)) has_changes_ = true;
+    ImGui::SameLine();
+    ImGui::TextDisabled("(-1 unset; fresh-run weights/dropout)");
+    if (model_seed_ < -1)
+        ImGui::TextColored(ImVec4(1, .4f, .3f, 1), "Model RNG seed must be -1 or nonnegative.");
 
     ImGui::Spacing();
     ImGui::TextColored(accent, "Class Imbalance");

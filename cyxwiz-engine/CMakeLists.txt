@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(cyxwiz-engine)
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/CyxWizHtmlParser.cmake")
+
 option(CYXWIZ_ENABLE_TRACY "Enable optional Tracy profiler integration when Tracy is installed" OFF)
 include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/CyxWizDataConvert.cmake")
 
@@ -154,6 +156,7 @@ set(ENGINE_SOURCES
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
     src/core/pipeline_runtime_capabilities.cpp  # Data Studio runtime support truth
     src/core/data_studio_execution_plan.cpp  # Track 22 typed Data Studio plan
+    src/core/data_studio_capabilities.cpp
     src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
     src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
     src/core/materialization_cache.cpp  # Persistent prepared dataset materialization cache
@@ -181,6 +184,7 @@ set(ENGINE_SOURCES
     src/core/image_utils.cpp
     src/core/model_builder.cpp
     src/core/synthetic_batch.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/debug_executor.cpp
     src/core/debug_numerics.cpp
     src/core/debug_batch_inspector.cpp
@@ -212,10 +216,13 @@ set(ENGINE_SOURCES
     src/core/sequence_arrow_batcher.cpp
     src/core/metric_learning_metrics.cpp
     src/core/training_executor.cpp
+    src/core/training_generation_preview.cpp
+    src/core/language_model_generation.cpp
     src/core/training_manager.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/test_executor.cpp
+    src/core/test_executor_sequence.cpp
     # Node executors (shared logic for nodes and panels)
     src/core/node_executors/kmeans_executor.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
@@ -225,7 +232,8 @@ set(ENGINE_SOURCES
     src/core/node_executors/log_transform_operator.cpp       # Phase 4 Band 1
     src/core/node_executors/differencing_operator.cpp        # Phase 4 Band 1
     src/core/node_executors/time_series_features_operator.cpp  # Phase 4 Band 1
-    src/core/node_executors/text_tokenizer_operator.cpp      # Fix B Band 1
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp      # Fix B Band 1
     src/core/node_executors/text_feature_matrix.cpp          # Shared dense/CSR text output
     src/core/node_executors/tfidf_vectorizer_operator.cpp    # Tool-to-Node Band 1
     src/core/node_executors/count_vectorizer_operator.cpp    # Tool-to-Node Band 1
@@ -275,6 +283,7 @@ set(ENGINE_SOURCES
     src/utils/shape_utils.cpp
     src/utils/labeling_utils.cpp
     src/core/test_manager.cpp
+    src/core/graph_compile_task.cpp
     src/core/checkpoint_manifest.cpp
     src/core/checkpoint_payload_io.cpp
     src/core/checkpoint_manager.cpp
@@ -286,6 +295,7 @@ set(ENGINE_SOURCES
     src/core/model_converter.cpp
     src/core/file_dialogs.cpp
     src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
     src/core/formats/text_dataset.cpp
     src/core/formats/timeseries_dataset.cpp
     src/core/formats/audio_dataset.cpp
@@ -298,6 +308,8 @@ set(ENGINE_SOURCES
     src/gui/node_editor_connection.cpp
     src/gui/node_editor_context_menu.cpp
     src/gui/node_editor_io.cpp
+    src/gui/node_editor_subgraph.cpp
+    src/gui/subgraph_document.cpp
     src/gui/node_type_import_registry.cpp
     src/gui/node_editor_nodes.cpp
     src/gui/node_editor_validation.cpp
@@ -1506,10 +1518,12 @@ add_executable(test_debug_executor
     src/core/sparse_feature_dataset_batcher.cpp
     src/core/sparse_feature_dataset_batcher_balancing.cpp
     src/core/synthetic_batch.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/debug_executor.cpp
     src/core/debug_numerics.cpp
     src/core/debug_loss_metric_explainer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
     src/core/text_arrow_adapter.cpp
     src/core/text_dataset_batcher.cpp
     src/core/parquet_backed_dataset.cpp
@@ -1794,10 +1808,24 @@ set_target_properties(test_dataset_audit PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: typed document token windows and Parquet/causal ingress =====
+add_executable(test_document_token_windows
+    tests/test_document_token_windows.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
+    src/core/sequence_arrow_batcher.cpp
+    src/core/arrow_dataset.cpp)
+target_compile_features(test_document_token_windows PRIVATE cxx_std_20)
+target_include_directories(test_document_token_windows PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_definitions(test_document_token_windows PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+target_link_libraries(test_document_token_windows PRIVATE Arrow::arrow_shared Parquet::parquet_shared spdlog::spdlog imgui::imgui cyxwiz-backend)
+set_target_properties(test_document_token_windows PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: Text Tokenizer Operator =====
 add_executable(test_text_tokenizer_operator
     tests/test_text_tokenizer_operator.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
 )
 
 target_include_directories(test_text_tokenizer_operator PRIVATE
@@ -1806,6 +1834,7 @@ target_include_directories(test_text_tokenizer_operator PRIVATE
 
 target_link_libraries(test_text_tokenizer_operator PRIVATE
     Arrow::arrow_shared
+    Parquet::parquet_shared
     spdlog::spdlog
     fmt::fmt
     cyxwiz-backend
@@ -1958,6 +1987,56 @@ set_target_properties(test_text_vectorizer_fitted_state PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Benchmark: Transformer Execution and Generation Boundaries =====
+add_executable(test_transformer_benchmark
+    tests/benchmarks/test_transformer_benchmark.cpp
+    src/core/language_model_generation.cpp)
+target_include_directories(test_transformer_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_transformer_benchmark PRIVATE cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_transformer_benchmark PRIVATE NOMINMAX)
+endif()
+set_target_properties(test_transformer_benchmark PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# ===== Test: Placement Observation Cache Session Round-Trip =====
+add_executable(test_placement_observation_cache_session
+    tests/test_placement_observation_cache_session.cpp)
+target_include_directories(test_placement_observation_cache_session PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_placement_observation_cache_session PRIVATE spdlog::spdlog cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_placement_observation_cache_session PRIVATE NOMINMAX)
+endif()
+set_target_properties(test_placement_observation_cache_session PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# ===== Benchmark: Recurrent Staged Plan vs Native CPU =====
+add_executable(test_recurrent_staged_benchmark
+    tests/benchmarks/test_recurrent_staged_benchmark.cpp)
+target_include_directories(test_recurrent_staged_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_recurrent_staged_benchmark PRIVATE cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_recurrent_staged_benchmark PRIVATE NOMINMAX)
+endif()
+set_target_properties(test_recurrent_staged_benchmark PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# ===== Test: Attention/Transformer Constructor Contracts =====
+add_executable(test_transformer_constructor tests/computation_truth/test_transformer_constructor.cpp)
+target_link_libraries(test_transformer_constructor PRIVATE cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_transformer_constructor PRIVATE NOMINMAX)
+endif()
+set_target_properties(test_transformer_constructor PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# ===== Test: Transformer Dropout Gradients and Device Residency =====
+add_executable(test_transformer_dropout
+    tests/computation_truth/test_transformer_dropout.cpp
+)
+target_include_directories(test_transformer_dropout PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_transformer_dropout PRIVATE cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_transformer_dropout PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_transformer_dropout PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: Computation Truth - Transformer Primitive Parity =====
 add_executable(test_computation_truth_transformer_primitives
     tests/computation_truth/test_computation_truth_transformer_primitives.cpp
@@ -2004,6 +2083,9 @@ add_executable(test_language_model_generation
     tests/test_language_model_generation.cpp
     src/core/language_model_generation.cpp
 )
+
+target_sources(test_language_model_generation PRIVATE tests/test_training_generation_preview.cpp src/core/training_generation_preview.cpp)
+target_link_libraries(test_language_model_generation PRIVATE spdlog::spdlog nlohmann_json::nlohmann_json)
 
 target_include_directories(test_language_model_generation PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -2328,6 +2410,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/sparse_feature_dataset.cpp
@@ -2435,6 +2518,7 @@ set_target_properties(test_graph_executor_simulation PROPERTIES
 # ===== Test: Legacy PipelineExecutor operator routing =====
 add_executable(test_pipeline_executor_operator_routing
     tests/test_pipeline_executor_operator_routing.cpp
+    tests/test_ordered_text_aggregation.cpp
     src/core/preprocessing_state.cpp
     src/core/arrow_dataset.cpp
     src/core/data_registry.cpp
@@ -2485,6 +2569,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/sparse_feature_dataset.cpp
@@ -2573,6 +2658,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/sparse_feature_dataset.cpp
@@ -2662,6 +2748,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/sparse_feature_dataset.cpp
@@ -2727,6 +2814,23 @@ endif()
 set_target_properties(test_data_studio_execution_plan PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== Test: shared Data Studio effective capabilities =====
+add_executable(test_data_studio_capabilities
+    tests/test_data_studio_capabilities.cpp
+    src/core/data_studio_capabilities.cpp
+    src/core/data_studio_execution_plan.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/node_metadata_registry.cpp
+)
+target_include_directories(test_data_studio_capabilities PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_data_studio_capabilities PRIVATE
+    imgui::imgui spdlog::spdlog nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_data_studio_capabilities PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_data_studio_capabilities PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: Pattern Template Guard =====
 add_executable(test_pattern_template_guard
@@ -2801,6 +2905,13 @@ set_target_properties(test_graph_compiler_deferred_nodes PROPERTIES
 # ===== Test: Graph Compiler Causal LM Shape Contract =====
 add_executable(test_graph_compiler_causal_lm_shape
     tests/test_graph_compiler_causal_lm_shape.cpp
+    tests/test_graph_compile_task.cpp
+    src/core/graph_compile_task.cpp
+    src/core/async_task_manager.cpp
+    src/core/crash_run_recorder.cpp
+    src/core/training_trace_collector.cpp
+    src/core/runtime_log_store.cpp
+    src/core/route_qualification_snapshot.cpp
     src/core/graph_compiler.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -2993,6 +3104,7 @@ set_target_properties(test_text_loader_csv_preflight PROPERTIES
 add_executable(test_tensor_reshape_runtime_contract
     tests/test_tensor_reshape_runtime_contract.cpp
     src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
 )
@@ -3023,6 +3135,7 @@ set_target_properties(test_tensor_reshape_runtime_contract PROPERTIES
 add_executable(test_executable_model_wrapper
     tests/test_executable_model_wrapper.cpp
     src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
 )
@@ -3053,6 +3166,7 @@ set_target_properties(test_executable_model_wrapper PROPERTIES
 add_executable(test_graph_executable_model
     tests/test_graph_executable_model.cpp
     src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
 )
@@ -3085,9 +3199,11 @@ add_executable(test_text_arrow_materializer
     src/core/pipeline_table_materializer.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
 )
@@ -3122,9 +3238,11 @@ add_executable(test_text_arrow_training_launch
     src/core/pipeline_table_materializer.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
 )
@@ -3156,6 +3274,7 @@ set_target_properties(test_text_arrow_training_launch PROPERTIES
 # ===== Test: Graph Training Sequence Preflight =====
 add_executable(test_graph_training_sequence_preflight
     tests/test_graph_training_sequence_preflight.cpp
+    src/core/sequence_arrow_batcher.cpp
     src/core/preprocessing_state.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
@@ -3195,6 +3314,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/sentiment_analyzer_operator.cpp
     src/core/node_executors/signal_processing_operators.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/tfidf_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/sparse_feature_dataset.cpp
@@ -3254,11 +3374,13 @@ add_executable(test_text_gui_training_launch
     src/core/pipeline_table_materializer.cpp
     src/core/preprocessing_state.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/data_registry_core.cpp
@@ -3303,6 +3425,7 @@ set_target_properties(test_text_gui_training_launch PROPERTIES
 add_executable(test_cyxmodel_sequence_assets
     tests/test_cyxmodel_sequence_assets.cpp
     src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
 )
 
 target_include_directories(test_cyxmodel_sequence_assets PRIVATE
@@ -3331,6 +3454,7 @@ set_target_properties(test_cyxmodel_sequence_assets PROPERTIES
 add_executable(test_cyxmodel_generation_metadata
     tests/test_cyxmodel_generation_metadata.cpp
     src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
 )
 
 target_include_directories(test_cyxmodel_generation_metadata PRIVATE
@@ -3360,6 +3484,7 @@ add_executable(test_cyxmodel_exporter_generation_metadata
     tests/test_cyxmodel_exporter_generation_metadata.cpp
     src/core/model_exporter.cpp
     src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
 )
 
 target_include_directories(test_cyxmodel_exporter_generation_metadata PRIVATE
@@ -3390,6 +3515,7 @@ add_executable(test_cyxmodel_layernorm_roundtrip
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
     src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
@@ -3402,6 +3528,7 @@ add_executable(test_cyxmodel_layernorm_roundtrip
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
     src/inference/text_inference_input.cpp
 )
 
@@ -3436,6 +3563,7 @@ add_executable(test_cyxmodel_mha_roundtrip
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
     src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
@@ -3448,6 +3576,7 @@ add_executable(test_cyxmodel_mha_roundtrip
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
     src/inference/text_inference_input.cpp
 )
 
@@ -3482,6 +3611,7 @@ add_executable(test_cyxmodel_transformer_encoder_roundtrip
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
     src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
@@ -3494,6 +3624,7 @@ add_executable(test_cyxmodel_transformer_encoder_roundtrip
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
 )
 
 target_include_directories(test_cyxmodel_transformer_encoder_roundtrip PRIVATE
@@ -3527,6 +3658,7 @@ add_executable(test_cyxmodel_transformer_decoder_roundtrip
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
     src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
@@ -3539,6 +3671,7 @@ add_executable(test_cyxmodel_transformer_decoder_roundtrip
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
 )
 
 target_include_directories(test_cyxmodel_transformer_decoder_roundtrip PRIVATE
@@ -3573,6 +3706,7 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     src/core/model_importer.cpp
     src/core/language_model_generation.cpp
     src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
@@ -3585,6 +3719,7 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
     src/inference/text_inference_input.cpp
     src/inference/language_model_inference_contract.cpp
 )
@@ -3627,6 +3762,8 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/sequence_arrow_batcher.cpp
     src/core/classification_decision.cpp
     src/core/training_executor.cpp
+    src/core/training_generation_preview.cpp
+    src/core/language_model_generation.cpp
     src/core/regression_target_transform.cpp
     src/core/preprocessing_state.cpp
     src/core/training_batcher_setup.cpp
@@ -3637,6 +3774,7 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/parquet_backed_dataset.cpp
@@ -3648,6 +3786,7 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/route_qualification_snapshot.cpp
     src/core/runtime_log_store.cpp
     src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
     src/plugin/registries/plugin_training_hook_manager.cpp
 )
 
@@ -3693,6 +3832,7 @@ add_executable(test_training_batcher_setup
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/parquet_backed_dataset.cpp
@@ -4104,6 +4244,8 @@ set_target_properties(test_console_session_model PROPERTIES
 # ===== TrainingExecutor test and benchmark runtime =====
 set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     src/core/training_executor.cpp
+    src/core/training_generation_preview.cpp
+    src/core/language_model_generation.cpp
     src/core/training_scheduler_controller.cpp
     src/core/regression_target_transform.cpp
     src/core/preprocessing_state.cpp
@@ -4116,6 +4258,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/parquet_backed_dataset.cpp
@@ -4161,11 +4304,26 @@ function(configure_training_executor_harness target_name)
 endfunction()
 
 # ===== Test: TrainingExecutor Arrow/Parquet Parity =====
+add_executable(test_causal_lm_testing
+    tests/test_causal_lm_testing.cpp
+    src/core/test_executor.cpp
+    src/core/test_executor_sequence.cpp
+    src/core/sequence_arrow_batcher.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES})
+configure_training_executor_harness(test_causal_lm_testing)
+target_sources(test_causal_lm_testing PRIVATE src/core/test_manager.cpp src/core/async_task_manager.cpp)
+
 add_executable(test_training_executor_arrow_parquet
     tests/test_training_executor_arrow_parquet.cpp
     ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
 )
 configure_training_executor_harness(test_training_executor_arrow_parquet)
+target_sources(test_training_executor_arrow_parquet PRIVATE tests/test_training_randomness.cpp)
+target_sources(test_training_executor_arrow_parquet PRIVATE
+    tests/test_training_spatial_ingress.cpp
+    src/core/test_executor.cpp
+    src/core/test_executor_sequence.cpp
+    src/core/sequence_arrow_batcher.cpp)
 
 # ===== Test: Sparse first-projection TrainingExecutor lifecycle =====
 add_executable(test_sparse_training_executor
@@ -4266,6 +4424,7 @@ add_executable(test_text_arrow_adapter
     src/core/formats/text_dataset.cpp
     src/core/dataset_base.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
 )
 
 target_include_directories(test_text_arrow_adapter PRIVATE
@@ -4299,6 +4458,7 @@ add_executable(test_text_dataset_batcher_arrow
     src/core/formats/text_dataset.cpp
     src/core/dataset_base.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
 )
@@ -4420,6 +4580,7 @@ add_executable(test_debugger_contracts
     src/core/debug_recommendation_engine.cpp
     src/core/debug_run_store.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
     src/core/preflight_validator.cpp
     src/core/text_preprocessing_tracer.cpp
     src/core/formats/text_dataset.cpp
@@ -4556,6 +4717,7 @@ add_executable(test_pipeline_materializer_cache
     src/core/pipeline_runtime_capabilities.cpp
     src/core/pipeline_table_materializer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
     src/core/node_executors/count_vectorizer_operator.cpp
     src/core/node_executors/text_feature_matrix.cpp
     src/core/preprocessing_state.cpp
@@ -4680,3 +4842,57 @@ endif()
 
 
 
+# Graph replacement admission has no renderer or backend dependencies.
+add_executable(test_graph_replacement_policy tests/test_graph_replacement_policy.cpp)
+target_include_directories(test_graph_replacement_policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_graph_replacement_policy PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# Native package storage, dtype and conversion contract.
+add_executable(test_cyxmodel_archive
+    tests/test_cyxmodel_archive.cpp
+    src/core/formats/cyxmodel_archive.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/model_converter.cpp
+)
+target_link_libraries(test_cyxmodel_archive PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json spdlog::spdlog fmt::fmt)
+set_target_properties(test_cyxmodel_archive PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# Generic bounded ZIP text reader; Data Input integration is tracked in tofix115.
+add_executable(test_archive_text_source
+    tests/test_archive_text_source.cpp
+    src/core/archive_text_source.cpp)
+target_compile_features(test_archive_text_source PRIVATE cxx_std_20)
+target_include_directories(test_archive_text_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_archive_text_source PRIVATE Arrow::arrow_shared LibArchive::LibArchive cyxwiz-backend)
+foreach(archive_input_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input
+        test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity)
+    target_sources(${archive_input_target} PRIVATE src/core/archive_text_source.cpp)
+    target_link_libraries(${archive_input_target} PRIVATE LibArchive::LibArchive)
+endforeach()
+set_target_properties(test_archive_text_source PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# Optional HTML provider is shared by all executables owning pipeline execution.
+foreach(html_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input
+        test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity)
+    cyxwiz_target_html_parser(${html_target})
+endforeach()
+add_executable(test_html_document_text tests/test_html_document_text.cpp)
+cyxwiz_target_html_parser(test_html_document_text)
+target_include_directories(test_html_document_text PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_html_document_text PRIVATE Arrow::arrow_shared nlohmann_json::nlohmann_json)
+set_target_properties(test_html_document_text PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_executable(test_html_document_text_unavailable tests/test_html_document_text.cpp src/core/html_document_text.cpp)
+target_include_directories(test_html_document_text_unavailable PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_html_document_text_unavailable PRIVATE Arrow::arrow_shared nlohmann_json::nlohmann_json)
+set_target_properties(test_html_document_text_unavailable PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# Visual subgraph persistence uses the actual node factory, without renderer startup.
+add_executable(test_subgraph_document tests/test_subgraph_document.cpp
+    src/gui/subgraph_document.cpp src/gui/node_editor_nodes.cpp
+    src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp
+    src/plugin/registries/plugin_node_registry.cpp)
+target_include_directories(test_subgraph_document PRIVATE src external/imnodes)
+target_compile_definitions(test_subgraph_document PRIVATE CYXWIZ_NODE_FACTORY_ONLY NOMINMAX)
+target_link_libraries(test_subgraph_document PRIVATE imgui::imgui nlohmann_json::nlohmann_json
+    spdlog::spdlog cyxwiz-backend)
+set_target_properties(test_subgraph_document PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

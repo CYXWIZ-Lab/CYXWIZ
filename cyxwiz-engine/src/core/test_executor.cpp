@@ -1,4 +1,6 @@
 #include "test_executor.h"
+#include "spatial_batch_layout.h"
+#include "spatial_sequential_head.h"
 #include "classification_decision.h"
 #include "model_builder.h"
 #include "training_batcher_setup.h"
@@ -181,7 +183,7 @@ bool TestExecutor::Initialize(int /*batch_size*/) {
 
     // Classification-only detail structures. Continuous targets use
     // MAE/RMSE across every output value instead of class decisions.
-    if (regression_mode) {
+    if (regression_mode || config_.sequence_batch.create_causal_lm_targets) {
         return true;
     }
 
@@ -224,6 +226,20 @@ void TestExecutor::Test(
     is_testing_.store(true);
     stop_requested_.store(false);
 
+    if (config_.sequence_batch.enabled) {
+        try {
+            TestCausalSequence(batch_size, batch_cb, complete_cb);
+        } catch (const std::exception& e) {
+            is_testing_.store(false);
+            UpdateMetrics([&](TestingMetrics& m) {
+                m.is_testing = false; m.is_complete = false;
+                m.status_message = std::string("Testing failed: ") + e.what();
+            });
+            throw;
+        }
+        return;
+    }
+
     // Initialize
     if (!Initialize(batch_size)) {
         const std::string detail =
@@ -262,8 +278,10 @@ void TestExecutor::Test(
     });
 
     // Create the test batcher using the dataset type that was trained.
+#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
     std::unique_ptr<DatasetBatcher> legacy_test_batcher;
     std::unique_ptr<TextDatasetBatcher> text_test_batcher;
+#endif
     std::unique_ptr<ArrowDatasetBatcher> arrow_test_batcher;
     std::unique_ptr<ParquetArrowBatcher> parquet_test_batcher;
 
@@ -285,6 +303,7 @@ void TestExecutor::Test(
             dataset_scope_ == TestDatasetScope::EntireProvidedDataset
                 ? std::move(batchers.parquet_train)
                 : std::move(batchers.parquet_test);
+#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
     } else if (use_text_dataset_) {
         text_test_batcher = std::make_unique<TextDatasetBatcher>(
             text_entry_,
@@ -330,6 +349,10 @@ void TestExecutor::Test(
         }
 
         legacy_test_batcher->SetFlatten(true);
+#else
+    } else {
+        throw std::runtime_error("This test harness only supports Arrow/Parquet sources");
+#endif
     }
 
     size_t total_batches = 0;
@@ -337,10 +360,12 @@ void TestExecutor::Test(
         total_batches = arrow_test_batcher ? arrow_test_batcher->GetNumBatches() : 0;
     } else if (use_parquet_dataset_) {
         total_batches = parquet_test_batcher ? parquet_test_batcher->GetNumBatches() : 0;
+#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
     } else if (use_text_dataset_) {
         total_batches = text_test_batcher ? text_test_batcher->GetNumBatches() : 0;
     } else {
         total_batches = legacy_test_batcher ? legacy_test_batcher->GetNumBatches() : 0;
+#endif
     }
     UpdateMetrics([total_batches](TestingMetrics& m) {
         m.total_batches = static_cast<int>(total_batches);
@@ -387,10 +412,12 @@ void TestExecutor::Test(
             batch = arrow_test_batcher->GetNextBatch();
         } else if (use_parquet_dataset_) {
             batch = parquet_test_batcher->GetNextBatch();
+#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
         } else if (use_text_dataset_) {
             batch = text_test_batcher->GetNextBatch();
         } else {
             batch = legacy_test_batcher->GetNextBatch();
+#endif
         }
 
         if (!batch.IsValid()) break;
@@ -607,7 +634,9 @@ Tensor TestExecutor::Forward(const Tensor& input) {
         spdlog::error("TestExecutor::Forward: Model not initialized");
         return Tensor();
     }
-    return model_->Forward(input);
+    return UsesSpatialSequentialInput(config_)
+        ? model_->Forward(SpatialBatchFromRows(input, config_.input_shape))
+        : model_->Forward(input);
 }
 
 float TestExecutor::ComputeLoss(const Tensor& predictions, const Tensor& targets) {

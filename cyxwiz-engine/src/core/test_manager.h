@@ -90,6 +90,8 @@ public:
      * Stop the current testing session
      */
     void StopTesting();
+    // Shutdown only: never wait while holding the worker cleanup mutex.
+    void WaitForTestingStop();
 
     /**
      * Export results to CSV file
@@ -111,7 +113,9 @@ public:
     using ProgressCallback = std::function<void(int batch, int total, float accuracy)>;
 
     void SetOnTestingStart(TestingStartCallback callback) { on_testing_start_ = callback; }
-    void SetOnTestingEnd(TestingEndCallback callback) { on_testing_end_ = callback; }
+    void SetOnTestingEnd(TestingEndCallback callback) {
+        std::lock_guard<std::mutex> lock(mutex_); on_testing_end_ = std::move(callback);
+    }
     void SetOnProgress(ProgressCallback callback) { on_progress_ = callback; }
 
 private:

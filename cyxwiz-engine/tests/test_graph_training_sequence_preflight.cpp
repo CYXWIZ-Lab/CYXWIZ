@@ -1,3 +1,6 @@
+#include "../src/core/sequence_arrow_batcher.h"
+#include "../src/core/node_executors/text_tokenizer_operator.h"
+#include <arrow/util/key_value_metadata.h>
 #include "../src/gui/graph_training_launcher.h"
 
 #include "../src/core/arrow_dataset.h"
@@ -226,6 +229,58 @@ cyxwiz::TrainingConfiguration MakeSequenceConfig() {
     config.sequence_batch.create_attention_mask = true;
     config.sequence_batch.max_sequence_length = 8;
     return config;
+}
+
+
+void CheckCausalExternalRoleLaunch(cyxwiz::DataRegistry& registry) {
+    auto documents=arrow::Table::Make(arrow::schema({arrow::field("document_id",arrow::utf8()),
+        arrow::field("text",arrow::utf8()),arrow::field("split",arrow::utf8())}),
+        {FinishStringArray({"A","B","C"}),FinishStringArray({"ab","cd","xy"}),
+         FinishStringArray({"train","train","train"})});
+    cyxwiz::TextTokenizerOperator tokenizer;std::string error;
+    Check(tokenizer.Configure({{"text_col","text"},{"document_id_col","document_id"},
+        {"split_col","split"},{"output_mode","causal_windows"},{"tokenizer_type","3"},{"lowercase","false"},
+        {"max_length","3"},{"max_vocab_size","260"}},error),error);
+    auto tokenized=tokenizer.Apply(documents);Check(tokenized.ok(),tokenized.status().ToString());
+    auto windows=*tokenized;Check(windows->num_rows()==3,"three document windows expected");
+    const std::string train="causal_role_train",dev="causal_role_dev";
+    Check(registry.RegisterArrowTable(windows->Slice(0,2),train)!=nullptr,"register token-window Train");
+    Check(registry.RegisterArrowTable(windows->Slice(2,1),dev)!=nullptr,"register token-window Dev");
+    auto config=MakeRoleConfig(train,"");config.dataset_roles.test={};
+    config.dataset_roles.dev.dataset_name=dev;config.dataset_roles.dev.source_node_id=11;
+    config.dataset_roles.dev.externally_supplied=true;
+    config.has_data_split=true;config.train_ratio=1;config.val_ratio=0;config.test_ratio=0;
+    config.sequence_batch.enabled=true;config.sequence_batch.create_causal_lm_targets=true;
+    config.sequence_batch.token_column="token_ids";config.sequence_batch.sentence_id_column="document_id";
+    config.sequence_batch.max_sequence_length=3;
+    std::vector<gui::MLNode> nodes={MakeRoleDataInputNode(10,"Train",train),MakeRoleDataInputNode(11,"Dev",dev)};
+    for(auto& node:nodes) node.parameters["label_column"]="";
+    std::atomic<bool> prepared{false};
+    auto dispatch=[&](cyxwiz::TrainingConfiguration actual,const std::string& name,const std::string&,
+        int,int batch,std::weak_ptr<cyxwiz::TrainingPlotPanel>,std::function<void(bool)>) {
+        auto built=cyxwiz::BuildSequenceBatcherFromArrowDataset(registry.GetArrowDataset(name),actual,batch,
+            registry.GetArrowDataset(actual.dataset_roles.dev.dataset_name));
+        if(!built.success()) throw std::runtime_error(built.error_message);
+        Check(built.batcher->GetNumSamples()==2,"two training windows reach the batcher");
+        built.batcher->SetPhase(cyxwiz::BatcherPhase::Val);built.batcher->Reset();
+        Check(built.batcher->GetNumSamples()==1,"one supplied validation window is preserved");
+        auto payload=built.batcher->GetNextSequenceBatch();
+        const auto* target=static_cast<const cyxwiz::Tensor&>(payload.target_ids).Data<int64_t>();
+        Check(target[0]==125 && target[1]==3 && target[2]==-100,"generated targets use the validation token IDs and EOS");
+        prepared.store(true);return true;
+    };
+    auto result=gui::StartGraphTrainingFromCompiledConfig(nodes,{},config,registry,{},[](bool){},dispatch);
+    Check(result.started,"label-free causal role should queue: "+result.error_message);
+    Check(WaitFor([&]{return prepared.load();},std::chrono::seconds(10)),"causal role must pass BOTH launcher preflights and construct its batcher");
+    Check(WaitFor([]{return !HasActiveTaskNamed("Prepare graph training");},std::chrono::seconds(5)),"causal preparation completes");
+    // A sequence-specific preflight must still reject missing token columns.
+    registry.UnregisterTabularDataset(dev);
+    Check(registry.RegisterArrowTable(MakeRoleTable("label"),dev)!=nullptr,"register invalid Dev");
+    prepared.store(false);
+    result=gui::StartGraphTrainingFromCompiledConfig(nodes,{},config,registry,{},[](bool){},dispatch);
+    Check(!result.started && !prepared.load(),"missing Dev tokens must block before dispatch");
+    Check(result.error_message.find("token_ids")!=std::string::npos,"sequence error must name missing tokens");
+    registry.UnregisterTabularDataset(train);registry.UnregisterTabularDataset(dev);
 }
 
 } // namespace
@@ -470,6 +525,7 @@ int main() {
     registry.UnregisterTabularDataset(kRoleMissingLabelDataset);
     registry.UnregisterTabularDataset(kRoleMismatchedFeatureDataset);
     registry.UnregisterTabularDataset(kRoleOverlappingIdDataset);
+    CheckCausalExternalRoleLaunch(registry);
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
     std::cout << "Graph training sequence preflight test passed\n";
     return 0;

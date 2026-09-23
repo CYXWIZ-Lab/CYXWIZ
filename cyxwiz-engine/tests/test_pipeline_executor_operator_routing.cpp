@@ -8,6 +8,7 @@
 #include "core/pipeline_runtime_capabilities.h"
 
 #include <arrow/api.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -21,6 +22,8 @@
 #include <string>
 #include <vector>
 #include <thread>
+
+void CheckOrderedTextAggregation();
 
 namespace {
 
@@ -835,7 +838,138 @@ void CheckFocusedExportParquetPathOnly() {
 }
 } // namespace
 
+void CheckDocumentWindowPipeline() {
+    namespace fs=std::filesystem;
+    const auto dir=fs::temp_directory_path()/"cyxwiz_document_window_pipeline";
+    fs::create_directories(dir);
+    const auto csv=dir/"documents.csv", output=dir/"windows.parquet";
+    { std::ofstream file(csv); file << "document_id,split,text,reference\nA,train,abcdefg,source:1\nB,train,XY,source:2\n"; }
+    const std::string pipeline=
+        R"({"nodes":[{"id":91001,"type":"DataInput","name":"Documents","parameters":{"source_type":"file","type":"csv","has_header":"true","file_path":")"+JsonEscapePath(csv.string())+
+        R"("}},{"id":91002,"type":"TextTokenizer","name":"Document windows","parameters":{"text_col":"text","document_id_col":"document_id","split_col":"split","output_mode":"causal_windows","tokenizer_type":"3","lowercase":"false","max_length":"3","max_vocab_size":"260","min_word_freq":"1"}},{"id":91003,"type":"ExportParquet","name":"Export","parameters":{"file_path":")"+JsonEscapePath(output.string())+
+        R"("}}],"links":[{"start_node":91001,"end_node":91002},{"start_node":91002,"end_node":91003}]})";
+    { std::ofstream saved(dir/"pipeline.json"); saved<<pipeline; }
+    cyxwiz::PipelineExecutor executor;
+    Check(executor.ExecutePipeline(pipeline),"Document window pipeline: "+executor.GetLastError());
+    auto produced=cyxwiz::DataRegistry::Instance().GetArrowDataset("ds_operator_TextTokenizer_91002");
+    Check(produced && produced->GetArrowTable()->num_rows()==4,"Document pipeline emits all four windows");
+    const std::string reload=
+        R"({"nodes":[{"id":91004,"type":"DataInput","name":"Reload","parameters":{"source_type":"file","type":"parquet","file_path":")"+JsonEscapePath(output.string())+R"("}}],"links":[]})";
+    cyxwiz::PipelineExecutor loader;
+    Check(loader.ExecutePipeline(reload),"Document window pipeline reload: "+loader.GetLastError());
+    auto loaded=cyxwiz::DataRegistry::Instance().GetArrowDataset("ds_datainput_91004");
+    Check(loaded && produced->GetArrowTable()->Equals(*loaded->GetArrowTable(),true),"Pipeline export/reload preserves IDs, references and schema metadata");
+    std::cout<<"Document window pipeline export/reload passed\n";
+    cyxwiz::AsyncTaskManager::Instance().Shutdown();
+}
+
+void CheckBooleanFiltering() {
+    const auto path = std::filesystem::temp_directory_path() /
+        "cyxwiz_filter_boolean_regression.csv";
+    {
+        std::ofstream file(path);
+        file << "id,admitted,split\n1,false,unassigned\n2,true,unassigned\n"
+                "3,,unassigned\n4,false,train\n";
+    }
+    auto run = [&](const std::string& condition, bool valid,
+                   const std::vector<int>& expected, const std::string& error) {
+        const std::string graph =
+            R"({"nodes":[{"id":92001,"type":"DataInput","name":"Input","parameters":{"source_type":"file","type":"csv","file_path":")" +
+            JsonEscapePath(path.string()) +
+            R"(","has_header":"true"}},{"id":92002,"type":"FilterRows","name":"Filter","parameters":{"condition":")" +
+            condition + R"("}}],"links":[{"start_node":92001,"end_node":92002}]})";
+        cyxwiz::PipelineExecutor executor;
+        const bool success = executor.ExecutePipeline(graph);
+        Check(success == valid, condition + ": " + executor.GetLastError());
+        if (!valid) {
+            Check(executor.GetLastError().find(error) != std::string::npos,
+                  "Boolean filter should explain invalid comparison: " + condition);
+            return;
+        }
+        auto output = cyxwiz::DataRegistry::Instance().GetArrowDataset("ds_filter_92002");
+        Check(output != nullptr, "Boolean filter output registered");
+        auto table = output->GetArrowTable();
+        Check(table->schema()->GetFieldByName("admitted")->type()->id() == arrow::Type::BOOL,
+              "Boolean field type preserved");
+        Check(table->num_rows() == static_cast<int64_t>(expected.size()),
+              "Boolean filter row count, including null exclusion: " + condition);
+        for (size_t i = 0; i < expected.size(); ++i) {
+            Check(ReadNumericValue(table, "id", i) == expected[i],
+                  "Boolean filter row membership: " + condition);
+        }
+    };
+    run("admitted = false", true, {1,4}, "");
+    run("admitted = TrUe", true, {2}, "");
+    run("admitted != false", true, {2}, "");
+    run("admitted <> true", true, {1,4}, "");
+    run("admitted = false AND split = 'unassigned'", true, {1}, "");
+    run("(admitted = false AND split = 'unassigned') OR id = 3", true, {1,3}, "");
+    run("admitted = 'false'", false, {}, "requires an unquoted true or false");
+    run("admitted = 0", false, {}, "requires an unquoted true or false");
+    run("admitted = invalid", false, {}, "requires an unquoted true or false");
+    run("admitted > false", false, {}, "only supports equality");
+    run("id = true", false, {}, "requires a numeric literal");
+    std::filesystem::remove(path);
+    cyxwiz::AsyncTaskManager::Instance().Shutdown();
+    std::cout << "Boolean filter regression passed\n";
+}
+
+// Integration probe: real selected archive -> DataInput -> ExportParquet -> registry reload.
+// Output must be new, so verification cannot replace existing corpus artifacts.
+void CheckArchiveTextPipeline(const std::string& path, const std::string& member,
+                              const std::string& output_path, bool html = false, int64_t expected_rows = 1) {
+    Check(!std::filesystem::exists(output_path), "Archive probe output already exists");
+    const auto source = nlohmann::json({{"id",93001},{"type","DataInput"},{"name","ZIP documents"},
+        {"parameters",{{"source_type","file"},{"file_type","zip_text"},{"file_path",path},{"archive_member",member}}}}).dump();
+    const auto output = R"({"id":93002,"type":"ExportParquet","name":"Save document","parameters":{"file_path":")" +
+        JsonEscapePath(output_path) + R"("}})";
+    const std::string cleaner = R"HTML({"id":93003,"type":"TextCleanNode","name":"HTML body","parameters":{"text_column":"text","html_mode":"parsed_html","remove_html":"true","lowercase":"false","remove_special_chars":"false","html_begin_comment":"(Begin Body)","html_end_comment":"(End Body)"}})HTML";
+    const auto graph = "{\"nodes\":[" + source + "," + (html ? cleaner + "," : "") + output +
+        (html ? R"(],"links":[{"start_node":93001,"end_node":93003},{"start_node":93003,"end_node":93002}]})"
+              : R"(],"links":[{"start_node":93001,"end_node":93002}]})");
+    cyxwiz::PipelineExecutor executor;
+    Check(executor.ExecutePipeline(graph), "ZIP pipeline failed: " + executor.GetLastError());
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const auto loaded = registry.GetArrowDataset(html ? "ds_textclean_93003" : "ds_datainput_93001");
+    const auto reloaded = registry.LoadParquetToArrow(output_path, "archive_probe_reload");
+    Check(loaded && reloaded, "Document tables registered");
+    const auto table = loaded->GetArrowTable();
+    Check(table->num_rows() == expected_rows && table->num_columns() == (html ? 9 : 6) && table->ValidateFull().ok(), "Document table contract");
+    Check(table->Equals(*reloaded->GetArrowTable(), false), "Parquet preserves all document fields");
+    if (html) {
+        const auto raw = registry.GetArrowDataset("ds_datainput_93001")->GetArrowTable();
+        for (int i=0;i<raw->num_columns();++i) Check(raw->column(i)->Equals(table->column(i)), "HTML preserves source and provenance");
+        const auto clean = table->GetColumnByName("text_cleaned")->GetScalar(0).ValueOrDie()->ToString();
+        if (expected_rows == 1) Check(clean.find("The Creation.") != std::string::npos && clean.find("Table of Contents") == std::string::npos,
+            "HTML retains commentary heading, excludes navigation");
+    }
+    std::cout << "Archive DataInput/export/reload passed: " << output_path << "\n";
+    registry.UnloadDataset("ds_datainput_93001");
+    registry.UnloadDataset("archive_probe_reload");
+    cyxwiz::AsyncTaskManager::Instance().Shutdown();
+}
+
 int main(int argc, char** argv) {
+    if (argc == 6 && std::string(argv[1]) == "--html-selection") {
+        std::ifstream file(argv[3], std::ios::binary);
+        Check(file.good(), "Cannot open member selection file");
+        const std::string selection((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        CheckArchiveTextPipeline(argv[2], selection, argv[4], true, std::stoll(argv[5])); return 0;
+    }
+
+    if (argc == 5 && std::string(argv[1]) == "--html-text") {
+        CheckArchiveTextPipeline(argv[2],argv[3],argv[4],true); return 0;
+    }
+    if (argc == 5 && std::string(argv[1]) == "--archive-text") {
+        CheckArchiveTextPipeline(argv[2], argv[3], argv[4]); return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--boolean-filter") { CheckBooleanFiltering(); return 0; }
+    if (argc == 2 && std::string(argv[1]) == "--ordered-text-aggregation") {
+        CheckOrderedTextAggregation();
+        return 0;
+    }
+    if (argc == 1) CheckOrderedTextAggregation();
+    if(argc==2 && std::string(argv[1])=="--document-token-windows") { CheckDocumentWindowPipeline(); return 0; }
     if (argc == 2 &&
         std::string(argv[1]) == "--async-task-terminal-contract") {
         CheckAsyncTaskTerminalContract();
@@ -2272,7 +2406,7 @@ int main(int argc, char** argv) {
         R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":361,"type":"TextTokenizer","name":"BadTokenizerType","parameters":{)"
-        R"("text_col":"phrase","tokenizer_type":"3"}})"
+        R"("text_col":"phrase","tokenizer_type":"4"}})"
         R"(],"links":[{"start_node":360,"end_node":361}]})";
 
     cyxwiz::PipelineExecutor bad_text_tokenizer_type_executor;
@@ -2280,7 +2414,7 @@ int main(int argc, char** argv) {
               bad_text_tokenizer_type_json),
           "TextTokenizer unsupported tokenizer_type should fail validation");
     Check(bad_text_tokenizer_type_executor.GetLastError().find(
-              "TextTokenizer tokenizer_type '3' is not supported by PipelineExecutor") !=
+              "TextTokenizer tokenizer_type '4' is not supported by PipelineExecutor") !=
               std::string::npos,
           "TextTokenizer tokenizer_type validation should be central and specific: " +
               bad_text_tokenizer_type_executor.GetLastError());
@@ -6305,7 +6439,7 @@ int main(int argc, char** argv) {
         R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":163,"type":"TextTokenize","name":"BadTokenizeMethod","parameters":{)"
-        R"("text_col":"phrase","tokenizer_type":"3"}})"
+        R"("text_col":"phrase","tokenizer_type":"4"}})"
         R"(],"links":[{"start_node":162,"end_node":163}]})";
 
     cyxwiz::PipelineExecutor bad_text_tokenize_method_executor;
@@ -6313,10 +6447,30 @@ int main(int argc, char** argv) {
               bad_text_tokenize_method_json),
           "TextTokenize unsupported tokenizer_type should fail validation");
     Check(bad_text_tokenize_method_executor.GetLastError().find(
-              "TextTokenize tokenizer_type '3' is not supported") !=
+              "TextTokenize tokenizer_type '4' is not supported") !=
               std::string::npos,
           "TextTokenize unsupported tokenizer_type error should be specific: " +
               bad_text_tokenize_method_executor.GetLastError());
+
+    // The legacy spelling selects the numeric operator when tokenizer_type is
+    // present. Both routes must accept BPE; the string-only transform is separate.
+    for (const std::string runtime_name : {"TextTokenize", "TextTokenizer"}) {
+        std::string bpe_json = bad_text_tokenize_method_json;
+        const std::string old_setting = R"("tokenizer_type":"4")";
+        bpe_json.replace(bpe_json.find(old_setting), old_setting.size(),
+            R"("tokenizer_type":"3","lowercase":"false","min_word_freq":"1","max_vocab_size":"512","max_length":"32")");
+        const std::string old_type = R"("type":"TextTokenize")";
+        bpe_json.replace(bpe_json.find(old_type), old_type.size(),
+                         "\"type\":\"" + runtime_name + "\"");
+        cyxwiz::PipelineExecutor bpe_executor;
+        Check(bpe_executor.ExecutePipeline(bpe_json),
+              "BPE numeric pipeline route should execute: " + bpe_executor.GetLastError());
+        auto bpe_dataset = registry.GetArrowDataset("ds_operator_" + runtime_name + "_163");
+        Check(bpe_dataset != nullptr, "BPE pipeline registers token output");
+        auto bpe_table = bpe_dataset->GetArrowTable();
+        Check(bpe_table && bpe_table->num_rows() == 2 && bpe_table->num_columns() == 32,
+              "BPE pipeline preserves row count and requested token width");
+    }
 
     const std::string bad_text_vectorize_method_json =
         R"({"nodes":[)"

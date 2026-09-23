@@ -185,6 +185,14 @@ struct PipelineMaterializerStorageBackendCapability {
     const char* reason = nullptr;
 };
 
+// Qualified input storage for PipelineExecutor, distinct from materializer support.
+struct PipelineExecutorInputStorageSupport {
+    bool supported = false;
+    const char* reason = nullptr;
+};
+PipelineExecutorInputStorageSupport ResolvePipelineExecutorInputStorageSupport(
+    gui::NodeType node_type, PipelineStorageBackend backend);
+
 struct PipelineRuntimeSupport {
     PipelineRuntimeSupport() = default;
 

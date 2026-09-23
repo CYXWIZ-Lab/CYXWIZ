@@ -98,7 +98,8 @@ Geometry Validate(const Tensor &input, const Tensor &weights,
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 bool UseNative(const char *operation, const Tensor &tensor, const Geometry &g,
-               int kernel, int padding) {
+               int kernel, int padding,
+               const char *observation_node_type = nullptr) {
   // wrap/unwrap require padding < window and a window fitting the image
   // plus one padding side. Other valid layer shapes retain native support.
   if (padding >= kernel ||
@@ -106,9 +107,18 @@ bool UseNative(const char *operation, const Tensor &tensor, const Geometry &g,
           static_cast<size_t>(kernel) ||
       g.native.out_w + static_cast<size_t>(padding) <
           static_cast<size_t>(kernel)) {
-    RecordLayerArrayFireFallback(
-        operation, BackendFallbackReason::UnsupportedShape,
-        "ArrayFire wrap/unwrap window and padding limits", tensor, "tensor");
+    // Only the Forward call carries the layer input that can form the
+    // input-keyed placement observation; Backward passes the gradient.
+    if (observation_node_type != nullptr) {
+      RecordLayerArrayFireFallbackObservation(
+          operation, observation_node_type,
+          BackendFallbackReason::UnsupportedShape,
+          "ArrayFire wrap/unwrap window and padding limits", tensor, "tensor");
+    } else {
+      RecordLayerArrayFireFallback(
+          operation, BackendFallbackReason::UnsupportedShape,
+          "ArrayFire wrap/unwrap window and padding limits", tensor, "tensor");
+    }
     return true;
   }
   if (ShouldForceArrayFireBackendFallbackForTesting(operation)) {
@@ -174,7 +184,7 @@ Tensor ConvTranspose2DLayer::Forward(const Tensor &input) {
                kernel_size_, stride_, padding_, output_padding_, use_bias_);
 #ifdef CYXWIZ_HAS_ARRAYFIRE
   if (!UseNative("ConvTranspose2DLayer::Forward", input, g, kernel_size_,
-                 padding_)) {
+                 padding_, "ConvTranspose2D")) {
     try {
       const af::array filters =
           af::moddims(weights_.GetSemanticArray(),
@@ -203,8 +213,9 @@ Tensor ConvTranspose2DLayer::Forward(const Tensor &input) {
       has_forward_ = true;
       return result;
     } catch (const af::exception &error) {
-      RecordLayerArrayFireFallback("ConvTranspose2DLayer::Forward",
-                                   error.what(), input, "input");
+      RecordLayerArrayFireFallbackObservation("ConvTranspose2DLayer::Forward",
+                                              "ConvTranspose2D", error.what(),
+                                              input, "input");
     }
   }
 #else
@@ -274,8 +285,9 @@ Tensor ConvTranspose2DLayer::Backward(const Tensor &grad_output) {
         grad_bias_ = std::move(new_bias_gradient);
       return result;
     } catch (const af::exception &error) {
-      RecordLayerArrayFireFallback("ConvTranspose2DLayer::Backward",
-                                   error.what(), grad_output, "grad_output");
+      RecordLayerArrayFireFallbackObservation("ConvTranspose2DLayer::Backward",
+                                              "ConvTranspose2D", error.what(),
+                                              cached_input_, "input");
     }
   }
 #else

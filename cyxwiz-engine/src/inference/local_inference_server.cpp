@@ -307,13 +307,18 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
         formats::CyxModelFormat cyxmodel_format;
         std::string tokenizer_config_json;
         std::string tokenizer_vocab_text;
+        std::string tokenizer_model_data;
         TextTokenizerPackage new_tokenizer_package;
         bool new_has_tokenizer_package = false;
         if (cyxmodel_format.ExtractTextTokenizerAssets(
-                model_path, tokenizer_config_json, tokenizer_vocab_text)) {
+                model_path,
+                tokenizer_config_json,
+                tokenizer_vocab_text,
+                tokenizer_model_data)) {
             std::string tokenizer_error;
             if (!LoadTextTokenizerPackage(tokenizer_config_json,
                                           tokenizer_vocab_text,
+                                          tokenizer_model_data,
                                           new_tokenizer_package,
                                           tokenizer_error)) {
                 last_error_ = "Failed to load tokenizer assets: " +
@@ -322,7 +327,8 @@ bool LocalInferenceServer::LoadModel(const std::string& model_path) {
                 return false;
             }
             new_has_tokenizer_package = new_tokenizer_package.tokenizer != nullptr;
-            new_has_text_vocabulary = new_tokenizer_package.has_vocabulary;
+            new_has_text_vocabulary = new_tokenizer_package.has_vocabulary ||
+                                      new_tokenizer_package.has_model_artifact;
         }
 
         const auto probe = cyxmodel_format.Probe(model_path);
@@ -789,7 +795,7 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
             }
             if (!has_text_vocabulary_) {
                 throw std::runtime_error(
-                    "raw text input requires packaged vocabulary");
+                    "raw text input requires packaged vocabulary or tokenizer model");
             }
 
             if (bert_encoder_contract_.supports_bert_encoder) {
@@ -813,7 +819,7 @@ void LocalInferenceServer::HandlePredict(const httplib::Request& req, httplib::R
                     optional_data = BuildBertEncoderAttentionMask(
                         word_data,
                         static_cast<int64_t>(
-                            text_tokenizer_->GetVocabulary().PadIndex()));
+                            text_tokenizer_->GetPadId()));
                     sequence_attention_tensor =
                         Tensor(word_shape, optional_data.data(), DataType::Int64);
                     has_sequence_attention_input = true;

@@ -1,3 +1,4 @@
+void RunGraphCompileTaskTests();
 #include "../src/core/graph_compiler.h"
 #include "../src/gui/loaders/data_loader.h"
 
@@ -168,6 +169,56 @@ int main() {
     Check(!HasErrorText(config, "TimeDistributed requires sequence input shape"),
           "causal LM graph should not report TimeDistributed shape error");
 
+    Check(config.model_seed == -1, "old graph without model seed must remain unset");
+    auto seeded_nodes = nodes;
+    auto seeded_links = links;
+    auto loader = Node(90, gui::NodeType::DataLoader, "Seeded loader",
+        {Pin(901, gui::PinType::Tensor, "Input", true)},
+        {Pin(902, gui::PinType::Tensor, "Data", false)});
+    loader.parameters["seed"] = "97";
+    seeded_nodes.push_back(loader);
+    seeded_links[0] = Link(1, 1, 101, 90, 901);
+    seeded_links.push_back(Link(90, 90, 902, 2, 201));
+    for (const auto& value : {"-1", "0", "52", "2147483647"}) {
+        seeded_nodes.back().parameters["model_seed"] = value;
+        // Graph serialization preserves parameter strings, including the unset sentinel.
+        const nlohmann::json saved = seeded_nodes.back().parameters;
+        seeded_nodes.back().parameters = nlohmann::json::parse(saved.dump()).get<decltype(loader.parameters)>();
+        const auto seeded = compiler.Compile(seeded_nodes, seeded_links, true);
+        Check(seeded.is_valid, "seeded graph should compile: " + seeded.error_message);
+        Check(seeded.model_seed == std::stoi(value) && seeded.dataloader_seed == 97,
+              "model and data seeds must propagate independently");
+    }
+    for (const auto& value : {"-2", "2147483648", "1x", "", "1.5"}) {
+        seeded_nodes.back().parameters["model_seed"] = value;
+        const auto invalid = compiler.Compile(seeded_nodes, seeded_links, true);
+        Check(!invalid.is_valid && HasErrorText(invalid, "Model RNG seed"), "invalid model seed must fail compilation");
+    }
+    // Preview settings participate in real graph compilation and parameter persistence.
+    seeded_nodes.back().parameters["model_seed"] = "52";
+    seeded_nodes.back().parameters["generation_preview_enabled"] = "false";
+    seeded_nodes.back().parameters["generation_preview_every_epochs"] = "invalid";
+    Check(compiler.Compile(seeded_nodes, seeded_links, true).is_valid,
+          "disabled previews must preserve legacy graph behavior");
+    seeded_nodes.back().parameters["generation_preview_enabled"] = "true";
+    seeded_nodes.back().parameters["generation_preview_prompts"] = "one\ntwo";
+    const auto bad_preview = compiler.Compile(seeded_nodes, seeded_links, true);
+    Check(!bad_preview.is_valid && HasErrorText(bad_preview, "Generation preview:"),
+          "invalid enabled preview cadence must fail graph compilation");
+    seeded_nodes.back().parameters["generation_preview_every_epochs"] = "20";
+    const nlohmann::json saved_preview = seeded_nodes.back().parameters;
+    seeded_nodes.back().parameters = nlohmann::json::parse(saved_preview.dump()).get<decltype(loader.parameters)>();
+    Check(seeded_nodes.back().parameters.at("generation_preview_prompts") == "one\ntwo",
+          "fixed multiline prompts must survive graph parameter serialization");
+    const auto noncausal = compiler.Compile(seeded_nodes, seeded_links, true);
+    Check(!noncausal.is_valid && HasErrorText(noncausal, "causal next-token targets"),
+          "previews must reject a noncausal training contract");
+    seeded_nodes.back().parameters["create_causal_lm_targets"] = "true";
+    seeded_nodes.back().parameters["max_sequence_length"] = "7";
+    const auto missing_artifact = compiler.Compile(seeded_nodes, seeded_links, true);
+    Check(!missing_artifact.is_valid && HasErrorText(missing_artifact, "vocabulary metadata"),
+          "enabled previews must reject a dataset without the training vocabulary artifact");
+    RunGraphCompileTaskTests();
     std::cout << "Graph compiler causal LM shape test passed\n";
     return 0;
 }

@@ -70,7 +70,8 @@ BertEncoderPackageContract ValidateBertEncoderPackageContract(
     contract.has_attention_mask = probe.bert_encoder_has_attention_mask;
     contract.requires_token_type_ids = probe.bert_encoder_requires_token_type_ids;
     contract.has_tokenizer = probe.has_tokenizer;
-    contract.has_vocabulary = probe.has_vocabulary;
+    contract.has_vocabulary = probe.has_vocabulary ||
+        (tokenizer_package != nullptr && tokenizer_package->has_model_artifact);
     contract.max_sequence_length = probe.sequence_max_sequence_length;
 
     std::vector<std::string> issues;
@@ -115,21 +116,22 @@ BertEncoderPackageContract ValidateBertEncoderPackageContract(
     if (!probe.has_tokenizer) {
         AddIssue(issues, "package is missing tokenizer/config.json");
     }
-    if (!probe.has_vocabulary) {
-        AddIssue(issues, "package is missing tokenizer/vocab.txt");
+    if (!probe.has_vocabulary &&
+        (tokenizer_package == nullptr || !tokenizer_package->has_model_artifact)) {
+        AddIssue(issues, "package is missing tokenizer/vocab.txt or tokenizer/model.spm");
     }
 
     if (tokenizer_package == nullptr || !tokenizer_package->tokenizer) {
         AddIssue(issues, "tokenizer package is not loaded");
     } else {
-        const auto& vocabulary =
-            tokenizer_package->tokenizer->GetVocabulary();
-        contract.tokenizer_vocabulary_size = vocabulary.Size();
+        contract.tokenizer_vocabulary_size =
+            tokenizer_package->tokenizer->GetVocabularySize();
         contract.max_sequence_length = static_cast<size_t>(
             std::max(0, tokenizer_package->tokenizer->GetMaxLength()));
 
-        if (!tokenizer_package->has_vocabulary) {
-            AddIssue(issues, "tokenizer package has no usable vocabulary");
+        if (!tokenizer_package->has_vocabulary &&
+            !tokenizer_package->has_model_artifact) {
+            AddIssue(issues, "tokenizer package has no usable vocabulary or model artifact");
         }
         if (contract.tokenizer_vocabulary_size == 0) {
             AddIssue(issues, "tokenizer vocabulary is empty");

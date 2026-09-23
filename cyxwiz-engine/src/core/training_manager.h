@@ -23,6 +23,7 @@ enum class ActiveModelOrigin {
 };
 
 struct ActiveModelInfo {
+    std::optional<TrainingConfiguration> evaluation_config;
     ActiveModelOrigin origin = ActiveModelOrigin::None;
     std::string checkpoint_path;
     std::string graph_fingerprint;

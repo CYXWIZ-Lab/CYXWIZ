@@ -1,7 +1,6 @@
 #include <cyxwiz/sequential.h>
-#include <spdlog/spdlog.h>
+#include "attention_configuration.h"
 
-#include <algorithm>
 #include <string>
 
 namespace cyxwiz {
@@ -40,19 +39,9 @@ MultiHeadAttentionModule::MultiHeadAttentionModule(size_t embed_dim,
     , dropout_(dropout)
     , use_bias_(use_bias)
 {
-    if (embed_dim_ < 1) embed_dim_ = 1;
-    if (num_heads_ < 1) num_heads_ = 1;
-    if (embed_dim_ % num_heads_ != 0) {
-        spdlog::warn("MultiHeadAttentionModule: embed_dim={} is not divisible "
-                     "by num_heads={}; falling back to one head",
-                     embed_dim_, num_heads_);
-        num_heads_ = 1;
-    }
-    dropout_ = std::clamp(dropout_, 0.0f, 0.999f);
-
     layer_ = std::make_unique<MultiHeadAttentionLayer>(
-        static_cast<int>(embed_dim_),
-        static_cast<int>(num_heads_),
+        attention_configuration_detail::CheckedAttentionDimension(embed_dim_, "embed_dim"),
+        attention_configuration_detail::CheckedAttentionDimension(num_heads_, "num_heads"),
         dropout_,
         use_bias_);
 }

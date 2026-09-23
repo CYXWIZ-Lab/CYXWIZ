@@ -69,6 +69,7 @@ struct TestingMetrics {
     float macro_f1 = 0.0f;
     float weighted_f1 = 0.0f;
     bool regression_mode = false;
+    bool causal_lm_mode = false;
     float test_mae = 0.0f;
     float test_rmse = 0.0f;
     size_t total_target_values = 0;
@@ -197,6 +198,7 @@ private:
      * Initialize testing components
      */
     bool Initialize(int batch_size);
+    void TestCausalSequence(int batch_size, TestBatchCallback batch_cb, TestCompleteCallback complete_cb);
 
     /**
      * Build model from configuration if not already set

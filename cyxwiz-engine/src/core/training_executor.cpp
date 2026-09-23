@@ -1,4 +1,7 @@
 #include "training_executor.h"
+#include "training_generation_preview.h"
+#include "spatial_batch_layout.h"
+#include "spatial_sequential_head.h"
 #include "classification_decision.h"
 #include "checkpoint_manager.h"
 #include "crash_run_recorder.h"
@@ -660,6 +663,8 @@ TrainingExecutor::TrainingExecutor(
     , sequence_batcher_(std::move(sequence_batcher))
     , sequence_id_to_label_(std::move(id_to_label))
 {
+    if (config_.sequence_batch.create_causal_lm_targets)
+        config_.sequence_batch.expected_token_vocabulary = sequence_id_to_label_;
     spdlog::info("TrainingExecutor: Created with external ISequenceBatcher, "
                  "{} layers, input_size={}, output_size={}, labels={}",
                  config_.layers.size(), config_.input_size,
@@ -973,6 +978,21 @@ void TrainingExecutor::Train(
     }
 
     try {
+        // Bind/reset only here on the execution worker, before randomized construction.
+        TrainingRandomness randomness;
+        randomness.model_seed = ParseModelRandomSeed(std::to_string(config_.model_seed));
+        randomness.dataloader_seed = config_.dataloader_seed;
+        randomness.execution_device = execution_context.Describe();
+        if (randomness.model_seed >= 0) {
+            randomness.generator = SeedCurrentArrayFireRandomEngine(
+                static_cast<uint64_t>(randomness.model_seed));
+        }
+        UpdateMetrics([&](TrainingMetrics& metrics) { metrics.randomness = randomness; });
+        const auto seed_provenance = nlohmann::json(randomness).dump();
+        training_trace.RecordTrainingRandomness(randomness);
+        training_trace.RecordRuntimeEvent("ModelRandomSeed", seed_provenance);
+        spdlog::info("TrainingExecutor: Model RNG provenance {}", seed_provenance);
+
         // Initialize
         if (!Initialize(batch_size)) {
             spdlog::error("TrainingExecutor: {}",
@@ -1317,6 +1337,14 @@ void TrainingExecutor::Train(
     checkpoint_root /= last_run ? last_run->run_id : "training-run";
     checkpoint_manager = std::make_unique<CheckpointManager>(checkpoint_root.string());
 
+    std::unique_ptr<TrainingGenerationPreview> generation_preview;
+    if (config_.generation_preview.enabled) {
+        if (!config_.sequence_batch.create_causal_lm_targets || !model_->AsSequentialModel())
+            throw std::invalid_argument("Generation previews require a causal SequentialModel");
+        generation_preview = std::make_unique<TrainingGenerationPreview>(
+            config_.generation_preview, config_.output_size);
+    }
+
     // Training loop
     const bool regression_metrics = UsesRegressionMetrics(config_);
     for (int epoch = 1; epoch <= epochs; ++epoch) {
@@ -1577,6 +1605,25 @@ void TrainingExecutor::Train(
                     stop_after_epoch = true;
                 }
             }
+        }
+
+        if (generation_preview && ShouldRunTrainingPreview(config_.generation_preview, epoch)) {
+            TrainingTraceCollector::Instance().RecordRuntimeEvent(
+                "GenerationPreview.Started", "Completed epoch " + std::to_string(epoch) + "; weights=current_epoch");
+            bool completed = false;
+            try {
+                completed = generation_preview->Run(*model_->AsSequentialModel(), epoch,
+                    training_run_id, (checkpoint_root / "generation_previews").string(),
+                    [this] { return ShouldStop(); });
+            } catch (const std::exception& error) {
+                TrainingTraceCollector::Instance().RecordRuntimeEvent(
+                    "GenerationPreview.Failed", "Completed epoch " + std::to_string(epoch) + "; " + error.what());
+                throw;
+            }
+            TrainingTraceCollector::Instance().RecordRuntimeEvent(
+                completed ? "GenerationPreview.Completed" : "GenerationPreview.Cancelled",
+                "Completed epoch " + std::to_string(epoch) + "; sample artifacts under " + checkpoint_root.string());
+            if (!completed) break;
         }
 
         // Notify plugin hooks: epoch end
@@ -2248,7 +2295,11 @@ Tensor TrainingExecutor::Forward(const Tensor& input) {
         return Tensor();
     }
 
-    last_predictions_ = model_->Forward(input);
+    // Batcher ownership stays batch-first, including prefetch. Convert only
+    // here on the bound execution thread; no layout work on loader workers.
+    last_predictions_ = UsesSpatialSequentialInput(config_)
+        ? model_->Forward(SpatialBatchFromRows(input, config_.input_shape))
+        : model_->Forward(input);
     return last_predictions_;
 }
 

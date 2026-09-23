@@ -1,5 +1,25 @@
 #include "layer_recurrent_utils.h"
 
+#include <atomic>
+
+namespace cyxwiz {
+
+namespace {
+std::atomic<bool> g_force_native_recurrent_forward_for_testing{false};
+} // namespace
+
+void SetForceNativeRecurrentForwardForTesting(bool force) {
+    g_force_native_recurrent_forward_for_testing.store(force);
+}
+
+namespace recurrent_utils_detail {
+bool IsNativeRecurrentForwardForcedForTesting() {
+    return g_force_native_recurrent_forward_for_testing.load();
+}
+} // namespace recurrent_utils_detail
+
+} // namespace cyxwiz
+
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 
 #include "cyxwiz/backend_placement_observation.h"
@@ -53,9 +73,11 @@ void DisableArrayFireCudaRecurrentAfterFailure(
     int num_layers,
     bool bidirectional,
     const char* error_message) {
-    if (!IsCudaJitFormalParameterOverflow(error_message)) {
-        return;
-    }
+    const bool is_param_overflow =
+        IsCudaJitFormalParameterOverflow(error_message);
+    const BackendFallbackReason reason = is_param_overflow
+        ? BackendFallbackReason::CudaJitParamOverflow
+        : ClassifyArrayFireBackendFallbackReason(error_message);
 
     RecurrentCudaPlacementRequest request;
     request.kind = kind;
@@ -67,19 +89,34 @@ void DisableArrayFireCudaRecurrentAfterFailure(
     request.bidirectional = bidirectional;
     request.return_sequences = false;
 
+    // Record evidence for EVERY failure class, not only param overflow —
+    // the compiler routes around any known-unsafe recurrent key
+    // (tofix67 slice 6). Only overflow flips the process-wide disable
+    // latch; other reasons may be transient device conditions.
     RecordRecurrentCudaPlacementObservation(
         request,
-        BackendFallbackReasonName(BackendFallbackReason::CudaJitParamOverflow),
+        BackendFallbackReasonName(reason),
         BackendPlacementObservationSource::RuntimeFallback,
-        std::string(layer_name) +
-            " runtime ArrayFire CUDA forward failed with generated-kernel "
-            "formal-parameter overflow. This observation should make future "
-            "compiler preflight route the same recurrent shape to CPU before "
-            "training starts.");
+        is_param_overflow
+            ? std::string(layer_name) +
+                  " runtime ArrayFire CUDA forward failed with "
+                  "generated-kernel formal-parameter overflow. This "
+                  "observation should make future compiler preflight route "
+                  "the same recurrent shape to CPU before training starts."
+            : std::string(layer_name) +
+                  " runtime ArrayFire CUDA forward failed (reason=" +
+                  BackendFallbackReasonName(reason) +
+                  "). This observation should make future compiler "
+                  "preflight route the same recurrent shape to CPU before "
+                  "training starts.");
+
+    if (!is_param_overflow) {
+        return;
+    }
 
     auto& disabled = RecurrentFailureDisableFlag(kind);
     if (!disabled.exchange(true)) {
-        const std::string reason =
+        const std::string disable_message =
             std::string(layer_name) +
             " ArrayFire CUDA recurrent path hit CUDA generated-kernel "
             "formal-parameter overflow (reason=" +
@@ -88,8 +125,8 @@ void DisableArrayFireCudaRecurrentAfterFailure(
             "for the rest of the process and using the native CPU recurrent "
             "path directly for later batches. This is separate from VRAM "
             "capacity.";
-        BackendDebugHooks::EmitDebugEvent(layer_name, reason);
-        spdlog::warn("{}", reason);
+        BackendDebugHooks::EmitDebugEvent(layer_name, disable_message);
+        spdlog::warn("{}", disable_message);
     }
 }
 
@@ -101,6 +138,9 @@ bool ShouldUseArrayFireRecurrentForward(
     int hidden_size,
     int num_layers,
     bool bidirectional) {
+    if (recurrent_utils_detail::IsNativeRecurrentForwardForcedForTesting()) {
+        return false;
+    }
     try {
         if (af::getActiveBackend() != AF_BACKEND_CUDA) {
             return true;

@@ -14,7 +14,7 @@ namespace cyxwiz {
  * Supported model file formats
  */
 enum class ModelFormat {
-    CyxModel,       // .cyxmodel - Native complete format (ZIP archive)
+    CyxModel,       // .cyxmodel - Native CYXW v3 binary package (legacy directories readable)
     ONNX,           // .onnx - ONNX interchange format
     Safetensors,    // .safetensors - Safe tensor serialization
     GGUF,           // .gguf - GGML Universal Format for LLMs
@@ -53,6 +53,30 @@ enum class TensorDType {
 };
 
 /**
+ * Training configuration stored in .cyxmodel
+ */
+struct TrainingConfig {
+    // Optimizer settings
+    std::string optimizer_type;     // "SGD", "Adam", "AdamW", etc.
+    float learning_rate = 0.001f;
+    float momentum = 0.9f;
+    float weight_decay = 0.0f;
+    float beta1 = 0.9f;             // Adam
+    float beta2 = 0.999f;           // Adam
+    float epsilon = 1e-8f;          // Adam
+
+    // Training settings
+    int batch_size = 32;
+    int epochs = 0;
+    std::string loss_function;      // "CrossEntropy", "MSE", etc.
+
+    // Data info
+    std::string dataset_name;
+    int num_classes = 0;
+    std::vector<int64_t> input_shape;
+};
+
+/**
  * Export options for model serialization
  */
 struct ExportOptions {
@@ -70,6 +94,13 @@ struct ExportOptions {
     // tokenizer/vocab.txt inside the .cyxmodel directory package.
     std::string text_tokenizer_config_json;
     std::string text_tokenizer_vocab_path;
+    // Owned bytes from the training dataset; mutually exclusive with a path.
+    std::string text_tokenizer_vocab_data;
+    // Optional SentencePiece-compatible model artifact. Mutually exclusive
+    // path/data sources are copied into tokenizer/model.spm.
+    std::string text_tokenizer_model_path;
+    std::string text_tokenizer_model_data;
+    std::optional<TrainingConfig> trained_config;
 
     // Optional sequence deployment assets for CyxModel packages.
     // When empty, ModelExporter may infer these from graph_json for
@@ -111,7 +142,7 @@ struct ExportOptions {
     std::map<std::string, std::string> custom_metadata;
 
     // Advanced options
-    bool compress = true;                   // Use compression in ZIP
+    bool compress = false;                  // CYXW v3 is uncompressed; true rejects explicitly
     int compression_level = 6;              // 0-9, where 9 is maximum compression
 };
 
@@ -252,30 +283,6 @@ struct WeightsManifest {
     // Total statistics
     int total_tensors = 0;
     size_t total_bytes = 0;
-};
-
-/**
- * Training configuration stored in .cyxmodel
- */
-struct TrainingConfig {
-    // Optimizer settings
-    std::string optimizer_type;     // "SGD", "Adam", "AdamW", etc.
-    float learning_rate = 0.001f;
-    float momentum = 0.9f;
-    float weight_decay = 0.0f;
-    float beta1 = 0.9f;             // Adam
-    float beta2 = 0.999f;           // Adam
-    float epsilon = 1e-8f;          // Adam
-
-    // Training settings
-    int batch_size = 32;
-    int epochs = 0;
-    std::string loss_function;      // "CrossEntropy", "MSE", etc.
-
-    // Data info
-    std::string dataset_name;
-    int num_classes = 0;
-    std::vector<int64_t> input_shape;
 };
 
 /**

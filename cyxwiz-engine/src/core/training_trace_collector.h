@@ -1,6 +1,7 @@
 #pragma once
 
 #include "crash_run_recorder.h"
+#include "training_randomness.h"
 #include <algorithm>
 #include <cstdint>
 #include <deque>
@@ -130,6 +131,7 @@ struct TrainingTraceHostSyncGroup {
 };
 
 struct TrainingTraceSummary {
+    TrainingRandomness randomness;
     bool available = false;
     std::string run_id;
     std::string status;
@@ -245,6 +247,7 @@ public:
     void RecordNativeCpuFallback(
         const ArrayFireNativeCpuFallbackEvent& fallback);
     void RecordArrayFireHostSync(const ArrayFireHostSyncEvent& sync);
+    void RecordTrainingRandomness(const TrainingRandomness& randomness);
     void RecordExecutionDeviceContext(
         const ExecutionDeviceContext& context);
     void RecordPlacementPlan(const std::string& fingerprint,
@@ -314,6 +317,7 @@ private:
     static std::string ThreadIdString();
 
     mutable std::mutex mutex_;
+    TrainingRandomness randomness_;
     std::string run_id_;
     std::string status_ = "idle";
     std::deque<TrainingTraceEvent> events_;

@@ -24,6 +24,12 @@ option(CYXWIZ_BUILD_INSTALLER_ONLY "Build only the standalone installer and back
 set(CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR "" CACHE PATH
     "Release-signed trust, catalog, and manifest bundle staged below runtime/")
 option(CYXWIZ_BUILD_TESTS "Build tests" ON)
+option(CYXWIZ_ENABLE_SENTENCEPIECE "Enable optional SentencePiece tokenizer provider" OFF)
+if(CYXWIZ_ENABLE_SENTENCEPIECE)
+    message(STATUS
+        "SentencePiece tokenizer provider requested. Configure vcpkg with "
+        "--x-feature=sentencepiece or set SentencePiece_DIR to the official C++ package.")
+endif()
 option(CYXWIZ_BUILD_DOCS "Build documentation" OFF)
 option(CYXWIZ_ENABLE_CUDA "Enable CUDA support for ArrayFire" ON)
 option(CYXWIZ_ENABLE_OPENCL "Enable OpenCL support for ArrayFire" ON)

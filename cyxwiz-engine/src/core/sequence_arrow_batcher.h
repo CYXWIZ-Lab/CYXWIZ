@@ -14,6 +14,8 @@ class ArrowDataset;
 struct SequenceArrowBatcherBuildResult {
     std::unique_ptr<ISequenceBatcher> batcher;
     std::vector<std::string> id_to_label;
+    std::string tokenizer_config_json;
+    std::string tokenizer_vocabulary_artifact;
     std::string error_message;
     size_t sample_count = 0;
     size_t sequence_length = 0;
@@ -31,7 +33,9 @@ struct SequenceArrowBatcherBuildResult {
 SequenceArrowBatcherBuildResult BuildSequenceBatcherFromArrowDataset(
     const std::shared_ptr<ArrowDataset>& dataset,
     const TrainingConfiguration& config,
-    int batch_size);
+    int batch_size,
+    const std::shared_ptr<ArrowDataset>& validation = nullptr,
+    const std::shared_ptr<ArrowDataset>& test = nullptr);
 
 void ApplySequenceBatcherBuildResultToTrainingConfig(
     const SequenceArrowBatcherBuildResult& build,

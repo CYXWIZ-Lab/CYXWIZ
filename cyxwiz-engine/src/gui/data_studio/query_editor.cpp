@@ -4,6 +4,7 @@
 #include "../../core/arrow_dataset.h"
 #include <spdlog/spdlog.h>
 #include <cstring>
+#include "../../core/node_metadata_registry.h"
 #include <chrono>
 
 namespace cyxwiz {
@@ -56,6 +57,7 @@ bool QueryEditor::SaveResultAsDataset(const std::string& dataset_name) {
 }
 
 void QueryEditor::SetActiveDataset(const std::string& dataset_name) {
+    registered_dataset_.clear();
     current_dataset_ = dataset_name;
     spdlog::info("[Data Studio] QueryEditor: Setting active dataset: {}", dataset_name);
 
@@ -93,6 +95,8 @@ void QueryEditor::SetActiveDataset(const std::string& dataset_name) {
             return;
         }
 
+        registered_dataset_ = dataset_name;
+
         // Get table schema for display
         auto schema = duckdb_->GetTableSchema("dataset");
         int64_t row_count = duckdb_->GetRowCount("dataset");
@@ -108,7 +112,35 @@ void QueryEditor::SetActiveDataset(const std::string& dataset_name) {
     }
 }
 
+DataStudioCapability QueryEditor::GetQueryCapability() const {
+    DataStudioCapabilityRequest request;
+    request.node_type = gui::NodeType::SQLQuery;
+    request.parameters = {{"query", query_buffer_}};
+    auto& registry = DataRegistry::Instance();
+    if (!current_dataset_.empty()) {
+        auto storage = PipelineStorageBackend::Unknown;
+        if (registry.GetArrowDataset(current_dataset_))
+            storage = PipelineStorageBackend::ArrowTable;
+        else if (registry.GetParquetBackedDataset(current_dataset_))
+            storage = PipelineStorageBackend::ParquetBacked;
+        request.input_storage.push_back(storage);
+    }
+    auto capability = ResolveDataStudioCapability(request,
+        NodeMetadataRegistry::Instance().GetMetadata(request.node_type));
+    if (capability.state == DataStudioActionState::ExploreOnly &&
+        registered_dataset_ != current_dataset_) {
+        capability.state = DataStudioActionState::Unavailable;
+        capability.reason = "The selected dataset has not been registered successfully for SQL queries";
+    }
+    return capability;
+}
+
 bool QueryEditor::ExecuteQuery() {
+    const auto capability = GetQueryCapability();
+    if (capability.state != DataStudioActionState::ExploreOnly || query_running_) {
+        last_error_ = query_running_ ? "A query is already running" : capability.reason;
+        return false;
+    }
     current_query_ = std::string(query_buffer_);
     if (current_query_.empty()) {
         last_error_ = "Query is empty";

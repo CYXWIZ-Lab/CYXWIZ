@@ -386,13 +386,10 @@ std::string BuildTensorOpPlacementShapeSignature(
 }
 
 std::string BuildTensorLayerPlacementShapeSignature(
-    const std::vector<size_t>& input_shape,
-    const std::vector<size_t>& output_shape) {
+    const std::vector<size_t>& input_shape) {
     std::ostringstream out;
     out << "input=";
     AppendShape(out, input_shape);
-    out << ";output=";
-    AppendShape(out, output_shape);
     return out.str();
 }
 
@@ -721,6 +718,25 @@ bool TryGetRecurrentCudaPlacementObservation(
         "float32",
         BuildRecurrentCudaPlacementShapeSignature(request),
         observation);
+}
+
+std::vector<size_t> StripBatchDimensionForPlacementSignature(
+    const std::vector<size_t>& runtime_shape) {
+    if (runtime_shape.size() < 2) {
+        return runtime_shape;
+    }
+    return std::vector<size_t>(runtime_shape.begin() + 1,
+                               runtime_shape.end());
+}
+
+std::string BuildBackendPlacementObservationKey(
+    const std::string& op_type,
+    const std::string& backend,
+    const std::string& device,
+    const std::string& dtype,
+    const std::string& shape_signature) {
+    return BuildObservationKey(op_type, backend, device, dtype,
+                               shape_signature);
 }
 
 std::vector<BackendPlacementObservation>

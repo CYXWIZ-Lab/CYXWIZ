@@ -1,4 +1,5 @@
 #include "tabular_loader.h"
+#include "../../core/archive_text_source.h"
 
 #include "../../core/arrow_dataset.h"
 #include "../../core/async_task_manager.h"
@@ -182,6 +183,14 @@ bool TabularLoader::ValidateApplyContext(const ApplyContext& ctx,
     }
     const std::string file_type =
         NormalizeTabularFileType(ctx.detected_file_type);
+    if (file_type == "zip_text" && ctx.archive_member.empty()) {
+        err = "ZIP text requires an exact member path inside the archive";
+        return false;
+    }
+    if (file_type == "zip_text" && ctx.force_disk_backed) {
+        err = "ZIP text uses a bounded in-memory document table; disable Force disk-backed";
+        return false;
+    }
     if (IsUnsupportedTabularFileType(file_type)) {
         err = UnsupportedTabularFileTypeMessage(file_type);
         return false;
@@ -210,6 +219,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     const std::string name       = ctx.dataset_name;
     const std::string file_type =
         ResolveTabularFileType(ctx.detected_file_type, path);
+    const auto archive_member = ctx.archive_member;
     const bool has_header        = ctx.has_header;
     const char delim             = (file_type == "tsv") ? '\t' : ctx.delimiter;
     const char decimal_point     = ctx.decimal_point;
@@ -242,7 +252,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
     auto& mgr = cyxwiz::AsyncTaskManager::Instance();
     return mgr.RunAsync(
         "Loading " + name,
-        [path, name, file_type, has_header, delim, decimal_point, use_threads,
+        [path, name, file_type, archive_member, has_header, delim, decimal_point, use_threads,
          missing_tokens, skip_rows, max_rows, force_disk, label_col,
          selected_columns, ingestion_cache_directory, state]
         (cyxwiz::LambdaTask& task) {
@@ -331,7 +341,11 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                     // Non-CSV supported formats go straight to Arrow
                     // in-memory on the AsyncTaskManager worker.
                     std::shared_ptr<cyxwiz::ArrowDataset> dataset;
-                    if (file_type == "parquet") {
+                    if (file_type == "zip_text") {
+                        dataset = reg.RegisterArrowTable(
+                            LoadZipTextSelection(path, archive_member, {},
+                                [&task] { return task.ShouldStop(); }), name);
+                    } else if (file_type == "parquet") {
                         dataset = reg.LoadParquetToArrow(path, name);
                     } else {
                         // auto/feather/arrow/ipc use Arrow's table loader.

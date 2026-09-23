@@ -1,9 +1,8 @@
 #include "layer_utils.h"
 
 #include "../arrayfire_backend_utils.h"
+#include "cyxwiz/backend_placement_observation.h"
 
-#include <algorithm>
-#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -94,12 +93,47 @@ void RecordLayerArrayFireFallback(const char* operation_name,
         tensor_name);
 }
 
-ResizeLinearSample ComputeResizeLinearSample(size_t out_index, size_t in_size, int scale_factor) {
-    float source = (static_cast<float>(out_index) + 0.5f) / static_cast<float>(scale_factor) - 0.5f;
-    source = std::clamp(source, 0.0f, static_cast<float>(in_size - 1));
-    const size_t lower = static_cast<size_t>(std::floor(source));
-    const size_t upper = std::min(lower + 1, in_size - 1);
-    return {lower, upper, source - static_cast<float>(lower)};
+void RecordLayerArrayFireFallbackObservation(
+    const char* operation_name,
+    const char* node_type_name,
+    BackendFallbackReason reason,
+    const char* error_message,
+    const Tensor& layer_input,
+    const char* tensor_name) {
+    // Evidence first, so it survives the strict-policy throw in the shared
+    // fallback handler below.
+    RecordBackendPlacementObservationForActiveDevice(
+        node_type_name,
+        CurrentArrayFireBackendName(),
+        "float32",
+        BuildTensorLayerPlacementShapeSignature(
+            StripBatchDimensionForPlacementSignature(layer_input.Shape())),
+        BackendFallbackReasonName(reason),
+        BackendPlacementObservationSource::RuntimeFallback,
+        BuildArrayFireBackendFallbackMessage(
+            operation_name,
+            reason,
+            reason != BackendFallbackReason::CudaJitParamOverflow,
+            error_message,
+            BuildArrayFireBackendFallbackContext(
+                BuildTensorShapeContext(tensor_name, layer_input.Shape()))));
+    RecordLayerArrayFireFallback(
+        operation_name, reason, error_message, layer_input, tensor_name);
+}
+
+void RecordLayerArrayFireFallbackObservation(
+    const char* operation_name,
+    const char* node_type_name,
+    const char* error_message,
+    const Tensor& layer_input,
+    const char* tensor_name) {
+    RecordLayerArrayFireFallbackObservation(
+        operation_name,
+        node_type_name,
+        ClassifyArrayFireBackendFallbackReason(error_message),
+        error_message,
+        layer_input,
+        tensor_name);
 }
 
 } // namespace cyxwiz

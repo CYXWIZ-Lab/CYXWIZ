@@ -40,23 +40,48 @@ ResolvePipelineUnsupportedSequentialModelConfigurationReason(
     gui::NodeType node_type,
     const std::map<std::string, std::string>& parameters) {
     if (node_type != gui::NodeType::LSTM &&
-        node_type != gui::NodeType::GRU) {
+        node_type != gui::NodeType::GRU &&
+        node_type != gui::NodeType::RNN) {
         return std::nullopt;
     }
 
-    const char* layer_name = node_type == gui::NodeType::LSTM ? "LSTM" : "GRU";
+    const char* layer_name = node_type == gui::NodeType::LSTM
+        ? "LSTM"
+        : (node_type == gui::NodeType::GRU ? "GRU" : "RNN");
     const auto bidirectional = parameters.find("bidirectional");
-    if (node_type == gui::NodeType::LSTM &&
+    if ((node_type == gui::NodeType::LSTM ||
+         node_type == gui::NodeType::RNN) &&
         bidirectional != parameters.end()) {
         const std::string value =
             recurrent_configuration_policy_detail::TrimLower(
                 bidirectional->second);
         if (value == "true" || value == "1" || value == "yes" ||
             value == "on") {
+            if (node_type == gui::NodeType::RNN) {
+                return std::string(
+                    "RNN bidirectional=true is not supported for Engine training "
+                    "because the simple RNN layer implements one direction only "
+                    "and fails closed rather than silently running unidirectional. "
+                    "Use bidirectional=false.");
+            }
             return std::string(
                 "LSTM bidirectional=true is not supported for Engine training "
                 "because reverse-direction backward gradients are not implemented. "
                 "Use bidirectional=false until bidirectional backward parity is proven.");
+        }
+    }
+
+    if (node_type == gui::NodeType::RNN) {
+        const auto nonlinearity = parameters.find("nonlinearity");
+        if (nonlinearity != parameters.end()) {
+            const std::string value =
+                recurrent_configuration_policy_detail::TrimLower(
+                    nonlinearity->second);
+            if (!value.empty() && value != "tanh" && value != "relu") {
+                return std::string(
+                    "RNN nonlinearity must be \"tanh\" or \"relu\"; the simple "
+                    "RNN layer implements no other cell activation.");
+            }
         }
     }
 

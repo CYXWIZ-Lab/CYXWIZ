@@ -13,6 +13,9 @@ void NodeEditor::SaveUndoState() {
     // Create snapshot of current state
     GraphSnapshot snapshot;
     snapshot.nodes = nodes_;
+    snapshot.subgraphs = subgraphs_;
+    snapshot.positions = cached_node_positions_;
+    for (const auto& [id, pos] : pending_positions_) snapshot.positions[id] = pos;
     snapshot.links = links_;
     snapshot.next_node_id = next_node_id_;
     snapshot.next_pin_id = next_pin_id_;
@@ -33,6 +36,7 @@ void NodeEditor::SaveUndoState() {
 }
 
 void NodeEditor::Undo() {
+    if (!CanReplaceGraph("undo graph edits")) return;
     if (!CanUndo()) {
         spdlog::debug("Nothing to undo");
         return;
@@ -41,6 +45,9 @@ void NodeEditor::Undo() {
     // Save current state to redo stack
     GraphSnapshot current;
     current.nodes = nodes_;
+    current.subgraphs = subgraphs_;
+    current.positions = cached_node_positions_;
+    for (const auto& [id, pos] : pending_positions_) current.positions[id] = pos;
     current.links = links_;
     current.next_node_id = next_node_id_;
     current.next_pin_id = next_pin_id_;
@@ -51,7 +58,15 @@ void NodeEditor::Undo() {
     GraphSnapshot previous = undo_stack_.back();
     undo_stack_.pop_back();
 
+    if (properties_panel_) properties_panel_->ClearNodeReferences();
     nodes_ = previous.nodes;
+    subgraphs_ = previous.subgraphs;
+    cached_node_positions_ = previous.positions;
+    pending_positions_ = previous.positions;
+    pending_positions_frames_ = 3;
+    pending_context_reset_ = true;
+    selected_node_ids_.clear();
+    ClearValidationState();
     links_ = previous.links;
     next_node_id_ = previous.next_node_id;
     next_pin_id_ = previous.next_pin_id;
@@ -70,6 +85,7 @@ void NodeEditor::Undo() {
 }
 
 void NodeEditor::Redo() {
+    if (!CanReplaceGraph("redo graph edits")) return;
     if (!CanRedo()) {
         spdlog::debug("Nothing to redo");
         return;
@@ -78,6 +94,9 @@ void NodeEditor::Redo() {
     // Save current state to undo stack
     GraphSnapshot current;
     current.nodes = nodes_;
+    current.subgraphs = subgraphs_;
+    current.positions = cached_node_positions_;
+    for (const auto& [id, pos] : pending_positions_) current.positions[id] = pos;
     current.links = links_;
     current.next_node_id = next_node_id_;
     current.next_pin_id = next_pin_id_;
@@ -88,7 +107,15 @@ void NodeEditor::Redo() {
     GraphSnapshot next = redo_stack_.back();
     redo_stack_.pop_back();
 
+    if (properties_panel_) properties_panel_->ClearNodeReferences();
     nodes_ = next.nodes;
+    subgraphs_ = next.subgraphs;
+    cached_node_positions_ = next.positions;
+    pending_positions_ = next.positions;
+    pending_positions_frames_ = 3;
+    pending_context_reset_ = true;
+    selected_node_ids_.clear();
+    ClearValidationState();
     links_ = next.links;
     next_node_id_ = next.next_node_id;
     next_pin_id_ = next.next_pin_id;
@@ -217,6 +244,7 @@ ImVec2 NodeEditor::FindEmptyPosition() {
 }
 
 void NodeEditor::CopySelection() {
+    clipboard_.valid = false;
     // Get selected nodes from ImNodes
     const int num_selected = ImNodes::NumSelectedNodes();
     if (num_selected == 0) {
@@ -226,6 +254,13 @@ void NodeEditor::CopySelection() {
 
     std::vector<int> selected_ids(num_selected);
     ImNodes::GetSelectedNodes(selected_ids.data());
+
+    for (int id : selected_ids) {
+        if (IsSubgraphNode(id) || IsSubgraphMember(id)) {
+            spdlog::warn("Subgraph copy/cut/duplicate is not supported yet; save and load the complete graph instead.");
+            return;
+        }
+    }
 
     // Build set for quick lookup
     std::set<int> selected_set(selected_ids.begin(), selected_ids.end());

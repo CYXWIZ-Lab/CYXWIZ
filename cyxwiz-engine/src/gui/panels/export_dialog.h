@@ -40,7 +40,8 @@ public:
         const Optimizer* optimizer,
         const TrainingMetrics* metrics,
         const std::string& graph_json,
-        uint64_t graph_hash
+        uint64_t graph_hash,
+        const ExportOptions& trained_metadata = {}
     );
 
     // Callbacks
@@ -81,6 +82,7 @@ private:
     // Export settings
     ModelFormat selected_format_ = ModelFormat::CyxModel;
     ExportOptions export_options_;
+    ExportOptions trained_metadata_;
 
     // UI buffers
     char output_path_[512] = "";

@@ -1,8 +1,11 @@
 #include "synthetic_batch.h"
+#include "spatial_batch_layout.h"
+#include "spatial_sequential_head.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cstdint>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 namespace cyxwiz {
@@ -61,6 +64,14 @@ Tensor MakeBinaryFloat(const std::vector<size_t>& shape, uint32_t seed) {
 }
 
 Tensor MakeFeatures(const TrainingConfiguration& config, uint32_t seed) {
+    // Only explicitly constructed spatial entry nodes opt into this contract.
+    // Image data feeding Dense keeps its existing flattened input convention.
+    if (UsesSpatialSequentialInput(config)) {
+        const size_t features = SpatialSampleElements(config.input_shape);
+        if (config.input_size != 0 && config.input_size != features)
+            throw std::invalid_argument("Spatial synthetic input_size does not match [H,W,C]");
+        return SpatialBatchFromRows(MakeFloatRandom({1, features}, seed), config.input_shape);
+    }
     // input_size is the flattened feature count the first layer expects
     // (or seq_len for text). Fall back to 1 to avoid zero-size tensors.
     const size_t input_size = config.input_size > 0 ? config.input_size : 1;

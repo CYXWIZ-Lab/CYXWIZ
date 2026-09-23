@@ -157,7 +157,7 @@ const char* PreviewUnavailableMessage(SourceType source_type, cyxwiz::loaders::F
 const char* FileTypeParam(int detected_type) {
     static constexpr const char* kTypes[] = {
         "auto", "csv", "tsv", "json", "parquet", "excel",
-        "hdf5", "feather", "arrow", "txt", "arff",
+        "hdf5", "feather", "arrow", "txt", "arff", "zip_text",
     };
     constexpr int kTypeCount = static_cast<int>(sizeof(kTypes) / sizeof(kTypes[0]));
     if (detected_type >= 0 && detected_type < kTypeCount) {
@@ -169,7 +169,7 @@ const char* FileTypeParam(int detected_type) {
 const char* FileTypeName(int detected_type) {
     static constexpr const char* kNames[] = {
         "Auto", "CSV", "TSV", "JSON", "Parquet", "Excel",
-        "HDF5", "Feather", "Arrow", "TXT", "ARFF",
+        "HDF5", "Feather", "Arrow", "TXT", "ARFF", "ZIP text document",
     };
     constexpr int kNameCount = static_cast<int>(sizeof(kNames) / sizeof(kNames[0]));
     if (detected_type >= 0 && detected_type < kNameCount) {
@@ -182,7 +182,7 @@ int FileTypeFromParam(const std::string& value, int fallback) {
     const std::string normalized = ToLower(Trim(value));
     static constexpr const char* kTypes[] = {
         "auto", "csv", "tsv", "json", "parquet", "excel",
-        "hdf5", "feather", "arrow", "txt", "arff",
+        "hdf5", "feather", "arrow", "txt", "arff", "zip_text",
     };
     constexpr int kTypeCount = static_cast<int>(sizeof(kTypes) / sizeof(kTypes[0]));
     for (int i = 0; i < kTypeCount; ++i) {
@@ -213,6 +213,7 @@ int DetectFileTypeForPath(const std::string& path, std::size_t* file_size) {
     }
 
     const std::string ext = LowerExtension(path);
+    if (ext == "zip") return 11;
     if (ext == "csv") return 1;
     if (ext == "tsv" || ext == "tab") return 2;
     if (ext == "json" || ext == "jsonl") return 3;

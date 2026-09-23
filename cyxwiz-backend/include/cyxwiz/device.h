@@ -1,6 +1,7 @@
 #pragma once
 
 #include "api_export.h"
+#include "device_type.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -11,15 +12,6 @@
 #endif
 
 namespace cyxwiz {
-
-enum class DeviceType {
-    CPU = 0,
-    CUDA = 1,
-    OPENCL = 2,
-    METAL = 3,
-    VULKAN = 4,
-    ONEAPI = 5
-};
 
 enum class DeviceMetadataStatus {
     NotQueried = 0,

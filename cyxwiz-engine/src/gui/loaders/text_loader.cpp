@@ -192,6 +192,10 @@ uint64_t TextLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                 switch (tok_type) {
                     case 0: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::Whitespace; break;
                     case 2: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::Character; break;
+                    case 3: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::ByteBPE; break;
+                    case 4: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::WordPiece; break;
+                    case 5: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::SentencePieceBPE; break;
+                    case 6: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::SentencePieceUnigram; break;
                     default: probe_cfg.tokenizer_type = cyxwiz::TokenizerType::Word; break;
                 }
                 probe_cfg.max_length     = max_length;
@@ -443,7 +447,7 @@ std::vector<ParamSchema> TextLoader::NodeParams() const {
         {"text_layout",         "0",    "0=SingleFile, 1=CorpusSubdirs"},
         {"text_column",         "text", "Column with text for tokenization"},
         {"text_label_column",   "label","Label column (single-file mode)"},
-        {"text_tokenizer_type", "1",    "0=Whitespace, 1=Word, 2=Character"},
+        {"text_tokenizer_type", "1",    "0=Whitespace, 1=Word, 2=Character, 3=ByteBPE, 4=WordPiece, 5=SentencePieceBPE, 6=SentencePieceUnigram (optional provider)"},
         {"text_max_length",     "512",  "Max tokens per sample"},
         {"text_lowercase",      "true", "Lowercase before tokenization"},
         {"text_min_freq",       "1",    "Min word frequency for vocab"},

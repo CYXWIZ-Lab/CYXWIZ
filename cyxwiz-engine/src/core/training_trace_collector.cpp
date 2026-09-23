@@ -713,6 +713,7 @@ TrainingTraceCollector& TrainingTraceCollector::Instance() {
 void TrainingTraceCollector::StartRun(const std::string& run_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     run_id_ = run_id;
+    randomness_ = TrainingRandomness{};
     status_ = "running";
     events_.clear();
     materialization_events_.clear();
@@ -1044,6 +1045,12 @@ void TrainingTraceCollector::RecordArrayFireHostSync(
     }
 
     MaybePersistLocked(false);
+}
+
+void TrainingTraceCollector::RecordTrainingRandomness(const TrainingRandomness& randomness) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    randomness_ = randomness;
+    MaybePersistLocked(true);
 }
 
 void TrainingTraceCollector::RecordExecutionDeviceContext(
@@ -1436,6 +1443,7 @@ TrainingTraceSummary TrainingTraceCollector::Snapshot() const {
     TrainingTraceSummary summary;
     summary.available = !run_id_.empty();
     summary.run_id = run_id_;
+    summary.randomness = randomness_;
     summary.status = status_;
     summary.warnings = warnings_;
     summary.recent_events.assign(events_.begin(), events_.end());
@@ -1626,6 +1634,7 @@ std::optional<TrainingTraceSummary> TrainingTraceCollector::LoadLastTrace() {
         TrainingTraceSummary summary;
         summary.available = true;
         summary.run_id = j.value("run_id", "");
+        if (j.contains("randomness")) summary.randomness = j.at("randomness").get<TrainingRandomness>();
         summary.status = j.value("status", "");
         summary.warnings = j.value("warnings", std::vector<std::string>{});
         summary.native_cpu_fallback_count =
@@ -1767,6 +1776,7 @@ void TrainingTraceCollector::WriteLocked() const {
         }
         nlohmann::json j = {
             {"run_id", run_id_},
+            {"randomness", randomness_},
             {"status", status_},
             {"events", events},
             {"materialization_events", materialization_events},
@@ -1790,6 +1800,7 @@ void TrainingTraceCollector::WriteLocked() const {
         TrainingTraceSummary summary;
         summary.available = !run_id_.empty();
         summary.run_id = run_id_;
+        summary.randomness = randomness_;
         summary.status = status_;
         summary.recent_events.assign(events_.begin(), events_.end());
         summary.native_cpu_fallback_count = native_cpu_fallback_count_;

@@ -127,7 +127,14 @@ Tensor Execute(const Tensor &input, int factor, bool inverse) {
       values.eval();
       return Tensor::FromSemanticArray(values, shape);
     } catch (const af::exception &error) {
-      RecordLayerArrayFireFallback(operation, error.what(), input, "tensor");
+      if (inverse) {
+        // Backward's Execute input is the gradient, whose shape cannot form
+        // the input-keyed observation; the forward pass records the key.
+        RecordLayerArrayFireFallback(operation, error.what(), input, "tensor");
+      } else {
+        RecordLayerArrayFireFallbackObservation(
+            operation, "PixelShuffle", error.what(), input, "tensor");
+      }
     }
   }
 #else

@@ -1,4 +1,7 @@
 #include "cyxmodel_format.h"
+#include "cyxmodel_archive.h"
+#include <set>
+#include <limits>
 #include <spdlog/spdlog.h>
 #include <ctime>
 #include <iomanip>
@@ -8,27 +11,7 @@
 namespace cyxwiz {
 namespace formats {
 
-namespace {
 
-std::string ReadTreeModelArtifactTypeLocal(
-    const std::filesystem::path& tree_model_path) {
-    std::ifstream artifact_file(tree_model_path);
-    if (!artifact_file.is_open()) {
-        return {};
-    }
-
-    try {
-        nlohmann::json artifact_json = nlohmann::json::parse(artifact_file);
-        if (artifact_json.value("format", "") != "cyxwiz_tree_model") {
-            return {};
-        }
-        return artifact_json.value("model_type", "");
-    } catch (...) {
-        return {};
-    }
-}
-
-}  // namespace
 
 // JSON serialization for ModelManifest
 nlohmann::json CyxModelFormat::ManifestToJson(const ModelManifest& manifest) {
@@ -332,11 +315,31 @@ WeightsManifest CyxModelFormat::JsonToWeightsManifest(const nlohmann::json& j) {
 }
 
 // Binary tensor serialization with header
+namespace {
+size_t TensorPayloadBytes(const std::vector<int64_t>& shape, TensorDType dtype) {
+    size_t bytes=0;
+    switch(dtype) {
+        case TensorDType::Float32: case TensorDType::Int32: bytes=4; break;
+        case TensorDType::Float64: case TensorDType::Int64: bytes=8; break;
+        case TensorDType::UInt8: bytes=1; break;
+        default: throw std::runtime_error("Unsupported native tensor dtype");
+    }
+    if (shape.size()>8) throw std::runtime_error("Unsupported tensor rank");
+    for (const auto dim : shape) {
+        if (dim<0 || (dim>0 && bytes>std::numeric_limits<size_t>::max()/static_cast<size_t>(dim)))
+            throw std::runtime_error("Invalid tensor dimensions/byte overflow");
+        bytes*=static_cast<size_t>(dim);
+    }
+    return bytes;
+}
+}
+
 std::vector<uint8_t> CyxModelFormat::SerializeTensorWithHeader(
     const std::vector<uint8_t>& data,
     const std::vector<int64_t>& shape,
     TensorDType dtype
 ) {
+    if (TensorPayloadBytes(shape,dtype)!=data.size()) throw std::runtime_error("Tensor byte count mismatch");
     std::vector<uint8_t> result;
 
     // Header format:
@@ -411,6 +414,9 @@ bool CyxModelFormat::DeserializeTensorWithHeader(
 
     // Read data
     size_t tensor_size = data.size() - offset;
+    try {
+        if (TensorPayloadBytes(shape,dtype)!=tensor_size) { last_error_="Tensor byte count mismatch"; return false; }
+    } catch(const std::exception& e) { last_error_=e.what(); return false; }
     tensor_data.resize(tensor_size);
     std::memcpy(tensor_data.data(), data.data() + offset, tensor_size);
 
@@ -427,7 +433,8 @@ bool CyxModelFormat::Create(
     const std::map<std::string, std::vector<uint8_t>>& weights,
     const std::map<std::string, std::vector<int64_t>>& weight_shapes,
     const std::map<std::string, std::vector<uint8_t>>* optimizer_state,
-    const ExportOptions& options
+    const ExportOptions& options,
+    const std::map<std::string, TensorDType>* weight_dtypes
 ) {
     std::map<std::string, std::vector<uint8_t>> files;
 
@@ -467,7 +474,8 @@ bool CyxModelFormat::Create(
         }
 
         // Serialize with header
-        auto serialized = SerializeTensorWithHeader(data, shape, TensorDType::Float32);
+        const auto dtype = weight_dtypes ? weight_dtypes->at(name) : TensorDType::Float32;
+        auto serialized = SerializeTensorWithHeader(data, shape, dtype);
 
         // Generate filename (replace . and / with _)
         std::string filename = name;
@@ -476,13 +484,14 @@ bool CyxModelFormat::Create(
         }
         filename = "weights/" + filename + ".bin";
 
+        if (files.count(filename)) { last_error_ = "Colliding tensor filename: " + filename; return false; }
         files[filename] = serialized;
 
         // Add to manifest
         TensorMeta meta;
         meta.name = name;
         meta.shape = shape;
-        meta.dtype = TensorDType::Float32;
+        meta.dtype = dtype;
         meta.size_bytes = serialized.size();
         weights_manifest.tensors.push_back(meta);
         total_bytes += serialized.size();
@@ -515,7 +524,14 @@ bool CyxModelFormat::Create(
                                      tokenizer_config.end());
         }
 
-        if (!options.text_tokenizer_vocab_path.empty()) {
+        if (!options.text_tokenizer_vocab_data.empty() && !options.text_tokenizer_vocab_path.empty()) {
+            last_error_ = "Tokenizer export cannot specify both vocabulary bytes and a file path";
+            return false;
+        }
+        if (!options.text_tokenizer_vocab_data.empty()) {
+            files["tokenizer/vocab.txt"] = std::vector<uint8_t>(
+                options.text_tokenizer_vocab_data.begin(), options.text_tokenizer_vocab_data.end());
+        } else if (!options.text_tokenizer_vocab_path.empty()) {
             std::ifstream vocab_file(options.text_tokenizer_vocab_path,
                                      std::ios::binary);
             if (!vocab_file.is_open()) {
@@ -528,6 +544,29 @@ bool CyxModelFormat::Create(
                 (std::istreambuf_iterator<char>(vocab_file)),
                 std::istreambuf_iterator<char>());
             files["tokenizer/vocab.txt"] = std::move(vocab_bytes);
+        }
+
+        if (!options.text_tokenizer_model_data.empty() && !options.text_tokenizer_model_path.empty()) {
+            last_error_ = "Tokenizer export cannot specify both model bytes and a file path";
+            return false;
+        }
+        if (!options.text_tokenizer_model_data.empty()) {
+            files["tokenizer/model.spm"] = std::vector<uint8_t>(
+                options.text_tokenizer_model_data.begin(),
+                options.text_tokenizer_model_data.end());
+        } else if (!options.text_tokenizer_model_path.empty()) {
+            std::ifstream model_file(options.text_tokenizer_model_path,
+                                     std::ios::binary);
+            if (!model_file.is_open()) {
+                last_error_ = "Cannot open tokenizer model file: " +
+                              options.text_tokenizer_model_path;
+                return false;
+            }
+
+            std::vector<uint8_t> model_bytes(
+                (std::istreambuf_iterator<char>(model_file)),
+                std::istreambuf_iterator<char>());
+            files["tokenizer/model.spm"] = std::move(model_bytes);
         }
     }
 
@@ -604,17 +643,7 @@ bool CyxModelFormat::Create(
         }
     }
 
-    // Write to archive or directory
-    bool use_zip = output_path.size() > 9 &&
-                   output_path.substr(output_path.size() - 9) == ".cyxmodel";
-
-    if (use_zip) {
-        // For now, use directory-based storage (ZIP can be added with minizip)
-        // Create a directory with .cyxmodel extension (it's just a convention)
-        return CreateDirectory(output_path, files);
-    } else {
-        return CreateDirectory(output_path, files);
-    }
+    return CreateArchive(output_path, files, options.compress);
 }
 
 // Extract .cyxmodel archive
@@ -627,15 +656,35 @@ bool CyxModelFormat::Extract(
     std::map<std::string, std::vector<uint8_t>>& weights,
     std::map<std::string, std::vector<int64_t>>& weight_shapes,
     std::map<std::string, std::vector<uint8_t>>* optimizer_state,
-    const ImportOptions& options
+    const ImportOptions& options,
+    std::map<std::string, TensorDType>* weight_dtypes
 ) {
     std::map<std::string, std::vector<uint8_t>> files;
 
     // Read from directory
-    if (!ReadDirectory(input_path, files)) {
+    if (!ReadPackage(input_path, files)) {
         return false;
     }
 
+    return Extract(files,manifest,graph_json,config,history,weights,weight_shapes,
+                   optimizer_state,options,weight_dtypes);
+}
+
+bool CyxModelFormat::Extract(
+    const std::map<std::string, std::vector<uint8_t>>& files,
+    ModelManifest& manifest,
+    std::string& graph_json,
+    TrainingConfig& config,
+    TrainingHistory* history,
+    std::map<std::string, std::vector<uint8_t>>& weights,
+    std::map<std::string, std::vector<int64_t>>& weight_shapes,
+    std::map<std::string, std::vector<uint8_t>>* optimizer_state,
+    const ImportOptions& options,
+    std::map<std::string, TensorDType>* weight_dtypes
+) {
+    weights.clear(); weight_shapes.clear(); graph_json.clear();
+    if (weight_dtypes) weight_dtypes->clear();
+    if (optimizer_state) optimizer_state->clear();
     // Parse manifest.json
     auto manifest_it = files.find("manifest.json");
     if (manifest_it == files.end()) {
@@ -649,6 +698,17 @@ bool CyxModelFormat::Extract(
     auto graph_it = files.find("graph.cyxgraph");
     if (graph_it != files.end()) {
         graph_json = std::string(graph_it->second.begin(), graph_it->second.end());
+    }
+
+    const std::pair<bool,const char*> required_assets[] = {
+        {manifest.has_graph,"graph.cyxgraph"}, {manifest.has_tokenizer,"tokenizer/config.json"},
+        {manifest.has_vocabulary,"tokenizer/vocab.txt"}, {manifest.has_training_history,"history.json"},
+        {manifest.has_tree_model_artifact,"tree/model.json"},
+        {manifest.has_sequence_token_vocabulary,manifest.sequence_token_vocabulary_path.c_str()},
+        {manifest.has_sequence_pos_vocabulary,manifest.sequence_pos_vocabulary_path.c_str()},
+        {manifest.has_sequence_tag_vocabulary,manifest.sequence_tag_vocabulary_path.c_str()}};
+    for (const auto& [required,name] : required_assets) {
+        if (required && !files.count(name)) { last_error_=std::string("Missing declared asset: ")+name; return false; }
     }
 
     // Parse config.json
@@ -673,14 +733,18 @@ bool CyxModelFormat::Extract(
         std::string wm_str(weights_manifest_it->second.begin(), weights_manifest_it->second.end());
         WeightsManifest weights_manifest = JsonToWeightsManifest(nlohmann::json::parse(wm_str));
 
+        std::set<std::string> tensor_names;
+        std::set<std::string> tensor_files;
         // Load each tensor
         for (const auto& meta : weights_manifest.tensors) {
+            if (!tensor_names.insert(meta.name).second) { last_error_="Duplicate tensor: "+meta.name; return false; }
             std::string filename = meta.name;
             for (auto& c : filename) {
                 if (c == '.' || c == '/') c = '_';
             }
             filename = "weights/" + filename + ".bin";
 
+            if (!tensor_files.insert(filename).second) { last_error_="Colliding tensor filenames: "+filename; return false; }
             auto tensor_it = files.find(filename);
             if (tensor_it != files.end()) {
                 std::vector<uint8_t> tensor_data;
@@ -688,12 +752,16 @@ bool CyxModelFormat::Extract(
                 TensorDType dtype;
 
                 if (DeserializeTensorWithHeader(tensor_it->second, tensor_data, shape, dtype)) {
+                    if (shape != meta.shape || dtype != meta.dtype || meta.size_bytes != tensor_it->second.size()) {
+                        last_error_="Tensor inventory/header mismatch: "+meta.name; return false;
+                    }
                     weights[meta.name] = std::move(tensor_data);
                     weight_shapes[meta.name] = std::move(shape);
-                }
-            }
+                    if (weight_dtypes) (*weight_dtypes)[meta.name]=dtype;
+                } else { return false; }
+            } else { last_error_="Missing tensor payload: "+meta.name; return false; }
         }
-    }
+    } else { last_error_="Missing weights/manifest.json"; return false; }
 
     // Load optimizer state
     if (optimizer_state && options.load_optimizer_state) {
@@ -735,24 +803,16 @@ ProbeResult CyxModelFormat::Probe(const std::string& input_path) {
     result.format = ModelFormat::CyxModel;
 
     // Try to read manifest.json
-    std::filesystem::path manifest_path = std::filesystem::path(input_path) / "manifest.json";
-    if (!std::filesystem::exists(manifest_path)) {
-        result.error_message = "Missing manifest.json";
-        return result;
-    }
-
-    std::ifstream manifest_file(manifest_path);
-    if (!manifest_file.is_open()) {
-        result.error_message = "Cannot open manifest.json";
-        return result;
-    }
-
+    std::map<std::string, std::vector<uint8_t>> files;
+    if (!ReadPackage(input_path,files)) { result.error_message=last_error_; return result; }
+    if (!files.count("manifest.json")) { result.error_message="Missing manifest.json"; return result; }
+    const auto& manifest_bytes = files.at("manifest.json");
     try {
-        nlohmann::json j = nlohmann::json::parse(manifest_file);
+        nlohmann::json j = nlohmann::json::parse(manifest_bytes.begin(),manifest_bytes.end());
         ModelManifest manifest = JsonToManifest(j);
 
         result.valid = true;
-        result.format_version = manifest.version;
+        result.format_version = CyxModelArchive::IsV3(input_path) ? "CYXW v3" : manifest.version;
         result.model_name = manifest.model_name;
         result.model_family = manifest.model_family;
         result.supports_generation = manifest.supports_generation;
@@ -788,16 +848,12 @@ ProbeResult CyxModelFormat::Probe(const std::string& input_path) {
         result.has_tree_model_artifact = manifest.has_tree_model_artifact;
         result.tree_model_type = manifest.tree_model_type;
         result.tree_model_artifact_path = manifest.tree_model_artifact_path;
-        std::filesystem::path tree_model_path =
-            std::filesystem::path(input_path) / "tree" / "model.json";
-        if (std::filesystem::exists(tree_model_path)) {
+        if (files.count("tree/model.json")) {
             result.has_tree_model_artifact = true;
-            if (result.tree_model_artifact_path.empty()) {
-                result.tree_model_artifact_path = "tree/model.json";
-            }
+            if (result.tree_model_artifact_path.empty()) result.tree_model_artifact_path="tree/model.json";
             if (result.tree_model_type.empty()) {
-                result.tree_model_type =
-                    ReadTreeModelArtifactTypeLocal(tree_model_path);
+                const auto& bytes=files.at("tree/model.json");
+                result.tree_model_type=nlohmann::json::parse(bytes.begin(),bytes.end()).value("model_type",std::string{});
             }
         }
         result.sequence_batch_first = manifest.sequence_batch_first;
@@ -819,48 +875,30 @@ ProbeResult CyxModelFormat::Probe(const std::string& input_path) {
         result.sequence_tag_vocabulary_path =
             manifest.sequence_tag_vocabulary_path;
     } catch (const std::exception& e) {
+        result.valid = false;
         result.error_message = "Error parsing manifest: " + std::string(e.what());
     }
 
-    // Load weights manifest for layer info
-    std::filesystem::path weights_manifest_path = std::filesystem::path(input_path) / "weights" / "manifest.json";
-    if (std::filesystem::exists(weights_manifest_path)) {
-        std::ifstream wm_file(weights_manifest_path);
-        if (wm_file.is_open()) {
-            try {
-                nlohmann::json wm_json = nlohmann::json::parse(wm_file);
-                WeightsManifest wm = JsonToWeightsManifest(wm_json);
-                for (const auto& t : wm.tensors) {
-                    result.layer_names.push_back(t.name);
-                    result.layer_shapes[t.name] = t.shape;
-                }
-            } catch (...) {
-                // Ignore errors in weights manifest probe
+    if (files.count("weights/manifest.json")) {
+        try {
+            const auto& bytes=files.at("weights/manifest.json");
+            const auto wm=JsonToWeightsManifest(nlohmann::json::parse(bytes.begin(),bytes.end()));
+            for (const auto& tensor : wm.tensors) {
+                result.layer_names.push_back(tensor.name);
+                result.layer_shapes[tensor.name]=tensor.shape;
             }
-        }
+        } catch (const std::exception& e) { result.valid=false; result.error_message=e.what(); }
     }
-
     return result;
 }
 
 // Extract graph only
 std::string CyxModelFormat::ExtractGraphOnly(const std::string& input_path) {
-    std::filesystem::path graph_path = std::filesystem::path(input_path) / "graph.cyxgraph";
-
-    if (!std::filesystem::exists(graph_path)) {
-        last_error_ = "No graph.cyxgraph found";
-        return "";
-    }
-
-    std::ifstream file(graph_path);
-    if (!file.is_open()) {
-        last_error_ = "Cannot open graph.cyxgraph";
-        return "";
-    }
-
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+    std::map<std::string,std::vector<uint8_t>> files;
+    if (!ReadPackage(input_path,files)) return {};
+    const auto found=files.find("graph.cyxgraph");
+    if (found==files.end()) { last_error_="No graph.cyxgraph found"; return {}; }
+    return std::string(found->second.begin(),found->second.end());
 }
 
 bool CyxModelFormat::ExtractTextTokenizerAssets(
@@ -868,13 +906,24 @@ bool CyxModelFormat::ExtractTextTokenizerAssets(
     std::string& config_json,
     std::string& vocab_text
 ) {
+    std::string model_data;
+    return ExtractTextTokenizerAssets(input_path, config_json, vocab_text, model_data);
+}
+
+bool CyxModelFormat::ExtractTextTokenizerAssets(
+    const std::string& input_path,
+    std::string& config_json,
+    std::string& vocab_text,
+    std::string& model_data
+) {
     std::map<std::string, std::vector<uint8_t>> files;
-    if (!ReadDirectory(input_path, files)) {
+    if (!ReadPackage(input_path, files)) {
         return false;
     }
 
     config_json.clear();
     vocab_text.clear();
+    model_data.clear();
 
     auto config_it = files.find("tokenizer/config.json");
     if (config_it != files.end()) {
@@ -886,7 +935,15 @@ bool CyxModelFormat::ExtractTextTokenizerAssets(
         vocab_text.assign(vocab_it->second.begin(), vocab_it->second.end());
     }
 
-    if (config_json.empty() && vocab_text.empty()) {
+    auto model_it = files.find("tokenizer/model.spm");
+    if (model_it == files.end()) {
+        model_it = files.find("tokenizer/model.spm.fb");
+    }
+    if (model_it != files.end()) {
+        model_data.assign(model_it->second.begin(), model_it->second.end());
+    }
+
+    if (config_json.empty() && vocab_text.empty() && model_data.empty()) {
         last_error_ = "No tokenizer assets found";
         return false;
     }
@@ -901,7 +958,7 @@ bool CyxModelFormat::ExtractSequenceVocabularyAssets(
     std::string& tag_vocab_text
 ) {
     std::map<std::string, std::vector<uint8_t>> files;
-    if (!ReadDirectory(input_path, files)) {
+    if (!ReadPackage(input_path, files)) {
         return false;
     }
 
@@ -939,7 +996,7 @@ bool CyxModelFormat::ExtractTreeModelArtifact(
     std::string& artifact_json
 ) {
     std::map<std::string, std::vector<uint8_t>> files;
-    if (!ReadDirectory(input_path, files)) {
+    if (!ReadPackage(input_path, files)) {
         return false;
     }
 
@@ -960,78 +1017,11 @@ bool CyxModelFormat::ExtractTreeModelArtifact(
 }
 
 // Directory-based storage (simple fallback)
-bool CyxModelFormat::CreateDirectory(
-    const std::string& output_path,
-    const std::map<std::string, std::vector<uint8_t>>& files
-) {
-    namespace fs = std::filesystem;
-
-    try {
-        // Create root directory
-        fs::create_directories(output_path);
-
-        for (const auto& [filename, data] : files) {
-            fs::path full_path = fs::path(output_path) / filename;
-
-            // Create parent directories if needed
-            fs::create_directories(full_path.parent_path());
-
-            // Write file
-            std::ofstream file(full_path, std::ios::binary);
-            if (!file.is_open()) {
-                last_error_ = "Cannot create file: " + full_path.string();
-                return false;
-            }
-            file.write(reinterpret_cast<const char*>(data.data()), data.size());
-        }
-
-        spdlog::info("Created .cyxmodel at: {}", output_path);
-        return true;
-    } catch (const std::exception& e) {
-        last_error_ = "Error creating directory: " + std::string(e.what());
-        return false;
-    }
-}
-
-bool CyxModelFormat::ReadDirectory(
+bool CyxModelFormat::ReadPackage(
     const std::string& input_path,
-    std::map<std::string, std::vector<uint8_t>>& files
-) {
-    namespace fs = std::filesystem;
-
-    try {
-        if (!fs::exists(input_path) || !fs::is_directory(input_path)) {
-            last_error_ = "Not a valid directory: " + input_path;
-            return false;
-        }
-
-        fs::path root(input_path);
-
-        for (const auto& entry : fs::recursive_directory_iterator(input_path)) {
-            if (entry.is_regular_file()) {
-                // Get relative path
-                fs::path rel_path = fs::relative(entry.path(), root);
-                std::string filename = rel_path.generic_string();
-
-                // Read file
-                std::ifstream file(entry.path(), std::ios::binary);
-                if (file.is_open()) {
-                    file.seekg(0, std::ios::end);
-                    size_t size = file.tellg();
-                    file.seekg(0, std::ios::beg);
-
-                    std::vector<uint8_t> data(size);
-                    file.read(reinterpret_cast<char*>(data.data()), size);
-                    files[filename] = std::move(data);
-                }
-            }
-        }
-
-        return true;
-    } catch (const std::exception& e) {
-        last_error_ = "Error reading directory: " + std::string(e.what());
-        return false;
-    }
+    std::map<std::string, std::vector<uint8_t>>& files) {
+    try { files = CyxModelArchive::Read(input_path); return true; }
+    catch (const std::exception& e) { last_error_ = e.what(); return false; }
 }
 
 std::string CyxModelFormat::GetTimestamp() {
@@ -1042,35 +1032,16 @@ std::string CyxModelFormat::GetTimestamp() {
     return ss.str();
 }
 
-bool CyxModelFormat::IsZipFile(const std::string& path) {
-    // Check for ZIP magic bytes: PK\x03\x04
-    std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) return false;
-
-    char magic[4];
-    file.read(magic, 4);
-    return magic[0] == 'P' && magic[1] == 'K' && magic[2] == 0x03 && magic[3] == 0x04;
-}
-
-// ZIP archive operations (placeholder - implement with minizip when available)
 bool CyxModelFormat::CreateArchive(
     const std::string& output_path,
     const std::map<std::string, std::vector<uint8_t>>& files,
-    bool /*compress*/
-) {
-    // TODO: Implement with minizip for proper ZIP archive creation
-    // For now, fall back to directory-based storage
-    spdlog::warn("ZIP archive creation not available, using directory storage");
-    return CreateDirectory(output_path, files);
-}
-
-bool CyxModelFormat::ExtractArchive(
-    const std::string& input_path,
-    std::map<std::string, std::vector<uint8_t>>& files
-) {
-    // TODO: Implement with minizip for proper ZIP archive extraction
-    // For now, try directory-based storage
-    return ReadDirectory(input_path, files);
+    bool compress) {
+    try {
+        if (compress) throw std::runtime_error("CYXW v3 compression is not implemented; disable Compress");
+        CyxModelArchive::WriteBinary(output_path, files);
+        spdlog::info("Created CYXW v3 binary model: {}", output_path);
+        return true;
+    } catch (const std::exception& e) { last_error_ = e.what(); return false; }
 }
 
 } // namespace formats

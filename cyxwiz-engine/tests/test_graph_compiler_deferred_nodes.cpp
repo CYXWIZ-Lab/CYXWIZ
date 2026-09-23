@@ -234,6 +234,59 @@ int main() {
                           {Pin(501, gui::PinType::Loss, "Loss", true)},
                           {});
 
+    // Reuse the graph fixture to qualify diagnostic spatial inference without
+    // promoting these nodes to an executable Studio training workflow.
+    {
+        cyxwiz::GraphCompiler spatial_compiler;
+        auto spatial_data = data;
+        spatial_data.parameters["shape"] = "[2,3,8]";
+        auto spatial = dense;
+        spatial.name = "Spatial Contract";
+        const std::vector<gui::NodeLink> spatial_links = {
+            Link(1, 1, 101, 2, 201), Link(2, 2, 202, 4, 401),
+            Link(3, 1, 102, 4, 402), Link(4, 4, 403, 5, 501)};
+        for (auto type : {gui::NodeType::Upsample, gui::NodeType::PixelShuffle}) {
+            spatial.type = type;
+            const char* key = type == gui::NodeType::Upsample
+                ? "scale_factor" : "upscale_factor";
+            spatial.parameters = {{key, "2"}, {"mode", "1"}};
+            auto compiled = spatial_compiler.Compile(
+                {spatial_data, spatial, loss, optimizer}, spatial_links, true);
+            Check(!compiled.is_valid && HasIssueCode(compiled,
+                      cyxwiz::errors::Compiler::UnsupportedTrainingNode),
+                  "spatial geometry must not promote Studio training support");
+            Check(compiled.layers.size() == 1 &&
+                      compiled.layers[0].input_shape == std::vector<size_t>{2, 3, 8} &&
+                      compiled.layers[0].output_shape == std::vector<size_t>{4, 6,
+                          type == gui::NodeType::Upsample ? size_t{8} : size_t{2}} &&
+                      compiled.layers[0].scale_factor == 2,
+                  "compiler should preserve exact per-sample spatial geometry");
+            Check(!HasIssueCode(compiled, cyxwiz::errors::Compiler::TensorShapeMismatch),
+                  "valid spatial geometry must not report a shape mismatch");
+            for (const std::string value : {"", "2junk", "0", "-1", "1048577"}) {
+                spatial.parameters[key] = value;
+                compiled = spatial_compiler.Compile(
+                    {spatial_data, spatial, loss, optimizer}, spatial_links, true);
+                Check(HasIssueCode(compiled, cyxwiz::errors::Compiler::InvalidParameter) &&
+                          HasIssueText(compiled, key),
+                      "spatial malformed parameters should produce coded diagnostics");
+            }
+            spatial.parameters[key] = "2";
+            auto invalid_data = spatial_data;
+            invalid_data.parameters["shape"] = "[2,3]";
+            compiled = spatial_compiler.Compile(
+                {invalid_data, spatial, loss, optimizer}, spatial_links, true);
+            Check(HasIssueCode(compiled, cyxwiz::errors::Compiler::TensorShapeMismatch),
+                  "spatial input requires exactly three sample axes");
+        }
+        spatial.parameters = {{"upscale_factor", "3"}};
+        const auto invalid_channels = spatial_compiler.Compile(
+            {spatial_data, spatial, loss, optimizer}, spatial_links, true);
+        Check(HasIssueCode(invalid_channels, cyxwiz::errors::Compiler::TensorShapeMismatch) &&
+                  HasIssueText(invalid_channels, "divisible"),
+              "PixelShuffle invalid channel factor must fail at compile time");
+    }
+
     std::vector<gui::MLNode> nodes = {data, dev_data, test_data, dense, batch_matmul, loss, optimizer};
     std::vector<gui::NodeLink> links = {
         Link(1, 1, 101, 2, 201),
@@ -2453,6 +2506,8 @@ int main() {
               std::fabs(config.val_ratio) < 0.0001f &&
               std::fabs(config.test_ratio - 0.1f) < 0.0001f,
           "Train plus external Dev must preserve Dev and derive only Test from Train");
+    Check(!HasIssueText(config, "Validation split is 0"),
+          "a supplied Dev dataset must suppress the no-validation warning");
 
     nodes = {role_train, role_dev, role_test, role_split, role_loader,
              binary_dense, binary_loss, optimizer};

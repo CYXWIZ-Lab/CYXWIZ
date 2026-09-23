@@ -4550,7 +4550,14 @@ void TestTrainingTracePersistenceCoalescing() {
 
 } // namespace
 
+int RunTrainingRandomnessTests(const std::string& backend);
+int RunSpatialIngressTests(const std::string& backend);
+
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string(argv[1]) == "--spatial-ingress")
+        return RunSpatialIngressTests(argv[2]);
+    if (argc == 3 && std::string(argv[1]) == "--model-seed")
+        return RunTrainingRandomnessTests(argv[2]);
     namespace fs = std::filesystem;
 
     const fs::path work_dir =

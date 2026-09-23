@@ -142,6 +142,10 @@ private:
     bool IsPaddingNode() const;
 
     int tokenizer_type_ = 1;
+    int token_output_mode_ = 0;
+    char document_id_col_[128] = "document_id";
+    char split_col_[128] = "split";
+    char token_ids_col_[128] = "token_ids";
     int max_length_ = 256;
     int max_vocab_size_ = 10000;
     int min_word_freq_ = 2;
@@ -156,6 +160,10 @@ private:
     char source_csv_[512] = "";
     char sample_text_[1024] = "Hello world! This is a sample text for tokenization preview.";
     std::vector<std::string> preview_tokens_;
+    std::vector<int> preview_token_ids_;
+    std::string preview_decoded_text_;
+    bool preview_roundtrip_ok_ = false;
+    bool preview_has_roundtrip_ = false;
     std::string status_message_;
     bool status_is_error_ = false;
 };
@@ -329,6 +337,7 @@ private:
     DatabaseType database_type_ = DatabaseType::SQLite;
 
     // STATE: File source
+    char archive_member_[65537] = {};
     char file_path_[512] = {};
     char folder_path_[512] = {};
     // 0=Auto, 1=CSV, 2=TSV, 3=JSON, 4=Parquet, 5=Excel, 6=HDF5, 7=Feather, 8=Arrow, 9=TXT, 10=ARFF
@@ -369,7 +378,7 @@ private:
     // its vocabulary from the text corpus.
     char text_column_[128] = "text";
     char text_label_column_[128] = "label";
-    int text_tokenizer_type_ = 1;   // 0=Whitespace, 1=Word, 2=Character
+    int text_tokenizer_type_ = 1;   // 0=Whitespace, 1=Word, 2=Character, 3=ByteBPE, 4=WordPiece, 5=SentencePieceBPE, 6=SentencePieceUnigram
     int text_max_length_ = 512;
     bool text_lowercase_ = true;
     int text_min_freq_ = 1;
@@ -657,6 +666,7 @@ private:
     int log_interval_ = 10;
     int validation_freq_ = 1;
     int seed_ = 42;
+    int model_seed_ = -1;
     int grad_accum_steps_ =
         cyxwiz::training_contract::kGradientAccumulationStepsDefault;
     bool balance_classes_ = false;
@@ -667,6 +677,10 @@ private:
     bool save_best_checkpoint_ = true;
     int early_stopping_patience_ = 5;
     char checkpoint_dir_[512] = "";
+    bool generation_preview_enabled_ = false;
+    int generation_preview_every_epochs_ = 20;
+    int generation_preview_max_new_tokens_ = 32;
+    char generation_preview_prompts_[8193] = "";
 };
 
 /**

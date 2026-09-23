@@ -344,7 +344,8 @@ bool ArrowDataset::ExportParquet(const std::string& path, bool compress) const {
 
     // Write table
     auto status = parquet::arrow::WriteTable(*table_, arrow::default_memory_pool(),
-                                             output, 1024 * 1024, props);  // 1MB row group size
+                                             output, 1024 * 1024, props,
+                                             parquet::ArrowWriterProperties::Builder().store_schema()->build());
     if (!status.ok()) {
         spdlog::error("Failed to write Parquet table: {}", status.ToString());
         return false;

@@ -18,10 +18,16 @@ void QueryEditor::RenderQueryEditor() {
     ImGui::InputTextMultiline("##query", query_buffer_, sizeof(query_buffer_),
                               ImVec2(-1, 150), ImGuiInputTextFlags_AllowTabInput);
 
+    const auto capability = GetQueryCapability();
+    ImGui::Text("Availability: %s", DataStudioActionStateName(capability.state));
+    ImGui::TextWrapped("%s", capability.reason.c_str());
+    ImGui::BeginDisabled(query_running_ ||
+        capability.state != DataStudioActionState::ExploreOnly);
     // Execute button
     if (ImGui::Button("Execute Query")) {
         ExecuteQuery();
     }
+    ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Clear")) {
         std::memset(query_buffer_, 0, sizeof(query_buffer_));

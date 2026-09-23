@@ -738,8 +738,20 @@ struct DataBoundaryMigrationResult {
     std::string message;
 };
 
+// Subgraph data for encapsulated node groups
+struct SubgraphData {
+    int subgraph_node_id;                    // ID of the parent subgraph node
+    std::vector<MLNode> internal_nodes;      // Nodes inside the subgraph
+    std::vector<NodeLink> internal_links;    // Links between internal nodes
+    std::vector<int> input_pin_mappings;     // External input pin -> internal node pin
+    std::vector<int> output_pin_mappings;    // Internal node pin -> external output pin
+    bool expanded = false;                   // Whether subgraph is expanded (visible)
+};
+
 // Graph snapshot for undo/redo
 struct GraphSnapshot {
+    std::vector<SubgraphData> subgraphs;
+    std::map<int, ImVec2> positions;
     std::vector<MLNode> nodes;
     std::vector<NodeLink> links;
     int next_node_id;
@@ -891,16 +903,6 @@ struct ValidationWarning {
     int to_node_id = -1;              // Target node (for connection issues)
 };
 
-// Subgraph data for encapsulated node groups
-struct SubgraphData {
-    int subgraph_node_id;                    // ID of the parent subgraph node
-    std::vector<MLNode> internal_nodes;      // Nodes inside the subgraph
-    std::vector<NodeLink> internal_links;    // Links between internal nodes
-    std::vector<int> input_pin_mappings;     // External input pin -> internal node pin
-    std::vector<int> output_pin_mappings;    // Internal node pin -> external output pin
-    bool expanded = false;                   // Whether subgraph is expanded (visible)
-};
-
 // Execution context for unified canvas (Unified Canvas Phase 2)
 struct ExecutionContext {
     ExecutionMode mode;
@@ -987,6 +989,13 @@ public:
 
     // Check if graph is ready for training
     bool IsGraphValid() const;
+    // Graph replacement admission is checked by all load/clear entry points.
+    std::string GetGraphReplacementBlockReason() const;
+    bool CanReplaceGraph(const char* operation);
+    void SetGraphPreparationBusyCallback(std::function<bool()> callback) {
+        graph_preparation_busy_callback_ = std::move(callback);
+    }
+
 
     // Training state control
     void SetTrainingActive(bool active) { is_training_ = active; }
@@ -1317,6 +1326,7 @@ private:
     void ToggleSubgraphExpansion(int node_id);
     bool IsSubgraphNode(int node_id) const;
     SubgraphData* GetSubgraphData(int node_id);
+    bool IsSubgraphMember(int node_id) const;
 
     // Framework-specific generators
     std::string GeneratePyTorchCode(const std::vector<int>& sorted_ids);
@@ -1426,7 +1436,9 @@ private:
     int pending_focus_node_id_ = -1;
 
     // Training animation state
-    bool is_training_ = false;
+    std::atomic<bool> is_training_{false};
+    std::function<bool()> graph_preparation_busy_callback_;
+
     float training_animation_time_ = 0.0f;
 
     // Zoom state
@@ -1488,6 +1500,10 @@ private:
 
     // Flag to recreate ImNodes editor context (full reset)
     bool pending_context_reset_ = false;
+
+    // UI-owned rejection feedback, rendered even when the Studio tab is hidden.
+    bool graph_busy_dialog_pending_ = false;
+    std::string graph_busy_message_;
 
     // Empty graph warning popup state
     bool show_empty_graph_warning_ = false;

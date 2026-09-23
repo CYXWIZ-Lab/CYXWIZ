@@ -1,6 +1,7 @@
 #pragma once
 
 #include <imgui.h>
+#include "../../core/data_studio_capabilities.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -49,6 +50,7 @@ public:
      * Execute the current query
      */
     bool ExecuteQuery();
+    DataStudioCapability GetQueryCapability() const;
 
     /**
      * Save the current query result as a new dataset
@@ -62,6 +64,7 @@ private:
     std::string last_error_;
     bool query_running_;
     std::string current_dataset_;
+    std::string registered_dataset_;
 
     // DuckDB connector for SQL execution
     std::unique_ptr<DuckDBConnector> duckdb_;

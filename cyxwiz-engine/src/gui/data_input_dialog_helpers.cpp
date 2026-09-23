@@ -180,6 +180,10 @@ bool DataInputDialog::CanPageRegisteredPreview() const {
         return false;
     }
 
+    if (detected_type_ == 11) {
+        return parameter_matches("archive_member", archive_member_) &&
+            cyxwiz::DataRegistry::Instance().IsArrowDataset(loaded_dataset_name_);
+    }
     const auto source_dataset =
         cyxwiz::DataRegistry::Instance().FindTabularDatasetBySourcePath(file_path_);
     return source_dataset && *source_dataset == loaded_dataset_name_;
@@ -341,7 +345,7 @@ void DataInputDialog::BrowseFile() {
 
     switch (file_category_) {
         case FileCategory::Tabular:
-            filters = {{"Supported Tabular Data", "csv,tsv,parquet,feather,fea,arrow,ipc"},
+            filters = {{"Supported Table and Document Data", "csv,tsv,parquet,feather,fea,arrow,ipc,zip"},
                        {"CSV", "csv"}, {"TSV", "tsv"}, {"Parquet", "parquet"},
                        {"Feather", "feather,fea"}, {"Arrow / IPC", "arrow,ipc"}, {"All Files", "*"}};
             break;

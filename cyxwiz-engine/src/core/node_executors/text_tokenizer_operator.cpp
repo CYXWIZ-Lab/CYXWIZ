@@ -10,6 +10,9 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <charconv>
+#include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <limits>
@@ -59,12 +62,284 @@ std::string BuildTokenizerMemoryPreflightMessage(
     return ss.str();
 }
 
+bool ParseTokenIdList(const std::string& text, std::vector<int>& ids) {
+    ids.clear();
+    const char* current = text.data();
+    const char* end = text.data() + text.size();
+    while (current < end) {
+        while (current < end) {
+            const unsigned char c = static_cast<unsigned char>(*current);
+            if (std::isspace(c) || *current == ',' || *current == '[' ||
+                *current == ']') {
+                ++current;
+            } else {
+                break;
+            }
+        }
+        if (current >= end) break;
+        int value = 0;
+        const auto parsed = std::from_chars(current, end, value);
+        if (parsed.ec != std::errc{} || parsed.ptr == current) {
+            return false;
+        }
+        ids.push_back(value);
+        current = parsed.ptr;
+    }
+    return true;
+}
+
+std::string JoinTokenIds(const std::vector<int>& ids) {
+    std::ostringstream out;
+    for (size_t i = 0; i < ids.size(); ++i) {
+        if (i > 0) out << ' ';
+        out << ids[i];
+    }
+    return out.str();
+}
+
+arrow::Result<double> NumericValueAt(
+    const std::shared_ptr<arrow::ChunkedArray>& column,
+    int64_t row) {
+    int64_t offset = row;
+    for (int chunk_index = 0; chunk_index < column->num_chunks(); ++chunk_index) {
+        const auto& chunk = column->chunk(chunk_index);
+        if (offset >= chunk->length()) {
+            offset -= chunk->length();
+            continue;
+        }
+        if (chunk->IsNull(offset)) {
+            return arrow::Status::Invalid("Token id column contains null");
+        }
+        switch (chunk->type_id()) {
+            case arrow::Type::INT8:
+                return static_cast<double>(
+                    std::static_pointer_cast<arrow::Int8Array>(chunk)->Value(offset));
+            case arrow::Type::INT16:
+                return static_cast<double>(
+                    std::static_pointer_cast<arrow::Int16Array>(chunk)->Value(offset));
+            case arrow::Type::INT32:
+                return static_cast<double>(
+                    std::static_pointer_cast<arrow::Int32Array>(chunk)->Value(offset));
+            case arrow::Type::INT64:
+                return static_cast<double>(
+                    std::static_pointer_cast<arrow::Int64Array>(chunk)->Value(offset));
+            case arrow::Type::UINT8:
+                return static_cast<double>(
+                    std::static_pointer_cast<arrow::UInt8Array>(chunk)->Value(offset));
+            case arrow::Type::UINT16:
+                return static_cast<double>(
+                    std::static_pointer_cast<arrow::UInt16Array>(chunk)->Value(offset));
+            case arrow::Type::UINT32:
+                return static_cast<double>(
+                    std::static_pointer_cast<arrow::UInt32Array>(chunk)->Value(offset));
+            case arrow::Type::UINT64:
+                return static_cast<double>(
+                    std::static_pointer_cast<arrow::UInt64Array>(chunk)->Value(offset));
+            case arrow::Type::FLOAT:
+                return static_cast<double>(
+                    std::static_pointer_cast<arrow::FloatArray>(chunk)->Value(offset));
+            case arrow::Type::DOUBLE:
+                return std::static_pointer_cast<arrow::DoubleArray>(chunk)->Value(offset);
+            default:
+                return arrow::Status::TypeError(
+                    "Token id column must be integer or floating-point, got " +
+                    chunk->type()->ToString());
+        }
+    }
+    return arrow::Status::IndexError("Token id row out of range");
+}
+
+bool IsNumericTokenIdType(arrow::Type::type type_id) {
+    switch (type_id) {
+        case arrow::Type::INT8:
+        case arrow::Type::INT16:
+        case arrow::Type::INT32:
+        case arrow::Type::INT64:
+        case arrow::Type::UINT8:
+        case arrow::Type::UINT16:
+        case arrow::Type::UINT32:
+        case arrow::Type::UINT64:
+        case arrow::Type::FLOAT:
+        case arrow::Type::DOUBLE:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool IsTokenIdColumnType(const std::shared_ptr<arrow::ChunkedArray>& column) {
+    if (!column || column->num_chunks() == 0) return false;
+    for (int chunk_index = 0; chunk_index < column->num_chunks(); ++chunk_index) {
+        if (!IsNumericTokenIdType(column->chunk(chunk_index)->type_id())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+arrow::Result<double> NumericArrayValueAt(
+    const std::shared_ptr<arrow::Array>& array,
+    int64_t index) {
+    if (!array) {
+        return arrow::Status::Invalid("Token id list values array is null");
+    }
+    if (index < 0 || index >= array->length()) {
+        return arrow::Status::IndexError("Token id list value index out of range");
+    }
+    if (array->IsNull(index)) {
+        return arrow::Status::Invalid("Token id list contains null value");
+    }
+    switch (array->type_id()) {
+        case arrow::Type::INT8:
+            return static_cast<double>(
+                std::static_pointer_cast<arrow::Int8Array>(array)->Value(index));
+        case arrow::Type::INT16:
+            return static_cast<double>(
+                std::static_pointer_cast<arrow::Int16Array>(array)->Value(index));
+        case arrow::Type::INT32:
+            return static_cast<double>(
+                std::static_pointer_cast<arrow::Int32Array>(array)->Value(index));
+        case arrow::Type::INT64:
+            return static_cast<double>(
+                std::static_pointer_cast<arrow::Int64Array>(array)->Value(index));
+        case arrow::Type::UINT8:
+            return static_cast<double>(
+                std::static_pointer_cast<arrow::UInt8Array>(array)->Value(index));
+        case arrow::Type::UINT16:
+            return static_cast<double>(
+                std::static_pointer_cast<arrow::UInt16Array>(array)->Value(index));
+        case arrow::Type::UINT32:
+            return static_cast<double>(
+                std::static_pointer_cast<arrow::UInt32Array>(array)->Value(index));
+        case arrow::Type::UINT64:
+            return static_cast<double>(
+                std::static_pointer_cast<arrow::UInt64Array>(array)->Value(index));
+        case arrow::Type::FLOAT:
+            return static_cast<double>(
+                std::static_pointer_cast<arrow::FloatArray>(array)->Value(index));
+        case arrow::Type::DOUBLE:
+            return std::static_pointer_cast<arrow::DoubleArray>(array)->Value(index);
+        default:
+            return arrow::Status::TypeError(
+                "Token id list values must be integer or floating-point, got " +
+                array->type()->ToString());
+    }
+}
+
+arrow::Result<int> TokenIdFromDouble(double value, const std::string& context) {
+    const double rounded = std::round(value);
+    if (std::fabs(value - rounded) > 1.0e-6) {
+        return arrow::Status::Invalid(context + " value must be an integer");
+    }
+    if (rounded < static_cast<double>(std::numeric_limits<int>::min()) ||
+        rounded > static_cast<double>(std::numeric_limits<int>::max())) {
+        return arrow::Status::Invalid(context + " value is outside int range");
+    }
+    return static_cast<int>(rounded);
+}
+
+bool IsTokenIdListColumnType(const std::shared_ptr<arrow::ChunkedArray>& column) {
+    if (!column || column->num_chunks() == 0) return false;
+    for (int chunk_index = 0; chunk_index < column->num_chunks(); ++chunk_index) {
+        const auto& chunk = column->chunk(chunk_index);
+        std::shared_ptr<arrow::DataType> value_type;
+        switch (chunk->type_id()) {
+            case arrow::Type::LIST:
+                value_type = std::static_pointer_cast<arrow::ListType>(chunk->type())->value_type();
+                break;
+            case arrow::Type::LARGE_LIST:
+                value_type = std::static_pointer_cast<arrow::LargeListType>(chunk->type())->value_type();
+                break;
+            case arrow::Type::FIXED_SIZE_LIST:
+                value_type = std::static_pointer_cast<arrow::FixedSizeListType>(chunk->type())->value_type();
+                break;
+            default:
+                return false;
+        }
+        if (!value_type || !IsNumericTokenIdType(value_type->id())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+arrow::Result<std::vector<std::vector<int>>> ReadTokenIdListColumn(
+    const std::shared_ptr<arrow::ChunkedArray>& column) {
+    std::vector<std::vector<int>> rows;
+    if (!column) {
+        return arrow::Status::Invalid("Token id list column is null");
+    }
+    rows.reserve(static_cast<size_t>(column->length()));
+    for (int chunk_index = 0; chunk_index < column->num_chunks(); ++chunk_index) {
+        const auto& chunk = column->chunk(chunk_index);
+        for (int64_t row = 0; row < chunk->length(); ++row) {
+            if (chunk->IsNull(row)) {
+                return arrow::Status::Invalid("Token id list column contains null row");
+            }
+            std::shared_ptr<arrow::Array> values;
+            int64_t offset = 0;
+            int64_t length = 0;
+            switch (chunk->type_id()) {
+                case arrow::Type::LIST: {
+                    auto list = std::static_pointer_cast<arrow::ListArray>(chunk);
+                    values = list->values();
+                    offset = list->value_offset(row);
+                    length = list->value_length(row);
+                    break;
+                }
+                case arrow::Type::LARGE_LIST: {
+                    auto list = std::static_pointer_cast<arrow::LargeListArray>(chunk);
+                    values = list->values();
+                    offset = list->value_offset(row);
+                    length = list->value_length(row);
+                    break;
+                }
+                case arrow::Type::FIXED_SIZE_LIST: {
+                    auto list = std::static_pointer_cast<arrow::FixedSizeListArray>(chunk);
+                    values = list->values();
+                    length = list->list_type()->list_size();
+                    offset = row * length;
+                    break;
+                }
+                default:
+                    return arrow::Status::TypeError(
+                        "Token id list column must be list, large_list, or fixed_size_list");
+            }
+            std::vector<int> ids;
+            ids.reserve(static_cast<size_t>(length));
+            for (int64_t item = 0; item < length; ++item) {
+                ARROW_ASSIGN_OR_RAISE(
+                    const double value,
+                    NumericArrayValueAt(values, offset + item));
+                ARROW_ASSIGN_OR_RAISE(
+                    const int id,
+                    TokenIdFromDouble(value, "Token id list"));
+                ids.push_back(id);
+            }
+            rows.push_back(std::move(ids));
+        }
+    }
+    return rows;
+}
+
 } // namespace
 
 bool TextTokenizerOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
 
+    output_mode_ = "wide";
+    document_id_col_.clear();
+    split_col_ = "split";
+    token_ids_col_ = "token_ids";
+    if (auto p=params.find("output_mode");p!=params.end()) output_mode_=p->second;
+    if (auto p=params.find("document_id_col");p!=params.end()) document_id_col_=p->second;
+    if (auto p=params.find("split_col");p!=params.end()) split_col_=p->second;
+    if (auto p=params.find("token_ids_col");p!=params.end()) token_ids_col_=p->second;
+    if (output_mode_!="wide" && output_mode_!="causal_windows" &&
+        output_mode_!="decode" && output_mode_!="roundtrip") {
+        error="TextTokenizer: output_mode must be wide, causal_windows, decode, or roundtrip"; return false;
+    }
     text_col_.clear();
     label_col_.clear();
     vocab_file_.clear();
@@ -78,11 +353,17 @@ bool TextTokenizerOperator::Configure(
     last_vocab_size_ = 0;
 
     auto it = params.find("text_col");
-    if (it == params.end() || it->second.empty()) {
+    if ((output_mode_ != "decode") && (it == params.end() || it->second.empty())) {
         error = "TextTokenizer: 'text_col' parameter is required";
         return false;
     }
-    text_col_ = it->second;
+    if (it != params.end()) {
+        text_col_ = it->second;
+    }
+    if (output_mode_ == "decode" && token_ids_col_.empty()) {
+        error = "TextTokenizer: decode output_mode requires token_ids_col";
+        return false;
+    }
 
     auto lc = params.find("label_col");
     if (lc != params.end()) label_col_ = lc->second;
@@ -123,7 +404,7 @@ bool TextTokenizerOperator::Configure(
 
     auto lcase = params.find("lowercase");
     if (lcase == params.end() || lcase->second.empty()) {
-        lowercase_ = true;
+        lowercase_ = tokenizer_type_ != 3;
     } else if (lcase->second == "true") {
         lowercase_ = true;
     } else if (lcase->second == "false") {
@@ -139,9 +420,26 @@ bool TextTokenizerOperator::Configure(
                 std::to_string(max_length_) + ")";
         return false;
     }
-    if (tokenizer_type_ < 0 || tokenizer_type_ > 2) {
-        error = "TextTokenizer: tokenizer_type must be 0..2 (got " +
+    if (tokenizer_type_ < 0 || tokenizer_type_ > 6) {
+        error = "TextTokenizer: tokenizer_type must be 0..6 (got " +
                 std::to_string(tokenizer_type_) + ")";
+        return false;
+    }
+    if (tokenizer_type_ == 5 || tokenizer_type_ == 6) {
+        error = "TextTokenizer: SentencePiece tokenizer support is not enabled in this build; install/build the optional provider or choose a native tokenizer family";
+        return false;
+    }
+    if (tokenizer_type_ == 3 && (lowercase_ || min_word_freq_ < 1 || max_vocab_size_ < 260)) {
+        error = "TextTokenizer: Byte BPE requires lowercase=false, min_word_freq>=1 and max_vocab_size>=260";
+        return false;
+    }
+    if (output_mode_=="causal_windows" && (document_id_col_.empty() || split_col_.empty() ||
+        document_id_col_==text_col_ || split_col_==text_col_ || document_id_col_==split_col_ || !label_col_.empty())) {
+        error="Causal windows require distinct text/document_id_col/split_col and no classification label_col"; return false;
+    }
+    if ((output_mode_ == "decode" || output_mode_ == "roundtrip") &&
+        !label_col_.empty()) {
+        error = "TextTokenizer: decode/roundtrip modes do not support label_col";
         return false;
     }
     if (pad_value_ < 0) {
@@ -182,6 +480,48 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         progress_callback_(event);
     };
 
+    auto make_tokenizer = [&]() {
+        TokenizerType tt = TokenizerType::Word;
+        switch (tokenizer_type_) {
+            case 0: tt = TokenizerType::Whitespace; break;
+            case 2: tt = TokenizerType::Character; break;
+            case 3: tt = TokenizerType::ByteBPE; break;
+            case 4: tt = TokenizerType::WordPiece; break;
+            case 5: tt = TokenizerType::SentencePieceBPE; break;
+            case 6: tt = TokenizerType::SentencePieceUnigram; break;
+            default: tt = TokenizerType::Word; break;
+        }
+        Tokenizer tokenizer(tt);
+        tokenizer.SetCancellationQuery(GetCancellationQuery());
+        tokenizer.SetLowercase(lowercase_);
+        tokenizer.SetMaxLength(max_length_);
+        tokenizer.SetPadding(true);
+        tokenizer.SetTruncation(true);
+        return tokenizer;
+    };
+
+    if (output_mode_ == "decode") {
+        if (vocab_file_.empty()) {
+            return arrow::Status::Invalid(
+                "TextTokenizer: decode output_mode requires vocab_file");
+        }
+        Tokenizer tokenizer = make_tokenizer();
+        if (!std::filesystem::exists(vocab_file_) ||
+            !tokenizer.GetVocabulary().LoadFromFile(vocab_file_)) {
+            return arrow::Status::Invalid(
+                "TextTokenizer: failed to load vocab_file '" + vocab_file_ +
+                "' for decode");
+        }
+        try {
+            tokenizer.ValidateVocabulary();
+        } catch (const std::exception& e) {
+            return arrow::Status::Invalid("TextTokenizer: ", e.what());
+        }
+        last_vocab_size_ = tokenizer.GetVocabulary().Size();
+        return DecodeTokenRows(input, tokenizer);
+    }
+
+    if (output_mode_=="causal_windows") ARROW_RETURN_NOT_OK(ValidateWindowInput(input));
     auto text_column = input->GetColumnByName(text_col_);
     if (!text_column) {
         return arrow::Status::KeyError(
@@ -258,19 +598,16 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                     total_rows,
                     estimated_token_matrix_bytes);
 
-    // Build tokenizer + vocab from the corpus.
-    TokenizerType tt = TokenizerType::Word;
-    switch (tokenizer_type_) {
-        case 0: tt = TokenizerType::Whitespace; break;
-        case 2: tt = TokenizerType::Character; break;
-        default: tt = TokenizerType::Word; break;
+    // Build tokenizer + vocab from the corpus. Round-trip inspection checks
+    // encode/decode identity for the artifact itself, so it must not pad or
+    // truncate source text by the training context length.
+    Tokenizer tokenizer = make_tokenizer();
+    if (output_mode_ == "roundtrip") {
+        tokenizer.SetPadding(false);
+        tokenizer.SetTruncation(false);
     }
-    Tokenizer tokenizer(tt);
-    tokenizer.SetLowercase(lowercase_);
-    tokenizer.SetMaxLength(max_length_);
-    tokenizer.SetPadding(true);
-    tokenizer.SetTruncation(true);
 
+    try {
     if (!vocab_file_.empty() && std::filesystem::exists(vocab_file_)) {
         report_progress("Loading vocabulary",
                         "Loading tokenizer vocabulary from file",
@@ -322,6 +659,11 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         tokenizer.Train(texts, min_word_freq_, max_vocab_size_);
         ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
     }
+    tokenizer.ValidateVocabulary();
+    } catch (const std::exception& e) {
+        ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        return arrow::Status::Invalid("TextTokenizer: ", e.what());
+    }
     const size_t trained_vocab_size = tokenizer.GetVocabulary().Size();
     report_progress("Vocabulary ready",
                     "Tokenizer vocabulary ready with " +
@@ -331,6 +673,13 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                     total_rows,
                     estimated_token_matrix_bytes);
 
+    if (output_mode_ == "roundtrip") {
+        last_vocab_size_ = trained_vocab_size;
+        return RoundTripTextRows(texts, tokenizer);
+    }
+
+    if (output_mode_=="causal_windows") return BuildTokenWindows(input,texts,tokenizer);
+
     // Encode + pad. EncodeBatch then PadBatch produces the final
     // [num_samples, max_length] int matrix.
     report_progress("Tokenizing rows",
@@ -339,7 +688,13 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                     0,
                     total_rows,
                     estimated_token_matrix_bytes);
-    auto encoded = tokenizer.EncodeBatch(texts);
+    std::vector<std::vector<int>> encoded;
+    try {
+        encoded = tokenizer.EncodeBatch(texts);
+    } catch (const std::exception& e) {
+        ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        return arrow::Status::Invalid("TextTokenizer: ", e.what());
+    }
     ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
     auto padded = tokenizer.PadBatch(encoded, max_length_);
     ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
@@ -476,6 +831,170 @@ TextTokenizerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                     static_cast<uint64_t>(n),
                     estimated_token_matrix_bytes);
     return out_table;
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>>
+TextTokenizerOperator::DecodeTokenRows(
+    const std::shared_ptr<arrow::Table>& input,
+    Tokenizer& tokenizer) {
+    if (!input) {
+        return arrow::Status::Invalid("TextTokenizer: input table is null");
+    }
+
+    std::vector<std::vector<int>> rows;
+    if (auto id_column = input->GetColumnByName(token_ids_col_)) {
+        std::string bad_type;
+        if (IsStringLikeColumn(id_column, bad_type)) {
+            std::vector<std::string> id_texts;
+            if (!ReadColumnAsStrings(
+                    id_column, id_texts, bad_type, GetCancellationQuery())) {
+                return arrow::Status::TypeError(
+                    "TextTokenizer: token_ids_col '" + token_ids_col_ +
+                    "' must be string/large_string, got '" + bad_type + "'");
+            }
+            rows.reserve(id_texts.size());
+            for (size_t row = 0; row < id_texts.size(); ++row) {
+                if ((row & 1023) == 0) {
+                    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+                }
+                std::vector<int> ids;
+                if (!ParseTokenIdList(id_texts[row], ids)) {
+                    return arrow::Status::Invalid(
+                        "TextTokenizer: failed to parse token_ids_col '" +
+                        token_ids_col_ + "' at row " + std::to_string(row));
+                }
+                rows.push_back(std::move(ids));
+            }
+        } else if (IsTokenIdListColumnType(id_column)) {
+            ARROW_ASSIGN_OR_RAISE(rows, ReadTokenIdListColumn(id_column));
+        } else if (IsTokenIdColumnType(id_column)) {
+            rows.reserve(static_cast<size_t>(input->num_rows()));
+            for (int64_t row = 0; row < input->num_rows(); ++row) {
+                ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+                ARROW_ASSIGN_OR_RAISE(const double value,
+                                      NumericValueAt(id_column, row));
+                ARROW_ASSIGN_OR_RAISE(
+                    const int id,
+                    TokenIdFromDouble(value,
+                                      "TextTokenizer: token id at row " +
+                                          std::to_string(row)));
+                rows.push_back({id});
+            }
+        } else {
+            return arrow::Status::TypeError(
+                "TextTokenizer: token_ids_col '" + token_ids_col_ +
+                "' must be string, numeric, or list<numeric>, got '" +
+                id_column->type()->ToString() + "'");
+        }
+    } else {
+        std::vector<std::shared_ptr<arrow::ChunkedArray>> token_columns;
+        for (int index = 0; index < max_length_; ++index) {
+            auto column = input->GetColumnByName("tok_" + std::to_string(index));
+            if (!column) {
+                break;
+            }
+            if (!IsTokenIdColumnType(column)) {
+                return arrow::Status::TypeError(
+                    "TextTokenizer: tok_" + std::to_string(index) +
+                    " must be numeric for decode");
+            }
+            token_columns.push_back(std::move(column));
+        }
+        if (token_columns.empty()) {
+            return arrow::Status::KeyError(
+                "TextTokenizer: decode requires token_ids_col '" + token_ids_col_ +
+                "' or wide tok_0..tok_n columns");
+        }
+        rows.reserve(static_cast<size_t>(input->num_rows()));
+        for (int64_t row = 0; row < input->num_rows(); ++row) {
+            if ((row & 1023) == 0) {
+                ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+            }
+            std::vector<int> ids;
+            ids.reserve(token_columns.size());
+            for (size_t column_index = 0; column_index < token_columns.size();
+                 ++column_index) {
+                ARROW_ASSIGN_OR_RAISE(const double value,
+                                      NumericValueAt(token_columns[column_index], row));
+                ARROW_ASSIGN_OR_RAISE(
+                    const int id,
+                    TokenIdFromDouble(value,
+                                      "TextTokenizer: tok_" +
+                                          std::to_string(column_index) +
+                                          " at row " + std::to_string(row)));
+                ids.push_back(id);
+            }
+            rows.push_back(std::move(ids));
+        }
+    }
+
+    arrow::StringBuilder decoded_builder;
+    arrow::StringBuilder id_builder;
+    ARROW_RETURN_NOT_OK(decoded_builder.Reserve(static_cast<int64_t>(rows.size())));
+    ARROW_RETURN_NOT_OK(id_builder.Reserve(static_cast<int64_t>(rows.size())));
+    for (size_t row = 0; row < rows.size(); ++row) {
+        if ((row & 1023) == 0) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        }
+        ARROW_RETURN_NOT_OK(decoded_builder.Append(tokenizer.Decode(rows[row])));
+        ARROW_RETURN_NOT_OK(id_builder.Append(JoinTokenIds(rows[row])));
+    }
+    std::shared_ptr<arrow::Array> decoded_array;
+    std::shared_ptr<arrow::Array> id_array;
+    ARROW_RETURN_NOT_OK(decoded_builder.Finish(&decoded_array));
+    ARROW_RETURN_NOT_OK(id_builder.Finish(&id_array));
+    auto schema = arrow::schema({
+        arrow::field("decoded_text", arrow::utf8()),
+        arrow::field("token_ids", arrow::utf8()),
+    });
+    return arrow::Table::Make(schema, {decoded_array, id_array},
+                              static_cast<int64_t>(rows.size()));
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>>
+TextTokenizerOperator::RoundTripTextRows(
+    const std::vector<std::string>& texts,
+    Tokenizer& tokenizer) {
+    arrow::StringBuilder input_builder;
+    arrow::StringBuilder encoded_builder;
+    arrow::StringBuilder decoded_builder;
+    arrow::BooleanBuilder ok_builder;
+    ARROW_RETURN_NOT_OK(input_builder.Reserve(static_cast<int64_t>(texts.size())));
+    ARROW_RETURN_NOT_OK(encoded_builder.Reserve(static_cast<int64_t>(texts.size())));
+    ARROW_RETURN_NOT_OK(decoded_builder.Reserve(static_cast<int64_t>(texts.size())));
+    ARROW_RETURN_NOT_OK(ok_builder.Reserve(static_cast<int64_t>(texts.size())));
+
+    for (size_t row = 0; row < texts.size(); ++row) {
+        if ((row & 1023) == 0) {
+            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+        }
+        const std::vector<int> ids = tokenizer.Encode(texts[row]);
+        const std::string decoded = tokenizer.Decode(ids);
+        ARROW_RETURN_NOT_OK(input_builder.Append(texts[row]));
+        ARROW_RETURN_NOT_OK(encoded_builder.Append(JoinTokenIds(ids)));
+        ARROW_RETURN_NOT_OK(decoded_builder.Append(decoded));
+        ARROW_RETURN_NOT_OK(ok_builder.Append(decoded == texts[row]));
+    }
+
+    std::shared_ptr<arrow::Array> input_array;
+    std::shared_ptr<arrow::Array> encoded_array;
+    std::shared_ptr<arrow::Array> decoded_array;
+    std::shared_ptr<arrow::Array> ok_array;
+    ARROW_RETURN_NOT_OK(input_builder.Finish(&input_array));
+    ARROW_RETURN_NOT_OK(encoded_builder.Finish(&encoded_array));
+    ARROW_RETURN_NOT_OK(decoded_builder.Finish(&decoded_array));
+    ARROW_RETURN_NOT_OK(ok_builder.Finish(&ok_array));
+
+    auto schema = arrow::schema({
+        arrow::field("input_text", arrow::utf8()),
+        arrow::field("encoded_ids", arrow::utf8()),
+        arrow::field("decoded_text", arrow::utf8()),
+        arrow::field("roundtrip_ok", arrow::boolean()),
+    });
+    return arrow::Table::Make(
+        schema,
+        {input_array, encoded_array, decoded_array, ok_array},
+        static_cast<int64_t>(texts.size()));
 }
 
 } // namespace cyxwiz

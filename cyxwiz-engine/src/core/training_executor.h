@@ -8,6 +8,7 @@
 #include "data_registry.h"
 #include "arrow_dataset.h"
 #include "training_scheduler_controller.h"
+#include "training_randomness.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/optimizer.h>
 #include <cyxwiz/sequential.h>
@@ -30,6 +31,7 @@ inline bool UsesRegressionMetrics(const TrainingConfiguration& config) {
  * Training metrics updated during training
  */
 struct TrainingMetrics {
+    TrainingRandomness randomness;
     // Current progress
     int current_epoch = 0;
     // Run-history truth. This is never rewritten when an earlier checkpoint

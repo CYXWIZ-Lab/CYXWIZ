@@ -1,5 +1,6 @@
 #include "text_dataset.h"
 #include <fstream>
+#include <stdexcept>
 #include <sstream>
 #include <filesystem>
 #include <algorithm>
@@ -119,11 +120,14 @@ void TextDataset::InitTokenizer() {
     tokenizer_.SetPadding(config_.do_padding);
     tokenizer_.SetTruncation(config_.do_truncation);
 
-    if (!config_.vocab_file.empty() && fs::exists(config_.vocab_file)) {
-        tokenizer_.GetVocabulary().LoadFromFile(config_.vocab_file);
+    if (!config_.vocab_file.empty()) {
+        if (!tokenizer_.GetVocabulary().LoadFromFile(config_.vocab_file)) {
+            throw std::runtime_error("TextDataset: invalid or missing vocabulary file: " + config_.vocab_file);
+        }
     } else {
         tokenizer_.Train(texts_, config_.min_word_freq, config_.max_vocab_size);
     }
+    tokenizer_.ValidateVocabulary();
     tokenizer_initialized_ = true;
 }
 

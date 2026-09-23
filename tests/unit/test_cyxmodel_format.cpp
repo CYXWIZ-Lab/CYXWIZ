@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "../../cyxwiz-engine/src/core/formats/cyxmodel_format.h"
+#include "../../cyxwiz-engine/src/core/formats/cyxmodel_archive.h"
 
 #include <filesystem>
 #include <fstream>
@@ -14,6 +15,7 @@ TEST_CASE("CyxModel packages tokenizer assets", "[cyxmodel][tokenizer]") {
     const fs::path root = fs::temp_directory_path() / "cyxwiz_cyxmodel_tokenizer_test";
     const fs::path package_path = root / "text_model.cyxmodel";
     const fs::path vocab_path = root / "vocab.txt";
+    const fs::path spm_path = root / "model.spm";
 
     fs::remove_all(root);
     fs::create_directories(root);
@@ -21,6 +23,10 @@ TEST_CASE("CyxModel packages tokenizer assets", "[cyxmodel][tokenizer]") {
     {
         std::ofstream vocab(vocab_path, std::ios::binary);
         vocab << "<pad>\n<unk>\nhello\nworld\n";
+    }
+    {
+        std::ofstream model(spm_path, std::ios::binary);
+        model << "sentencepiece model bytes";
     }
 
     cyxwiz::ModelManifest manifest;
@@ -39,6 +45,7 @@ TEST_CASE("CyxModel packages tokenizer assets", "[cyxmodel][tokenizer]") {
     options.text_tokenizer_config_json =
         R"({"version":"1.0","effective":{"tokenizer_type":"1","max_length":"8"}})";
     options.text_tokenizer_vocab_path = vocab_path.string();
+    options.text_tokenizer_model_path = spm_path.string();
 
     cyxwiz::formats::CyxModelFormat format;
     const bool created = format.Create(
@@ -53,8 +60,12 @@ TEST_CASE("CyxModel packages tokenizer assets", "[cyxmodel][tokenizer]") {
         options);
 
     REQUIRE(created);
-    REQUIRE(fs::exists(package_path / "tokenizer" / "config.json"));
-    REQUIRE(fs::exists(package_path / "tokenizer" / "vocab.txt"));
+    REQUIRE(fs::is_regular_file(package_path));
+    REQUIRE(cyxwiz::formats::CyxModelArchive::IsV3(package_path));
+    const auto files = cyxwiz::formats::CyxModelArchive::Read(package_path);
+    REQUIRE(files.contains("tokenizer/config.json"));
+    REQUIRE(files.contains("tokenizer/vocab.txt"));
+    REQUIRE(files.contains("tokenizer/model.spm"));
 
     const auto probe = format.Probe(package_path.string());
     REQUIRE(probe.valid);
@@ -63,13 +74,16 @@ TEST_CASE("CyxModel packages tokenizer assets", "[cyxmodel][tokenizer]") {
 
     std::string extracted_config;
     std::string extracted_vocab;
+    std::string extracted_model;
     REQUIRE(format.ExtractTextTokenizerAssets(
         package_path.string(),
         extracted_config,
-        extracted_vocab));
+        extracted_vocab,
+        extracted_model));
 
     REQUIRE(extracted_config.find("\"tokenizer_type\":\"1\"") != std::string::npos);
     REQUIRE(extracted_vocab.find("hello") != std::string::npos);
+    REQUIRE(extracted_model == "sentencepiece model bytes");
 
     fs::remove_all(root);
 }

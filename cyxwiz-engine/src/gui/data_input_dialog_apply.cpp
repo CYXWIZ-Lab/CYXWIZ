@@ -119,6 +119,7 @@ void DataInputDialog::Apply() {
         node_->parameters["file_type"] =
             data_input::FileTypeParam(detected_type_);
         node_->parameters.erase("type");
+        node_->parameters["archive_member"] = archive_member_;
         node_->parameters["has_header"] = has_header_ ? "true" : "false";
         node_->parameters["delimiter"] = custom_delimiter_;
         node_->parameters["decimal_point"] = std::string(1, decimal_point_);
@@ -467,11 +468,8 @@ void DataInputDialog::Apply() {
         ctx.source_path           = file_path_;
         ctx.previous_dataset_name = previous_dataset_name;
 
-        const char* types[] = {"auto", "csv", "tsv", "json", "parquet",
-                               "excel", "hdf5", "feather", "arrow",
-                               "txt", "arff"};
-        int type_idx = (detected_type_ >= 0 && detected_type_ < 11) ? detected_type_ : 0;
-        ctx.detected_file_type = types[type_idx];
+        ctx.detected_file_type = data_input::FileTypeParam(detected_type_);
+        ctx.archive_member = archive_member_;
         ctx.has_header         = has_header_;
         ctx.delimiter          = custom_delimiter_[0];
         ctx.decimal_point      = decimal_point_;

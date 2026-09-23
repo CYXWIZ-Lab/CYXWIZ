@@ -49,6 +49,9 @@ DataInputDialog::DataInputDialog(MLNode* node)
     : NodeConfigDialog("Data Input", node)
 {
     if (node_) {
+        if (node_->parameters.count("archive_member")) {
+            strncpy(archive_member_, node_->parameters["archive_member"].c_str(), sizeof(archive_member_) - 1);
+        }
         // Restore from parameters
         if (node_->parameters.count("source_type")) {
             source_type_ = data_input::SourceTypeFromParam(

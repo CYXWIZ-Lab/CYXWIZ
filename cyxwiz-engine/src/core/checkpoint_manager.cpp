@@ -91,6 +91,7 @@ std::string CheckpointManager::SaveCheckpoint(
 
     // Prepare metadata
     CheckpointMetadata metadata;
+    metadata.randomness = metrics.randomness;
     metadata.epoch = metrics.current_epoch;
     metadata.global_step = metrics.current_batch;
     metadata.train_loss = metrics.train_loss;
@@ -372,6 +373,7 @@ bool CheckpointManager::SaveMetadata(const fs::path& dir, const CheckpointMetada
         j["model_name"] = metadata.model_name;
         j["optimizer_type"] = metadata.optimizer_type;
         j["learning_rate"] = metadata.learning_rate;
+        j["randomness"] = metadata.randomness;
         j["timestamp"] = metadata.timestamp;
 
         // Save history arrays
@@ -430,6 +432,7 @@ std::optional<CheckpointMetadata> CheckpointManager::LoadMetadata(const fs::path
         metadata.model_name = j.value("model_name", "");
         metadata.optimizer_type = j.value("optimizer_type", "");
         metadata.learning_rate = j.value("learning_rate", 0.0f);
+        if (j.contains("randomness")) metadata.randomness = j.at("randomness").get<TrainingRandomness>();
         metadata.timestamp = j.value("timestamp", "");
 
         // Load history arrays

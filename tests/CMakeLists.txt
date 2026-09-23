@@ -21,6 +21,14 @@ add_executable(cyxwiz-tests
     unit/test_c_api.cpp
     unit/test_activations.cpp
     unit/test_arrayfire_fallback_source_scan.cpp
+    unit/test_backend_fallback_reason_taxonomy_scan.cpp
+    unit/test_gpu_execution_contracts.cpp
+    unit/test_gpu_execution_modes.cpp
+    unit/test_recurrent_staged_plan_parity.cpp
+    unit/test_placement_observation_key_alignment.cpp
+    unit/test_neural_provider_registry.cpp
+    unit/test_nvidia_provider_rnn_parity.cpp
+    unit/test_rnn_layer.cpp
     unit/test_arrayfire_host_materialization.cpp
     unit/test_arrayfire_backend_utils.cpp
     unit/test_arrayfire_backend_smoke.cpp
@@ -41,6 +49,7 @@ add_executable(cyxwiz-tests
     unit/test_pooling_layer.cpp
     unit/test_upsampling_layer.cpp
     unit/test_pixel_shuffle_execution.cpp
+    unit/test_upsample_execution.cpp
     unit/test_spatial_modules.cpp
     unit/test_spatial_normalization_modules.cpp
     unit/test_sequence_layers.cpp
@@ -49,12 +58,14 @@ add_executable(cyxwiz-tests
     unit/test_utilities.cpp
     unit/test_cyxmodel_format.cpp
     unit/test_text_inference_input.cpp
+    unit/test_byte_bpe.cpp
     unit/test_language_model_training.cpp
     unit/test_sequence_batcher.cpp
     unit/test_pipeline_runtime_capabilities.cpp
     unit/test_gui_tensor_shape_inference.cpp
     unit/test_nas_architecture_validation.cpp
     ../cyxwiz-engine/src/core/formats/cyxmodel_format.cpp
+    ../cyxwiz-engine/src/core/formats/cyxmodel_archive.cpp
     ../cyxwiz-engine/src/core/language_model_training.cpp
     ../cyxwiz-engine/src/core/pipeline_runtime_capabilities.cpp
     ../cyxwiz-engine/src/gui/tensor_shape_inference_contract.cpp
@@ -156,6 +167,31 @@ if(CYXWIZ_BUILD_ENGINE AND WIN32)
     )
 endif()
 
+# Keep bounded ModelBuilder tests separate from the mixed debug executor suite.
+add_executable(test_model_builder_upsampling
+    unit/test_main.cpp
+    unit/test_model_builder_upsampling.cpp
+    unit/test_spatial_batch_layout.cpp
+    unit/test_spatial_head.cpp
+    ../cyxwiz-engine/src/core/spatial_batch_layout.cpp
+    ../cyxwiz-engine/src/core/synthetic_batch.cpp
+    ../cyxwiz-engine/src/core/model_builder.cpp
+    ../cyxwiz-engine/src/core/executable_model.cpp
+    ../cyxwiz-engine/src/core/graph_executable_model.cpp
+)
+target_include_directories(test_model_builder_upsampling PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-engine/src
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src
+)
+target_link_libraries(test_model_builder_upsampling PRIVATE
+    Catch2::Catch2 cyxwiz-backend imgui::imgui spdlog::spdlog
+)
+if(WIN32)
+    target_compile_definitions(test_model_builder_upsampling PRIVATE NOMINMAX)
+endif()
+set_target_properties(test_model_builder_upsampling PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 add_executable(cyxwiz-device-inventory
     smoke/device_inventory_report.cpp
 )
@@ -252,6 +288,7 @@ include(CTest)
 # restart ArrayFire and hardware detection hundreds of times, turning an
 # 18-second suite into an impractical validation command.
 add_test(NAME CyxWizCoreTests COMMAND cyxwiz-tests "~[oneapi]")
+add_test(NAME ModelBuilderUpsamplingContracts COMMAND test_model_builder_upsampling)
 
 # ONNX Export Tests (conditional on ONNX export support)
 if(CYXWIZ_HAS_ONNX_EXPORT)

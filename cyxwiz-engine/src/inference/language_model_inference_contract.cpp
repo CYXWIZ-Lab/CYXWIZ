@@ -63,7 +63,8 @@ LanguageModelPackageContract ValidateLanguageModelPackageContract(
     contract.supports_generation = probe.supports_generation;
     contract.generation_output_contract = probe.generation_output_contract;
     contract.has_tokenizer = probe.has_tokenizer;
-    contract.has_vocabulary = probe.has_vocabulary;
+    contract.has_vocabulary = probe.has_vocabulary ||
+        (tokenizer_package != nullptr && tokenizer_package->has_model_artifact);
     contract.max_sequence_length = probe.sequence_max_sequence_length;
 
     std::vector<std::string> issues;
@@ -89,22 +90,24 @@ LanguageModelPackageContract ValidateLanguageModelPackageContract(
     if (!probe.has_tokenizer) {
         AddIssue(issues, "package is missing tokenizer/config.json");
     }
-    if (!probe.has_vocabulary) {
-        AddIssue(issues, "package is missing tokenizer/vocab.txt");
+    if (!probe.has_vocabulary &&
+        (tokenizer_package == nullptr || !tokenizer_package->has_model_artifact)) {
+        AddIssue(issues, "package is missing tokenizer/vocab.txt or tokenizer/model.spm");
     }
 
     if (tokenizer_package == nullptr || !tokenizer_package->tokenizer) {
         AddIssue(issues, "tokenizer package is not loaded");
     } else {
-        const auto& vocabulary =
-            tokenizer_package->tokenizer->GetVocabulary();
-        contract.tokenizer_vocabulary_size = vocabulary.Size();
-        contract.eos_token_id = static_cast<int64_t>(vocabulary.EosIndex());
+        contract.tokenizer_vocabulary_size =
+            tokenizer_package->tokenizer->GetVocabularySize();
+        contract.eos_token_id =
+            static_cast<int64_t>(tokenizer_package->tokenizer->GetEosId());
         contract.max_sequence_length = static_cast<size_t>(
             std::max(0, tokenizer_package->tokenizer->GetMaxLength()));
 
-        if (!tokenizer_package->has_vocabulary) {
-            AddIssue(issues, "tokenizer package has no usable vocabulary");
+        if (!tokenizer_package->has_vocabulary &&
+            !tokenizer_package->has_model_artifact) {
+            AddIssue(issues, "tokenizer package has no usable vocabulary or model artifact");
         }
         if (contract.tokenizer_vocabulary_size == 0) {
             AddIssue(issues, "tokenizer vocabulary is empty");

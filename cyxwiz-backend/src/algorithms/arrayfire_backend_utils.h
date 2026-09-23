@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cyxwiz/api_export.h"
+#include "cyxwiz/backend_fallback_reason.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -9,18 +10,9 @@
 
 namespace cyxwiz {
 
-enum class BackendFallbackReason {
-    BackendUnavailable,
-    GpuBackendException,
-    ArrayFireJitCompileFailure,
-    CudaJitParamOverflow,
-    GpuOutOfMemory,
-    UnsupportedDtype,
-    UnsupportedShape,
-    UnsupportedOperation,
-    BackendCompileTimeout,
-    BackendInternalError,
-};
+// Reset the current thread/device default ArrayFire RNG; return generator identity.
+// Does not seed native fallback generators or restore stream continuation.
+CYXWIZ_API std::string SeedCurrentArrayFireRandomEngine(uint64_t seed);
 
 enum class ArrayFireFallbackPolicy {
     AllowNativeCpuFallback,
@@ -151,7 +143,6 @@ CYXWIZ_API void SetArrayFireHostSyncAttribution(
 CYXWIZ_API const char* ArrayFireHostSyncCategoryName(
     ArrayFireHostSyncCategory category);
 CYXWIZ_API void NotifyArrayFireHostSync(ArrayFireHostSyncEvent event);
-CYXWIZ_API const char* BackendFallbackReasonName(BackendFallbackReason reason);
 CYXWIZ_API bool IsCudaJitFormalParameterOverflow(const char* message);
 CYXWIZ_API BackendFallbackReason ClassifyArrayFireBackendFallbackReason(
     const char* message);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "api_export.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <sstream>
@@ -11,6 +13,33 @@ enum class RecurrentLayerKind {
     LSTM,
     GRU
 };
+
+// tofix67 slice 5: name of the recurrent staged ArrayFire execution plan.
+// The LSTM ArrayFire forward materializes per timestep (input projection,
+// recurrent projection, gate combination, state update), which bounds CUDA
+// JIT fusion below the formal-parameter limit for estimator-approved
+// shapes. Placement explanations reference this name so evidence and
+// support bundles can identify the exact plan; bump the version suffix when
+// the staging boundaries change.
+//
+// tofix67 slice 7 benchmark verdict (2026-09-22, GTX 1050 Ti, see
+// track67.md): the estimator caps CUDA eligibility at hidden<=~19, and at
+// those sizes the staged CUDA path measured 1.4-2.7x SLOWER than the
+// native CPU forward — staged ArrayFire CUDA has no winning shape on this
+// class of hardware, which meets the ticket's native-provider graduation
+// criteria (unsafe beyond the cap, slower within it). On the ArrayFire CPU
+// backend the v1 boundaries win up to 5.1x over native at hidden>=64, so
+// the staging itself is not the bottleneck and eval-boundary pruning was
+// rejected by evidence. A native/fused recurrent provider is the only
+// route to real GPU recurrent training; building it awaits the dependency
+// decision (cuDNN vs custom kernels) per the ticket's non-goals.
+inline constexpr const char* RecurrentStagedArrayFirePlanName =
+    "recurrent_timestep_materialization_v1";
+
+// Test-only: force ShouldUseArrayFireRecurrentForward to route to the
+// native CPU recurrent path, so staged-ArrayFire vs native parity can be
+// exercised in one process. Never set in production code.
+CYXWIZ_API void SetForceNativeRecurrentForwardForTesting(bool force);
 
 struct RecurrentCudaPlacementRequest {
     RecurrentLayerKind kind = RecurrentLayerKind::GRU;

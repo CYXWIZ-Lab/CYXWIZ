@@ -1,4 +1,7 @@
 #include "model_importer.h"
+#include "formats/cyxmodel_archive.h"
+#include "node_metadata_registry.h"
+#include "../gui/node_import_guardrails.h"
 #include "error_codes.h"
 #include "graph_compiler.h"
 #include "model_builder.h"
@@ -117,6 +120,14 @@ static bool BuildModelFromGraph(
         using json = nlohmann::json;
         json j = json::parse(graph_json);
 
+        // Modern serialized links carry port indices. Rebuild their contracts from
+        // the same metadata used by the editor instead of losing dataset roles.
+        const bool has_port_indices = std::any_of(j["links"].begin(), j["links"].end(),
+            [](const json& link) { return link.contains("from_pin_index") ||
+                                        link.contains("to_pin_index"); });
+        auto& registry = NodeMetadataRegistry::Instance();
+        if (has_port_indices) registry.Initialize();
+        int next_pin_id = 1;
         // Parse nodes
         std::vector<gui::MLNode> nodes;
         for (const auto& node_json : j["nodes"]) {
@@ -124,6 +135,11 @@ static bool BuildModelFromGraph(
             node.id = node_json["id"];
             node.type = static_cast<gui::NodeType>(node_json["type"].get<int>());
             node.name = node_json["name"];
+            if (has_port_indices) {
+                const auto* metadata = registry.GetMetadata(node.type);
+                if (!metadata) throw std::runtime_error("Missing node metadata: " + node.name);
+                ApplyStaticNodeMetadataContract(*metadata, node, next_pin_id);
+            }
             if (node_json.contains("parameters")) {
                 node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
             }
@@ -137,12 +153,29 @@ static bool BuildModelFromGraph(
             link.id = link_json["id"];
             link.from_node = link_json["from_node"];
             link.to_node = link_json["to_node"];
+            if (has_port_indices) {
+                const auto from = std::find_if(nodes.begin(), nodes.end(),
+                    [&](const gui::MLNode& node) { return node.id == link.from_node; });
+                const auto to = std::find_if(nodes.begin(), nodes.end(),
+                    [&](const gui::MLNode& node) { return node.id == link.to_node; });
+                int from_index = 0, to_index = 0;
+                if (from == nodes.end() || to == nodes.end() ||
+                    !gui::detail::ResolveSerializedPinIndex(link_json, "from_pin_index",
+                        from->outputs.size(), from_index) ||
+                    !gui::detail::ResolveSerializedPinIndex(link_json, "to_pin_index",
+                        to->inputs.size(), to_index)) {
+                    throw std::runtime_error("Invalid serialized model graph link: " +
+                                             std::to_string(link.id));
+                }
+                link.from_pin = from->outputs[from_index].id;
+                link.to_pin = to->inputs[to_index].id;
+            }
             links.push_back(link);
         }
 
         // Compile graph to get layer configuration
         GraphCompiler compiler;
-        TrainingConfiguration config = compiler.Compile(nodes, links, true);
+        TrainingConfiguration config = compiler.Compile(nodes, links, true, {}, GraphCompiler::Purpose::ModelImport);
 
         if (!config.is_valid) {
             error_message = "Graph compilation failed: " + config.error_message;
@@ -205,7 +238,7 @@ ProbeResult ModelImporter::ProbeFile(const std::string& input_path) {
     // Format-specific probing
     switch (result.format) {
         case ModelFormat::CyxModel: {
-            if (IsCyxwBinaryFormat(input_path)) {
+            if (IsCyxwBinaryFormat(input_path) && !formats::CyxModelArchive::IsV3(input_path)) {
                 std::ifstream file(input_path, std::ios::binary);
                 CyxwHeader header;
                 std::string error;
@@ -574,7 +607,7 @@ ImportResult ModelImporter::ImportCyxModel(
     ProgressCallback progress_cb
 ) {
     // Check if this is binary format
-    if (IsCyxwBinaryFormat(input_path)) {
+    if (IsCyxwBinaryFormat(input_path) && !formats::CyxModelArchive::IsV3(input_path)) {
         spdlog::info("Detected binary CYXW format: {}", input_path);
         return ImportCyxModelBinary(input_path, model, options, progress_cb);
     }
@@ -592,6 +625,7 @@ ImportResult ModelImporter::ImportCyxModel(
         TrainingHistory history;
         std::map<std::string, std::vector<uint8_t>> weights;
         std::map<std::string, std::vector<int64_t>> weight_shapes;
+        std::map<std::string, TensorDType> weight_dtypes;
         std::map<std::string, std::vector<uint8_t>> optimizer_state;
 
         TrainingHistory* history_ptr = options.load_training_history ? &history : nullptr;
@@ -607,7 +641,8 @@ ImportResult ModelImporter::ImportCyxModel(
             weights,
             weight_shapes,
             opt_state_ptr,
-            options
+            options,
+            &weight_dtypes
         );
 
         if (!success) {
@@ -624,10 +659,13 @@ ImportResult ModelImporter::ImportCyxModel(
         if (!graph_json.empty()) {
             std::string build_error;
             if (!BuildModelFromGraph(graph_json, model, build_error)) {
-                // If graph build fails, log warning but continue
-                // (for backward compatibility with models without graphs)
-                spdlog::warn("Could not build model from graph: {}", build_error);
-                result.warnings.push_back("Could not build model from graph: " + build_error);
+                // A saved architecture is authoritative. Shape guessing can replace
+                // a transformer with unrelated Dense layers and obscure the cause.
+                result.success = false;
+                result.error_message = "Could not build model from graph: " + build_error;
+                last_error_ = result.error_message;
+                spdlog::error("{}", result.error_message);
+                return result;
             } else {
                 model_built = true;
             }
@@ -636,7 +674,14 @@ ImportResult ModelImporter::ImportCyxModel(
             result.warnings.push_back("No graph data - model architecture not available");
         }
 
-        // Fallback: build model from weight shapes if graph compilation failed
+        if (!model_built && formats::CyxModelArchive::IsV3(input_path)) {
+            result.success=false;
+            result.error_message="CYXW v3 model import requires a saved graph; weights-only packages cannot reconstruct architecture";
+            last_error_=result.error_message;
+            return result;
+        }
+
+        // Legacy packages without graphs retain their documented compatibility path.
         if (!model_built && !weight_shapes.empty()) {
             spdlog::info("Building model from weight shapes (graph unavailable)");
 
@@ -746,7 +791,7 @@ ImportResult ModelImporter::ImportCyxModel(
         if (progress_cb) progress_cb(3, 5, "Loading weights...");
 
         // Populate model with weights
-        if (!PopulateModelWeights(model, weights, weight_shapes, options, result.warnings)) {
+        if (!PopulateModelWeights(model, weights, weight_shapes, options, result.warnings, &weight_dtypes)) {
             result.success = false;
             result.error_message = last_error_;
             return result;
@@ -847,6 +892,7 @@ ImportResult ModelImporter::ImportSafetensors(
         // Parse tensor metadata
         std::map<std::string, std::vector<uint8_t>> weights;
         std::map<std::string, std::vector<int64_t>> weight_shapes;
+        std::map<std::string, TensorDType> weight_dtypes;
 
         // Calculate data start position
         size_t data_start = 8 + header_size;
@@ -1122,7 +1168,8 @@ bool ModelImporter::PopulateModelWeights(
     const std::map<std::string, std::vector<uint8_t>>& weights,
     const std::map<std::string, std::vector<int64_t>>& shapes,
     const ImportOptions& options,
-    std::vector<std::string>& warnings
+    std::vector<std::string>& warnings,
+    const std::map<std::string, TensorDType>* dtypes
 ) {
     // Get current model parameters
     auto model_params = model.GetParameters();
@@ -1189,7 +1236,7 @@ bool ModelImporter::PopulateModelWeights(
         }
 
         // Create tensor (assume float32 for now)
-        Tensor tensor = BytesToTensor(data, loaded_shape, TensorDType::Float32);
+        Tensor tensor = BytesToTensor(data, loaded_shape, dtypes ? dtypes->at(name) : TensorDType::Float32);
         new_params[name] = std::move(tensor);
     }
 

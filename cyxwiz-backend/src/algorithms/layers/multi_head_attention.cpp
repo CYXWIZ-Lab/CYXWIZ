@@ -3,6 +3,7 @@
 #include "layer_arrayfire_utils.h"
 
 #include <cmath>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -225,15 +226,13 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
         BuildTensorShapeContext("key", k_shape) + "; " +
         BuildTensorShapeContext("value", v_shape));
     BackendFallbackReason fallback_reason = BackendFallbackReason::UnsupportedOperation;
-    std::string fallback_detail = "ArrayFire attention training dropout is not supported";
+    std::string fallback_detail = "ArrayFire attention execution failed";
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (!(training_ && dropout_ > 0.0f)) {
-        try {
-            return ForwardArrayFire(query, key, value, attn_mask);
-        } catch (const af::exception& e) {
-            fallback_reason = ClassifyArrayFireBackendFallbackReason(e.what());
-            fallback_detail = e.what();
-        }
+    try {
+        return ForwardArrayFire(query, key, value, attn_mask);
+    } catch (const af::exception& e) {
+        fallback_reason = ClassifyArrayFireBackendFallbackReason(e.what());
+        fallback_detail = e.what();
     }
 #else
     fallback_detail = "ArrayFire is not compiled into this backend";
@@ -318,8 +317,11 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
             const size_t head_offset = h * head_dim;
             for (size_t q = 0; q < seq_len_q; ++q) {
                 float max_score = -std::numeric_limits<float>::infinity();
+                bool fully_blocked = mask_data != nullptr;
                 for (size_t k = 0; k < seq_len_kv; ++k) {
                     float score = mask_data != nullptr ? mask_data[q * seq_len_kv + k] : 0.0f;
+                    fully_blocked = fully_blocked &&
+                        score == -std::numeric_limits<float>::infinity();
                     for (size_t d = 0; d < head_dim; ++d) {
                         score += Q[seq_index(b, q, head_offset + d, seq_len_q)] *
                                  K[seq_index(b, k, head_offset + d, seq_len_kv)] * scale_;
@@ -328,10 +330,11 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
                     max_score = std::max(max_score, score);
                 }
 
-                float sum_exp = 0.0f;
+                // Match the ArrayFire zero-attention contract, including dropout.
+                float sum_exp = fully_blocked ? 1.0f : 0.0f;
                 for (size_t k = 0; k < seq_len_kv; ++k) {
                     const size_t index = attn_index(q, k, b, h);
-                    attn_data[index] = std::exp(attn_data[index] - max_score);
+                    attn_data[index] = fully_blocked ? 0.0f : std::exp(attn_data[index] - max_score);
                     sum_exp += attn_data[index];
                 }
                 for (size_t k = 0; k < seq_len_kv; ++k) {
@@ -414,15 +417,13 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
     const std::string fallback_context = BuildArrayFireBackendFallbackContext(
         BuildTensorShapeContext("grad_output", shape));
     BackendFallbackReason fallback_reason = BackendFallbackReason::UnsupportedOperation;
-    std::string fallback_detail = "ArrayFire attention training dropout is not supported";
+    std::string fallback_detail = "ArrayFire attention execution failed";
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-    if (!cached_attention_dropout_) {
-        try {
-            return BackwardArrayFire(grad_output);
-        } catch (const af::exception& e) {
-            fallback_reason = ClassifyArrayFireBackendFallbackReason(e.what());
-            fallback_detail = e.what();
-        }
+    try {
+        return BackwardArrayFire(grad_output);
+    } catch (const af::exception& e) {
+        fallback_reason = ClassifyArrayFireBackendFallbackReason(e.what());
+        fallback_detail = e.what();
     }
 #else
     fallback_detail = "ArrayFire is not compiled into this backend";

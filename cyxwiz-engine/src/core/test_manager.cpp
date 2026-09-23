@@ -37,9 +37,12 @@ TestManager& TestManager::Instance() {
 
 TestManager::~TestManager() {
     StopTesting();
-    if (testing_thread_ && testing_thread_->joinable()) {
-        testing_thread_->join();
-    }
+    WaitForTestingStop();
+}
+
+void TestManager::WaitForTestingStop() {
+    // The worker may need mutex_ to finish. This wait is for owned shutdown only.
+    if (testing_thread_ && testing_thread_->joinable()) testing_thread_->join();
 }
 
 TestingMetrics TestManager::GetCurrentMetrics() const {
@@ -60,7 +63,7 @@ bool TestManager::StartTesting(
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
 
     // Double-check after acquiring lock
     if (is_testing_.load()) {
@@ -106,6 +109,7 @@ bool TestManager::StartTesting(
     ));
 
     // Notify start callback
+    lock.unlock();
     if (on_testing_start_) {
         on_testing_start_("Testing Model");
     }
@@ -140,7 +144,7 @@ bool TestManager::StartTestingArrow(
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
 
     // Double-check after acquiring lock
     if (is_testing_.load()) {
@@ -188,6 +192,7 @@ bool TestManager::StartTestingArrow(
     ));
 
     // Notify start callback
+    lock.unlock();
     if (on_testing_start_) {
         on_testing_start_("Testing Model");
     }
@@ -221,7 +226,7 @@ bool TestManager::StartTestingParquet(
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
     if (is_testing_.load()) {
         return false;
     }
@@ -260,6 +265,7 @@ bool TestManager::StartTestingParquet(
         nullptr
     ));
 
+    lock.unlock();
     if (on_testing_start_) {
         on_testing_start_("Testing Model");
     }
@@ -288,7 +294,7 @@ bool TestManager::StartTestingText(
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
     if (is_testing_.load()) {
         return false;
     }
@@ -325,6 +331,7 @@ bool TestManager::StartTestingText(
         nullptr
     ));
 
+    lock.unlock();
     if (on_testing_start_) {
         on_testing_start_("Testing Model");
     }
@@ -448,30 +455,11 @@ void TestManager::TestingThreadFunc(
             final_metrics.is_complete && !stop_requested_.load();
     }
 
-    // Store last results
-    bool success = !stop_requested_.load() && final_metrics.is_complete;
-    if (success) {
-        last_results_ = final_metrics;
-        has_results_ = true;
-    }
-
-    // Cleanup
-    is_testing_.store(false);
-    current_task_id_.store(0);
-
-    // Notify end callback
-    if (on_testing_end_) {
-        on_testing_end_(success, final_metrics);
-    }
-
-    // Notify completion callback
-    if (on_complete && success) {
-        on_complete(final_metrics);
-    }
-
-    // Clear current executor
+    const bool success = !stop_requested_.load() && final_metrics.is_complete;
+    TestingEndCallback end_callback;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        end_callback = on_testing_end_;
         current_executor_.reset();
     }
 
@@ -492,6 +480,17 @@ void TestManager::TestingThreadFunc(
                 ? "Testing stopped"
                 : final_metrics.status_message);
     }
+    current_task_id_.store(0);
+    // No worker cleanup may acquire mutex_ after publishing inactive.
+    is_testing_.store(false);
+    AsyncTaskManager::Instance().PostToMainThread(
+        [this, success, final_metrics = std::move(final_metrics),
+         end_callback = std::move(end_callback), on_complete = std::move(on_complete)] {
+            if (success) { last_results_ = final_metrics; has_results_ = true; }
+            if (end_callback) end_callback(success, final_metrics);
+            if (on_complete && success) on_complete(final_metrics);
+        });
+
 }
 
 bool TestManager::ExportResultsToCSV(const std::string& filepath) {
@@ -510,11 +509,14 @@ bool TestManager::ExportResultsToCSV(const std::string& filepath) {
     file << "Test Results Summary\n";
     file << "Metric,Value\n";
     file << "Objective," <<
-        (last_results_.regression_mode ? "regression" : "classification") <<
+        (last_results_.causal_lm_mode ? "causal_lm" : (last_results_.regression_mode ? "regression" : "classification")) <<
         "\n";
     file << "Loss," << last_results_.test_loss << "\n";
     file << "Total Samples," << last_results_.total_samples << "\n";
-    if (last_results_.regression_mode) {
+    if (last_results_.causal_lm_mode) {
+        file << "Valid Target Tokens," << last_results_.total_target_values << "\n";
+        file << "Token Accuracy," << last_results_.test_accuracy << "\n";
+    } else if (last_results_.regression_mode) {
         file << "Target Values," << last_results_.total_target_values << "\n";
         file << "MAE," << last_results_.test_mae << "\n";
         file << "RMSE," << last_results_.test_rmse << "\n";
@@ -529,7 +531,7 @@ bool TestManager::ExportResultsToCSV(const std::string& filepath) {
     file << "Time (seconds)," << last_results_.total_time_seconds << "\n";
     file << "Samples/sec," << last_results_.samples_per_second << "\n";
 
-    if (!last_results_.regression_mode) {
+    if (!last_results_.regression_mode && !last_results_.causal_lm_mode) {
         file << "\nPer-Class Metrics\n";
         file << "Class,Precision,Recall,F1,Support\n";
         for (const auto& cm : last_results_.per_class_metrics) {
@@ -573,10 +575,13 @@ bool TestManager::ExportResultsToJSON(const std::string& filepath) {
 
     // Overview
     j["objective"] =
-        last_results_.regression_mode ? "regression" : "classification";
+        last_results_.causal_lm_mode ? "causal_lm" : (last_results_.regression_mode ? "regression" : "classification");
     j["loss"] = last_results_.test_loss;
     j["total_samples"] = last_results_.total_samples;
-    if (last_results_.regression_mode) {
+    if (last_results_.causal_lm_mode) {
+        j["valid_target_tokens"] = last_results_.total_target_values;
+        j["token_accuracy"] = last_results_.test_accuracy;
+    } else if (last_results_.regression_mode) {
         j["total_target_values"] = last_results_.total_target_values;
         j["mae"] = last_results_.test_mae;
         j["rmse"] = last_results_.test_rmse;

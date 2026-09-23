@@ -5,6 +5,7 @@
 // - Code export functionality (PyTorch, TensorFlow, Keras, PyCyxWiz)
 
 #include "node_editor.h"
+#include "subgraph_document.h"
 #include "node_type_import_registry.h"
 #include "../core/data_input_parameters.h"
 #include "../core/pipeline_runtime_capabilities.h"
@@ -150,6 +151,7 @@ static void MigrateLegacyNodeParameters(NodeType type,
 }
 
 bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
+    if (!CanReplaceGraph("load a graph")) return false;
     // Clear existing graph
     ClearGraph();
 
@@ -411,6 +413,10 @@ void NodeEditor::RebuildDataBoundaryPins(
 }
 
 bool NodeEditor::HasLegacyDataBoundary() const {
+    for (const auto& data : subgraphs_) for (const auto& node : data.internal_nodes) {
+        const auto it = node.parameters.find("data_boundary_pin_contract");
+        if (it != node.parameters.end() && it->second == "legacy.v1") return true;
+    }
     for (const auto& node : nodes_) {
         auto it = node.parameters.find("data_boundary_pin_contract");
         if (it != node.parameters.end() && it->second == "legacy.v1") {
@@ -422,6 +428,10 @@ bool NodeEditor::HasLegacyDataBoundary() const {
 
 DataBoundaryMigrationResult NodeEditor::MigrateLegacyDataBoundary() {
     DataBoundaryMigrationResult result;
+    if (!subgraphs_.empty()) {
+        result.message = "Migrate data boundaries before encapsulating nodes in subgraphs.";
+        return result;
+    }
     if (!HasLegacyDataBoundary()) {
         result.message = "The graph already uses the Dataset v2 boundary.";
         return result;
@@ -684,72 +694,7 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
         }
         j["groups"] = groups_array;
 
-        // Serialize nodes
-        json nodes_array = json::array();
-        for (const auto& node : nodes_) {
-            json node_json;
-            node_json["id"] = node.id;
-            node_json["type"] = static_cast<int>(node.type);
-            node_json["name"] = node.name;
-            node_json["description"] = node.description;
-            node_json["parameters"] = node.parameters;
-
-            // Unified Canvas Phase 7: Save node category for better organization
-            node_json["category"] = static_cast<int>(node.category);
-
-            // Save node position
-            auto it = cached_node_positions_.find(node.id);
-            ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
-            node_json["pos_x"] = pos.x;
-            node_json["pos_y"] = pos.y;
-
-            nodes_array.push_back(node_json);
-        }
-        j["nodes"] = nodes_array;
-
-        // Serialize links with pin indices for multi-pin support
-        json links_array = json::array();
-        for (const auto& link : links_) {
-            json link_json;
-            link_json["id"] = link.id;
-            link_json["from_node"] = link.from_node;
-            link_json["from_pin"] = link.from_pin;
-            link_json["to_node"] = link.to_node;
-            link_json["to_pin"] = link.to_pin;
-
-            // Save pin indices for proper multi-pin node support
-            const MLNode* from_node = FindNodeById(link.from_node);
-            const MLNode* to_node = FindNodeById(link.to_node);
-
-            int from_pin_index = 0;
-            if (from_node) {
-                for (size_t i = 0; i < from_node->outputs.size(); ++i) {
-                    if (from_node->outputs[i].id == link.from_pin) {
-                        from_pin_index = static_cast<int>(i);
-                        break;
-                    }
-                }
-            }
-
-            int to_pin_index = 0;
-            if (to_node) {
-                for (size_t i = 0; i < to_node->inputs.size(); ++i) {
-                    if (to_node->inputs[i].id == link.to_pin) {
-                        to_pin_index = static_cast<int>(i);
-                        break;
-                    }
-                }
-            }
-
-            link_json["from_pin_index"] = from_pin_index;
-            link_json["to_pin_index"] = to_pin_index;
-
-            // Save link type for skip connection visualization
-            link_json["link_type"] = static_cast<int>(link.type);
-
-            links_array.push_back(link_json);
-        }
-        j["links"] = links_array;
+        detail::WriteEditorGraphContent(j, nodes_, links_, subgraphs_, cached_node_positions_);
 
         // Write to file
         std::ofstream file(filepath);
@@ -908,6 +853,7 @@ static bool ResolveSavedGraphLinkPins(const nlohmann::json& link_json,
 
 bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
                                const std::string& source_description) {
+    if (!CanReplaceGraph("replace the graph")) return false;
     if (!graph_json.is_object() ||
         !graph_json.contains("nodes") || !graph_json["nodes"].is_array() ||
         !graph_json.contains("links") || !graph_json["links"].is_array()) {
@@ -940,6 +886,7 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
     } counters(next_node_id_, next_pin_id_);
 
     try {
+        const auto flat_graph = detail::FlattenSubgraphDocument(graph_json);
         // CreateNode owns the pin contract, so use it to build a complete
         // replacement graph without touching the live node/link containers.
         next_node_id_ = 1;
@@ -1030,8 +977,8 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
             }
         }
 
-        loaded_nodes.reserve(graph_json["nodes"].size());
-        for (const auto& node_json : graph_json["nodes"]) {
+        loaded_nodes.reserve(flat_graph["nodes"].size());
+        for (const auto& node_json : flat_graph["nodes"]) {
             NodeType node_type = NodeType::Unknown;
             if (!TryReadSerializedNodeType(node_json, node_type)) {
                 return false;
@@ -1065,8 +1012,16 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
                     node_json["pos_x"].get<float>(),
                     node_json["pos_y"].get<float>());
             }
+            const auto pos = loaded_positions.find(node.id);
+            if (pos != loaded_positions.end()) {
+                node.initial_pos_x = pos->second.x;
+                node.initial_pos_y = pos->second.y;
+                node.has_initial_position = true;
+            }
             loaded_nodes.push_back(std::move(node));
         }
+
+        detail::RestoreSubgraphPins(graph_json, loaded_nodes, next_pin_id_);
 
         const auto find_loaded_node = [&loaded_nodes](int node_id) -> const MLNode* {
             const auto it = std::find_if(
@@ -1075,8 +1030,8 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
             return it == loaded_nodes.end() ? nullptr : &*it;
         };
 
-        loaded_links.reserve(graph_json["links"].size());
-        for (const auto& link_json : graph_json["links"]) {
+        loaded_links.reserve(flat_graph["links"].size());
+        for (const auto& link_json : flat_graph["links"]) {
             NodeLink link;
             link.id = link_json.at("id").get<int>();
             link.from_node = link_json.at("from_node").get<int>();
@@ -1089,6 +1044,7 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
                     preserve_legacy_evaluation_table_inputs,
                     preserve_legacy_classical_tree_pins,
                     link)) {
+                if (graph_json.contains("subgraphs")) throw std::runtime_error("Subgraph document contains an invalid link");
                 continue;
             }
             if (link_json.contains("link_type")) {
@@ -1098,12 +1054,16 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
             loaded_links.push_back(link);
         }
 
+        auto loaded_subgraphs = detail::RestoreSubgraphContents(graph_json, loaded_nodes, loaded_links);
+
         const int loaded_next_pin_id = next_pin_id_;
         counters.Restore();
 
         // Commit only after the complete replacement graph has been built.
+        if (!CanReplaceGraph("replace the graph")) return false;
         ClearGraph();
         nodes_ = std::move(loaded_nodes);
+        subgraphs_ = std::move(loaded_subgraphs);
         links_ = std::move(loaded_links);
         groups_ = std::move(loaded_groups);
         annotations_ = std::move(loaded_annotations);
@@ -1136,6 +1096,7 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
 }
 
 bool NodeEditor::LoadGraph(const std::string& filepath) {
+    if (!CanReplaceGraph("load a graph")) return false;
     using json = nlohmann::json;
 
     spdlog::info("Loading graph from: {}", filepath);
@@ -1173,70 +1134,9 @@ std::string NodeEditor::GetGraphJson() const {
     try {
         json j = detail::CreateSerializedGraphDocument("1.0", HasLegacyDataBoundary());
         j["framework"] = static_cast<int>(selected_framework_);
+        j["execution_mode"] = static_cast<int>(execution_mode_);
 
-        // Serialize nodes
-        json nodes_array = json::array();
-        for (const auto& node : nodes_) {
-            json node_json;
-            node_json["id"] = node.id;
-            node_json["type"] = static_cast<int>(node.type);
-            node_json["name"] = node.name;
-            node_json["description"] = node.description;
-            node_json["parameters"] = node.parameters;
-
-            // Save node position
-            auto it = cached_node_positions_.find(node.id);
-            ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
-            node_json["pos_x"] = pos.x;
-            node_json["pos_y"] = pos.y;
-
-            nodes_array.push_back(node_json);
-        }
-        j["nodes"] = nodes_array;
-
-        // Serialize links with pin indices for multi-pin support
-        json links_array = json::array();
-        for (const auto& link : links_) {
-            json link_json;
-            link_json["id"] = link.id;
-            link_json["from_node"] = link.from_node;
-            link_json["from_pin"] = link.from_pin;
-            link_json["to_node"] = link.to_node;
-            link_json["to_pin"] = link.to_pin;
-
-            // Save pin indices for proper multi-pin node support
-            const MLNode* from_node = FindNodeById(link.from_node);
-            const MLNode* to_node = FindNodeById(link.to_node);
-
-            int from_pin_index = 0;
-            if (from_node) {
-                for (size_t i = 0; i < from_node->outputs.size(); ++i) {
-                    if (from_node->outputs[i].id == link.from_pin) {
-                        from_pin_index = static_cast<int>(i);
-                        break;
-                    }
-                }
-            }
-
-            int to_pin_index = 0;
-            if (to_node) {
-                for (size_t i = 0; i < to_node->inputs.size(); ++i) {
-                    if (to_node->inputs[i].id == link.to_pin) {
-                        to_pin_index = static_cast<int>(i);
-                        break;
-                    }
-                }
-            }
-
-            link_json["from_pin_index"] = from_pin_index;
-            link_json["to_pin_index"] = to_pin_index;
-
-            // Save link type for skip connection visualization
-            link_json["link_type"] = static_cast<int>(link.type);
-
-            links_array.push_back(link_json);
-        }
-        j["links"] = links_array;
+        detail::WriteEditorGraphContent(j, nodes_, links_, subgraphs_, cached_node_positions_);
 
         return j.dump(4);  // Pretty print with 4-space indent
 
@@ -1247,6 +1147,7 @@ std::string NodeEditor::GetGraphJson() const {
 }
 
 bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
+    if (!CanReplaceGraph("load a graph")) return false;
     using json = nlohmann::json;
 
     if (json_string.empty()) {
@@ -1278,6 +1179,7 @@ void NodeEditor::ShowSaveDialog() {
 }
 
 void NodeEditor::ShowLoadDialog() {
+    if (!CanReplaceGraph("load a graph")) return;
     auto& project = cyxwiz::ProjectManager::Instance();
     const std::string default_path =
         project.HasActiveProject() ? project.GetCyxGraphsPath() : std::string();

@@ -1,5 +1,7 @@
 #include "cyxwiz/layers/recurrent.h"
+#include "cyxwiz/backend_placement_observation.h"
 #include "cyxwiz/debug_hooks.h"
+#include "cyxwiz/neural_provider.h"
 #include "cyxwiz/recurrent_cuda_placement.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_recurrent_utils.h"
@@ -99,10 +101,12 @@ void GRULayer::InitializeWeights() {
 
 void GRULayer::ResetState() {
     h_n_ = Tensor();
+    initial_state_pending_ = false;
 }
 
 void GRULayer::SetHiddenState(const Tensor& h0) {
     h_n_ = h0.Clone();
+    initial_state_pending_ = true;
 }
 
 Tensor GRULayer::Forward(const Tensor& input) {
@@ -122,6 +126,14 @@ Tensor GRULayer::Forward(const Tensor& input) {
 
     cached_input_ = input;
 
+    // Stateless per Forward (owner ruling 2026-09-23, track68): zero h_0
+    // unless SetHiddenState was called since the last Forward. See the
+    // matching note in LSTMLayer::Forward.
+    if (!initial_state_pending_) {
+        h_n_ = Tensor();
+    }
+    initial_state_pending_ = false;
+
     // Hoisted weight init guard — same pattern as LSTMLayer::Forward.
     // GRULayer's constructor calls InitializeWeights() which uses the AF
     // backend; if AF init silently failed the weight tensors carry null
@@ -139,6 +151,68 @@ Tensor GRULayer::Forward(const Tensor& input) {
                 b_ih_[layer] = Tensor::Zeros({gate_size});
                 b_hh_[layer] = Tensor::Zeros({gate_size});
             }
+        }
+    }
+
+    // tofix68 P3: route single-layer unidirectional batch-first GRU
+    // through the native neural provider when one serves the run's
+    // selected device and supports the exact tuple (mirror of
+    // LSTMLayer::Forward, P2). Failure records placement evidence and
+    // falls through to the AF/native paths below.
+    provider_forward_used_ = false;
+    if (num_layers_ == 1 && !bidirectional_ && batch_first_ &&
+        !provider_disabled_after_failure_) {
+        NeuralOpRequest provider_request;
+        provider_request.target = CaptureCurrentNeuralDeviceTarget();
+        provider_request.op = NeuralOp::GruForward;
+        provider_request.training = false;  // forward math is identical
+        provider_request.dtype = DataType::Float32;
+        provider_request.batch = input_shape[0];
+        provider_request.seq = input_shape[1];
+        provider_request.input = input_shape[2];
+        provider_request.hidden = static_cast<size_t>(hidden_size_);
+        if (auto provider = NeuralProviderRegistry::Instance()
+                                .FindSupporting(provider_request)) {
+            const size_t hidden = static_cast<size_t>(hidden_size_);
+            Tensor output(std::vector<size_t>{
+                input_shape[0], input_shape[1], hidden});
+            NeuralOpBuffers buffers;
+            buffers.inputs = {&input};
+            buffers.weights = {&W_ih_[0], &W_hh_[0], &b_ih_[0], &b_hh_[0]};
+            buffers.outputs = {&output};
+            const auto status = provider->Execute(provider_request, buffers);
+            if (status.ok) {
+                provider_forward_used_ = true;
+                // Final hidden state = last timestep, in the CPU path's
+                // [layers*directions, batch, hidden] layout.
+                const size_t seq = input_shape[1];
+                h_n_ = Tensor::Zeros({1, input_shape[0], hidden});
+                const float* y = output.ReadData<float>();
+                float* hn = h_n_.Data<float>();
+                for (size_t b = 0; b < input_shape[0]; ++b) {
+                    for (size_t j = 0; j < hidden; ++j) {
+                        hn[b * hidden + j] =
+                            y[(b * seq + (seq - 1)) * hidden + j];
+                    }
+                }
+                return output;
+            }
+            RecurrentCudaPlacementRequest evidence_request;
+            evidence_request.kind = RecurrentLayerKind::GRU;
+            evidence_request.batch_size = input_shape[0];
+            evidence_request.seq_len = input_shape[1];
+            evidence_request.input_size = input_shape[2];
+            evidence_request.hidden_size =
+                static_cast<size_t>(hidden_size_);
+            RecordRecurrentCudaPlacementObservation(
+                evidence_request,
+                BackendFallbackReasonName(status.reason),
+                BackendPlacementObservationSource::RuntimeFallback,
+                "native provider gru_forward failed: " + status.detail);
+            spdlog::warn(
+                "GRULayer::Forward: native provider failed (reason={}), "
+                "falling back to ArrayFire/native path: {}",
+                BackendFallbackReasonName(status.reason), status.detail);
         }
     }
 
@@ -354,6 +428,13 @@ Tensor GRULayer::Forward(const Tensor& input) {
                                  fallback_message));
             }
         }
+        // Strict placement runs must fail closed instead of silently
+        // training on the native CPU recurrent path (tofix67 slice 5). The
+        // observation above is recorded first so the evidence survives the
+        // throw.
+        ThrowIfArrayFireNativeCpuFallbackForbidden(
+            "GRULayer::Forward", fallback_reason, e.what(),
+            fallback_context);
     }
 #endif
 

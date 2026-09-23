@@ -55,5 +55,17 @@
       "features": ["parquet", "csv", "json"]
     }
   ],
+  "features": {
+    "html-parser": {
+      "description": "Optional Lexbor provider for parsed HTML in Text Clean.",
+      "dependencies": ["lexbor"]
+    },
+    "sentencepiece": {
+      "description": "Optional official SentencePiece C++ tokenizer provider for TextTokenizer SentencePiece BPE/Unigram families.",
+      "dependencies": [
+        "sentencepiece"
+      ]
+    }
+  },
   "builtin-baseline": "594ad8871e1e8e45f8e626c015fd611163430207"
 }

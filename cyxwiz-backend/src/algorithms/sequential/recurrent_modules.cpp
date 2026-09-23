@@ -505,5 +505,104 @@ void GRUModule::SetTraining(bool training) {
     }
 }
 
+
+// ============================================================================
+// RNNModule Implementation — mirror of LSTMModule over the vanilla RNN
+// reference layer (tofix68 phase 3). Host access goes through
+// ReadData/MutableData so the legacy Data-access inventory is unchanged.
+// ============================================================================
+
+RNNModule::RNNModule(size_t input_size, size_t hidden_size,
+                     size_t num_layers, bool return_sequences,
+                     const std::string& nonlinearity)
+    : input_size_(input_size)
+    , hidden_size_(hidden_size)
+    , num_layers_(num_layers)
+    , return_sequences_(return_sequences)
+    , nonlinearity_(nonlinearity)
+{
+    layer_ = std::make_unique<RNNLayer>(
+        static_cast<int>(input_size),
+        static_cast<int>(hidden_size),
+        static_cast<int>(num_layers),
+        /*batch_first=*/true,
+        /*bidirectional=*/false,
+        nonlinearity);
+}
+
+Tensor RNNModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    Tensor full_output = layer_->Forward(input);
+    last_full_output_shape_ = full_output.Shape();
+
+    if (return_sequences_) {
+        return full_output;
+    }
+    if (last_full_output_shape_.size() != 3) {
+        spdlog::warn("RNNModule: expected 3D output [batch, seq, hidden] "
+                     "but got {}D — passing full output through",
+                     last_full_output_shape_.size());
+        return full_output;
+    }
+
+    const size_t batch = last_full_output_shape_[0];
+    const size_t seq_len = last_full_output_shape_[1];
+    const size_t hd = last_full_output_shape_[2];
+
+    Tensor last({batch, hd}, DataType::Float32);
+    const float* src = full_output.ReadData<float>();
+    float* dst = last.MutableData<float>();
+    for (size_t b = 0; b < batch; ++b) {
+        const float* src_step = src + b * seq_len * hd + (seq_len - 1) * hd;
+        std::memcpy(dst + b * hd, src_step, hd * sizeof(float));
+    }
+    return last;
+}
+
+Tensor RNNModule::Backward(const Tensor& grad_output) {
+    if (return_sequences_) {
+        return layer_->Backward(grad_output);
+    }
+    if (last_full_output_shape_.size() != 3) {
+        spdlog::warn("RNNModule::Backward called without a 3D shape cache "
+                     "— falling back to direct grad passthrough");
+        return layer_->Backward(grad_output);
+    }
+
+    const size_t batch = last_full_output_shape_[0];
+    const size_t seq_len = last_full_output_shape_[1];
+    const size_t hd = last_full_output_shape_[2];
+
+    Tensor expanded = Tensor::Zeros({batch, seq_len, hd});
+    const float* src = grad_output.ReadData<float>();
+    float* dst = expanded.MutableData<float>();
+    for (size_t b = 0; b < batch; ++b) {
+        float* dst_step = dst + b * seq_len * hd + (seq_len - 1) * hd;
+        std::memcpy(dst_step, src + b * hd, hd * sizeof(float));
+    }
+    return layer_->Backward(expanded);
+}
+
+std::map<std::string, Tensor> RNNModule::GetParameters() {
+    return layer_->GetParameters();
+}
+
+void RNNModule::SetParameters(const std::map<std::string, Tensor>& params) {
+    layer_->SetParameters(params);
+}
+
+std::map<std::string, Tensor> RNNModule::GetGradients() {
+    // Same convention as LSTM/GRU: RNNLayer writes "grad_*" keys into its
+    // parameter map and the SequentialModel optimizer step reads them
+    // through GetParameters().
+    return layer_->GetParameters();
+}
+
+std::string RNNModule::GetName() const {
+    return "RNN(" + std::to_string(input_size_) + " -> " +
+           std::to_string(hidden_size_) + ", " + nonlinearity_ +
+           (return_sequences_ ? ", seq" : ", last") + ")";
+}
+
 } // namespace cyxwiz
 

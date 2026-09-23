@@ -8,6 +8,7 @@
 
 namespace cyxwiz {
 class TaskProgressPanel;
+class AsyncTask;
 struct DebugArtifactConsistencyInput;
 } // namespace cyxwiz
 
@@ -228,6 +229,11 @@ private:
 
     // Testing from node graph
     void StartTestingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    void StartTestingWithConfig(const std::vector<MLNode>& nodes,
+        const std::vector<NodeLink>& links, cyxwiz::TrainingConfiguration config);
+    std::shared_ptr<cyxwiz::AsyncTask> test_preparation_task_;
+    std::shared_ptr<int> test_callback_lifetime_ = std::make_shared<int>(0);
+
 
     // Compile the current graph as a dry-run (no training) and show results in a popup
     void CompileGraphAndReport();

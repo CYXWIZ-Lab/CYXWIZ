@@ -146,7 +146,10 @@ cyxwiz::TrainingConfiguration CompileRecurrentGraph(gui::NodeType recurrent_type
 
     auto recurrent = Node(4,
                           recurrent_type,
-                          recurrent_type == gui::NodeType::GRU ? "GRU 32" : "LSTM 8",
+                          recurrent_type == gui::NodeType::GRU
+                              ? "GRU 32"
+                              : (recurrent_type == gui::NodeType::RNN ? "RNN 32"
+                                                                      : "LSTM 8"),
                           {Pin(401, gui::PinType::Tensor, "Input", true)},
                           {Pin(402, gui::PinType::Tensor, "Output", false),
                            Pin(403, gui::PinType::Tensor, "Hidden", false, false)});
@@ -242,9 +245,108 @@ cyxwiz::TrainingConfiguration CompileUnclassifiedLayerGraph() {
     return compiler.Compile(nodes, links, true);
 }
 
+// tofix68 placement wiring: when a provider claims the exact tuple, the
+// placement entry becomes provider-backed. Exercised with a stub provider
+// bound to a deliberately absurd tuple so it can never collide with real
+// compiles or the real provider in this process.
+class StubSelectingProvider final : public cyxwiz::INeuralNetworkProvider {
+public:
+    const char* ProviderId() const override { return "cyxwiz.test-stub"; }
+    cyxwiz::DeviceType Platform() const override {
+        return cyxwiz::DeviceType::CUDA;
+    }
+    std::string Version() const override {
+        return "cyxwiz.test-stub 9.9.9 / placement-wiring fixture";
+    }
+    cyxwiz::NeuralCapability QueryCapability(
+        const cyxwiz::NeuralOpRequest& request) const override {
+        // layers==3 keeps this fixture outside the REAL provider's
+        // single-layer contract, so only the stub can claim it.
+        cyxwiz::NeuralCapability capability;
+        capability.supported =
+            request.op == cyxwiz::NeuralOp::LstmForward &&
+            request.batch == 7777 && request.hidden == 7777 &&
+            request.layers == 3;
+        if (!capability.supported) {
+            capability.detail = "stub supports only the fixture tuple";
+        }
+        return capability;
+    }
+    cyxwiz::NeuralResourceEstimate EstimateResources(
+        const cyxwiz::NeuralOpRequest&) const override {
+        return {};
+    }
+    cyxwiz::NeuralOpStatus Execute(const cyxwiz::NeuralOpRequest&,
+                                   cyxwiz::NeuralOpBuffers&) override {
+        return {};
+    }
+};
+
+void TestNativeProviderSelectionPlacement() {
+    cyxwiz::NeuralProviderRegistry::Instance().Register(
+        std::make_shared<StubSelectingProvider>());
+
+    cyxwiz::BackendPlacementEntry placement;
+    placement.status = cyxwiz::BackendPlacementStatus::Cpu;
+    placement.explanation = "base explanation.";
+
+    cyxwiz::NeuralOpRequest request;
+    request.target = {cyxwiz::DeviceType::CUDA, 0};
+    request.op = cyxwiz::NeuralOp::LstmForward;
+    request.training = true;
+    request.batch = 7777;
+    request.seq = 4;
+    request.input = 8;
+    request.hidden = 7777;
+    request.layers = 3;
+    cyxwiz::backend_placement::ApplyNativeProviderPlacement(placement,
+                                                            request);
+
+    Check(placement.status == cyxwiz::BackendPlacementStatus::Gpu,
+          "provider-supported tuple should place as gpu");
+    Check(placement.reason_code ==
+              cyxwiz::BackendPlacementReason::NativeProviderSelected,
+          "provider-supported tuple should use the native_provider reason");
+    Check(placement.expected_backend == "native provider cyxwiz.test-stub",
+          "provider-supported tuple should name the selected provider");
+    Check(placement.explanation.find("cyxwiz.test-stub 9.9.9") !=
+              std::string::npos,
+          "selection should record the provider version");
+
+    // Device-keyed dispatch: the SAME tuple for a run the user pointed at
+    // an OpenCL device must not select the CUDA stub (nor any CUDA
+    // provider present in this process); placement stays on the portable
+    // path and the explanation says why.
+    cyxwiz::BackendPlacementEntry opencl_placement;
+    opencl_placement.status = cyxwiz::BackendPlacementStatus::Cpu;
+    opencl_placement.expected_backend = "CPU";
+    opencl_placement.reason_code = "base_reason";
+    opencl_placement.explanation = "base explanation.";
+    auto opencl_request = request;
+    opencl_request.target = {cyxwiz::DeviceType::OPENCL, 0};
+    cyxwiz::backend_placement::ApplyNativeProviderPlacement(opencl_placement,
+                                                            opencl_request);
+    Check(opencl_placement.status == cyxwiz::BackendPlacementStatus::Cpu,
+          "opencl-targeted run must not be placed on a cuda provider");
+    Check(opencl_placement.reason_code == "base_reason",
+          "opencl-targeted run must keep its portable placement reason");
+    Check(opencl_placement.expected_backend == "CPU",
+          "opencl-targeted run must keep its portable expected backend");
+    Check(opencl_placement.explanation.find("do not serve the run's target "
+                                            "device (opencl)") !=
+              std::string::npos,
+          "mismatch must be explained, not silent");
+}
+
 } // namespace
 
 int main() {
+    // The legacy AF/CPU placement-policy sections below run with the
+    // neural providers hidden — a real provider now truthfully claims
+    // supported LSTM training tuples (tofix68 P2), which would rewrite
+    // the placements these sections assert. Provider-selection behavior
+    // is tested explicitly at the end with the seam lifted.
+    cyxwiz::SetNeuralProvidersDisabledForTesting(true);
     Check(cyxwiz::ClassifyArrayFireBackendFallbackReason(
               "Formal parameter space overflowed") ==
               cyxwiz::BackendFallbackReason::CudaJitParamOverflow,
@@ -613,6 +715,67 @@ int main() {
               gui::NodeType::TransformerDecoder).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
           "TransformerDecoder capability kind should be CpuBackedModelLayer");
+    cyxwiz::CompiledLayer supported_decoder;
+    supported_decoder.type = gui::NodeType::TransformerDecoder;
+    supported_decoder.name = "Supported Causal Decoder";
+    supported_decoder.input_shape = {256, 128};
+    supported_decoder.output_shape = {256, 128};
+    supported_decoder.parameters["dropout"] = "0";
+    Check(cyxwiz::backend_placement::ClassifyLayer(supported_decoder).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
+          "TransformerDecoder dropout=0 sequence path should be classified as ArrayFireTensor");
+    auto supported_decoder_placement =
+        cyxwiz::backend_placement::BuildArrayFireTensorPlacement(
+            supported_decoder);
+    Check(supported_decoder_placement.reason_code ==
+              cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
+          "supported TransformerDecoder placement should be ArrayFire-capable");
+    cyxwiz::CompiledLayer dropout_decoder = supported_decoder;
+    dropout_decoder.name = "Dropout Decoder";
+    dropout_decoder.parameters["dropout"] = "0.1";
+    Check(cyxwiz::backend_placement::ClassifyLayer(dropout_decoder).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
+          "TransformerDecoder dropout>0 sequence path should be classified as ArrayFireTensor after residency proof");
+    auto dropout_decoder_placement =
+        cyxwiz::backend_placement::BuildArrayFireTensorPlacement(
+            dropout_decoder);
+    Check(dropout_decoder_placement.reason_code ==
+              cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
+          "TransformerDecoder dropout placement should be ArrayFire-capable");
+    dropout_decoder.parameters["ffn_dropout"] = "0.25";
+    Check(cyxwiz::backend_placement::ClassifyLayer(dropout_decoder).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
+          "TransformerDecoder attention and FFN dropout path should be ArrayFireTensor");
+    cyxwiz::CompiledLayer supported_encoder = supported_decoder;
+    supported_encoder.type = gui::NodeType::TransformerEncoder;
+    supported_encoder.name = "Supported Encoder";
+    supported_encoder.parameters["dropout"] = "0.1";
+    supported_encoder.parameters["ffn_dropout"] = "0.25";
+    Check(cyxwiz::backend_placement::ClassifyLayer(supported_encoder).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
+          "TransformerEncoder dropout sequence path should be classified as ArrayFireTensor");
+    cyxwiz::CompiledLayer supported_attention = supported_decoder;
+    supported_attention.type = gui::NodeType::MultiHeadAttention;
+    supported_attention.name = "Supported Attention";
+    supported_attention.parameters["dropout"] = "0.25";
+    Check(cyxwiz::backend_placement::ClassifyLayer(supported_attention).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
+          "MultiHeadAttention dropout sequence path should be classified as ArrayFireTensor");
+    cyxwiz::CompiledLayer invalid_dropout_decoder = supported_decoder;
+    invalid_dropout_decoder.name = "Invalid Dropout Decoder";
+    invalid_dropout_decoder.parameters["dropout"] = "1.0";
+    Check(cyxwiz::backend_placement::ClassifyLayer(invalid_dropout_decoder).kind ==
+              cyxwiz::backend_placement::LayerCapabilityKind::CpuBackedModelLayer,
+          "invalid TransformerDecoder dropout should not be classified as ArrayFireTensor");
+    auto invalid_dropout_placement =
+        cyxwiz::backend_placement::BuildCpuBackedModelLayerPlacement(
+            invalid_dropout_decoder);
+    Check(invalid_dropout_placement.explanation.find("dropout value '1.0'") !=
+              std::string::npos,
+          "CPU-backed TransformerDecoder explanation should name invalid dropout value");
+    Check(invalid_dropout_placement.explanation.find("probability in [0,1)") !=
+              std::string::npos,
+          "CPU-backed TransformerDecoder explanation should give the valid probability range");
     Check(!cyxwiz::backend_placement::IsKnownArrayFireTensorLayer(
               gui::NodeType::PositionalEncoding),
           "PositionalEncoding should not be classified as direct ArrayFire tensor-capable");
@@ -643,6 +806,39 @@ int main() {
     Check(gru_summary.gpu == 2, "GRU placement summary should count Embedding and Dense as GPU");
     Check(gru_summary.cpu == 1, "GRU placement summary should count GRU as CPU");
     Check(gru_summary.unknown == 0, "GRU placement summary should have no unknown entries");
+
+    // tofix68 Studio RNN wiring: the simple RNN compiles as a CPU-backed
+    // model layer (native CPU reference, no ArrayFire path) with the
+    // recurrent family's declared execution mode, and never as an
+    // unsupported/unclassified entry.
+    auto rnn_config = CompileRecurrentGraph(gui::NodeType::RNN, 32, false);
+    Check(rnn_config.is_valid, "RNN placement graph should compile");
+    Check(rnn_config.backend_placements.size() == 3,
+          "RNN graph should produce placement entries for Embedding, RNN, Dense");
+    const auto* rnn_placement = FindPlacement(rnn_config, 4);
+    Check(rnn_placement != nullptr, "RNN placement entry should reference node 4");
+    Check(rnn_placement->node_type == "RNN", "RNN placement should name the layer");
+    Check(rnn_placement->status == cyxwiz::BackendPlacementStatus::Cpu &&
+              rnn_placement->expected_backend == "CPU",
+          "RNN should be placed on the CPU reference path");
+    Check(rnn_placement->reason_code ==
+              cyxwiz::BackendPlacementReason::GraphRuntimeCpuBacked,
+          "RNN should use the CPU-backed model layer reason");
+    Check(rnn_placement->explanation.find("simple-RNN reference") !=
+              std::string::npos,
+          "RNN placement should explain the CPU reference path");
+    Check(rnn_placement->declared_execution_mode ==
+              cyxwiz::GpuExecutionModeName(cyxwiz::DeclaredGpuExecutionMode(
+                  cyxwiz::GpuOperationFamily::Recurrent)),
+          "RNN should declare the recurrent family execution mode");
+    const auto rnn_summary = rnn_config.SummarizeBackendPlacements();
+    Check(rnn_summary.cpu == 1 && rnn_summary.gpu == 2 && rnn_summary.unknown == 0,
+          "RNN placement summary should count RNN as CPU and the rest as GPU");
+
+    auto rnn_bidirectional_config =
+        CompileRecurrentGraph(gui::NodeType::RNN, 32, true);
+    Check(!rnn_bidirectional_config.is_valid,
+          "bidirectional RNN must fail closed at compile time");
 
     cyxwiz::ExecutionDeviceContext cpu_context;
     cpu_context.requested_backend = "arrayfire_cpu";
@@ -821,6 +1017,25 @@ int main() {
           "GRU placement explanation should include compiled batch size");
     Check(gru_placement->explanation.find("seq_len=64") != std::string::npos,
           "GRU placement explanation should include inferred sequence length");
+    Check(gru_placement->declared_execution_mode == "staged_arrayfire",
+          "recurrent placement should carry the declared staged_arrayfire "
+          "execution mode");
+    Check(gru_placement->explanation.find(
+              "Declared execution mode: staged_arrayfire") !=
+              std::string::npos,
+          "recurrent placement explanation should name the declared mode");
+    Check(gru_placement->explanation.find(
+              std::string("Staged plan: ") +
+              cyxwiz::RecurrentStagedArrayFirePlanName) != std::string::npos,
+          "recurrent placement explanation should name the staged plan");
+#ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER
+    if (!cyxwiz::NeuralProviderRegistry::Instance().List().empty()) {
+        Check(gru_placement->explanation.find("Native provider") !=
+                  std::string::npos,
+              "recurrent placement should record the native provider "
+              "verdict when a provider is registered");
+    }
+#endif
     Check(HasWarningText(
               gru_config,
               cyxwiz::RecurrentCudaPlacementReason::GruArrayFireCudaProbeRequired),
@@ -1001,6 +1216,10 @@ int main() {
     Check(dense_cached_placement->explanation.find("source=runtime_fallback") !=
               std::string::npos,
           "cached Dense fallback should include observation source");
+    Check(dense_cached_placement->declared_execution_mode ==
+              "direct_arrayfire",
+          "tensor-layer placement should keep the declared direct_arrayfire "
+          "mode even when evidence routes this exact key to CPU");
     Check(dense_cached_placement->observation_source ==
               cyxwiz::BackendPlacementObservationSource::RuntimeFallback,
           "cached Dense fallback should carry observation source metadata");
@@ -1079,6 +1298,9 @@ int main() {
           "Supported TimeDistributed should not emit the obsolete wrapper warning");
     Check(unclassified_config.SummarizeBackendPlacements().unknown == 0,
           "Supported TimeDistributed should not count as unknown");
+
+    cyxwiz::SetNeuralProvidersDisabledForTesting(false);
+    TestNativeProviderSelectionPlacement();
 
     std::cout << "Recurrent backend placement tests passed\n";
     return 0;

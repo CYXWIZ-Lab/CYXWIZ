@@ -38,13 +38,17 @@ namespace cyxwiz {
  *   text_col          (required)        — string column with raw text
  *   label_col         (optional)        — column to use as label
  *   max_length        (default 256)     — pad/truncate to this length
- *   tokenizer_type    (default 1)       — 0=Whitespace, 1=Word, 2=Character
+ *   tokenizer_type    (default 1)       — 0=Whitespace, 1=Word, 2=Character, 3=ByteBPE
  *   lowercase         (default true)    — lowercase before tokenizing
  *   min_word_freq     (default 2)       — vocabulary frequency floor
  *   max_vocab_size    (default 10000)   — vocabulary cap
  *   vocab_file        (optional)        — load vocabulary instead of training
  *   vocab_build_if_missing (default false) — train and save vocab_file if absent
+ *   output_mode       (default wide)     — wide, causal_windows, decode, roundtrip
+ *   token_ids_col     (default token_ids)— decode input column containing id text
  */
+class Tokenizer;
+
 class TextTokenizerOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "TextTokenizer"; }
@@ -64,7 +68,18 @@ public:
     size_t GetLastVocabSize() const { return last_vocab_size_; }
 
 private:
+    arrow::Status ValidateWindowInput(const std::shared_ptr<arrow::Table>& input) const;
+    arrow::Result<std::shared_ptr<arrow::Table>> BuildTokenWindows(
+        const std::shared_ptr<arrow::Table>& input, const std::vector<std::string>& texts, Tokenizer& tokenizer);
+    arrow::Result<std::shared_ptr<arrow::Table>> DecodeTokenRows(
+        const std::shared_ptr<arrow::Table>& input, Tokenizer& tokenizer);
+    arrow::Result<std::shared_ptr<arrow::Table>> RoundTripTextRows(
+        const std::vector<std::string>& texts, Tokenizer& tokenizer);
+    std::string output_mode_ = "wide";
+    std::string document_id_col_;
+    std::string split_col_ = "split";
     std::string text_col_;
+    std::string token_ids_col_ = "token_ids";
     std::string label_col_;
     int max_length_ = 256;
     int tokenizer_type_ = 1;

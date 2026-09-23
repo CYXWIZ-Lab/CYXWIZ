@@ -65,6 +65,10 @@ struct DataStudioExecutionPlan {
     std::vector<DataStudioExecutionPlanStep> steps;
 };
 
+// Structural preflight only; schema/value validation remains with execution.
+bool ValidateDataStudioOperationConfiguration(
+    const DataStudioPlanNodeInput& node, int input_count, std::string& error);
+
 DataStudioExecutionPlan BuildDataStudioExecutionPlan(
     const std::vector<DataStudioPlanNodeInput>& nodes,
     const std::vector<DataStudioPlanLinkInput>& links,

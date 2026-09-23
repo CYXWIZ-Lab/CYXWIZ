@@ -270,8 +270,8 @@ private:
 /**
  * @brief Parameter-free SequentialModel adapter for Upsample2DLayer.
  *
- * Studio remains blocked while nearest and bilinear execution are native
- * CPU-only and lack the complete Part F residency and fallback evidence.
+ * Nearest/bilinear execution is ArrayFire-first with observed native fallback.
+ * Studio still requires spatial batch-layout and saved-graph integration.
  */
 class CYXWIZ_API Upsample2DModule : public Module {
 public:
@@ -292,8 +292,8 @@ private:
 /**
  * @brief Parameter-free SequentialModel adapter for PixelShuffleLayer.
  *
- * Studio remains blocked while the depth-to-space primitive is native
- * CPU-only and lacks the complete Part F residency and fallback evidence.
+ * Depth-to-space execution is ArrayFire-first with observed native fallback.
+ * Studio still requires spatial batch-layout and saved-graph integration.
  */
 class CYXWIZ_API PixelShuffleModule : public Module {
 public:
@@ -591,18 +591,57 @@ private:
 };
 
 /**
+ * @brief Wrapper around RNNLayer (vanilla Elman RNN, tanh|relu).
+ *
+ * Mirrors LSTMModule: Keras-style `return_sequences=false` reduction to
+ * the last timestep with symmetric gradient re-expansion in Backward.
+ * Unidirectional and batch-first only — RNNLayer fails closed otherwise,
+ * and the Studio configuration policy rejects those settings before
+ * ModelBuilder runs (tofix68 Studio RNN wiring).
+ */
+class CYXWIZ_API RNNModule : public Module {
+public:
+    RNNModule(size_t input_size, size_t hidden_size,
+              size_t num_layers = 1,
+              bool return_sequences = false,
+              const std::string& nonlinearity = "tanh");
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    std::unique_ptr<RNNLayer> layer_;
+    size_t input_size_;
+    size_t hidden_size_;
+    size_t num_layers_;
+    bool return_sequences_;
+    std::string nonlinearity_;
+    std::vector<size_t> last_full_output_shape_;
+};
+
+/**
  * @brief Wrapper around TransformerEncoderLayer.
  *
  * Consumes and returns `[batch, seq_len, d_model]` tensors. Use a
  * Flatten or pooling module after this wrapper before a Dense
  * classification head.
  */
+// Attention/transformer module dimensions must fit a positive int. Invalid
+// widths, head counts and dropout throw; construction never repairs architecture.
 class CYXWIZ_API TransformerEncoderModule : public Module {
 public:
     TransformerEncoderModule(size_t d_model, size_t num_heads,
                              size_t dim_feedforward = 2048,
                              float dropout = 0.1f,
                              bool norm_first = false);
+    TransformerEncoderModule(size_t d_model, size_t num_heads,
+                             size_t dim_feedforward, float dropout,
+                             bool norm_first, float ffn_dropout);
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
@@ -634,6 +673,9 @@ public:
                              size_t dim_feedforward = 2048,
                              float dropout = 0.1f,
                              bool norm_first = false);
+    TransformerDecoderModule(size_t d_model, size_t num_heads,
+                             size_t dim_feedforward, float dropout,
+                             bool norm_first, float ffn_dropout);
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;

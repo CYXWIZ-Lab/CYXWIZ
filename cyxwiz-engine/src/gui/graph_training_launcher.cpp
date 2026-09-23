@@ -1068,11 +1068,39 @@ bool ValidateSuppliedRoleSchema(
     return true;
 }
 
+bool ValidateSequenceLaunchColumns(
+    cyxwiz::DataRegistry& registry, const std::string& dataset_name,
+    const cyxwiz::TrainingConfiguration& config, std::string& error_message);
+
 bool ValidateSuppliedRolePreflight(
     cyxwiz::DataRegistry& registry,
     cyxwiz::ResolvedDatasetRoles& roles,
+    const cyxwiz::TrainingConfiguration& config,
     GraphTrainingLaunchResult& launch_result) {
     auto& manifest = roles.manifest;
+    if (config.sequence_batch.enabled) {
+        // Sequence inputs own token/tag/POS contracts, not numeric feature/label
+        // columns. Keep this preflight allocation-light; the existing sequence
+        // batcher validates typed IDs, frozen metadata and role overlap before
+        // the training executor can perform any updates.
+        if (!roles.dev.IsSupplied() && !roles.test.IsSupplied()) return true;
+        for (const auto* role : {&roles.train, &roles.dev, &roles.test}) {
+            if (role != &roles.train && !role->IsSupplied()) continue;
+            std::string error;
+            if (!ValidateSequenceLaunchColumns(registry, role->dataset_name, config, error)) {
+                SetBlockedStatus(launch_result, "Sequence dataset columns unavailable", error);
+                return false;
+            }
+        }
+        // Do not report tabular label/row checks as sequence compatibility proof.
+        manifest.dev_compatibility = cyxwiz::PartitionCompatibility::Unknown;
+        manifest.test_compatibility = cyxwiz::PartitionCompatibility::Unknown;
+        manifest.dev_leakage = cyxwiz::PartitionLeakageStatus::NotChecked;
+        manifest.test_leakage = cyxwiz::PartitionLeakageStatus::NotChecked;
+        manifest.dev_status_reason = manifest.test_status_reason =
+            "Sequence schema columns checked; full role validation is owned by sequence batch construction";
+        return true;
+    }
     if (!ValidateSuppliedRoleSchema(
             registry, roles.train, roles.dev, "Dev", launch_result)) {
         manifest.dev_compatibility =
@@ -1348,7 +1376,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
         !validate_supplied_role(config.dataset_roles.test, "Test", result)) {
         return result;
     }
-    if (!ValidateSuppliedRolePreflight(registry, config.dataset_roles, result)) {
+    if (!ValidateSuppliedRolePreflight(registry, config.dataset_roles, config, result)) {
         return result;
     }
 
@@ -1562,7 +1590,7 @@ GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
             runtime_roles.train.dataset_name = effective_dataset_name;
             runtime_roles.train.label_column = effective_label_column;
             GraphTrainingLaunchResult role_validation;
-            if (!ValidateSuppliedRolePreflight(registry, runtime_roles, role_validation)) {
+            if (!ValidateSuppliedRolePreflight(registry, runtime_roles, config, role_validation)) {
                 throw std::runtime_error(role_validation.error_message);
             }
             config.dataset_roles = runtime_roles;

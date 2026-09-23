@@ -1509,9 +1509,9 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
     }
     ImGui::NextColumn();
 
-    ImGui::Text("Entity F1");
-    ImGui::NextColumn();
     if (has_train_entity_f1 || has_val_entity_f1) {
+        ImGui::Text("Entity F1");
+        ImGui::NextColumn();
         if (has_train_entity_f1) {
             ImGui::Text("train %.2f%%", train_entity_f1);
             ImGui::SameLine();
@@ -1519,10 +1519,8 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
         if (has_val_entity_f1) {
             ImGui::Text("val %.2f%%", val_entity_f1);
         }
-    } else {
-        ImGui::TextDisabled("no data");
+        ImGui::NextColumn();
     }
-    ImGui::NextColumn();
 
     ImGui::Columns(1);
 }

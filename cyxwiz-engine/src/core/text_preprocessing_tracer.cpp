@@ -43,6 +43,10 @@ TextDatasetConfig BuildTextDatasetConfig(
     switch (entry.tokenizer_type) {
         case 0: cfg.tokenizer_type = TokenizerType::Whitespace; break;
         case 2: cfg.tokenizer_type = TokenizerType::Character; break;
+        case 3: cfg.tokenizer_type = TokenizerType::ByteBPE; break;
+        case 4: cfg.tokenizer_type = TokenizerType::WordPiece; break;
+        case 5: cfg.tokenizer_type = TokenizerType::SentencePieceBPE; break;
+        case 6: cfg.tokenizer_type = TokenizerType::SentencePieceUnigram; break;
         case 1:
         default: cfg.tokenizer_type = TokenizerType::Word; break;
     }
@@ -58,6 +62,8 @@ TextDatasetConfig BuildTextDatasetConfig(
         switch (preprocess.tokenizer_type) {
             case 0: cfg.tokenizer_type = TokenizerType::Whitespace; break;
             case 2: cfg.tokenizer_type = TokenizerType::Character; break;
+            case 3: cfg.tokenizer_type = TokenizerType::ByteBPE; break;
+            case 4: cfg.tokenizer_type = TokenizerType::WordPiece; break;
             case 1:
             default: cfg.tokenizer_type = TokenizerType::Word; break;
         }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "api_export.h"
+#include "backend_fallback_reason.h"
 #include "recurrent_cuda_placement.h"
 
 #include <string>
@@ -8,16 +9,26 @@
 
 namespace cyxwiz {
 
+// Observation-facing spellings of the failure taxonomy. Derived from the
+// typed BackendFallbackReason authority so the strings cannot drift; add new
+// reasons to backend_fallback_reason.h, not here.
 namespace BackendPlacementObservationReason {
-inline constexpr const char* CudaJitParamOverflow = "cuda_jit_param_overflow";
+inline constexpr const char* CudaJitParamOverflow =
+    BackendFallbackReasonName(BackendFallbackReason::CudaJitParamOverflow);
 inline constexpr const char* ArrayFireJitCompileFailure =
-    "arrayfire_jit_compile_failure";
-inline constexpr const char* GpuBackendException = "gpu_backend_exception";
-inline constexpr const char* GpuOutOfMemory = "gpu_out_of_memory";
-inline constexpr const char* UnsupportedDtype = "unsupported_dtype";
-inline constexpr const char* UnsupportedShape = "unsupported_shape";
-inline constexpr const char* BackendCompileTimeout = "backend_compile_timeout";
-inline constexpr const char* BackendInternalError = "backend_internal_error";
+    BackendFallbackReasonName(BackendFallbackReason::ArrayFireJitCompileFailure);
+inline constexpr const char* GpuBackendException =
+    BackendFallbackReasonName(BackendFallbackReason::GpuBackendException);
+inline constexpr const char* GpuOutOfMemory =
+    BackendFallbackReasonName(BackendFallbackReason::GpuOutOfMemory);
+inline constexpr const char* UnsupportedDtype =
+    BackendFallbackReasonName(BackendFallbackReason::UnsupportedDtype);
+inline constexpr const char* UnsupportedShape =
+    BackendFallbackReasonName(BackendFallbackReason::UnsupportedShape);
+inline constexpr const char* BackendCompileTimeout =
+    BackendFallbackReasonName(BackendFallbackReason::BackendCompileTimeout);
+inline constexpr const char* BackendInternalError =
+    BackendFallbackReasonName(BackendFallbackReason::BackendInternalError);
 } // namespace BackendPlacementObservationReason
 
 namespace BackendPlacementObservationSource {
@@ -100,11 +111,33 @@ CYXWIZ_API std::string BuildTensorOpPlacementShapeSignature(
     const std::string& dtype,
     const std::string& attributes);
 
+// Input-shape-only by design (tofix67 slice 7 key redesign): runtime
+// Forward failures happen BEFORE an output exists, so an output-bearing key
+// could never be formed by the writers that matter. Compiler lookups pass
+// the batchless compile-time input shape; runtime writers pass
+// StripBatchDimensionForPlacementSignature of the layer input.
 CYXWIZ_API std::string BuildTensorLayerPlacementShapeSignature(
-    const std::vector<size_t>& input_shape,
-    const std::vector<size_t>& output_shape);
+    const std::vector<size_t>& input_shape);
 
 CYXWIZ_API std::string CurrentBackendPlacementDeviceSignature();
+
+// Runtime tensors carry a leading batch dimension; compiler placement
+// signatures exclude it (compiler shapes are batchless). Runtime observation
+// writers MUST normalize a runtime tensor shape with this before building a
+// shape signature — otherwise the recorded key can never match a compile-time
+// lookup and the evidence is silently dead (tofix67 slice 6 audit finding).
+CYXWIZ_API std::vector<size_t> StripBatchDimensionForPlacementSignature(
+    const std::vector<size_t>& runtime_shape);
+
+// Canonical observation-store key: op|backend|device|dtype|shape. The single
+// authority for key formation — typed views (GpuExecutionKey) and the store
+// itself both use this.
+CYXWIZ_API std::string BuildBackendPlacementObservationKey(
+    const std::string& op_type,
+    const std::string& backend,
+    const std::string& device,
+    const std::string& dtype,
+    const std::string& shape_signature);
 
 CYXWIZ_API void RecordBackendPlacementObservation(
     const BackendPlacementObservation& observation);

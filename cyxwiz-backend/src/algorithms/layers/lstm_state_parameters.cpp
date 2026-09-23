@@ -8,14 +8,17 @@ namespace cyxwiz {
 void LSTMLayer::ResetState() {
     h_n_ = Tensor();
     c_n_ = Tensor();
+    initial_state_pending_ = false;
 }
 
 void LSTMLayer::SetHiddenState(const Tensor& h0) {
     h_n_ = h0.Clone();
+    initial_state_pending_ = true;
 }
 
 void LSTMLayer::SetCellState(const Tensor& c0) {
     c_n_ = c0.Clone();
+    initial_state_pending_ = true;
 }
 
 std::map<std::string, Tensor> LSTMLayer::GetParameters() {

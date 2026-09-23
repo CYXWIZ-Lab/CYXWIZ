@@ -6,6 +6,9 @@
 #include "recurrent_configuration_policy.h"
 #include "sequence_projection_configuration_policy.h"
 #include "transformer_configuration_policy.h"
+#include "upsampling_configuration_policy.h"
+#include "spatial_head_module.h"
+#include "spatial_sequential_head.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cctype>
@@ -342,6 +345,7 @@ bool BuildSequential(
     // Track input size for each layer
     size_t current_input_size = config.input_size;
     size_t current_sequence_length = config.input_size > 0 ? config.input_size : 1;
+    const auto spatial_head = ResolveSpatialSequentialHead(config);
 
     for (size_t i = 0; i < config.layers.size(); ++i) {
         const auto& layer_cfg = config.layers[i];
@@ -663,6 +667,52 @@ bool BuildSequential(
                 break;
             }
 
+            case gui::NodeType::RNN: {
+                // tofix68 Studio RNN wiring. bidirectional and dropout are
+                // rejected fail-closed by the recurrent configuration
+                // policy before ModelBuilder runs (RNNLayer refuses them).
+                size_t hidden_size = 128;
+                size_t num_layers = 1;
+                bool return_sequences = false;
+                std::string nonlinearity = "tanh";
+
+                auto hs_it = layer_cfg.parameters.find("hidden_size");
+                if (hs_it != layer_cfg.parameters.end()) {
+                    try { hidden_size = static_cast<size_t>(std::stoi(hs_it->second)); }
+                    catch (...) {}
+                }
+                auto nl_it = layer_cfg.parameters.find("num_layers");
+                if (nl_it != layer_cfg.parameters.end()) {
+                    try { num_layers = static_cast<size_t>(std::stoi(nl_it->second)); }
+                    catch (...) {}
+                }
+                auto rs_it = layer_cfg.parameters.find("return_sequences");
+                if (rs_it != layer_cfg.parameters.end()) {
+                    return_sequences = (rs_it->second == "true" ||
+                                        rs_it->second == "1");
+                }
+                auto act_it = layer_cfg.parameters.find("nonlinearity");
+                if (act_it != layer_cfg.parameters.end() &&
+                    !act_it->second.empty()) {
+                    nonlinearity = act_it->second;
+                }
+                if (hidden_size < 1) hidden_size = 1;
+                if (num_layers < 1) num_layers = 1;
+
+                model.Add<RNNModule>(current_input_size, hidden_size,
+                                     num_layers, return_sequences,
+                                     nonlinearity);
+
+                spdlog::info("  [{}] RNN(in={}, hidden={}, layers={}, "
+                             "nonlinearity={}, return_seq={}) — output "
+                             "[batch, {}]",
+                             i, current_input_size, hidden_size,
+                             num_layers, nonlinearity, return_sequences,
+                             hidden_size);
+                current_input_size = hidden_size;
+                break;
+            }
+
             case gui::NodeType::TransformerEncoder: {
                 const size_t d_model = current_input_size > 0
                     ? current_input_size
@@ -683,7 +733,8 @@ bool BuildSequential(
                     transformer_configuration.num_heads,
                     transformer_configuration.feedforward_width,
                     transformer_configuration.dropout,
-                    transformer_configuration.norm_first);
+                    transformer_configuration.norm_first,
+                    transformer_configuration.ffn_dropout);
 
                 bool next_is_transformer = false;
                 if (i + 1 < config.layers.size()) {
@@ -793,7 +844,8 @@ bool BuildSequential(
                     transformer_configuration.num_heads,
                     transformer_configuration.feedforward_width,
                     transformer_configuration.dropout,
-                    transformer_configuration.norm_first);
+                    transformer_configuration.norm_first,
+                    transformer_configuration.ffn_dropout);
 
                 bool next_is_transformer = false;
                 if (i + 1 < config.layers.size()) {
@@ -904,9 +956,38 @@ bool BuildSequential(
                 break;
             }
 
+            case gui::NodeType::Upsample:
+            case gui::NodeType::PixelShuffle: {
+                UpsamplingConfiguration resolved;
+                if (const auto reason = ResolveUpsamplingConfiguration(
+                        layer_cfg.type, layer_cfg.parameters, resolved,
+                        layer_cfg.scale_factor, layer_cfg.upsample_mode)) {
+                    throw std::runtime_error("invalid upsampling configuration at index " +
+                                             std::to_string(i) + ": " + *reason);
+                }
+                // Direct construction consumes semantic [H,W,C,N] tensors.
+                // Studio remains gated until ingress/head layout is integrated.
+                if (layer_cfg.type == gui::NodeType::Upsample) {
+                    model.Add<Upsample2DModule>(resolved.factor,
+                        resolved.mode == 0 ? UpsampleMode::Nearest : UpsampleMode::Bilinear);
+                } else {
+                    model.Add<PixelShuffleModule>(resolved.factor);
+                }
+                spdlog::info("  [{}] {} (semantic [H,W,C,N])", i,
+                             model.GetModule(model.Size() - 1)->GetName());
+                break;
+            }
+
             case gui::NodeType::Flatten: {
-                model.Add<FlattenModule>(1);
-                spdlog::info("  [{}] Flatten", i);
+                if (spatial_head && spatial_head->flatten_index == i) {
+                    model.Add<SpatialFlattenModule>(spatial_head->sample_shape);
+                    current_input_size = spatial_head->features;
+                    spdlog::info("  [{}] SpatialFlatten [H,W,C,N] -> [N,{}]",
+                                 i, current_input_size);
+                } else {
+                    model.Add<FlattenModule>(1);
+                    spdlog::info("  [{}] Flatten", i);
+                }
                 break;
             }
 

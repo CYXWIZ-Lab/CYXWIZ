@@ -446,6 +446,58 @@ TEST_CASE("LSTMLayer - State persistence", "[lstm][state]") {
     REQUIRE(TensorsApproxEqual(h1, h3, 1e-5f));
 }
 
+TEST_CASE("Recurrent layers are stateless per Forward unless an initial state is set",
+          "[lstm][gru][state]") {
+    // Owner ruling 2026-09-23 (track68): the CPU/AF paths start every
+    // Forward from zero, like the native provider and PyTorch. An explicit
+    // SetHiddenState applies to the NEXT Forward only.
+    const Tensor input = Tensor::Random({2, 3, 4});
+    const Tensor smaller = Tensor::Random({1, 3, 4});
+
+    {
+        LSTMLayer lstm(4, 8, 1, true, false, 0.0f);
+        const Tensor first = lstm.Forward(input);
+        const Tensor h_first = lstm.GetHiddenState().Clone();
+        const Tensor second = lstm.Forward(input);
+        REQUIRE(TensorsApproxEqual(first, second, 1e-6f));
+        REQUIRE(TensorsApproxEqual(h_first, lstm.GetHiddenState(), 1e-6f));
+
+        Tensor h0 = Tensor::Ones({1, 2, 8});
+        Tensor c0 = Tensor::Ones({1, 2, 8});
+        lstm.SetHiddenState(h0);
+        lstm.SetCellState(c0);
+        const Tensor seeded = lstm.Forward(input);
+        REQUIRE_FALSE(TensorsApproxEqual(seeded, first, 1e-6f));
+        // One-shot: the following Forward is back to the zero state.
+        const Tensor third = lstm.Forward(input);
+        REQUIRE(TensorsApproxEqual(third, first, 1e-6f));
+
+        // A smaller final batch must not index the previous batch's state.
+        Tensor small_out;
+        REQUIRE_NOTHROW(small_out = lstm.Forward(smaller));
+        REQUIRE(ShapesEqual(small_out.Shape(), {1, 3, 8}));
+        REQUIRE(ShapesEqual(lstm.GetHiddenState().Shape(), {1, 1, 8}));
+    }
+
+    {
+        GRULayer gru(4, 8, 1, true, false, 0.0f);
+        const Tensor first = gru.Forward(input);
+        const Tensor second = gru.Forward(input);
+        REQUIRE(TensorsApproxEqual(first, second, 1e-6f));
+
+        gru.SetHiddenState(Tensor::Ones({1, 2, 8}));
+        const Tensor seeded = gru.Forward(input);
+        REQUIRE_FALSE(TensorsApproxEqual(seeded, first, 1e-6f));
+        const Tensor third = gru.Forward(input);
+        REQUIRE(TensorsApproxEqual(third, first, 1e-6f));
+
+        Tensor small_out;
+        REQUIRE_NOTHROW(small_out = gru.Forward(smaller));
+        REQUIRE(ShapesEqual(small_out.Shape(), {1, 3, 8}));
+        REQUIRE(ShapesEqual(gru.GetHiddenState().Shape(), {1, 1, 8}));
+    }
+}
+
 TEST_CASE("LSTMLayer - Backward pass runs without error", "[lstm][backward]") {
     LSTMLayer lstm(4, 8, 1, true, false, 0.0f);
 

@@ -28,6 +28,7 @@ bool IsRuntimeSupportedTabularFormat(int detected_type) {
         case 2: // TSV
         case 4: // Parquet
         case 7: // Feather
+        case 11: // ZIP UTF-8 document
         case 8: // Arrow / IPC
             return true;
         default:
@@ -210,6 +211,7 @@ void DataInputDialog::RenderTabularOptions() {
                 {"Parquet", 4},
                 {"Feather", 7},
                 {"Arrow / IPC", 8},
+                {"ZIP text document", 11},
             };
             for (const auto& option : kFormats) {
                 const bool selected = detected_type_ == option.detected_type;
@@ -230,6 +232,14 @@ void DataInputDialog::RenderTabularOptions() {
                 "%s is not supported by PipelineExecutor. Choose CSV, TSV, "
                 "Parquet, Feather, or Arrow/IPC for executable graphs.",
                 GetFileTypeName());
+        }
+
+        if (detected_type_ == 11) {
+            if (ImGui::InputTextMultiline("Member paths", archive_member_, sizeof(archive_member_), ImVec2(-1, 100))) {
+                has_changes_ = true;
+                RefreshColumnList();
+            }
+            ImGui::TextWrapped("One exact case-sensitive ZIP path per line; selection order is preserved. No wildcards. Original UTF-8 documents with source hashes. Limits: archive 64 MiB, member 16 MiB, selected text 64 MiB, 4096 selections, 10000 archive entries.");
         }
 
         // CSV/TSV specific options (delimiter-based)

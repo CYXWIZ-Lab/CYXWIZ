@@ -631,21 +631,22 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::RNN] = {
         "Simple RNN",
-        "Blocked compatibility node preserving a historical simple-RNN design.",
-        "No simple-RNN backend layer, Python binding, ModelBuilder module, or "
-        "Studio training owner exists. The Engine must not substitute a GRU.",
+        "Trainable simple (Elman) recurrent layer: h_t = act(W_ih x_t + b_ih + W_hh h_{t-1} + b_hh).",
+        "Runs on the native CPU simple-RNN reference layer with tanh or relu "
+        "nonlinearity. Unidirectional and dropout=0.0 only; bidirectional=true "
+        "fails closed. For GPU-accelerated recurrent training use LSTM or GRU.",
         {
-            {"input_size", "Input feature size per timestep"},
+            {"input_size", "Input feature size per timestep (auto-derived)"},
             {"hidden_size", "Number of hidden units"},
             {"num_layers", "Number of stacked layers"},
-            {"bidirectional", "Historical two-direction intent"},
-            {"return_sequences", "Historical full-sequence output intent"},
-            {"dropout", "Historical inter-layer dropout"},
-            {"nonlinearity", "Historical activation intent"}
+            {"bidirectional", "Must remain false (not implemented)"},
+            {"return_sequences", "Return every timestep instead of the last"},
+            {"dropout", "Must remain 0.0; use an explicit Dropout node"},
+            {"nonlinearity", "Cell activation: tanh or relu"}
         },
         {
-            "This node can be inspected in saved graphs but cannot compile or train",
-            "Use LSTM or GRU when an executable recurrent layer is required"
+            "Trains on the CPU reference path; placement reports it as CPU-backed",
+            "Use LSTM or GRU when GPU recurrent acceleration is required"
         },
         "Recurrent"
     };
@@ -784,6 +785,7 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"num_heads", "Number of attention heads"},
             {"dim_feedforward", "Feedforward hidden dimension"},
             {"dropout", "Dropout probability"},
+            {"ffn_dropout", "Hidden FFN dropout after activation; default 0 preserves legacy behavior"},
             {"norm_first", "Apply normalization before attention and feedforward"}
         },
         {
@@ -808,6 +810,7 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"num_heads", "Number of attention heads"},
             {"dim_feedforward", "Feedforward hidden dimension"},
             {"dropout", "Dropout probability"},
+            {"ffn_dropout", "Hidden FFN dropout after activation; default 0 preserves legacy behavior"},
             {"norm_first", "Apply normalization before attention and feedforward"}
         },
         {

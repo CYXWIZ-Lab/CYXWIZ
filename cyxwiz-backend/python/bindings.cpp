@@ -841,6 +841,36 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def_property_readonly("batch_first", &cyxwiz::GRULayer::IsBatchFirst)
         .def_property_readonly("bidirectional", &cyxwiz::GRULayer::IsBidirectional);
 
+    // Simple RNN Layer (tofix68 phase 3 reference; Studio RNN wiring)
+    py::class_<cyxwiz::RNNLayer, cyxwiz::Layer>(m, "RNN")
+        .def(py::init<int, int, int, bool, bool, const std::string&>(),
+             py::arg("input_size"),
+             py::arg("hidden_size"),
+             py::arg("num_layers") = 1,
+             py::arg("batch_first") = true,
+             py::arg("bidirectional") = false,
+             py::arg("nonlinearity") = "tanh",
+             "Create a simple (Elman) RNN layer; tanh or relu nonlinearity, "
+             "batch_first=True and bidirectional=False only")
+        .def("forward", &cyxwiz::RNNLayer::Forward,
+             py::arg("input"),
+             "Forward pass: process sequence through the RNN")
+        .def("backward", &cyxwiz::RNNLayer::Backward,
+             py::arg("grad_output"),
+             "Backward pass: backpropagation through time")
+        .def("get_parameters", &cyxwiz::RNNLayer::GetParameters,
+             "Get RNN parameters")
+        .def("set_parameters", &cyxwiz::RNNLayer::SetParameters,
+             py::arg("params"),
+             "Set RNN parameters")
+        .def("reset_state", &cyxwiz::RNNLayer::ResetState,
+             "Reset hidden state")
+        .def("get_hidden_state", &cyxwiz::RNNLayer::GetHiddenState,
+             "Get current hidden state")
+        .def_property_readonly("input_size", &cyxwiz::RNNLayer::GetInputSize)
+        .def_property_readonly("hidden_size", &cyxwiz::RNNLayer::GetHiddenSize)
+        .def_property_readonly("num_layers", &cyxwiz::RNNLayer::GetNumLayers);
+
     // MultiHeadAttention Layer
     py::class_<cyxwiz::MultiHeadAttentionLayer, cyxwiz::Layer>(m, "MultiHeadAttention")
         .def(py::init<int, int, float, bool>(),
@@ -878,12 +908,13 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     // TransformerEncoderLayer
     py::class_<cyxwiz::TransformerEncoderLayer, cyxwiz::Layer>(m, "TransformerEncoderLayer")
-        .def(py::init<int, int, int, float, bool>(),
+        .def(py::init<int, int, int, float, bool, float>(),
              py::arg("d_model"),
              py::arg("nhead"),
              py::arg("dim_feedforward") = 2048,
              py::arg("dropout") = 0.1f,
              py::arg("norm_first") = false,
+             py::arg("ffn_dropout") = 0.0f,
              "Create a Transformer Encoder layer")
         .def("forward", static_cast<cyxwiz::Tensor (cyxwiz::TransformerEncoderLayer::*)(const cyxwiz::Tensor&)>(&cyxwiz::TransformerEncoderLayer::Forward),
              py::arg("input"),
@@ -909,12 +940,13 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     // TransformerDecoderLayer
     py::class_<cyxwiz::TransformerDecoderLayer, cyxwiz::Layer>(m, "TransformerDecoderLayer")
-        .def(py::init<int, int, int, float, bool>(),
+        .def(py::init<int, int, int, float, bool, float>(),
              py::arg("d_model"),
              py::arg("nhead"),
              py::arg("dim_feedforward") = 2048,
              py::arg("dropout") = 0.1f,
              py::arg("norm_first") = false,
+             py::arg("ffn_dropout") = 0.0f,
              "Create a Transformer Decoder layer")
         .def("forward", static_cast<cyxwiz::Tensor (cyxwiz::TransformerDecoderLayer::*)(const cyxwiz::Tensor&)>(&cyxwiz::TransformerDecoderLayer::Forward),
              py::arg("input"),
@@ -2824,6 +2856,10 @@ Example queries:
         .value("Whitespace", cyxwiz::TokenizerType::Whitespace)
         .value("Word", cyxwiz::TokenizerType::Word)
         .value("Character", cyxwiz::TokenizerType::Character)
+        .value("ByteBPE", cyxwiz::TokenizerType::ByteBPE)
+        .value("WordPiece", cyxwiz::TokenizerType::WordPiece)
+        .value("SentencePieceBPE", cyxwiz::TokenizerType::SentencePieceBPE)
+        .value("SentencePieceUnigram", cyxwiz::TokenizerType::SentencePieceUnigram)
         .export_values();
 
     py::class_<cyxwiz::Vocabulary>(m, "Vocabulary")
@@ -2853,6 +2889,11 @@ Example queries:
         .def_property_readonly("unk_index", &cyxwiz::Vocabulary::UnkIndex)
         .def_property_readonly("bos_index", &cyxwiz::Vocabulary::BosIndex)
         .def_property_readonly("eos_index", &cyxwiz::Vocabulary::EosIndex);
+
+    m.def("is_sentencepiece_tokenizer_available", &cyxwiz::IsSentencePieceTokenizerAvailable,
+          "Return true when the optional SentencePiece tokenizer provider adapter is available");
+    m.def("sentencepiece_tokenizer_unavailable_message", &cyxwiz::SentencePieceTokenizerUnavailableMessage,
+          "Return the canonical explanation for unavailable SentencePiece tokenizer support");
 
     py::class_<cyxwiz::Tokenizer>(m, "Tokenizer")
         .def(py::init<cyxwiz::TokenizerType>(),

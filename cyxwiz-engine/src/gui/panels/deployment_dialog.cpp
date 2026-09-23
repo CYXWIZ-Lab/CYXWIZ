@@ -167,7 +167,7 @@ void DeploymentDialog::RenderModelSection() {
         }
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Select binary .cyxmodel file\n(from Tools > Save Trained Model)");
+        ImGui::SetTooltip("Select a native single-file .cyxmodel package\n(from File/Deploy/Tools > Export Model)");
     }
 
     ImGui::SameLine();
@@ -178,7 +178,7 @@ void DeploymentDialog::RenderModelSection() {
         }
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Select .cyxmodel directory\n(from Deploy > Export Model)");
+        ImGui::SetTooltip("Select a legacy .cyxmodel directory package\n(or convert from the native single-file package)");
     }
 
     // Show model info if valid path

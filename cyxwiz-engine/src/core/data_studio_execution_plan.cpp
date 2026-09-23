@@ -177,6 +177,20 @@ bool ValidateInputArity(const DataStudioPlanNodeInput& node,
 
 } // namespace
 
+bool ValidateDataStudioOperationConfiguration(
+    const DataStudioPlanNodeInput& node, int input_count, std::string& error) {
+    error.clear();
+    if (input_count < 0) {
+        error = "Input count must not be negative";
+        return false;
+    }
+    const auto resolved = ResolvePlanNodeRuntime(node.type);
+    return ValidateRuntimeSupport(node, resolved.support, error) &&
+           ValidateInputArity(node, resolved.support, input_count,
+                             ClassifyStep(node, resolved.support, {}), error) &&
+           ValidateParameters(node, resolved.support, error);
+}
+
 const char* DataStudioExecutionStepKindName(
     DataStudioExecutionStepKind kind) {
     switch (kind) {

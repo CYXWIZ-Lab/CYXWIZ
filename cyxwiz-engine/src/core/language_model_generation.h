@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <cstdint>
 #include <random>
 #include <string>
@@ -34,6 +35,7 @@ struct LanguageModelGenerationConfig {
     LanguageModelSamplingMode sampling_mode = LanguageModelSamplingMode::Greedy;
     bool include_prompt = true;
     size_t max_context_tokens = 0;
+    std::function<bool()> should_cancel; // Called between tokens; no callback preserves legacy behavior.
 };
 
 struct NextTokenCandidate {

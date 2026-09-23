@@ -1,4 +1,5 @@
 #include "core/language_model_generation.h"
+#include "core/execution_device_context.h"
 #include "gui/panels/language_model_generation_panel_metadata.h"
 
 #include <cyxwiz/sequential.h>
@@ -50,7 +51,8 @@ void CheckNear(float actual,
                float expected,
                float tolerance,
                const std::string& message) {
-    if (std::fabs(actual - expected) > tolerance) {
+    if (!std::isfinite(actual) || !std::isfinite(expected) ||
+        std::fabs(actual - expected) > tolerance) {
         std::cerr << "FAIL: " << message
                   << " actual=" << actual
                   << " expected=" << expected << "\n";
@@ -338,9 +340,151 @@ void TestGenerateTokenIdsWithReportRejectsBadPrompt() {
           "generation report should reject prompts without context budget");
 }
 
+// Deterministic full-prefix logits provide an independent reference for both
+// selection and every candidate probability, with deliberately different rows.
+std::vector<float> PrefixLogits(size_t seq, size_t vocab) {
+    std::vector<float> values(seq * vocab);
+    for (size_t s = 0; s < seq; ++s)
+        for (size_t v = 0; v < vocab; ++v)
+            values[s * vocab + v] = std::sin(static_cast<float>(s * 11 + v) * .37f);
+    return values;
+}
+
+class DeviceLogitModule : public cyxwiz::Module {
+public:
+    explicit DeviceLogitModule(size_t vocab) : vocab_(vocab) {}
+    cyxwiz::Tensor Forward(const cyxwiz::Tensor& input) override {
+        const size_t seq = input.Shape()[1];
+        const auto values = PrefixLogits(seq, vocab_);
+        cyxwiz::Tensor host({1, seq, vocab_}, values.data());
+        cyxwiz::Tensor device;
+        device.SetFromSemanticArray(host.GetSemanticArray(), host.Shape());
+        device.GetSemanticArray().eval();
+        return device;
+    }
+    cyxwiz::Tensor Backward(const cyxwiz::Tensor& grad) override { return grad; }
+    std::string GetName() const override { return "DeviceLogitFixture"; }
+private:
+    size_t vocab_;
+};
+
+uint64_t readback_bytes = 0, readback_count = 0, fallback_count = 0;
+void ObserveReadback(const cyxwiz::ArrayFireHostSyncEvent& event) {
+    ++readback_count;
+    readback_bytes += event.bytes;
+    Check(event.attribution_category == "output_materialization" &&
+          event.attribution_operation == "GenerateTokenIdsWithReport::NextTokenLogits",
+          "generation must name its host output boundary");
+    Check(event.tensor_shape.size() == 3 && event.tensor_shape[0] == 1 &&
+          event.tensor_shape[1] == 1, "only final-position logits may reach host");
+}
+void ObserveFallback(const cyxwiz::ArrayFireNativeCpuFallbackEvent&) { ++fallback_count; }
+
+void TestDeviceGenerationReadback() {
+    size_t cases = 0;
+    for (const size_t vocab : {size_t(7), size_t(2540)}) {
+        for (const size_t prefix : {size_t(1), size_t(2), size_t(24)}) {
+            for (int mode = 0; mode < 3; ++mode) {
+                for (const uint32_t seed : {52u, 97u}) {
+                    cyxwiz::SequentialModel model;
+                    model.Add<DeviceLogitModule>(vocab);
+                    cyxwiz::LanguageModelGenerationConfig config;
+                    config.max_new_tokens = 4;
+                    config.max_context_tokens = prefix + 3;
+                    config.include_prompt = mode == 0;
+                    config.temperature = .7f;
+                    if (mode != 0) config.sampling_mode = cyxwiz::LanguageModelSamplingMode::Multinomial;
+                    if (mode == 1) config.top_k = 5;
+                    if (mode == 2) config.top_p = .72f;
+                    const std::vector<int64_t> prompt(prefix, 1);
+                    cyxwiz::LanguageModelGenerationResult report;
+                    readback_bytes = readback_count = fallback_count = 0;
+                    {
+                        cyxwiz::ScopedArrayFireHostSyncObserver reads(ObserveReadback);
+                        cyxwiz::ScopedArrayFireNativeCpuFallbackObserver fallbacks(ObserveFallback);
+                        report = cyxwiz::GenerateTokenIdsWithReport(model, prompt, config, seed);
+                    }
+                    Check(report.steps.size() == 3 && report.remaining_budget == 0,
+                          "context stopping metadata must remain unchanged");
+                    Check(report.prompt_length == prefix && report.max_new_tokens == 4 &&
+                          report.include_prompt == config.include_prompt &&
+                          report.stop_reason == cyxwiz::LanguageModelGenerationStopReason::MaxTokens,
+                          "generation report contract");
+                    Check(readback_count == 3 && readback_bytes == 3 * vocab * sizeof(float) &&
+                          fallback_count == 0, "one vocabulary row per token, zero native fallback");
+                    std::mt19937 rng(seed);
+                    std::vector<int64_t> expected;
+                    for (size_t step = 0; step < report.steps.size(); ++step) {
+                        const auto reference = cyxwiz::SelectNextTokenFromLogits(
+                            PrefixLogits(prefix + step, vocab), 1, prefix + step, vocab, config, rng);
+                        const auto& actual = report.steps[step];
+                        Check(actual.step_index == step && actual.input_length == prefix + step &&
+                              actual.token_id == reference.token_id, "seeded token/step parity");
+                        CheckNear(actual.probability, reference.probability, 0, "selected probability parity");
+                        Check(actual.candidates.size() == reference.candidates.size(), "candidate count parity");
+                        for (size_t i = 0; i < actual.candidates.size(); ++i) {
+                            Check(actual.candidates[i].token_id == reference.candidates[i].token_id,
+                                  "candidate ID parity");
+                            CheckNear(actual.candidates[i].probability, reference.candidates[i].probability,
+                                      0, "candidate probability parity");
+                        }
+                        expected.push_back(reference.token_id);
+                    }
+                    Check(report.new_token_ids == expected, "new token sequence parity");
+                    if (config.include_prompt) expected.insert(expected.begin(), prompt.begin(), prompt.end());
+                    Check(report.token_ids == expected, "returned token sequence parity");
+                    ++cases;
+                }
+            }
+        }
+    }
+    std::cout << cases << " device readback/candidate/seed/context cases passed; zero native fallback\n";
+}
+
+class InvalidOutputModule : public cyxwiz::Module {
+public:
+    explicit InvalidOutputModule(cyxwiz::Tensor output) : output_(std::move(output)) {}
+    cyxwiz::Tensor Forward(const cyxwiz::Tensor&) override { return output_; }
+    cyxwiz::Tensor Backward(const cyxwiz::Tensor& grad) override { return grad; }
+    std::string GetName() const override { return "InvalidOutputFixture"; }
+private:
+    cyxwiz::Tensor output_;
+};
+
+void TestInvalidModelOutput() {
+    for (const auto& shape : std::vector<std::vector<size_t>>{{2, 2, 7}, {1, 1, 7}, {2, 7}, {1, 2, 7}}) {
+        const auto dtype = shape == std::vector<size_t>{1, 2, 7}
+            ? cyxwiz::DataType::Int64 : cyxwiz::DataType::Float32;
+        cyxwiz::SequentialModel model;
+        model.Add<InvalidOutputModule>(cyxwiz::Tensor(shape, dtype));
+        bool rejected = false;
+        try { (void)cyxwiz::GenerateTokenIdsWithReport(model, {1, 2}, {}); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        Check(rejected, "invalid model output must be rejected before slicing");
+    }
+}
+
 } // namespace
 
-int main() {
+void TestTrainingGenerationPreview();
+
+int main(int argc, char** argv) {
+    const std::string backend = argc > 1 ? argv[1] : "cpu";
+    Check(argc <= 2 && (backend == "cpu" || backend == "cuda" || backend == "opencl"),
+          "Usage: test_language_model_generation [cpu|cuda|opencl]");
+    const auto activation = cyxwiz::Device(
+        backend == "cpu" ? cyxwiz::DeviceType::CPU :
+        backend == "cuda" ? cyxwiz::DeviceType::CUDA : cyxwiz::DeviceType::OPENCL, 0).ActivateExact(true);
+    Check(activation.success && activation.execution_validated, activation.message);
+    const auto policy = cyxwiz::ArrayFireFallbackPolicy::ForbidNativeCpuFallback;
+    const auto context = cyxwiz::CaptureCurrentExecutionDeviceContext(policy);
+    cyxwiz::ScopedActiveExecutionDeviceContext active;
+    cyxwiz::ScopedExecutionDeviceContext binding(context);
+    cyxwiz::ScopedArrayFireFallbackPolicy strict(policy);
+    std::cout << "Exact activation validated: " << backend << "\n" << context.Describe() << "\n";
+    TestDeviceGenerationReadback();
+    TestInvalidModelOutput();
+    TestTrainingGenerationPreview();
     TestConfigValidation();
     TestStopReasonNames();
     TestGreedyTopKDistribution();

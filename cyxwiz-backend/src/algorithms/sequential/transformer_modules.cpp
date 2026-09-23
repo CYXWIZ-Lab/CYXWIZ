@@ -1,5 +1,5 @@
 ﻿#include <cyxwiz/sequential.h>
-#include <spdlog/spdlog.h>
+#include "attention_configuration.h"
 #include <string>
 #include <utility>
 
@@ -38,30 +38,22 @@ TransformerEncoderModule::TransformerEncoderModule(size_t d_model,
                                                    size_t dim_feedforward,
                                                    float dropout,
                                                    bool norm_first)
+    : TransformerEncoderModule(d_model, num_heads, dim_feedforward, dropout, norm_first, 0.0f) {}
+
+TransformerEncoderModule::TransformerEncoderModule(size_t d_model, size_t num_heads,
+    size_t dim_feedforward, float dropout, bool norm_first, float ffn_dropout)
     : d_model_(d_model)
     , num_heads_(num_heads)
     , dim_feedforward_(dim_feedforward)
     , dropout_(dropout)
     , norm_first_(norm_first)
 {
-    if (d_model_ < 1) d_model_ = 1;
-    if (num_heads_ < 1) num_heads_ = 1;
-    if (d_model_ % num_heads_ != 0) {
-        spdlog::warn("TransformerEncoderModule: d_model={} is not divisible "
-                     "by num_heads={}; falling back to one head",
-                     d_model_, num_heads_);
-        num_heads_ = 1;
-    }
-    if (dim_feedforward_ < 1) dim_feedforward_ = d_model_;
-    if (dropout_ < 0.0f) dropout_ = 0.0f;
-    if (dropout_ >= 1.0f) dropout_ = 0.999f;
-
     layer_ = std::make_unique<TransformerEncoderLayer>(
-        static_cast<int>(d_model_),
-        static_cast<int>(num_heads_),
-        static_cast<int>(dim_feedforward_),
+        attention_configuration_detail::CheckedAttentionDimension(d_model_, "d_model"),
+        attention_configuration_detail::CheckedAttentionDimension(num_heads_, "num_heads"),
+        attention_configuration_detail::CheckedAttentionDimension(dim_feedforward_, "dim_feedforward"),
         dropout_,
-        norm_first_);
+        norm_first_, ffn_dropout);
 }
 
 Tensor TransformerEncoderModule::Forward(const Tensor& input) {
@@ -117,30 +109,22 @@ TransformerDecoderModule::TransformerDecoderModule(size_t d_model,
                                                    size_t dim_feedforward,
                                                    float dropout,
                                                    bool norm_first)
+    : TransformerDecoderModule(d_model, num_heads, dim_feedforward, dropout, norm_first, 0.0f) {}
+
+TransformerDecoderModule::TransformerDecoderModule(size_t d_model, size_t num_heads,
+    size_t dim_feedforward, float dropout, bool norm_first, float ffn_dropout)
     : d_model_(d_model)
     , num_heads_(num_heads)
     , dim_feedforward_(dim_feedforward)
     , dropout_(dropout)
     , norm_first_(norm_first)
 {
-    if (d_model_ < 1) d_model_ = 1;
-    if (num_heads_ < 1) num_heads_ = 1;
-    if (d_model_ % num_heads_ != 0) {
-        spdlog::warn("TransformerDecoderModule: d_model={} is not divisible "
-                     "by num_heads={}; falling back to one head",
-                     d_model_, num_heads_);
-        num_heads_ = 1;
-    }
-    if (dim_feedforward_ < 1) dim_feedforward_ = d_model_;
-    if (dropout_ < 0.0f) dropout_ = 0.0f;
-    if (dropout_ >= 1.0f) dropout_ = 0.999f;
-
     layer_ = std::make_unique<TransformerDecoderLayer>(
-        static_cast<int>(d_model_),
-        static_cast<int>(num_heads_),
-        static_cast<int>(dim_feedforward_),
+        attention_configuration_detail::CheckedAttentionDimension(d_model_, "d_model"),
+        attention_configuration_detail::CheckedAttentionDimension(num_heads_, "num_heads"),
+        attention_configuration_detail::CheckedAttentionDimension(dim_feedforward_, "dim_feedforward"),
         dropout_,
-        norm_first_);
+        norm_first_, ffn_dropout);
 }
 
 Tensor TransformerDecoderModule::Forward(const Tensor& input) {

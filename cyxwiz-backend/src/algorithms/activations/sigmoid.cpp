@@ -33,7 +33,9 @@ void LogSigmoidFallbackOnce(
         "Sigmoid",
         CurrentArrayFireBackendName(),
         "float32",
-        BuildActivationPlacementShapeSignature(tensor.Shape(), "float32"),
+        BuildActivationPlacementShapeSignature(
+            StripBatchDimensionForPlacementSignature(tensor.Shape()),
+            "float32"),
         BackendFallbackReasonName(reason),
         BackendPlacementObservationSource::RuntimeFallback,
         message);

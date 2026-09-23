@@ -1,6 +1,8 @@
 #include "cyxwiz/layers/recurrent.h"
 #include "lstm_direction_helpers.h"
 #include "cyxwiz/debug_hooks.h"
+#include "cyxwiz/backend_placement_observation.h"
+#include "cyxwiz/neural_provider.h"
 #include "cyxwiz/recurrent_cuda_placement.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_recurrent_utils.h"
@@ -59,6 +61,18 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
 
     cached_input_ = input;
 
+    // Stateless per Forward (owner ruling 2026-09-23, track68): every call
+    // starts from zero h_0/c_0 unless an initial state was set explicitly
+    // since the last Forward. Previously the final state of the previous
+    // call leaked into the next batch on the CPU/AF paths only (the native
+    // provider always started from zero), so multi-batch training differed
+    // between paths and a smaller final batch could index a stale state.
+    if (!initial_state_pending_) {
+        h_n_ = Tensor();
+        c_n_ = Tensor();
+    }
+    initial_state_pending_ = false;
+
     // Hoisted from the CPU fallback path: ensure weights are valid
     // BEFORE either path runs. The AF path was tripping
     // af_write_array "Expected: (data != nullptr)" because LSTMLayer's
@@ -81,6 +95,72 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
                 b_ih_[layer] = Tensor::Zeros({gate_size});
                 b_hh_[layer] = Tensor::Zeros({gate_size});
             }
+        }
+    }
+
+    // tofix68 P2: route single-layer unidirectional batch-first LSTM
+    // through the native neural provider when one supports the exact
+    // tuple. This is what makes the compiler's native_provider placement
+    // selection truthful. Failure records placement evidence and falls
+    // through to the AF/native paths below.
+    provider_forward_used_ = false;
+    if (num_layers_ == 1 && !bidirectional_ && batch_first_ &&
+        !provider_disabled_after_failure_) {
+        NeuralOpRequest provider_request;
+        provider_request.target = CaptureCurrentNeuralDeviceTarget();
+        provider_request.op = NeuralOp::LstmForward;
+        provider_request.training = false;  // forward math is identical
+        provider_request.dtype = DataType::Float32;
+        provider_request.batch = input_shape[0];
+        provider_request.seq = input_shape[1];
+        provider_request.input = input_shape[2];
+        provider_request.hidden = static_cast<size_t>(hidden_size_);
+        if (auto provider = NeuralProviderRegistry::Instance()
+                                .FindSupporting(provider_request)) {
+            Tensor output(std::vector<size_t>{
+                input_shape[0], input_shape[1],
+                static_cast<size_t>(hidden_size_)});
+            // Final states in the CPU path's [layers*directions, batch,
+            // hidden] layout; the provider writes c_n through the optional
+            // second output (contract 0.5.1), h_n is the last output step.
+            const size_t hidden = static_cast<size_t>(hidden_size_);
+            Tensor final_cell(std::vector<size_t>{1, input_shape[0], hidden});
+            NeuralOpBuffers buffers;
+            buffers.inputs = {&input};
+            buffers.weights = {&W_ih_[0], &W_hh_[0], &b_ih_[0], &b_hh_[0]};
+            buffers.outputs = {&output, &final_cell};
+            const auto status = provider->Execute(provider_request, buffers);
+            if (status.ok) {
+                provider_forward_used_ = true;
+                const size_t seq = input_shape[1];
+                h_n_ = Tensor::Zeros({1, input_shape[0], hidden});
+                c_n_ = final_cell;
+                const float* y = output.ReadData<float>();
+                float* hn = h_n_.Data<float>();
+                for (size_t b = 0; b < input_shape[0]; ++b) {
+                    for (size_t j = 0; j < hidden; ++j) {
+                        hn[b * hidden + j] =
+                            y[(b * seq + (seq - 1)) * hidden + j];
+                    }
+                }
+                return output;
+            }
+            RecurrentCudaPlacementRequest evidence_request;
+            evidence_request.kind = RecurrentLayerKind::LSTM;
+            evidence_request.batch_size = input_shape[0];
+            evidence_request.seq_len = input_shape[1];
+            evidence_request.input_size = input_shape[2];
+            evidence_request.hidden_size =
+                static_cast<size_t>(hidden_size_);
+            RecordRecurrentCudaPlacementObservation(
+                evidence_request,
+                BackendFallbackReasonName(status.reason),
+                BackendPlacementObservationSource::RuntimeFallback,
+                "native provider lstm_forward failed: " + status.detail);
+            spdlog::warn(
+                "LSTMLayer::Forward: native provider failed (reason={}), "
+                "falling back to ArrayFire/native path: {}",
+                BackendFallbackReasonName(status.reason), status.detail);
         }
     }
 
@@ -554,6 +634,13 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
                                  fallback_message));
             }
         }
+        // Strict placement runs must fail closed instead of silently
+        // training on the native CPU recurrent path (tofix67 slice 5). The
+        // observation above is recorded first so the evidence survives the
+        // throw.
+        ThrowIfArrayFireNativeCpuFallbackForbidden(
+            "LSTMLayer::Forward", fallback_reason, e.what(),
+            fallback_context);
     }
 #endif
 

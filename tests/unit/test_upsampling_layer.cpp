@@ -1,9 +1,12 @@
+#include "../../cyxwiz-backend/src/algorithms/layers/layer_utils.h"
 #include "convolution_test_support.h"
 #include <algorithm>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 #include <cyxwiz/layers/upsampling.h>
 #include <cyxwiz/tensor.h>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -63,8 +66,57 @@ void CheckInputGradient(cyxwiz::Layer &layer,
 }
 } // namespace
 
+TEST_CASE("Upsample native half-pixel coordinates retain integer bounds",
+          "[upsample][geometry]") {
+  using cyxwiz::ComputeResizeLinearSample;
+  constexpr auto extreme = ComputeResizeLinearSample(33554439, 16777220, 2);
+  STATIC_REQUIRE(extreme.lower == 16777219);
+  STATIC_REQUIRE(extreme.upper == 16777219);
+  STATIC_REQUIRE(extreme.upper_weight == 0.0f);
+  constexpr size_t largest = (std::numeric_limits<size_t>::max)();
+  constexpr auto last = ComputeResizeLinearSample(largest - 1, largest, 1);
+  STATIC_REQUIRE(last.lower == largest - 1);
+  STATIC_REQUIRE(last.upper == largest - 1);
+  STATIC_REQUIRE(last.upper_weight == 0.0f);
+  constexpr auto fractional = ComputeResizeLinearSample(33554436, 16777220, 2);
+  STATIC_REQUIRE(fractional.lower == 16777217);
+  STATIC_REQUIRE(fractional.upper == 16777218);
+  STATIC_REQUIRE(fractional.upper_weight == 0.75f);
+  for (size_t extent : {size_t{1}, size_t{3}, size_t{16777220}, largest / 5}) {
+    for (int factor : {1, 2, 3, 5}) {
+      const size_t end = extent * static_cast<size_t>(factor) - 1;
+      for (size_t position : {size_t{0}, end / 2, end}) {
+        const auto sample = ComputeResizeLinearSample(position, extent, factor);
+        CAPTURE(extent, factor, position);
+        CHECK(sample.lower <= sample.upper);
+        CHECK(sample.upper < extent);
+        CHECK(sample.upper_weight >= 0.0f);
+        CHECK(sample.upper_weight <= 1.0f);
+      }
+    }
+  }
+  const auto midpoint = ComputeResizeLinearSample(1, 3, 2);
+  CHECK(midpoint.lower == 0);
+  CHECK(midpoint.upper == 1);
+  CHECK(midpoint.upper_weight == 0.25f);
+}
+
+TEST_CASE(
+    "Upsample native coordinates reject invalid geometry without overflow",
+    "[upsample][geometry]") {
+  using cyxwiz::ComputeResizeLinearSample;
+  CHECK_THROWS_AS(ComputeResizeLinearSample(0, 0, 2), std::invalid_argument);
+  CHECK_THROWS_AS(ComputeResizeLinearSample(0, 2, 0), std::invalid_argument);
+  CHECK_THROWS_AS(ComputeResizeLinearSample(0, 2, -1), std::invalid_argument);
+  CHECK_THROWS_AS(ComputeResizeLinearSample(6, 2, 3), std::out_of_range);
+  CHECK_THROWS_AS(
+      ComputeResizeLinearSample((std::numeric_limits<size_t>::max)(), 2, 3),
+      std::out_of_range);
+}
+
 TEST_CASE("Upsample2DLayer nearest computes forward and backward values",
           "[upsample][layer]") {
+  cyxwiz::test::convolution::BackendLane lane;
   float input_values[] = {
       1.0f,
       2.0f,
@@ -101,6 +153,7 @@ TEST_CASE("Upsample2DLayer nearest computes forward and backward values",
 
 TEST_CASE("Upsample2DLayer bilinear computes forward and backward values",
           "[upsample][layer]") {
+  cyxwiz::test::convolution::BackendLane lane;
   float input_values[] = {
       1.0f,
       2.0f,
@@ -165,6 +218,7 @@ TEST_CASE("PixelShuffleLayer computes forward and backward values",
 TEST_CASE(
     "Upsample preserves affine ramps across spatial edges channels and batches",
     "[upsample][layer][contract]") {
+  cyxwiz::test::convolution::BackendLane lane;
   for (const auto mode :
        {cyxwiz::UpsampleMode::Nearest, cyxwiz::UpsampleMode::Bilinear}) {
     for (const int factor : {1, 2, 3}) {
@@ -212,6 +266,7 @@ TEST_CASE(
 TEST_CASE("Upsample nonuniform input gradients match finite differences and "
           "the adjoint",
           "[upsample][layer][gradient]") {
+  cyxwiz::test::convolution::BackendLane lane;
   for (const auto mode :
        {cyxwiz::UpsampleMode::Nearest, cyxwiz::UpsampleMode::Bilinear}) {
     for (const int factor : {1, 2, 3}) {
@@ -272,6 +327,11 @@ TEST_CASE("Upsampling rejects existing invalid constructor input and gradient "
     REQUIRE_THROWS_AS(cyxwiz::Upsample2DLayer(factor), std::invalid_argument);
     REQUIRE_THROWS_AS(cyxwiz::PixelShuffleLayer(factor), std::invalid_argument);
   }
+  for (const int mode : {-1, 2, 99}) {
+    REQUIRE_THROWS_AS(
+        cyxwiz::Upsample2DLayer(2, static_cast<cyxwiz::UpsampleMode>(mode)),
+        std::invalid_argument);
+  }
   cyxwiz::Upsample2DLayer upsample(2);
   cyxwiz::PixelShuffleLayer shuffle(2);
   const Tensor wrong_rank({2, 3, 4}, DataType::Float32);
@@ -301,4 +361,80 @@ TEST_CASE("Upsampling rejects existing invalid constructor input and gradient "
                     std::runtime_error);
   REQUIRE_THROWS_AS(fresh.Backward(Tensor({4, 3, 1, 2}, DataType::Float32)),
                     std::runtime_error);
+}
+
+TEST_CASE(
+    "Upsample validates output arithmetic before allocation or input access",
+    "[upsample][layer][validation]") {
+  cyxwiz::test::convolution::BackendLane lane;
+  using cyxwiz::DataType;
+  using cyxwiz::Tensor;
+  const size_t limit = (std::numeric_limits<size_t>::max)();
+  // Metadata-only inputs have valid input byte counts and no backing storage.
+  // These exact errors must precede allocation and any attempt to read input.
+  for (const auto mode :
+       {cyxwiz::UpsampleMode::Nearest, cyxwiz::UpsampleMode::Bilinear}) {
+    cyxwiz::Upsample2DLayer extent_layer(8, mode);
+    REQUIRE_THROWS_WITH(extent_layer.Forward(Tensor(
+                            {limit / 4, 1, 1, 1}, nullptr, DataType::Float32)),
+                        "Upsample2D output height overflow");
+    REQUIRE_THROWS_WITH(extent_layer.Forward(Tensor(
+                            {1, limit / 4, 1, 1}, nullptr, DataType::Float32)),
+                        "Upsample2D output width overflow");
+    cyxwiz::Upsample2DLayer elements_layer(4, mode);
+    REQUIRE_THROWS_WITH(elements_layer.Forward(Tensor(
+                            {limit / 16, 2, 1, 1}, nullptr, DataType::Float32)),
+                        "Upsample2D output elements overflow");
+    cyxwiz::Upsample2DLayer bytes_layer(3, mode);
+    REQUIRE_THROWS_WITH(bytes_layer.Forward(Tensor({limit / 16, 1, 1, 1},
+                                                   nullptr, DataType::Float32)),
+                        "Upsample2D output bytes overflow");
+  }
+}
+
+TEST_CASE(
+    "Upsample failed forward invalidates backward and a valid run recovers",
+    "[upsample][layer][lifecycle]") {
+  cyxwiz::test::convolution::BackendLane lane;
+  using cyxwiz::DataType;
+  using cyxwiz::Tensor;
+  using cyxwiz::test::convolution::CheckValues;
+  for (const auto mode :
+       {cyxwiz::UpsampleMode::Nearest, cyxwiz::UpsampleMode::Bilinear}) {
+    CAPTURE(static_cast<int>(mode));
+    cyxwiz::Upsample2DLayer layer(2, mode);
+    const std::vector<float> ones(24, 1.0f);
+    const Tensor gradient({4, 6, 1, 1}, ones.data(), DataType::Float32);
+    const auto expect_no_context = [&] {
+      REQUIRE_THROWS_WITH(
+          layer.Backward(gradient),
+          "Upsample2D::Backward requires a successful Forward call");
+    };
+    expect_no_context();
+    const size_t limit = (std::numeric_limits<size_t>::max)();
+    for (const auto &invalid :
+         {Tensor({2, 3, 1}, DataType::Float32),
+          Tensor({2, 3, 1, 1}, DataType::Float64),
+          Tensor({0, 3, 1, 1}, DataType::Float32),
+          Tensor({2, 0, 1, 1}, DataType::Float32),
+          Tensor({2, 3, 0, 1}, DataType::Float32),
+          Tensor({2, 3, 1, 0}, DataType::Float32),
+          Tensor({limit / 4, 1, 1, 1}, nullptr, DataType::Float32)}) {
+      REQUIRE_NOTHROW(layer.Forward(Tensor({2, 3, 1, 1}, DataType::Float32)));
+      REQUIRE_THROWS(layer.Forward(invalid));
+      expect_no_context();
+      REQUIRE_NOTHROW(layer.Forward(Tensor({2, 3, 1, 1}, DataType::Float32)));
+      // Rejected gradients do not poison a completed forward context.
+      REQUIRE_THROWS(layer.Backward(Tensor({6, 4, 1, 1}, DataType::Float32)));
+      REQUIRE_THROWS(layer.Backward(Tensor({4, 6, 1, 1}, DataType::Float64)));
+      CheckValues(layer.Backward(gradient), {2, 3, 1, 1},
+                  std::vector<float>(6, 4.0f));
+    }
+    // A later successful run replaces the shape, rather than retaining it.
+    REQUIRE_NOTHROW(layer.Forward(Tensor({1, 2, 2, 1}, DataType::Float32)));
+    REQUIRE_THROWS(layer.Backward(gradient));
+    CheckValues(
+        layer.Backward(Tensor({2, 4, 2, 1}, ones.data(), DataType::Float32)),
+        {1, 2, 2, 1}, std::vector<float>(4, 4.0f));
+  }
 }

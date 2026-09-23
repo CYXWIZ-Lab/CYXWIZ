@@ -1,3 +1,4 @@
+#include "../core/training_export_metadata.h"
 // Windows header order fix - must come first to prevent winsock conflicts
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -27,6 +28,7 @@
 #include "../core/debug_operator_trace_producer.h"
 #include "../core/compute_runtime_config.h"
 #include "../core/compute_runtime_paths.h"
+#include "../core/placement_observation_cache_session.h"
 #include "../core/execution_device_preferences.h"
 #include "../core/keyboard_shortcuts.h"
 #include "../core/sequence_arrow_batcher.h"
@@ -170,6 +172,7 @@
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
 #include "../core/test_manager.h"
+#include "../core/graph_compile_task.h"
 #include "../core/test_dataset_selection.h"
 #include "../core/model_converter.h"
 #include "../core/model_importer.h"
@@ -532,8 +535,14 @@ MainWindow::MainWindow()
     // fast enough to do synchronously without measurable startup impact.
     cyxwiz::ParquetBackedDataset::PruneCache();
 
+    // Merge persisted GPU placement evidence (runtime fallbacks, preflight
+    // probes) into the process-global store so the first compile of this
+    // session already routes around known-unsafe device/shape keys.
+    cyxwiz::LoadPlacementObservationCacheAtStartup();
+
     // Original panels
     node_editor_ = std::make_unique<NodeEditor>();
+    node_editor_->SetGraphPreparationBusyCallback([this] { return test_preparation_task_ != nullptr; });
     console_ = std::make_unique<Console>();
     viewport_ = std::make_unique<Viewport>();
     properties_ = std::make_unique<Properties>();
@@ -1164,7 +1173,9 @@ MainWindow::MainWindow()
         }
     });
 
-    cyxwiz::TestManager::Instance().SetOnTestingEnd([this](bool success, const cyxwiz::TestingMetrics& metrics) {
+    const std::weak_ptr<int> test_window_lifetime = test_callback_lifetime_;
+    cyxwiz::TestManager::Instance().SetOnTestingEnd([this, test_window_lifetime](bool success, const cyxwiz::TestingMetrics& metrics) {
+        if (test_window_lifetime.expired()) return;
         if (test_results_panel_) {
             test_results_panel_->SetResults(metrics);
             test_results_panel_->Show();
@@ -1229,6 +1240,7 @@ MainWindow::MainWindow()
                     graph_json = node_editor_->GetGraphJson();
                 }
 
+                const auto trained_info = tm.GetActiveModelInfo();
                 const auto nodes = node_editor_
                     ? node_editor_->GetNodes()
                     : std::vector<MLNode>{};
@@ -1242,7 +1254,10 @@ MainWindow::MainWindow()
                     graph_json,
                     node_editor_
                         ? HashGraphStructure(nodes, links)
-                        : 0);
+                        : 0,
+                    trained_info.evaluation_config
+                        ? cyxwiz::TrainingExportMetadata(*trained_info.evaluation_config)
+                        : cyxwiz::ExportOptions{});
                 spdlog::info("Loaded trained model into Export dialog");
             } else {
                 spdlog::warn("No trained model available for export");
@@ -2484,6 +2499,13 @@ MainWindow::MainWindow()
 
 MainWindow::~MainWindow() {
     spdlog::info("MainWindow destructor: starting cleanup");
+    test_callback_lifetime_.reset();
+    if (test_preparation_task_) test_preparation_task_->RequestCancel();
+    auto& test_manager = cyxwiz::TestManager::Instance();
+    test_manager.SetOnTestingEnd(nullptr);
+    test_manager.StopTesting();
+    test_manager.WaitForTestingStop();
+
 
     auto& training_mgr = cyxwiz::TrainingManager::Instance();
     if (training_mgr.IsTrainingActive()) {
@@ -2491,6 +2513,10 @@ MainWindow::~MainWindow() {
         training_mgr.StopTraining();
         training_mgr.WaitForTrainingStop();
     }
+
+    // Persist placement evidence gathered this session (covers compile-time
+    // probe results even when no training ran).
+    cyxwiz::SavePlacementObservationCache();
 
     // IMPORTANT: Destroy panels that use PlotManager/Python BEFORE scripting_engine_
     // PlotWindow destructor calls PlotManager::DeletePlot() which may use Python
@@ -3539,6 +3565,11 @@ void MainWindow::SetDefaultPanelVisibility() {
 }
 
 void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
+    if (test_preparation_task_ || cyxwiz::TestManager::Instance().IsTestingActive()) {
+        spdlog::warn("Train: wait for Run Test preparation/evaluation or cancel it first");
+        return;
+    }
+
     const bool memory_confirmation_accepted =
         materialization_memory_confirmation_accepted_once_;
     const int accepted_memory_node_id =
@@ -3727,8 +3758,17 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
 
             if (dispatch_config.sequence_batch.enabled) {
                 auto arrow_dataset = registry.GetArrowDataset(dataset_name);
+                auto dev = dispatch_config.dataset_roles.dev.IsSupplied()
+                    ? registry.GetArrowDataset(dispatch_config.dataset_roles.dev.dataset_name) : nullptr;
+                auto test = dispatch_config.dataset_roles.test.IsSupplied()
+                    ? registry.GetArrowDataset(dispatch_config.dataset_roles.test.dataset_name) : nullptr;
+                if ((dispatch_config.dataset_roles.dev.IsSupplied() && !dev) ||
+                    (dispatch_config.dataset_roles.test.IsSupplied() && !test)) {
+                    spdlog::error("Supplied sequence roles require registered in-memory Arrow datasets; Apply each source before Train");
+                    return false;
+                }
                 auto sequence = cyxwiz::BuildSequenceBatcherFromArrowDataset(
-                    arrow_dataset, dispatch_config, batch_size);
+                    arrow_dataset, dispatch_config, batch_size, dev, test);
                 if (!sequence.success()) {
                     spdlog::error("StartTrainingFromGraph: sequence batcher "
                                   "materialization failed: {}",
@@ -5612,12 +5652,37 @@ void MainWindow::RenderCompileResultPopup() {
 }
 
 void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
-    spdlog::info("StartTestingFromGraph: Compiling {} nodes, {} links", nodes.size(), links.size());
+    auto& training = cyxwiz::TrainingManager::Instance();
+    if (test_preparation_task_ || training.IsTrainingActive() ||
+        cyxwiz::TestManager::Instance().IsTestingActive()) {
+        spdlog::warn("Run Test: another preparation, training or test is active");
+        return;
+    }
+    auto model = training.GetActiveModel();
+    if (!model) { spdlog::error("Run Test requires a trained or loaded model"); return; }
+    const auto fingerprint = HashGraphStructure(nodes, links);
+    const std::weak_ptr<int> lifetime = test_callback_lifetime_;
+    test_preparation_task_ = cyxwiz::SubmitGraphCompileTask(nodes, links,
+        [this, lifetime, nodes, links, model, fingerprint](bool success,
+            const std::string& error, cyxwiz::TrainingConfiguration config) {
+            if (lifetime.expired()) return;
+            test_preparation_task_.reset();
+            if (!success) { spdlog::warn("Run Test: {}", error); return; }
+            auto& training = cyxwiz::TrainingManager::Instance();
+            if (!node_editor_ || training.IsTrainingActive() ||
+                cyxwiz::TestManager::Instance().IsTestingActive() ||
+                training.GetActiveModel() != model ||
+                HashGraphStructure(node_editor_->GetNodes(), node_editor_->GetLinks()) != fingerprint) {
+                spdlog::warn("Run Test: graph/model changed during preparation; run Test again");
+                return;
+            }
+            try { StartTestingWithConfig(nodes, links, std::move(config)); }
+            catch (const std::exception& error) { spdlog::error("Run Test launch failed: {}", error.what()); }
+        });
+}
 
-    // Compile the graph (same as training)
-    cyxwiz::GraphCompiler compiler;
-    cyxwiz::TrainingConfiguration config = compiler.Compile(nodes, links);
-
+void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
+    const std::vector<NodeLink>& links, cyxwiz::TrainingConfiguration config) {
     if (!config.is_valid) {
         spdlog::error("Graph compilation failed: {}", config.error_message);
         return;
@@ -5654,6 +5719,11 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
         }
     }
 
+    if (active_model_info.evaluation_config &&
+        active_model_info.evaluation_config->sequence_batch.enabled) {
+        config = *active_model_info.evaluation_config;
+        spdlog::info("StartTestingFromGraph: using the active model sequence preparation contract");
+    }
     const auto test_selection =
         cyxwiz::ResolveGraphTestDataset(config);
     std::string dataset_name = test_selection.dataset_name;
@@ -5702,24 +5772,17 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
         return;
     }
 
-    auto on_complete = [this](const cyxwiz::TestingMetrics& metrics) {
-        if (test_results_panel_) {
-            test_results_panel_->SetResults(metrics);
-            test_results_panel_->Show();
-        }
-    };
-
     const int test_batch_size = config.batch_size;
     auto& registry = cyxwiz::DataRegistry::Instance();
     bool started = false;
     if (auto arrow_dataset = registry.GetArrowDataset(dataset_name)) {
         started = cyxwiz::TestManager::Instance().StartTestingArrow(
             std::move(config), std::move(arrow_dataset), label_column,
-            test_selection.scope, test_batch_size, model, on_complete);
+            test_selection.scope, test_batch_size, model, nullptr);
     } else if (auto parquet_dataset = registry.GetParquetBackedDataset(dataset_name)) {
         started = cyxwiz::TestManager::Instance().StartTestingParquet(
             std::move(config), std::move(parquet_dataset), label_column,
-            test_selection.scope, test_batch_size, model, on_complete);
+            test_selection.scope, test_batch_size, model, nullptr);
     } else if (registry.IsTextDataset(dataset_name)) {
         const auto* text_entry = registry.GetTextDatasetEntry(dataset_name);
         if (!text_entry) {
@@ -5728,7 +5791,7 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
         }
 
         started = cyxwiz::TestManager::Instance().StartTestingText(
-            std::move(config), *text_entry, test_batch_size, model, on_complete);
+            std::move(config), *text_entry, test_batch_size, model, nullptr);
     } else {
         auto dataset = registry.GetDataset(dataset_name);
         if (!dataset) {
@@ -5738,7 +5801,7 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
         }
 
         started = cyxwiz::TestManager::Instance().StartTesting(
-            std::move(config), dataset, test_batch_size, model, on_complete);
+            std::move(config), dataset, test_batch_size, model, nullptr);
     }
 
     if (started) {

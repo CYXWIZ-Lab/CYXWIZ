@@ -745,10 +745,14 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
     code += "            raise ValueError('sequence length exceeds max_sequence_length')\n";
     code += "        return x + self.encoding[:, :x.size(1), :]\n\n";
 
+    code += "def configure_ffn_dropout(block, probability):\n";
+    code += "    block.dropout.p = probability\n";
+    code += "    return block\n\n";
     code += "class CausalTransformerDecoderBlock(nn.Module):\n";
-    code += "    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1, norm_first=False):\n";
+    code += "    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1, norm_first=False, ffn_dropout=0.0):\n";
     code += "        super().__init__()\n";
-    code += "        self.block = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout, batch_first=True, norm_first=norm_first)\n\n";
+    code += "        self.block = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout, batch_first=True, norm_first=norm_first)\n";
+    code += "        self.block.dropout.p = ffn_dropout\n\n";
     code += "    def forward(self, x):\n";
     code += "        causal_mask = torch.triu(torch.ones(x.size(1), x.size(1), device=x.device, dtype=torch.bool), diagonal=1)\n";
     code += "        return self.block(x, src_mask=causal_mask)\n\n";
@@ -840,6 +844,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
                 break;
 
             case NodeType::GRU:
+            case NodeType::RNN:
                 code += "        x, h_n = self.layer" + std::to_string(layer_idx++) + "(x)\n";
                 break;
 
@@ -1740,9 +1745,10 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
                 node, {"dropout", "dropout_rate"}, "0.1");
             const std::string norm_first = PythonBoolLiteral(
                 GetParamOrDefault(node, "norm_first", "false"));
-            code = "nn.TransformerEncoderLayer(d_model=" + d_model + ", nhead=" + nhead +
+            code = "configure_ffn_dropout(nn.TransformerEncoderLayer(d_model=" + d_model + ", nhead=" + nhead +
                    ", dim_feedforward=" + dim_feedforward + ", dropout=" + dropout +
-                   ", batch_first=True, norm_first=" + norm_first + ")";
+                   ", batch_first=True, norm_first=" + norm_first + "), " +
+                   GetParamOrDefault(node, "ffn_dropout", "0.0") + ")";
             break;
         }
 
@@ -1759,7 +1765,8 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
                 GetParamOrDefault(node, "norm_first", "false"));
             code = "CausalTransformerDecoderBlock(d_model=" + d_model + ", nhead=" + nhead +
                    ", dim_feedforward=" + dim_feedforward + ", dropout=" + dropout +
-                   ", norm_first=" + norm_first + ")";
+                   ", norm_first=" + norm_first + ", ffn_dropout=" +
+                   GetParamOrDefault(node, "ffn_dropout", "0.0") + ")";
             break;
         }
 
@@ -1832,6 +1839,25 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             code = "nn.GRU(input_size=" + input_size + ", hidden_size=" + hidden_size +
                    ", num_layers=" + num_layers + ", batch_first=True, bidirectional=" + bidirectional +
                    ", dropout=" + dropout + ")";
+            break;
+        }
+
+        case NodeType::RNN: {
+            std::string input_size = "512";
+            std::string hidden_size = "256";
+            std::string num_layers = "1";
+            std::string nonlinearity = "tanh";
+            auto it = node.parameters.find("input_size");
+            if (it != node.parameters.end()) input_size = it->second;
+            it = node.parameters.find("hidden_size");
+            if (it != node.parameters.end()) hidden_size = it->second;
+            it = node.parameters.find("num_layers");
+            if (it != node.parameters.end()) num_layers = it->second;
+            it = node.parameters.find("nonlinearity");
+            if (it != node.parameters.end() && !it->second.empty()) nonlinearity = it->second;
+            code = "nn.RNN(input_size=" + input_size + ", hidden_size=" + hidden_size +
+                   ", num_layers=" + num_layers + ", nonlinearity='" + nonlinearity +
+                   "', batch_first=True)";
             break;
         }
 
@@ -2122,7 +2148,8 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
                 GetParamOrDefault(node, "norm_first", "false"));
             code = "cx.TransformerEncoderLayer(d_model=" + d_model +
                    ", nhead=" + num_heads + ", dim_feedforward=" + ff_dim +
-                   ", dropout=" + dropout + ", norm_first=" + norm_first + ")";
+                   ", dropout=" + dropout + ", norm_first=" + norm_first + ", ffn_dropout=" +
+                   GetParamOrDefault(node, "ffn_dropout", "0.0") + ")";
             break;
         }
 
@@ -2139,7 +2166,8 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
                 GetParamOrDefault(node, "norm_first", "false"));
             code = "cx.TransformerDecoderLayer(d_model=" + d_model +
                    ", nhead=" + num_heads + ", dim_feedforward=" + ff_dim +
-                   ", dropout=" + dropout + ", norm_first=" + norm_first + ")";
+                   ", dropout=" + dropout + ", norm_first=" + norm_first + ", ffn_dropout=" +
+                   GetParamOrDefault(node, "ffn_dropout", "0.0") + ")";
             break;
         }
 
@@ -2275,6 +2303,27 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
                    ", hidden_size=" + hidden_size +
                    ", num_layers=" + num_layers +
                    ", batch_first=True, bidirectional=" + bidirectional + ")";
+            break;
+        }
+
+        case NodeType::RNN: {
+            std::string input_size = "512";
+            std::string hidden_size = "256";
+            std::string num_layers = "1";
+            std::string nonlinearity = "tanh";
+            auto it = node.parameters.find("input_size");
+            if (it != node.parameters.end()) input_size = it->second;
+            it = node.parameters.find("hidden_size");
+            if (it != node.parameters.end()) hidden_size = it->second;
+            it = node.parameters.find("num_layers");
+            if (it != node.parameters.end()) num_layers = it->second;
+            it = node.parameters.find("nonlinearity");
+            if (it != node.parameters.end() && !it->second.empty()) nonlinearity = it->second;
+            code = "cx.RNN(input_size=" + input_size +
+                   ", hidden_size=" + hidden_size +
+                   ", num_layers=" + num_layers +
+                   ", batch_first=True, bidirectional=False, nonlinearity='" +
+                   nonlinearity + "')";
             break;
         }
 

@@ -14,6 +14,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
+#include <stdexcept>
 #include <map>
 #include <random>
 #include <sstream>
@@ -31,11 +33,13 @@ void Check(bool condition, const std::string& message) {
 
 void CheckNear(float actual, float expected, float tolerance,
                const std::string& message) {
-    if (std::fabs(actual - expected) > tolerance) {
+    if (!std::isfinite(actual) || !std::isfinite(expected) ||
+        !std::isfinite(tolerance) || tolerance < 0.0f ||
+        std::fabs(actual - expected) > tolerance) {
         std::ostringstream ss;
         ss << message << " expected=" << expected << " actual=" << actual
            << " tolerance=" << tolerance;
-        Check(false, ss.str());
+        throw std::runtime_error(ss.str());
     }
 }
 
@@ -2556,8 +2560,80 @@ void TestTinyTransformerCrossEntropyTrainingStepSanity() {
 }
 } // namespace
 
+
+void TestNearRejectsNonfinite() {
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    const auto rejects = [](float actual, float expected, float tolerance) {
+        bool rejected = false;
+        try { CheckNear(actual, expected, tolerance, "nonfinite rejection probe"); }
+        catch (const std::runtime_error&) { rejected = true; }
+        Check(rejected, "CheckNear must reject nonfinite values or invalid tolerance");
+    };
+    rejects(nan, 0, 1e-4f); rejects(0, nan, 1e-4f);
+    rejects(inf, inf, 1e-4f); rejects(-inf, 0, 1e-4f);
+    rejects(0, 0, nan); rejects(0, 0, inf); rejects(0, 0, -1);
+    CheckNear(1, 1, 0, "exact finite comparison");
+}
+
+void TestFullyBlockedAttentionRows() {
+    using cyxwiz::Tensor;
+    for (bool self : {false, true}) {
+        for (bool all_rows : {false, true}) {
+            cyxwiz::MultiHeadAttentionLayer layer(4, 2, 0.0f, true);
+            auto params = layer.GetParameters();
+            for (auto& [name, tensor] : params) {
+                if (name.rfind("grad_", 0) == 0) continue;
+                auto* p = tensor.MutableData<float>();
+                for (size_t i = 0; i < tensor.NumElements(); ++i)
+                    p[i] = name == "b_o" ? 0.25f :
+                        (tensor.Shape().size() == 2 && i / 4 == i % 4 ? 1.0f : 0.0f);
+            }
+            layer.SetParameters(params);
+            Tensor q({2, 3, 4}), k({2, 4, 4}), v({2, 4, 4});
+            for (Tensor* tensor : {&q, &k, &v}) {
+                auto* p = tensor->MutableData<float>();
+                for (size_t i = 0; i < tensor->NumElements(); ++i)
+                    p[i] = 0.2f * std::sin(static_cast<float>(i));
+            }
+            const size_t keys = self ? 3 : 4;
+            Tensor mask = Tensor::Zeros({3, keys});
+            auto* m = mask.MutableData<float>();
+            for (size_t row = 0; row < (all_rows ? 3u : 1u); ++row)
+                for (size_t col = 0; col < keys; ++col)
+                    m[row * keys + col] = -std::numeric_limits<float>::infinity();
+            const Tensor y = self ? layer.Forward(q, q, q, &mask) : layer.Forward(q, k, v, &mask);
+            const float* values = y.ReadData<float>();
+            Tensor upstream = Tensor::Zeros({2, 3, 4});
+            auto* g = upstream.MutableData<float>();
+            for (size_t i = 0; i < y.NumElements(); ++i) {
+                Check(std::isfinite(values[i]), "masked attention output must be finite");
+                if (all_rows || (i / 4) % 3 == 0) {
+                    CheckNear(values[i], 0.25f, 1e-6f, "blocked row retains output bias");
+                    g[i] = 1.0f;
+                }
+            }
+            const Tensor dq = layer.Backward(upstream);
+            for (const Tensor& grad : {dq, layer.GetLastKeyGradient(), layer.GetLastValueGradient()}) {
+                const auto* p = grad.ReadData<float>();
+                for (size_t i = 0; i < grad.NumElements(); ++i)
+                    CheckNear(p[i], 0, 1e-6f, "blocked-only upstream gives zero Q/K/V derivative");
+            }
+            for (const auto& [name, grad] : layer.GetParameters()) {
+                if (name.rfind("grad_", 0) != 0) continue;
+                const float expected = name == "grad_b_o" ? (all_rows ? 6.0f : 2.0f) : 0.0f;
+                const auto* p = grad.ReadData<float>();
+                for (size_t i = 0; i < grad.NumElements(); ++i)
+                    CheckNear(p[i], expected, 1e-6f, "blocked-only parameter derivative " + name);
+            }
+        }
+    }
+}
+
 int main() {
     try {
+        TestNearRejectsNonfinite();
+        TestFullyBlockedAttentionRows();
         TestEmbeddingForwardAndGradientParity();
         TestPositionalEncodingParity();
         TestScaledDotProductAttentionParity();

@@ -789,6 +789,7 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
         gui::NodeType::Unsqueeze,
         gui::NodeType::LSTM,
         gui::NodeType::GRU,
+        gui::NodeType::RNN,
         gui::NodeType::NERSequenceBuilder,
         gui::NodeType::TokenVocabulary,
         gui::NodeType::POSVocabulary,
@@ -1091,12 +1092,15 @@ void CheckTransformerFamilyReferenceContract(
         const auto* meta = metadata.GetMetadata(type);
         Check(meta != nullptr && meta->IsImplemented(),
               "Transformer block metadata should be executable: " + TypeId(type));
+        const char* expected_dropout =
+            type == gui::NodeType::TransformerDecoder ? "0.0" : "0.1";
         Check(ParameterMatches(meta, "d_model", "int", "512") &&
                   ParameterMatches(meta, "num_heads", "int", "8") &&
                   ParameterMatches(meta, "dim_feedforward", "int", "2048") &&
-                  ParameterMatches(meta, "dropout", "float", "0.1") &&
+                  ParameterMatches(meta, "dropout", "float", expected_dropout) &&
+                  ParameterMatches(meta, "ffn_dropout", "float", "0.0") &&
                   ParameterMatches(meta, "norm_first", "bool", "false"),
-              "Transformer block metadata should expose the five consumed fields: " +
+              "Transformer block metadata should expose the six consumed fields: " +
                   TypeId(type));
         Check(!HasParameter(meta, "num_layers") &&
                   !HasParameter(meta, "nhead") &&
@@ -1132,8 +1136,18 @@ void CheckTransformerFamilyReferenceContract(
     Check(resolved.model_width == 8 && resolved.num_heads == 2 &&
               resolved.feedforward_width == 32 &&
               std::abs(resolved.dropout - 0.25f) < 1e-6f &&
-              resolved.norm_first,
+              resolved.norm_first && resolved.ffn_dropout == 0.0f,
           "the shared transformer policy must resolve every accepted alias into construction values");
+    for(const auto type:{gui::NodeType::TransformerEncoder,gui::NodeType::TransformerDecoder}) {
+        Check(!cyxwiz::ResolveTransformerConfiguration(type,
+                  Parameters{{"ffn_dropout","0.25"}},resolved) && resolved.ffn_dropout==0.25f,
+              "explicit FFN hidden dropout must reach construction");
+        for(const auto* invalid:{"nan","inf","-0.1","1","0.999999999"}) {
+            Check(cyxwiz::ResolveInvalidTransformerConfigurationReason(type,
+                      Parameters{{"ffn_dropout",invalid}}).has_value(),
+                  "invalid FFN dropout must fail closed");
+        }
+    }
     Check(cyxwiz::ResolveInvalidTransformerConfigurationReason(
               gui::NodeType::TransformerEncoder,
               Parameters{{"d_model", "8"}, {"nhead", "3"}}).has_value(),
@@ -1326,10 +1340,13 @@ void CheckDataInputDialogReferenceContract(
     Check(meta->inputs.empty(), "DataInput should not expose static inputs");
     Check(HasOutputType(meta, "Dataset", gui::PinType::Dataset),
           "DataInput should expose one Dataset artifact");
-    Check(meta->parameters.size() == 3,
+    // 3 bootstrap fields + archive_member (ZIP text-source selection added
+    // with the archive text source work in this working tree).
+    Check(meta->parameters.size() == 4,
           "DataInput metadata should contain only its static dialog bootstrap fields");
     Check(ParameterMatches(meta, "file_path", "file", "") &&
               ParameterMatches(meta, "file_type", "enum", "auto") &&
+              ParameterMatches(meta, "archive_member", "string", "") &&
               ParameterMatches(meta, "configured", "bool", "false"),
           "DataInput metadata should own its dialog bootstrap defaults");
     Check(!HasParameter(meta, "chunk_size") &&
@@ -1637,8 +1654,7 @@ void CheckBlockedAttentionFamilyContract(
 
 void CheckBlockedRecurrentCompatibilityContract(
     cyxwiz::NodeMetadataRegistry& metadata) {
-    for (const auto type : {gui::NodeType::RNN,
-                            gui::NodeType::Bidirectional}) {
+    for (const auto type : {gui::NodeType::Bidirectional}) {
         const auto* meta = metadata.GetMetadata(type);
         Check(meta != nullptr,
               "recurrent compatibility metadata should exist: " + TypeId(type));
@@ -1661,22 +1677,6 @@ void CheckBlockedRecurrentCompatibilityContract(
         CheckSupportAxis(meta, "Compile", "unsupported", false, TypeId(type));
         CheckSupportAxis(meta, "Training", "unsupported", false, TypeId(type));
     }
-
-    const auto* rnn = metadata.GetMetadata(gui::NodeType::RNN);
-    Check(rnn->outputs.size() == 2 &&
-              rnn->outputs[1].name == "Hidden" &&
-              !rnn->outputs[1].required,
-          "RNN must preserve its optional Hidden output pin");
-    Check(rnn->parameters.size() == 7 &&
-              ParameterMatches(rnn, "input_size", "int", "0") &&
-              ParameterMatches(rnn, "hidden_size", "int", "256") &&
-              ParameterMatches(rnn, "num_layers", "int", "1") &&
-              ParameterMatches(rnn, "bidirectional", "bool", "false") &&
-              ParameterMatches(rnn, "return_sequences", "bool", "false") &&
-              ParameterMatches(rnn, "dropout", "float", "0.0") &&
-              ParameterMatches(rnn, "nonlinearity", "string", "tanh") &&
-              !HasParameter(rnn, "activation"),
-          "RNN metadata must preserve known saved fields without inventing execution");
 
     const auto* bidirectional =
         metadata.GetMetadata(gui::NodeType::Bidirectional);
@@ -1714,6 +1714,35 @@ void CheckImplementedRecurrentConfigurationContract(
                   TypeId(type));
     }
 
+    // tofix68 Studio RNN wiring: the simple RNN is an implemented
+    // recurrent node backed by the native CPU reference layer. It keeps
+    // its 7 saved fields (nonlinearity included) and the optional Hidden
+    // pin contract of the other recurrent nodes.
+    const auto* rnn = metadata.GetMetadata(gui::NodeType::RNN);
+    Check(rnn != nullptr &&
+              rnn->status == cyxwiz::NodeImplementationStatus::Implemented &&
+              cyxwiz::CanAddNodeToGraph(*rnn),
+          "RNN should be an implemented, addable recurrent node");
+    Check(rnn->inputs.size() == 1 && rnn->inputs[0].name == "Input" &&
+              rnn->inputs[0].required && rnn->outputs.size() == 2 &&
+              rnn->outputs[0].name == "Output" && rnn->outputs[0].required &&
+              rnn->outputs[1].name == "Hidden" && !rnn->outputs[1].required &&
+              rnn->outputs[1].description.find("does not route") !=
+                  std::string::npos,
+          "RNN pins must match the recurrent pin contract");
+    Check(rnn->parameters.size() == 7 &&
+              ParameterMatches(rnn, "input_size", "int", "0") &&
+              ParameterMatches(rnn, "hidden_size", "int", "256") &&
+              ParameterMatches(rnn, "num_layers", "int", "1") &&
+              ParameterMatches(rnn, "bidirectional", "bool", "false") &&
+              ParameterMatches(rnn, "return_sequences", "bool", "false") &&
+              ParameterMatches(rnn, "dropout", "float", "0.0") &&
+              ParameterMatches(rnn, "nonlinearity", "string", "tanh") &&
+              !HasParameter(rnn, "activation"),
+          "RNN metadata must preserve its saved fields");
+    CheckSupportAxis(rnn, "Compile", "supported", true, TypeId(gui::NodeType::RNN));
+    CheckSupportAxis(rnn, "Training", "supported", true, TypeId(gui::NodeType::RNN));
+
     const std::map<std::string, std::string> supported = {
         {"bidirectional", "false"},
         {"dropout", "0.0"},
@@ -1721,6 +1750,31 @@ void CheckImplementedRecurrentConfigurationContract(
     Check(!cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
                gui::NodeType::LSTM, supported),
           "unidirectional LSTM with zero dropout should remain supported");
+    Check(!cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+               gui::NodeType::RNN, supported),
+          "unidirectional RNN with zero dropout should be supported");
+    {
+        auto rnn_bidirectional = supported;
+        rnn_bidirectional["bidirectional"] = "true";
+        const auto reason =
+            cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+                gui::NodeType::RNN, rnn_bidirectional);
+        Check(reason && reason->find("one direction only") != std::string::npos,
+              "bidirectional RNN must fail closed with its exact gap");
+        auto rnn_activation = supported;
+        rnn_activation["nonlinearity"] = "gelu";
+        const auto activation_reason =
+            cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+                gui::NodeType::RNN, rnn_activation);
+        Check(activation_reason &&
+                  activation_reason->find("tanh") != std::string::npos,
+              "unsupported RNN nonlinearity must fail closed");
+        auto rnn_relu = supported;
+        rnn_relu["nonlinearity"] = "relu";
+        Check(!cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+                   gui::NodeType::RNN, rnn_relu),
+              "relu RNN should be supported");
+    }
     Check(!cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
                gui::NodeType::GRU, supported),
           "unidirectional GRU with zero dropout should remain supported");
@@ -1740,7 +1794,8 @@ void CheckImplementedRecurrentConfigurationContract(
 
     auto recurrent_dropout = supported;
     recurrent_dropout["dropout"] = "0.2";
-    for (const auto type : {gui::NodeType::LSTM, gui::NodeType::GRU}) {
+    for (const auto type : {gui::NodeType::LSTM, gui::NodeType::GRU,
+                            gui::NodeType::RNN}) {
         const auto reason =
             cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
                 type, recurrent_dropout);
@@ -2209,9 +2264,12 @@ void CheckTabularTransformFamilyContract(
               HasEnumValue(sort, "order", "desc") &&
               FindParameter(sort, "ascending")->advanced,
           "SortRows should expose order and retain ascending only as an advanced compatibility alias");
-    Check(group->parameters.size() == 2 &&
+    Check(group->parameters.size() == 4 &&
               FindParameter(group, "group_columns")->required &&
               FindParameter(group, "aggregations")->required &&
+              ParameterMatches(group, "text_order_by", "string", "") &&
+              ParameterMatches(group, "text_separator", "string", " ") &&
+              !FindParameter(group, "text_order_by")->required &&
               !HasParameter(group, "group_by"),
           "GroupBy should expose only the parameter names consumed by its executor");
     Check(fill->parameters.size() == 8 &&
@@ -5609,6 +5667,7 @@ int main() {
         gui::NodeType::BatchNorm,
         gui::NodeType::LSTM,
         gui::NodeType::GRU,
+        gui::NodeType::RNN,
         gui::NodeType::Embedding,
         gui::NodeType::ReLU,
         gui::NodeType::LeakyReLU,
@@ -5686,6 +5745,7 @@ int main() {
         {gui::NodeType::BatchNorm, "model_layer"},
         {gui::NodeType::LSTM, "model_layer"},
         {gui::NodeType::GRU, "model_layer"},
+        {gui::NodeType::RNN, "model_layer"},
         {gui::NodeType::Embedding, "model_layer"},
         {gui::NodeType::Flatten, "model_layer"},
         {gui::NodeType::TimeDistributed, "model_layer"},

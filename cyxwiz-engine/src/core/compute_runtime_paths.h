@@ -73,6 +73,10 @@ inline std::filesystem::path GetRouteQualificationCachePath() {
     return GetComputeRuntimeRoot() / "route-qualification.json";
 }
 
+inline std::filesystem::path GetPlacementObservationCachePath() {
+    return GetComputeRuntimeRoot() / "placement-observations.json";
+}
+
 class ScopedComputeRuntimeRootOverrideForTesting {
 public:
     explicit ScopedComputeRuntimeRootOverrideForTesting(

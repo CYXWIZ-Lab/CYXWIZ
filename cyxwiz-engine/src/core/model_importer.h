@@ -162,7 +162,8 @@ private:
         const std::map<std::string, std::vector<uint8_t>>& weights,
         const std::map<std::string, std::vector<int64_t>>& shapes,
         const ImportOptions& options,
-        std::vector<std::string>& warnings
+        std::vector<std::string>& warnings,
+        const std::map<std::string, TensorDType>* dtypes = nullptr
     );
 
     // Validate that model architecture matches weights

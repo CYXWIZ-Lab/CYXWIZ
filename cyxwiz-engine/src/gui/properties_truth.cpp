@@ -1,4 +1,5 @@
 #include "properties_truth.h"
+#include "../core/training_randomness.h"
 #include "../core/dense_activation_configuration_policy.h"
 #include "../core/normalization_regularization_configuration_policy.h"
 #include "../core/transformer_configuration_policy.h"
@@ -1790,6 +1791,11 @@ void AddTransformerTruth(NodeTruthReport& report, const MLNode& node) {
                 TruthOwner::Runtime,
                 true,
                 false);
+            auto ffn_dropout = ResolveAliasedFloatProperty(
+                node, "FFN hidden dropout", "ffn_dropout", {}, "0.0",
+                TruthOwner::Runtime, true, false);
+            RequireFloatInRange(ffn_dropout, "ffn_dropout", 0.0, 1.0, true, false);
+            report.properties.push_back(std::move(ffn_dropout));
             RequirePositiveInt(feedforward, "dim_feedforward");
             report.properties.push_back(std::move(feedforward));
             report.properties.push_back(ResolveBoolProperty(
@@ -1830,8 +1836,8 @@ void AddTransformerTruth(NodeTruthReport& report, const MLNode& node) {
         AddStatus(configuration, TruthStatus::Unsupported);
     } else {
         configuration.effective_value = is_positional
-            ? "one deterministic CPU-backed encoding"
-            : "one CPU-backed attention block";
+            ? "one deterministic encoding; execution follows the selected backend"
+            : "one attention block; execution follows the selected backend";
         AddStatus(configuration, TruthStatus::OK);
     }
     report.properties.push_back(std::move(configuration));
@@ -2739,6 +2745,7 @@ const std::vector<NodeType>& SpecializedTruthCoverageNodeTypes() {
         NodeType::Unsqueeze,
         NodeType::LSTM,
         NodeType::GRU,
+        NodeType::RNN,
         NodeType::NERSequenceBuilder,
         NodeType::TokenVocabulary,
         NodeType::POSVocabulary,
@@ -2917,6 +2924,19 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
     }
 
     if (node.type == NodeType::DataLoader) {
+        auto seed = ResolveStringProperty(node, "Model RNG seed", "model_seed", "-1",
+            TruthOwner::Runtime, false, true, false,
+            "-1 leaves unset. Seeds fresh-run ArrayFire weights/dropout; DataLoader seed controls data order. Not checkpoint continuation.");
+        try {
+            if (const auto* configured = FindParameter(node, "model_seed"))
+                (void)cyxwiz::ParseModelRandomSeed(*configured);
+        } catch (const std::exception& error) {
+            seed.statuses.clear();
+            AddStatus(seed, TruthStatus::Conflicting);
+            AddStatus(seed, TruthStatus::RequiresDialog);
+            seed.message = error.what();
+        }
+        report.properties.push_back(std::move(seed));
         if (FindParameter(node, "pin_memory")) {
             auto pin_memory = ResolveBoolProperty(
                 node,
@@ -2981,7 +3001,8 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
         AddOptimizerTruth(report, node);
     }
 
-    if (node.type == NodeType::LSTM || node.type == NodeType::GRU) {
+    if (node.type == NodeType::LSTM || node.type == NodeType::GRU ||
+        node.type == NodeType::RNN) {
         auto hidden_size = ResolveIntProperty(
             node,
             "Hidden size",
@@ -3034,13 +3055,22 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
             false,
             node.type == NodeType::LSTM
                 ? "Engine LSTM training currently supports only one direction."
-                : "GRU uses explicit forward and reverse branches when enabled.");
+                : (node.type == NodeType::RNN
+                       ? "Engine simple-RNN training supports only one direction."
+                       : "GRU uses explicit forward and reverse branches when enabled."));
         if (node.type == NodeType::LSTM &&
             bidirectional.effective_value == "true") {
             bidirectional.statuses.clear();
             AddStatus(bidirectional, TruthStatus::Unsupported);
             bidirectional.message =
                 "Reverse-direction LSTM backward gradients are not implemented; "
+                "Engine training fails closed for bidirectional=true.";
+        } else if (node.type == NodeType::RNN &&
+                   bidirectional.effective_value == "true") {
+            bidirectional.statuses.clear();
+            AddStatus(bidirectional, TruthStatus::Unsupported);
+            bidirectional.message =
+                "The simple RNN layer implements one direction only; "
                 "Engine training fails closed for bidirectional=true.";
         } else if (node.type == NodeType::GRU &&
                    bidirectional.effective_value == "true") {

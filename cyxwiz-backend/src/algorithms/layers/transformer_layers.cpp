@@ -64,8 +64,19 @@ Tensor AddSameShape(const Tensor& lhs, const Tensor& rhs) {
 TransformerEncoderLayer::TransformerEncoderLayer(int d_model, int nhead,
                                                    int dim_feedforward, float dropout,
                                                    bool norm_first)
+    : TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, norm_first, 0.0f) {}
+
+TransformerEncoderLayer::TransformerEncoderLayer(int d_model, int nhead,
+    int dim_feedforward, float dropout, bool norm_first, float ffn_dropout)
     : d_model_(d_model), nhead_(nhead), dim_feedforward_(dim_feedforward),
       dropout_(dropout), norm_first_(norm_first) {
+    if (dim_feedforward <= 0) {
+        throw std::invalid_argument("Transformer dim_feedforward must be positive");
+    }
+    if (!std::isfinite(ffn_dropout) || ffn_dropout < 0.0f || ffn_dropout >= 1.0f) {
+        throw std::invalid_argument("Transformer ffn_dropout must be finite and in [0,1)");
+    }
+    ffn_dropout_ = std::make_unique<DropoutLayer>(ffn_dropout);
 
     self_attn_ = std::make_unique<MultiHeadAttentionLayer>(d_model, nhead, dropout);
     norm1_ = std::make_unique<LayerNormLayer>(std::vector<int>{d_model});
@@ -104,6 +115,7 @@ Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_m
         // ReLU activation
         ffn_out = ReLU().Forward(ffn_out);
         cached_ffn_mid_ = ffn_out;
+        ffn_out = ffn_dropout_->Forward(ffn_out);
 
         ffn_out = linear2_->Forward(ffn_out);
         ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
@@ -134,6 +146,7 @@ Tensor TransformerEncoderLayer::Forward(const Tensor& input, const Tensor* src_m
         // ReLU activation
         ffn_out = ReLU().Forward(ffn_out);
         cached_ffn_mid_ = ffn_out;
+        ffn_out = ffn_dropout_->Forward(ffn_out);
 
         ffn_out = linear2_->Forward(ffn_out);
         ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
@@ -160,6 +173,7 @@ Tensor TransformerEncoderLayer::Backward(const Tensor& grad_output) {
         grad_ffn = FlattenTransformerSequenceForDense(grad_ffn);
     }
     grad_ffn = linear2_->Backward(grad_ffn);
+    grad_ffn = ffn_dropout_->Backward(grad_ffn);
 
     grad_ffn = ReLU().Backward(grad_ffn, cached_ffn_mid_);
 
@@ -251,6 +265,7 @@ void TransformerEncoderLayer::SetTraining(bool training) {
     norm2_->SetTraining(training);
     linear1_->SetTraining(training);
     linear2_->SetTraining(training);
+    ffn_dropout_->SetTraining(training);
     dropout1_->SetTraining(training);
     dropout2_->SetTraining(training);
 }
@@ -262,8 +277,19 @@ void TransformerEncoderLayer::SetTraining(bool training) {
 TransformerDecoderLayer::TransformerDecoderLayer(int d_model, int nhead,
                                                    int dim_feedforward, float dropout,
                                                    bool norm_first)
+    : TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, norm_first, 0.0f) {}
+
+TransformerDecoderLayer::TransformerDecoderLayer(int d_model, int nhead,
+    int dim_feedforward, float dropout, bool norm_first, float ffn_dropout)
     : d_model_(d_model), nhead_(nhead), dim_feedforward_(dim_feedforward),
       dropout_(dropout), norm_first_(norm_first) {
+    if (dim_feedforward <= 0) {
+        throw std::invalid_argument("Transformer dim_feedforward must be positive");
+    }
+    if (!std::isfinite(ffn_dropout) || ffn_dropout < 0.0f || ffn_dropout >= 1.0f) {
+        throw std::invalid_argument("Transformer ffn_dropout must be finite and in [0,1)");
+    }
+    ffn_dropout_ = std::make_unique<DropoutLayer>(ffn_dropout);
 
     self_attn_ = std::make_unique<MultiHeadAttentionLayer>(d_model, nhead, dropout);
     cross_attn_ = std::make_unique<MultiHeadAttentionLayer>(d_model, nhead, dropout);
@@ -308,6 +334,7 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& input) {
 
         ffn_out = ReLU().Forward(ffn_out);
         cached_ffn_mid_ = ffn_out;
+        ffn_out = ffn_dropout_->Forward(ffn_out);
 
         ffn_out = linear2_->Forward(ffn_out);
         ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
@@ -330,6 +357,7 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& input) {
 
     ffn_out = ReLU().Forward(ffn_out);
     cached_ffn_mid_ = ffn_out;
+    ffn_out = ffn_dropout_->Forward(ffn_out);
 
     ffn_out = linear2_->Forward(ffn_out);
     ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
@@ -379,6 +407,7 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
         // ReLU
         ffn_out = ReLU().Forward(ffn_out);
         cached_ffn_mid_ = ffn_out;
+        ffn_out = ffn_dropout_->Forward(ffn_out);
 
         ffn_out = linear2_->Forward(ffn_out);
         ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
@@ -416,6 +445,7 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
         // ReLU
         ffn_out = ReLU().Forward(ffn_out);
         cached_ffn_mid_ = ffn_out;
+        ffn_out = ffn_dropout_->Forward(ffn_out);
 
         ffn_out = linear2_->Forward(ffn_out);
         ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
@@ -441,6 +471,7 @@ Tensor TransformerDecoderLayer::Backward(const Tensor& grad_output) {
         grad_ffn = FlattenTransformerSequenceForDense(grad_ffn);
     }
     grad_ffn = linear2_->Backward(grad_ffn);
+    grad_ffn = ffn_dropout_->Backward(grad_ffn);
 
     grad_ffn = ReLU().Backward(grad_ffn, cached_ffn_mid_);
 
@@ -582,6 +613,7 @@ void TransformerDecoderLayer::SetTraining(bool training) {
     norm3_->SetTraining(training);
     linear1_->SetTraining(training);
     linear2_->SetTraining(training);
+    ffn_dropout_->SetTraining(training);
     dropout1_->SetTraining(training);
     dropout2_->SetTraining(training);
     dropout3_->SetTraining(training);

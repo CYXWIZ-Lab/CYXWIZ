@@ -1,6 +1,9 @@
+#include "../src/core/training_export_metadata.h"
+#include <sstream>
 #include "../src/core/graph_compiler.h"
 #include "../src/core/model_exporter.h"
 #include "../src/core/model_importer.h"
+#include "../src/core/formats/cyxmodel_archive.h"
 #include "../src/core/language_model_generation.h"
 #include "../src/gui/loaders/data_loader.h"
 #include "../src/inference/text_inference_input.h"
@@ -80,7 +83,7 @@ void WriteTextFile(const std::filesystem::path& path, const std::string& text) {
     file << text;
 }
 
-std::string BuildCausalLmGraphJson() {
+std::string BuildCausalLmGraphJson(bool supplied_roles = false) {
     using json = nlohmann::json;
     json graph;
     graph["nodes"] = json::array();
@@ -153,6 +156,33 @@ std::string BuildCausalLmGraphJson() {
     graph["links"].push_back({{"id", 106}, {"from_node", 1}, {"to_node", 6}});
     graph["links"].push_back({{"id", 107}, {"from_node", 7}, {"to_node", 6}});
 
+    if (supplied_roles) {
+        graph["data_boundary_version"] = 2;
+        graph["nodes"][0]["type"] = static_cast<int>(gui::NodeType::DataInput);
+        auto validation = graph["nodes"][0];
+        validation["id"] = 10;
+        validation["name"] = "Unloaded validation dataset";
+        validation["parameters"]["dataset_name"] = "unloaded_validation";
+        validation["parameters"]["dataset"] = "unloaded_validation";
+        graph["nodes"].push_back(validation);
+        graph["nodes"].push_back({{"id",8},{"type",static_cast<int>(gui::NodeType::DataSplit)},
+            {"name","Supplied roles"},{"parameters",{{"train_ratio","1.0"},
+            {"val_ratio","0.0"},{"test_ratio","0.0"},{"data_boundary_pin_contract","dataset.v2"}}}});
+        graph["nodes"].push_back({{"id",9},{"type",static_cast<int>(gui::NodeType::DataLoader)},
+            {"name","Training loader with preview"},{"parameters",{
+            {"create_causal_lm_targets","true"},{"max_sequence_length","32"},
+            {"generation_preview_enabled","true"},{"generation_preview_every_epochs","1"},
+            {"generation_preview_prompts","hello"},{"generation_preview_max_new_tokens","2"},
+            {"data_boundary_pin_contract","dataset.v2"}}}});
+        graph["links"] = json::array();
+        auto connect = [&](int from, int output, int to, int input) {
+            graph["links"].push_back({{"id",static_cast<int>(graph["links"].size()+1)},
+                {"from_node",from},{"from_pin_index",output},{"to_node",to},{"to_pin_index",input}});
+        };
+        connect(1,0,8,0); connect(10,0,8,1); connect(8,0,9,0);
+        connect(9,0,2,0); connect(2,0,3,0); connect(3,0,4,0);
+        connect(4,0,5,0); connect(5,0,6,0); connect(9,1,6,1); connect(6,0,7,0);
+    }
     return graph.dump();
 }
 void CheckTensorValues(const cyxwiz::Tensor& tensor,
@@ -166,9 +196,120 @@ void CheckTensorValues(const cyxwiz::Tensor& tensor,
     }
 }
 
+
+void CheckBpeSnapshotRoundtrip(const std::filesystem::path& root) {
+    cyxwiz::Tokenizer tokenizer(cyxwiz::TokenizerType::ByteBPE);
+    tokenizer.SetLowercase(false);
+    tokenizer.SetPadding(false);
+    tokenizer.Train({"In the beginning", "And God said"}, 1, 280);
+    std::ostringstream artifact;
+    Check(tokenizer.GetVocabulary().SaveToStream(artifact), "serialize BPE snapshot");
+    const auto width = tokenizer.GetVocabulary().Size();
+    cyxwiz::TrainingConfiguration config;
+    config.batch_size=1; config.input_shape={32}; config.output_size=width;
+    config.sequence_batch.enabled=true; config.sequence_batch.create_causal_lm_targets=true;
+    config.sequence_batch.max_sequence_length=32;
+    config.sequence_batch.tokenizer_config_json=R"({"effective":{"tokenizer_type":"3","lowercase":"false","max_length":32}})";
+    config.sequence_batch.tokenizer_vocabulary_artifact=artifact.str();
+    auto options=cyxwiz::TrainingExportMetadata(config);
+    options.include_optimizer_state=false; options.include_training_history=false;
+    auto graph=nlohmann::json::parse(BuildCausalLmGraphJson(true));
+    graph["nodes"][0]["parameters"]["shape"]="[32]";
+    graph["nodes"][0]["parameters"]["max_sequence_length"]="32";
+    graph["nodes"][1]["parameters"]["num_embeddings"]=std::to_string(width);
+    graph["nodes"][3]["parameters"]["units"]=std::to_string(width);
+    graph["nodes"][4]["parameters"]["num_classes"]=std::to_string(width);
+    cyxwiz::SequentialModel source;
+    source.Add<cyxwiz::EmbeddingModule>(width,4,0);
+    source.Add<cyxwiz::TransformerDecoderModule>(4,2,8,0.0f,false);
+    source.Add<cyxwiz::TimeDistributedDenseModule>(4,width,true);
+    source.SetTraining(false);
+    cyxwiz::ModelExporter exporter;
+    const auto path=root/"bpe_snapshot.cyxmodel";
+    const auto exported=exporter.ExportCyxModel(source,nullptr,nullptr,graph.dump(),path.string(),options);
+    Check(exported.success,"BPE snapshot export: "+exported.error_message);
+    Check(std::filesystem::is_regular_file(path),"native export must create a binary file");
+    cyxwiz::formats::CyxModelFormat format;
+    std::string cfg,vocab,error;
+    Check(format.ExtractTextTokenizerAssets(path.string(),cfg,vocab),"BPE extraction");
+    Check(vocab==artifact.str(),"BPE artifact byte identity");
+    cyxwiz::TextTokenizerPackage packaged;
+    Check(cyxwiz::LoadTextTokenizerPackage(cfg,vocab,packaged,error),"BPE tokenizer reload: "+error);
+    const auto ids=cyxwiz::EncodeTextTokenIdsForGeneration(*packaged.tokenizer,"In the beginning");
+    const auto expected=tokenizer.Encode("In the beginning");
+    Check(ids==std::vector<int64_t>(expected.begin(),expected.end()),"BPE prompt ID parity");
+    auto contract=cyxwiz::ValidateLanguageModelPackageContract(format.Probe(path.string()),&packaged,path.string());
+    Check(contract.compatible && contract.tokenizer_vocabulary_size==width,"BPE inference package contract: "+contract.error);
+    cyxwiz::SequentialModel imported;
+    cyxwiz::ModelImporter importer;
+    cyxwiz::ImportOptions load;load.strict_mode=true;
+    const auto result=importer.ImportCyxModel(path.string(),imported,load);
+    Check(result.success,"BPE model import: "+result.error_message);
+    Check(imported.Size()==3,"supplied-role graph must retain exactly three model layers");
+    imported.SetTraining(false);
+    cyxwiz::Tensor input({1,ids.size()},ids.data(),cyxwiz::DataType::Int64);
+    CheckTensorValues(imported.Forward(input),source.Forward(input),"BPE imported logits");
+    cyxwiz::LanguageModelGenerationConfig generation;
+    generation.max_new_tokens=2; generation.eos_token_id=-1;
+    auto before=cyxwiz::GenerateTokenIdsWithConfig(source,ids,generation,7u);
+    auto after=cyxwiz::GenerateTokenIdsWithConfig(imported,ids,generation,7u);
+    Check(before==after,"BPE generated-token parity after package reload");
+    Check(cyxwiz::DecodeGeneratedTokenIds(tokenizer,before)==
+          cyxwiz::DecodeGeneratedTokenIds(*packaged.tokenizer,after),"BPE decoded-output parity");
+    // An invalid saved graph must fail with its original cause, never guess Dense layers.
+    auto invalid = graph;
+    invalid["links"][0]["to_pin_index"] = 999;
+    auto assets=cyxwiz::formats::CyxModelArchive::Read(path);
+    const auto invalid_json=invalid.dump();
+    assets["graph.cyxgraph"]={invalid_json.begin(),invalid_json.end()};
+    cyxwiz::formats::CyxModelArchive::WriteBinary(path,assets);
+    cyxwiz::SequentialModel rejected;
+    const auto failed=importer.Import(path.string(),rejected,{});
+    Check(!failed.success && failed.error_message.find("Invalid serialized model graph link")!=std::string::npos,
+          "invalid graph must preserve the import error: "+failed.error_message);
+    Check(rejected.Size()==0,"invalid graph must not be reconstructed from weight shapes");
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    // Optional real-artifact oracle: no training dataset or project-specific code.
+    if (argc == 3) {
+        const std::filesystem::path package_path(argv[1]);
+        std::ifstream preview_file(argv[2]);
+        const auto preview = nlohmann::json::parse(preview_file);
+        cyxwiz::ModelImporter importer;
+        cyxwiz::SequentialModel model;
+        const auto result = importer.Import(package_path.string(), model, {});
+        Check(result.success, "actual package import: " + result.error_message);
+        model.SetTraining(false);
+        cyxwiz::formats::CyxModelFormat format;
+        std::string config, vocabulary, error;
+        Check(format.ExtractTextTokenizerAssets(package_path.string(), config, vocabulary),
+              "actual tokenizer extraction");
+        cyxwiz::TextTokenizerPackage tokenizer;
+        Check(cyxwiz::LoadTextTokenizerPackage(config, vocabulary, tokenizer, error), error);
+        Check(tokenizer.tokenizer != nullptr, "actual tokenizer must be present");
+        for (const auto& sample : preview.at("samples")) {
+            const auto prompt = sample.at("prompt_token_ids").get<std::vector<int64_t>>();
+            const auto expected = sample.at("new_token_ids").get<std::vector<int64_t>>();
+            cyxwiz::LanguageModelGenerationConfig generation;
+            generation.max_new_tokens = preview.at("max_new_tokens").get<size_t>();
+            generation.max_context_tokens = preview.at("context").get<size_t>();
+            generation.eos_token_id = tokenizer.tokenizer->GetVocabulary().EosIndex();
+            generation.include_prompt = false;
+            generation.sampling_mode = cyxwiz::LanguageModelSamplingMode::Greedy;
+            const auto report = cyxwiz::GenerateTokenIdsWithReport(model, prompt, generation, 52u);
+            Check(report.new_token_ids == expected, "actual package generated-token parity");
+            const auto decoded = cyxwiz::DecodeGeneratedTokenIds(*tokenizer.tokenizer, report.new_token_ids);
+            Check(decoded == sample.at("generated_text").get<std::string>(),
+                  "actual package decoded-text parity");
+            std::cout << "Verified prompt " << sample.at("prompt") << ": " << decoded << '\n';
+        }
+        std::cout << "Actual package import and preview parity passed; layers=" << model.Size() << '\n';
+        return 0;
+    }
+    Check(argc == 1, "usage: test [package_path preview_json]");
     namespace fs = std::filesystem;
 
     const fs::path root =
@@ -349,6 +490,7 @@ int main() {
         generated_ids);
     Check(!generated_text.empty(),
           "generated token IDs should decode through packaged tokenizer");
+    CheckBpeSnapshotRoundtrip(root);
     fs::remove_all(root);
     std::cout << "CyxModel causal LM generation round-trip test passed\n";
     return 0;

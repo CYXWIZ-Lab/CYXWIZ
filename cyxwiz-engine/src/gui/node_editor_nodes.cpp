@@ -2650,6 +2650,19 @@ static void UnregisterNodeDatasetIfOwned(const MLNode& node) {
 }
 
 void NodeEditor::DeleteNode(int node_id) {
+    if (IsSubgraphMember(node_id)) {
+        spdlog::warn("Cannot delete a subgraph member individually yet; delete its Subgraph container instead.");
+        return;
+    }
+    if (auto* data = GetSubgraphData(node_id)) {
+        const auto members = data->internal_nodes;
+        const bool expanded = data->expanded;
+        std::erase_if(subgraphs_, [node_id](const SubgraphData& entry) { return entry.subgraph_node_id == node_id; });
+        for (const auto& member : members) {
+            if (expanded) DeleteNode(member.id);
+            else UnregisterNodeDatasetIfOwned(member);
+        }
+    }
     ClearValidationState();  // Graph changed — stale compile results
 
     // Delete node
@@ -2687,6 +2700,7 @@ void NodeEditor::DeleteNode(int node_id) {
 }
 
 void NodeEditor::ClearGraph() {
+    if (!CanReplaceGraph("clear the graph")) return;
     SaveUndoState();
     ClearValidationState();  // Graph changed — stale compile results
 
@@ -2703,6 +2717,10 @@ void NodeEditor::ClearGraph() {
         UnregisterNodeDatasetIfOwned(node);
     }
 
+    for (const auto& data : subgraphs_) {
+        if (!data.expanded) for (const auto& node : data.internal_nodes) UnregisterNodeDatasetIfOwned(node);
+    }
+    subgraphs_.clear();
     nodes_.clear();
     links_.clear();
     next_node_id_ = 1;
@@ -2733,6 +2751,7 @@ void NodeEditor::ClearGraph() {
 }
 
 void NodeEditor::InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
+    if (!CanReplaceGraph("insert a pattern")) return;
     if (nodes.empty()) {
         spdlog::warn("InsertPattern called with empty nodes list");
         return;

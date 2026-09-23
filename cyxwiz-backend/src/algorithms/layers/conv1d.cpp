@@ -317,16 +317,18 @@ Tensor Conv1DLayer::Forward(const Tensor& input) {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     bool use_native_cpu = false;
     if (dilation_ != 1) {
-        RecordLayerArrayFireFallback(
+        RecordLayerArrayFireFallbackObservation(
             "Conv1DLayer::Forward",
+            "Conv1D",
             BackendFallbackReason::UnsupportedShape,
             "ArrayFire unwrap does not support dilated Conv1D windows",
             input,
             "input");
         use_native_cpu = true;
     } else if (padding_ >= kernel_size_) {
-        RecordLayerArrayFireFallback(
+        RecordLayerArrayFireFallbackObservation(
             "Conv1DLayer::Forward",
+            "Conv1D",
             BackendFallbackReason::UnsupportedShape,
             "ArrayFire unwrap requires padding smaller than kernel size",
             input,
@@ -383,8 +385,8 @@ Tensor Conv1DLayer::Forward(const Tensor& input) {
             has_forward_ = true;
             return result;
         } catch (const af::exception& e) {
-            RecordLayerArrayFireFallback(
-                "Conv1DLayer::Forward", e.what(), input, "input");
+            RecordLayerArrayFireFallbackObservation(
+                "Conv1DLayer::Forward", "Conv1D", e.what(), input, "input");
         }
     }
 #else
@@ -528,11 +530,12 @@ Tensor Conv1DLayer::Backward(const Tensor& grad_output) {
             return Tensor::FromSemanticArray(
                 grad_input, cached_input_.Shape());
         } catch (const af::exception& e) {
-            RecordLayerArrayFireFallback(
+            RecordLayerArrayFireFallbackObservation(
                 "Conv1DLayer::Backward",
+                "Conv1D",
                 e.what(),
-                grad_output,
-                "grad_output");
+                cached_input_,
+                "input");
         }
     }
 #else

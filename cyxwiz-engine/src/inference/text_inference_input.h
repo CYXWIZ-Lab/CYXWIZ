@@ -21,11 +21,19 @@ struct TextTokenizerPackage {
 
     std::unique_ptr<Tokenizer> tokenizer;
     bool has_vocabulary = false;
+    bool has_model_artifact = false;
 };
 
 bool LoadTextTokenizerPackage(
     const std::string& config_json,
     const std::string& vocab_text,
+    TextTokenizerPackage& out,
+    std::string& error);
+
+bool LoadTextTokenizerPackage(
+    const std::string& config_json,
+    const std::string& vocab_text,
+    const std::string& model_artifact,
     TextTokenizerPackage& out,
     std::string& error);
 

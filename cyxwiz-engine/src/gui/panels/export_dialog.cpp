@@ -35,7 +35,7 @@ void ExportDialog::Open(ModelFormat initial_format) {
     include_training_history_ = true;
     include_graph_ = true;
     quantization_index_ = 0;
-    compress_ = true;
+    compress_ = false;
 }
 
 void ExportDialog::Close() {
@@ -47,13 +47,15 @@ void ExportDialog::SetModelData(
     const Optimizer* optimizer,
     const TrainingMetrics* metrics,
     const std::string& graph_json,
-    uint64_t graph_hash
+    uint64_t graph_hash,
+    const ExportOptions& trained_metadata
 ) {
     model_ = model;
     optimizer_ = optimizer;
     metrics_ = metrics;
     graph_json_ = graph_json;
     graph_hash_ = graph_hash;
+    trained_metadata_ = trained_metadata;
 }
 
 void ExportDialog::Render() {
@@ -279,10 +281,11 @@ void ExportDialog::RenderOptions() {
         }
 
         ImGui::SameLine(200);
+        compress_ = false;
+        ImGui::BeginDisabled();
         ImGui::Checkbox("Compress", &compress_);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Compress weights (reduces file size)");
-        }
+        ImGui::EndDisabled();
+        ImGui::TextDisabled("Single-file CYXW v3; compression is not implemented.");
     }
     else if (selected_format_ == ModelFormat::ONNX) {
         ImGui::SetNextItemWidth(100);
@@ -378,6 +381,8 @@ void ExportDialog::StartExport() {
     export_progress_ = 0;
     export_total_ = 6;
 
+    // Keep the completed run snapshot; UI controls only change inclusion/format.
+    export_options_ = trained_metadata_;
     // Build export options
     export_options_.format = selected_format_;
     export_options_.include_optimizer_state = include_optimizer_state_;

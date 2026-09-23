@@ -103,6 +103,7 @@ struct ApplyContext {
     // path accepts auto/csv/tsv/parquet/feather/arrow/ipc; unsupported
     // values fail validation before async loading starts.
     std::string detected_file_type;
+    std::string archive_member;
     bool has_header = true;
     char delimiter = ',';
     char decimal_point = '.';
@@ -122,7 +123,7 @@ struct ApplyContext {
     // text_has_labels is `true` when the corpus is class-subdir layout
     // (folder/<class>/*.txt) or when the user picked a label column
     // for a single-file corpus. text_tokenizer_type is the raw enum
-    // index from the dialog: 0=Whitespace, 1=Word, 2=Character.
+    // index from the dialog: 0=Whitespace, 1=Word, 2=Character, 3=ByteBPE, 4=WordPiece, 5=SentencePieceBPE, 6=SentencePieceUnigram.
     std::string text_column;
     std::string text_label_column;
     bool text_has_labels = false;

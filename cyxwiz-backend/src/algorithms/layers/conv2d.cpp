@@ -348,8 +348,8 @@ Tensor Conv2DLayer::Forward(const Tensor& input) {
             has_forward_ = true;
             return result;
         } catch (const af::exception& e) {
-            RecordLayerArrayFireFallback(
-                "Conv2DLayer::Forward", e.what(), input, "input");
+            RecordLayerArrayFireFallbackObservation(
+                "Conv2DLayer::Forward", "Conv2D", e.what(), input, "input");
         }
     }
 #else
@@ -477,11 +477,12 @@ Tensor Conv2DLayer::Backward(const Tensor& grad_output) {
             return Tensor::FromSemanticArray(
                 grad_input, cached_input_.Shape());
         } catch (const af::exception& e) {
-            RecordLayerArrayFireFallback(
+            RecordLayerArrayFireFallbackObservation(
                 "Conv2DLayer::Backward",
+                "Conv2D",
                 e.what(),
-                grad_output,
-                "grad_output");
+                cached_input_,
+                "input");
         }
     }
 #else

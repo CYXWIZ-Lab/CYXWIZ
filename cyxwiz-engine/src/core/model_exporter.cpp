@@ -48,6 +48,7 @@ bool LooksLikeTokenizerParams(const nlohmann::json& params) {
     return params.contains("tokenizer_type") ||
            params.contains("method") ||
            params.contains("vocab_file") ||
+           params.contains("model_file") ||
            params.contains("text_col") ||
            params.contains("text_column") ||
            params.contains("max_length") ||
@@ -67,10 +68,12 @@ void CopyParamIfPresent(nlohmann::json& target,
 bool InferTextTokenizerAssetsFromGraph(
     const std::string& graph_json,
     std::string& out_config_json,
-    std::string& out_vocab_path
+    std::string& out_vocab_path,
+    std::string& out_model_path
 ) {
     out_config_json.clear();
     out_vocab_path.clear();
+    out_model_path.clear();
 
     if (graph_json.empty()) {
         return false;
@@ -90,6 +93,7 @@ bool InferTextTokenizerAssetsFromGraph(
 
         bool found = false;
         std::string candidate_vocab_path;
+        std::string candidate_model_path;
 
         for (const auto& node : graph["nodes"]) {
             if (!node.contains("parameters") || !node["parameters"].is_object()) {
@@ -126,11 +130,17 @@ bool InferTextTokenizerAssetsFromGraph(
             CopyParamIfPresent(effective, params, "label_col");
             CopyParamIfPresent(effective, params, "label_column");
             CopyParamIfPresent(effective, params, "vocab_file");
+            CopyParamIfPresent(effective, params, "model_file");
 
             if (params.contains("vocab_file") &&
                 params["vocab_file"].is_string() &&
                 !params["vocab_file"].get<std::string>().empty()) {
                 candidate_vocab_path = params["vocab_file"].get<std::string>();
+            }
+            if (params.contains("model_file") &&
+                params["model_file"].is_string() &&
+                !params["model_file"].get<std::string>().empty()) {
+                candidate_model_path = params["model_file"].get<std::string>();
             }
         }
 
@@ -147,6 +157,18 @@ bool InferTextTokenizerAssetsFromGraph(
                 package_config["effective"]["vocab_file_packaged"] = nullptr;
                 package_config["effective"]["vocab_file_package_warning"] =
                     "Original vocab_file path did not exist at export time";
+            }
+        }
+
+        if (!candidate_model_path.empty()) {
+            package_config["effective"]["model_file_packaged"] =
+                "tokenizer/model.spm";
+            if (std::filesystem::exists(candidate_model_path)) {
+                out_model_path = candidate_model_path;
+            } else {
+                package_config["effective"]["model_file_packaged"] = nullptr;
+                package_config["effective"]["model_file_package_warning"] =
+                    "Original model_file path did not exist at export time";
             }
         }
 
@@ -749,23 +771,31 @@ ExportResult ModelExporter::ExportCyxModel(
     try {
         ExportOptions resolved_options = options;
         if (resolved_options.include_tokenizer_assets &&
+            resolved_options.text_tokenizer_vocab_data.empty() &&
+            resolved_options.text_tokenizer_model_data.empty() &&
             resolved_options.text_tokenizer_config_json.empty()) {
             std::string inferred_config;
             std::string inferred_vocab_path;
+            std::string inferred_model_path;
             if (InferTextTokenizerAssetsFromGraph(graph_json,
                                                   inferred_config,
-                                                  inferred_vocab_path)) {
+                                                  inferred_vocab_path,
+                                                  inferred_model_path)) {
                 resolved_options.text_tokenizer_config_json =
                     std::move(inferred_config);
                 if (resolved_options.text_tokenizer_vocab_path.empty()) {
                     resolved_options.text_tokenizer_vocab_path =
                         std::move(inferred_vocab_path);
                 }
+                if (resolved_options.text_tokenizer_model_path.empty()) {
+                    resolved_options.text_tokenizer_model_path =
+                        std::move(inferred_model_path);
+                }
             }
         }
 
         InferredSequenceConfig inferred_sequence_config;
-        if (resolved_options.include_sequence_assets &&
+        if (resolved_options.include_sequence_assets && resolved_options.text_tokenizer_vocab_data.empty() &&
             InferSequenceAssetsFromGraph(graph_json, inferred_sequence_config)) {
             if (resolved_options.sequence_token_vocabulary_path.empty() &&
                 !inferred_sequence_config.token_vocab_path.empty()) {
@@ -828,10 +858,10 @@ ExportResult ModelExporter::ExportCyxModel(
             manifest.bert_encoder_requires_token_type_ids =
                 inferred_bert_config.requires_token_type_ids;
         }
-        manifest.has_tokenizer =
+        manifest.has_tokenizer = resolved_options.include_tokenizer_assets &&
             !resolved_options.text_tokenizer_config_json.empty();
-        manifest.has_vocabulary =
-            !resolved_options.text_tokenizer_vocab_path.empty();
+        manifest.has_vocabulary = resolved_options.include_tokenizer_assets &&
+            (!resolved_options.text_tokenizer_vocab_path.empty() || !resolved_options.text_tokenizer_vocab_data.empty());
         manifest.has_tree_model_artifact =
             resolved_options.include_tree_model_artifact;
         if (manifest.has_tree_model_artifact) {
@@ -895,6 +925,7 @@ ExportResult ModelExporter::ExportCyxModel(
         // 2. Extract weights from model
         std::map<std::string, std::vector<uint8_t>> weights;
         std::map<std::string, std::vector<int64_t>> weight_shapes;
+        std::map<std::string, TensorDType> weight_dtypes;
 
         auto params = model.GetParameters();
         result.num_parameters = 0;
@@ -903,6 +934,14 @@ ExportResult ModelExporter::ExportCyxModel(
         for (const auto& [name, tensor] : params) {
             weights[name] = TensorToBytes(tensor);
             weight_shapes[name] = GetTensorShape(tensor);
+            switch(tensor.GetDataType()) {
+                case DataType::Float32: weight_dtypes[name]=TensorDType::Float32; break;
+                case DataType::Float64: weight_dtypes[name]=TensorDType::Float64; break;
+                case DataType::Int32: weight_dtypes[name]=TensorDType::Int32; break;
+                case DataType::Int64: weight_dtypes[name]=TensorDType::Int64; break;
+                case DataType::UInt8: weight_dtypes[name]=TensorDType::UInt8; break;
+                default: throw std::runtime_error("Unsupported native export dtype: "+name);
+            }
             result.num_parameters += static_cast<int>(tensor.NumElements());
             result.total_tensor_bytes += tensor.NumBytes();
         }
@@ -914,7 +953,10 @@ ExportResult ModelExporter::ExportCyxModel(
         if (progress_cb) progress_cb(2, 6, "Creating training config...");
 
         // 3. Create training config
-        TrainingConfig config = CreateTrainingConfig(optimizer, training_metrics);
+        TrainingConfig config = resolved_options.trained_config
+            ? *resolved_options.trained_config : CreateTrainingConfig(optimizer, training_metrics);
+        if (training_metrics) config.epochs = training_metrics->last_executed_epoch > 0
+            ? training_metrics->last_executed_epoch : training_metrics->current_epoch;
 
         if (progress_cb) progress_cb(3, 6, "Creating training history...");
 
@@ -955,7 +997,8 @@ ExportResult ModelExporter::ExportCyxModel(
             weights,
             weight_shapes,
             optimizer_state_ptr,
-            resolved_options
+            resolved_options,
+            &weight_dtypes
         );
 
         if (!success) {
@@ -1619,7 +1662,7 @@ TrainingConfig ModelExporter::CreateTrainingConfig(
 
     if (metrics) {
         config.epochs = metrics->total_epochs;
-        config.batch_size = metrics->total_batches > 0 ? 32 : 0;  // Approximation
+        config.batch_size = 0;  // Unknown without the completed training configuration.
     }
 
     return config;

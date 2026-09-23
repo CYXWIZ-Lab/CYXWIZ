@@ -1,6 +1,8 @@
 #include "cyxwiz/layers/recurrent.h"
 #include "cyxwiz/backend_placement_observation.h"
 #include "cyxwiz/debug_hooks.h"
+#include "cyxwiz/neural_provider.h"
+#include "cyxwiz/recurrent_cuda_placement.h"
 #include "layer_arrayfire_utils.h"
 #include "layer_recurrent_utils.h"
 
@@ -13,6 +15,68 @@
 namespace cyxwiz {
 
 Tensor GRULayer::Backward(const Tensor& grad_output) {
+    // tofix68 P3: when Forward ran through the native provider, the
+    // CPU/AF caches are empty by design; gradients come from the
+    // provider's self-contained recompute+BPTT op. On provider failure,
+    // record evidence, disable the provider for this layer instance, and
+    // recompute Forward through the conventional paths so the CPU BPTT
+    // below has its caches (mirror of LSTMLayer::Backward, P2).
+    if (provider_forward_used_) {
+        provider_forward_used_ = false;
+        const auto& in_shape = cached_input_.Shape();
+        NeuralOpRequest provider_request;
+        provider_request.target = CaptureCurrentNeuralDeviceTarget();
+        provider_request.op = NeuralOp::GruBackward;
+        provider_request.training = true;
+        provider_request.dtype = DataType::Float32;
+        provider_request.batch = in_shape[0];
+        provider_request.seq = in_shape[1];
+        provider_request.input = in_shape[2];
+        provider_request.hidden = static_cast<size_t>(hidden_size_);
+        if (auto provider = NeuralProviderRegistry::Instance()
+                                .FindSupporting(provider_request)) {
+            const size_t gate_width =
+                static_cast<size_t>(3 * hidden_size_);
+            grad_W_ih_[0] = Tensor::Zeros({gate_width, in_shape[2]});
+            grad_W_hh_[0] = Tensor::Zeros(
+                {gate_width, static_cast<size_t>(hidden_size_)});
+            grad_b_ih_[0] = Tensor::Zeros({gate_width});
+            grad_b_hh_[0] = Tensor::Zeros({gate_width});
+            Tensor grad_input(in_shape);
+            NeuralOpBuffers buffers;
+            buffers.inputs = {&cached_input_, &grad_output};
+            buffers.weights = {&W_ih_[0], &W_hh_[0], &b_ih_[0], &b_hh_[0]};
+            buffers.outputs = {&grad_input};
+            buffers.gradients = {&grad_W_ih_[0], &grad_W_hh_[0],
+                                 &grad_b_ih_[0], &grad_b_hh_[0]};
+            const auto status =
+                provider->Execute(provider_request, buffers);
+            if (status.ok) {
+                return grad_input;
+            }
+            RecurrentCudaPlacementRequest evidence_request;
+            evidence_request.kind = RecurrentLayerKind::GRU;
+            evidence_request.batch_size = in_shape[0];
+            evidence_request.seq_len = in_shape[1];
+            evidence_request.input_size = in_shape[2];
+            evidence_request.hidden_size =
+                static_cast<size_t>(hidden_size_);
+            RecordRecurrentCudaPlacementObservation(
+                evidence_request,
+                BackendFallbackReasonName(status.reason),
+                BackendPlacementObservationSource::RuntimeFallback,
+                "native provider gru_backward failed: " + status.detail);
+            spdlog::warn(
+                "GRULayer::Backward: native provider failed (reason={}), "
+                "recomputing through the conventional path: {}",
+                BackendFallbackReasonName(status.reason), status.detail);
+        }
+        // Recompute Forward with the provider disabled so the CPU BPTT
+        // below has valid caches for THIS input.
+        provider_disabled_after_failure_ = true;
+        Forward(cached_input_);
+    }
+
     // Empty caches mean Forward was never called; return zeros sized by
     // the input we last saw so upstream grad flow is dimension-safe
     // rather than throwing. Mirror of LSTMLayer::Backward's guard.

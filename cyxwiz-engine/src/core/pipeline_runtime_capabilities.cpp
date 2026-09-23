@@ -896,8 +896,8 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"FileInput", "format", "auto", {"auto", "csv", "parquet"}},
         {"DataInput", "source_type", "file", {"file", "folder"}},
         {"DataInput", "dataset_role", "train", {"train", "dev", "validation", "test", "inference", "unspecified"}},
-        {"DataInput", "type", "auto", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}},
-        {"DataInput", "file_type", "auto", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc"}},
+        {"DataInput", "type", "auto", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc", "zip_text"}},
+        {"DataInput", "file_type", "auto", {"auto", "csv", "tsv", "parquet", "feather", "arrow", "ipc", "zip_text"}},
         {"DataOutput", "format", "csv", {"csv", "parquet"}},
         {"DataOutput", "file_type", "csv", {"csv", "parquet"}},
         {"DataConvert", "input_format", "auto", data_convert::AllowedNames(data_convert::Direction::Input, data_convert::kBuildFeatures)},
@@ -920,7 +920,8 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"BinningNode", "method", "equal_width", {"equal_width", "equal_freq", "equal_frequency"}},
         {"Binning", "method", "equal_width", {"equal_width", "equal_freq", "equal_frequency"}},
         {"TextTokenize", "method", "word", {"word", "sentence", "character"}},
-        {"TextTokenizer", "tokenizer_type", "1", {"0", "1", "2"}},
+        {"TextTokenizer", "tokenizer_type", "1", {"0", "1", "2", "3", "4", "5", "6"}},
+        {"TextTokenizer", "output_mode", "wide", {"wide", "causal_windows", "decode", "roundtrip"}},
         {"TextVectorize", "method", "count", {"count"}},
         {"StringManipulation", "operation", "trim", {"trim", "upper", "lower", "replace", "substring"}},
         {"CountVectorizer", "norm", "l2", {"l1", "l2", "none"}},
@@ -1100,10 +1101,10 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
          "has an ArrayFire-first backend primitive with tested output padding, gradients, residency, and fallback behavior plus a direct SequentialModel adapter, but is not constructed by ModelBuilder and has no multi-batch Studio training workflow",
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::Upsample,
-         "has native nearest/bilinear backend primitives, a compiler sketch, and a direct SequentialModel adapter but is not constructed by ModelBuilder or ArrayFire-first",
+         "has ArrayFire-first nearest/bilinear forward and gradients with observed native fallback and exact ModelBuilder construction through the SequentialModel adapter, but has no integrated spatial batch-layout contract or multi-batch Studio training workflow",
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::PixelShuffle,
-         "has an ArrayFire-first depth-to-space backend primitive with tested inverse, gradients, residency, and fallback behavior plus a direct SequentialModel adapter, but is not constructed by ModelBuilder and has no multi-batch Studio training workflow",
+         "has an ArrayFire-first depth-to-space backend primitive with tested inverse, gradients, residency, and fallback behavior plus exact ModelBuilder construction through the SequentialModel adapter, but has no integrated spatial batch-layout contract or multi-batch Studio training workflow",
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {gui::NodeType::PolicyNetwork,
          "sketches reinforcement-learning policy training but is not supported by ModelBuilder/SequentialModel yet",
@@ -1125,9 +1126,6 @@ GetPipelineUnsupportedSequentialModelLayerCapabilities() {
          PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
         {gui::NodeType::LinearAttention,
          "has neither a backend linear-attention primitive nor a GraphCompiler/ModelBuilder execution owner",
-         PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::RNN,
-         "has no backend simple-RNN layer, Python binding, ModelBuilder/SequentialModel module, or training owner and must not be substituted with GRU",
          PipelineBackendPrimitiveEvidence::Missing},
         {gui::NodeType::Bidirectional,
          "has no contract for binding an inner recurrent layer and is not constructed by GraphCompiler, ModelBuilder, or SequentialModel; bidirectional execution must be configured and validated on a concrete recurrent node",
@@ -1242,6 +1240,8 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled as a trainable recurrent model layer"},
         {gui::NodeType::GRU, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable recurrent model layer"},
+        {gui::NodeType::RNN, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable simple recurrent model layer on the native CPU reference"},
         {gui::NodeType::Embedding, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable token embedding layer"},
         {gui::NodeType::TransformerEncoder, PipelineTrainingSupportRole::ModelLayer,
@@ -2027,6 +2027,37 @@ bool HasTrainingGraphStructure(const std::vector<gui::MLNode>& nodes) {
         if (has_source && has_model && has_loss) return true;
     }
     return false;
+}
+
+PipelineExecutorInputStorageSupport ResolvePipelineExecutorInputStorageSupport(
+    gui::NodeType node_type, PipelineStorageBackend backend) {
+    const auto support = ResolvePipelineRuntimeSupport(node_type);
+    if (!support.pipeline_executor_supported ||
+        support.fail_mode != PipelineRuntimeFailMode::Real || support.source_node) {
+        return {false, "Operation has no qualified dataset-input execution contract"};
+    }
+    if (support.mode == PipelineRuntimeSupportMode::OperatorBacked) {
+        const auto storage = ResolvePipelineMaterializerStorageBackendSupport(backend);
+        return {storage.materializer_supported, storage.reason};
+    }
+    // These executor methods explicitly obtain their inputs with GetArrowDataset.
+    // Extend this qualification here after auditing the consuming method, not in UI.
+    switch (node_type) {
+    case gui::NodeType::FilterRows:
+    case gui::NodeType::SelectColumns:
+    case gui::NodeType::SortRows:
+    case gui::NodeType::JoinTables:
+    case gui::NodeType::GroupByAggregate:
+    case gui::NodeType::TextCleanNode:
+    case gui::NodeType::ExportCSV:
+    case gui::NodeType::ExportJSON:
+    case gui::NodeType::ExportParquet:
+        return {backend == PipelineStorageBackend::ArrowTable,
+                backend == PipelineStorageBackend::ArrowTable ? nullptr :
+                "This executor requires an in-memory Arrow table; the selected storage is unsupported"};
+    default:
+        return {false, "Input storage support has not yet been qualified for this operation"};
+    }
 }
 
 } // namespace cyxwiz

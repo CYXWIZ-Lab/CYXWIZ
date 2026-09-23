@@ -85,7 +85,9 @@ static void LogEmbeddingFallbackOnce(
         CurrentArrayFireBackendName(),
         "int32",
         BuildEmbeddingPlacementShapeSignature(
-            num_embeddings, embedding_dim, tensor.Shape(), "int32"),
+            num_embeddings, embedding_dim,
+            StripBatchDimensionForPlacementSignature(tensor.Shape()),
+            "int32"),
         BackendFallbackReasonName(reason),
         BackendPlacementObservationSource::RuntimeFallback,
         message);

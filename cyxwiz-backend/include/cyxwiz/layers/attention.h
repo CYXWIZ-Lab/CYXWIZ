@@ -15,6 +15,9 @@ public:
                             float dropout = 0.0f, bool use_bias = true);
 
     Tensor Forward(const Tensor& input) override;
+    // Float32 additive [query_length,key_length] mask. A row entirely -infinity
+    // contributes zero attention/context and zero Q/K/V gradient. Output bias
+    // still applies. Finite mask values remain additive score offsets.
     Tensor Forward(const Tensor& query, const Tensor& key, const Tensor& value,
                    const Tensor* attn_mask = nullptr);
 
