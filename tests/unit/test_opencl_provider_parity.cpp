@@ -61,6 +61,18 @@ cyxwiz::NeuralOpRequest OpenclRequest(cyxwiz::NeuralOp op, size_t batch,
     return request;
 }
 
+// Small-tuple parity cases (hidden=10) sit below the retention floor; they
+// exercise the provider math, not the floor, so they lift it for their scope.
+struct RetentionFloorOverride {
+    size_t previous = cyxwiz::OpenclProviderRetentionFloorHidden();
+    explicit RetentionFloorOverride(size_t floor) {
+        cyxwiz::SetOpenclProviderRetentionFloorForTesting(floor);
+    }
+    ~RetentionFloorOverride() {
+        cyxwiz::SetOpenclProviderRetentionFloorForTesting(previous);
+    }
+};
+
 void Compare(const cyxwiz::Tensor& actual, const cyxwiz::Tensor& expected,
              const char* label, float tolerance) {
     REQUIRE(actual.NumElements() == expected.NumElements());
@@ -257,6 +269,7 @@ TEST_CASE("OpenCL provider rnn_backward matches the CPU RNN BPTT reference (stac
         WARN("no OpenCL GPU device; parity not exercised");
         return;
     }
+    RetentionFloorOverride no_floor(0);
     const auto input = FilledTensor({3, 7, 5}, 0.5f, 0.7f);
     const auto upstream = FilledTensor({3, 7, 10}, 0.3f, 1.3f);
     cyxwiz::RNNLayer reference(5, 10, 2, true, false, "tanh");
@@ -331,6 +344,7 @@ TEST_CASE("Stacked LSTM and GRU layers route through the OpenCL provider on an O
     }
     REQUIRE(cyxwiz::CaptureCurrentNeuralDeviceTarget().platform ==
             cyxwiz::DeviceType::OPENCL);
+    RetentionFloorOverride no_floor(0);
     const auto input = FilledTensor({3, 7, 5}, 0.5f, 0.2f);
     const auto upstream = FilledTensor({3, 7, 10}, 0.25f, 1.1f);
     const char* grad_names[] = {
@@ -386,6 +400,42 @@ TEST_CASE("Stacked LSTM and GRU layers route through the OpenCL provider on an O
         REQUIRE(actual_h.Shape() == std::vector<size_t>{2, 3, 10});
         Compare(actual_h, expected_h, "opencl stacked GRU h_n", 5e-4f);
     }
+}
+
+TEST_CASE("OpenCL provider declines tuples below the retention floor and serves them from it",
+          "[gpu_execution][neural_provider][opencl][retention_floor]") {
+    auto provider = OpenclProvider();
+    if (!provider) {
+        WARN("no OpenCL GPU device; retention floor not exercised");
+        return;
+    }
+    // Owner ruling 2026-09-23: floor at hidden=16 (0.82x at 8, 2.4x at 16).
+    REQUIRE(cyxwiz::OpenclProviderRetentionFloorHidden() == 16);
+    const auto below = OpenclRequest(cyxwiz::NeuralOp::LstmForward, 32, 16, 32, 8);
+    const auto at_floor = OpenclRequest(cyxwiz::NeuralOp::LstmForward, 32, 16, 32, 16);
+
+    const auto declined = provider->QueryCapability(below);
+    REQUIRE_FALSE(declined.supported);
+    REQUIRE(declined.reason ==
+            cyxwiz::BackendFallbackReason::OpenclProviderBelowRetentionFloor);
+    REQUIRE(declined.detail.find("retention floor") != std::string::npos);
+    REQUIRE(declined.detail.find("hidden=8") != std::string::npos);
+    REQUIRE(provider->QueryCapability(at_floor).supported);
+
+    // The registry answers the same way, so no layer selects the tenant for
+    // a tiny tuple while the tuple at the floor still routes to it.
+    auto& registry = cyxwiz::NeuralProviderRegistry::Instance();
+    REQUIRE(registry.FindSupporting(below) == nullptr);
+    REQUIRE(registry.FindSupporting(at_floor) != nullptr);
+
+    // The floor is a policy knob, not a contract limit: lifting it (test
+    // hook) makes the same tuple executable, and it comes back on scope exit.
+    {
+        RetentionFloorOverride no_floor(0);
+        REQUIRE(provider->QueryCapability(below).supported);
+        REQUIRE(registry.FindSupporting(below) != nullptr);
+    }
+    REQUIRE_FALSE(provider->QueryCapability(below).supported);
 }
 
 TEST_CASE("OpenCL provider survives repeated training runs and reports its speed vs native CPU",

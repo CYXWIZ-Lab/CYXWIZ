@@ -81,6 +81,7 @@ const std::vector<cyxwiz::BackendFallbackReason>& AllReasons() {
         cyxwiz::BackendFallbackReason::OpenclProviderUnsupportedContract,
         cyxwiz::BackendFallbackReason::OpenclProviderWorkspaceExhausted,
         cyxwiz::BackendFallbackReason::OpenclProviderExecutionFailed,
+        cyxwiz::BackendFallbackReason::OpenclProviderBelowRetentionFloor,
     };
     return reasons;
 }
@@ -149,6 +150,9 @@ TEST_CASE("Backend fallback reason names pin the persisted taxonomy contract",
     CHECK(std::string(BackendFallbackReasonName(
               BackendFallbackReason::OpenclProviderExecutionFailed)) ==
           "opencl_provider_execution_failed");
+    CHECK(std::string(BackendFallbackReasonName(
+              BackendFallbackReason::OpenclProviderBelowRetentionFloor)) ==
+          "opencl_provider_below_retention_floor");
 
     // The observation-facing namespace must be the same pointers/values as
     // the authority, not a re-typed copy.

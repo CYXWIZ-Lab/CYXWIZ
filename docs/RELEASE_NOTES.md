@@ -29,3 +29,7 @@ private Data Studio tickets (`tofix*/track*`).
   OpenCL GPUs, selected per run by the device you choose. Stacked and
   bidirectional RNN, LSTM and GRU train on the GPU; the placement audit
   shows which path each layer took.
+- On OpenCL devices, recurrent layers with fewer than 16 hidden units
+  stay on the portable path because the OpenCL provider measured slower
+  than the CPU there; the placement audit says so
+  (`opencl_provider_below_retention_floor`). NVIDIA CUDA has no such floor.

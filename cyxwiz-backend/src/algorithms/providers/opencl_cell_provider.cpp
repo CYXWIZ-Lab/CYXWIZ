@@ -30,6 +30,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -42,7 +43,12 @@ namespace cyxwiz {
 namespace {
 
 constexpr const char* kProviderId = "cyxwiz.opencl-cell";
-constexpr const char* kProviderSemver = "0.3.0-clblast-optional";
+constexpr const char* kProviderSemver = "0.4.0-retention-floor";
+// Owner ruling 2026-09-23 (track68): below this hidden size the tenant is
+// slower than native CPU (0.82x at hidden=8; 2.4x at hidden=16), so it
+// declines and the layer keeps the portable path. Test-overridable only.
+constexpr size_t kDefaultRetentionFloorHidden = 16;
+std::atomic<size_t> g_retention_floor_hidden{kDefaultRetentionFloorHidden};
 
 // Row-major float kernels. Layout conventions match the CUDA provider and
 // the CPU references: x is [batch, seq, features], the row index of the
@@ -701,6 +707,19 @@ public:
             capability.detail = "all dimensions must be positive";
             return capability;
         }
+        const size_t retention_floor = g_retention_floor_hidden.load();
+        if (request.hidden < retention_floor) {
+            capability.reason =
+                BackendFallbackReason::OpenclProviderBelowRetentionFloor;
+            capability.detail =
+                "hidden=" + std::to_string(request.hidden) +
+                " is below the OpenCL tenant retention floor (hidden >= " +
+                std::to_string(retention_floor) +
+                "): the tenant measured 0.82x of native CPU at hidden=8 and "
+                "2.4x at hidden=16 (track68, 2026-09-23), so tiny layers stay "
+                "on the portable path";
+            return capability;
+        }
         capability.supported = true;
         capability.reason = BackendFallbackReason::BackendInternalError;
         capability.detail.clear();
@@ -1318,6 +1337,14 @@ private:
 };
 
 } // namespace
+
+size_t OpenclProviderRetentionFloorHidden() {
+    return g_retention_floor_hidden.load();
+}
+
+void SetOpenclProviderRetentionFloorForTesting(size_t hidden_floor) {
+    g_retention_floor_hidden.store(hidden_floor);
+}
 
 void RegisterOpenclCellNeuralProvider(NeuralProviderRegistry& registry) {
     const OpenclRuntimeProbe probe = ProbeOpenclRuntime();

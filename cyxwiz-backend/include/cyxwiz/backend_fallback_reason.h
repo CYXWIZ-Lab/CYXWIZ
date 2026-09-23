@@ -31,6 +31,10 @@ enum class BackendFallbackReason {
     OpenclProviderUnsupportedContract,
     OpenclProviderWorkspaceExhausted,
     OpenclProviderExecutionFailed,
+    // Owner ruling 2026-09-23: the OpenCL tenant declines tuples it measured
+    // slower than native CPU on (hidden below the retention floor). Not a
+    // contract failure, so it gets its own persisted name.
+    OpenclProviderBelowRetentionFloor,
 };
 
 constexpr const char* BackendFallbackReasonName(BackendFallbackReason reason) {
@@ -71,6 +75,8 @@ constexpr const char* BackendFallbackReasonName(BackendFallbackReason reason) {
         return "opencl_provider_workspace_exhausted";
     case BackendFallbackReason::OpenclProviderExecutionFailed:
         return "opencl_provider_execution_failed";
+    case BackendFallbackReason::OpenclProviderBelowRetentionFloor:
+        return "opencl_provider_below_retention_floor";
     }
     return "backend_internal_error";
 }

@@ -123,9 +123,17 @@ double MeasureProviderForward(const BenchShape& shape,
     request.seq = shape.seq;
     request.input = shape.input;
     request.hidden = static_cast<size_t>(shape.hidden);
-    auto provider =
-        cyxwiz::NeuralProviderRegistry::Instance().FindSupporting(request);
+    auto& registry = cyxwiz::NeuralProviderRegistry::Instance();
+    auto provider = registry.FindSupporting(request);
     if (!provider) {
+        // A tenant that serves the platform but declines this tuple (e.g.
+        // the OpenCL retention floor) is reported by reason, so the row
+        // is not mistaken for "no provider on this machine".
+        for (const auto& serving : registry.ListServing(request.target)) {
+            const auto capability = serving->QueryCapability(request);
+            provider_version = std::string("declined:") +
+                               cyxwiz::BackendFallbackReasonName(capability.reason);
+        }
         return -1.0;
     }
     provider_version = provider->Version();
@@ -329,13 +337,18 @@ int main(int argc, char** argv) {
                           ? " provider_speedup_vs_native=" +
                                 std::to_string(native.forward_ms /
                                                provider_fwd_ms)
-                          : std::string(" provider=unavailable"))
+                          : " provider=" + (provider_version.empty()
+                                                ? std::string("unavailable")
+                                                : provider_version))
                   << " opencl_provider_fwd_ms=" << opencl_provider_fwd_ms
                   << (opencl_provider_fwd_ms > 0.0
                           ? " opencl_provider_speedup_vs_native=" +
                                 std::to_string(native.forward_ms /
                                                opencl_provider_fwd_ms)
-                          : std::string(" opencl_provider=unavailable"))
+                          : " opencl_provider=" +
+                                (opencl_provider_version.empty()
+                                     ? std::string("unavailable")
+                                     : opencl_provider_version))
                   << " gru_native_fwd_ms=" << gru_native_fwd_ms
                   << " gru_provider_fwd_ms=" << gru_provider_fwd_ms
                   << (gru_provider_fwd_ms > 0.0

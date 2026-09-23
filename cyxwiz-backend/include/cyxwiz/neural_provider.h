@@ -185,6 +185,18 @@ CYXWIZ_API bool NvidiaProviderDeviceMemoryForTesting(size_t& free_bytes,
                                                      size_t& total_bytes);
 #endif
 
+#ifdef CYXWIZ_HAS_OPENCL_DNN_PROVIDER
+// OpenCL tenant retention floor (owner ruling 2026-09-23): requests whose
+// hidden size is below this value are declined with
+// OpenclProviderBelowRetentionFloor so they stay on the portable path. The
+// tenant measured 0.82x of native CPU at hidden=8 and 2.4x at hidden=16;
+// the CUDA tenant has no floor because it is never slower (GRU ruling).
+CYXWIZ_API size_t OpenclProviderRetentionFloorHidden();
+// Test-only: override the floor (0 disables it) so small-tuple parity tests
+// keep exercising the provider math. Never set in production code.
+CYXWIZ_API void SetOpenclProviderRetentionFloorForTesting(size_t hidden_floor);
+#endif
+
 // The single provider registry (no parallel provider lists anywhere else).
 // Built-in providers self-register on first access when their build flag
 // is enabled AND their runtime probe succeeds; an empty registry is the
