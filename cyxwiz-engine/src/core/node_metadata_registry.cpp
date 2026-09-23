@@ -2254,7 +2254,8 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         "Trainable simple (Elman) recurrent sequence layer",
         "Engine training supports unidirectional, stacked simple RNN with "
         "tanh or relu nonlinearity and dropout=0.0 on the native CPU "
-        "recurrent reference layer. bidirectional=true fails closed.", "",
+        "recurrent reference layer or the native neural provider "
+        "(CUDA/OpenCL). bidirectional=true fails closed.", "",
         {{"Input", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
         {{"Output", PinType::Tensor, true,

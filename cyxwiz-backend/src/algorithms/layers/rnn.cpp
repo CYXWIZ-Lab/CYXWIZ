@@ -5,6 +5,8 @@
 // path (future) and the native provider, both parity-gated against this.
 
 #include "cyxwiz/layers/recurrent.h"
+#include "cyxwiz/neural_provider.h"
+#include <spdlog/spdlog.h>
 
 #include <cmath>
 #include <random>
@@ -102,6 +104,58 @@ Tensor RNNLayer::Forward(const Tensor& input) {
     const size_t seq = shape[1];
     const size_t hidden = static_cast<size_t>(hidden_size_);
 
+    // tofix68 (provider 0.7.0): route through the native neural provider
+    // when one serves the run's selected device and supports the exact
+    // tuple (stacked, unidirectional, batch-first — RNNLayer's whole
+    // contract). Mirror of LSTMLayer::Forward.
+    provider_forward_used_ = false;
+    if (!provider_disabled_after_failure_) {
+        NeuralOpRequest provider_request;
+        provider_request.target = CaptureCurrentNeuralDeviceTarget();
+        provider_request.op = NeuralOp::RnnForward;
+        provider_request.training = false;  // forward math is identical
+        provider_request.dtype = DataType::Float32;
+        provider_request.batch = batch;
+        provider_request.seq = seq;
+        provider_request.input = shape[2];
+        provider_request.hidden = hidden;
+        provider_request.layers = static_cast<size_t>(num_layers_);
+        provider_request.activation = use_tanh_ ? NeuralActivation::Tanh
+                                                : NeuralActivation::Relu;
+        if (auto provider = NeuralProviderRegistry::Instance()
+                                .FindSupporting(provider_request)) {
+            const size_t layers = static_cast<size_t>(num_layers_);
+            Tensor output(std::vector<size_t>{batch, seq, hidden});
+            Tensor final_hidden(std::vector<size_t>{layers, batch, hidden});
+            NeuralOpBuffers buffers;
+            buffers.inputs = {&input};
+            for (size_t l = 0; l < layers; ++l) {
+                buffers.weights.push_back(&W_ih_[l]);
+                buffers.weights.push_back(&W_hh_[l]);
+                buffers.weights.push_back(&b_ih_[l]);
+                buffers.weights.push_back(&b_hh_[l]);
+            }
+            buffers.outputs = {&output, &final_hidden};
+            const auto status = provider->Execute(provider_request, buffers);
+            if (status.ok) {
+                provider_forward_used_ = true;
+                provider_input_cache_ = input.Clone();
+                cached_inputs_.clear();
+                cached_hidden_states_.clear();
+                // RNNLayer reports the TOP layer's final state [batch, hidden].
+                h_n_ = Tensor({batch, hidden},
+                              final_hidden.ReadData<float>() +
+                                  (layers - 1) * batch * hidden,
+                              DataType::Float32);
+                return output;
+            }
+            spdlog::warn(
+                "RNNLayer::Forward: native provider failed (reason={}), "
+                "falling back to the CPU reference: {}",
+                BackendFallbackReasonName(status.reason), status.detail);
+        }
+    }
+
     cached_inputs_.clear();
     cached_hidden_states_.clear();
 
@@ -161,6 +215,61 @@ Tensor RNNLayer::Forward(const Tensor& input) {
 }
 
 Tensor RNNLayer::Backward(const Tensor& grad_output) {
+    // tofix68 (provider 0.7.0): provider-executed Forward -> provider
+    // backward (self-contained recompute + BPTT). On failure, disable the
+    // provider for this instance and recompute Forward on the CPU so the
+    // reference BPTT below has its caches.
+    if (provider_forward_used_) {
+        provider_forward_used_ = false;
+        const auto& in_shape = provider_input_cache_.Shape();
+        const size_t hidden = static_cast<size_t>(hidden_size_);
+        const size_t layers = static_cast<size_t>(num_layers_);
+        NeuralOpRequest provider_request;
+        provider_request.target = CaptureCurrentNeuralDeviceTarget();
+        provider_request.op = NeuralOp::RnnBackward;
+        provider_request.training = true;
+        provider_request.dtype = DataType::Float32;
+        provider_request.batch = in_shape[0];
+        provider_request.seq = in_shape[1];
+        provider_request.input = in_shape[2];
+        provider_request.hidden = hidden;
+        provider_request.layers = layers;
+        provider_request.activation = use_tanh_ ? NeuralActivation::Tanh
+                                                : NeuralActivation::Relu;
+        if (auto provider = NeuralProviderRegistry::Instance()
+                                .FindSupporting(provider_request)) {
+            Tensor grad_input(in_shape);
+            NeuralOpBuffers buffers;
+            buffers.inputs = {&provider_input_cache_, &grad_output};
+            buffers.outputs = {&grad_input};
+            for (size_t l = 0; l < layers; ++l) {
+                const size_t in = l == 0 ? in_shape[2] : hidden;
+                grad_W_ih_[l] = Tensor::Zeros({hidden, in});
+                grad_W_hh_[l] = Tensor::Zeros({hidden, hidden});
+                grad_b_ih_[l] = Tensor::Zeros({hidden});
+                grad_b_hh_[l] = Tensor::Zeros({hidden});
+                buffers.weights.push_back(&W_ih_[l]);
+                buffers.weights.push_back(&W_hh_[l]);
+                buffers.weights.push_back(&b_ih_[l]);
+                buffers.weights.push_back(&b_hh_[l]);
+                buffers.gradients.push_back(&grad_W_ih_[l]);
+                buffers.gradients.push_back(&grad_W_hh_[l]);
+                buffers.gradients.push_back(&grad_b_ih_[l]);
+                buffers.gradients.push_back(&grad_b_hh_[l]);
+            }
+            const auto status = provider->Execute(provider_request, buffers);
+            if (status.ok) {
+                return grad_input;
+            }
+            spdlog::warn(
+                "RNNLayer::Backward: native provider failed (reason={}), "
+                "recomputing on the CPU reference: {}",
+                BackendFallbackReasonName(status.reason), status.detail);
+        }
+        provider_disabled_after_failure_ = true;
+        Forward(provider_input_cache_);
+    }
+
     if (cached_hidden_states_.empty()) {
         throw std::logic_error(
             "RNNLayer::Backward requires a prior Forward call");

@@ -367,9 +367,10 @@ TEST_CASE("NVIDIA provider refuses out-of-contract rnn_forward tuples",
     request.hidden = 16;
     request.activation = cyxwiz::NeuralActivation::Tanh;
 
+    // rnn training is served since provider 0.7.0 (rnn_backward).
     auto training_request = request;
     training_request.training = true;
-    CHECK(registry.FindSupporting(training_request) == nullptr);
+    CHECK(registry.FindSupporting(training_request) != nullptr);
 
     auto bidirectional_request = request;
     bidirectional_request.directions = 2;
@@ -940,13 +941,98 @@ TEST_CASE("Stacked provider ops validate the per-layer buffer contract",
     right.outputs = {&y, &h_n, &c_n};
     CHECK(provider->Execute(request, right).ok);
 
-    // rnn_forward stays single-layer.
+    // rnn_forward is stacked too since 0.7.0.
     auto rnn = request;
     rnn.op = cyxwiz::NeuralOp::RnnForward;
     rnn.activation = cyxwiz::NeuralActivation::Tanh;
-    CHECK(registry.FindSupporting(rnn) == nullptr);
+    CHECK(registry.FindSupporting(rnn) != nullptr);
     rnn.layers = 1;
     CHECK(registry.FindSupporting(rnn) != nullptr);
+}
+
+TEST_CASE("Stacked RNN layers route training through the provider with parity",
+          "[gpu_execution][neural_provider][parity][stacked][rnn]") {
+    auto& registry = cyxwiz::NeuralProviderRegistry::Instance();
+    cyxwiz::NeuralOpRequest probe;
+    probe.target = {cyxwiz::DeviceType::CUDA, 0};
+    probe.op = cyxwiz::NeuralOp::RnnBackward;
+    probe.training = true;
+    probe.batch = 3;
+    probe.seq = 7;
+    probe.input = 5;
+    probe.hidden = 10;
+    probe.layers = 2;
+    probe.activation = cyxwiz::NeuralActivation::Tanh;
+    if (!registry.FindSupporting(probe)) {
+        WARN("no provider supports stacked rnn training on this machine; "
+             "routing not exercised");
+        return;
+    }
+    struct SelectedBackendGuard {
+        af::Backend previous = AF_BACKEND_CPU;
+        int previous_device = 0;
+        bool active = false;
+        ~SelectedBackendGuard() {
+            if (active) {
+                try {
+                    af::setBackend(previous);
+                    af::setDevice(previous_device);
+                } catch (...) {
+                }
+            }
+        }
+    } backend_guard;
+    try {
+        backend_guard.previous = af::getActiveBackend();
+        backend_guard.previous_device = af::getDevice();
+        af::setBackend(AF_BACKEND_CUDA);
+        af::setDevice(0);
+        backend_guard.active = true;
+    } catch (...) {
+        WARN("ArrayFire CUDA backend cannot be selected in this process; "
+             "rnn routing not exercised");
+        return;
+    }
+    const auto input = FilledTensor({3, 7, 5}, 0.5f, 0.2f);
+    const auto upstream = FilledTensor({3, 7, 10}, 0.25f, 1.1f);
+    const auto compare = [](const cyxwiz::Tensor& a, const cyxwiz::Tensor& e,
+                            const char* label) {
+        REQUIRE(a.NumElements() == e.NumElements());
+        const float* pa = a.ReadData<float>();
+        const float* pe = e.ReadData<float>();
+        float max_abs_diff = 0.0f;
+        for (size_t i = 0; i < a.NumElements(); ++i) {
+            max_abs_diff = std::max(max_abs_diff, std::fabs(pa[i] - pe[i]));
+        }
+        INFO(label << " max_abs_diff=" << max_abs_diff);
+        CHECK(max_abs_diff <= 5e-4f);
+    };
+    const char* grad_names[] = {
+        "layer0_grad_W_ih", "layer0_grad_W_hh", "layer0_grad_b_ih",
+        "layer0_grad_b_hh", "layer1_grad_W_ih", "layer1_grad_W_hh",
+        "layer1_grad_b_ih", "layer1_grad_b_hh"};
+    for (const char* nonlinearity : {"tanh", "relu"}) {
+        cyxwiz::RNNLayer layer(5, 10, 2, true, false, nonlinearity);
+        cyxwiz::SetNeuralProvidersDisabledForTesting(true);
+        const auto expected = layer.Forward(input);
+        const auto expected_h = layer.GetHiddenState();
+        const auto expected_dx = layer.Backward(upstream);
+        const auto oracle = layer.GetParameters();
+        cyxwiz::SetNeuralProvidersDisabledForTesting(false);
+
+        const auto actual = layer.Forward(input);
+        const auto actual_h = layer.GetHiddenState();
+        const auto actual_dx = layer.Backward(upstream);
+        const auto routed = layer.GetParameters();
+        const std::string tag = std::string("stacked RNN ") + nonlinearity;
+        compare(actual, expected, (tag + " forward").c_str());
+        compare(actual_dx, expected_dx, (tag + " dx").c_str());
+        for (const char* name : grad_names) {
+            compare(routed.at(name), oracle.at(name), name);
+        }
+        REQUIRE(actual_h.Shape() == std::vector<size_t>{3, 10});
+        compare(actual_h, expected_h, (tag + " h_n").c_str());
+    }
 }
 
 TEST_CASE("NVIDIA provider repeated lstm training runs do not leak device memory",

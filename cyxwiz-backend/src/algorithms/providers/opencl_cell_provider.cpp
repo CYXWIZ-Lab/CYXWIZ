@@ -39,7 +39,7 @@ namespace cyxwiz {
 namespace {
 
 constexpr const char* kProviderId = "cyxwiz.opencl-cell";
-constexpr const char* kProviderSemver = "0.1.0-opencl-tenant";
+constexpr const char* kProviderSemver = "0.2.0-rnn-training";
 
 // Row-major float kernels. Layout conventions match the CUDA provider and
 // the CPU references: x is [batch, seq, features], the row index of the
@@ -164,6 +164,24 @@ __kernel void cyx_rnn_cell(__global const float* gates_ih,
   const float v = use_tanh ? tanh(a) : (a > 0.0f ? a : 0.0f);
   hidden_out[idx] = v;
   sequence_out[(b * seq + t) * hidden + j] = v;
+}
+
+__kernel void cyx_rnn_backward_cell(__global const float* grad_y,
+                                    __global const float* dh_recurrent,
+                                    __global const float* sequence_out,
+                                    __global float* da,
+                                    const int t, const int seq,
+                                    const int hidden, const int total,
+                                    const int use_tanh) {
+  const int idx = get_global_id(0);
+  if (idx >= total) return;
+  const int b = idx / hidden;
+  const int j = idx - b * hidden;
+  const int pos = (b * seq + t) * hidden + j;
+  const float h_t = sequence_out[pos];
+  const float dh = grad_y[pos] + dh_recurrent[idx];
+  const float deriv = use_tanh ? (1.0f - h_t * h_t) : (h_t > 0.0f ? 1.0f : 0.0f);
+  da[pos] = dh * deriv;
 }
 
 __kernel void cyx_lstm_cell(__global const float* gates_ih,
@@ -407,8 +425,8 @@ class OpenclExecutionState {
 public:
     ~OpenclExecutionState() {
         for (cl_kernel k : {fill_, gemm_abt_, gemm_ab_, gemm_atb_accum_, colsum_,
-                            rnn_cell_, lstm_cell_, lstm_backward_cell_,
-                            gru_cell_, gru_backward_cell_}) {
+                            rnn_cell_, rnn_backward_cell_, lstm_cell_,
+                            lstm_backward_cell_, gru_cell_, gru_backward_cell_}) {
             if (k) clReleaseKernel(k);
         }
         if (program_) clReleaseProgram(program_);
@@ -464,6 +482,7 @@ public:
             {&gemm_atb_accum_, "cyx_gemm_atb_accum"},
             {&colsum_, "cyx_colsum"},
             {&rnn_cell_, "cyx_rnn_cell"},
+            {&rnn_backward_cell_, "cyx_rnn_backward_cell"},
             {&lstm_cell_, "cyx_lstm_cell"},
             {&lstm_backward_cell_, "cyx_lstm_backward_cell"},
             {&gru_cell_, "cyx_gru_cell"},
@@ -489,6 +508,7 @@ public:
     cl_kernel GemmAtbAccum() const { return gemm_atb_accum_; }
     cl_kernel Colsum() const { return colsum_; }
     cl_kernel RnnCell() const { return rnn_cell_; }
+    cl_kernel RnnBackwardCell() const { return rnn_backward_cell_; }
     cl_kernel LstmCell() const { return lstm_cell_; }
     cl_kernel LstmBackwardCell() const { return lstm_backward_cell_; }
     cl_kernel GruCell() const { return gru_cell_; }
@@ -506,6 +526,7 @@ private:
     cl_kernel gemm_atb_accum_ = nullptr;
     cl_kernel colsum_ = nullptr;
     cl_kernel rnn_cell_ = nullptr;
+    cl_kernel rnn_backward_cell_ = nullptr;
     cl_kernel lstm_cell_ = nullptr;
     cl_kernel lstm_backward_cell_ = nullptr;
     cl_kernel gru_cell_ = nullptr;
@@ -628,7 +649,8 @@ public:
                 std::to_string(probe_.gpu_devices.size()) + " available)";
             return capability;
         }
-        const bool is_rnn = request.op == NeuralOp::RnnForward;
+        const bool is_rnn = request.op == NeuralOp::RnnForward ||
+                            request.op == NeuralOp::RnnBackward;
         const bool is_lstm = request.op == NeuralOp::LstmForward ||
                              request.op == NeuralOp::LstmBackward;
         const bool is_gru = request.op == NeuralOp::GruForward ||
@@ -637,11 +659,8 @@ public:
             capability.detail =
                 std::string(NeuralOpName(request.op)) +
                 " is not implemented yet (supported: rnn_forward, "
-                "lstm_forward, lstm_backward, gru_forward, gru_backward)";
-            return capability;
-        }
-        if (is_rnn && request.training) {
-            capability.detail = "rnn_forward training is not supported yet";
+                "rnn_backward, lstm_forward, lstm_backward, gru_forward, "
+                "gru_backward)";
             return capability;
         }
         if (request.dtype != DataType::Float32) {
@@ -654,10 +673,6 @@ public:
         }
         if (request.layers < 1) {
             capability.detail = "layers must be positive";
-            return capability;
-        }
-        if (is_rnn && request.layers != 1) {
-            capability.detail = "rnn_forward is single-layer";
             return capability;
         }
         if (is_rnn && request.activation != NeuralActivation::Tanh &&
@@ -693,7 +708,8 @@ public:
         const bool is_gru = request.op == NeuralOp::GruForward ||
                             request.op == NeuralOp::GruBackward;
         const bool backward = request.op == NeuralOp::LstmBackward ||
-                              request.op == NeuralOp::GruBackward;
+                              request.op == NeuralOp::GruBackward ||
+                              request.op == NeuralOp::RnnBackward;
         const size_t gates = is_lstm ? 4 : (is_gru ? 3 : 1);
         const size_t layers = std::max<size_t>(1, request.layers);
         const size_t rows = request.batch * request.seq;
@@ -714,9 +730,9 @@ public:
         if (backward) {
             estimate.workspace_bytes +=
                 rows * request.hidden * f +
-                layers * rows * 4 * request.hidden * f +
+                ((is_lstm || is_gru) ? layers * rows * 4 * request.hidden * f : 0) +
                 (is_lstm ? layers * rows * request.hidden * f : 0) +
-                (is_lstm ? 1 : 2) * rows * gate_width * f +
+                (is_gru ? 2 : 1) * rows * gate_width * f +
                 request.batch * request.hidden * f + input_elems * f +
                 weight_elems * f + rows * f;
         } else {
@@ -734,7 +750,9 @@ public:
         }
         switch (request.op) {
         case NeuralOp::RnnForward:
-            return ExecuteRnnForward(request, buffers);
+            return ExecuteStackedForward(request, buffers, CellKind::Rnn);
+        case NeuralOp::RnnBackward:
+            return ExecuteStackedBackward(request, buffers, CellKind::Rnn);
         case NeuralOp::LstmForward:
             return ExecuteStackedForward(request, buffers, CellKind::Lstm);
         case NeuralOp::LstmBackward:
@@ -751,9 +769,9 @@ public:
     }
 
 private:
-    enum class CellKind { Lstm, Gru };
+    enum class CellKind { Rnn, Lstm, Gru };
     static size_t GatesFor(CellKind kind) {
-        return kind == CellKind::Lstm ? 4 : 3;
+        return kind == CellKind::Lstm ? 4 : (kind == CellKind::Gru ? 3 : 1);
     }
 
     static NeuralOpStatus Fail(BackendFallbackReason reason,
@@ -907,7 +925,7 @@ private:
                                 ClBuffer& d_ghh, ClBuffer& d_h, ClBuffer& d_c,
                                 ClBuffer& d_y, ClBuffer& gate_cache,
                                 ClBuffer& cell_cache, bool has_cache,
-                                std::string& detail) {
+                                int use_tanh, std::string& detail) {
         const size_t gate_width = GatesFor(kind) * hidden;
         const size_t rows = batch * seq;
         if (!Zero(s.Queue(), s.Fill(), d_h, batch * hidden) ||
@@ -937,13 +955,19 @@ private:
                                    static_cast<int>(hidden), total,
                                    has_cache ? 1 : 0) &&
                            Launch1D(s.Queue(), s.LstmCell(), batch * hidden);
-            } else {
+            } else if (kind == CellKind::Gru) {
                 launched = SetArgs(s.GruCell(), d_gih, d_ghh, w.b_ih, w.b_hh, d_h,
                                    d_y, gate_cache, static_cast<int>(t),
                                    static_cast<int>(seq),
                                    static_cast<int>(hidden), total,
                                    has_cache ? 1 : 0) &&
                            Launch1D(s.Queue(), s.GruCell(), batch * hidden);
+            } else {
+                launched = SetArgs(s.RnnCell(), d_gih, d_ghh, w.b_ih, w.b_hh, d_h,
+                                   d_y, static_cast<int>(t),
+                                   static_cast<int>(seq),
+                                   static_cast<int>(hidden), total, use_tanh) &&
+                           Launch1D(s.Queue(), s.RnnCell(), batch * hidden);
             }
             if (!launched) {
                 detail = "cell kernel launch failed";
@@ -951,72 +975,6 @@ private:
             }
         }
         return true;
-    }
-
-    NeuralOpStatus ExecuteRnnForward(const NeuralOpRequest& request,
-                                     NeuralOpBuffers& buffers) {
-        const size_t batch = request.batch;
-        const size_t seq = request.seq;
-        const size_t input = request.input;
-        const size_t hidden = request.hidden;
-        const size_t rows = batch * seq;
-        if (buffers.inputs.size() != 1 || buffers.outputs.size() != 1 ||
-            !buffers.inputs[0] || !buffers.outputs[0] ||
-            buffers.inputs[0]->NumElements() != rows * input ||
-            buffers.outputs[0]->NumElements() != rows * hidden ||
-            !StackedWeightsMatch(buffers.weights, 1, hidden, input, hidden)) {
-            return Fail(BackendFallbackReason::OpenclProviderUnsupportedContract,
-                        "recurrent forward buffer contract violated");
-        }
-        NeuralOpStatus failure;
-        OpenclExecutionState* state = EnsureState(request, failure);
-        if (!state) return failure;
-        OpenclExecutionState& s = *state;
-        std::lock_guard<std::mutex> lock(s.ExecuteMutex());
-        const size_t f = sizeof(float);
-        std::vector<LayerDeviceWeights> weights;
-        if (!UploadStackedWeights(s, buffers.weights, 1, hidden, input, hidden,
-                                  weights, failure)) {
-            return failure;
-        }
-        ClBuffer d_x, d_gih, d_ghh, d_h, d_out;
-        if (!d_x.Allocate(s.Context(), rows * input * f) ||
-            !d_gih.Allocate(s.Context(), rows * hidden * f) ||
-            !d_ghh.Allocate(s.Context(), batch * hidden * f) ||
-            !d_h.Allocate(s.Context(), batch * hidden * f) ||
-            !d_out.Allocate(s.Context(), rows * hidden * f)) {
-            return AllocFail();
-        }
-        if (!Upload(s.Queue(), d_x, buffers.inputs[0]->ReadData<float>(),
-                    rows * input * f) ||
-            !Zero(s.Queue(), s.Fill(), d_h, batch * hidden)) {
-            return ExecFail("host-to-device transfer failed");
-        }
-        if (!GemmABt(s, rows, hidden, input, d_x, 0, input, weights[0].w_ih, 0,
-                     input, d_gih, 0, hidden, 0.0f)) {
-            return ExecFail("input-projection GEMM failed");
-        }
-        const int total = static_cast<int>(batch * hidden);
-        const int use_tanh = request.activation == NeuralActivation::Tanh ? 1 : 0;
-        for (size_t t = 0; t < seq; ++t) {
-            if (!GemmABt(s, batch, hidden, hidden, d_h, 0, hidden,
-                         weights[0].w_hh, 0, hidden, d_ghh, 0, hidden, 0.0f)) {
-                return ExecFail("recurrent-projection GEMM failed");
-            }
-            if (!SetArgs(s.RnnCell(), d_gih, d_ghh, weights[0].b_ih,
-                         weights[0].b_hh, d_h, d_out, static_cast<int>(t),
-                         static_cast<int>(seq), static_cast<int>(hidden), total,
-                         use_tanh) ||
-                !Launch1D(s.Queue(), s.RnnCell(), batch * hidden)) {
-                return ExecFail("cell kernel launch failed");
-            }
-        }
-        if (clFinish(s.Queue()) != CL_SUCCESS ||
-            !Download(s.Queue(), buffers.outputs[0]->Data<float>(), d_out,
-                      rows * hidden * f)) {
-            return ExecFail("device execution or readback failed");
-        }
-        return Ok();
     }
 
     NeuralOpStatus ExecuteStackedForward(const NeuralOpRequest& request,
@@ -1031,6 +989,7 @@ private:
         const size_t rows = batch * seq;
         const size_t state_count = layers * batch * hidden;
         const size_t state_outputs = kind == CellKind::Lstm ? 2 : 1;
+        const int use_tanh = request.activation == NeuralActivation::Tanh ? 1 : 0;
         const bool wants_states = buffers.outputs.size() == 1 + state_outputs;
         bool states_ok = true;
         if (wants_states) {
@@ -1084,7 +1043,8 @@ private:
             std::string detail;
             if (!RunStackedLayerForward(s, kind, batch, seq, hidden, d_input,
                                         weights[l], d_gih, d_ghh, d_h, d_c,
-                                        d_y[l], dummy, dummy, false, detail)) {
+                                        d_y[l], dummy, dummy, false, use_tanh,
+                                        detail)) {
                 return ExecFail("layer " + std::to_string(l) + ": " + detail);
             }
             if (!CopyDevice(s.Queue(), d_hn, l * batch * hidden, d_h,
@@ -1150,6 +1110,9 @@ private:
         std::lock_guard<std::mutex> lock(s.ExecuteMutex());
         const size_t f = sizeof(float);
         const bool lstm = kind == CellKind::Lstm;
+        const bool gated = kind != CellKind::Rnn;
+        const bool shared_gates = kind != CellKind::Gru;
+        const int use_tanh = request.activation == NeuralActivation::Tanh ? 1 : 0;
         std::vector<LayerDeviceWeights> weights;
         if (!UploadStackedWeights(s, buffers.weights, layers, gate_width, input,
                                   hidden, weights, failure)) {
@@ -1167,12 +1130,12 @@ private:
                          d_c.Allocate(s.Context(), batch * hidden * f) &&
                          d_dhrec.Allocate(s.Context(), batch * hidden * f) &&
                          d_dgx.Allocate(s.Context(), rows * gate_width * f) &&
-                         d_dgh.Allocate(s.Context(), lstm ? f : rows * gate_width * f) &&
+                         d_dgh.Allocate(s.Context(), shared_gates ? f : rows * gate_width * f) &&
                          dummy.Allocate(s.Context(), f);
         for (size_t l = 0; allocated && l < layers; ++l) {
             const size_t in = l == 0 ? input : hidden;
             allocated = d_y[l].Allocate(s.Context(), rows * hidden * f) &&
-                        d_gates[l].Allocate(s.Context(), rows * 4 * hidden * f) &&
+                        d_gates[l].Allocate(s.Context(), gated ? rows * 4 * hidden * f : f) &&
                         d_ccache[l].Allocate(s.Context(), lstm ? rows * hidden * f : f) &&
                         d_dx[l].Allocate(s.Context(), rows * in * f) &&
                         d_dwih[l].Allocate(s.Context(), gate_width * in * f) &&
@@ -1193,8 +1156,8 @@ private:
             std::string detail;
             if (!RunStackedLayerForward(s, kind, batch, seq, hidden, d_input,
                                         weights[l], d_gih, d_ghh, d_h, d_c,
-                                        d_y[l], d_gates[l], d_ccache[l], true,
-                                        detail)) {
+                                        d_y[l], d_gates[l], d_ccache[l], gated,
+                                        use_tanh, detail)) {
                 return ExecFail("training forward layer " + std::to_string(l) +
                                 ": " + detail);
             }
@@ -1222,22 +1185,29 @@ private:
                                 static_cast<int>(t), static_cast<int>(seq),
                                 static_cast<int>(hidden), total) &&
                         Launch1D(s.Queue(), s.LstmBackwardCell(), batch * hidden);
-                } else {
+                } else if (kind == CellKind::Gru) {
                     launched =
                         SetArgs(s.GruBackwardCell(), *d_dy_cur, d_dhrec,
                                 d_gates[li], d_y[li], d_dgx, d_dgh,
                                 static_cast<int>(t), static_cast<int>(seq),
                                 static_cast<int>(hidden), total) &&
                         Launch1D(s.Queue(), s.GruBackwardCell(), batch * hidden);
+                } else {
+                    launched =
+                        SetArgs(s.RnnBackwardCell(), *d_dy_cur, d_dhrec,
+                                d_y[li], d_dgx, static_cast<int>(t),
+                                static_cast<int>(seq), static_cast<int>(hidden),
+                                total, use_tanh) &&
+                        Launch1D(s.Queue(), s.RnnBackwardCell(), batch * hidden);
                 }
                 if (!launched) return ExecFail("backward cell launch failed");
                 const size_t g_off = t * gate_width;
-                const ClBuffer& dgh = lstm ? d_dgx : d_dgh;
+                const ClBuffer& dgh = shared_gates ? d_dgx : d_dgh;
                 // dh for t-1: LSTM has no direct term (beta 0); GRU adds to
                 // the direct part the cell wrote (beta 1).
                 if (!GemmAB(s, batch, hidden, gate_width, dgh, g_off, ld_gates,
                             w.w_hh, 0, hidden, d_dhrec, 0, hidden,
-                            lstm ? 0.0f : 1.0f)) {
+                            shared_gates ? 0.0f : 1.0f)) {
                     return ExecFail("recurrent gradient GEMM failed");
                 }
                 if (!GemmAtBAccum(s, batch, gate_width, in, d_dgx, g_off, ld_gates,
@@ -1258,7 +1228,7 @@ private:
             if (!Colsum(s, rows, gate_width, d_dgx, gate_width, d_dbih[li])) {
                 return ExecFail("bias gradient reduction failed");
             }
-            if (lstm) {
+            if (shared_gates) {
                 if (!CopyDevice(s.Queue(), d_dbhh[li], 0, d_dbih[li], gate_width)) {
                     return ExecFail("bias gradient copy failed");
                 }

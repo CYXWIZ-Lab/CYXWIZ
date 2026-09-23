@@ -307,19 +307,20 @@ inline BackendPlacementEntry BuildCpuBackedModelLayerPlacement(
     placement.status = BackendPlacementStatus::Cpu;
     placement.reason_code = BackendPlacementReason::GraphRuntimeCpuBacked;
     if (layer.type == gui::NodeType::RNN) {
-        // tofix68 Studio RNN wiring: the simple RNN runs on the native CPU
-        // reference layer (phase 3). There is no ArrayFire RNN path, and
-        // the native neural provider offers rnn_forward for inference
-        // only, so training stays on the CPU reference by design.
+        // tofix68 Studio RNN wiring: the simple RNN's portable path is the
+        // native CPU reference layer (phase 3); there is no ArrayFire RNN
+        // path. The graph compiler upgrades this entry to a native-provider
+        // placement when a provider serves the run's device and the exact
+        // training tuple (provider 0.7.0 serves rnn_forward/rnn_backward).
         placement.explanation =
             "RNN is supported by ModelBuilder/SequentialModel through the "
             "native CPU simple-RNN reference layer. There is no ArrayFire "
-            "RNN path and the native neural provider serves rnn_forward for "
-            "inference only, so training runs on the CPU reference and this "
-            "layer is not GPU-resident.";
+            "RNN path; GPU training happens only through the native neural "
+            "provider on a CUDA/OpenCL-targeted run, otherwise training runs "
+            "on the CPU reference and this layer is not GPU-resident.";
         placement.suggested_action =
-            "No correctness action needed. For GPU recurrent training use "
-            "LSTM or GRU, which the native neural provider accelerates.";
+            "No correctness action needed. Select a CUDA or OpenCL device "
+            "served by the native neural provider for GPU recurrent training.";
         StampDeclaredExecutionMode(
             placement,
             cyxwiz::DeclaredGpuExecutionMode(

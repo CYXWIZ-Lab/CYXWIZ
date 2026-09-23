@@ -129,6 +129,13 @@ private:
     std::vector<Tensor> cached_inputs_;
     std::vector<Tensor> cached_hidden_states_;
 
+    // tofix68 (provider 0.7.0): when the native neural provider executed
+    // Forward, the CPU caches are empty and Backward uses the provider's
+    // self-contained recompute+BPTT op (mirror of LSTMLayer/GRULayer).
+    bool provider_forward_used_ = false;
+    bool provider_disabled_after_failure_ = false;
+    Tensor provider_input_cache_;
+
     void InitializeWeights();
 };
 

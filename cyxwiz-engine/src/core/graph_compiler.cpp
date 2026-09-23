@@ -2053,10 +2053,44 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
                 }
                 continue;
             }
-            case backend_placement::LayerCapabilityKind::CpuBackedModelLayer:
-                config.backend_placements.push_back(
-                    backend_placement::BuildCpuBackedModelLayerPlacement(layer));
+            case backend_placement::LayerCapabilityKind::CpuBackedModelLayer: {
+                auto placement =
+                    backend_placement::BuildCpuBackedModelLayerPlacement(layer);
+                if (layer.type == gui::NodeType::RNN) {
+                    // tofix68 provider 0.7.0: the simple RNN trains on the
+                    // native neural provider when one serves the run's
+                    // device and the exact tuple; otherwise it stays on the
+                    // CPU reference (the placement built above).
+                    NeuralOpRequest provider_request;
+                    provider_request.target = CaptureCurrentNeuralDeviceTarget();
+                    provider_request.op = NeuralOp::RnnForward;
+                    provider_request.training = true;
+                    provider_request.dtype = DataType::Float32;
+                    provider_request.batch =
+                        static_cast<size_t>(std::max(1, config.batch_size));
+                    provider_request.seq = EstimateSequenceLength(layer);
+                    provider_request.input =
+                        layer.input_shape.size() >= 2 ? layer.input_shape[1] : 0;
+                    provider_request.hidden =
+                        ParseSizeParam(layer.parameters, "hidden_size", 128);
+                    provider_request.layers =
+                        ParseSizeParam(layer.parameters, "num_layers", 1);
+                    provider_request.directions =
+                        ParseBoolParam(layer.parameters, "bidirectional", false)
+                            ? 2 : 1;
+                    const auto nonlinearity =
+                        layer.parameters.find("nonlinearity");
+                    provider_request.activation =
+                        (nonlinearity != layer.parameters.end() &&
+                         nonlinearity->second == "relu")
+                            ? NeuralActivation::Relu
+                            : NeuralActivation::Tanh;
+                    backend_placement::ApplyNativeProviderPlacement(
+                        placement, provider_request);
+                }
+                config.backend_placements.push_back(placement);
                 continue;
+            }
             case backend_placement::LayerCapabilityKind::UnsupportedSequentialModelLayer:
                 config.backend_placements.push_back(
                     backend_placement::BuildUnsupportedSequentialModelPlacement(

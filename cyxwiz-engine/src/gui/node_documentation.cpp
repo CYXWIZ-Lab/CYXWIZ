@@ -633,8 +633,9 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Simple RNN",
         "Trainable simple (Elman) recurrent layer: h_t = act(W_ih x_t + b_ih + W_hh h_{t-1} + b_hh).",
         "Runs on the native CPU simple-RNN reference layer with tanh or relu "
-        "nonlinearity. Unidirectional and dropout=0.0 only; bidirectional=true "
-        "fails closed. For GPU-accelerated recurrent training use LSTM or GRU.",
+        "nonlinearity, or on the native neural provider (CUDA/OpenCL) when one "
+        "serves the run's device. Unidirectional and dropout=0.0 only; "
+        "bidirectional=true fails closed.",
         {
             {"input_size", "Input feature size per timestep (auto-derived)"},
             {"hidden_size", "Number of hidden units"},
@@ -645,8 +646,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"nonlinearity", "Cell activation: tanh or relu"}
         },
         {
-            "Trains on the CPU reference path; placement reports it as CPU-backed",
-            "Use LSTM or GRU when GPU recurrent acceleration is required"
+            "Trains on the CPU reference path unless a native provider serves the run's device",
+            "The placement audit shows which path was selected for the run"
         },
         "Recurrent"
     };

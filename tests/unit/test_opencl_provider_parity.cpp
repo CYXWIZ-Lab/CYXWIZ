@@ -250,6 +250,51 @@ TEST_CASE("OpenCL provider lstm/gru backward match the CPU BPTT references",
     }
 }
 
+TEST_CASE("OpenCL provider rnn_backward matches the CPU RNN BPTT reference (stacked)",
+          "[gpu_execution][neural_provider][opencl][parity][rnn]") {
+    auto provider = OpenclProvider();
+    if (!provider) {
+        WARN("no OpenCL GPU device; parity not exercised");
+        return;
+    }
+    const auto input = FilledTensor({3, 7, 5}, 0.5f, 0.7f);
+    const auto upstream = FilledTensor({3, 7, 10}, 0.3f, 1.3f);
+    cyxwiz::RNNLayer reference(5, 10, 2, true, false, "tanh");
+    cyxwiz::SetNeuralProvidersDisabledForTesting(true);
+    reference.Forward(input);
+    const auto expected_dx = reference.Backward(upstream);
+    const auto grads = reference.GetParameters();
+    cyxwiz::SetNeuralProvidersDisabledForTesting(false);
+    std::vector<cyxwiz::Tensor> weights_storage = {
+        grads.at("layer0_W_ih"), grads.at("layer0_W_hh"), grads.at("layer0_b_ih"),
+        grads.at("layer0_b_hh"), grads.at("layer1_W_ih"), grads.at("layer1_W_hh"),
+        grads.at("layer1_b_ih"), grads.at("layer1_b_hh")};
+    cyxwiz::Tensor dx(std::vector<size_t>{3, 7, 5});
+    std::vector<cyxwiz::Tensor> grad_storage = {
+        cyxwiz::Tensor(std::vector<size_t>{10, 5}), cyxwiz::Tensor(std::vector<size_t>{10, 10}),
+        cyxwiz::Tensor(std::vector<size_t>{10}), cyxwiz::Tensor(std::vector<size_t>{10}),
+        cyxwiz::Tensor(std::vector<size_t>{10, 10}), cyxwiz::Tensor(std::vector<size_t>{10, 10}),
+        cyxwiz::Tensor(std::vector<size_t>{10}), cyxwiz::Tensor(std::vector<size_t>{10})};
+    cyxwiz::NeuralOpBuffers buffers;
+    buffers.inputs = {&input, &upstream};
+    buffers.outputs = {&dx};
+    for (auto& w : weights_storage) buffers.weights.push_back(&w);
+    for (auto& g : grad_storage) buffers.gradients.push_back(&g);
+    auto request = OpenclRequest(cyxwiz::NeuralOp::RnnBackward, 3, 7, 5, 10, 2);
+    request.activation = cyxwiz::NeuralActivation::Tanh;
+    const auto status = provider->Execute(request, buffers);
+    INFO("detail: " << status.detail);
+    REQUIRE(status.ok);
+    Compare(dx, expected_dx, "opencl stacked rnn_backward dx", 5e-4f);
+    const char* names[] = {"layer0_grad_W_ih", "layer0_grad_W_hh",
+                           "layer0_grad_b_ih", "layer0_grad_b_hh",
+                           "layer1_grad_W_ih", "layer1_grad_W_hh",
+                           "layer1_grad_b_ih", "layer1_grad_b_hh"};
+    for (size_t i = 0; i < 8; ++i) {
+        Compare(grad_storage[i], grads.at(names[i]), names[i], 5e-4f);
+    }
+}
+
 TEST_CASE("Stacked LSTM and GRU layers route through the OpenCL provider on an OpenCL-selected run",
           "[gpu_execution][neural_provider][opencl][parity][stacked]") {
     auto provider = OpenclProvider();
