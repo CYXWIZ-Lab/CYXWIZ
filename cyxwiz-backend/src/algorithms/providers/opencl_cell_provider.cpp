@@ -23,6 +23,9 @@
 #define CL_TARGET_OPENCL_VERSION 120
 #define CL_USE_DEPRECATED_OPENCL_1_2_APIS
 #include <CL/cl.h>
+#ifdef CYXWIZ_HAS_OPENCL_CLBLAST
+#include <clblast.h>
+#endif
 
 #include <spdlog/spdlog.h>
 
@@ -39,7 +42,7 @@ namespace cyxwiz {
 namespace {
 
 constexpr const char* kProviderId = "cyxwiz.opencl-cell";
-constexpr const char* kProviderSemver = "0.2.0-rnn-training";
+constexpr const char* kProviderSemver = "0.3.0-clblast-optional";
 
 // Row-major float kernels. Layout conventions match the CUDA provider and
 // the CPU references: x is [batch, seq, features], the row index of the
@@ -617,7 +620,13 @@ public:
     std::string Version() const override {
         std::ostringstream out;
         out << kProviderId << " " << kProviderSemver << " / OpenCL GPU devices "
-            << probe_.gpu_devices.size();
+            << probe_.gpu_devices.size()
+#ifdef CYXWIZ_HAS_OPENCL_CLBLAST
+            << " / GEMM CLBlast"
+#else
+            << " / GEMM built-in tiled kernels"
+#endif
+            ;
         if (!probe_.gpu_devices.empty()) {
             const auto& d = probe_.gpu_devices.front();
             out << " / device0 '" << d.name << "' (" << d.vendor << ", "
@@ -860,10 +869,43 @@ private:
 
     // GEMM wrappers mirroring the CUDA provider's row-major helpers, with
     // element offsets in place of pointer arithmetic.
+#ifdef CYXWIZ_HAS_OPENCL_CLBLAST
+    // CLBlast row-major SGEMM with element offsets. Returns false on any
+    // CLBlast status other than success so the caller can fall back.
+    // Measured on the GTX 1050 Ti OpenCL platform (2026-09-23): CLBlast's
+    // per-call overhead loses to the built-in tiled kernel on the small
+    // per-timestep recurrent GEMMs, so it is used only above a work
+    // threshold (m*n*k) where its tuned kernels win.
+    static constexpr size_t kClblastMinWork = size_t{1} << 24;  // 16.8M MACs
+    static bool ClblastGemm(OpenclExecutionState& s, bool transpose_a,
+                            bool transpose_b, size_t m, size_t n, size_t k,
+                            const ClBuffer& A, size_t a_off, size_t lda,
+                            const ClBuffer& B, size_t b_off, size_t ldb,
+                            ClBuffer& C, size_t c_off, size_t ldc, float beta) {
+        if (m * n * k < kClblastMinWork) {
+            return false;  // built-in kernel path
+        }
+        cl_command_queue queue = s.Queue();
+        const auto status = clblast::Gemm<float>(
+            clblast::Layout::kRowMajor,
+            transpose_a ? clblast::Transpose::kYes : clblast::Transpose::kNo,
+            transpose_b ? clblast::Transpose::kYes : clblast::Transpose::kNo,
+            m, n, k, 1.0f, A.mem, a_off, lda, B.mem, b_off, ldb, beta, C.mem,
+            c_off, ldc, &queue, nullptr);
+        return status == clblast::StatusCode::kSuccess;
+    }
+#endif
+
     bool GemmABt(OpenclExecutionState& s, size_t m, size_t n, size_t k,
                  const ClBuffer& A, size_t a_off, size_t lda, const ClBuffer& B,
                  size_t b_off, size_t ldb, ClBuffer& C, size_t c_off, size_t ldc,
                  float beta) {
+#ifdef CYXWIZ_HAS_OPENCL_CLBLAST
+        if (ClblastGemm(s, false, true, m, n, k, A, a_off, lda, B, b_off, ldb,
+                        C, c_off, ldc, beta)) {
+            return true;
+        }
+#endif
         cl_kernel kernel = s.GemmAbt();
         return SetArgs(kernel, static_cast<int>(m), static_cast<int>(n),
                        static_cast<int>(k), A, static_cast<int>(a_off),
@@ -876,6 +918,12 @@ private:
                 const ClBuffer& A, size_t a_off, size_t lda, const ClBuffer& B,
                 size_t b_off, size_t ldb, ClBuffer& C, size_t c_off, size_t ldc,
                 float beta) {
+#ifdef CYXWIZ_HAS_OPENCL_CLBLAST
+        if (ClblastGemm(s, false, false, m, n, k, A, a_off, lda, B, b_off, ldb,
+                        C, c_off, ldc, beta)) {
+            return true;
+        }
+#endif
         cl_kernel kernel = s.GemmAb();
         return SetArgs(kernel, static_cast<int>(m), static_cast<int>(n),
                        static_cast<int>(k), A, static_cast<int>(a_off),
@@ -889,6 +937,13 @@ private:
                       const ClBuffer& A, size_t a_off, size_t lda,
                       const ClBuffer& B, size_t b_off, size_t ldb, ClBuffer& C,
                       size_t c_off, size_t ldc) {
+#ifdef CYXWIZ_HAS_OPENCL_CLBLAST
+        // C[k x n] += A[m x k]^T * B[m x n]
+        if (ClblastGemm(s, true, false, k, n, m, A, a_off, lda, B, b_off, ldb,
+                        C, c_off, ldc, 1.0f)) {
+            return true;
+        }
+#endif
         cl_kernel kernel = s.GemmAtbAccum();
         return SetArgs(kernel, static_cast<int>(m), static_cast<int>(k),
                        static_cast<int>(n), A, static_cast<int>(a_off),

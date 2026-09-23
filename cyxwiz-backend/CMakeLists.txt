@@ -422,6 +422,25 @@ if(CYXWIZ_HAS_ARRAYFIRE)
             target_compile_definitions(cyxwiz-backend PUBLIC
                 CYXWIZ_HAS_OPENCL_DNN_PROVIDER)
             set(CYXWIZ_HAS_OPENCL_DNN_PROVIDER TRUE)
+            # Optional CLBlast GEMMs (vcpkg manifest feature `opencl-clblast`).
+            # OFF by default; the provider's built-in tiled kernels remain the
+            # fallback at runtime even when CLBlast is linked.
+            option(CYXWIZ_ENABLE_OPENCL_CLBLAST
+                   "Use CLBlast GEMMs in the OpenCL neural provider" OFF)
+            if(CYXWIZ_ENABLE_OPENCL_CLBLAST)
+                find_package(CLBlast CONFIG QUIET)
+                if(CLBlast_FOUND)
+                    message(STATUS "OpenCL DNN provider: CLBlast GEMMs enabled")
+                    target_link_libraries(cyxwiz-backend PRIVATE clblast)
+                    target_compile_definitions(cyxwiz-backend PRIVATE
+                        CYXWIZ_HAS_OPENCL_CLBLAST)
+                else()
+                    message(WARNING
+                        "CYXWIZ_ENABLE_OPENCL_CLBLAST=ON but CLBlast was not "
+                        "found (install the vcpkg feature opencl-clblast) - "
+                        "using built-in GEMM kernels")
+                endif()
+            endif()
         else()
             message(WARNING
                 "CYXWIZ_ENABLE_OPENCL_DNN_PROVIDER=ON but no OpenCL SDK was "

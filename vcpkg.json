@@ -65,6 +65,12 @@
       "dependencies": [
         "sentencepiece"
       ]
+    },
+    "opencl-clblast": {
+      "description": "Optional CLBlast (Apache-2.0) BLAS for the OpenCL neural provider's GEMMs; the provider falls back to its built-in tiled kernels without it.",
+      "dependencies": [
+        "clblast"
+      ]
     }
   },
   "builtin-baseline": "594ad8871e1e8e45f8e626c015fd611163430207"
