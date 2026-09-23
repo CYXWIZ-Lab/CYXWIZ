@@ -668,13 +668,19 @@ bool BuildSequential(
             }
 
             case gui::NodeType::RNN: {
-                // tofix68 Studio RNN wiring. bidirectional and dropout are
-                // rejected fail-closed by the recurrent configuration
-                // policy before ModelBuilder runs (RNNLayer refuses them).
+                // tofix68 Studio RNN wiring. dropout is rejected fail-closed
+                // by the recurrent configuration policy before ModelBuilder
+                // runs; bidirectional uses RNNModule's split path.
                 size_t hidden_size = 128;
                 size_t num_layers = 1;
                 bool return_sequences = false;
+                bool bidirectional = false;
                 std::string nonlinearity = "tanh";
+                auto bi_it = layer_cfg.parameters.find("bidirectional");
+                if (bi_it != layer_cfg.parameters.end()) {
+                    bidirectional = (bi_it->second == "true" ||
+                                     bi_it->second == "1");
+                }
 
                 auto hs_it = layer_cfg.parameters.find("hidden_size");
                 if (hs_it != layer_cfg.parameters.end()) {
@@ -701,15 +707,17 @@ bool BuildSequential(
 
                 model.Add<RNNModule>(current_input_size, hidden_size,
                                      num_layers, return_sequences,
-                                     nonlinearity);
+                                     nonlinearity, bidirectional);
 
+                const size_t output_features =
+                    hidden_size * (bidirectional ? 2 : 1);
                 spdlog::info("  [{}] RNN(in={}, hidden={}, layers={}, "
-                             "nonlinearity={}, return_seq={}) — output "
-                             "[batch, {}]",
+                             "nonlinearity={}, bidir={}, return_seq={}) — "
+                             "output [batch, {}]",
                              i, current_input_size, hidden_size,
-                             num_layers, nonlinearity, return_sequences,
-                             hidden_size);
-                current_input_size = hidden_size;
+                             num_layers, nonlinearity, bidirectional,
+                             return_sequences, output_features);
+                current_input_size = output_features;
                 break;
             }
 

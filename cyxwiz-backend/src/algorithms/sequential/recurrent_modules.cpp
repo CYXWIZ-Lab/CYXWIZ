@@ -636,25 +636,59 @@ void GRUModule::SetTraining(bool training) {
 
 RNNModule::RNNModule(size_t input_size, size_t hidden_size,
                      size_t num_layers, bool return_sequences,
-                     const std::string& nonlinearity)
+                     const std::string& nonlinearity, bool bidirectional)
     : input_size_(input_size)
     , hidden_size_(hidden_size)
     , num_layers_(num_layers)
     , return_sequences_(return_sequences)
     , nonlinearity_(nonlinearity)
+    , bidirectional_(bidirectional)
 {
-    layer_ = std::make_unique<RNNLayer>(
-        static_cast<int>(input_size),
-        static_cast<int>(hidden_size),
-        static_cast<int>(num_layers),
-        /*batch_first=*/true,
-        /*bidirectional=*/false,
-        nonlinearity);
+    if (bidirectional_) {
+        split_bidirectional_path_ = true;
+        forward_layers_.reserve(num_layers_);
+        reverse_layers_.reserve(num_layers_);
+        for (size_t layer = 0; layer < num_layers_; ++layer) {
+            const int layer_input_size = (layer == 0)
+                ? static_cast<int>(input_size)
+                : static_cast<int>(hidden_size * 2);
+            forward_layers_.push_back(std::make_unique<RNNLayer>(
+                layer_input_size, static_cast<int>(hidden_size), 1,
+                /*batch_first=*/true, /*bidirectional=*/false, nonlinearity));
+            reverse_layers_.push_back(std::make_unique<RNNLayer>(
+                layer_input_size, static_cast<int>(hidden_size), 1,
+                /*batch_first=*/true, /*bidirectional=*/false, nonlinearity));
+        }
+        spdlog::info("[RNNModule] Using split bidirectional RNN path "
+                     "({} layer pairs); each branch is placed independently.",
+                     num_layers_);
+    } else {
+        layer_ = std::make_unique<RNNLayer>(
+            static_cast<int>(input_size),
+            static_cast<int>(hidden_size),
+            static_cast<int>(num_layers),
+            /*batch_first=*/true,
+            /*bidirectional=*/false,
+            nonlinearity);
+    }
 }
 
 Tensor RNNModule::Forward(const Tensor& input) {
     input_cache_ = input.Clone();
-    Tensor full_output = layer_->Forward(input);
+    Tensor full_output;
+    if (split_bidirectional_path_) {
+        Tensor layer_input = input;
+        for (size_t layer = 0; layer < num_layers_; ++layer) {
+            Tensor forward_output = forward_layers_[layer]->Forward(layer_input);
+            Tensor reverse_input = ReverseSequenceTensor(layer_input, /*batch_first=*/true);
+            Tensor reverse_output = reverse_layers_[layer]->Forward(reverse_input);
+            reverse_output = ReverseSequenceTensor(reverse_output, /*batch_first=*/true);
+            layer_input = ConcatFeatureTensor(forward_output, reverse_output);
+        }
+        full_output = layer_input;
+    } else {
+        full_output = layer_->Forward(input);
+    }
     last_full_output_shape_ = full_output.Shape();
 
     if (return_sequences_) {
@@ -682,38 +716,122 @@ Tensor RNNModule::Forward(const Tensor& input) {
 }
 
 Tensor RNNModule::Backward(const Tensor& grad_output) {
-    if (return_sequences_) {
-        return layer_->Backward(grad_output);
-    }
-    if (last_full_output_shape_.size() != 3) {
-        spdlog::warn("RNNModule::Backward called without a 3D shape cache "
-                     "— falling back to direct grad passthrough");
-        return layer_->Backward(grad_output);
+    Tensor upstream = grad_output;
+    if (!return_sequences_) {
+        if (last_full_output_shape_.size() != 3) {
+            spdlog::warn("RNNModule::Backward called without a 3D shape cache "
+                         "— falling back to direct grad passthrough");
+            return split_bidirectional_path_
+                ? Tensor::Zeros(input_cache_.Shape())
+                : layer_->Backward(grad_output);
+        }
+        const size_t batch = last_full_output_shape_[0];
+        const size_t seq_len = last_full_output_shape_[1];
+        const size_t hd = last_full_output_shape_[2];
+
+        Tensor expanded = Tensor::Zeros({batch, seq_len, hd});
+        const float* src = grad_output.ReadData<float>();
+        float* dst = expanded.MutableData<float>();
+        for (size_t b = 0; b < batch; ++b) {
+            float* dst_step = dst + b * seq_len * hd + (seq_len - 1) * hd;
+            std::memcpy(dst_step, src + b * hd, hd * sizeof(float));
+        }
+        upstream = expanded;
     }
 
-    const size_t batch = last_full_output_shape_[0];
-    const size_t seq_len = last_full_output_shape_[1];
-    const size_t hd = last_full_output_shape_[2];
-
-    Tensor expanded = Tensor::Zeros({batch, seq_len, hd});
-    const float* src = grad_output.ReadData<float>();
-    float* dst = expanded.MutableData<float>();
-    for (size_t b = 0; b < batch; ++b) {
-        float* dst_step = dst + b * seq_len * hd + (seq_len - 1) * hd;
-        std::memcpy(dst_step, src + b * hd, hd * sizeof(float));
+    if (split_bidirectional_path_) {
+        if (upstream.Shape().size() != 3) {
+            spdlog::warn("RNNModule::Backward expected 3D upstream gradient "
+                         "for split bidirectional path");
+            return Tensor::Zeros(input_cache_.Shape());
+        }
+        Tensor layer_grad = upstream;
+        for (int layer = static_cast<int>(num_layers_) - 1; layer >= 0; --layer) {
+            const size_t total_features = layer_grad.Shape()[2];
+            const size_t half_features = total_features / 2;
+            Tensor forward_grad = SliceFeatureTensor(layer_grad, 0, half_features);
+            Tensor reverse_grad = SliceFeatureTensor(layer_grad, half_features, half_features);
+            Tensor dx_forward = forward_layers_[static_cast<size_t>(layer)]->Backward(forward_grad);
+            Tensor dx_reverse = reverse_layers_[static_cast<size_t>(layer)]->Backward(
+                ReverseSequenceTensor(reverse_grad, /*batch_first=*/true));
+            dx_reverse = ReverseSequenceTensor(dx_reverse, /*batch_first=*/true);
+            layer_grad = dx_forward + dx_reverse;
+        }
+        return layer_grad;
     }
-    return layer_->Backward(expanded);
+    return layer_->Backward(upstream);
 }
 
 std::map<std::string, Tensor> RNNModule::GetParameters() {
+    if (split_bidirectional_path_) {
+        std::map<std::string, Tensor> params;
+        for (size_t layer = 0; layer < num_layers_; ++layer) {
+            for (const auto& [key, tensor] : forward_layers_[layer]->GetParameters()) {
+                if (key.find("grad_") != std::string::npos) continue;
+                params[MakeGRUBranchKey(layer, "forward", NormalizeGRULayerKey(key))] = tensor;
+            }
+            for (const auto& [key, tensor] : reverse_layers_[layer]->GetParameters()) {
+                if (key.find("grad_") != std::string::npos) continue;
+                params[MakeGRUBranchKey(layer, "reverse", NormalizeGRULayerKey(key))] = tensor;
+            }
+        }
+        return params;
+    }
     return layer_->GetParameters();
 }
 
 void RNNModule::SetParameters(const std::map<std::string, Tensor>& params) {
+    if (split_bidirectional_path_) {
+        std::vector<std::map<std::string, Tensor>> forward_params(num_layers_);
+        std::vector<std::map<std::string, Tensor>> reverse_params(num_layers_);
+        for (const auto& [key, tensor] : params) {
+            if (key.rfind("layer", 0) != 0) continue;
+            const size_t dot1 = key.find('.');
+            const size_t dot2 = key.find('.', dot1 == std::string::npos ? 0 : dot1 + 1);
+            if (dot1 == std::string::npos || dot2 == std::string::npos) continue;
+            const size_t layer_idx = static_cast<size_t>(std::stoul(key.substr(5, dot1 - 5)));
+            if (layer_idx >= num_layers_) continue;
+            const std::string branch = key.substr(dot1 + 1, dot2 - dot1 - 1);
+            const std::string base_key = key.substr(dot2 + 1);
+            if (base_key.empty()) continue;
+            const std::string child_key = "layer0_" + base_key;
+            if (branch == "forward") {
+                forward_params[layer_idx][child_key] = tensor;
+            } else if (branch == "reverse") {
+                reverse_params[layer_idx][child_key] = tensor;
+            }
+        }
+        for (size_t layer = 0; layer < num_layers_; ++layer) {
+            forward_layers_[layer]->SetParameters(forward_params[layer]);
+            reverse_layers_[layer]->SetParameters(reverse_params[layer]);
+        }
+        return;
+    }
     layer_->SetParameters(params);
 }
 
 std::map<std::string, Tensor> RNNModule::GetGradients() {
+    auto build_gradient_map = [](const std::map<std::string, Tensor>& params,
+                                 const std::string& prefix) {
+        std::map<std::string, Tensor> grads;
+        for (const auto& [key, value] : params) {
+            if (key.find("grad_") == std::string::npos) continue;
+            grads[prefix + NormalizeGRULayerKey(key)] = value;
+        }
+        return grads;
+    };
+    if (split_bidirectional_path_) {
+        std::map<std::string, Tensor> grads;
+        for (size_t layer = 0; layer < num_layers_; ++layer) {
+            auto forward_grads = build_gradient_map(forward_layers_[layer]->GetParameters(),
+                                                     MakeGRUBranchKey(layer, "forward", ""));
+            auto reverse_grads = build_gradient_map(reverse_layers_[layer]->GetParameters(),
+                                                     MakeGRUBranchKey(layer, "reverse", ""));
+            grads.insert(forward_grads.begin(), forward_grads.end());
+            grads.insert(reverse_grads.begin(), reverse_grads.end());
+        }
+        return grads;
+    }
     // Same convention as LSTM/GRU: RNNLayer writes "grad_*" keys into its
     // parameter map and the SequentialModel optimizer step reads them
     // through GetParameters().
@@ -721,10 +839,13 @@ std::map<std::string, Tensor> RNNModule::GetGradients() {
 }
 
 std::string RNNModule::GetName() const {
-    return "RNN(" + std::to_string(input_size_) + " -> " +
-           std::to_string(hidden_size_) + ", " + nonlinearity_ +
+    const int dirs = bidirectional_ ? 2 : 1;
+    const std::string prefix = split_bidirectional_path_ ? "Bi" : "";
+    return prefix + "RNN(" + std::to_string(input_size_) + " -> " +
+           std::to_string(hidden_size_ * dirs) + ", " + nonlinearity_ +
            (return_sequences_ ? ", seq" : ", last") + ")";
 }
 
 } // namespace cyxwiz
+
 

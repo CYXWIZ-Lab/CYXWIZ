@@ -603,16 +603,17 @@ private:
  *
  * Mirrors LSTMModule: Keras-style `return_sequences=false` reduction to
  * the last timestep with symmetric gradient re-expansion in Backward.
- * Unidirectional and batch-first only — RNNLayer fails closed otherwise,
- * and the Studio configuration policy rejects those settings before
- * ModelBuilder runs (tofix68 Studio RNN wiring).
+ * Batch-first only. bidirectional=true uses the same split
+ * forward/reverse path as LSTMModule/GRUModule (each branch a
+ * single-direction RNNLayer, provider-routed on its own).
  */
 class CYXWIZ_API RNNModule : public Module {
 public:
     RNNModule(size_t input_size, size_t hidden_size,
               size_t num_layers = 1,
               bool return_sequences = false,
-              const std::string& nonlinearity = "tanh");
+              const std::string& nonlinearity = "tanh",
+              bool bidirectional = false);
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
@@ -624,11 +625,15 @@ public:
 
 private:
     std::unique_ptr<RNNLayer> layer_;
+    std::vector<std::unique_ptr<RNNLayer>> forward_layers_;
+    std::vector<std::unique_ptr<RNNLayer>> reverse_layers_;
+    bool split_bidirectional_path_ = false;
     size_t input_size_;
     size_t hidden_size_;
     size_t num_layers_;
     bool return_sequences_;
     std::string nonlinearity_;
+    bool bidirectional_;
     std::vector<size_t> last_full_output_shape_;
 };
 

@@ -48,23 +48,9 @@ ResolvePipelineUnsupportedSequentialModelConfigurationReason(
     const char* layer_name = node_type == gui::NodeType::LSTM
         ? "LSTM"
         : (node_type == gui::NodeType::GRU ? "GRU" : "RNN");
-    // LSTM and GRU bidirectional training run as split forward/reverse
-    // branches (LSTMModule/GRUModule), each a proven single-direction
-    // layer; only the simple RNN still fails closed.
-    const auto bidirectional = parameters.find("bidirectional");
-    if (node_type == gui::NodeType::RNN && bidirectional != parameters.end()) {
-        const std::string value =
-            recurrent_configuration_policy_detail::TrimLower(
-                bidirectional->second);
-        if (value == "true" || value == "1" || value == "yes" ||
-            value == "on") {
-            return std::string(
-                "RNN bidirectional=true is not supported for Engine training "
-                "because the simple RNN layer implements one direction only "
-                "and fails closed rather than silently running unidirectional. "
-                "Use bidirectional=false.");
-        }
-    }
+    // Bidirectional RNN/LSTM/GRU training all run as split forward/reverse
+    // branches (RNNModule/LSTMModule/GRUModule), each a proven
+    // single-direction layer, so no directionality fails closed here.
 
     if (node_type == gui::NodeType::RNN) {
         const auto nonlinearity = parameters.find("nonlinearity");

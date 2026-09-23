@@ -2073,11 +2073,20 @@ void AddBackendPlacementReports(TrainingConfiguration& config) {
                         layer.input_shape.size() >= 2 ? layer.input_shape[1] : 0;
                     provider_request.hidden =
                         ParseSizeParam(layer.parameters, "hidden_size", 128);
-                    provider_request.layers =
-                        ParseSizeParam(layer.parameters, "num_layers", 1);
-                    provider_request.directions =
-                        ParseBoolParam(layer.parameters, "bidirectional", false)
-                            ? 2 : 1;
+                    const bool rnn_bidirectional =
+                        ParseBoolParam(layer.parameters, "bidirectional", false);
+                    // Split-path bidirectional: each branch runs as a
+                    // single-direction, single-layer tuple (first level).
+                    provider_request.layers = rnn_bidirectional
+                        ? 1
+                        : ParseSizeParam(layer.parameters, "num_layers", 1);
+                    provider_request.directions = 1;
+                    if (rnn_bidirectional) {
+                        placement.explanation +=
+                            " Bidirectional runs as split forward/reverse "
+                            "branches; the native provider verdict below "
+                            "applies per branch (first level).";
+                    }
                     const auto nonlinearity =
                         layer.parameters.find("nonlinearity");
                     provider_request.activation =

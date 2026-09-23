@@ -845,8 +845,13 @@ int main() {
 
     auto rnn_bidirectional_config =
         CompileRecurrentGraph(gui::NodeType::RNN, 32, true);
-    Check(!rnn_bidirectional_config.is_valid,
-          "bidirectional RNN must fail closed at compile time");
+    Check(rnn_bidirectional_config.is_valid,
+          "bidirectional RNN compiles through the split path");
+    const auto* rnn_bi_placement = FindPlacement(rnn_bidirectional_config, 4);
+    Check(rnn_bi_placement != nullptr &&
+              rnn_bi_placement->explanation.find("split forward/reverse") !=
+                  std::string::npos,
+          "bidirectional RNN placement should disclose the split path");
 
     cyxwiz::ExecutionDeviceContext cpu_context;
     cpu_context.requested_backend = "arrayfire_cpu";

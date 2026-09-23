@@ -3053,24 +3053,17 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
             TruthOwner::Runtime,
             true,
             false,
-            node.type == NodeType::RNN
-                ? "Engine simple-RNN training supports only one direction."
-                : (node.type == NodeType::LSTM
-                       ? "LSTM uses explicit forward and reverse branches when enabled."
-                       : "GRU uses explicit forward and reverse branches when enabled."));
-        if (node.type == NodeType::RNN &&
-            bidirectional.effective_value == "true") {
-            bidirectional.statuses.clear();
-            AddStatus(bidirectional, TruthStatus::Unsupported);
-            bidirectional.message =
-                "The simple RNN layer implements one direction only; "
-                "Engine training fails closed for bidirectional=true.";
-        } else if ((node.type == NodeType::GRU || node.type == NodeType::LSTM) &&
-                   bidirectional.effective_value == "true") {
+            std::string(node.type == NodeType::RNN
+                            ? "RNN"
+                            : (node.type == NodeType::LSTM ? "LSTM" : "GRU")) +
+                " uses explicit forward and reverse branches when enabled.");
+        if (bidirectional.effective_value == "true") {
             AddStatus(bidirectional, TruthStatus::RuntimeOnly);
             bidirectional.message =
                 std::string("Engine training uses the split forward/reverse ") +
-                (node.type == NodeType::GRU ? "GRU" : "LSTM") +
+                (node.type == NodeType::RNN
+                     ? "RNN"
+                     : (node.type == NodeType::LSTM ? "LSTM" : "GRU")) +
                 " path; each branch is placed independently (native CPU "
                 "reference or the native neural provider).";
         }

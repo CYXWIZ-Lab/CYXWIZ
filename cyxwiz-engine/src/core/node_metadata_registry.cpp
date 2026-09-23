@@ -2254,10 +2254,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
     RegisterNode({NodeType::RNN, NodeCategory::Recurrent, "RNN", ICON_FA_REPEAT,
         {"rnn", "recurrent", "sequence"}, 0, false,
         "Trainable simple (Elman) recurrent sequence layer",
-        "Engine training supports unidirectional, stacked simple RNN with "
-        "tanh or relu nonlinearity and dropout=0.0 on the native CPU "
-        "recurrent reference layer or the native neural provider "
-        "(CUDA/OpenCL). bidirectional=true fails closed.", "",
+        "Engine training supports stacked simple RNN with tanh or relu "
+        "nonlinearity and dropout=0.0, unidirectional or split-path "
+        "bidirectional, on the native CPU recurrent reference layer or the "
+        "native neural provider (CUDA/OpenCL).", "",
         {{"Input", PinType::Tensor, true,
           "Sequence tensor [batch, sequence, features]; features is derived as input_size."}},
         {{"Output", PinType::Tensor, true,
@@ -2270,7 +2270,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           "Hidden Size", "Recurrent", true, false},
          {"num_layers", "int", "1", "Number of stacked recurrent layers", {}, "1-1048576",
           "Layers", "Recurrent", true, false},
-         {"bidirectional", "bool", "false", "Must remain false; reverse-direction RNN is not implemented", {}, "",
+         {"bidirectional", "bool", "false", "Run explicit forward and reverse RNN branches", {}, "",
           "Bidirectional", "Recurrent", true, false},
          {"return_sequences", "bool", "false", "Return every timestep instead of the final timestep", {}, "",
           "Return Sequences", "Output", true, false},

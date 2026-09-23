@@ -1756,11 +1756,9 @@ void CheckImplementedRecurrentConfigurationContract(
     {
         auto rnn_bidirectional = supported;
         rnn_bidirectional["bidirectional"] = "true";
-        const auto reason =
-            cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
-                gui::NodeType::RNN, rnn_bidirectional);
-        Check(reason && reason->find("one direction only") != std::string::npos,
-              "bidirectional RNN must fail closed with its exact gap");
+        Check(!cyxwiz::ResolvePipelineUnsupportedSequentialModelConfigurationReason(
+                   gui::NodeType::RNN, rnn_bidirectional),
+              "split-path bidirectional RNN should be supported");
         auto rnn_activation = supported;
         rnn_activation["nonlinearity"] = "gelu";
         const auto activation_reason =

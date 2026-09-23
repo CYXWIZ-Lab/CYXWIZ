@@ -634,13 +634,13 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Trainable simple (Elman) recurrent layer: h_t = act(W_ih x_t + b_ih + W_hh h_{t-1} + b_hh).",
         "Runs on the native CPU simple-RNN reference layer with tanh or relu "
         "nonlinearity, or on the native neural provider (CUDA/OpenCL) when one "
-        "serves the run's device. Unidirectional and dropout=0.0 only; "
-        "bidirectional=true fails closed.",
+        "serves the run's device. dropout=0.0 only; bidirectional runs as "
+        "split forward/reverse branches.",
         {
             {"input_size", "Input feature size per timestep (auto-derived)"},
             {"hidden_size", "Number of hidden units"},
             {"num_layers", "Number of stacked layers"},
-            {"bidirectional", "Must remain false (not implemented)"},
+            {"bidirectional", "Run explicit forward and reverse RNN branches"},
             {"return_sequences", "Return every timestep instead of the last"},
             {"dropout", "Must remain 0.0; use an explicit Dropout node"},
             {"nonlinearity", "Cell activation: tanh or relu"}

@@ -192,3 +192,61 @@ TEST_CASE("RNNModule reduces to the last step and re-expands its gradient",
     CHECK(grads.count("layer0_grad_b_hh") == 1);
     CHECK(last_step.HasParameters());
 }
+
+TEST_CASE("RNNModule split bidirectional path concatenates branches and checks numerically",
+          "[rnn][sequential][bidirectional]") {
+    const auto input = FilledTensor({2, 5, 3}, 0.4f, 0.3f);
+    cyxwiz::RNNModule module(3, 4, 1, true, "tanh", /*bidirectional=*/true);
+    const auto out = module.Forward(input);
+    REQUIRE(out.Shape() == std::vector<size_t>{2, 5, 8});
+    CHECK(module.GetName() == "BiRNN(3 -> 8, tanh, seq)");
+    const auto params = module.GetParameters();
+    REQUIRE(params.count("layer0.forward.W_ih") == 1);
+    REQUIRE(params.count("layer0.reverse.W_hh") == 1);
+
+    // The forward half equals a plain RNNLayer with the forward weights;
+    // the reverse half equals the reverse RNNLayer on the reversed input.
+    cyxwiz::RNNLayer forward_only(3, 4, 1, true, false, "tanh");
+    forward_only.SetParameters({{"layer0_W_ih", params.at("layer0.forward.W_ih")},
+                                {"layer0_W_hh", params.at("layer0.forward.W_hh")},
+                                {"layer0_b_ih", params.at("layer0.forward.b_ih")},
+                                {"layer0_b_hh", params.at("layer0.forward.b_hh")}});
+    const auto fwd = forward_only.Forward(input);
+    const float* o = out.ReadData<float>();
+    const float* f = fwd.ReadData<float>();
+    for (size_t b = 0; b < 2; ++b) {
+        for (size_t t = 0; t < 5; ++t) {
+            for (size_t j = 0; j < 4; ++j) {
+                CHECK(std::fabs(o[(b * 5 + t) * 8 + j] - f[(b * 5 + t) * 4 + j]) <= 1e-6f);
+            }
+        }
+    }
+
+    // Numerical check of the split-path dx for L = sum(y * U).
+    const auto upstream = FilledTensor({2, 5, 8}, 0.25f, 1.1f);
+    const auto dx = module.Backward(upstream);
+    REQUIRE(dx.Shape() == std::vector<size_t>{2, 5, 3});
+    const auto loss = [&](const cyxwiz::Tensor& x) {
+        cyxwiz::RNNModule probe(3, 4, 1, true, "tanh", true);
+        probe.SetParameters(params);
+        const auto y = probe.Forward(x);
+        const float* py = y.ReadData<float>();
+        const float* pu = upstream.ReadData<float>();
+        double total = 0.0;
+        for (size_t i = 0; i < y.NumElements(); ++i) total += double(py[i]) * pu[i];
+        return total;
+    };
+    const float* dx_data = dx.ReadData<float>();
+    const float eps = 1e-3f;
+    for (size_t i : {size_t{0}, size_t{7}, size_t{16}, size_t{29}}) {
+        auto plus = input.Clone();
+        auto minus = input.Clone();
+        plus.MutableData<float>()[i] += eps;
+        minus.MutableData<float>()[i] -= eps;
+        const double numeric = (loss(plus) - loss(minus)) / (2.0 * eps);
+        CHECK(std::fabs(dx_data[i] - static_cast<float>(numeric)) <= 2e-3f);
+    }
+    const auto grads = module.GetGradients();
+    CHECK(grads.count("layer0.forward.W_ih") == 1);
+    CHECK(grads.count("layer0.reverse.W_ih") == 1);
+}
