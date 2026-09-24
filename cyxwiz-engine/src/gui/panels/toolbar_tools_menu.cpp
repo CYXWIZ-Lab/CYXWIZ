@@ -69,11 +69,16 @@ void ToolbarPanel::RenderToolsMenu() {
 
         // ==================== Testing ====================
         if (ImGui::BeginMenu(ICON_FA_FLASK " Testing")) {
-            if (ImGui::MenuItem(ICON_FA_GAUGE " Run Test", "F7")) {
+            if (ImGui::MenuItem(ICON_FA_GAUGE " Run Test", "F8")) {
                 if (run_test_callback_) run_test_callback_();
             }
-            if (ImGui::MenuItem("Run Quick Test", "Shift+F7")) {
+            // Only offer Quick Test when something implements it (no fake shortcut).
+            if (ImGui::MenuItem("Run Quick Test", nullptr, false,
+                                static_cast<bool>(run_quick_test_callback_))) {
                 if (run_quick_test_callback_) run_quick_test_callback_();
+            }
+            if (!run_quick_test_callback_ && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Not implemented yet. Use Run Test (F8).");
             }
             ImGui::Separator();
             if (ImGui::MenuItem(ICON_FA_CHART_BAR " View Test Results")) {

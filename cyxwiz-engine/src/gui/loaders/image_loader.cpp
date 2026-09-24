@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include "image_loader.h"
 
 #include "../../core/async_task_manager.h"
@@ -98,8 +99,9 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
                         "expected either class subdirectories "
                         "(cats/, dogs/, ...) OR a flat folder with "
                         "a Labels CSV selected above";
-                    state->done.store(true);
-                    return;
+                    // Handled by the catch below, which publishes the state and
+                    // ends the task Failed.
+                    throw std::runtime_error(state->message);
                 }
 
                 task.ReportProgress(0.9f, "Registering dataset");
@@ -148,6 +150,11 @@ uint64_t ImageLoader::LaunchAsyncLoad(const ApplyContext& ctx,
             }
             // Publish barrier — must be set LAST.
             state->done.store(true);
+            // The dialog reads the published state; the task itself must also
+            // end Failed (not Completed) so the Tasks panel tells the truth.
+            if (!state->success && !task.ShouldStop()) {
+                throw std::runtime_error(state->message.empty() ? std::string("Load failed") : state->message);
+            }
         });
 }
 

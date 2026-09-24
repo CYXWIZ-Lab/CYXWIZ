@@ -138,6 +138,9 @@ public:
     void SetBatchProgress(int current_epoch, int current_batch, int total_batches,
                           float running_loss);
     void SetMetricReportingCadence(int batch_interval);
+    // Samples per batch and batches per optimizer update, so the batch counter
+    // can name its unit ("8 samples each") instead of reading as samples.
+    void SetBatchComposition(int samples_per_batch, int batches_per_update);
     void AddRunComparisonRecord(const TrainingRunComparisonRecord& record);
     void ClearRunComparisonRecords();
 
@@ -240,6 +243,8 @@ private:
     int total_batches_ = 0;
     float current_batch_loss_ = 0.0f;
     int metric_reporting_interval_ = 10;
+    int samples_per_batch_ = 0;
+    int batches_per_update_ = 1;
     float last_epoch_time_ = 0.0f;
     float avg_epoch_time_ = 0.0f;
     float samples_per_second_ = 0.0f;

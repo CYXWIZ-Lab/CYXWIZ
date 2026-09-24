@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include "audio_loader.h"
 
 #include "../../core/async_task_manager.h"
@@ -144,6 +145,11 @@ uint64_t AudioLoader::LaunchAsyncLoad(const ApplyContext& ctx,
             }
             // Publish barrier — must be set LAST.
             state->done.store(true);
+            // The dialog reads the published state; the task itself must also
+            // end Failed (not Completed) so the Tasks panel tells the truth.
+            if (!state->success && !task.ShouldStop()) {
+                throw std::runtime_error(state->message.empty() ? std::string("Load failed") : state->message);
+            }
         });
 }
 

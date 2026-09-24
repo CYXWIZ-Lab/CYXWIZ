@@ -892,12 +892,20 @@ MainWindow::MainWindow()
         auto& training = cyxwiz::TrainingManager::Instance();
         auto& testing = cyxwiz::TestManager::Instance();
         if (training.IsTrainingActive() || testing.IsTestingActive()) {
-            spdlog::error(
-                "LoadCheckpoint: stop the active training or testing task first.");
+            ShowOperationError("Cannot load checkpoint",
+                "Stop the active training or testing task first.");
             return;
         }
         if (!node_editor_) {
-            spdlog::error("LoadCheckpoint: node editor is unavailable.");
+            ShowOperationError("Cannot load checkpoint", "The node editor is unavailable.");
+            return;
+        }
+        if (node_editor_->GetNodes().empty()) {
+            // The checkpoint's weights are loaded into the model built from the
+            // graph on the canvas; without that graph there is nothing to load into.
+            ShowOperationError("Cannot load checkpoint",
+                "The canvas is empty. Open the graph this checkpoint was trained with, "
+                "Apply its Data Inputs, then load the checkpoint.");
             return;
         }
 
@@ -917,6 +925,9 @@ MainWindow::MainWindow()
         BuildCompileResult(nodes, links);
         if (!compile_result_success_) {
             compile_result_mode_ = CompileResultMode::Compile;
+            compile_result_message_ =
+                "Cannot load checkpoint: the open graph must compile first. It should be the "
+                "graph the checkpoint was trained with, with its Data Inputs applied.";
             show_compile_result_popup_ = true;
             spdlog::error(
                 "LoadCheckpoint: active graph did not pass the compile gate.");
@@ -928,8 +939,8 @@ MainWindow::MainWindow()
             cyxwiz::GraphCompiler compiler;
             config = compiler.Compile(nodes, links);
         } catch (const std::exception& exception) {
-            spdlog::error("LoadCheckpoint: graph compilation failed: {}",
-                          exception.what());
+            ShowOperationError("Cannot load checkpoint",
+                std::string("Graph compilation failed: ") + exception.what());
             return;
         }
 
@@ -1021,12 +1032,15 @@ MainWindow::MainWindow()
                 task.ReportProgress(1.0f, "Checkpoint loaded for testing");
             },
             nullptr,
-            [dashboard, load_result](bool success, const std::string& error) {
+            [this, lifetime = std::weak_ptr<int>(test_callback_lifetime_), dashboard, load_result](
+                bool success, const std::string& error) {
                 if (!success || !load_result->success) {
-                    spdlog::error("LoadCheckpoint: {}",
-                                  error.empty()
-                                      ? load_result->error_message
-                                      : error);
+                    const std::string reason = error.empty() ? load_result->error_message : error;
+                    if (!lifetime.expired()) {
+                        ShowOperationError("Cannot load checkpoint", reason);
+                    } else {
+                        spdlog::error("LoadCheckpoint: {}", reason);
+                    }
                     return;
                 }
 
@@ -3129,6 +3143,7 @@ void MainWindow::Render() {
 
     // Render the Compile Graph result popup (triggered from Train -> Compile Graph menu)
     RenderCompileResultPopup();
+    RenderOperationErrorPopup();
     RenderMaterializationMemoryConfirmationPopup();
 
     // Render tutorial overlay (on top of all panels)
@@ -5376,6 +5391,34 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
     }
 }
 
+void MainWindow::ShowOperationError(std::string title, std::string message) {
+    spdlog::error("{}: {}", title, message);
+    operation_error_title_ = std::move(title);
+    operation_error_message_ = std::move(message);
+    show_operation_error_popup_ = true;
+}
+
+void MainWindow::RenderOperationErrorPopup() {
+    static constexpr const char* kPopupId = "Operation failed##operation_error";
+    if (show_operation_error_popup_) {
+        ImGui::OpenPopup(kPopupId);
+        show_operation_error_popup_ = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal(kPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", operation_error_title_.c_str());
+        ImGui::Separator();
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 540.0f);
+        ImGui::TextUnformatted(operation_error_message_.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+        if (ImGui::Button("OK", ImVec2(120.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
 void MainWindow::RenderCompileResultPopup() {
     // Window title differs based on which flow opened the popup.
     const char* popup_title = "Compile Graph Result";
@@ -5665,11 +5708,17 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
     auto& training = cyxwiz::TrainingManager::Instance();
     if (test_preparation_task_ || training.IsTrainingActive() ||
         cyxwiz::TestManager::Instance().IsTestingActive()) {
-        spdlog::warn("Run Test: another preparation, training or test is active");
+        ShowOperationError("Cannot run test",
+            "Another test preparation, training run or test is active. Wait for it to finish.");
         return;
     }
     auto model = training.GetActiveModel();
-    if (!model) { spdlog::error("Run Test requires a trained or loaded model"); return; }
+    if (!model) {
+        ShowOperationError("Cannot run test",
+            "No model is active. Train the graph, or use Tools > Checkpoints > Load Checkpoint "
+            "for Testing with the graph the checkpoint was trained with open.");
+        return;
+    }
     const auto fingerprint = HashGraphStructure(nodes, links);
     const std::weak_ptr<int> lifetime = test_callback_lifetime_;
     test_preparation_task_ = cyxwiz::SubmitGraphCompileTask(nodes, links,
@@ -5677,13 +5726,14 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
             const std::string& error, cyxwiz::TrainingConfiguration config) {
             if (lifetime.expired()) return;
             test_preparation_task_.reset();
-            if (!success) { spdlog::warn("Run Test: {}", error); return; }
+            if (!success) { ShowOperationError("Cannot run test", error); return; }
             auto& training = cyxwiz::TrainingManager::Instance();
             if (!node_editor_ || training.IsTrainingActive() ||
                 cyxwiz::TestManager::Instance().IsTestingActive() ||
                 training.GetActiveModel() != model ||
                 HashGraphStructure(node_editor_->GetNodes(), node_editor_->GetLinks()) != fingerprint) {
-                spdlog::warn("Run Test: graph/model changed during preparation; run Test again");
+                ShowOperationError("Cannot run test",
+                    "The graph or model changed while the test was being prepared. Run Test again.");
                 return;
             }
             try { StartTestingWithConfig(nodes, links, std::move(config)); }
@@ -5707,10 +5757,9 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
 
     auto& tm = cyxwiz::TrainingManager::Instance();
     if (!tm.HasTrainedModel()) {
-        spdlog::error(
-            "StartTestingFromGraph: no active model is available. Train a model, "
-            "or use Tools > Checkpoints > Load Checkpoint for Testing before "
-            "running Test.");
+        ShowOperationError("Cannot run test",
+            "No model is active. Train a model, or use Tools > Checkpoints > Load "
+            "Checkpoint for Testing before running Test.");
         return;
     }
 
@@ -5721,10 +5770,10 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         std::ostringstream fingerprint;
         fingerprint << std::hex << HashGraphStructure(nodes, links);
         if (fingerprint.str() != active_model_info.graph_fingerprint) {
-            spdlog::error(
-                "StartTestingFromGraph: the canvas graph changed after the "
-                "checkpoint was loaded. Reload the checkpoint against the "
-                "current graph before testing.");
+            ShowOperationError("Cannot run test",
+                "The graph changed after the checkpoint was loaded (any edit, including "
+                "a Data Input file, counts). Load the checkpoint again with this graph open, "
+                "then run Test.");
             return;
         }
     }
@@ -5948,6 +5997,13 @@ void MainWindow::HandleGlobalShortcuts() {
     if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F7)) {
         CompileGraphAndReport();
         spdlog::info("Compile Graph invoked via F7");
+    }
+
+    // Run Test (F8) - score the active (trained or loaded) model on the graph's
+    // test data; the same action as Tools > Testing > Run Test.
+    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F8) && node_editor_) {
+        StartTestingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
+        spdlog::info("Run Test invoked via F8");
     }
 
     // Pattern Browser (Ctrl+Shift+P) - Always available

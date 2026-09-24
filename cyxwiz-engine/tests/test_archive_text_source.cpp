@@ -62,6 +62,12 @@ int main(int argc, char** argv) {
         Check(multiple->Slice(0, 1)->Equals(*table), "Single-member backward compatibility");
         Check(multiple->GetColumnByName("text")->GetScalar(1).ValueOrDie()->ToString() == "ignore", "Selection order, not archive order");
         Reject([&] {cyxwiz::LoadZipTextSelection(path, "notes.txt\nnotes.txt");}, "duplicate selection");
+        {
+            // Spaces/tabs around pasted member paths are trimmed.
+            const auto trimmed = cyxwiz::LoadZipTextSelection(path, "  nested/text.txt \t\r\n\tnotes.txt  ");
+            Check(trimmed && trimmed->num_rows() == 2, "trimmed member paths load both members");
+        }
+        Reject([&] {cyxwiz::LoadZipTextSelection(path, "notes.txt\n   \nnested/text.txt");}, "empty or invalid");
         Reject([&] {cyxwiz::LoadZipTextSelection(path, "notes.txt\n\nnested/text.txt");}, "empty or invalid");
         Reject([&] {cyxwiz::LoadZipTextSelection(path, "notes.txt\nmissing");}, "not found: missing");
         Reject([&] {cyxwiz::LoadZipTextSelection(path, std::string(65537, 'a'));}, "65536 bytes");

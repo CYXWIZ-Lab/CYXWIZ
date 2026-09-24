@@ -238,6 +238,10 @@ private:
     // Compile the current graph as a dry-run (no training) and show results in a popup
     void CompileGraphAndReport();
     void RenderCompileResultPopup();
+    // User-facing failure for an action that has no result panel of its own
+    // (checkpoint load, Run Test refusals): shown on screen, also logged.
+    void ShowOperationError(std::string title, std::string message);
+    void RenderOperationErrorPopup();
     void RenderMaterializationMemoryConfirmationPopup();
     bool BuildStudioDebuggerSession(cyxwiz::StudioDebuggerSnapshot& session,
                                     cyxwiz::StudioDebuggerRunMode mode,
@@ -285,6 +289,9 @@ private:
     // Local Debug runs replace it with a per-layer trace instead.
     // compile_result_mode_ selects the header + title text.
     bool show_compile_result_popup_ = false;
+    bool show_operation_error_popup_ = false;
+    std::string operation_error_title_;
+    std::string operation_error_message_;
     bool compile_result_success_ = false;
     CompileResultMode compile_result_mode_ = CompileResultMode::Compile;
     std::string compile_result_message_;     // legacy single-string fallback

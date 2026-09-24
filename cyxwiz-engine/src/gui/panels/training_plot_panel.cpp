@@ -689,6 +689,12 @@ void TrainingPlotPanel::SetBatchProgress(int current_epoch, int current_batch,
                            std::max(1, total_epochs_));
 }
 
+void TrainingPlotPanel::SetBatchComposition(int samples_per_batch, int batches_per_update) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    samples_per_batch_ = std::max(0, samples_per_batch);
+    batches_per_update_ = std::max(1, batches_per_update);
+}
+
 void TrainingPlotPanel::SetMetricReportingCadence(int batch_interval) {
     std::lock_guard<std::mutex> lock(data_mutex_);
     metric_reporting_interval_ = std::max(0, batch_interval);
@@ -2390,7 +2396,17 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         float batch_progress = static_cast<float>(current_batch_) /
                                 std::max(1, total_batches_);
         ImGui::Text("Batch %d / %d", current_batch_, total_batches_);
-        ImGui::SameLine(280);
+        if (samples_per_batch_ > 0) {
+            ImGui::SameLine();
+            if (batches_per_update_ > 1) {
+                ImGui::TextDisabled("(%d sample%s each, update every %d batches)", samples_per_batch_,
+                                    samples_per_batch_ == 1 ? "" : "s", batches_per_update_);
+            } else {
+                ImGui::TextDisabled("(%d sample%s each)", samples_per_batch_,
+                                    samples_per_batch_ == 1 ? "" : "s");
+            }
+        }
+        ImGui::SameLine();
         ImGui::ProgressBar(batch_progress, ImVec2(200, 0));
         ImGui::SameLine();
         ImGui::Text("running loss: %.4f", current_batch_loss_);

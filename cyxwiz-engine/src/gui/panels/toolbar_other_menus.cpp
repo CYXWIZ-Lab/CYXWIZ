@@ -148,7 +148,7 @@ void ToolbarPanel::RenderTrainMenu() {
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("Start Training", "F5")) {
+        if (ImGui::MenuItem("Start Training")) {
             if (start_training_callback_) {
                 start_training_callback_();
             }
@@ -160,7 +160,7 @@ void ToolbarPanel::RenderTrainMenu() {
             }
         }
 
-        if (ImGui::MenuItem("Stop", "Shift+F5")) {
+        if (ImGui::MenuItem("Stop")) {
             if (stop_training_callback_) {
                 stop_training_callback_();
             }

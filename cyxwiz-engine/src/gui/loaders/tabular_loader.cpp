@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include "tabular_loader.h"
 #include "../../core/archive_text_source.h"
 
@@ -396,6 +397,11 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
             // Publish barrier — must be set LAST so PollAsyncLoadResult
             // only reads a fully initialized state.
             state->done.store(true);
+            // The dialog reads the published state; the task itself must also
+            // end Failed (not Completed) so the Tasks panel tells the truth.
+            if (!state->success && !task.ShouldStop()) {
+                throw std::runtime_error(state->message.empty() ? std::string("Load failed") : state->message);
+            }
         });
 }
 

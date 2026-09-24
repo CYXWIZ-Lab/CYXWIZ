@@ -204,6 +204,12 @@ std::shared_ptr<arrow::Table> LoadZipTextSelection(const std::filesystem::path& 
         const auto end = selection.find('\n', start);
         auto member = selection.substr(start, end == std::string::npos ? end : end - start);
         if (!member.empty() && member.back() == '\r') member.pop_back();
+        // Pasted lists often carry spaces or tabs around a path; trim them
+        // (blank lines stay invalid).
+        const auto first = member.find_first_not_of(" \t");
+        member = first == std::string::npos
+            ? std::string()
+            : member.substr(first, member.find_last_not_of(" \t") - first + 1);
         if (member.empty() || member.find_first_of("\r\n") != std::string::npos ||
             member.find('\0') != std::string::npos)
             throw std::runtime_error("Archive text: empty or invalid member selection line");

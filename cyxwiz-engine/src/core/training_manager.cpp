@@ -1083,6 +1083,8 @@ void TrainingManager::TrainingThreadFunc(
             if (auto panel = plot_panel.lock()) {
                 panel->SetMetricReportingCadence(
                     exec->GetConfig().log_interval);
+                panel->SetBatchComposition(exec->GetConfig().batch_size,
+                                           exec->GetConfig().grad_accum_steps);
             }
             // Per-batch callback — keeps the Training Dashboard responsive during
             // the epoch. Without this, the dashboard stays on "Epoch 0/N" for the
