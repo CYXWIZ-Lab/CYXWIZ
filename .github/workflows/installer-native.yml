@@ -555,6 +555,18 @@ jobs:
         if: runner.os == 'Windows'
         run: ./setup-stage/cyxwiz-setup.exe --help
 
+      # Runners ship the VC++ redistributable, so the smoke above cannot catch
+      # a setup that would fail to start on a clean machine.
+      - name: Require app-local MSVC runtime in Windows setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($dll in 'vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll') {
+            if (-not (Test-Path "setup-stage/$dll")) {
+              throw "Setup package lacks $dll; it cannot start without the VC++ redistributable"
+            }
+          }
+
       - name: Smoke staged Unix setup
         if: runner.os != 'Windows'
         run: ./setup-stage/cyxwiz-setup --help

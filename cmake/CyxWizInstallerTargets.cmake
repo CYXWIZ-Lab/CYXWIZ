@@ -447,8 +447,14 @@ if(CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR)
 endif()
 
 if(MSVC)
-    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
+    # The dependency scans below exclude C:\Windows, so the MSVC runtime must
+    # be installed explicitly for both the installer and the first-stage setup;
+    # a clean machine may not have the VC++ redistributable.
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
     include(InstallRequiredSystemLibraries)
+    install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION .)
+    install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
+        DESTINATION . COMPONENT cyxwiz-setup)
 endif()
 
 set(_cyxwiz_installer_runtime_directories)
