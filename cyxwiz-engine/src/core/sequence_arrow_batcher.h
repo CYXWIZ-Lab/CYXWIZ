@@ -41,4 +41,14 @@ void ApplySequenceBatcherBuildResultToTrainingConfig(
     const SequenceArrowBatcherBuildResult& build,
     TrainingConfiguration& config);
 
+// Evaluation of a loaded causal-LM checkpoint (any sequence graph): a compiled
+// graph has no frozen token vocabulary; training gets it by building the
+// sequence batcher from its prepared dataset. Do the same from `dataset` (the
+// graph's prepared training dataset) when the vocabulary is missing. Returns
+// false with `error` set if it cannot be prepared; a no-op for other graphs.
+bool PrepareSequenceEvaluationVocabulary(
+    TrainingConfiguration& config,
+    const std::shared_ptr<ArrowDataset>& dataset,
+    std::string& error);
+
 } // namespace cyxwiz

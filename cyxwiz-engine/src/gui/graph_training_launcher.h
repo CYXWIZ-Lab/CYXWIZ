@@ -2,6 +2,7 @@
 
 #include "../core/graph_compiler.h"
 #include "../core/pipeline_materializer.h"
+#include "../core/execution_device_preferences.h"
 
 #include <functional>
 #include <memory>
@@ -71,6 +72,23 @@ GraphMaterializationPreflightResult PreflightGraphMaterialization(
     const cyxwiz::TrainingConfiguration& config,
     cyxwiz::DataRegistry& registry,
     cyxwiz::MaterializationMemoryContext memory_context = {});
+
+// Launch-readiness findings Compile reports before a run is started, so Train
+// never starts a task that is already known to fail:
+//  - sequence token / sentence-id / tag columns missing from a loaded
+//    train, dev or test dataset (the same check Train runs);
+//  - the requested device route is not qualified for training on this machine
+//    (error when native CPU fallback is forbidden or CPU recovery is not
+//    qualified, otherwise a fallback warning);
+//  - a Data Input max_rows limit that training does not apply.
+// `route` is the device decision previewed by the caller (Compile uses
+// PreviewRequestedRouteTrainingReadiness, the run preflight's own route
+// resolution); null skips the device check.
+std::vector<cyxwiz::ValidationIssue> CheckGraphLaunchReadiness(
+    const std::vector<MLNode>& nodes,
+    const cyxwiz::TrainingConfiguration& config,
+    cyxwiz::DataRegistry& registry,
+    const cyxwiz::RequestedRouteTrainingReadiness* route = nullptr);
 
 GraphTrainingLaunchResult StartGraphTrainingFromCompiledConfig(
     const std::vector<MLNode>& nodes,

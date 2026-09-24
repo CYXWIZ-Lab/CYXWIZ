@@ -139,14 +139,44 @@ int main(int argc, char** argv) {
         Check(std::abs(summed.GetMetrics().test_loss-(-std::log(.6)-2*std::log(.2)))<1e-5,"sum loss");
         auto changed=config;
         std::swap(changed.sequence_batch.expected_token_vocabulary[2],changed.sequence_batch.expected_token_vocabulary[3]);
-        for(int failure=0;failure<3;++failure) {
-            auto bad_config=failure==0?changed:config;
+        // Loading a checkpoint for testing: a compiled config has no frozen
+        // vocabulary; it is prepared from the training dataset exactly as training does.
+        {
+            auto compiled=config; compiled.sequence_batch.expected_token_vocabulary.clear();
+            std::string error;
+            Check(cyxwiz::PrepareSequenceEvaluationVocabulary(compiled,dataset,error),"vocabulary prepared");
+            Check(compiled.sequence_batch.expected_token_vocabulary==config.sequence_batch.expected_token_vocabulary,
+                  "prepared vocabulary equals the training vocabulary");
+            auto missing=config; missing.sequence_batch.expected_token_vocabulary.clear(); missing.dataset_name="absent";
+            Check(!cyxwiz::PrepareSequenceEvaluationVocabulary(missing,nullptr,error) &&
+                  error.find("Apply its Data Input")!=std::string::npos,"missing dataset explains the fix");
+            auto ready=config; std::string unused;
+            Check(cyxwiz::PrepareSequenceEvaluationVocabulary(ready,nullptr,unused) &&
+                  ready.sequence_batch.expected_token_vocabulary==config.sequence_batch.expected_token_vocabulary,
+                  "an existing vocabulary is kept");
+        }
+        // A supplied Test dataset is scored whole (every row), not re-split.
+        {
+            cyxwiz::TestExecutor whole(config,dataset,"",cyxwiz::TestDatasetScope::EntireProvidedDataset);
+            whole.SetModel(model); whole.Test(2);
+            const auto w=whole.GetMetrics();
+            Check(w.is_complete && w.causal_lm_mode && !whole.IsTesting(),"supplied Test dataset completes");
+            // All six rows, 8 next-token targets (x-targets: 2, y-targets: 6); the fixture
+            // always predicts x, so accuracy 2/8 and loss (2*-ln .6 + 6*-ln .2)/8.
+            Check(w.total_samples==6 && w.total_target_values==8 && w.correct_predictions==2,"supplied Test dataset scores every row");
+            Check(std::abs(w.test_accuracy-0.25)<1e-6,"whole-dataset accuracy");
+            Check(std::abs(w.test_loss-(-2*std::log(.6)-6*std::log(.2))/8)<1e-5,"whole-dataset token-weighted loss");
+        }
+        for(int failure=0;failure<4;++failure) {
+            auto bad_config=failure==2?config:changed;
             if(failure==2) bad_config.sequence_batch.expected_token_vocabulary.clear();
-            cyxwiz::TestExecutor bad(bad_config,dataset,"",failure==1?
+            // 0: split, different vocabulary; 1 and 3: supplied dataset with a
+            // different vocabulary; 2: no frozen vocabulary - all fail closed.
+            cyxwiz::TestExecutor bad(bad_config,dataset,"",failure==1||failure==3?
                 cyxwiz::TestDatasetScope::EntireProvidedDataset:cyxwiz::TestDatasetScope::ConfiguredTestSplit);
             bad.SetModel(model);
             bool rejected=false;
-            try { bad.Test(2); } catch(const std::runtime_error&) { rejected=true; }
+            try { bad.Test(failure==3?1:2); } catch(const std::runtime_error&) { rejected=true; }
             Check(rejected && !bad.IsTesting() && !bad.GetMetrics().is_complete,"fail closed and clean lifecycle");
         }
         cyxwiz::TestExecutor cancelled(config,dataset,"",cyxwiz::TestDatasetScope::ConfiguredTestSplit);

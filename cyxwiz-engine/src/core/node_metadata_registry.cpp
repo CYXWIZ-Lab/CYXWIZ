@@ -1384,6 +1384,9 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         {{"Result", PinType::Dataset, true, "Query result"}},
         {{"query", "string", "SELECT * FROM input", "Read-only SELECT over the input table", {}, ""},
          {"input_alias", "string", "input", "Table name for the input inside the query", {}, ""},
+         {"input_aliases", "string", "",
+          "Several inputs: comma-separated table names, one input pin each (e.g. chapters, manifest)",
+          {}, ""},
          {"sql_contract_version", "string", "1", "SQL step contract version", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
@@ -2428,8 +2431,22 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           "Dropout", "Regularization", false, false},
          {"ffn_dropout", "float", "0.0", "Dropout after FFN activation, before its second Dense; zero preserves legacy blocks", {}, "0.0-0.999",
           "FFN Hidden Dropout", "Regularization", false, false},
-         {"norm_first", "bool", "false", "Apply normalization before each sublayer", {}, "",
-          "Pre-Norm", "Transformer", false, true}},
+         {"norm_first", "bool", "false", "Apply normalization before each sublayer (pre-norm, as in GPT-2 and LLaMA). Off is the original post-norm layout.", {}, "",
+          "Pre-Norm", "Transformer", false, true},
+         {"norm_type", "enum", "layer_norm", "Normalization: layer_norm (mean and variance, learned scale and shift) or rms_norm (root-mean-square scale only, as in LLaMA; cheaper).", {"layer_norm", "rms_norm"}, "",
+          "Normalization", "Block", false, false},
+         {"norm_eps", "float", "0.00001", "Epsilon added inside the normalization square root.", {}, "0.0-1.0",
+          "Norm Epsilon", "Block", false, true},
+         {"ffn_type", "enum", "mlp", "Feed-forward type: mlp = Dense -> activation -> Dense; gated = Dense(gate) -> activation, multiplied by Dense(up), then Dense(down). Gated with silu is SwiGLU (LLaMA), with gelu GEGLU, with relu ReGLU, with sigmoid GLU. Gated adds a third d_model x dim_feedforward matrix.", {"mlp", "gated"}, "",
+          "Feed-forward Type", "Block", false, false},
+         {"ffn_activation", "enum", "relu", "Feed-forward activation (the gate activation when ffn_type=gated). gelu is the tanh approximation; silu is Swish.", {"relu", "gelu", "silu", "mish", "elu", "selu", "leaky_relu", "sigmoid", "tanh", "hardswish"}, "",
+          "Feed-forward Activation", "Block", false, false},
+         {"ffn_bias", "bool", "true", "Learn bias vectors in the feed-forward Dense layers. LLaMA-style blocks turn this off.", {}, "",
+          "Feed-forward Bias", "Block", false, true},
+         {"position_encoding", "enum", "external", "Where positions come from: external (a Positional Encoding node before the blocks) or rope (rotary position embedding inside self-attention, as in LLaMA; needs an even d_model / num_heads). With rope, remove the Positional Encoding node.", {"external", "rope"}, "",
+          "Position Encoding", "Block", false, false},
+         {"rope_base", "float", "10000", "Rotary frequency base (theta). Larger values suit longer contexts.", {}, "1.0-10000000.0",
+          "RoPE Base", "Block", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TransformerDecoder, NodeCategory::Attention, "Transformer Decoder", ICON_FA_BULLSEYE,
@@ -2437,7 +2454,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         "One decoder-only causal transformer block containing masked self-attention "
         "and an internal Dense/FC feed-forward path.",
         "Connect Float32 [batch, sequence, d_model]. Internal Q/K/V/output projections "
-        "and Dense(d_model -> dim_feedforward) -> activation -> Dense(dim_feedforward -> d_model) "
+        "and the feed-forward path (Dense -> activation -> Dense, or a gated GLU-family FFN) "
         "are owned by this composite node. Change dim_feedforward for its hidden width; "
         "stack TransformerDecoder nodes to add depth. "
         "Connected Memory remains fail-closed until seq2seq cross-attention has a graph owner.", "",
@@ -3560,6 +3577,8 @@ void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
          {"max_rows", "string", "", "Most rows allowed", {}, ""},
          {"count_true_column", "string", "",
           "Count only rows where this boolean column is true", {}, ""},
+         {"count_column", "string", "", "Count only rows where this column equals count_value", {}, ""},
+         {"count_value", "string", "", "Value to match in count_column (compared as text)", {}, ""},
          {"on_failure", "enum", "stop", "What a failed check does", {"stop"}, ""}},
         NodeImplementationStatus::Implemented, 0});
 

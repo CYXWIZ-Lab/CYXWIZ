@@ -647,6 +647,14 @@ PYBIND11_MODULE(pycyxwiz, m) {
     // BatchNorm alias (code generator uses cx.BatchNorm)
     m.attr("BatchNorm") = m.attr("BatchNorm2D");
     // LayerNorm Layer
+    py::class_<cyxwiz::RMSNormLayer, cyxwiz::Layer>(m, "RMSNorm")
+        .def(py::init<int, float, bool>(), py::arg("normalized_size"), py::arg("eps") = 1e-5f,
+             py::arg("elementwise_affine") = true, "RMSNorm over the last dimension (matches torch.nn.RMSNorm)")
+        .def("forward", &cyxwiz::RMSNormLayer::Forward, py::arg("input"))
+        .def("backward", &cyxwiz::RMSNormLayer::Backward, py::arg("grad_output"))
+        .def("get_parameters", &cyxwiz::RMSNormLayer::GetParameters)
+        .def("set_parameters", &cyxwiz::RMSNormLayer::SetParameters, py::arg("params"));
+
     py::class_<cyxwiz::LayerNormLayer, cyxwiz::Layer>(m, "LayerNorm")
         .def(py::init<const std::vector<int>&, float, bool>(),
              py::arg("normalized_shape"),
@@ -948,6 +956,39 @@ PYBIND11_MODULE(pycyxwiz, m) {
              py::arg("norm_first") = false,
              py::arg("ffn_dropout") = 0.0f,
              "Create a Transformer Decoder layer")
+        .def(py::init([](int d_model, int nhead, int dim_feedforward, float dropout, bool norm_first,
+                         float ffn_dropout, const std::string& norm_type, float norm_eps,
+                         const std::string& ffn_type, const std::string& ffn_activation, bool ffn_bias,
+                         const std::string& position_encoding, float rope_base) {
+                 cyxwiz::TransformerBlockOptions options;
+                 if (norm_type == "rms_norm") options.norm_type = cyxwiz::TransformerNormType::RMSNorm;
+                 else if (norm_type != "layer_norm") throw std::invalid_argument("norm_type must be layer_norm or rms_norm");
+                 if (ffn_type == "gated") options.ffn_type = cyxwiz::TransformerFeedForwardType::Gated;
+                 else if (ffn_type != "mlp") throw std::invalid_argument("ffn_type must be mlp or gated");
+                 static const std::map<std::string, cyxwiz::ActivationType> activations = {
+                     {"relu", cyxwiz::ActivationType::ReLU}, {"gelu", cyxwiz::ActivationType::GELU},
+                     {"silu", cyxwiz::ActivationType::SiLU}, {"mish", cyxwiz::ActivationType::Mish},
+                     {"elu", cyxwiz::ActivationType::ELU}, {"selu", cyxwiz::ActivationType::SELU},
+                     {"leaky_relu", cyxwiz::ActivationType::LeakyReLU}, {"sigmoid", cyxwiz::ActivationType::Sigmoid},
+                     {"tanh", cyxwiz::ActivationType::Tanh}, {"hardswish", cyxwiz::ActivationType::Hardswish}};
+                 const auto it = activations.find(ffn_activation);
+                 if (it == activations.end()) throw std::invalid_argument("unknown ffn_activation: " + ffn_activation);
+                 options.ffn_activation = it->second;
+                 options.norm_eps = norm_eps;
+                 options.ffn_bias = ffn_bias;
+                 if (position_encoding == "rope") options.position_encoding = cyxwiz::TransformerPositionEncoding::Rope;
+                 else if (position_encoding != "external") throw std::invalid_argument("position_encoding must be external or rope");
+                 options.rope_base = rope_base;
+                 return std::make_unique<cyxwiz::TransformerDecoderLayer>(
+                     d_model, nhead, dim_feedforward, dropout, norm_first, ffn_dropout, options);
+             }),
+             py::arg("d_model"), py::arg("nhead"), py::arg("dim_feedforward"), py::arg("dropout"),
+             py::arg("norm_first"), py::arg("ffn_dropout"), py::kw_only(),
+             py::arg("norm_type") = "layer_norm", py::arg("norm_eps") = 1e-5f,
+             py::arg("ffn_type") = "mlp", py::arg("ffn_activation") = "relu", py::arg("ffn_bias") = true,
+             py::arg("position_encoding") = "external", py::arg("rope_base") = 10000.0f,
+             "Create a configurable decoder block (tofix112): norm_type layer_norm|rms_norm, "
+             "ffn_type mlp|gated, ffn_activation (gelu = tanh approximation), ffn_bias")
         .def("forward", static_cast<cyxwiz::Tensor (cyxwiz::TransformerDecoderLayer::*)(const cyxwiz::Tensor&)>(&cyxwiz::TransformerDecoderLayer::Forward),
              py::arg("input"),
              "Self-attention only forward pass")

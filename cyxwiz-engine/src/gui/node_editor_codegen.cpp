@@ -756,6 +756,53 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
     code += "    def forward(self, x):\n";
     code += "        causal_mask = torch.triu(torch.ones(x.size(1), x.size(1), device=x.device, dtype=torch.bool), diagonal=1)\n";
     code += "        return self.block(x, src_mask=causal_mask)\n\n";
+    // Configurable decoder block (tofix112): RMSNorm / gated GLU-family FFN /
+    // activation / bias. Emitted as explicit PyTorch so exports match the
+    // backend math (gelu = tanh approximation, SwiGLU = act(gate(x)) * up(x)).
+    code += "class ConfigurableCausalDecoderBlock(nn.Module):\n";
+    code += "    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.0, norm_first=False, ffn_dropout=0.0,\n";
+    code += "                 norm_type='layer_norm', norm_eps=1e-5, ffn_type='mlp', ffn_activation='relu', ffn_bias=True,\n";
+    code += "                 position_encoding='external', rope_base=10000.0):\n";
+    code += "        super().__init__()\n";
+    code += "        self.norm_first = norm_first\n";
+    code += "        self.nhead, self.rope, self.rope_base, self.attn_dropout = nhead, position_encoding == 'rope', rope_base, dropout\n";
+    code += "        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)\n";
+    code += "        make_norm = (lambda: nn.RMSNorm(d_model, eps=norm_eps)) if norm_type == 'rms_norm' else (lambda: nn.LayerNorm(d_model, eps=norm_eps))\n";
+    code += "        self.norm1, self.norm2 = make_norm(), make_norm()\n";
+    code += "        self.linear1 = nn.Linear(d_model, dim_feedforward, bias=ffn_bias)  # up\n";
+    code += "        self.linear2 = nn.Linear(dim_feedforward, d_model, bias=ffn_bias)  # down\n";
+    code += "        self.gate = nn.Linear(d_model, dim_feedforward, bias=ffn_bias) if ffn_type == 'gated' else None\n";
+    code += "        self.act = {'relu': nn.ReLU(), 'gelu': nn.GELU(approximate='tanh'), 'silu': nn.SiLU(), 'mish': nn.Mish(),\n";
+    code += "                    'elu': nn.ELU(), 'selu': nn.SELU(), 'leaky_relu': nn.LeakyReLU(0.01), 'sigmoid': nn.Sigmoid(),\n";
+    code += "                    'tanh': nn.Tanh(), 'hardswish': nn.Hardswish()}[ffn_activation]\n";
+    code += "        self.dropout1, self.dropout3, self.ffn_dropout = nn.Dropout(dropout), nn.Dropout(dropout), nn.Dropout(ffn_dropout)\n\n";
+    code += "    def _rotary(self, x):\n";
+    code += "        # half-split RoPE: x*cos + rotate_half(x)*sin, frequencies base^(-2i/head_dim)\n";
+    code += "        seq, dim = x.size(-2), x.size(-1)\n";
+    code += "        inv_freq = self.rope_base ** (-torch.arange(0, dim, 2, device=x.device, dtype=x.dtype) / dim)\n";
+    code += "        angle = torch.arange(seq, device=x.device, dtype=x.dtype)[:, None] * inv_freq[None, :]\n";
+    code += "        cos, sin = torch.cat([angle.cos(), angle.cos()], -1), torch.cat([angle.sin(), angle.sin()], -1)\n";
+    code += "        x1, x2 = x[..., :dim // 2], x[..., dim // 2:]\n";
+    code += "        return x * cos + torch.cat([-x2, x1], -1) * sin\n\n";
+    code += "    def _self_attention(self, x):\n";
+    code += "        if not self.rope:\n";
+    code += "            causal_mask = torch.triu(torch.ones(x.size(1), x.size(1), device=x.device, dtype=torch.bool), diagonal=1)\n";
+    code += "            return self.dropout1(self.self_attn(x, x, x, attn_mask=causal_mask, need_weights=False)[0])\n";
+    code += "        batch, seq, width = x.shape\n";
+    code += "        q, k, v = torch.nn.functional.linear(x, self.self_attn.in_proj_weight, self.self_attn.in_proj_bias).chunk(3, -1)\n";
+    code += "        heads = lambda t: t.view(batch, seq, self.nhead, width // self.nhead).transpose(1, 2)\n";
+    code += "        q, k, v = self._rotary(heads(q)), self._rotary(heads(k)), heads(v)\n";
+    code += "        context = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=self.attn_dropout if self.training else 0.0)\n";
+    code += "        return self.dropout1(self.self_attn.out_proj(context.transpose(1, 2).reshape(batch, seq, width)))\n\n";
+    code += "    def _feed_forward(self, x):\n";
+    code += "        hidden = self.act(self.gate(x)) * self.linear1(x) if self.gate is not None else self.act(self.linear1(x))\n";
+    code += "        return self.dropout3(self.linear2(self.ffn_dropout(hidden)))\n\n";
+    code += "    def forward(self, x):\n";
+    code += "        if self.norm_first:\n";
+    code += "            x = x + self._self_attention(self.norm1(x))\n";
+    code += "            return x + self._feed_forward(self.norm2(x))\n";
+    code += "        x = self.norm1(x + self._self_attention(x))\n";
+    code += "        return self.norm2(x + self._feed_forward(x))\n\n";
 
     // Model class
     code += "class GeneratedModel(nn.Module):\n";
@@ -1763,10 +1810,31 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
                 node, {"dropout", "dropout_rate"}, "0.1");
             const std::string norm_first = PythonBoolLiteral(
                 GetParamOrDefault(node, "norm_first", "false"));
-            code = "CausalTransformerDecoderBlock(d_model=" + d_model + ", nhead=" + nhead +
-                   ", dim_feedforward=" + dim_feedforward + ", dropout=" + dropout +
-                   ", norm_first=" + norm_first + ", ffn_dropout=" +
-                   GetParamOrDefault(node, "ffn_dropout", "0.0") + ")";
+            const std::string norm_type = GetParamOrDefault(node, "norm_type", "layer_norm");
+            const std::string norm_eps = GetParamOrDefault(node, "norm_eps", "0.00001");
+            const std::string ffn_type = GetParamOrDefault(node, "ffn_type", "mlp");
+            const std::string ffn_activation = GetParamOrDefault(node, "ffn_activation", "relu");
+            const std::string ffn_bias = PythonBoolLiteral(GetParamOrDefault(node, "ffn_bias", "true"));
+            const std::string position_encoding = GetParamOrDefault(node, "position_encoding", "external");
+            const std::string rope_base = GetParamOrDefault(node, "rope_base", "10000");
+            const bool classic = norm_type == "layer_norm" && ffn_type == "mlp" &&
+                                 ffn_activation == "relu" && ffn_bias == "True" &&
+                                 position_encoding == "external" &&
+                                 (norm_eps == "0.00001" || norm_eps == "1e-5" || norm_eps == "1e-05");
+            if (classic) {
+                code = "CausalTransformerDecoderBlock(d_model=" + d_model + ", nhead=" + nhead +
+                       ", dim_feedforward=" + dim_feedforward + ", dropout=" + dropout +
+                       ", norm_first=" + norm_first + ", ffn_dropout=" +
+                       GetParamOrDefault(node, "ffn_dropout", "0.0") + ")";
+            } else {
+                code = "ConfigurableCausalDecoderBlock(d_model=" + d_model + ", nhead=" + nhead +
+                       ", dim_feedforward=" + dim_feedforward + ", dropout=" + dropout +
+                       ", norm_first=" + norm_first + ", ffn_dropout=" +
+                       GetParamOrDefault(node, "ffn_dropout", "0.0") + ", norm_type='" + norm_type +
+                       "', norm_eps=" + norm_eps + ", ffn_type='" + ffn_type + "', ffn_activation='" +
+                       ffn_activation + "', ffn_bias=" + ffn_bias + ", position_encoding='" +
+                       position_encoding + "', rope_base=" + rope_base + ")";
+            }
             break;
         }
 
@@ -2167,7 +2235,14 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
             code = "cx.TransformerDecoderLayer(d_model=" + d_model +
                    ", nhead=" + num_heads + ", dim_feedforward=" + ff_dim +
                    ", dropout=" + dropout + ", norm_first=" + norm_first + ", ffn_dropout=" +
-                   GetParamOrDefault(node, "ffn_dropout", "0.0") + ")";
+                   GetParamOrDefault(node, "ffn_dropout", "0.0") +
+                   ", norm_type='" + GetParamOrDefault(node, "norm_type", "layer_norm") +
+                   "', norm_eps=" + GetParamOrDefault(node, "norm_eps", "0.00001") +
+                   ", ffn_type='" + GetParamOrDefault(node, "ffn_type", "mlp") +
+                   "', ffn_activation='" + GetParamOrDefault(node, "ffn_activation", "relu") +
+                   "', ffn_bias=" + PythonBoolLiteral(GetParamOrDefault(node, "ffn_bias", "true")) +
+                   ", position_encoding='" + GetParamOrDefault(node, "position_encoding", "external") +
+                   "', rope_base=" + GetParamOrDefault(node, "rope_base", "10000") + ")";
             break;
         }
 

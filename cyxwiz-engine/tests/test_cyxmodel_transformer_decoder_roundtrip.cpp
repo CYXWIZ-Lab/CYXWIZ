@@ -1,3 +1,4 @@
+#include "../src/core/transformer_configuration_policy.h"
 #include "../src/core/model_exporter.h"
 #include "../src/core/model_importer.h"
 #include "../src/core/graph_compiler.h"
@@ -67,7 +68,8 @@ void CheckNear(float actual,
     }
 }
 
-std::string BuildTransformerDecoderGraphJson() {
+std::string BuildTransformerDecoderGraphJson(
+    const std::map<std::string, std::string>& extra_decoder_parameters = {}) {
     using json = nlohmann::json;
     json graph;
     graph["nodes"] = json::array();
@@ -95,6 +97,9 @@ std::string BuildTransformerDecoderGraphJson() {
             {"norm_first", "false"}
         }}
     });
+    for (const auto& [key, value] : extra_decoder_parameters) {
+        graph["nodes"].back()["parameters"][key] = value;
+    }
     graph["nodes"].push_back({
         {"id", 3},
         {"type", static_cast<int>(gui::NodeType::Flatten)},
@@ -147,19 +152,20 @@ void CheckTensorValues(const cyxwiz::Tensor& tensor,
     }
 }
 
-} // namespace
-
-int main() {
+void RunRoundTrip(const std::string& label,
+                  const std::map<std::string, std::string>& decoder_parameters,
+                  const cyxwiz::TransformerBlockOptions& options,
+                  bool norm_first) {
     namespace fs = std::filesystem;
 
     const fs::path root =
-        fs::temp_directory_path() / "cyxwiz_cyxmodel_transformer_decoder_roundtrip";
+        fs::temp_directory_path() / ("cyxwiz_cyxmodel_transformer_decoder_roundtrip_" + label);
     const fs::path package_path = root / "transformer_decoder.cyxmodel";
     fs::remove_all(root);
     fs::create_directories(root);
 
     cyxwiz::SequentialModel source;
-    source.Add<cyxwiz::TransformerDecoderModule>(4, 2, 8, 0.0f, false);
+    source.Add<cyxwiz::TransformerDecoderModule>(4, 2, 8, 0.0f, norm_first, 0.0f, options);
     source.Add<cyxwiz::FlattenModule>();
     source.Add<cyxwiz::LinearModule>(16, 2, true);
 
@@ -178,7 +184,7 @@ int main() {
         source,
         nullptr,
         nullptr,
-        BuildTransformerDecoderGraphJson(),
+        BuildTransformerDecoderGraphJson(decoder_parameters),
         package_path.string(),
         export_options);
     Check(exported.success,
@@ -224,6 +230,54 @@ int main() {
                       "TransformerDecoder imported inference output");
 
     fs::remove_all(root);
+    std::cout << "CyxModel TransformerDecoder round-trip passed: " << label << "\n";
+}
+
+}  // namespace
+
+int main() {
+    RunRoundTrip("classic", {}, cyxwiz::TransformerBlockOptions{}, false);
+
+    // LLaMA-style block (tofix112): pre-norm, RMSNorm, SwiGLU, no FFN bias.
+    // The graph node carries the options; import must rebuild the same block.
+    cyxwiz::TransformerBlockOptions llama;
+    llama.norm_type = cyxwiz::TransformerNormType::RMSNorm;
+    llama.ffn_type = cyxwiz::TransformerFeedForwardType::Gated;
+    llama.ffn_activation = cyxwiz::ActivationType::SiLU;
+    llama.ffn_bias = false;
+    llama.position_encoding = cyxwiz::TransformerPositionEncoding::Rope;
+    RunRoundTrip("llama_style",
+                 {{"norm_first", "true"}, {"norm_type", "rms_norm"}, {"ffn_type", "gated"},
+                  {"ffn_activation", "silu"}, {"ffn_bias", "false"}, {"position_encoding", "rope"}},
+                 llama, true);
+
+    // Policy: invalid choices fail closed with the field named; the encoder
+    // rejects block options it does not implement instead of ignoring them.
+    using cyxwiz::ResolveInvalidTransformerConfigurationReason;
+    const auto reason = [](gui::NodeType type, std::map<std::string, std::string> params) {
+        params.emplace("d_model", "4");
+        params.emplace("num_heads", "2");
+        return ResolveInvalidTransformerConfigurationReason(type, params);
+    };
+    Check(!reason(gui::NodeType::TransformerDecoder, {{"ffn_activation", "swish"}, {"norm_type", "RMSNorm"}}),
+          "aliases swish and RMSNorm are accepted");
+    const auto bad_activation = reason(gui::NodeType::TransformerDecoder, {{"ffn_activation", "softmax"}});
+    Check(bad_activation && bad_activation->find("ffn_activation") != std::string::npos,
+          "softmax is rejected as a feed-forward activation");
+    const auto bad_eps = reason(gui::NodeType::TransformerDecoder, {{"norm_eps", "0"}});
+    Check(bad_eps && bad_eps->find("norm_eps") != std::string::npos, "norm_eps must be positive");
+    const auto encoder = reason(gui::NodeType::TransformerEncoder, {{"ffn_type", "gated"}});
+    Check(encoder && encoder->find("TransformerDecoder") != std::string::npos,
+          "the encoder rejects block options it does not implement");
+    Check(!reason(gui::NodeType::TransformerEncoder, {{"ffn_type", "mlp"}, {"norm_type", "layer_norm"}}),
+          "the encoder accepts explicit classic values");
+    const auto odd_rope = reason(gui::NodeType::TransformerDecoder,
+                                 {{"position_encoding", "rope"}, {"d_model", "6"}, {"num_heads", "2"}});
+    Check(odd_rope && odd_rope->find("even head width") != std::string::npos,
+          "rope needs an even head width");
+    const auto low_base = reason(gui::NodeType::TransformerDecoder, {{"position_encoding", "rope"}, {"rope_base", "1"}});
+    Check(low_base && low_base->find("rope_base") != std::string::npos, "rope_base must exceed 1");
+
     std::cout << "CyxModel TransformerDecoder round-trip test passed\n";
     return 0;
 }

@@ -30,6 +30,14 @@ public:
     Tensor GetLastKeyGradient() const { return cached_grad_key_; }
     Tensor GetLastValueGradient() const { return cached_grad_value_; }
 
+    // Rotary position embedding (RoFormer, arXiv:2104.09864; LLaMA/GPT-NeoX
+    // half-split convention): Q and K of every head are rotated by
+    // position * base^(-2i/head_dim) before the scores. Positions start at 0
+    // for both query and key. Requires an even head_dim and the ArrayFire path.
+    void SetRotaryEmbedding(bool enabled, float base = 10000.0f);
+    bool UsesRotaryEmbedding() const { return rope_; }
+    float GetRotaryBase() const { return rope_base_; }
+
     int GetEmbedDim() const { return embed_dim_; }
     int GetNumHeads() const { return num_heads_; }
     int GetHeadDim() const { return head_dim_; }
@@ -41,6 +49,8 @@ private:
     float dropout_;
     bool use_bias_;
     float scale_;
+    bool rope_ = false;
+    float rope_base_ = 10000.0f;
 
     Tensor W_q_, W_k_, W_v_, W_o_;
     Tensor b_q_, b_k_, b_v_, b_o_;

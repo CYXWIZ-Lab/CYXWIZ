@@ -8,6 +8,7 @@
 #include "core/pipeline_runtime_capabilities.h"
 #include "core/project_data_path.h"
 #include "core/preparation_recipe.h"
+#include "core/sql_step_contract.h"
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
 #include <thread>
@@ -869,6 +870,45 @@ void CheckDocumentWindowPipeline() {
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
 }
 
+void CheckTokenizerProjectVocabulary() {
+    // A saved graph stores the vocabulary project-relative. The executor must
+    // resolve it against the project root (like Data Input paths); without a
+    // root the missing file is reported as missing, not as "fit on train only".
+    namespace fs=std::filesystem;
+    const auto project=fs::temp_directory_path()/"cyxwiz_tokenizer_project_vocab";
+    fs::remove_all(project); fs::create_directories(project/"vocab");
+    const auto train_csv=project/"train.csv", mixed_csv=project/"mixed.csv";
+    { std::ofstream file(train_csv); file << "document_id,split,text\nA,train,abcdefg\nB,train,XY\n"; }
+    { std::ofstream file(mixed_csv); file << "document_id,split,text\nA,train,abcdefg\nB,validation,XY\nC,test,abc\n"; }
+    const auto graph=[](const fs::path& csv, const std::string& vocab, const std::string& build) {
+        return R"({"nodes":[{"id":91101,"type":"DataInput","name":"Documents","parameters":{"source_type":"file","type":"csv","has_header":"true","file_path":")"+JsonEscapePath(csv.string())+
+            R"("}},{"id":91102,"type":"TextTokenizer","name":"Windows","parameters":{"text_col":"text","document_id_col":"document_id","split_col":"split","output_mode":"causal_windows","tokenizer_type":"3","lowercase":"false","max_length":"3","max_vocab_size":"260","min_word_freq":"1","vocab_build_if_missing":")"+build+
+            R"(","vocab_file":")"+JsonEscapePath(vocab)+R"("}}],"links":[{"start_node":91101,"end_node":91102}]})";
+    };
+    {
+        cyxwiz::PipelineExecutor fit;
+        Check(fit.ExecutePipeline(graph(train_csv,(project/"vocab"/"tok.vocab").string(),"true")),
+              "fit project vocabulary: "+fit.GetLastError());
+        Check(fs::exists(project/"vocab"/"tok.vocab"),"vocabulary saved in the project");
+    }
+    {
+        cyxwiz::PipelineExecutor executor; executor.SetProjectRoot(project.string());
+        Check(executor.ExecutePipeline(graph(mixed_csv,"vocab/tok.vocab","false")),
+              "project-relative vocabulary loads for train, validation and test: "+executor.GetLastError());
+        auto produced=cyxwiz::DataRegistry::Instance().GetArrowDataset("ds_operator_TextTokenizer_91102");
+        Check(produced && produced->GetArrowTable()->num_rows()>=3,"windows for every split");
+    }
+    {
+        cyxwiz::PipelineExecutor executor;
+        Check(!executor.ExecutePipeline(graph(mixed_csv,"vocab/tok.vocab","false")) &&
+                  executor.GetLastError().find("does not exist")!=std::string::npos &&
+                  executor.GetLastError().find("Fit vocabulary")==std::string::npos,
+              "missing vocabulary is named as missing (got: "+executor.GetLastError()+")");
+    }
+    fs::remove_all(project);
+    std::cout<<"Tokenizer project vocabulary passed\n";
+}
+
 void CheckBooleanFiltering() {
     const auto path = std::filesystem::temp_directory_path() /
         "cyxwiz_filter_boolean_regression.csv";
@@ -1237,11 +1277,163 @@ void CheckRowCountCheckStep() {
           "a non-numeric expectation is rejected (got: " + error + ")");
     Check(!run(check(2, {{"expected_rows", "5"}, {"on_failure", "quarantine"}}), error),
           "policies other than stop are not accepted yet");
+    Check(run(check(2, {{"expected_rows", "3"}, {"count_column", "empty_text"},
+                        {"count_value", "false"}}), error),
+          "counting rows where a column equals a value passes: " + error);
+    Check(run(check(2, {{"expected_rows", "1"}, {"count_column", "text"},
+                        {"count_value", "And God said"}}), error),
+          "text values compare exactly: " + error);
+    Check(!run(check(2, {{"expected_rows", "2"}, {"count_column", "id"}, {"count_value", "3"}}), error) &&
+              error.find("rows where id = '3', found 1") != std::string::npos,
+          "a wrong value count stops the run and names column and value (got: " + error + ")");
+    Check(!run(check(2, {{"expected_rows", "1"}, {"count_column", "id"}}), error) &&
+              error.find("needs a count_value") != std::string::npos,
+          "count_column without count_value is a configuration error (got: " + error + ")");
+    Check(!run(check(2, {{"expected_rows", "1"}, {"count_column", "id"}, {"count_value", "1"},
+                         {"count_true_column", "empty_text"}}), error) &&
+              error.find("not both") != std::string::npos,
+          "the two count modes are exclusive (got: " + error + ")");
 
     registry.UnregisterTabularDataset("ds_operator_RowCountCheck_2");
     fs::remove(csv);
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
     std::cout << "Row Count Check step passed\n";
+}
+
+// TOFIX101 package C2: a SQL step reads several named inputs (one pin each),
+// and a Preparation Recipe (contract 2) can take several dataset inputs.
+void CheckSqlNamedInputs() {
+    namespace fs = std::filesystem;
+    using json = nlohmann::json;
+    const fs::path chapters_csv = fs::temp_directory_path() / "cyxwiz_c2_chapters.csv";
+    const fs::path manifest_csv = fs::temp_directory_path() / "cyxwiz_c2_manifest.csv";
+    {
+        std::ofstream chapters(chapters_csv);
+        chapters << "document_id,book_code,chapter,text\nGEN.1,GEN,1,In the beginning\n"
+                    "GEN.2,GEN,2,Thus the heavens\nEXO.1,EXO,1,These are the names\nEXO.2,EXO,2,And there went\n";
+        std::ofstream manifest(manifest_csv);
+        manifest << "partition_document_id,split\nGEN.1,train\nGEN.2,validation\nEXO.1,train\nEXO.2,test\n";
+    }
+    const auto source = [](int id, const fs::path& path, const std::string& name) {
+        return json{{"id", id}, {"type", "DataInput"}, {"name", name},
+                    {"parameters", {{"source_type", "file"}, {"type", "csv"},
+                                    {"file_path", path.string()}, {"has_header", "true"}}}};
+    };
+    const std::string join_sql =
+        "SELECT c.document_id, c.book_code, c.chapter, m.split FROM chapters c "
+        "JOIN manifest m ON c.document_id = m.partition_document_id ORDER BY c.book_code, c.chapter";
+    const auto sql = [&](const std::string& aliases) {
+        return json{{"id", 3}, {"type", "SQLQuery"}, {"name", "Attach split"},
+                    {"parameters", {{"query", join_sql}, {"input_aliases", aliases},
+                                    {"sql_contract_version", "1"}}}};
+    };
+    const auto pin_link = [](int from, int to, int pin) {
+        return json{{"start_node", from}, {"end_node", to}, {"start_pin_index", 0}, {"end_pin_index", pin}};
+    };
+    auto& registry = cyxwiz::DataRegistry::Instance();
+
+    {
+        const json graph = {{"nodes", json::array({source(1, chapters_csv, "Chapters"),
+                                                   source(2, manifest_csv, "Manifest"),
+                                                   sql("chapters, manifest")})},
+                            {"links", json::array({pin_link(1, 3, 0), pin_link(2, 3, 1)})}};
+        cyxwiz::PipelineExecutor executor;
+        Check(executor.ExecutePipeline(graph.dump()), "two named inputs join: " + executor.GetLastError());
+        const auto result = registry.GetArrowDataset("ds_sql_3");
+        Check(result && result->GetArrowTable()->num_rows() == 4, "join keeps all four chapters");
+        const auto split = std::static_pointer_cast<arrow::StringArray>(
+            result->GetArrowTable()->GetColumnByName("split")->chunk(0));
+        Check(split->GetString(0) == "train" && split->GetString(1) == "test" &&
+                  split->GetString(2) == "train" && split->GetString(3) == "validation",
+              "each chapter gets its own split, ordered by book and chapter");
+        registry.UnregisterTabularDataset("ds_sql_3");
+    }
+    {
+        // Pin order decides which table is which: swapping the links swaps the
+        // names, so the join finds no manifest columns on 'manifest'.
+        const json graph = {{"nodes", json::array({source(1, chapters_csv, "Chapters"),
+                                                   source(2, manifest_csv, "Manifest"),
+                                                   sql("chapters, manifest")})},
+                            {"links", json::array({pin_link(1, 3, 1), pin_link(2, 3, 0)})}};
+        cyxwiz::PipelineExecutor executor;
+        Check(!executor.ExecutePipeline(graph.dump()) &&
+                  executor.GetLastError().find("partition_document_id") != std::string::npos,
+              "inputs bind by pin, not by link order (got: " + executor.GetLastError() + ")");
+    }
+    {
+        const json graph = {{"nodes", json::array({source(1, chapters_csv, "Chapters"),
+                                                   sql("chapters, manifest")})},
+                            {"links", json::array({pin_link(1, 3, 0)})}};
+        cyxwiz::PipelineExecutor executor;
+        Check(!executor.ExecutePipeline(graph.dump()) &&
+                  executor.GetLastError().find("requires exactly 2 input connections") != std::string::npos,
+              "two names need two connections (got: " + executor.GetLastError() + ")");
+    }
+    Check(cyxwiz::SqlStepInputAliases({{"input_aliases", " chapters , manifest ,"}}) ==
+              std::vector<std::string>({"chapters", "manifest"}),
+          "alias list is trimmed and blank entries dropped");
+    Check(cyxwiz::SqlStepInputAliases({{"input_alias", "document"}}) == std::vector<std::string>({"document"}),
+          "single alias still works");
+    Check(cyxwiz::SqlStepInputAliases({}) == std::vector<std::string>({"input"}), "default alias");
+
+    // Recipe contract 2: two dataset inputs into one recipe holding the SQL step.
+    {
+        using gui::NodeType;
+        const auto T = [](NodeType type) { return static_cast<int>(type); };
+        json chapters = source(1, chapters_csv, "Chapters");
+        chapters["type"] = T(NodeType::DataInput);
+        json manifest = source(2, manifest_csv, "Manifest");
+        manifest["type"] = T(NodeType::DataInput);
+        json step = sql("chapters, manifest");
+        step["type"] = T(NodeType::SQLQuery);
+        const auto doc_link = [](int id, int from, int to, int to_pin) {
+            return json{{"id", id}, {"from_node", from}, {"to_node", to},
+                        {"from_pin_index", 0}, {"to_pin_index", to_pin}};
+        };
+        const auto recipe = [&](const std::string& contract) {
+            json wrapper = {{"id", 5}, {"type", T(NodeType::Subgraph)}, {"name", "attach_split"},
+                {"parameters", {{cyxwiz::kRecipeRoleParameter, cyxwiz::kPreparationRecipeRole},
+                                {cyxwiz::kRecipeContractParameter, contract}}}};
+            return json{{"nodes", json::array({chapters, manifest, wrapper})},
+                        {"links", json::array({doc_link(10, 1, 5, 0), doc_link(11, 2, 5, 1)})},
+                        {"subgraph_contract_version", 1},
+                        {"subgraphs", json::array({{{"node_id", 5}, {"expanded", false},
+                            {"nodes", json::array({step})}, {"links", json::array()},
+                            {"inputs", json::array({{{"node_id", 3}, {"pin_index", 0}},
+                                                    {{"node_id", 3}, {"pin_index", 1}}})},
+                            {"outputs", json::array({{{"node_id", 3}, {"pin_index", 0}}})}}})}};
+        };
+        const json lowered = cyxwiz::LowerPreparationRecipes(recipe("2"));
+        bool pin0 = false, pin1 = false;
+        for (const auto& l : lowered.at("links")) {
+            pin0 |= l.at("from_node") == 1 && l.at("to_node") == 3 && l.at("to_pin_index") == 0;
+            pin1 |= l.at("from_node") == 2 && l.at("to_node") == 3 && l.at("to_pin_index") == 1;
+        }
+        Check(pin0 && pin1, "recipe input i is rewired to the step's pin i");
+        json pipeline{{"nodes", json::array()}, {"links", json::array()}};
+        for (const auto& n : lowered.at("nodes"))
+            pipeline["nodes"].push_back({{"id", n.at("id")},
+                {"type", cyxwiz::ResolvePipelineRuntimeLegacyTypeName(static_cast<NodeType>(n.at("type").get<int>()))},
+                {"name", n.at("name")}, {"parameters", n.at("parameters")}});
+        for (const auto& l : lowered.at("links"))
+            pipeline["links"].push_back({{"start_node", l.at("from_node")}, {"end_node", l.at("to_node")},
+                {"start_pin_index", l.at("from_pin_index")}, {"end_pin_index", l.at("to_pin_index")}});
+        cyxwiz::PipelineExecutor executor;
+        Check(executor.ExecutePipeline(pipeline.dump()), "contract 2 recipe with two inputs runs: " + executor.GetLastError());
+        const auto result = registry.GetArrowDataset("ds_sql_3");
+        Check(result && result->GetArrowTable()->num_rows() == 4, "recipe join result has four rows");
+        registry.UnregisterTabularDataset("ds_sql_3");
+
+        std::string error;
+        try { (void)cyxwiz::LowerPreparationRecipes(recipe("1")); } catch (const std::exception& e) { error = e.what(); }
+        Check(error.find("exactly one dataset input") != std::string::npos,
+              "a contract 1 recipe still takes exactly one input (got: " + error + ")");
+    }
+
+    fs::remove(chapters_csv);
+    fs::remove(manifest_csv);
+    cyxwiz::AsyncTaskManager::Instance().Shutdown();
+    std::cout << "SQL named inputs and recipe contract 2 passed\n";
 }
 
 void CheckPreparationRecipe() {
@@ -1336,10 +1528,12 @@ void CheckPreparationRecipe() {
     Rejects(Document(visual, json::array({filter, select}), json::array({link(11, 2, 3)}), in_bind, out_bind),
             "visual group", "a plain visual group is never silently executable");
     json future = recipe_wrapper;
-    future["parameters"][cyxwiz::kRecipeContractParameter] = "2";
+    future["parameters"][cyxwiz::kRecipeContractParameter] = "3";
     Rejects(Document(future, json::array({filter, select}), json::array({link(11, 2, 3)}), in_bind, out_bind),
             "contract version", "an unknown recipe contract version is rejected");
-    Rejects(Document(recipe_wrapper, json::array({filter, select}), json::array({link(11, 2, 3)}),
+    json contract_one = recipe_wrapper;
+    contract_one["parameters"][cyxwiz::kRecipeContractParameter] = "1";
+    Rejects(Document(contract_one, json::array({filter, select}), json::array({link(11, 2, 3)}),
                      json::array({in_bind.at(0), {{"node_id", 3}, {"pin_index", 0}}}), out_bind),
             "exactly one dataset input", "contract 1 takes one input");
     json inner_source = input;
@@ -1450,7 +1644,14 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (argc == 1) CheckRowCountCheckStep();
+    if (argc == 2 && std::string(argv[1]) == "--sql-named-inputs") {
+        CheckSqlNamedInputs();
+        return 0;
+    }
+    if (argc == 1) CheckSqlNamedInputs();
     if(argc==2 && std::string(argv[1])=="--document-token-windows") { CheckDocumentWindowPipeline(); return 0; }
+    if(argc==2 && std::string(argv[1])=="--tokenizer-project-vocab") { CheckTokenizerProjectVocabulary(); return 0; }
+    if(argc==1) CheckTokenizerProjectVocabulary();
     if (argc == 2 &&
         std::string(argv[1]) == "--async-task-terminal-contract") {
         CheckAsyncTaskTerminalContract();

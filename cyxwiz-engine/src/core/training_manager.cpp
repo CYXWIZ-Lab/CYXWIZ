@@ -1,4 +1,7 @@
+#include "training_progress_estimate.h"
+#include <chrono>
 #include "training_manager.h"
+#include "sequence_arrow_batcher.h"
 #include "classification_decision.h"
 #include "model_builder.h"
 
@@ -153,6 +156,8 @@ bool TrainingManager::StartTrainingCommon(
         [](LambdaTask& task) {
             auto& mgr = TrainingManager::Instance();
             bool stop_forwarded = false;
+            TrainingEtaEstimator eta;
+            const auto clock_start = std::chrono::steady_clock::now();
             while (mgr.IsTrainingActive()) {
                 if (task.ShouldStop() && !stop_forwarded) {
                     // Task-panel cancellation is a request to stop the
@@ -165,12 +170,26 @@ bool TrainingManager::StartTrainingCommon(
                     break;
                 }
                 auto metrics = mgr.GetCurrentMetrics();
-                float progress = static_cast<float>(metrics.current_epoch) /
-                    std::max(1, metrics.total_epochs);
-                task.ReportProgress(progress,
-                    "Epoch " + std::to_string(metrics.current_epoch) + "/" +
-                    std::to_string(metrics.total_epochs) +
-                    " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6));
+                // Progress counts the batches of the epoch in progress; the
+                // epoch counter alone reads 1/1 = 100% for a whole 1-epoch run.
+                const double now_seconds = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - clock_start).count();
+                eta.Observe(now_seconds, metrics.current_epoch, metrics.current_batch,
+                            metrics.total_batches, metrics.total_epochs);
+                const float progress = static_cast<float>(TrainingFractionComplete(
+                    metrics.current_epoch, metrics.current_batch,
+                    metrics.total_batches, metrics.total_epochs));
+                std::string message = "Epoch " + std::to_string(metrics.current_epoch) + "/" +
+                    std::to_string(metrics.total_epochs);
+                if (metrics.total_batches > 0) {
+                    message += " - batch " + std::to_string(metrics.current_batch) + "/" +
+                        std::to_string(metrics.total_batches);
+                }
+                message += " - Loss: " + std::to_string(metrics.train_loss).substr(0, 6);
+                if (const auto remaining = eta.RemainingSeconds()) {
+                    message += " - ETA " + FormatTrainingDuration(*remaining);
+                }
+                task.ReportProgress(progress, message);
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
             const auto final_metrics =
@@ -338,7 +357,18 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
         return result;
     }
 
-    auto built = BuildSequentialFromConfig(config);
+    // Generic for any causal-LM sequence graph: compiling a graph does not
+    // produce the frozen token vocabulary; training obtains it by building the
+    // sequence batcher from its prepared dataset (token-window metadata). Do the
+    // same here so Run Test can verify that test data uses the model's vocabulary.
+    TrainingConfiguration prepared = config;
+    if (!PrepareSequenceEvaluationVocabulary(
+            prepared, DataRegistry::Instance().GetArrowDataset(prepared.dataset_name),
+            result.error_message)) {
+        return result;
+    }
+
+    auto built = BuildSequentialFromConfig(prepared);
     if (!built.ok() || !built.model) {
         result.error_message = built.error_message.empty()
             ? "The active graph could not build a sequential model for this checkpoint."
@@ -422,7 +452,7 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
                 ? config.target.primary_column
                 : config.dataset_roles.train.label_column;
         active_model_info_.checkpoint_metadata = *metadata;
-        active_model_info_.evaluation_config = config;
+        active_model_info_.evaluation_config = prepared;
     }
 
     result.success = true;

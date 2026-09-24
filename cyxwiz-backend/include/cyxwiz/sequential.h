@@ -11,6 +11,7 @@
 #include "layers/upsampling.h"
 #include "layers/normalization.h"
 #include "layers/attention.h"
+#include "layers/transformer.h"
 #include "activations/relu.h"
 #include "activations/sigmoid.h"
 #include "activations/tanh.h"
@@ -689,6 +690,11 @@ public:
     TransformerDecoderModule(size_t d_model, size_t num_heads,
                              size_t dim_feedforward, float dropout,
                              bool norm_first, float ffn_dropout);
+    // Configurable block (norm type, FFN type/activation, FFN bias); tofix112.
+    TransformerDecoderModule(size_t d_model, size_t num_heads,
+                             size_t dim_feedforward, float dropout,
+                             bool norm_first, float ffn_dropout,
+                             const TransformerBlockOptions& options);
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;

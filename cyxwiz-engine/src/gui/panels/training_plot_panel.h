@@ -2,6 +2,8 @@
 
 #include "../panel.h"
 #include "../../core/training_run_comparison_record.h"
+#include "../../core/training_progress_estimate.h"
+#include <chrono>
 #include "../../plotting/plot_manager.h"
 #include <imgui.h>
 #include <vector>
@@ -241,6 +243,10 @@ private:
     float last_epoch_time_ = 0.0f;
     float avg_epoch_time_ = 0.0f;
     float samples_per_second_ = 0.0f;
+    // Remaining-time estimate from batch progress across all epochs (rate over a
+    // recent window, plus measured epoch-boundary overhead).
+    TrainingEtaEstimator eta_estimator_;
+    std::chrono::steady_clock::time_point eta_clock_start_ = std::chrono::steady_clock::now();
     float total_training_time_ = 0.0f;
     std::string terminal_status_;
     std::string terminal_reason_;

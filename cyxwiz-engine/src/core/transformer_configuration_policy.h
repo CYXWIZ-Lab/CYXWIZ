@@ -1,5 +1,8 @@
 #pragma once
 
+#include <vector>
+#include <cctype>
+#include <algorithm>
 #include "../gui/node_editor.h"
 
 #include <cerrno>
@@ -144,7 +147,29 @@ struct TransformerConfiguration {
     float ffn_dropout = 0.0f;
     bool use_bias = true;
     bool norm_first = false;
+    // Decoder block choices (tofix112). Defaults are the classic block.
+    std::string norm_type = "layer_norm";     // layer_norm | rms_norm
+    float norm_eps = 1e-5f;
+    std::string ffn_type = "mlp";             // mlp | gated
+    std::string ffn_activation = "relu";      // see kTransformerFfnActivations
+    bool ffn_bias = true;
+    std::string position_encoding = "external";  // external | rope
+    float rope_base = 10000.0f;
+
+    bool HasClassicBlock() const {
+        return norm_type == "layer_norm" && norm_eps == 1e-5f && ffn_type == "mlp" &&
+               ffn_activation == "relu" && ffn_bias && position_encoding == "external";
+    }
 };
+
+// Feed-forward activations a decoder block accepts. "gelu" is the tanh
+// approximation (torch GELU(approximate="tanh")); "silu" is Swish. With
+// ffn_type=gated: sigmoid=GLU, relu=ReGLU, gelu=GEGLU, silu=SwiGLU.
+inline const std::vector<std::string>& TransformerFfnActivations() {
+    static const std::vector<std::string> values = {
+        "relu", "gelu", "silu", "mish", "elu", "selu", "leaky_relu", "sigmoid", "tanh", "hardswish"};
+    return values;
+}
 
 // Shared fail-closed policy for the executable unary transformer path. Legacy
 // aliases remain readable only when they agree with the canonical field.
@@ -255,6 +280,61 @@ inline std::optional<std::string> ResolveTransformerConfiguration(
             configuration.norm_first)) {
         return error;
     }
+    // Block choices. Only the decoder implements them; the encoder must stay
+    // classic until it gains the same options (never silently ignored).
+    const auto choose = [&](const char* key, const std::vector<std::string>& allowed,
+                            std::string& out) -> std::optional<std::string> {
+        const std::string* text = FindNonEmpty(parameters, key);
+        if (!text) return std::nullopt;
+        std::string value;
+        for (const char c : *text) value.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        if (value == "swish") value = "silu";
+        if (value == "layernorm") value = "layer_norm";
+        if (value == "rmsnorm") value = "rms_norm";
+        if (std::find(allowed.begin(), allowed.end(), value) == allowed.end()) {
+            std::string list;
+            for (const auto& v : allowed) list += (list.empty() ? "" : ", ") + v;
+            return std::string(layer_name) + " " + key + " must be one of: " + list + ".";
+        }
+        out = value;
+        return std::nullopt;
+    };
+    if (const auto error = choose("norm_type", {"layer_norm", "rms_norm"}, configuration.norm_type)) return error;
+    if (const auto error = choose("ffn_type", {"mlp", "gated"}, configuration.ffn_type)) return error;
+    if (const auto error = choose("ffn_activation", TransformerFfnActivations(), configuration.ffn_activation)) return error;
+    if (const std::string* text = FindNonEmpty(parameters, "norm_eps")) {
+        const auto eps = ParseFiniteDouble(*text);
+        if (!eps || *eps <= 0.0 || *eps >= 1.0 || static_cast<float>(*eps) <= 0.0f) {
+            return std::string(layer_name) + " norm_eps must be a finite value in (0,1).";
+        }
+        configuration.norm_eps = static_cast<float>(*eps);
+    }
+    if (const auto error = ResolveBoolParameter(parameters, layer_name, "ffn_bias", true,
+                                                configuration.ffn_bias)) {
+        return error;
+    }
+    if (const auto error = choose("position_encoding", {"external", "rope"},
+                                  configuration.position_encoding)) {
+        return error;
+    }
+    if (const std::string* text = FindNonEmpty(parameters, "rope_base")) {
+        const auto base = ParseFiniteDouble(*text);
+        if (!base || *base <= 1.0) {
+            return std::string(layer_name) + " rope_base must be a finite value greater than 1.";
+        }
+        configuration.rope_base = static_cast<float>(*base);
+    }
+    if (configuration.position_encoding == "rope" &&
+        (configuration.model_width / configuration.num_heads) % 2 != 0) {
+        return std::string(layer_name) +
+            " position_encoding=rope needs an even head width (d_model / num_heads).";
+    }
+    if (is_encoder && !configuration.HasClassicBlock()) {
+        return std::string(layer_name) +
+            " supports only the classic block (layer_norm, mlp, relu, ffn_bias=true, external positions) for now; "
+            "norm_type/ffn_type/ffn_activation/ffn_bias/norm_eps/position_encoding are implemented on TransformerDecoder.";
+    }
+
     if (const std::string* layers = FindNonEmpty(parameters, "num_layers")) {
         const auto parsed = ParseInteger(*layers);
         if (!parsed || *parsed != 1) {

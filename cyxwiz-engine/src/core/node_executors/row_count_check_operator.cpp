@@ -47,6 +47,16 @@ bool RowCountCheckOperator::Configure(const std::map<std::string, std::string>& 
                                       std::string& error) {
     check_name_ = Param(params, "check_name");
     count_true_column_ = Param(params, "count_true_column");
+    count_column_ = Param(params, "count_column");
+    count_value_ = Param(params, "count_value");
+    if (!count_true_column_.empty() && !count_column_.empty()) {
+        error = "RowCountCheck: use count_true_column or count_column, not both";
+        return false;
+    }
+    if (!count_column_.empty() && count_value_.empty()) {
+        error = "RowCountCheck: count_column '" + count_column_ + "' needs a count_value";
+        return false;
+    }
     if (!ParseCount(params, "expected_rows", expected_rows_, error) ||
         !ParseCount(params, "min_rows", min_rows_, error) ||
         !ParseCount(params, "max_rows", max_rows_, error)) {
@@ -82,6 +92,9 @@ arrow::Result<std::shared_ptr<arrow::Schema>> RowCountCheckOperator::InferOutput
                                           "' must be boolean, not ", field->type()->ToString());
         }
     }
+    if (!count_column_.empty() && !input_schema->GetFieldByName(count_column_)) {
+        return arrow::Status::Invalid("RowCountCheck: column '", count_column_, "' not found");
+    }
     return input_schema;
 }
 
@@ -101,6 +114,16 @@ arrow::Result<std::shared_ptr<arrow::Table>> RowCountCheckOperator::Apply(
             }
         }
         what = "rows where " + count_true_column_ + " is true";
+    } else if (!count_column_.empty()) {
+        counted = 0;
+        for (const auto& chunk : input->GetColumnByName(count_column_)->chunks()) {
+            for (int64_t i = 0; i < chunk->length(); ++i) {
+                if (!chunk->IsValid(i)) continue;
+                ARROW_ASSIGN_OR_RAISE(auto scalar, chunk->GetScalar(i));
+                if (scalar->ToString() == count_value_) ++counted;
+            }
+        }
+        what = "rows where " + count_column_ + " = '" + count_value_ + "'";
     }
 
     std::string expectation;

@@ -384,14 +384,19 @@ inline DeviceActivationResult MakeRouteQualificationFailure(
     return failure;
 }
 
-inline ExecutionDeviceContext PrepareExecutionDeviceForRun(
-    ArrayFireFallbackPolicy fallback_policy) {
+// The route a training run will request: the pending selection, else the
+// saved selection, else the current process device. Returns false when no
+// process device exists. Shared by the run preflight and the Compile preview so
+// both judge the same route.
+inline bool ResolveRequestedExecutionRoute(
+    const std::vector<DeviceInfo>& inventory,
+    DeviceType& requested_type,
+    int& requested_device_id,
+    std::string& route_resolution_error) {
     const auto pending = GetPendingExecutionDeviceSelection();
-    const auto inventory = Device::GetAvailableDevices();
-
-    DeviceType requested_type = DeviceType::CPU;
-    int requested_device_id = 0;
-    std::string route_resolution_error;
+    requested_type = DeviceType::CPU;
+    requested_device_id = 0;
+    route_resolution_error.clear();
     if (pending.has_value()) {
         requested_type = pending->type;
         requested_device_id = pending->device_id;
@@ -426,6 +431,69 @@ inline ExecutionDeviceContext PrepareExecutionDeviceForRun(
         requested_type = current->GetType();
         requested_device_id = current->GetDeviceId();
     } else {
+        return false;
+    }
+    return true;
+}
+
+struct RequestedRouteTrainingReadiness {
+    bool route_available = false;   // a route could be resolved at all
+    bool authorized = false;        // the requested route may train
+    bool cpu_recovery_qualified = false;
+    DeviceType type = DeviceType::CPU;
+    int device_id = 0;
+    std::string route_name;
+    std::string message;            // why the requested route may not train
+};
+
+// Non-throwing preview of the run preflight's route decision, for Compile:
+// tells whether training would be refused (or fall back) before a run starts.
+inline RequestedRouteTrainingReadiness PreviewRequestedRouteTrainingReadiness() {
+    RequestedRouteTrainingReadiness readiness;
+    const auto inventory = Device::GetAvailableDevices();
+    std::string route_error;
+    if (!ResolveRequestedExecutionRoute(
+            inventory, readiness.type, readiness.device_id, route_error)) {
+        readiness.message = "ArrayFire process device is unavailable";
+        return readiness;
+    }
+    readiness.route_available = true;
+    const DeviceInfo* route = nullptr;
+    const DeviceInfo* cpu_route = nullptr;
+    for (const auto& candidate : inventory) {
+        if (candidate.type == readiness.type && candidate.device_id == readiness.device_id) {
+            route = &candidate;
+        }
+        if (candidate.type == DeviceType::CPU && cpu_route == nullptr) cpu_route = &candidate;
+    }
+    if (cpu_route != nullptr) {
+        readiness.cpu_recovery_qualified = EvaluateRouteQualification(*cpu_route).qualified;
+    }
+    if (!route_error.empty()) {
+        readiness.message = route_error;
+        return readiness;
+    }
+    if (route == nullptr) {
+        readiness.message = "Requested route is not present in the current inventory";
+        return readiness;
+    }
+    readiness.route_name = route->name;
+    const auto qualification = EvaluateRouteQualification(*route);
+    const auto authorization = EvaluateRouteTrainingAuthorization(*route, qualification);
+    readiness.authorized = authorization.authorized;
+    if (!authorization.authorized) readiness.message = authorization.message;
+    return readiness;
+}
+
+inline ExecutionDeviceContext PrepareExecutionDeviceForRun(
+    ArrayFireFallbackPolicy fallback_policy) {
+    const auto pending = GetPendingExecutionDeviceSelection();
+    const auto inventory = Device::GetAvailableDevices();
+    DeviceType requested_type = DeviceType::CPU;
+    int requested_device_id = 0;
+    std::string route_resolution_error;
+    if (!ResolveRequestedExecutionRoute(
+            inventory, requested_type, requested_device_id, route_resolution_error)) {
         throw std::runtime_error(
             "ArrayFire process device is unavailable before run preflight");
     }

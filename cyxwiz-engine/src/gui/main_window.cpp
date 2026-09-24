@@ -5205,6 +5205,16 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         compile_result_issues_ = config.issues;
         compile_result_backend_placements_ = config.backend_placements;
         compile_result_success_ = config.is_valid;
+        // Launch readiness (data columns, device qualification, row limits):
+        // reported by Compile, and therefore also before Train starts.
+        if (config.is_valid) {
+            const auto route = cyxwiz::PreviewRequestedRouteTrainingReadiness();
+            for (auto& issue : gui::CheckGraphLaunchReadiness(
+                     nodes, config, cyxwiz::DataRegistry::Instance(), &route)) {
+                if (issue.level == cyxwiz::IssueLevel::Error) compile_result_success_ = false;
+                compile_result_issues_.push_back(std::move(issue));
+            }
+        }
         if (properties_) {
             std::vector<properties_truth::BackendPlacementTruthFact> facts;
             facts.reserve(compile_result_backend_placements_.size());
@@ -5731,7 +5741,10 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         ? test_selection.source_node_id
         : config.data_source_node_id;
     std::string label_column = test_selection.label_column;
-    if (!active_model_info.effective_dataset_name.empty()) {
+    // Reuse the model's own prepared dataset only when the graph supplies no
+    // Test input; a supplied Test dataset is exactly what should be scored.
+    if (!active_model_info.effective_dataset_name.empty() &&
+        test_selection.scope != cyxwiz::TestDatasetScope::EntireProvidedDataset) {
         dataset_name = active_model_info.effective_dataset_name;
         if (!active_model_info.effective_label_column.empty()) {
             label_column = active_model_info.effective_label_column;

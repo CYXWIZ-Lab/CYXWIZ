@@ -20,6 +20,36 @@
 #include <stdexcept>
 #include <vector>
 
+namespace {
+// Engine policy strings -> backend block options (tofix112). The policy has
+// already validated every value; an unknown value here is a programming error.
+cyxwiz::TransformerBlockOptions ToTransformerBlockOptions(const cyxwiz::TransformerConfiguration& c) {
+    cyxwiz::TransformerBlockOptions options;
+    options.norm_type = c.norm_type == "rms_norm" ? cyxwiz::TransformerNormType::RMSNorm
+                                                  : cyxwiz::TransformerNormType::LayerNorm;
+    options.norm_eps = c.norm_eps;
+    options.ffn_type = c.ffn_type == "gated" ? cyxwiz::TransformerFeedForwardType::Gated
+                                             : cyxwiz::TransformerFeedForwardType::Mlp;
+    options.ffn_bias = c.ffn_bias;
+    static const std::map<std::string, cyxwiz::ActivationType> activations = {
+        {"relu", cyxwiz::ActivationType::ReLU}, {"gelu", cyxwiz::ActivationType::GELU},
+        {"silu", cyxwiz::ActivationType::SiLU}, {"mish", cyxwiz::ActivationType::Mish},
+        {"elu", cyxwiz::ActivationType::ELU}, {"selu", cyxwiz::ActivationType::SELU},
+        {"leaky_relu", cyxwiz::ActivationType::LeakyReLU}, {"sigmoid", cyxwiz::ActivationType::Sigmoid},
+        {"tanh", cyxwiz::ActivationType::Tanh}, {"hardswish", cyxwiz::ActivationType::Hardswish}};
+    const auto it = activations.find(c.ffn_activation);
+    if (it == activations.end()) {
+        throw std::runtime_error("TransformerDecoder ffn_activation '" + c.ffn_activation + "' is not mapped");
+    }
+    options.ffn_activation = it->second;
+    options.position_encoding = c.position_encoding == "rope" ? cyxwiz::TransformerPositionEncoding::Rope
+                                                              : cyxwiz::TransformerPositionEncoding::External;
+    options.rope_base = c.rope_base;
+    return options;
+}
+}  // namespace
+
+
 namespace cyxwiz {
 
 namespace {
@@ -853,7 +883,8 @@ bool BuildSequential(
                     transformer_configuration.feedforward_width,
                     transformer_configuration.dropout,
                     transformer_configuration.norm_first,
-                    transformer_configuration.ffn_dropout);
+                    transformer_configuration.ffn_dropout,
+                    ToTransformerBlockOptions(transformer_configuration));
 
                 bool next_is_transformer = false;
                 if (i + 1 < config.layers.size()) {

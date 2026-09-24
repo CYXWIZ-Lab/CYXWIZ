@@ -283,6 +283,81 @@ void CheckCausalExternalRoleLaunch(cyxwiz::DataRegistry& registry) {
     registry.UnregisterTabularDataset(train);registry.UnregisterTabularDataset(dev);
 }
 
+void CheckLaunchReadinessAtCompile(cyxwiz::DataRegistry& registry) {
+    // Compile must report what Train would reject, before a run starts.
+    auto documents=arrow::Table::Make(arrow::schema({arrow::field("document_id",arrow::utf8()),
+        arrow::field("text",arrow::utf8()),arrow::field("split",arrow::utf8())}),
+        {FinishStringArray({"A","B","C"}),FinishStringArray({"ab","cd","xy"}),
+         FinishStringArray({"train","train","train"})});
+    cyxwiz::TextTokenizerOperator tokenizer;std::string error;
+    Check(tokenizer.Configure({{"text_col","text"},{"document_id_col","document_id"},
+        {"split_col","split"},{"output_mode","causal_windows"},{"tokenizer_type","3"},{"lowercase","false"},
+        {"max_length","3"},{"max_vocab_size","260"}},error),error);
+    auto windows=*tokenizer.Apply(documents);
+    const std::string train="readiness_train",dev="readiness_dev";
+    Check(registry.RegisterArrowTable(windows->Slice(0,2),train)!=nullptr,"register readiness Train");
+    Check(registry.RegisterArrowTable(windows->Slice(2,1),dev)!=nullptr,"register readiness Dev");
+    auto config=MakeRoleConfig(train,"");config.dataset_roles.test={};
+    config.dataset_roles.train.source_node_id=20;
+    config.dataset_roles.dev.dataset_name=dev;config.dataset_roles.dev.source_node_id=21;
+    config.has_data_split=true;
+    config.sequence_batch.enabled=true;config.sequence_batch.create_causal_lm_targets=true;
+    config.sequence_batch.token_column="token_ids";config.sequence_batch.sentence_id_column="document_id";
+    config.layers.emplace_back();
+    std::vector<gui::MLNode> nodes={MakeRoleDataInputNode(20,"Schedule",train),MakeRoleDataInputNode(21,"Validation",dev)};
+    cyxwiz::RequestedRouteTrainingReadiness qualified;
+    qualified.route_available=true;qualified.authorized=true;
+    const auto count=[](const std::vector<cyxwiz::ValidationIssue>& issues,cyxwiz::IssueLevel level,const std::string& text){
+        return std::count_if(issues.begin(),issues.end(),[&](const auto& i){
+            return i.level==level && i.message.find(text)!=std::string::npos;});
+    };
+
+    auto issues=gui::CheckGraphLaunchReadiness(nodes,config,registry,&qualified);
+    Check(issues.empty(),"matching columns, a qualified route and no row limit report nothing");
+
+    // The Berean case: the training windows name their ID column differently.
+    registry.UnregisterTabularDataset(train);
+    auto renamed=*windows->Slice(0,2)->RenameColumns([&]{
+        auto names=windows->ColumnNames();
+        for(auto& name:names) if(name=="document_id") name="schedule_document_id";
+        return names;}());
+    Check(registry.RegisterArrowTable(renamed,train)!=nullptr,"register renamed Train");
+    issues=gui::CheckGraphLaunchReadiness(nodes,config,registry,&qualified);
+    Check(count(issues,cyxwiz::IssueLevel::Error,"sentence id column 'document_id'")==1 &&
+          issues.front().node_id==20 && issues.front().message.rfind("Training data:",0)==0,
+          "Compile names the training input missing the sentence id column");
+    registry.UnregisterTabularDataset(train);
+    Check(registry.RegisterArrowTable(windows->Slice(0,2),train)!=nullptr,"re-register Train");
+
+    // Device route not qualified: error when fallback cannot help, warning otherwise.
+    cyxwiz::RequestedRouteTrainingReadiness unqualified;
+    unqualified.route_available=true;unqualified.authorized=false;unqualified.route_name="GTX 1050 Ti";
+    unqualified.message="No isolated route qualification snapshot is installed";
+    config.forbid_native_cpu_fallback=true;
+    issues=gui::CheckGraphLaunchReadiness(nodes,config,registry,&unqualified);
+    Check(count(issues,cyxwiz::IssueLevel::Error,"Verify Selected")==1 &&
+          count(issues,cyxwiz::IssueLevel::Error,"No isolated route qualification")==1,
+          "an unqualified device with fallback forbidden is a Compile error with the action");
+    config.forbid_native_cpu_fallback=false;unqualified.cpu_recovery_qualified=true;
+    issues=gui::CheckGraphLaunchReadiness(nodes,config,registry,&unqualified);
+    Check(count(issues,cyxwiz::IssueLevel::Warning,"fall back to ArrayFire CPU")==1 &&
+          count(issues,cyxwiz::IssueLevel::Error,"")==0,"a qualified CPU fallback is a warning");
+    auto data_only=config;data_only.layers.clear();
+    Check(gui::CheckGraphLaunchReadiness(nodes,data_only,registry,&unqualified).empty(),
+          "graphs without a model are not judged on the training device");
+
+    // A row limit the training path does not apply.
+    nodes[0].parameters["max_rows"]="1";
+    issues=gui::CheckGraphLaunchReadiness(nodes,config,registry,&qualified);
+    Check(count(issues,cyxwiz::IssueLevel::Warning,"max_rows=1 is not applied by training")==1,
+          "a max_rows limit smaller than the loaded data is reported");
+    nodes[0].parameters["max_rows"]="5";
+    Check(gui::CheckGraphLaunchReadiness(nodes,config,registry,&qualified).empty(),
+          "a limit the loaded data already satisfies is not reported");
+    registry.UnregisterTabularDataset(train);registry.UnregisterTabularDataset(dev);
+    std::cout << "Launch readiness at Compile passed\n";
+}
+
 } // namespace
 
 int main() {
@@ -526,6 +601,7 @@ int main() {
     registry.UnregisterTabularDataset(kRoleMismatchedFeatureDataset);
     registry.UnregisterTabularDataset(kRoleOverlappingIdDataset);
     CheckCausalExternalRoleLaunch(registry);
+    CheckLaunchReadinessAtCompile(registry);
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
     std::cout << "Graph training sequence preflight test passed\n";
     return 0;

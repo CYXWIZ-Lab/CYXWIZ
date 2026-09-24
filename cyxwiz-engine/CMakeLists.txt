@@ -4955,3 +4955,5 @@ if(WIN32)
     target_compile_definitions(test_async_task_lifecycle PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
 set_target_properties(test_async_task_lifecycle PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+add_executable(test_training_progress_estimate tests/test_training_progress_estimate.cpp)

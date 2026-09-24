@@ -4,6 +4,8 @@
 #include "../../core/project_manager.h"
 #include <imgui.h>
 #include <filesystem>
+#include <future>
+#include <unordered_set>
 #include <fstream>
 #include <algorithm>
 #include <cstring>
@@ -108,15 +110,19 @@ void AssetBrowserPanel::Render() {
 
     // Check if async scan completed and swap in the new tree
     if (scan_completed_.load()) {
-        std::lock_guard<std::mutex> lock(pending_tree_mutex_);
-        if (pending_directory_root_) {
-            directory_root_ = std::move(pending_directory_root_);
-            SortAssets();
-            ClearSelection();
+        std::unique_ptr<AssetItem> rescanned;
+        {
+            std::lock_guard<std::mutex> lock(pending_tree_mutex_);
+            rescanned = std::move(pending_directory_root_);
+        }
+        if (rescanned) {
+            ApplyRescannedTree(std::move(rescanned));
         }
         scan_completed_.store(false);
         is_scanning_directory_.store(false);
     }
+
+    PollForExternalChanges();
 
     ImGui::Begin(GetName(), &visible_);
 
@@ -271,8 +277,123 @@ void AssetBrowserPanel::Render() {
 }
 
 void AssetBrowserPanel::SetProjectRoot(const std::string& root) {
+    if (root != project_root_) {
+        // A different project starts with a fresh view and a fresh fingerprint.
+        directory_root_.reset();
+        ClearSelection();
+        context_menu_item_ = nullptr;
+        have_disk_signature_ = false;
+    }
     project_root_ = root;
     Refresh();
+}
+
+namespace {
+
+// Fingerprint of what the tree shows: every visible entry's path, size and
+// modification time, with the scanner's filters (hidden entries and .cyxwiz
+// project files skipped). Any add, delete, rename or write changes it.
+std::uint64_t ProjectDiskSignature(const std::string& root, bool show_hidden) {
+    std::uint64_t hash = 1469598103934665603ULL;  // FNV-1a
+    const auto mix = [&hash](const void* data, size_t size) {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (size_t i = 0; i < size; ++i) {
+            hash ^= bytes[i];
+            hash *= 1099511628211ULL;
+        }
+    };
+    std::error_code ec;
+    fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
+    const fs::recursive_directory_iterator end;
+    while (!ec && it != end) {
+        const fs::path& path = it->path();
+        const std::string name = path.filename().string();
+        std::error_code entry_ec;
+        if ((!show_hidden && !name.empty() && name[0] == '.') || path.extension() == ".cyxwiz") {
+            if (it->is_directory(entry_ec)) it.disable_recursion_pending();
+            it.increment(ec);
+            continue;
+        }
+        const std::string text = path.string();
+        mix(text.data(), text.size());
+        if (!it->is_directory(entry_ec)) {
+            const auto size = it->file_size(entry_ec);
+            mix(&size, sizeof(size));
+        }
+        const auto time = it->last_write_time(entry_ec).time_since_epoch().count();
+        mix(&time, sizeof(time));
+        it.increment(ec);
+    }
+    return hash;
+}
+
+void CollectOpenFolders(const AssetBrowserPanel::AssetItem& item, std::unordered_set<std::string>& open) {
+    if (item.is_directory && item.is_expanded) open.insert(item.absolute_path);
+    for (const auto& child : item.children) CollectOpenFolders(*child, open);
+}
+
+void RestoreOpenFolders(AssetBrowserPanel::AssetItem& item, const std::unordered_set<std::string>& open) {
+    for (auto& child : item.children) {
+        if (child->is_directory) child->is_expanded = open.count(child->absolute_path) > 0;
+        RestoreOpenFolders(*child, open);
+    }
+}
+
+}  // namespace
+
+void AssetBrowserPanel::ApplyRescannedTree(std::unique_ptr<AssetItem> new_root) {
+    const bool had_tree = directory_root_ != nullptr;
+    std::unordered_set<std::string> open_folders;
+    std::unordered_set<std::string> selected_paths;
+    const std::string context_path = context_menu_item_ ? context_menu_item_->absolute_path : std::string();
+    const std::string last_clicked_path = last_clicked_item_ ? last_clicked_item_->absolute_path : std::string();
+    if (had_tree) {
+        CollectOpenFolders(*directory_root_, open_folders);
+        for (const AssetItem* item : selected_items_) selected_paths.insert(item->absolute_path);
+    }
+
+    directory_root_ = std::move(new_root);
+    if (had_tree) {
+        RestoreOpenFolders(*directory_root_, open_folders);
+        force_tree_state_ = true;  // apply the restored open state this frame
+    }
+    SortAssets();
+
+    // Old item pointers died with the old tree: re-point by path, or drop.
+    ClearSelection();
+    context_menu_item_ = nullptr;
+    if (!context_path.empty() && context_path == directory_root_->absolute_path) {
+        context_menu_item_ = directory_root_.get();
+    }
+    std::vector<AssetItem*> items;
+    GetFlatItemList(directory_root_.get(), items);
+    for (AssetItem* item : items) {
+        if (selected_paths.count(item->absolute_path)) selected_items_.insert(item);
+        if (!context_path.empty() && item->absolute_path == context_path) context_menu_item_ = item;
+        if (!last_clicked_path.empty() && item->absolute_path == last_clicked_path) last_clicked_item_ = item;
+    }
+}
+
+void AssetBrowserPanel::PollForExternalChanges() {
+    if (!visible_ || project_root_.empty()) return;
+    if (change_probe_.valid()) {
+        if (change_probe_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+        const std::uint64_t signature = change_probe_.get();
+        if (change_probe_root_ != project_root_) return;  // project switched meanwhile
+        const bool changed = have_disk_signature_ && signature != last_disk_signature_;
+        last_disk_signature_ = signature;
+        have_disk_signature_ = true;
+        if (changed && !is_scanning_directory_.load()) {
+            spdlog::info("Asset browser: project files changed on disk; rescanning");
+            Refresh();
+        }
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now < next_change_probe_ || is_scanning_directory_.load()) return;
+    next_change_probe_ = now + std::chrono::seconds(2);
+    change_probe_root_ = project_root_;
+    change_probe_ = std::async(std::launch::async, ProjectDiskSignature, project_root_, show_hidden_files_);
 }
 
 void AssetBrowserPanel::Refresh() {
@@ -517,14 +638,11 @@ void AssetBrowserPanel::RenderToolbar() {
 }
 
 void AssetBrowserPanel::RenderDirectoryView() {
-    // Show loading indicator while scanning
-    if (is_scanning_directory_.load()) {
+    // Show the loading indicator only for the first scan; a rescan keeps the
+    // existing tree on screen without shifting it.
+    if (is_scanning_directory_.load() && !directory_root_) {
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), ICON_FA_SPINNER " Scanning project files...");
-
-        // Show existing tree while scanning (if any)
-        if (!directory_root_) {
-            return;
-        }
+        return;
     }
 
     if (!directory_root_) {
@@ -627,8 +745,9 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
     }
 
     // Render tree node with icon
-    void* node_id = &item;
-    bool node_open = ImGui::TreeNodeEx(node_id, flags, "%s %s", icon, label.c_str());
+    // Keyed by path, not by address: a rescan builds new items, and an address
+    // key would make ImGui forget which folders were open.
+    bool node_open = ImGui::TreeNodeEx(item.absolute_path.c_str(), flags, "%s %s", icon, label.c_str());
 
     // Sync our is_expanded state with ImGui's actual state (for directories)
     if (item.is_directory && !is_leaf) {

@@ -1005,6 +1005,9 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
                 node.type == NodeType::DataLoader) {
                 RebuildDataBoundaryPins(node, preserve_legacy_data_boundary);
             }
+            // Before links are restored by pin index: a multi-input SQL step
+            // needs its named input pins to exist.
+            (void)SyncSqlStepInputPins(node);
 
             max_node_id = std::max(max_node_id, node.id);
             if (node_json.contains("pos_x") && node_json.contains("pos_y")) {

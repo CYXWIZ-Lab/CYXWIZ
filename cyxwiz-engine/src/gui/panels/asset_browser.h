@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+#include <future>
 #include "../panel.h"
 #include "../../core/data_registry.h"
 #include "../../core/data_preview_service.h"
@@ -196,6 +198,20 @@ private:
 
     // Deferred operations (to avoid invalidating iterators)
     bool needs_refresh_ = false;
+
+    // Rescans keep the user's view: open folders, selection and the context
+    // item are carried over by path when a new tree replaces the old one.
+    void ApplyRescannedTree(std::unique_ptr<AssetItem> new_root);
+
+    // Changes made outside the browser (exports, scripts, other tools) are
+    // picked up by a cheap background fingerprint of the project every few
+    // seconds; a rescan runs only when the fingerprint changes.
+    void PollForExternalChanges();
+    std::future<std::uint64_t> change_probe_;
+    std::string change_probe_root_;
+    std::uint64_t last_disk_signature_ = 0;
+    bool have_disk_signature_ = false;
+    std::chrono::steady_clock::time_point next_change_probe_{};
 
     // Force tree state update (for expand/collapse all)
     bool force_tree_state_ = false;

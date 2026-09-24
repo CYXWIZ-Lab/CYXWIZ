@@ -172,6 +172,7 @@ set(BACKEND_SOURCES
     src/algorithms/layers/embedding.cpp
     src/algorithms/layers/normalization.cpp
     src/algorithms/layers/layer_norm_arrayfire.cpp
+    src/algorithms/layers/rms_norm.cpp
     src/algorithms/layers/conv1d.cpp
     src/algorithms/layers/conv1d_native.cpp
     src/algorithms/layers/conv2d.cpp

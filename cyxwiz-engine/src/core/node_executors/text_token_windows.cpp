@@ -21,7 +21,14 @@ arrow::Status TextTokenizerOperator::ValidateWindowInput(const std::shared_ptr<a
     if (!documents || !splits || !texts) return arrow::Status::Invalid("Token windows require text, document ID and split columns");
     auto string_type = [](const auto& col) { return col->type()->id() == arrow::Type::STRING || col->type()->id() == arrow::Type::LARGE_STRING; };
     if (!string_type(documents) || !string_type(splits)) return arrow::Status::Invalid("Document IDs and split labels must be strings");
-    const bool fitting = vocab_file_.empty() || !std::filesystem::exists(vocab_file_);
+    // A named vocabulary that is missing is an error, not a request to fit a new
+    // one: silently fitting would reject every non-train document with a
+    // misleading "fit on train only" message.
+    const bool vocab_missing = !vocab_file_.empty() && !std::filesystem::exists(vocab_file_);
+    if (vocab_missing && !vocab_build_if_missing_)
+        return arrow::Status::Invalid("TextTokenizer: vocab_file '", vocab_file_,
+            "' does not exist. Enable vocab_build_if_missing, build it from the TextTokenizer dialog, or remove vocab_file to train in memory.");
+    const bool fitting = vocab_file_.empty() || vocab_missing;
     std::unordered_set<std::string> seen;
     for (int64_t r=0; r<input->num_rows(); ++r) {
         ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));

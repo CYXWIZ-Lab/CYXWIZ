@@ -139,6 +139,12 @@ void CheckInvalidInput() {
     auto validation=load.Apply(mixed); REQUIRE(validation.ok());
     REQUIRE((*validation)->GetColumnByName("split")->GetScalar(3).ValueOrDie()->ToString()=="test");
     std::filesystem::remove(vocabulary);
+    // A named vocabulary that is missing must fail as missing, not fall back to
+    // fitting and then reject the non-train rows with a misleading message.
+    TextTokenizerOperator missing; REQUIRE(missing.Configure(p,error));
+    auto missing_result=missing.Apply(mixed); REQUIRE_FALSE(missing_result.ok());
+    REQUIRE(missing_result.status().ToString().find("does not exist")!=std::string::npos);
+    REQUIRE(missing_result.status().ToString().find("Fit vocabulary")==std::string::npos);
     auto null_text=Input()->SetColumn(2,arrow::field("text",arrow::utf8()),
         std::make_shared<arrow::ChunkedArray>(arrow::MakeArrayOfNull(arrow::utf8(),3).ValueOrDie())).ValueOrDie();
     REQUIRE_FALSE(op.Apply(null_text).ok());

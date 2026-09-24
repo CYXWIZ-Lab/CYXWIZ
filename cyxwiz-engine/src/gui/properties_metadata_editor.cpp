@@ -86,6 +86,10 @@ bool ShouldUseMultilineText(const cyxwiz::ParameterDefinition& param) {
         return true;
     }
 
+    // Short settings that merely mention SQL (sql_contract_version) stay one line.
+    if (ContainsAny(param.name, {"version", "contract", "alias"})) {
+        return false;
+    }
     return param.type == "string" &&
            ContainsAny(param.name, {"query", "sql", "body", "prompt", "template", "expression"});
 }

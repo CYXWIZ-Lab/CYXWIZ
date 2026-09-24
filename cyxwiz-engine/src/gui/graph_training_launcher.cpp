@@ -10,6 +10,7 @@
 #include "../core/sparse_feature_dataset.h"
 #include "../core/process_memory_snapshot.h"
 #include "../core/training_trace_collector.h"
+#include <cyxwiz/error_codes.h>
 #include "panels/training_plot_panel.h"
 
 #include <spdlog/spdlog.h>
@@ -1199,6 +1200,93 @@ void SetBlockedStatus(GraphTrainingLaunchResult& result,
 }
 
 } // namespace
+
+std::vector<cyxwiz::ValidationIssue> CheckGraphLaunchReadiness(
+    const std::vector<MLNode>& nodes,
+    const cyxwiz::TrainingConfiguration& config,
+    cyxwiz::DataRegistry& registry,
+    const cyxwiz::RequestedRouteTrainingReadiness* route) {
+    std::vector<cyxwiz::ValidationIssue> issues;
+    const auto node_name = [&nodes](int node_id) {
+        for (const auto& node : nodes) {
+            if (node.id == node_id) return node.name;
+        }
+        return std::string();
+    };
+
+    // 1. Sequence columns on every loaded partition (train, dev, test).
+    if (config.sequence_batch.enabled) {
+        struct Partition {
+            const char* role;
+            std::string dataset_name;
+            int node_id;
+        };
+        const std::string train_name = !config.dataset_roles.train.dataset_name.empty()
+            ? config.dataset_roles.train.dataset_name : config.dataset_name;
+        const Partition partitions[] = {
+            {"Training", train_name, config.dataset_roles.train.source_node_id},
+            {"Validation", config.dataset_roles.dev.dataset_name, config.dataset_roles.dev.source_node_id},
+            {"Test", config.dataset_roles.test.dataset_name, config.dataset_roles.test.source_node_id},
+        };
+        for (const auto& partition : partitions) {
+            // Unloaded inputs are reported by the compiler ("click Apply");
+            // only a loaded schema can be checked here.
+            if (partition.dataset_name.empty() || !FindTabularSchema(registry, partition.dataset_name)) {
+                continue;
+            }
+            std::string error;
+            if (!ValidateSequenceLaunchColumns(registry, partition.dataset_name, config, error)) {
+                issues.push_back({cyxwiz::IssueLevel::Error, partition.node_id,
+                                  node_name(partition.node_id),
+                                  std::string(partition.role) + " data: " + error,
+                                  cyxwiz::errors::Training::InvalidTrainingSetup});
+            }
+        }
+    }
+
+    // 2. Device route qualification (only graphs that train a model).
+    if (!config.layers.empty() && route != nullptr) {
+        const cyxwiz::RequestedRouteTrainingReadiness& preview = *route;
+        if (preview.route_available && !preview.authorized) {
+            const std::string device = preview.route_name.empty()
+                ? std::string("the selected device") : "'" + preview.route_name + "'";
+            const bool can_fall_back =
+                !config.forbid_native_cpu_fallback && preview.cpu_recovery_qualified;
+            if (can_fall_back) {
+                issues.push_back({cyxwiz::IssueLevel::Warning, -1, "",
+                    "Training device " + device + " is not qualified for training (" +
+                        preview.message + "); the run would fall back to ArrayFire CPU. "
+                        "Run Preferences > Devices > Verify Selected to train on it.",
+                    cyxwiz::errors::Training::InvalidTrainingSetup});
+            } else {
+                issues.push_back({cyxwiz::IssueLevel::Error, -1, "",
+                    "Training device " + device + " is not qualified for training on this machine (" +
+                        preview.message + "). Run Preferences > Devices > Verify Selected before training.",
+                    cyxwiz::errors::Training::InvalidTrainingSetup});
+            }
+        }
+    }
+
+    // 3. Data Input row limits that training does not apply.
+    for (const auto& node : nodes) {
+        if (node.type != NodeType::DataInput) continue;
+        const auto limit_it = node.parameters.find("max_rows");
+        const auto name_it = node.parameters.find("dataset_name");
+        if (limit_it == node.parameters.end() || name_it == node.parameters.end()) continue;
+        long long limit = 0;
+        try { limit = std::stoll(limit_it->second); } catch (...) { continue; }
+        if (limit <= 0) continue;
+        const auto dataset = registry.GetArrowDataset(name_it->second);
+        const auto table = dataset ? dataset->GetArrowTable() : nullptr;
+        if (table && table->num_rows() > limit) {
+            issues.push_back({cyxwiz::IssueLevel::Warning, node.id, node.name,
+                "max_rows=" + limit_it->second + " is not applied by training: the loaded dataset has " +
+                    std::to_string(table->num_rows()) + " rows and training uses all of them.",
+                cyxwiz::errors::Training::InvalidTrainingSetup});
+        }
+    }
+    return issues;
+}
 
 cyxwiz::MaterializationCacheConfig GraphMaterializationCacheConfig(
     const std::filesystem::path& project_root) {

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sql_step_contract.h"
+
 #include <arrow/api.h>
 
 #include <memory>
@@ -24,11 +26,7 @@ class DuckDBConnector;
 //     column named, instead of being silently turned into text; cast in SQL.
 // Inputs are copied into DuckDB (DuckDBConnector::RegisterTable); there is no
 // zero-copy claim.
-inline constexpr const char* kSqlContractParameter = "sql_contract_version";
-inline constexpr const char* kSqlContractVersion = "1";
-inline constexpr const char* kSqlQueryParameter = "query";
-inline constexpr const char* kSqlInputAliasParameter = "input_alias";
-inline constexpr const char* kSqlDefaultInputAlias = "input";
+// Contract names and input-alias parsing: sql_step_contract.h.
 
 struct SqlTransformInput {
     std::string alias;

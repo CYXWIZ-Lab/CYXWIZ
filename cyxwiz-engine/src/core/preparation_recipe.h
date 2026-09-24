@@ -14,8 +14,10 @@ namespace cyxwiz {
 //
 // A recipe is a saved Subgraph whose wrapper node carries
 //   recipe_role = "preparation_recipe"
-//   recipe_contract_version = "1"
-// It has exactly one Dataset input and one Dataset output, and every internal
+//   recipe_contract_version = "1" or "2"
+// Contract 1 has exactly one Dataset input; contract 2 (C2) takes 1 to 8 named
+// Dataset inputs, for joins against mapping or holdout tables. Both produce
+// one Dataset output, and every internal
 // node is a stateless single-table preparation step. Sources, exports, splits,
 // fitted transforms and models are pipeline stages and stay outside.
 //
@@ -27,7 +29,9 @@ namespace cyxwiz {
 inline constexpr const char* kRecipeRoleParameter = "recipe_role";
 inline constexpr const char* kPreparationRecipeRole = "preparation_recipe";
 inline constexpr const char* kRecipeContractParameter = "recipe_contract_version";
-inline constexpr const char* kPreparationRecipeContractVersion = "1";
+// Version written when a subgraph is made a recipe; version "1" still runs.
+inline constexpr const char* kPreparationRecipeContractVersion = "2";
+inline constexpr size_t kPreparationRecipeMaxInputs = 8;
 
 // True when a node of this type may be a step inside a recipe.
 bool IsPreparationRecipeStepType(gui::NodeType type);

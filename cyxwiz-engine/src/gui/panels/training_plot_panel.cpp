@@ -528,6 +528,7 @@ void TrainingPlotPanel::ClearLocked() {
     last_epoch_time_ = 0.0f;
     avg_epoch_time_ = 0.0f;
     samples_per_second_ = 0.0f;
+    eta_estimator_.Reset();
     total_training_time_ = 0.0f;
     terminal_status_.clear();
     terminal_reason_.clear();
@@ -682,6 +683,10 @@ void TrainingPlotPanel::SetBatchProgress(int current_epoch, int current_batch,
     current_batch_ = current_batch;
     total_batches_ = total_batches;
     current_batch_loss_ = running_loss;
+    const double now_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - eta_clock_start_).count();
+    eta_estimator_.Observe(now_seconds, current_epoch, current_batch, total_batches,
+                           std::max(1, total_epochs_));
 }
 
 void TrainingPlotPanel::SetMetricReportingCadence(int batch_interval) {
@@ -2297,8 +2302,12 @@ void TrainingPlotPanel::RenderTrainingStatus() {
                                : preparation_status_message_.c_str());
         ImGui::ProgressBar(preparation_progress_, ImVec2(-1.0f, 0.0f));
     } else if (total_epochs_ > 0) {
-        const float progress =
-            static_cast<float>(current_epoch_) / std::max(1, total_epochs_);
+        // During training, count the finished part of the epoch in progress
+        // (epoch counter moves to the new epoch at its first batch).
+        const float progress = is_training_ && total_batches_ > 0
+            ? static_cast<float>(TrainingFractionComplete(
+                  current_epoch_, current_batch_, total_batches_, total_epochs_))
+            : static_cast<float>(current_epoch_) / std::max(1, total_epochs_);
         if (!is_training_ && total_training_time_ > 0) {
             ImGui::Text("Executed epochs: %d / %d",
                         last_executed_epoch_, total_epochs_);
@@ -2397,32 +2406,35 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     // Second row: timing info
     ImGui::Spacing();
 
-    if (is_training_ && avg_epoch_time_ > 0) {
-        int remaining_epochs = total_epochs_ - current_epoch_;
-        float eta_seconds = remaining_epochs * avg_epoch_time_;
-
-        // Format ETA nicely
-        int eta_hours = static_cast<int>(eta_seconds / 3600);
-        int eta_mins = static_cast<int>((eta_seconds - eta_hours * 3600) / 60);
-        int eta_secs = static_cast<int>(eta_seconds) % 60;
-
-        ImGui::Text("Last Epoch: %.1fs", last_epoch_time_);
-        ImGui::SameLine(150);
-        ImGui::Text("Avg: %.1fs/epoch", avg_epoch_time_);
-        ImGui::SameLine(300);
-
-        if (eta_hours > 0) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
-                "ETA: %dh %dm %ds", eta_hours, eta_mins, eta_secs);
-        } else if (eta_mins > 0) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
-                "ETA: %dm %ds", eta_mins, eta_secs);
+    if (is_training_ && (total_batches_ > 0 || avg_epoch_time_ > 0)) {
+        // Dynamic estimate: remaining batches over all epochs at the rate of the
+        // last two minutes, plus measured epoch-boundary overhead. It follows
+        // speed changes and appears after ~10 s, also in single-epoch runs.
+        const auto remaining = eta_estimator_.RemainingSeconds();
+        const ImVec4 eta_colour(1.0f, 0.8f, 0.2f, 1.0f);
+        if (remaining) {
+            ImGui::TextColored(eta_colour, "ETA: %s", FormatTrainingDuration(*remaining).c_str());
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Remaining batches across all epochs at the recent rate (last 2 minutes),\n"
+                    "plus %s per remaining epoch boundary (validation, previews, checkpoint).\n"
+                    "Updates as the training speed changes.",
+                    eta_estimator_.HasMeasuredEpochOverhead()
+                        ? FormatTrainingDuration(eta_estimator_.MeanEpochOverheadSeconds()).c_str()
+                        : "not yet measured");
+            }
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
-                "ETA: %ds", eta_secs);
+            ImGui::TextColored(eta_colour, "ETA: estimating...");
         }
-
-        ImGui::SameLine(480);
+        ImGui::SameLine(200);
+        if (const double rate = eta_estimator_.BatchesPerSecond(); rate > 0.0) {
+            ImGui::Text("%.2f batches/s", rate);
+            ImGui::SameLine(360);
+        }
+        if (avg_epoch_time_ > 0) {
+            ImGui::Text("Last Epoch: %.1fs  Avg: %.1fs/epoch", last_epoch_time_, avg_epoch_time_);
+            ImGui::SameLine(640);
+        }
         if (samples_per_second_ > 0) {
             ImGui::Text("%.0f samples/sec", samples_per_second_);
         }

@@ -179,6 +179,17 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& input) {
     return Forward(input, input, input, nullptr);
 }
 
+void MultiHeadAttentionLayer::SetRotaryEmbedding(bool enabled, float base) {
+    if (enabled && (head_dim_ % 2 != 0)) {
+        throw std::invalid_argument("Rotary position embedding requires an even head dimension (d_model / num_heads)");
+    }
+    if (enabled && (!std::isfinite(base) || base <= 1.0f)) {
+        throw std::invalid_argument("Rotary position embedding base must be finite and greater than 1");
+    }
+    rope_ = enabled;
+    rope_base_ = base;
+}
+
 Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
                                          const Tensor& value, const Tensor* attn_mask) {
     const auto& q_shape = query.Shape();
@@ -240,6 +251,11 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
     ThrowIfArrayFireNativeCpuFallbackForbidden(
         "MultiHeadAttentionLayer::Forward", fallback_reason,
         fallback_detail.c_str(), fallback_context);
+    if (rope_) {
+        throw std::runtime_error(
+            "Rotary position embedding is implemented on the ArrayFire attention path only; "
+            "the native CPU fallback cannot run it (" + fallback_detail + ")");
+    }
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LayerCpuPath,
         "MultiHeadAttentionLayer::Forward");
@@ -431,6 +447,11 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
     ThrowIfArrayFireNativeCpuFallbackForbidden(
         "MultiHeadAttentionLayer::Backward", fallback_reason,
         fallback_detail.c_str(), fallback_context);
+    if (rope_) {
+        throw std::runtime_error(
+            "Rotary position embedding is implemented on the ArrayFire attention path only; "
+            "the native CPU fallback cannot run it (" + fallback_detail + ")");
+    }
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LayerCpuPath,
         "MultiHeadAttentionLayer::Backward");

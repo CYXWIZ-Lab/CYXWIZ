@@ -113,6 +113,12 @@ TransformerDecoderModule::TransformerDecoderModule(size_t d_model,
 
 TransformerDecoderModule::TransformerDecoderModule(size_t d_model, size_t num_heads,
     size_t dim_feedforward, float dropout, bool norm_first, float ffn_dropout)
+    : TransformerDecoderModule(d_model, num_heads, dim_feedforward, dropout, norm_first,
+                               ffn_dropout, TransformerBlockOptions{}) {}
+
+TransformerDecoderModule::TransformerDecoderModule(size_t d_model, size_t num_heads,
+    size_t dim_feedforward, float dropout, bool norm_first, float ffn_dropout,
+    const TransformerBlockOptions& options)
     : d_model_(d_model)
     , num_heads_(num_heads)
     , dim_feedforward_(dim_feedforward)
@@ -124,7 +130,7 @@ TransformerDecoderModule::TransformerDecoderModule(size_t d_model, size_t num_he
         attention_configuration_detail::CheckedAttentionDimension(num_heads_, "num_heads"),
         attention_configuration_detail::CheckedAttentionDimension(dim_feedforward_, "dim_feedforward"),
         dropout_,
-        norm_first_, ffn_dropout);
+        norm_first_, ffn_dropout, options);
 }
 
 Tensor TransformerDecoderModule::Forward(const Tensor& input) {

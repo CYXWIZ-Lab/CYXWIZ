@@ -3312,18 +3312,32 @@ bool PipelineExecutor::ExecuteSqlTransform(const Node& node, ExecutionContext& c
                     "(one input table, read-only SELECT).");
         return false;
     }
-    const std::string input_dataset_name = GetInputDatasetName(node, ctx);
-    if (input_dataset_name.empty()) {
+    // One named table per input pin, in pin order (C2). A single input keeps
+    // the older link form that carries no pin index.
+    const auto aliases = SqlStepInputAliases(node.parameters);
+    if (aliases.empty() || aliases.size() > kSqlMaxInputs) {
+        ReportError("SQL step '" + node.name + "': takes 1 to " + std::to_string(kSqlMaxInputs) +
+                    " named inputs, got " + std::to_string(aliases.size()));
         return false;
     }
-    auto input_dataset = DataRegistry::Instance().GetArrowDataset(input_dataset_name);
-    if (!input_dataset) {
-        ReportError("SQL step '" + node.name + "': input dataset '" + input_dataset_name +
-                    "' is not an in-memory table");
-        return false;
+    std::vector<SqlTransformInput> inputs;
+    int64_t input_rows = 0;
+    for (size_t pin = 0; pin < aliases.size(); ++pin) {
+        const std::string dataset_name = aliases.size() == 1
+            ? GetInputDatasetName(node, ctx)
+            : GetInputDatasetForPin(node, ctx, static_cast<int>(pin));
+        if (dataset_name.empty()) {
+            return false;
+        }
+        auto dataset = DataRegistry::Instance().GetArrowDataset(dataset_name);
+        if (!dataset) {
+            ReportError("SQL step '" + node.name + "': input '" + aliases[pin] + "' dataset '" +
+                        dataset_name + "' is not an in-memory table");
+            return false;
+        }
+        input_rows += dataset->GetArrowTable()->num_rows();
+        inputs.push_back({aliases[pin], dataset->GetArrowTable()});
     }
-    std::string alias = param(kSqlInputAliasParameter);
-    if (alias.empty()) alias = kSqlDefaultInputAlias;
 
     SqlTransform transform;
     {
@@ -3331,8 +3345,7 @@ bool PipelineExecutor::ExecuteSqlTransform(const Node& node, ExecutionContext& c
         active_sql_ = &transform;
         if (cancel_requested_) transform.Interrupt();
     }
-    const auto result = transform.Run(param(kSqlQueryParameter),
-                                      {{alias, input_dataset->GetArrowTable()}});
+    const auto result = transform.Run(param(kSqlQueryParameter), inputs);
     {
         std::lock_guard<std::mutex> lock(active_sql_mutex_);
         active_sql_ = nullptr;
@@ -3344,8 +3357,8 @@ bool PipelineExecutor::ExecuteSqlTransform(const Node& node, ExecutionContext& c
     const std::string output_dataset_name = "ds_sql_" + std::to_string(node.id);
     DataRegistry::Instance().RegisterArrowTable(result.table, output_dataset_name);
     ctx.node_results[node.id] = output_dataset_name;
-    spdlog::info("[Data Studio] SQL step '{}': {} -> {} rows, {} columns", node.name,
-                 input_dataset->GetArrowTable()->num_rows(), result.table->num_rows(),
+    spdlog::info("[Data Studio] SQL step '{}': {} input(s), {} rows in -> {} rows, {} columns",
+                 node.name, inputs.size(), input_rows, result.table->num_rows(),
                  result.table->num_columns());
     return true;
 }
@@ -3621,8 +3634,12 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         const auto runtime_support = ResolveNodeRuntimeSupport(node);
         const bool is_source = runtime_support.source_node;
         const bool is_data_convert = node.type == "DataConvert";
-        const auto required_input_count =
-            runtime_support.required_input_count;
+        auto required_input_count = runtime_support.required_input_count;
+        if (node.type == "SQLQuery") {
+            // A SQL step takes one input per name in its alias list (C2).
+            required_input_count =
+                static_cast<int>(SqlStepInputAliases(node.parameters).size());
+        }
 
         if (is_data_convert && node.inputs.empty() &&
             !HasNonEmptyParameter(node.parameters, "input_path")) {
@@ -5653,6 +5670,14 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     ExecutionContext& ctx,
     gui::NodeType type) {
     std::map<std::string, std::string> operator_parameters = node.parameters;
+    // File parameters saved project-relative resolve against the project root,
+    // like Data Input and export paths (otherwise the process directory is used).
+    for (const char* file_parameter : {"vocab_file"}) {
+        auto file_it = operator_parameters.find(file_parameter);
+        if (file_it != operator_parameters.end() && !file_it->second.empty()) {
+            file_it->second = ResolveProjectDataPath(file_it->second, project_root_);
+        }
+    }
     std::string input_dataset_name;
     if (type == gui::NodeType::RegressionModelPredictor) {
         input_dataset_name = GetInputDatasetForPin(node, ctx, 0);

@@ -63,6 +63,34 @@ private:
 #endif
 };
 
+// RMSNorm (Zhang and Sennrich, arXiv:1910.07467): y = x / sqrt(mean(x^2) + eps) * gamma
+// over the last normalized_size features. No mean centring and no shift; the
+// learned scale is optional (elementwise_affine). Matches torch.nn.RMSNorm.
+class CYXWIZ_API RMSNormLayer : public Layer {
+public:
+    explicit RMSNormLayer(int normalized_size, float eps = 1e-5f, bool elementwise_affine = true);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::string GetName() const override { return "RMSNorm"; }
+
+private:
+    size_t normalized_size_;
+    float eps_;
+    bool elementwise_affine_;
+
+    Tensor gamma_;
+    Tensor grad_gamma_;
+    Tensor normalized_;   // x * inv_rms, cached for backward
+    Tensor inv_rms_;      // [rows]
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    Tensor ForwardArrayFire(const Tensor& input, size_t rows);
+    Tensor BackwardArrayFire(const Tensor& gradient, size_t rows);
+#endif
+};
+
 class CYXWIZ_API InstanceNorm2DLayer : public Layer {
 public:
     InstanceNorm2DLayer(int num_features, float eps = 1e-5f, bool affine = false);

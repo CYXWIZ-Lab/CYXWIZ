@@ -1,6 +1,7 @@
 #include "preparation_recipe.h"
 
 #include "../gui/node_editor.h"
+#include "sql_step_contract.h"
 
 #include <map>
 #include <set>
@@ -31,16 +32,32 @@ bool IsRecipeWrapper(const json& wrapper) {
     return Parameter(wrapper, kRecipeRoleParameter) == kPreparationRecipeRole;
 }
 
-// Steps that combine two tables need both inputs bound inside the recipe.
-int RequiredInputs(gui::NodeType type) {
-    switch (type) {
+std::map<std::string, std::string> Parameters(const json& node) {
+    std::map<std::string, std::string> params;
+    if (!node.contains("parameters") || !node.at("parameters").is_object()) return params;
+    for (const auto& [key, value] : node.at("parameters").items()) {
+        if (value.is_string()) params[key] = value.get<std::string>();
+    }
+    return params;
+}
+
+// Inputs a step needs bound inside the recipe: two for table combiners, one
+// per named input for a SQL step.
+int RequiredInputs(const json& node) {
+    switch (static_cast<gui::NodeType>(node.at("type").get<int>())) {
     case gui::NodeType::JoinTables:
     case gui::NodeType::RowAppender:
     case gui::NodeType::ColumnAppender:
         return 2;
+    case gui::NodeType::SQLQuery:
+        return static_cast<int>(SqlStepInputAliases(Parameters(node)).size());
     default:
         return 1;
     }
+}
+
+bool IsKnownContract(const std::string& version) {
+    return version == "1" || version == "2";
 }
 
 }  // namespace
@@ -92,11 +109,20 @@ std::string PreparationRecipeRejection(const json& wrapper, const json& record) 
     }
     const auto& inputs = record.at("inputs");
     const auto& outputs = record.at("outputs");
-    if (inputs.size() != 1 || outputs.size() != 1) {
-        return label + " has " + std::to_string(inputs.size()) + " input(s) and " +
-               std::to_string(outputs.size()) +
-               " output(s); a Preparation Recipe (contract 1) takes exactly one dataset "
-               "input and produces one dataset output";
+    // Unmarked subgraphs are validated against the version marking would write.
+    std::string contract = Parameter(wrapper, kRecipeContractParameter);
+    if (contract.empty()) contract = kPreparationRecipeContractVersion;
+    const size_t max_inputs = contract == "1" ? 1 : kPreparationRecipeMaxInputs;
+    if (outputs.size() != 1) {
+        return label + " has " + std::to_string(outputs.size()) +
+               " output(s); a Preparation Recipe produces exactly one dataset output";
+    }
+    if (inputs.empty() || inputs.size() > max_inputs) {
+        return label + " has " + std::to_string(inputs.size()) + " input(s); a Preparation "
+               "Recipe (contract " + contract + ") takes " +
+               (contract == "1" ? std::string("exactly one dataset input")
+                                : "1 to " + std::to_string(kPreparationRecipeMaxInputs) +
+                                      " dataset inputs");
     }
 
     std::map<int, const json*> steps;
@@ -118,17 +144,17 @@ std::string PreparationRecipeRejection(const json& wrapper, const json& record) 
         ++incoming[to];
         downstream[from].insert(to);
     }
-    const int entry = inputs.at(0).at("node_id").get<int>();
+    for (const auto& binding : inputs) {
+        ++incoming[binding.at("node_id").get<int>()];  // a recipe input feeds this step
+    }
     const int exit = outputs.at(0).at("node_id").get<int>();
-    ++incoming[entry];  // the recipe input feeds this step
 
     for (const auto& [id, node] : steps) {
-        const auto type = static_cast<gui::NodeType>(node->at("type").get<int>());
-        if (incoming[id] < RequiredInputs(type)) {
+        const int needed = RequiredInputs(*node);
+        if (incoming[id] < needed) {
             return "step " + NodeLabel(*node) + " has " + std::to_string(incoming[id]) +
-                   " connected input(s) but needs " + std::to_string(RequiredInputs(type)) +
-                   "; contract 1 recipes take one external input, so every step input "
-                   "must come from another step or the recipe input";
+                   " connected input(s) but needs " + std::to_string(needed) +
+                   "; every step input must come from another step or a recipe input";
         }
     }
 
@@ -189,7 +215,8 @@ json LowerPreparationRecipes(const json& document) {
     for (const auto& node : lowered["nodes"]) ids.insert(node.at("id").get<int>());
 
     struct Boundary { int node_id; int pin_index; };
-    std::map<int, Boundary> recipe_input, recipe_output;
+    std::map<int, std::vector<Boundary>> recipe_inputs;
+    std::map<int, Boundary> recipe_output;
     for (const auto& record : document.at("subgraphs")) {
         const int owner = record.at("node_id").get<int>();
         const auto it = wrappers.find(owner);
@@ -201,10 +228,10 @@ json LowerPreparationRecipes(const json& document) {
                  "it, or mark it as a Preparation Recipe (right-click > Make Preparation "
                  "Recipe)");
         }
-        if (Parameter(wrapper, kRecipeContractParameter) != kPreparationRecipeContractVersion) {
+        if (!IsKnownContract(Parameter(wrapper, kRecipeContractParameter))) {
             Fail(NodeLabel(wrapper) + " uses recipe contract version '" +
                  Parameter(wrapper, kRecipeContractParameter) +
-                 "'; this Engine runs version " + kPreparationRecipeContractVersion);
+                 "'; this Engine runs versions 1 and 2");
         }
         if (const auto why = PreparationRecipeRejection(wrapper, record); !why.empty()) {
             Fail(why);
@@ -216,9 +243,10 @@ json LowerPreparationRecipes(const json& document) {
             lowered["recipe_steps"][std::to_string(id)] = owner;
         }
         for (const auto& link : record.at("links")) lowered["links"].push_back(link);
-        const auto& in = record.at("inputs").at(0);
+        for (const auto& in : record.at("inputs")) {
+            recipe_inputs[owner].push_back({in.at("node_id").get<int>(), in.at("pin_index").get<int>()});
+        }
         const auto& out = record.at("outputs").at(0);
-        recipe_input[owner] = {in.at("node_id").get<int>(), in.at("pin_index").get<int>()};
         recipe_output[owner] = {out.at("node_id").get<int>(), out.at("pin_index").get<int>()};
         wrappers.erase(it);
     }
@@ -234,10 +262,15 @@ json LowerPreparationRecipes(const json& document) {
             link["from_node"] = out->second.node_id;
             link["from_pin_index"] = out->second.pin_index;
         }
-        if (const auto in = recipe_input.find(to); in != recipe_input.end()) {
-            if (link.value("to_pin_index", 0) != 0) Fail("recipe input pin out of range");
-            link["to_node"] = in->second.node_id;
-            link["to_pin_index"] = in->second.pin_index;
+        if (const auto in = recipe_inputs.find(to); in != recipe_inputs.end()) {
+            // The wrapper's input pin i is recipe input i.
+            const int pin = link.value("to_pin_index", 0);
+            if (pin < 0 || static_cast<size_t>(pin) >= in->second.size()) {
+                Fail("a link reaches recipe input " + std::to_string(pin) + ", but the recipe has " +
+                     std::to_string(in->second.size()) + " input(s)");
+            }
+            link["to_node"] = in->second[static_cast<size_t>(pin)].node_id;
+            link["to_pin_index"] = in->second[static_cast<size_t>(pin)].pin_index;
         }
         lowered["links"].push_back(std::move(link));
     }

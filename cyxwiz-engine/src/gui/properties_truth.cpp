@@ -1801,6 +1801,22 @@ void AddTransformerTruth(NodeTruthReport& report, const MLNode& node) {
             report.properties.push_back(ResolveBoolProperty(
                 node, "Normalize first", "norm_first", false,
                 TruthOwner::Runtime, true, false));
+            // Block choices (tofix112); validated by the shared transformer policy.
+            report.properties.push_back(ResolveStringProperty(
+                node, "Normalization", "norm_type", "layer_norm",
+                TruthOwner::Runtime, true, false, false));
+            report.properties.push_back(ResolveStringProperty(
+                node, "Feed-forward type", "ffn_type", "mlp",
+                TruthOwner::Runtime, true, false, false));
+            report.properties.push_back(ResolveStringProperty(
+                node, "Feed-forward activation", "ffn_activation", "relu",
+                TruthOwner::Runtime, true, false, false));
+            report.properties.push_back(ResolveBoolProperty(
+                node, "Feed-forward bias", "ffn_bias", true,
+                TruthOwner::Runtime, true, false));
+            report.properties.push_back(ResolveStringProperty(
+                node, "Position encoding", "position_encoding", "external",
+                TruthOwner::Runtime, true, false, false));
 
             if (const std::string* layers = FindParameter(node, "num_layers")) {
                 auto layer_count = ResolveIntProperty(

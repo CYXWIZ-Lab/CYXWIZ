@@ -19,6 +19,7 @@
 #include "../core/pipeline_executor.h"  // Unified Canvas Phase 2
 #include "../core/pipeline_execution_task.h"
 #include "../core/preparation_recipe.h"
+#include "../core/sql_step_contract.h"
 #include "subgraph_document.h"
 #include "../core/pipeline_runtime_capabilities.h"
 #include "panels/training_dashboard.h"
@@ -266,6 +267,50 @@ NodeEditor::~NodeEditor() {
     }
 }
 
+std::vector<int> NodeEditor::SyncSqlStepInputPins(MLNode& node) {
+    std::vector<int> removed;
+    if (node.type != NodeType::SQLQuery) return removed;
+    auto aliases = cyxwiz::SqlStepInputAliases(node.parameters);
+    if (aliases.size() > cyxwiz::kSqlMaxInputs) aliases.resize(cyxwiz::kSqlMaxInputs);
+    for (size_t i = 0; i < aliases.size(); ++i) {
+        if (i < node.inputs.size()) {
+            node.inputs[i].name = aliases[i];
+            continue;
+        }
+        NodePin pin;
+        pin.id = next_pin_id_++;
+        pin.type = PinType::Dataset;
+        pin.name = aliases[i];
+        pin.is_input = true;
+        pin.description = "Table named '" + aliases[i] + "' inside the query";
+        node.inputs.push_back(std::move(pin));
+    }
+    while (node.inputs.size() > aliases.size()) {
+        removed.push_back(node.inputs.back().id);
+        node.inputs.pop_back();
+    }
+    return removed;
+}
+
+void NodeEditor::SyncParameterDrivenPins() {
+    std::vector<int> removed;
+    bool pins_changed = false;
+    for (auto& node : nodes_) {
+        const size_t before = node.inputs.size();
+        const auto gone = SyncSqlStepInputPins(node);
+        pins_changed = pins_changed || node.inputs.size() != before || !gone.empty();
+        removed.insert(removed.end(), gone.begin(), gone.end());
+    }
+    if (!removed.empty()) {
+        std::erase_if(links_, [&removed](const NodeLink& link) {
+            return std::find(removed.begin(), removed.end(), link.to_pin) != removed.end();
+        });
+    }
+    // pin_lookup_ holds pointers into each node's pin vector; adding a pin
+    // can reallocate it, so the lookup must be rebuilt before any hover query.
+    if (pins_changed) RebuildPinLookup();
+}
+
 void NodeEditor::ShowPipelineNotice(std::string message) {
     show_window_ = true;
     pipeline_notice_ = std::move(message);
@@ -303,6 +348,7 @@ bool NodeEditor::CanReplaceGraph(const char* operation) {
 void NodeEditor::Render() {
     if (!show_window_) return;
 
+    SyncParameterDrivenPins();
     SyncPipelineExecutionVisualization();
 
     const bool training_animation_active =
@@ -4753,6 +4799,7 @@ bool NodeEditor::ExecuteDataPipeline() {
     // Convert node graph to JSON for PipelineExecutor
     nlohmann::json pipeline_json;
     pipeline_json["nodes"] = nlohmann::json::array();
+    recipe_step_ids_.clear();
 
     if (!subgraphs_.empty()) {
         // Preparation Recipes run as their steps: lower the same saved-document
@@ -4766,6 +4813,10 @@ bool NodeEditor::ExecuteDataPipeline() {
             spdlog::error("Pipeline not started: {}", e.what());
             ShowPipelineNotice(std::string("The pipeline was not started.\n\n") + e.what());
             return false;
+        }
+        recipe_step_ids_.clear();
+        for (const auto& [step_id, recipe_id] : lowered.at("recipe_steps").items()) {
+            recipe_step_ids_[recipe_id.get<int>()].push_back(std::stoi(step_id));
         }
         for (const auto& node : lowered.at("nodes")) {
             nlohmann::json node_json;
@@ -4978,6 +5029,43 @@ void NodeEditor::SyncPipelineExecutionVisualization() {
             }
         }
         currently_executing_node_id_ = -1;
+    }
+    RollUpRecipeExecutionStates();
+}
+
+void NodeEditor::RollUpRecipeExecutionStates() {
+    // A collapsed recipe runs as its steps; show their combined state on the
+    // recipe node so it and its links reflect the run like any other node.
+    for (const auto& [recipe_id, steps] : recipe_step_ids_) {
+        bool any_error = false, any_running = false, any_pending = false;
+        size_t completed = 0;
+        std::string error;
+        for (int step : steps) {
+            const auto it = node_execution_states_.find(step);
+            const auto state = it == node_execution_states_.end() ? NodeExecutionState::Idle : it->second;
+            switch (state) {
+            case NodeExecutionState::Error:
+                any_error = true;
+                if (error.empty()) {
+                    const auto msg = node_execution_errors_.find(step);
+                    error = msg == node_execution_errors_.end() ? std::string() : msg->second;
+                }
+                break;
+            case NodeExecutionState::Executing: any_running = true; break;
+            case NodeExecutionState::Pending: any_pending = true; break;
+            case NodeExecutionState::Completed: ++completed; break;
+            case NodeExecutionState::Idle: break;
+            }
+        }
+        if (any_error) {
+            SetNodeExecutionError(recipe_id, error.empty() ? "a recipe step failed" : error);
+        } else if (any_running || (completed > 0 && completed < steps.size() && pipeline_execution_active_)) {
+            SetNodeExecutionState(recipe_id, NodeExecutionState::Executing);
+        } else if (!steps.empty() && completed == steps.size()) {
+            SetNodeExecutionState(recipe_id, NodeExecutionState::Completed);
+        } else if (any_pending) {
+            SetNodeExecutionState(recipe_id, NodeExecutionState::Pending);
+        }
     }
 }
 

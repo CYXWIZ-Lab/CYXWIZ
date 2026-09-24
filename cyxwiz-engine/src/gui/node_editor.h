@@ -1335,6 +1335,10 @@ private:
     bool IsSubgraphNode(int node_id) const;
     SubgraphData* GetSubgraphData(int node_id);
     bool IsPreparationRecipeNode(int node_id) const;
+    // SQL step input pins follow its alias list (one named pin per input).
+    // Returns the ids of removed pins so their links can be dropped.
+    std::vector<int> SyncSqlStepInputPins(MLNode& node);
+    void SyncParameterDrivenPins();
     // Marks a subgraph as a Preparation Recipe after validating the recipe
     // contract, or turns it back into a visual group. Returns false and shows
     // the reason when the subgraph does not qualify.
@@ -1522,6 +1526,10 @@ private:
     std::string pipeline_notice_;
     void ShowPipelineNotice(std::string message);
     bool SubmitDataPipelineJson(nlohmann::json pipeline_json);
+    // Recipe node -> its step node ids for the pipeline run in flight; the
+    // executor reports step states, the recipe node shows their roll-up.
+    std::map<int, std::vector<int>> recipe_step_ids_;
+    void RollUpRecipeExecutionStates();
 
     // Empty graph warning popup state
     bool show_empty_graph_warning_ = false;

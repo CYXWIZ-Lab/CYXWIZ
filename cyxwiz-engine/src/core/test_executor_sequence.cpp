@@ -11,26 +11,38 @@ void TestExecutor::TestCausalSequence(int batch_size,
                                     TestBatchCallback batch_cb,
                                     TestCompleteCallback complete_cb) {
     // Public Test owns exception cleanup and the testing flag.
+    // Two scopes: the configured test split of the model's prepared dataset, or
+    // an entire supplied Test dataset (e.g. frozen token windows). Either way the
+    // batcher's vocabulary must equal the model's frozen vocabulary (checked
+    // below), so a corpus encoded with a different tokenizer fails closed.
+    const bool entire = dataset_scope_ == TestDatasetScope::EntireProvidedDataset;
     if (batch_size <= 0 || !model_ || !use_arrow_dataset_ ||
-        !config_.sequence_batch.create_causal_lm_targets ||
-        dataset_scope_ != TestDatasetScope::ConfiguredTestSplit) {
+        !config_.sequence_batch.create_causal_lm_targets) {
         throw std::runtime_error(
-            "Sequence Run Test requires an active causal-LM model and the "
-            "configured test split of its prepared Arrow dataset. Independent "
-            "test-corpus encoding and other sequence tasks are not supported here.");
+            "Sequence Run Test requires an active causal-LM model and an Arrow "
+            "sequence dataset (the configured test split, or a supplied Test dataset "
+            "encoded with the model's vocabulary).");
     }
     if (config_.sequence_batch.expected_token_vocabulary.empty()) {
         throw std::runtime_error(
             "Sequence Run Test has no frozen vocabulary contract. Train or "
             "load the model with its validated sequence preparation first.");
     }
-    auto built = BuildSequenceBatcherFromArrowDataset(arrow_dataset_, config_, batch_size);
+    // A supplied Test dataset is scored whole: every row through the train
+    // phase (whole-dataset semantics), without the training run's roles.
+    TrainingConfiguration build_config =
+        entire ? ConfigureTestDatasetScope(config_, dataset_scope_) : config_;
+    if (entire) {
+        build_config.dataset_roles.dev = {};
+        build_config.dataset_roles.test = {};
+    }
+    auto built = BuildSequenceBatcherFromArrowDataset(arrow_dataset_, build_config, batch_size);
     if (!built.success()) throw std::runtime_error(built.error_message);
     if (built.id_to_label != config_.sequence_batch.expected_token_vocabulary ||
         built.token_vocabulary_size != config_.output_size) {
         throw std::runtime_error("Sequence Run Test vocabulary differs from the active model.");
     }
-    built.batcher->SetPhase(BatcherPhase::Test);
+    built.batcher->SetPhase(entire ? BatcherPhase::Train : BatcherPhase::Test);
     built.batcher->Reset();
     if (built.batcher->GetNumBatches() == 0)
         throw std::runtime_error("Sequence Run Test has no test windows.");

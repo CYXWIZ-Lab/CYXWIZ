@@ -281,8 +281,34 @@ TransformerDecoderLayer::TransformerDecoderLayer(int d_model, int nhead,
 
 TransformerDecoderLayer::TransformerDecoderLayer(int d_model, int nhead,
     int dim_feedforward, float dropout, bool norm_first, float ffn_dropout)
+    : TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, norm_first,
+                              ffn_dropout, TransformerBlockOptions{}) {}
+
+std::unique_ptr<Layer> TransformerDecoderLayer::MakeNorm() const {
+    if (options_.norm_type == TransformerNormType::RMSNorm) {
+        return std::make_unique<RMSNormLayer>(d_model_, options_.norm_eps);
+    }
+    return std::make_unique<LayerNormLayer>(std::vector<int>{d_model_}, options_.norm_eps);
+}
+
+TransformerDecoderLayer::TransformerDecoderLayer(int d_model, int nhead,
+    int dim_feedforward, float dropout, bool norm_first, float ffn_dropout,
+    const TransformerBlockOptions& options)
     : d_model_(d_model), nhead_(nhead), dim_feedforward_(dim_feedforward),
-      dropout_(dropout), norm_first_(norm_first) {
+      dropout_(dropout), norm_first_(norm_first), options_(options) {
+    if (!std::isfinite(options_.norm_eps) || options_.norm_eps <= 0.0f) {
+        throw std::invalid_argument("Transformer norm_eps must be finite and positive");
+    }
+    switch (options_.ffn_activation) {
+        case ActivationType::ReLU: case ActivationType::GELU: case ActivationType::Swish:
+        case ActivationType::SiLU: case ActivationType::Mish: case ActivationType::ELU:
+        case ActivationType::SELU: case ActivationType::LeakyReLU: case ActivationType::Sigmoid:
+        case ActivationType::Tanh: case ActivationType::Hardswish:
+            break;
+        default:
+            throw std::invalid_argument(
+                "Transformer ffn_activation must be an elementwise activation without learned parameters");
+    }
     if (dim_feedforward <= 0) {
         throw std::invalid_argument("Transformer dim_feedforward must be positive");
     }
@@ -293,14 +319,68 @@ TransformerDecoderLayer::TransformerDecoderLayer(int d_model, int nhead,
 
     self_attn_ = std::make_unique<MultiHeadAttentionLayer>(d_model, nhead, dropout);
     cross_attn_ = std::make_unique<MultiHeadAttentionLayer>(d_model, nhead, dropout);
-    norm1_ = std::make_unique<LayerNormLayer>(std::vector<int>{d_model});
-    norm2_ = std::make_unique<LayerNormLayer>(std::vector<int>{d_model});
-    norm3_ = std::make_unique<LayerNormLayer>(std::vector<int>{d_model});
-    linear1_ = std::make_unique<DenseLayer>(d_model, dim_feedforward);
-    linear2_ = std::make_unique<DenseLayer>(dim_feedforward, d_model);
+    if (options_.position_encoding == TransformerPositionEncoding::Rope) {
+        self_attn_->SetRotaryEmbedding(true, options_.rope_base);  // self-attention only
+    }
+    norm1_ = MakeNorm();
+    norm2_ = MakeNorm();
+    norm3_ = MakeNorm();
+    // Construction order (and therefore weight initialization order) of the
+    // classic layers is unchanged; the gate projection is created last.
+    linear1_ = std::make_unique<DenseLayer>(d_model, dim_feedforward, options_.ffn_bias);
+    linear2_ = std::make_unique<DenseLayer>(dim_feedforward, d_model, options_.ffn_bias);
+    if (options_.ffn_type == TransformerFeedForwardType::Gated) {
+        ffn_gate_ = std::make_unique<DenseLayer>(d_model, dim_feedforward, options_.ffn_bias);
+    }
+    if (options_.ffn_type == TransformerFeedForwardType::Gated ||
+        options_.ffn_activation != ActivationType::ReLU) {
+        // ELU uses the standard alpha=1 (the factory default 0.01 is LeakyReLU's).
+        ffn_activation_ = options_.ffn_activation == ActivationType::ELU
+            ? std::make_unique<ELUActivation>(1.0f)
+            : CreateActivation(options_.ffn_activation);
+    }
     dropout1_ = std::make_unique<DropoutLayer>(dropout);
     dropout2_ = std::make_unique<DropoutLayer>(dropout);
     dropout3_ = std::make_unique<DropoutLayer>(dropout);
+}
+
+Tensor TransformerDecoderLayer::FeedForward(const Tensor& flat_input) {
+    if (options_.ffn_type == TransformerFeedForwardType::Gated) {
+        Tensor up = linear1_->Forward(flat_input);
+        Tensor gate = ffn_gate_->Forward(flat_input);
+        Tensor gate_act = ffn_activation_->Forward(gate);
+        cached_ffn_mid_ = gate;
+        cached_ffn_up_ = up;
+        cached_ffn_gate_act_ = gate_act;
+        Tensor mid = ffn_dropout_->Forward(gate_act * up);
+        return linear2_->Forward(mid);
+    }
+    Tensor mid = linear1_->Forward(flat_input);
+    if (ffn_activation_) {
+        cached_ffn_mid_ = mid;  // activation input
+        mid = ffn_activation_->Forward(mid);
+    } else {
+        mid = ReLU().Forward(mid);
+        cached_ffn_mid_ = mid;  // classic path: ReLU output (legacy cache)
+    }
+    mid = ffn_dropout_->Forward(mid);
+    return linear2_->Forward(mid);
+}
+
+Tensor TransformerDecoderLayer::FeedForwardBackward(const Tensor& grad_flat) {
+    Tensor grad_mid = linear2_->Backward(grad_flat);
+    grad_mid = ffn_dropout_->Backward(grad_mid);
+    if (options_.ffn_type == TransformerFeedForwardType::Gated) {
+        Tensor grad_up = grad_mid * cached_ffn_gate_act_;
+        Tensor grad_gate = ffn_activation_->Backward(grad_mid * cached_ffn_up_, cached_ffn_mid_);
+        return AddSameShape(linear1_->Backward(grad_up), ffn_gate_->Backward(grad_gate));
+    }
+    if (ffn_activation_) {
+        grad_mid = ffn_activation_->Backward(grad_mid, cached_ffn_mid_);
+    } else {
+        grad_mid = ReLU().Backward(grad_mid, cached_ffn_mid_);
+    }
+    return linear1_->Backward(grad_mid);
 }
 
 Tensor TransformerDecoderLayer::Forward(const Tensor& input) {
@@ -329,14 +409,8 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& input) {
         cached_cross_attn_output_ = x;
 
         Tensor normed2 = norm2_->Forward(x);
-        Tensor ffn_out = linear1_->Forward(
-            FlattenTransformerSequenceForDense(normed2));
+        Tensor ffn_out = FeedForward(FlattenTransformerSequenceForDense(normed2));
 
-        ffn_out = ReLU().Forward(ffn_out);
-        cached_ffn_mid_ = ffn_out;
-        ffn_out = ffn_dropout_->Forward(ffn_out);
-
-        ffn_out = linear2_->Forward(ffn_out);
         ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
         ffn_out = dropout3_->Forward(ffn_out);
 
@@ -352,14 +426,8 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& input) {
     cached_self_attn_output_ = x;
     cached_cross_attn_output_ = x;
 
-    Tensor ffn_out = linear1_->Forward(
-        FlattenTransformerSequenceForDense(x));
+    Tensor ffn_out = FeedForward(FlattenTransformerSequenceForDense(x));
 
-    ffn_out = ReLU().Forward(ffn_out);
-    cached_ffn_mid_ = ffn_out;
-    ffn_out = ffn_dropout_->Forward(ffn_out);
-
-    ffn_out = linear2_->Forward(ffn_out);
     ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
     ffn_out = dropout3_->Forward(ffn_out);
 
@@ -401,15 +469,8 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
 
         // FFN
         Tensor normed3 = norm3_->Forward(x2);
-        Tensor ffn_out = linear1_->Forward(
-            FlattenTransformerSequenceForDense(normed3));
+        Tensor ffn_out = FeedForward(FlattenTransformerSequenceForDense(normed3));
 
-        // ReLU
-        ffn_out = ReLU().Forward(ffn_out);
-        cached_ffn_mid_ = ffn_out;
-        ffn_out = ffn_dropout_->Forward(ffn_out);
-
-        ffn_out = linear2_->Forward(ffn_out);
         ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
         ffn_out = dropout3_->Forward(ffn_out);
 
@@ -439,15 +500,8 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
         cached_cross_attn_output_ = x2;
 
         // FFN
-        Tensor ffn_out = linear1_->Forward(
-            FlattenTransformerSequenceForDense(x2));
+        Tensor ffn_out = FeedForward(FlattenTransformerSequenceForDense(x2));
 
-        // ReLU
-        ffn_out = ReLU().Forward(ffn_out);
-        cached_ffn_mid_ = ffn_out;
-        ffn_out = ffn_dropout_->Forward(ffn_out);
-
-        ffn_out = linear2_->Forward(ffn_out);
         ffn_out = RestoreTransformerSequenceFromDense(ffn_out, shape[0], shape[1]);
         ffn_out = dropout3_->Forward(ffn_out);
 
@@ -470,12 +524,7 @@ Tensor TransformerDecoderLayer::Backward(const Tensor& grad_output) {
     if (grad_shape.size() == 3) {
         grad_ffn = FlattenTransformerSequenceForDense(grad_ffn);
     }
-    grad_ffn = linear2_->Backward(grad_ffn);
-    grad_ffn = ffn_dropout_->Backward(grad_ffn);
-
-    grad_ffn = ReLU().Backward(grad_ffn, cached_ffn_mid_);
-
-    grad_ffn = linear1_->Backward(grad_ffn);
+    grad_ffn = FeedForwardBackward(grad_ffn);
     if (grad_shape.size() == 3) {
         grad_ffn = RestoreTransformerSequenceFromDense(
             grad_ffn, grad_shape[0], grad_shape[1]);
@@ -569,13 +618,19 @@ std::map<std::string, Tensor> TransformerDecoderLayer::GetParameters() {
         params["linear2." + key] = val;
     }
 
+    if (ffn_gate_) {
+        for (const auto& [key, val] : ffn_gate_->GetParameters()) {
+            params["ffn_gate." + key] = val;
+        }
+    }
+
     return params;
 }
 
 void TransformerDecoderLayer::SetParameters(const std::map<std::string, Tensor>& params) {
     std::map<std::string, Tensor> self_attn_params, cross_attn_params;
     std::map<std::string, Tensor> norm1_params, norm2_params, norm3_params;
-    std::map<std::string, Tensor> linear1_params, linear2_params;
+    std::map<std::string, Tensor> linear1_params, linear2_params, gate_params;
 
     for (const auto& [key, val] : params) {
         if (key.find("self_attn.") == 0) {
@@ -592,6 +647,8 @@ void TransformerDecoderLayer::SetParameters(const std::map<std::string, Tensor>&
             linear1_params[key.substr(8)] = val;
         } else if (key.find("linear2.") == 0) {
             linear2_params[key.substr(8)] = val;
+        } else if (key.find("ffn_gate.") == 0) {
+            gate_params[key.substr(9)] = val;
         }
     }
 
@@ -602,6 +659,7 @@ void TransformerDecoderLayer::SetParameters(const std::map<std::string, Tensor>&
     norm3_->SetParameters(norm3_params);
     linear1_->SetParameters(linear1_params);
     linear2_->SetParameters(linear2_params);
+    if (ffn_gate_) ffn_gate_->SetParameters(gate_params);
 }
 
 void TransformerDecoderLayer::SetTraining(bool training) {
@@ -613,6 +671,7 @@ void TransformerDecoderLayer::SetTraining(bool training) {
     norm3_->SetTraining(training);
     linear1_->SetTraining(training);
     linear2_->SetTraining(training);
+    if (ffn_gate_) ffn_gate_->SetTraining(training);
     ffn_dropout_->SetTraining(training);
     dropout1_->SetTraining(training);
     dropout2_->SetTraining(training);

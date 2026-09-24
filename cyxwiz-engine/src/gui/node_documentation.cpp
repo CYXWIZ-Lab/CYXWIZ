@@ -800,7 +800,10 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Transformer Decoder",
         "One decoder-only Transformer block with masked self-attention, residual "
         "paths, normalization, and an internal feed-forward network. The feed-forward "
-        "path is Dense(d_model -> dim_feedforward) -> activation -> Dense(dim_feedforward -> d_model).",
+        "path is Dense(d_model -> dim_feedforward) -> activation -> Dense(dim_feedforward -> d_model), "
+        "or a gated GLU-family network. Defaults are the original 2017 block; a LLaMA-style block is "
+        "norm_first=true, norm_type=rms_norm, ffn_type=gated, ffn_activation=silu (SwiGLU), ffn_bias=false, "
+        "position_encoding=rope.",
         "Stack multiple nodes for depth. Internal attention projections and Dense/FC "
         "layers are owned by this composite node; edit dim_feedforward to change the "
         "hidden Dense width. Add another TransformerDecoder node to add a block. The Memory pin is reserved and fails "
@@ -812,11 +815,19 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"dim_feedforward", "Feedforward hidden dimension"},
             {"dropout", "Dropout probability"},
             {"ffn_dropout", "Hidden FFN dropout after activation; default 0 preserves legacy behavior"},
-            {"norm_first", "Apply normalization before attention and feedforward"}
+            {"norm_first", "Apply normalization before attention and feedforward (pre-norm)"},
+            {"norm_type", "layer_norm or rms_norm (RMSNorm: scale only, no mean centring; LLaMA)"},
+            {"norm_eps", "Epsilon inside the normalization square root (default 1e-5)"},
+            {"ffn_type", "mlp, or gated: act(gate(x)) * up(x) then down; adds a third weight matrix"},
+            {"ffn_activation", "relu, gelu (tanh approximation), silu/Swish, mish, elu, selu, leaky_relu, sigmoid, tanh, hardswish; gated+silu = SwiGLU, gated+gelu = GEGLU"},
+            {"ffn_bias", "Learn biases in the feed-forward Dense layers (LLaMA turns this off)"},
+            {"position_encoding", "external (Positional Encoding node) or rope (rotary embedding inside self-attention)"},
+            {"rope_base", "Rotary frequency base, default 10000"}
         },
         {
             "d_model must divide evenly by num_heads",
-            "Autoregressive generation loops remain a separate future contract"
+            "Autoregressive generation loops remain a separate future contract",
+            "position_encoding=rope rotates queries and keys inside attention (ArrayFire path only); ALiBi and learned positions are planned (tofix112 phase 3)"
         },
         "Attention"
     };

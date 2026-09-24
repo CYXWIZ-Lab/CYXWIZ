@@ -546,4 +546,32 @@ void ApplySequenceBatcherBuildResultToTrainingConfig(
     }
 }
 
+bool PrepareSequenceEvaluationVocabulary(
+    TrainingConfiguration& config,
+    const std::shared_ptr<ArrowDataset>& dataset,
+    std::string& error) {
+    if (!config.sequence_batch.enabled || !config.sequence_batch.create_causal_lm_targets ||
+        !config.sequence_batch.expected_token_vocabulary.empty()) {
+        return true;
+    }
+    if (!dataset) {
+        error = "The checkpoint's token vocabulary is read from the graph's prepared "
+                "training dataset '" + config.dataset_name +
+                "'. Apply its Data Input before loading the checkpoint.";
+        return false;
+    }
+    TrainingConfiguration build_config = config;
+    build_config.dataset_roles.dev = {};
+    build_config.dataset_roles.test = {};
+    auto sequence = BuildSequenceBatcherFromArrowDataset(
+        dataset, build_config, std::max(1, config.batch_size));
+    if (!sequence.success()) {
+        error = "Checkpoint evaluation could not prepare the sequence vocabulary: " +
+                sequence.error_message;
+        return false;
+    }
+    ApplySequenceBatcherBuildResultToTrainingConfig(sequence, config);
+    return true;
+}
+
 } // namespace cyxwiz

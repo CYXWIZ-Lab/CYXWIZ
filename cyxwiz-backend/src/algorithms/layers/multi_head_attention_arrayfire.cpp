@@ -1,5 +1,6 @@
 #include "cyxwiz/layers/attention.h"
 #include <limits>
+#include <cmath>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -15,6 +16,29 @@ namespace {
 af::array SplitHeads(const af::array& sequence, int head_dim, int heads) {
     return af::reorder(af::moddims(sequence,
         af::dim4(sequence.dims(0), sequence.dims(1), head_dim, heads)), 1, 2, 0, 3);
+}
+
+// Rotate head features [S, D, B, H] by position (dim 0) using the half-split
+// convention: x*cos + rotate_half(x)*sin, rotate_half(x) = [-x2, x1].
+// direction = +1 applies the rotation, -1 its inverse (the transpose), which is
+// what backward needs because the rotation is orthogonal.
+af::array ApplyRotary(const af::array& x, float base, float direction) {
+    const dim_t seq = x.dims(0);
+    const dim_t dim = x.dims(1);
+    const dim_t half = dim / 2;
+    const af::array positions = af::range(af::dim4(seq, half), 0, f32);
+    const af::array index = af::range(af::dim4(seq, half), 1, f32);
+    const af::array inv_freq = af::exp(index * (-2.0f * std::log(base) / static_cast<float>(dim)));
+    const af::array angle = positions * inv_freq;
+    const af::array cos_half = af::cos(angle);
+    const af::array sin_half = af::sin(angle) * direction;
+    const af::dim4 spread(1, 1, x.dims(2), x.dims(3));
+    const af::array cos_full = af::tile(af::join(1, cos_half, cos_half), spread);
+    const af::array sin_full = af::tile(af::join(1, sin_half, sin_half), spread);
+    const af::array x1 = x(af::span, af::seq(0, static_cast<double>(half - 1)), af::span, af::span);
+    const af::array x2 = x(af::span, af::seq(static_cast<double>(half), static_cast<double>(dim - 1)), af::span, af::span);
+    const af::array rotated_half = af::join(1, -x2, x1);
+    return x * cos_full + rotated_half * sin_full;
 }
 
 af::array JoinHeads(const af::array& heads) {
@@ -42,9 +66,13 @@ Tensor MultiHeadAttentionLayer::ForwardArrayFire(
     Tensor q = project(query, W_q_, b_q_);
     Tensor k = project(key, W_k_, b_k_);
     Tensor v = project(value, W_v_, b_v_);
-    const af::array qh = SplitHeads(q.GetSemanticArray(), head_dim_, num_heads_);
-    const af::array kh = SplitHeads(k.GetSemanticArray(), head_dim_, num_heads_);
+    af::array qh = SplitHeads(q.GetSemanticArray(), head_dim_, num_heads_);
+    af::array kh = SplitHeads(k.GetSemanticArray(), head_dim_, num_heads_);
     const af::array vh = SplitHeads(v.GetSemanticArray(), head_dim_, num_heads_);
+    if (rope_) {
+        qh = ApplyRotary(qh, rope_base_, 1.0f);
+        kh = ApplyRotary(kh, rope_base_, 1.0f);
+    }
     af::array scores = af::matmul(qh, kh, AF_MAT_NONE, AF_MAT_TRANS) * scale_;
     if (mask) {
         scores = scores + af::tile(mask->GetSemanticArray(), af::dim4(1, 1, qh.dims(2), num_heads_));
@@ -123,8 +151,13 @@ Tensor MultiHeadAttentionLayer::BackwardArrayFire(const Tensor& grad_output) {
     Tensor gwo, gbo, gwq, gbq, gwk, gbk, gwv, gbv;
     const Tensor dc = backward_project(cached_context_, grad_output.GetSemanticArray(), W_o_, gwo, gbo);
     const af::array dch = SplitHeads(dc.GetSemanticArray(), head_dim_, num_heads_);
-    const af::array q = SplitHeads(cached_Q_.GetSemanticArray(), head_dim_, num_heads_);
-    const af::array k = SplitHeads(cached_K_.GetSemanticArray(), head_dim_, num_heads_);
+    // Scores used the rotated Q and K; cached projections are unrotated.
+    af::array q = SplitHeads(cached_Q_.GetSemanticArray(), head_dim_, num_heads_);
+    af::array k = SplitHeads(cached_K_.GetSemanticArray(), head_dim_, num_heads_);
+    if (rope_) {
+        q = ApplyRotary(q, rope_base_, 1.0f);
+        k = ApplyRotary(k, rope_base_, 1.0f);
+    }
     const af::array v = SplitHeads(cached_V_.GetSemanticArray(), head_dim_, num_heads_);
     const af::array a = cached_attn_weights_.GetSemanticArray();
     af::array da = af::matmul(dch, v, AF_MAT_NONE, AF_MAT_TRANS);
@@ -135,8 +168,14 @@ Tensor MultiHeadAttentionLayer::BackwardArrayFire(const Tensor& grad_output) {
         used_attention = a * multiplier;
     }
     const af::array ds = a * (da - af::tile(af::sum(a * da, 1), af::dim4(1, k.dims(0)))) * scale_;
-    Tensor dq = backward_project(cached_query_, JoinHeads(af::matmul(ds, k)), W_q_, gwq, gbq);
-    Tensor dk = backward_project(cached_key_, JoinHeads(af::matmul(ds, q, AF_MAT_TRANS)), W_k_, gwk, gbk);
+    af::array dq_heads = af::matmul(ds, k);
+    af::array dk_heads = af::matmul(ds, q, AF_MAT_TRANS);
+    if (rope_) {
+        dq_heads = ApplyRotary(dq_heads, rope_base_, -1.0f);
+        dk_heads = ApplyRotary(dk_heads, rope_base_, -1.0f);
+    }
+    Tensor dq = backward_project(cached_query_, JoinHeads(dq_heads), W_q_, gwq, gbq);
+    Tensor dk = backward_project(cached_key_, JoinHeads(dk_heads), W_k_, gwk, gbk);
     Tensor dv = backward_project(cached_value_, JoinHeads(af::matmul(used_attention, dch, AF_MAT_TRANS)), W_v_, gwv, gbv);
     Tensor result = dq;
     if (cached_self_attention_) {

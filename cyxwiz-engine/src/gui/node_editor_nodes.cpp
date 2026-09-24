@@ -1211,6 +1211,8 @@ MLNode NodeEditor::CreateNodeWithIds(NodeType type,
             node.parameters["min_rows"] = "";
             node.parameters["max_rows"] = "";
             node.parameters["count_true_column"] = "";
+            node.parameters["count_column"] = "";
+            node.parameters["count_value"] = "";
             node.parameters["on_failure"] = "stop";
             break;
         }
