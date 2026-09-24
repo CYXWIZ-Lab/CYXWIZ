@@ -525,6 +525,16 @@ if(TARGET cyxwiz-engine)
         cyxwiz-backend-pack-installer
         cyxwiz-installer
     )
+    if(MSVC AND CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+        # package_release.py collects every DLL beside the Engine; ship the
+        # MSVC runtime app-locally so the base needs no VC++ redistributable.
+        add_custom_command(TARGET cyxwiz-engine POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
+                "$<TARGET_FILE_DIR:cyxwiz-engine>"
+            VERBATIM
+        )
+    endif()
 endif()
 
 unset(_cyxwiz_installer_sources)

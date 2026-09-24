@@ -778,7 +778,6 @@ def write_manifest(
     components = inventory(stage)
     prerequisites = [
         "64-bit supported operating system",
-        "Microsoft Visual C++ 2015-2022 x64 Redistributable on Windows",
         "compatible hardware drivers/providers",
     ]
     if profile == "minimal":

@@ -41,6 +41,7 @@ from macho_runtime_closure import (  # noqa: E402
     is_system_dependency,
     parse_otool_dependencies,
 )
+from pe_runtime_closure import audit_msvc_runtime_closure  # noqa: E402
 
 
 class CpuBaseSmokeError(RuntimeError):
@@ -405,6 +406,14 @@ def verify(
     manifest = load_manifest(manifest_path, archive)
     base = install(archive, manifest, install_root)
     files, installed_size = package_inventory(install_root)
+    if platform.system() == "Windows":
+        # Hosted runners have the VC++ redistributable, so launching cannot
+        # prove the package carries its own MSVC runtime; check the imports.
+        missing_runtime = audit_msvc_runtime_closure(install_root)
+        if missing_runtime:
+            raise CpuBaseSmokeError(
+                "MSVC runtime is not app-local: " + "; ".join(missing_runtime)
+            )
 
     suffix = ".exe" if os.name == "nt" else ""
     bootstrapper = install_root / f"cyxwiz-runtime-bootstrapper{suffix}"

@@ -113,10 +113,29 @@ endif()
 add_executable(cyxwiz-runtime-bootstrapper
     ${_cyxwiz_runtime_bootstrapper_source}
 )
-target_link_libraries(cyxwiz-runtime-bootstrapper PRIVATE
-    cyxwiz-backend-pack-maintenance
-    cyxwiz-runtime-bootstrap
-)
+if(MSVC)
+    # The stable launcher lives in the install root, which carries no C++
+    # runtime DLLs. Compile its closure directly with the static CRT (as the
+    # finalizer does) so shortcuts work without the VC++ redistributable.
+    get_target_property(_cyxwiz_bootstrap_sources cyxwiz-runtime-bootstrap SOURCES)
+    get_target_property(_cyxwiz_maintenance_sources
+        cyxwiz-backend-pack-maintenance SOURCES)
+    target_sources(cyxwiz-runtime-bootstrapper PRIVATE
+        ${_cyxwiz_bootstrap_sources} ${_cyxwiz_maintenance_sources})
+    target_include_directories(cyxwiz-runtime-bootstrapper PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(cyxwiz-runtime-bootstrapper PRIVATE
+        nlohmann_json::nlohmann_json advapi32 ole32 shell32)
+    set_property(TARGET cyxwiz-runtime-bootstrapper PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    unset(_cyxwiz_bootstrap_sources)
+    unset(_cyxwiz_maintenance_sources)
+else()
+    target_link_libraries(cyxwiz-runtime-bootstrapper PRIVATE
+        cyxwiz-backend-pack-maintenance
+        cyxwiz-runtime-bootstrap
+    )
+endif()
 set_target_properties(cyxwiz-runtime-bootstrapper PROPERTIES
     CXX_STANDARD 20
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

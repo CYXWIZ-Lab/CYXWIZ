@@ -18,9 +18,8 @@ Hardware drivers and providers supplied by the operating system or hardware
 vendor are not bundled. A packaged backend can execute only when the target
 machine provides compatible hardware and drivers.
 
-Windows also requires the Microsoft Visual C++ 2015-2022 x64 Redistributable:
-
-https://aka.ms/vs/17/release/vc_redist.x64.exe
+On Windows the Microsoft Visual C++ runtime DLLs are included beside the
+Engine; no separate redistributable install is required.
 
 `PACKAGE_MANIFEST.json` is the authority for component contents, versions,
 sizes, source classes, and SHA-256 hashes (excluding the manifest itself).

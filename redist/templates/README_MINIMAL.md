@@ -28,9 +28,8 @@ Project creation and Python bindings require the matching Python 3.12 ABI.
 
 ### Microsoft Visual C++ Runtime on Windows
 
-Install the current supported x64 redistributable:
-
-https://aka.ms/vs/17/release/vc_redist.x64.exe
+The runtime DLLs are included beside the Engine; no separate redistributable
+install is required.
 
 ### ArrayFire
 
