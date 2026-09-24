@@ -33,3 +33,6 @@ private Data Studio tickets (`tofix*/track*`).
   stay on the portable path because the OpenCL provider measured slower
   than the CPU there; the placement audit says so
   (`opencl_provider_below_retention_floor`). NVIDIA CUDA has no such floor.
+- The OpenCL provider is verified on NVIDIA and on Intel integrated
+  graphics (UHD 630). When a machine has several OpenCL GPUs, the run's
+  selected device decides which one serves it.

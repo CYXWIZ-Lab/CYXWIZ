@@ -633,10 +633,10 @@ public:
             << " / GEMM built-in tiled kernels"
 #endif
             ;
-        if (!probe_.gpu_devices.empty()) {
-            const auto& d = probe_.gpu_devices.front();
-            out << " / device0 '" << d.name << "' (" << d.vendor << ", "
-                << d.version << ")";
+        for (size_t i = 0; i < probe_.gpu_devices.size(); ++i) {
+            const auto& d = probe_.gpu_devices[i];
+            out << " / device" << i << " '" << d.name << "' (" << d.vendor
+                << ", " << d.version << ")";
         }
         return out.str();
     }

@@ -16,12 +16,29 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
 #ifdef CYXWIZ_HAS_OPENCL_DNN_PROVIDER
 
 namespace {
+
+// Which enumerated OpenCL GPU the suite targets. Default 0 (the first GPU,
+// NVIDIA on the dev box); CYXWIZ_OPENCL_TEST_DEVICE=1 runs the same gates
+// on the second GPU (the Intel UHD 630 on the dev box) for the AMD/Intel
+// platform gate. The provider and ArrayFire both enumerate GPUs in
+// platform order, so one index serves both.
+int OpenclTestDeviceIndex() {
+    static const int index = [] {
+        const char* value = std::getenv("CYXWIZ_OPENCL_TEST_DEVICE");
+        if (value == nullptr || value[0] == '\0') {
+            return 0;
+        }
+        return std::atoi(value);
+    }();
+    return index;
+}
 
 cyxwiz::Tensor FilledTensor(const std::vector<size_t>& shape, float scale,
                             float phase) {
@@ -47,7 +64,7 @@ cyxwiz::NeuralOpRequest OpenclRequest(cyxwiz::NeuralOp op, size_t batch,
                                       size_t seq, size_t input, size_t hidden,
                                       size_t layers = 1) {
     cyxwiz::NeuralOpRequest request;
-    request.target = {cyxwiz::DeviceType::OPENCL, 0};
+    request.target = {cyxwiz::DeviceType::OPENCL, OpenclTestDeviceIndex()};
     request.op = op;
     request.training = op == cyxwiz::NeuralOp::LstmBackward ||
                        op == cyxwiz::NeuralOp::GruBackward;
@@ -98,6 +115,11 @@ TEST_CASE("OpenCL provider registers as the opencl tenant and serves only opencl
     }
     CHECK(provider->Platform() == cyxwiz::DeviceType::OPENCL);
     CHECK(provider->Version().find("OpenCL GPU devices") != std::string::npos);
+    WARN("opencl suite targets device " << OpenclTestDeviceIndex()
+         << "; provider: " << provider->Version());
+    CHECK(provider->Version().find(
+              "device" + std::to_string(OpenclTestDeviceIndex()) + " '") !=
+          std::string::npos);
 
     auto request = OpenclRequest(cyxwiz::NeuralOp::LstmForward, 4, 10, 6, 16);
     CHECK(provider->QueryCapability(request).supported);
@@ -335,7 +357,7 @@ TEST_CASE("Stacked LSTM and GRU layers route through the OpenCL provider on an O
         guard.previous = af::getActiveBackend();
         guard.previous_device = af::getDevice();
         af::setBackend(AF_BACKEND_OPENCL);
-        af::setDevice(0);
+        af::setDevice(OpenclTestDeviceIndex());
         guard.active = true;
     } catch (...) {
         WARN("ArrayFire OpenCL backend cannot be selected in this process; "

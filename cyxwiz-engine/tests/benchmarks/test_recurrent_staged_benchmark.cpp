@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -108,6 +109,20 @@ PathTiming MeasurePath(const BenchShape& shape,
 // contract is inference), timed INCLUDING host<->device boundary copies —
 // the v1 contract a caller actually experiences. Returns median ms, or a
 // negative value when no provider supports the tuple.
+// OpenCL provider leg device: CYXWIZ_OPENCL_BENCH_DEVICE (default 0, the
+// first enumerated OpenCL GPU); 1 targets the second GPU (Intel UHD 630 on
+// the dev box) for the AMD/Intel platform benchmark gate.
+int OpenclBenchDeviceIndex() {
+    static const int index = [] {
+        const char* value = std::getenv("CYXWIZ_OPENCL_BENCH_DEVICE");
+        if (value == nullptr || value[0] == '\0') {
+            return 0;
+        }
+        return std::atoi(value);
+    }();
+    return index;
+}
+
 double MeasureProviderForward(const BenchShape& shape,
                               const cyxwiz::Tensor& input,
                               int warmup_runs,
@@ -115,7 +130,10 @@ double MeasureProviderForward(const BenchShape& shape,
                               std::string& provider_version,
                               cyxwiz::DeviceType platform) {
     cyxwiz::NeuralOpRequest request;
-    request.target = {platform, 0};
+    request.target = {platform,
+                      platform == cyxwiz::DeviceType::OPENCL
+                          ? OpenclBenchDeviceIndex()
+                          : 0};
     request.op = cyxwiz::NeuralOp::LstmForward;
     request.training = false;
     request.dtype = cyxwiz::DataType::Float32;
@@ -340,6 +358,7 @@ int main(int argc, char** argv) {
                           : " provider=" + (provider_version.empty()
                                                 ? std::string("unavailable")
                                                 : provider_version))
+                  << " opencl_device=" << OpenclBenchDeviceIndex()
                   << " opencl_provider_fwd_ms=" << opencl_provider_fwd_ms
                   << (opencl_provider_fwd_ms > 0.0
                           ? " opencl_provider_speedup_vs_native=" +
@@ -373,6 +392,7 @@ int main(int argc, char** argv) {
              << ", \"native_forward_ms\": " << native.forward_ms
              << ", \"native_backward_ms\": " << native.backward_ms
              << ", \"provider_forward_ms\": " << provider_fwd_ms
+             << ", \"opencl_device\": " << OpenclBenchDeviceIndex()
              << ", \"opencl_provider_forward_ms\": " << opencl_provider_fwd_ms
              << ", \"opencl_provider\": \"" << opencl_provider_version << "\""
              << ", \"gru_native_forward_ms\": " << gru_native_fwd_ms
