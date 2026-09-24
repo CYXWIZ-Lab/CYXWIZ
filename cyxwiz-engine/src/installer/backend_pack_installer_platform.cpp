@@ -33,6 +33,7 @@
 #include "backend_pack_lifecycle_service.h"
 #include "backend_pack_metadata_refresh.h"
 #include "backend_pack_state_service.h"
+#include "product_installation_receipt.h"
 #include "runtime_installation_inspection.h"
 #include "core/backend_pack_catalog_adapter.h"
 #include "core/backend_pack_decision_reconciliation.h"
@@ -877,7 +878,12 @@ std::filesystem::path DefaultCyxWizInstallRoot(
     const wchar_t* variable = scope == CyxWizInstallScope::AllUsers
         ? _wgetenv(L"ProgramFiles") : _wgetenv(L"LOCALAPPDATA");
     if (variable && *variable) {
-        return std::filesystem::path(variable) / "CyxWiz";
+        // Per-user programs live under %LOCALAPPDATA%\Programs. Never use
+        // %LOCALAPPDATA%\CyxWiz: that is Engine user data, and product removal
+        // deletes the whole install root.
+        return scope == CyxWizInstallScope::AllUsers
+            ? std::filesystem::path(variable) / "CyxWiz"
+            : std::filesystem::path(variable) / "Programs" / "CyxWiz";
     }
     return scope == CyxWizInstallScope::AllUsers
         ? std::filesystem::path("C:\\Program Files\\CyxWiz")
@@ -901,6 +907,31 @@ std::filesystem::path DefaultCyxWizInstallRoot(
         ? std::filesystem::path(home) / ".local" / "share" / "cyxwiz"
         : std::filesystem::temp_directory_path() / "cyxwiz";
 #endif
+}
+
+bool IsClaimableCyxWizInstallRoot(const std::filesystem::path &install_root,
+                                  std::string &error) {
+    std::error_code status_error;
+    const auto status = std::filesystem::symlink_status(install_root, status_error);
+    if (status.type() == std::filesystem::file_type::not_found) return true;
+    if (status_error || status.type() != std::filesystem::file_type::directory) {
+        error = "The installation location must be a folder, not a file or link";
+        return false;
+    }
+    std::error_code probe_error;
+    // An existing (possibly interrupted) CyxWiz installation may be reused.
+    if (std::filesystem::is_regular_file(
+            runtime::ProductInstallationReceiptPath(install_root), probe_error) ||
+        std::filesystem::is_directory(install_root / "runtime", probe_error)) {
+        return true;
+    }
+    if (std::filesystem::is_empty(install_root, probe_error) && !probe_error) {
+        return true;
+    }
+    error = "The installation location already contains other files. Choose a "
+            "new or empty folder: uninstalling CyxWiz removes its whole "
+            "installation folder.";
+    return false;
 }
 
 }  // namespace cyxwiz::installer

@@ -84,4 +84,9 @@ CreateBackendPackInstallerPlatform(
 std::filesystem::path DefaultCyxWizInstallRoot(
     CyxWizInstallScope scope);
 
+// Product removal deletes the whole install root, so an installation may only
+// claim a missing or empty folder, or one that is already a CyxWiz install.
+bool IsClaimableCyxWizInstallRoot(const std::filesystem::path &install_root,
+                                  std::string &error);
+
 }  // namespace cyxwiz::installer

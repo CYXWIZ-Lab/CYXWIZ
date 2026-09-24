@@ -524,8 +524,14 @@ int RunInstaller(const std::vector<std::string> &arguments,
       operation_running = true;
       break;
     case cyxwiz::installer::gui::InstallerViewActionKind::UseInstallLocation: {
-      const auto candidate = cyxwiz::ResolveCyxWizInstallLocation(
+      auto candidate = cyxwiz::ResolveCyxWizInstallLocation(
           action.install_root, action.scope);
+      std::string claim_error;
+      if (candidate.valid && !cyxwiz::installer::IsClaimableCyxWizInstallRoot(
+                                 candidate.install_root, claim_error)) {
+        candidate.valid = false;
+        candidate.message = claim_error;
+      }
       view_state.install_location_message = candidate.message;
       if (candidate.valid) {
         install_location = candidate;
@@ -547,6 +553,13 @@ int RunInstaller(const std::vector<std::string> &arguments,
     }
     case cyxwiz::installer::gui::InstallerViewActionKind::ApplyPlan:
       operation_message.clear();
+      // Re-check at apply time: the folder may have gained foreign files.
+      if (std::string claim_error;
+          !cyxwiz::installer::IsClaimableCyxWizInstallRoot(
+              install_location.install_root, claim_error)) {
+        operation_message = claim_error;
+        break;
+      }
       view_state.uninstall_completed = false;
       view_state.install_completed = false;
       view_state.engine_launched = false;
