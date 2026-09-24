@@ -89,8 +89,11 @@ bool ParseArguments(int argc, char** argv, Options& output, std::string& error) 
 
 std::filesystem::path DefaultCacheRoot() {
 #ifdef _WIN32
+    // Keep the cache outside the default per-user install root
+    // (%LOCALAPPDATA%\CyxWiz); a bundle launched from inside it is treated as
+    // the installed maintenance tool and relaunched without its root tools.
     if (const char* local = std::getenv("LOCALAPPDATA")) {
-        return std::filesystem::path(local) / "CyxWiz" / "Setup";
+        return std::filesystem::path(local) / "CyxWiz-Setup";
     }
 #elif defined(__APPLE__)
     if (const char* home = std::getenv("HOME")) {
