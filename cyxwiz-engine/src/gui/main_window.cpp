@@ -6212,6 +6212,10 @@ void MainWindow::OnProjectOpened(const std::string& project_root) {
 void MainWindow::OnProjectClosed(const std::string& project_root) {
     spdlog::info("Project closed: {}", project_root);
 
+    // A pipeline run writes into the closed project's artifact/export paths;
+    // it stops with the project (TOFIX101 section 7).
+    if (node_editor_) node_editor_->CancelOwnedBackgroundWork();
+
     if (console_) console_->CloseProject(project_root);
 
     // Note: Settings should be saved before CloseProject() is called

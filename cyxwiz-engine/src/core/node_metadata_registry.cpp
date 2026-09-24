@@ -1373,13 +1373,19 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
           ParameterConsumption::UiOnly}},
         NodeImplementationStatus::Implemented, 0}, NodePropertiesEditor::Dialog));
 
-    // SQL remains blocked in pipelines; QueryEditor owns exploration.
-    RegisterNode({NodeType::SQLQuery, NodeCategory::DataSources, "SQL Query", ICON_FA_DATABASE,
-        {"sql", "query", "database"}, 0, false, "Execute SQL query", "", "",
-        {{"Source", PinType::Dataset, false, "Input table"}},
+    // SQL step (contract 1, TOFIX101 package C): one input table under a
+    // name, one read-only SELECT, one result table. Runs in a restricted
+    // DuckDB connection (no file/network access). Query Editor keeps scratch
+    // exploration; this is the reproducible, saved transform.
+    RegisterNode({NodeType::SQLQuery, NodeCategory::DataTransform, "SQL Query", ICON_FA_DATABASE,
+        {"sql", "query", "select", "transform"}, 0, false,
+        "Transform the input table with one read-only SQL SELECT", "", "",
+        {{"Input", PinType::Dataset, false, "Input table, named by input_alias in the query"}},
         {{"Result", PinType::Dataset, true, "Query result"}},
-        {{"query", "string", "SELECT * FROM data", "SQL query", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {{"query", "string", "SELECT * FROM input", "Read-only SELECT over the input table", {}, ""},
+         {"input_alias", "string", "input", "Table name for the input inside the query", {}, ""},
+         {"sql_contract_version", "string", "1", "SQL step contract version", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 
     // ===== Legacy File Format Nodes (hidden - use DataInput/DataOutput instead) =====
     // Note: Commented out to clean up Node Browser - functionality consolidated into DataInput/DataOutput
@@ -3541,6 +3547,22 @@ void NodeMetadataRegistry::InitializeTextNodes() {
 // Time Series Nodes
 // =============================================================================
 void NodeMetadataRegistry::InitializeTimeSeriesNodes() {
+    // Check step (data_studio_design.md 5.3): count checks, stop on failure.
+    RegisterNode({NodeType::RowCountCheck, NodeCategory::DataTransform,
+        "Row Count Check", ICON_FA_CHECK_DOUBLE,
+        {"check", "count", "rows", "expect", "quality"}, 0, false,
+        "Stop the run unless the row count matches the expectation", "", "",
+        {{"Data", PinType::Dataset, true, "Input table"}},
+        {{"Data", PinType::Dataset, true, "The same table, when the check passes"}},
+        {{"check_name", "string", "", "Label shown when the check fails", {}, ""},
+         {"expected_rows", "string", "", "Exact number of rows expected", {}, ""},
+         {"min_rows", "string", "", "Fewest rows allowed", {}, ""},
+         {"max_rows", "string", "", "Most rows allowed", {}, ""},
+         {"count_true_column", "string", "",
+          "Count only rows where this boolean column is true", {}, ""},
+         {"on_failure", "enum", "stop", "What a failed check does", {"stop"}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::TimeSeriesSegment, NodeCategory::TimeSeries,
         "Time Integrity & Segments", ICON_FA_CLOCK,
         {"timestamp", "integrity", "gap", "segment"}, 0, false,

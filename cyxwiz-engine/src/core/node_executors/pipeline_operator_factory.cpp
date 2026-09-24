@@ -19,6 +19,7 @@
 #include "time_series_analysis_operators.h"
 #include "time_series_features_operator.h"
 #include "time_series_segment_operator.h"
+#include "row_count_check_operator.h"
 #include "time_series_split_operator.h"
 #include "time_series_window_operator.h"
 
@@ -43,6 +44,9 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::TimeSeriesSegment, []() {
         return std::make_unique<TimeSeriesSegmentOperator>();
+    });
+    RegisterCreator(gui::NodeType::RowCountCheck, []() {
+        return std::make_unique<RowCountCheckOperator>();
     });
     RegisterCreator(gui::NodeType::TimeSeriesSplit, []() {
         return std::make_unique<TimeSeriesSplitOperator>();

@@ -18,6 +18,8 @@
 #include "../core/rl_training_executor.h"
 #include "../core/pipeline_executor.h"  // Unified Canvas Phase 2
 #include "../core/pipeline_execution_task.h"
+#include "../core/preparation_recipe.h"
+#include "subgraph_document.h"
 #include "../core/pipeline_runtime_capabilities.h"
 #include "panels/training_dashboard.h"
 #include "../core/rl_script_generator.h"
@@ -255,8 +257,26 @@ NodeEditor::NodeEditor()
 
 NodeEditor::~NodeEditor() {
     OnStopSimulation();
+    // Owned background work must not outlive the editor: the pipeline task is
+    // asked to stop and its queued UI delivery is dropped before any editor
+    // state goes away. The worker owns its executor, so the run itself is safe.
+    CancelOwnedBackgroundWork();
     if (editor_context_) {
         ImNodes::EditorContextFree(editor_context_);
+    }
+}
+
+void NodeEditor::ShowPipelineNotice(std::string message) {
+    show_window_ = true;
+    pipeline_notice_ = std::move(message);
+    pipeline_notice_pending_ = true;
+}
+
+void NodeEditor::CancelOwnedBackgroundWork() {
+    const size_t cancelled =
+        cyxwiz::AsyncTaskManager::Instance().CancelOwnedBy(task_owner_token_);
+    if (cancelled > 0) {
+        spdlog::info("Node editor cancelled {} owned background task(s)", cancelled);
     }
 }
 
@@ -761,6 +781,24 @@ void NodeEditor::Render() {
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
         ImGui::TextUnformatted("The requested graph change was not applied.");
+        if (ImGui::Button("OK", ImVec2(100.0f, 0.0f))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::EndPopup();
+    }
+
+    if (pipeline_notice_pending_) {
+        ImGui::OpenPopup("Pipeline##PipelineNotice");
+        pipeline_notice_pending_ = false;
+    }
+    ImGui::SetNextWindowSizeConstraints(ImVec2(360.0f, 0.0f), ImVec2(560.0f, FLT_MAX));
+    if (ImGui::BeginPopupModal("Pipeline##PipelineNotice", nullptr,
+                              ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420.0f);
+        ImGui::TextUnformatted(pipeline_notice_.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
         if (ImGui::Button("OK", ImVec2(100.0f, 0.0f))) {
             ImGui::CloseCurrentPopup();
         }
@@ -2128,6 +2166,21 @@ void NodeEditor::RenderNodes() {
             ImU32 border_color = IM_COL32(80, 80, 90, 200);
             draw_list->AddRect(icon_pos, icon_max, border_color, CORNER_RADIUS, 0, 1.5f);
 
+            // A recipe and a visual group look alike otherwise; say which it is.
+            if (node.type == NodeType::Subgraph) {
+                const bool recipe = IsPreparationRecipeNode(node.id);
+                const char* role = recipe ? "Preparation Recipe" : "Visual group (does not run)";
+                const ImU32 role_color = recipe ? IM_COL32(110, 200, 120, 255)
+                                                : IM_COL32(150, 150, 150, 255);
+                if (recipe) {
+                    draw_list->AddRect(icon_pos, icon_max, role_color, CORNER_RADIUS, 0, 2.5f);
+                }
+                const ImVec2 role_size = ImGui::CalcTextSize(role);
+                draw_list->AddText(
+                    ImVec2(icon_pos.x + (ICON_BOX_SIZE - role_size.x) * 0.5f, icon_max.y + 3.0f),
+                    role_color, role);
+            }
+
             // Draw node name ABOVE the icon
             if (show_name) {
                 ImVec2 name_size = ImGui::CalcTextSize(node.name.c_str());
@@ -2195,6 +2248,13 @@ void NodeEditor::RenderNodes() {
             // Node title bar
             ImNodes::BeginNodeTitleBar();
             ImGui::TextUnformatted(node.name.c_str());
+            if (node.type == NodeType::Subgraph) {
+                if (IsPreparationRecipeNode(node.id)) {
+                    ImGui::TextColored(ImVec4(0.43f, 0.78f, 0.47f, 1.0f), "Preparation Recipe");
+                } else {
+                    ImGui::TextDisabled("Visual group (does not run)");
+                }
+            }
             ImNodes::EndNodeTitleBar();
 
             // Input pins
@@ -4694,6 +4754,38 @@ bool NodeEditor::ExecuteDataPipeline() {
     nlohmann::json pipeline_json;
     pipeline_json["nodes"] = nlohmann::json::array();
 
+    if (!subgraphs_.empty()) {
+        // Preparation Recipes run as their steps: lower the same saved-document
+        // form that Save writes, so a reopened graph runs exactly like this one.
+        nlohmann::json lowered;
+        try {
+            nlohmann::json document;
+            gui::detail::WriteEditorGraphContent(document, nodes_, links_, subgraphs_, {});
+            lowered = cyxwiz::LowerPreparationRecipes(document);
+        } catch (const std::exception& e) {
+            spdlog::error("Pipeline not started: {}", e.what());
+            ShowPipelineNotice(std::string("The pipeline was not started.\n\n") + e.what());
+            return false;
+        }
+        for (const auto& node : lowered.at("nodes")) {
+            nlohmann::json node_json;
+            node_json["id"] = node.at("id");
+            node_json["type"] = GetNodeTypeName(static_cast<NodeType>(node.at("type").get<int>()));
+            node_json["name"] = node.at("name");
+            node_json["parameters"] = node.at("parameters");
+            pipeline_json["nodes"].push_back(std::move(node_json));
+        }
+        pipeline_json["links"] = nlohmann::json::array();
+        for (const auto& link : lowered.at("links")) {
+            pipeline_json["links"].push_back({
+                {"start_node", link.at("from_node")},
+                {"end_node", link.at("to_node")},
+                {"start_pin_index", link.value("from_pin_index", 0)},
+                {"end_pin_index", link.value("to_pin_index", 0)}});
+        }
+        return SubmitDataPipelineJson(std::move(pipeline_json));
+    }
+
     for (const auto& node : nodes_) {
         nlohmann::json node_json;
         node_json["id"] = node.id;
@@ -4741,6 +4833,10 @@ bool NodeEditor::ExecuteDataPipeline() {
         });
     }
 
+    return SubmitDataPipelineJson(std::move(pipeline_json));
+}
+
+bool NodeEditor::SubmitDataPipelineJson(nlohmann::json pipeline_json) {
     // Snapshot the graph on the UI thread, then execute through the shared
     // task system. The worker owns its PipelineExecutor, so it never reads
     // mutable editor state and remains safe if the editor closes mid-run.
@@ -4753,9 +4849,11 @@ bool NodeEditor::ExecuteDataPipeline() {
         cyxwiz::ProjectManager::Instance().GetExportsPath());
     executor->SetIngestionCacheRoot(
         cyxwiz::ProjectManager::Instance().GetIngestionCachePath());
+    executor->SetProjectRoot(
+        cyxwiz::ProjectManager::Instance().GetProjectRoot());
     auto submission = cyxwiz::SubmitPipelineExecutionTask(
         "Execute Data Pipeline", std::move(pipeline_str),
-        std::move(executor));
+        std::move(executor), task_owner_token_);
     pipeline_task_id_ = submission.task_id;
     pipeline_execution_tracker_ = std::move(submission.tracker);
     pipeline_execution_active_ = pipeline_task_id_ != 0;

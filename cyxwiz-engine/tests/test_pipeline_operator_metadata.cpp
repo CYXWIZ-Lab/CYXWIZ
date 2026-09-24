@@ -5162,16 +5162,18 @@ int main() {
         Check(json_file_meta->status == cyxwiz::NodeImplementationStatus::Template,
               "JSONFile metadata should be blocked until JSON loading is real");
     }
+    // TOFIX101 package C: SQLQuery is the SQL step (contract 1), run by the
+    // pipeline executor in a restricted DuckDB connection.
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::SQLQuery)) == "SQLQuery",
-          "fail-closed runtime enum lookup for SQLQuery is stable");
+          "runtime enum lookup for SQLQuery is stable");
     Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::SQLQuery).mode ==
-              cyxwiz::PipelineRuntimeSupportMode::FailClosed,
-          "SQLQuery enum support should resolve to fail-closed");
+              cyxwiz::PipelineRuntimeSupportMode::LegacyExecutor,
+          "SQLQuery resolves to the pipeline executor's SQL step");
     const auto* sql_query_meta = metadata.GetMetadata(gui::NodeType::SQLQuery);
     if (sql_query_meta != nullptr) {
-        Check(sql_query_meta->status == cyxwiz::NodeImplementationStatus::Template,
-              "SQLQuery metadata should be blocked until SQL loading is real");
+        Check(sql_query_meta->status == cyxwiz::NodeImplementationStatus::Implemented,
+              "SQLQuery metadata reports the implemented SQL step");
     }
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::HDF5Dataset)) == "HDF5Dataset",

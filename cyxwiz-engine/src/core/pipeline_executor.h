@@ -1,5 +1,6 @@
 #pragma once
 
+#include <mutex>
 #include <string>
 #include <vector>
 #include <map>
@@ -20,6 +21,7 @@ namespace cyxwiz {
 
 // Forward declaration
 class DuckDBConnector;
+class SqlTransform;
 struct PipelineRuntimeSupport;
 
 enum class PipelineNodeExecutionEvent : uint8_t {
@@ -87,6 +89,15 @@ public:
      */
     void SetIngestionCacheRoot(std::string ingestion_cache_root) {
         ingestion_cache_root_ = std::move(ingestion_cache_root);
+    }
+
+    /**
+     * Project root for source paths: a relative Data Input / File Input
+     * path is resolved against it (see ResolveProjectDataPath). Empty keeps
+     * the previous behaviour (relative to the working directory).
+     */
+    void SetProjectRoot(std::string project_root) {
+        project_root_ = std::move(project_root);
     }
 
     /**
@@ -189,6 +200,7 @@ private:
     std::atomic<bool> cancel_requested_;  // Phase 8: Atomic cancellation flag
     std::string current_status_;          // Phase 8: Current execution status message
     std::string artifact_root_;           // Project artifacts directory
+    std::string project_root_;            // Project root for relative source paths
     std::string export_root_;             // Project exports directory
     std::string ingestion_cache_root_;    // Project cache/ingestion directory
 
@@ -204,6 +216,9 @@ private:
 
     // DuckDB connector for SQL transformations
     std::unique_ptr<DuckDBConnector> duckdb_;
+    // SQL step running now, so RequestCancel can interrupt DuckDB.
+    std::mutex active_sql_mutex_;
+    SqlTransform* active_sql_ = nullptr;
 
     // Pipeline execution steps
     bool ParsePipeline(const std::string& pipeline_json, std::vector<Node>& nodes);
@@ -222,6 +237,7 @@ private:
     bool ExecuteDataOutput(const Node& node, ExecutionContext& ctx);  // Smart universal data output
     bool ExecuteDataConvert(const Node& node, ExecutionContext& ctx); // Smart file conversion utility
     bool ExecuteFilterRows(const Node& node, ExecutionContext& ctx);
+    bool ExecuteSqlTransform(const Node& node, ExecutionContext& ctx);
     bool ExecuteSelectColumns(const Node& node, ExecutionContext& ctx);
     bool ExecuteRemoveDuplicates(const Node& node, ExecutionContext& ctx);
     bool ExecuteSaveDataset(const Node& node, ExecutionContext& ctx);

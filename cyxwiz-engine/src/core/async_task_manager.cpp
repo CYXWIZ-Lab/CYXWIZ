@@ -55,6 +55,11 @@ void AsyncTask::SetCompletionCallback(CompletionCallback callback) {
     completion_callback_ = std::move(callback);
 }
 
+void AsyncTask::BindOwner(std::weak_ptr<const void> owner) {
+    owner_ = std::move(owner);
+    owned_ = true;
+}
+
 TaskInfo AsyncTask::GetInfo() const {
     TaskInfo info;
     info.id = id_;
@@ -210,6 +215,12 @@ void AsyncTaskManager::Initialize(size_t num_threads) {
     spdlog::info("Initializing AsyncTaskManager with {} worker threads", num_threads);
 
     shutdown_.store(false);
+    shutting_down_.store(false);
+    generation_.fetch_add(1);
+    {
+        std::lock_guard<std::mutex> lock(worker_exit_mutex_);
+        live_workers_ = num_threads;
+    }
 
     // Create worker threads
     for (size_t i = 0; i < num_threads; ++i) {
@@ -219,49 +230,156 @@ void AsyncTaskManager::Initialize(size_t num_threads) {
     initialized_ = true;
 }
 
-void AsyncTaskManager::Shutdown() {
+AsyncTaskManager::ShutdownReport AsyncTaskManager::Shutdown(
+    std::chrono::milliseconds drain_timeout) {
+    ShutdownReport report;
     if (!initialized_) {
-        return;
+        return report;
     }
 
     spdlog::info("Shutting down AsyncTaskManager...");
+    shutting_down_.store(true);  // Submit/PostToMainThread reject from here
 
-    // Signal shutdown
-    shutdown_.store(true);
-    queue_cv_.notify_all();
-
-    // Wait for workers to finish
-    for (auto& worker : workers_) {
-        if (worker.joinable()) {
-            worker.join();
-        }
-    }
-    workers_.clear();
-
-    // Clear queues
+    // 1. Queued work never starts: take it off the queue before any worker
+    //    can dispatch it and retire it as Cancelled, like the dispatch gate.
+    std::vector<std::shared_ptr<AsyncTask>> queued;
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
         while (!task_queue_.empty()) {
+            queued.push_back(task_queue_.top().task);
             task_queue_.pop();
         }
     }
+    for (const auto& task : queued) {
+        task->RequestCancel();  // callbacks run outside every manager lock
+        task->start_time_ = std::chrono::steady_clock::now();
+        task->MarkCancelled("Cancelled before execution: task manager shutting down");
+        RetireTask(task);
+        ++report.queued_cancelled;
+    }
 
+    // 2. Running work is asked to stop; it stays cooperative.
+    std::vector<std::shared_ptr<AsyncTask>> running;
     {
+        std::lock_guard<std::mutex> lock(tasks_mutex_);
+        running.reserve(active_tasks_.size());
+        for (const auto& [id, task] : active_tasks_) running.push_back(task);
+    }
+    for (const auto& task : running) {
+        if (task->IsCancellable()) {
+            task->RequestCancel();
+            ++report.running_cancel_requested;
+        }
+    }
+
+    // 3. Release the workers and wait, bounded, for them to retire.
+    shutdown_.store(true);
+    queue_cv_.notify_all();
+    {
+        std::unique_lock<std::mutex> lock(worker_exit_mutex_);
+        report.drained = worker_exit_cv_.wait_for(
+            lock, drain_timeout, [this] { return live_workers_ == 0; });
+    }
+    if (report.drained) {
+        for (auto& worker : workers_) {
+            if (worker.joinable()) worker.join();
+        }
+    } else {
+        // A task that ignores cancellation must not hold process exit
+        // hostage. The worker is released; it can still retire its task but
+        // can never deliver into a later generation (see EnqueueMainThread).
+        {
+            std::lock_guard<std::mutex> lock(tasks_mutex_);
+            for (const auto& [id, task] : active_tasks_) {
+                report.unfinished_tasks.push_back(task->GetName());
+            }
+        }
+        for (auto& worker : workers_) {
+            if (worker.joinable()) worker.detach();
+        }
+        std::string names;
+        for (const auto& name : report.unfinished_tasks) {
+            names += (names.empty() ? "" : ", ") + name;
+        }
+        spdlog::warn(
+            "AsyncTaskManager shutdown: {} task(s) still running after {} ms "
+            "and released without completion: {}",
+            report.unfinished_tasks.size(), drain_timeout.count(), names);
+    }
+    workers_.clear();
+
+    // 4. Nothing may reach a UI owner that is about to be destroyed.
+    {
+        std::lock_guard<std::mutex> lock(callback_mutex_);
+        report.callbacks_discarded += pending_callbacks_.size();
+        std::queue<MainThreadCallback>().swap(pending_callbacks_);
+    }
+
+    // 5. History is cleared only when every worker retired; an unfinished
+    //    task stays visible as active until its released worker retires it.
+    if (report.drained) {
         std::lock_guard<std::mutex> lock(tasks_mutex_);
         active_tasks_.clear();
         completed_tasks_.clear();
     }
 
     initialized_ = false;
-    spdlog::info("AsyncTaskManager shutdown complete");
+    // Close this generation: a worker released above can still retire its
+    // task, but nothing it produces is delivered into the next generation.
+    generation_.fetch_add(1);
+    shutting_down_.store(false);
+    spdlog::info(
+        "AsyncTaskManager shutdown complete: queued cancelled={}, running "
+        "cancel requested={}, callbacks discarded={}, drained={}",
+        report.queued_cancelled, report.running_cancel_requested,
+        report.callbacks_discarded, report.drained);
+    return report;
+}
+
+void AsyncTaskManager::RetireTask(const std::shared_ptr<AsyncTask>& task) {
+    std::lock_guard<std::mutex> lock(tasks_mutex_);
+    active_tasks_.erase(task->GetId());
+    completed_tasks_.push_back(task);
+
+    // Limit completed tasks history
+    while (completed_tasks_.size() > 100) {
+        completed_tasks_.erase(completed_tasks_.begin());
+    }
+}
+
+void AsyncTaskManager::EnqueueMainThread(MainThreadCallback callback,
+                                         uint64_t generation) {
+    if (!callback.callback) {
+        return;
+    }
+    // Work retiring during shutdown, or under an earlier generation, has no
+    // owner left to receive it; it is dropped here, never delivered late.
+    if (shutting_down_.load() || generation != generation_.load()) {
+        spdlog::debug("AsyncTaskManager dropped a main-thread callback with no live owner");
+        return;
+    }
+    std::lock_guard<std::mutex> lock(callback_mutex_);
+    pending_callbacks_.push(std::move(callback));
 }
 
 uint64_t AsyncTaskManager::Submit(std::shared_ptr<AsyncTask> task, TaskPriority priority) {
+    uint64_t task_id = task->GetId();
+    const auto reject = [this, &task, task_id] {
+        // Nothing submitted while Shutdown runs is executed; the task is kept
+        // in history so a caller that polls its state sees a truthful end.
+        task->start_time_ = std::chrono::steady_clock::now();
+        task->MarkCancelled("Rejected: task manager is shutting down");
+        RetireTask(task);
+        return task_id;
+    };
+
+    if (shutting_down_.load()) {
+        return reject();
+    }
+
     if (!initialized_) {
         Initialize();
     }
-
-    uint64_t task_id = task->GetId();
 
     {
         std::lock_guard<std::mutex> lock(tasks_mutex_);
@@ -269,7 +387,14 @@ uint64_t AsyncTaskManager::Submit(std::shared_ptr<AsyncTask> task, TaskPriority 
     }
 
     {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
+        // Checked again under the queue lock: Shutdown raises the flag before
+        // it drains this queue, so a task either lands before the drain (and
+        // is retired by it) or is rejected here; it is never stranded.
+        std::unique_lock<std::mutex> lock(queue_mutex_);
+        if (shutting_down_.load()) {
+            lock.unlock();
+            return reject();
+        }
         task_queue_.push({task, priority});
     }
 
@@ -304,6 +429,43 @@ void AsyncTaskManager::CancelAll() {
     }
     // Cancel the snapshot; callbacks can safely inspect or submit other tasks.
     for (const auto& task : tasks) task->RequestCancel();
+}
+
+size_t AsyncTaskManager::CancelOwnedBy(const std::shared_ptr<const void>& owner) {
+    if (!owner) {
+        return 0;
+    }
+    const void* key = owner.get();
+    std::vector<std::shared_ptr<AsyncTask>> owned;
+    {
+        std::lock_guard<std::mutex> lock(tasks_mutex_);
+        for (const auto& [id, task] : active_tasks_) {
+            if (task->owned_ && task->owner_.lock().get() == key) {
+                owned.push_back(task);
+            }
+        }
+    }
+    size_t requested = 0;
+    for (const auto& task : owned) {
+        if (task->IsCancellable()) {
+            task->RequestCancel();  // outside the registry lock, as Cancel()
+            ++requested;
+        }
+    }
+    // Queued deliveries for this owner are stale from now on.
+    {
+        std::lock_guard<std::mutex> lock(callback_mutex_);
+        std::queue<MainThreadCallback> kept;
+        while (!pending_callbacks_.empty()) {
+            auto& entry = pending_callbacks_.front();
+            if (!(entry.owned && entry.owner_key == key)) {
+                kept.push(std::move(entry));
+            }
+            pending_callbacks_.pop();
+        }
+        pending_callbacks_.swap(kept);
+    }
+    return requested;
 }
 
 std::shared_ptr<AsyncTask> AsyncTaskManager::GetTask(uint64_t task_id) {
@@ -369,39 +531,79 @@ size_t AsyncTaskManager::GetActiveTaskCount() const {
 }
 
 void AsyncTaskManager::ProcessCompletedCallbacks() {
-    std::queue<std::function<void()>> callbacks;
+    std::queue<MainThreadCallback> callbacks;
 
     {
         std::lock_guard<std::mutex> lock(callback_mutex_);
         std::swap(callbacks, pending_callbacks_);
     }
 
+    size_t discarded = 0;
     while (!callbacks.empty()) {
-        callbacks.front()();
+        auto& entry = callbacks.front();
+        // An owner that died between completion and this pump receives
+        // nothing; its callback would touch destroyed state.
+        if (entry.owned && entry.owner.expired()) {
+            ++discarded;
+        } else {
+            entry.callback();
+        }
         callbacks.pop();
+    }
+    if (discarded > 0) {
+        spdlog::debug("AsyncTaskManager discarded {} main-thread callback(s) whose owner is gone",
+                      discarded);
     }
 }
 
 void AsyncTaskManager::PostToMainThread(std::function<void()> callback) {
-    if (!callback) {
-        return;
-    }
-    std::lock_guard<std::mutex> lock(callback_mutex_);
-    pending_callbacks_.push(std::move(callback));
+    MainThreadCallback entry;
+    entry.callback = std::move(callback);
+    EnqueueMainThread(std::move(entry), generation_.load());
+}
+
+void AsyncTaskManager::PostToMainThread(std::weak_ptr<const void> owner,
+                                        std::function<void()> callback) {
+    MainThreadCallback entry;
+    entry.owned = true;
+    entry.owner_key = owner.lock().get();
+    entry.owner = std::move(owner);
+    entry.callback = std::move(callback);
+    EnqueueMainThread(std::move(entry), generation_.load());
 }
 
 void AsyncTaskManager::WorkerThread() {
-    while (!shutdown_.load()) {
+    const uint64_t generation = generation_.load();
+    // Counts this worker out of ITS generation only: a worker released by a
+    // timed-out Shutdown that exits later must not disturb the next one.
+    struct ExitSignal {
+        AsyncTaskManager& manager;
+        uint64_t generation;
+        ~ExitSignal() {
+            std::lock_guard<std::mutex> lock(manager.worker_exit_mutex_);
+            if (generation == manager.generation_.load()) {
+                --manager.live_workers_;
+                manager.worker_exit_cv_.notify_all();
+            }
+        }
+    } exit_signal{*this, generation};
+    const auto retired = [this, generation] {
+        return shutdown_.load() || generation != generation_.load();
+    };
+
+    while (!retired()) {
         std::shared_ptr<AsyncTask> task;
 
         // Wait for a task
         {
             std::unique_lock<std::mutex> lock(queue_mutex_);
-            queue_cv_.wait(lock, [this] {
-                return shutdown_.load() || !task_queue_.empty();
+            queue_cv_.wait(lock, [this, &retired] {
+                return retired() || !task_queue_.empty();
             });
 
-            if (shutdown_.load() && task_queue_.empty()) {
+            // Shutdown drains the queue itself before it releases workers,
+            // so a retiring worker never takes new work.
+            if (retired()) {
                 return;
             }
 
@@ -452,26 +654,21 @@ void AsyncTaskManager::WorkerThread() {
         }
 
         // Move from active to completed
-        {
-            std::lock_guard<std::mutex> lock(tasks_mutex_);
-            active_tasks_.erase(task_id);
-            completed_tasks_.push_back(task);
-
-            // Limit completed tasks history
-            while (completed_tasks_.size() > 100) {
-                completed_tasks_.erase(completed_tasks_.begin());
-            }
-        }
+        RetireTask(task);
 
         // Queue completion callback for main thread
         if (task->completion_callback_) {
             bool success = task->GetState() == TaskState::Completed;
             std::string error = task->GetErrorMessage();
 
-            std::lock_guard<std::mutex> lock(callback_mutex_);
-            pending_callbacks_.push([cb = task->completion_callback_, success, error]() {
+            MainThreadCallback entry;
+            entry.owned = task->owned_;
+            entry.owner = task->owner_;
+            entry.owner_key = task->owned_ ? task->owner_.lock().get() : nullptr;
+            entry.callback = [cb = task->completion_callback_, success, error]() {
                 cb(success, error);
-            });
+            };
+            EnqueueMainThread(std::move(entry), generation);
         }
     }
 }

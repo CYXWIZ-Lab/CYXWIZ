@@ -40,6 +40,10 @@ class RuntimeTruthQueryProvider;
 namespace gui {
 
 class Console : public scripting::IScriptOutputSink {
+  // Lifetime token for background work this console owns (pip commands);
+  // its output reaches the console only through the UI thread while alive.
+  std::shared_ptr<const void> task_owner_token_ = std::make_shared<int>(0);
+
 public:
   enum class LogLevel { Info, Warning, Error, Success, Debug };
 

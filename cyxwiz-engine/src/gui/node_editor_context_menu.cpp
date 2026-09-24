@@ -323,6 +323,43 @@ void NodeEditor::ShowContextMenu() {
                         ImGui::CloseCurrentPopup();
                     }
                 }
+                if (IsPreparationRecipeNode(selected_node_ids_[0])) {
+                    if (ImGui::MenuItem(ICON_FA_OBJECT_GROUP " Make Visual Group")) {
+                        SetSubgraphPreparationRecipe(selected_node_ids_[0], false);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::BeginTooltip();
+                        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+                        ImGui::TextUnformatted(
+                            "Turn this Preparation Recipe back into a plain visual group.\n\n"
+                            "A visual group only tidies the canvas: it does not run. To run "
+                            "its steps again, expand it or make it a Preparation Recipe again.");
+                        ImGui::PopTextWrapPos();
+                        ImGui::EndTooltip();
+                    }
+                } else {
+                    if (ImGui::MenuItem(ICON_FA_GEARS " Make Preparation Recipe")) {
+                        SetSubgraphPreparationRecipe(selected_node_ids_[0], true);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::BeginTooltip();
+                        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+                        ImGui::TextUnformatted(
+                            "Turn this subgraph into one runnable preparation stage.\n\n"
+                            "When the pipeline runs, the recipe's steps run in order: one "
+                            "dataset goes in, one prepared dataset comes out, and the result "
+                            "is the same as running those steps as separate nodes.\n\n"
+                            "Allowed steps: row and column operations, text cleaning, "
+                            "group-by, joins, SQL steps and checks. Sources, exports, splits, "
+                            "tokenizers and models stay outside the recipe.\n\n"
+                            "The subgraph is checked first; if it does not qualify, you are "
+                            "told why and nothing changes.");
+                        ImGui::PopTextWrapPos();
+                        ImGui::EndTooltip();
+                    }
+                }
             }
         }
 

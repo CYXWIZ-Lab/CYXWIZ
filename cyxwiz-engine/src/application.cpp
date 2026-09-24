@@ -17,6 +17,7 @@
 #include "core/python_detector.h"
 #include "core/texture_manager.h"
 
+#include <chrono>
 #include <cstdlib>  // for _exit()
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -900,6 +901,23 @@ void CyxWizApp::Render() {
 
 void CyxWizApp::Shutdown() {
     spdlog::info("Shutting down application...");
+
+    // Stop scripts, model downloads and the inference server first; this call
+    // was dropped from Shutdown in b4599389 and is restored here.
+    if (main_window_) {
+        main_window_->PrepareForShutdown();
+    }
+
+    // Background work stops before the UI it reports to is destroyed: queued
+    // tasks retire, running tasks are asked to stop, stale main-thread
+    // delivery is discarded. Bounded, so a task that ignores cancellation
+    // cannot hang exit; the process ends with _exit below regardless.
+    const auto tasks =
+        cyxwiz::AsyncTaskManager::Instance().Shutdown(std::chrono::seconds(5));
+    if (!tasks.drained) {
+        spdlog::warn("Shutdown continues with {} background task(s) still running",
+                     tasks.unfinished_tasks.size());
+    }
 
     // Cleanup components
     job_manager_.reset();

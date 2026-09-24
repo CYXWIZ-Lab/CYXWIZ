@@ -37,7 +37,6 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
         case NodeType::DataConvert:
         // Legacy Data Sources
         case NodeType::CSVFile:
-        case NodeType::SQLQuery:
         case NodeType::HDF5Dataset:
         case NodeType::ParquetFile:
         case NodeType::JSONFile:
@@ -52,6 +51,8 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
             return NodeCategory::DataSources;
 
         // Data Transforms
+        case NodeType::SQLQuery:
+        case NodeType::RowCountCheck:
         case NodeType::FilterRows:
         case NodeType::SelectColumns:
         case NodeType::JoinTables:
@@ -1190,6 +1191,30 @@ MLNode NodeEditor::CreateNodeWithIds(NodeType type,
 
         // ========== Time-Series Nodes ==========
 
+        case NodeType::RowCountCheck: {
+            NodePin in;
+            in.id = next_pin_id_++;
+            in.type = PinType::Dataset;
+            in.name = "Data";
+            in.is_input = true;
+            in.description = "Table to check.";
+            node.inputs.push_back(in);
+            NodePin out;
+            out.id = next_pin_id_++;
+            out.type = PinType::Dataset;
+            out.name = "Data";
+            out.is_input = false;
+            out.description = "The same table, passed through when the check holds.";
+            node.outputs.push_back(out);
+            node.parameters["check_name"] = "";
+            node.parameters["expected_rows"] = "";
+            node.parameters["min_rows"] = "";
+            node.parameters["max_rows"] = "";
+            node.parameters["count_true_column"] = "";
+            node.parameters["on_failure"] = "stop";
+            break;
+        }
+
         case NodeType::TimeSeriesSegment: {
             NodePin in;
             in.id = next_pin_id_++;
@@ -1855,16 +1880,26 @@ MLNode NodeEditor::CreateNodeWithIds(NodeType type,
         }
 
         case NodeType::SQLQuery: {
-            // SQL Query data source node - execute custom SQL
+            // SQL step (contract 1): input table -> read-only SELECT -> result.
+            // The output stays pin 0, so older source-shaped graphs keep their
+            // links; without sql_contract_version they are rejected at run.
+            NodePin input_pin;
+            input_pin.id = next_pin_id_++;
+            input_pin.type = PinType::Dataset;
+            input_pin.name = "Input";
+            input_pin.is_input = true;
+            node.inputs.push_back(input_pin);
+
             NodePin output_pin;
             output_pin.id = next_pin_id_++;
             output_pin.type = PinType::Dataset;
-            output_pin.name = "Data";
+            output_pin.name = "Result";
             output_pin.is_input = false;
             node.outputs.push_back(output_pin);
 
-            node.parameters["connection_string"] = "sqlite:///data.db";
-            node.parameters["query"] = "SELECT * FROM table";
+            node.parameters["query"] = "SELECT * FROM input";
+            node.parameters["input_alias"] = "input";
+            node.parameters["sql_contract_version"] = "1";
             break;
         }
 

@@ -66,7 +66,7 @@ int main() {
         std::string error;
         Check(!ValidateDataStudioOperationConfiguration({0, "FilterRows", "", {}}, 1, error) && error.find("condition") != std::string::npos, "Shared required parameter validation");
         Check(!ValidateDataStudioOperationConfiguration({0, "FilterRows", "", {{"condition", "x"}}}, -1, error), "Negative input count");
-        Check(!BuildDataStudioExecutionPlan({{0, "SQLQuery", "", {{"query", "SELECT 1"}}}}, {}).valid, "SQL plan remains fail closed");
+        Check(!BuildDataStudioExecutionPlan({{0, "SQLQuery", "", {{"query", "SELECT 1"}}}}, {}).valid, "an unversioned SQL node stays fail closed in a plan");
         std::cout << "Data Studio capability checks passed: " << checks << '\n';
         return 0;
     } catch (const std::exception& error) {

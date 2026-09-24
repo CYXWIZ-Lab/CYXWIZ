@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 #include <map>
@@ -116,6 +117,12 @@ public:
     void SetOnProjectVenvReady(ProjectCallback callback) { on_venv_ready_ = std::move(callback); }
     void NotifyProjectVenvReady(const std::string& project_root);
 
+    // Lifetime token of the open project. Background work that belongs to
+    // the project binds to it (AsyncTaskManager RunAsync/BindOwner);
+    // CloseProject, or opening another project, cancels that work and
+    // discards its pending UI delivery. Empty when no project is open.
+    std::weak_ptr<const void> GetSessionToken() const { return session_token_; }
+
     // Default filter extensions
     static const std::map<std::string, std::vector<std::string>>& GetDefaultFilters();
     static std::optional<std::string> ResolveProjectFilePath(const std::string& path);
@@ -146,7 +153,11 @@ private:
     void SaveRecentProjects();
     std::string GetRecentProjectsFilePath() const;
 
+    void BeginProjectSession();
+    void EndProjectSession();
+
     // State
+    std::shared_ptr<const void> session_token_;
     std::string project_root_;      // Absolute path to project directory
     std::string project_name_;      // Project name
     std::string project_file_path_; // Full path to .cyxwiz file

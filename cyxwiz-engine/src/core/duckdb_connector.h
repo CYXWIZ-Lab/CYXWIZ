@@ -38,12 +38,37 @@ namespace cyxwiz {
  *       LIMIT 10
  *   )");
  */
+// Connection policy. The default keeps the historical behaviour (full
+// access, used by exploration and the legacy transform nodes). The SQL step
+// opens a restricted connection: no file/network access, no extension
+// auto-install or auto-load, configuration locked.
+struct DuckDBConnectorPolicy {
+    bool allow_external_access = true;
+};
+
 class DuckDBConnector {
 public:
     /**
      * Constructor - creates in-memory DuckDB instance
      */
     DuckDBConnector();
+    explicit DuckDBConnector(const DuckDBConnectorPolicy& policy);
+
+    // True when the database and connection opened.
+    bool IsReady() const { return conn_ != nullptr; }
+
+    // Why `sql` is not exactly one read-only SELECT statement (WITH allowed),
+    // using DuckDB's own parser; empty when it is.
+    std::string ReadOnlySelectRejection(const std::string& sql);
+
+    // Binds `sql` without running it. Returns why it cannot bind, or which
+    // result columns have a type the Arrow conversion cannot represent
+    // exactly (anything but boolean, integers, float, double, text); empty
+    // when every column round-trips.
+    std::string UnsupportedResultColumns(const std::string& sql);
+
+    // Thread-safe request to stop the query running on this connection.
+    void Interrupt();
 
     /**
      * Destructor - closes connection

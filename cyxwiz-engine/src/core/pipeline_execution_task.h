@@ -37,10 +37,14 @@ struct PipelineExecutionSubmission {
 // Submit one pipeline snapshot to the shared background task system. The
 // returned executor owns runtime/deployment state while AsyncTaskManager owns
 // execution progress, cancellation, and recent-task visibility.
+// `owner` (optional) scopes the task's lifetime to the submitting editor or
+// session: AsyncTaskManager::CancelOwnedBy(owner) cancels it and discards
+// its queued main-thread delivery when that owner closes.
 PipelineExecutionSubmission SubmitPipelineExecutionTask(
     const std::string& task_name,
     std::string pipeline_json,
-    std::shared_ptr<PipelineExecutor> executor = nullptr);
+    std::shared_ptr<PipelineExecutor> executor = nullptr,
+    std::shared_ptr<const void> owner = nullptr);
 
 bool IsPipelineExecutionTaskActive(uint64_t task_id);
 

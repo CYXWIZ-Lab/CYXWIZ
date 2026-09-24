@@ -25,7 +25,8 @@ PipelineExecutionSnapshot PipelineExecutionTracker::GetSnapshot() const {
 PipelineExecutionSubmission SubmitPipelineExecutionTask(
     const std::string& task_name,
     std::string pipeline_json,
-    std::shared_ptr<PipelineExecutor> executor) {
+    std::shared_ptr<PipelineExecutor> executor,
+    std::shared_ptr<const void> owner) {
     if (!executor) {
         executor = std::make_shared<PipelineExecutor>();
     }
@@ -78,6 +79,10 @@ PipelineExecutionSubmission SubmitPipelineExecutionTask(
                 current->RequestCancel();
             }
         });
+
+    if (owner) {
+        task->BindOwner(owner);
+    }
 
     PipelineExecutionSubmission submission;
     submission.executor = std::move(executor);

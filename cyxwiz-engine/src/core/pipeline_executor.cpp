@@ -1,4 +1,6 @@
 #include "pipeline_executor.h"
+#include "project_data_path.h"
+#include "sql_transform.h"
 #include "archive_text_source.h"
 #include "html_document_text.h"
 #include "error_codes.h"
@@ -3292,7 +3294,60 @@ void PipelineExecutor::SetCompletionCallback(std::function<void(bool)> callback)
 
 void PipelineExecutor::RequestCancel() {
     cancel_requested_ = true;
+    {
+        std::lock_guard<std::mutex> lock(active_sql_mutex_);
+        if (active_sql_) active_sql_->Interrupt();
+    }
     spdlog::info("[Data Studio] Cancellation requested");
+}
+
+bool PipelineExecutor::ExecuteSqlTransform(const Node& node, ExecutionContext& ctx) {
+    const auto param = [&node](const char* key) {
+        const auto it = node.parameters.find(key);
+        return it == node.parameters.end() ? std::string() : it->second;
+    };
+    if (param(kSqlContractParameter) != kSqlContractVersion) {
+        ReportError("SQLQuery '" + node.name + "' has no sql_contract_version=1: it is an older "
+                    "source-shaped SQL node and is not executed. Recreate it as a SQL step "
+                    "(one input table, read-only SELECT).");
+        return false;
+    }
+    const std::string input_dataset_name = GetInputDatasetName(node, ctx);
+    if (input_dataset_name.empty()) {
+        return false;
+    }
+    auto input_dataset = DataRegistry::Instance().GetArrowDataset(input_dataset_name);
+    if (!input_dataset) {
+        ReportError("SQL step '" + node.name + "': input dataset '" + input_dataset_name +
+                    "' is not an in-memory table");
+        return false;
+    }
+    std::string alias = param(kSqlInputAliasParameter);
+    if (alias.empty()) alias = kSqlDefaultInputAlias;
+
+    SqlTransform transform;
+    {
+        std::lock_guard<std::mutex> lock(active_sql_mutex_);
+        active_sql_ = &transform;
+        if (cancel_requested_) transform.Interrupt();
+    }
+    const auto result = transform.Run(param(kSqlQueryParameter),
+                                      {{alias, input_dataset->GetArrowTable()}});
+    {
+        std::lock_guard<std::mutex> lock(active_sql_mutex_);
+        active_sql_ = nullptr;
+    }
+    if (!result.ok) {
+        ReportError("SQL step '" + node.name + "': " + result.error);
+        return false;
+    }
+    const std::string output_dataset_name = "ds_sql_" + std::to_string(node.id);
+    DataRegistry::Instance().RegisterArrowTable(result.table, output_dataset_name);
+    ctx.node_results[node.id] = output_dataset_name;
+    spdlog::info("[Data Studio] SQL step '{}': {} -> {} rows, {} columns", node.name,
+                 input_dataset->GetArrowTable()->num_rows(), result.table->num_rows(),
+                 result.table->num_columns());
+    return true;
 }
 
 bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
@@ -3904,6 +3959,8 @@ bool PipelineExecutor::ExecuteTypedLegacyNode(const Node& node,
         return ExecuteDataConvert(node, ctx);
     case gui::NodeType::FilterRows:
         return ExecuteFilterRows(node, ctx);
+    case gui::NodeType::SQLQuery:
+        return ExecuteSqlTransform(node, ctx);
     case gui::NodeType::SelectColumns:
         return ExecuteSelectColumns(node, ctx);
     case gui::NodeType::RemoveDuplicateRows:
@@ -4011,7 +4068,8 @@ bool PipelineExecutor::ExecuteFileInput(const Node& node, ExecutionContext& ctx)
         return false;
     }
 
-    const std::string& file_path = path_it->second;
+    const std::string file_path =
+        ResolveProjectDataPath(path_it->second, project_root_);
     auto format_it = node.parameters.find("format");
     const std::string format =
         (format_it != node.parameters.end() && !format_it->second.empty())
@@ -4078,7 +4136,8 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                 ReportError(GetImprovedErrorMessage("DataInput", "missing_parameter", "file_path"));
                 return false;
             }
-            const std::string& file_path = path_it->second;
+            const std::string file_path =
+                ResolveProjectDataPath(path_it->second, project_root_);
             spdlog::info("[Pipeline] DataInput loading file: {}", file_path);
 
             std::vector<std::string> selected_columns;

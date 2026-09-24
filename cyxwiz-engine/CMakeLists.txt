@@ -151,11 +151,13 @@ set(ENGINE_SOURCES
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
+    src/core/sql_transform.cpp  # TOFIX101 package C SQL step
     src/core/preprocessing_state.cpp  # Versioned fitted preprocessing artifacts
     src/core/regression_target_transform.cpp  # Original-unit regression metrics
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
     src/core/pipeline_runtime_capabilities.cpp  # Data Studio runtime support truth
     src/core/data_studio_execution_plan.cpp  # Track 22 typed Data Studio plan
+    src/core/preparation_recipe.cpp  # TOFIX101 package B recipe lowering
     src/core/data_studio_capabilities.cpp
     src/core/pipeline_table_materializer.cpp  # Cat-1 graph walk over an Arrow table
     src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
@@ -228,6 +230,7 @@ set(ENGINE_SOURCES
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/time_series_window_operator.cpp  # Phase 4 Band 1
     src/core/node_executors/time_series_segment_operator.cpp # Gap-safe segments
+    src/core/node_executors/row_count_check_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp   # Phase 4 Band 2
     src/core/node_executors/log_transform_operator.cpp       # Phase 4 Band 1
     src/core/node_executors/differencing_operator.cpp        # Phase 4 Band 1
@@ -2146,6 +2149,7 @@ add_executable(test_operator_configure_resets
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
     src/core/node_executors/time_series_segment_operator.cpp
+    src/core/node_executors/row_count_check_operator.cpp
 )
 
 target_include_directories(test_operator_configure_resets PRIVATE
@@ -2420,6 +2424,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
     src/core/node_executors/time_series_segment_operator.cpp
+    src/core/node_executors/row_count_check_operator.cpp
 )
 
 target_include_directories(test_pipeline_operator_metadata PRIVATE
@@ -2519,6 +2524,7 @@ set_target_properties(test_graph_executor_simulation PROPERTIES
 # ===== Test: Legacy PipelineExecutor operator routing =====
 add_executable(test_pipeline_executor_operator_routing
     tests/test_pipeline_executor_operator_routing.cpp
+    src/core/preparation_recipe.cpp
     tests/test_ordered_text_aggregation.cpp
     src/core/preprocessing_state.cpp
     src/core/arrow_dataset.cpp
@@ -2533,6 +2539,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/image_utils.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/pipeline_executor.cpp
+    src/core/sql_transform.cpp
     src/core/pipeline_execution_task.cpp
     src/core/async_task_manager.cpp
     src/core/training_trace_collector.cpp
@@ -2579,6 +2586,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
     src/core/node_executors/time_series_segment_operator.cpp
+    src/core/node_executors/row_count_check_operator.cpp
     src/data/data_table.cpp
     src/plotting/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
@@ -2626,6 +2634,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/image_utils.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/pipeline_executor.cpp
+    src/core/sql_transform.cpp
     src/core/pipeline_materializer.cpp
     src/core/materialization_cache.cpp
     src/core/sparse_feature_dataset_cache.cpp
@@ -2668,6 +2677,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
     src/core/node_executors/time_series_segment_operator.cpp
+    src/core/node_executors/row_count_check_operator.cpp
     src/data/data_table.cpp
     src/plotting/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
@@ -2716,6 +2726,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/image_utils.cpp
     src/core/parquet_backed_dataset.cpp
     src/core/pipeline_executor.cpp
+    src/core/sql_transform.cpp
     src/core/pipeline_materializer.cpp
     src/core/materialization_cache.cpp
     src/core/sparse_feature_dataset_cache.cpp
@@ -2758,6 +2769,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
     src/core/node_executors/time_series_segment_operator.cpp
+    src/core/node_executors/row_count_check_operator.cpp
     src/data/data_table.cpp
     src/plotting/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
@@ -3326,6 +3338,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
     src/core/node_executors/time_series_segment_operator.cpp
+    src/core/node_executors/row_count_check_operator.cpp
     src/core/arrow_dataset.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
@@ -4928,3 +4941,17 @@ if(WIN32)
     target_compile_definitions(test_async_task_cancellation PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
 set_target_properties(test_async_task_cancellation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+add_executable(test_async_task_lifecycle tests/test_async_task_lifecycle.cpp
+    src/core/async_task_manager.cpp src/core/training_trace_collector.cpp
+    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp
+    src/core/route_qualification_snapshot.cpp)
+target_include_directories(test_async_task_lifecycle PRIVATE src
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+target_link_libraries(test_async_task_lifecycle PRIVATE cyxwiz-backend
+    spdlog::spdlog nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_link_libraries(test_async_task_lifecycle PRIVATE Psapi)
+    target_compile_definitions(test_async_task_lifecycle PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_async_task_lifecycle PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

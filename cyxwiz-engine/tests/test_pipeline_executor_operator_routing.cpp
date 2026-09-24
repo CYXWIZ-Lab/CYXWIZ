@@ -6,6 +6,11 @@
 #include "core/async_task_manager.h"
 #include "core/csv_ingestion_options.h"
 #include "core/pipeline_runtime_capabilities.h"
+#include "core/project_data_path.h"
+#include "core/preparation_recipe.h"
+#include <arrow/io/file.h>
+#include <parquet/arrow/writer.h>
+#include <thread>
 
 #include <arrow/api.h>
 #include <nlohmann/json.hpp>
@@ -314,6 +319,7 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "SelectColumns",
         "SentimentAnalyzer",
         "SortRows",
+        "SQLQuery",
         "StationarityTest",
         "StandardScaler",
         "StringManipulation",
@@ -949,6 +955,415 @@ void CheckArchiveTextPipeline(const std::string& path, const std::string& member
     cyxwiz::AsyncTaskManager::Instance().Shutdown();
 }
 
+// TOFIX101 package B: a relative Data Input path resolves against the project
+// root, so saved graphs stop pinning absolute developer paths.
+void CheckProjectRelativeDataInput() {
+    namespace fs = std::filesystem;
+    Check(cyxwiz::ResolveProjectDataPath("datasets/a.csv", "") == "datasets/a.csv",
+          "no project root keeps the relative path unchanged");
+    const fs::path root = fs::temp_directory_path() / "cyxwiz_project_relative_input";
+    Check(cyxwiz::ResolveProjectDataPath("datasets/raw/../a.csv", root.string()) ==
+              (root / "datasets" / "a.csv").lexically_normal().string(),
+          "relative path joins the project root, normalized");
+    const std::string absolute = (fs::temp_directory_path() / "elsewhere.csv").string();
+    Check(cyxwiz::ResolveProjectDataPath(absolute, root.string()) == absolute,
+          "absolute path is used as written");
+    Check(cyxwiz::ResolveProjectDataPath("", root.string()).empty(), "empty stays empty");
+    fs::create_directories(root / "datasets" / "raw");
+    Check(cyxwiz::MakeProjectRelativePath((root / "datasets" / "raw" / "web.zip").string(),
+                                          root.string()) == "datasets/raw/web.zip",
+          "a picked file inside the project is stored project-relative");
+    Check(cyxwiz::MakeProjectRelativePath(absolute, root.string()) == absolute,
+          "a picked file outside the project keeps its absolute path");
+    Check(cyxwiz::MakeProjectRelativePath("datasets/a.csv", root.string()) == "datasets/a.csv",
+          "an already relative path is unchanged");
+    Check(cyxwiz::ResolveProjectDataPath(
+              cyxwiz::MakeProjectRelativePath((root / "datasets" / "raw" / "web.zip").string(),
+                                              root.string()), root.string()) ==
+              (root / "datasets" / "raw" / "web.zip").lexically_normal().string(),
+          "store-then-resolve round-trips to the same file");
+
+    fs::create_directories(root / "datasets");
+    {
+        std::ofstream file(root / "datasets" / "verses.csv");
+        file << "id,text\n1,In the beginning\n2,And the earth\n3,\n";
+    }
+    const std::string graph =
+        R"({"nodes":[{"id":92101,"type":"DataInput","name":"Relative input","parameters":{"source_type":"file","type":"csv","file_path":"datasets/verses.csv","has_header":"true"}}],"links":[]})";
+    {
+        // Without a project root the relative path is looked up in the working
+        // directory, where it does not exist: fails, as before.
+        cyxwiz::PipelineExecutor legacy;
+        Check(!legacy.ExecutePipeline(graph),
+              "relative source without a project root is not silently found");
+    }
+    cyxwiz::PipelineExecutor executor;
+    executor.SetProjectRoot(root.string());
+    Check(executor.ExecutePipeline(graph),
+          "relative source resolves against the project root: " + executor.GetLastError());
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const auto loaded = registry.GetArrowDataset("ds_datainput_92101");
+    Check(loaded && loaded->GetArrowTable()->num_rows() == 3,
+          "project-relative CSV loads all three rows");
+    registry.UnregisterTabularDataset("ds_datainput_92101");
+    fs::remove_all(root);
+    cyxwiz::AsyncTaskManager::Instance().Shutdown();
+    std::cout << "Project-relative Data Input passed\n";
+}
+
+// TOFIX101 package B: a Preparation Recipe runs as its steps, through the same
+// executor and operators as the equivalent plain graph.
+// TOFIX101 package C: the SQL step (contract 1) runs a read-only SELECT over a
+// named input inside the pipeline, in a restricted DuckDB connection.
+void CheckSqlStep() {
+    namespace fs = std::filesystem;
+    using json = nlohmann::json;
+    const fs::path parquet_path = fs::temp_directory_path() / "cyxwiz_sql_step_document.parquet";
+    {
+        // One document row with verse lines, like the WEB archive member.
+        arrow::StringBuilder ids, texts;
+        Check(ids.Append("web").ok() &&
+                  texts.Append("GEN 1:1 In the beginning\nGEN 1:2 \nGEN 1:3 And God said\n"
+                               "not a verse line\n").ok(),
+              "build document columns");
+        std::shared_ptr<arrow::Array> id_array, text_array;
+        Check(ids.Finish(&id_array).ok() && texts.Finish(&text_array).ok(), "finish document columns");
+        auto table = arrow::Table::Make(
+            arrow::schema({arrow::field("document_id", arrow::utf8()), arrow::field("text", arrow::utf8())}),
+            {id_array, text_array});
+        auto sink = arrow::io::FileOutputStream::Open(parquet_path.string());
+        Check(sink.ok(), "open parquet sink");
+        Check(parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), *sink, 64).ok(),
+              "write document parquet");
+        Check((*sink)->Close().ok(), "close parquet sink");
+    }
+    const std::string parse_verses =
+        "WITH lines AS ("
+        " SELECT document_id, unnest(string_split(text, chr(10))) AS raw_line,"
+        " generate_subscripts(string_split(text, chr(10)), 1) AS source_line FROM document"
+        "), verses AS ("
+        " SELECT *, regexp_extract(raw_line, '^([A-Z0-9]{3}) ([0-9]+):([0-9]+)( (.*))?$', 1) AS book_code,"
+        " CAST(regexp_extract(raw_line, '^([A-Z0-9]{3}) ([0-9]+):([0-9]+)( (.*))?$', 2) AS BIGINT) AS chapter,"
+        " CAST(regexp_extract(raw_line, '^([A-Z0-9]{3}) ([0-9]+):([0-9]+)( (.*))?$', 3) AS BIGINT) AS verse,"
+        " regexp_extract(raw_line, '^([A-Z0-9]{3}) ([0-9]+):([0-9]+)( (.*))?$', 5) AS source_text"
+        " FROM lines WHERE regexp_full_match(raw_line, '[A-Z0-9]{3} [0-9]+:[0-9]+( .*)?')"
+        ") SELECT book_code, chapter, verse, trim(source_text) AS text,"
+        " length(trim(source_text)) = 0 AS empty_text, CAST(source_line AS BIGINT) AS source_line"
+        " FROM verses ORDER BY source_line";
+
+    const json input = {{"id", 1}, {"type", "DataInput"}, {"name", "WEB document"},
+        {"parameters", {{"source_type", "file"}, {"type", "parquet"}, {"file_path", parquet_path.string()}}}};
+    const auto sql_node = [](int id, const std::string& query, const std::string& alias, bool versioned) {
+        json params = {{"query", query}, {"input_alias", alias}};
+        if (versioned) params["sql_contract_version"] = "1";
+        return json{{"id", id}, {"type", "SQLQuery"}, {"name", "Parse verses"}, {"parameters", params}};
+    };
+    const auto graph = [&](const json& step) {
+        return json{{"nodes", json::array({input, step})},
+                    {"links", json::array({{{"start_node", 1}, {"end_node", step.at("id")}}})}}.dump();
+    };
+    auto& registry = cyxwiz::DataRegistry::Instance();
+
+    {
+        cyxwiz::PipelineExecutor executor;
+        Check(executor.ExecutePipeline(graph(sql_node(2, parse_verses, "document", true))),
+              "SQL step parses the verse lines: " + executor.GetLastError());
+        const auto result = registry.GetArrowDataset("ds_sql_2");
+        Check(result != nullptr, "SQL step registers its result");
+        const auto table = result->GetArrowTable();
+        Check(table->num_rows() == 3, "3 verse lines, the non-verse line excluded");
+        Check(table->schema()->GetFieldIndex("empty_text") >= 0 &&
+                  table->schema()->GetFieldByName("chapter")->type()->id() == arrow::Type::INT64 &&
+                  table->schema()->GetFieldByName("empty_text")->type()->id() == arrow::Type::BOOL,
+              "typed result columns survive the round trip");
+        const auto empty = std::static_pointer_cast<arrow::BooleanArray>(
+            table->GetColumnByName("empty_text")->chunk(0));
+        const auto verse = std::static_pointer_cast<arrow::Int64Array>(
+            table->GetColumnByName("verse")->chunk(0));
+        Check(verse->Value(0) == 1 && verse->Value(1) == 2 && verse->Value(2) == 3,
+              "verses come back in source order");
+        Check(!empty->Value(0) && empty->Value(1) && !empty->Value(2),
+              "the empty verse is kept as a record, flagged empty");
+        registry.UnregisterTabularDataset("ds_sql_2");
+    }
+
+    // Inside a Preparation Recipe: SQL parse, then a filter step.
+    {
+        using gui::NodeType;
+        const auto T = [](NodeType type) { return static_cast<int>(type); };
+        json source = input;
+        source["type"] = T(NodeType::DataInput);
+        json sql = sql_node(2, parse_verses, "document", true);
+        sql["type"] = T(NodeType::SQLQuery);
+        const json keep = {{"id", 3}, {"type", T(NodeType::FilterRows)}, {"name", "Keep nonempty"},
+            {"parameters", {{"condition", "empty_text = false"}}}};
+        const json wrapper = {{"id", 5}, {"type", T(NodeType::Subgraph)}, {"name", "web_prepare"},
+            {"parameters", {{cyxwiz::kRecipeRoleParameter, cyxwiz::kPreparationRecipeRole},
+                            {cyxwiz::kRecipeContractParameter, cyxwiz::kPreparationRecipeContractVersion}}}};
+        const auto link = [](int id, int from, int to) {
+            return json{{"id", id}, {"from_node", from}, {"to_node", to}, {"from_pin_index", 0}, {"to_pin_index", 0}};
+        };
+        const json document = {{"nodes", json::array({source, wrapper})}, {"links", json::array({link(10, 1, 5)})},
+            {"subgraph_contract_version", 1},
+            {"subgraphs", json::array({{{"node_id", 5}, {"expanded", false}, {"nodes", json::array({sql, keep})},
+                {"links", json::array({link(11, 2, 3)})},
+                {"inputs", json::array({{{"node_id", 2}, {"pin_index", 0}}})},
+                {"outputs", json::array({{{"node_id", 3}, {"pin_index", 0}}})}}})}};
+        const json lowered = cyxwiz::LowerPreparationRecipes(document);
+        json pipeline{{"nodes", json::array()}, {"links", json::array()}};
+        for (const auto& n : lowered.at("nodes")) {
+            const char* name = cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+                static_cast<NodeType>(n.at("type").get<int>()));
+            Check(name != nullptr, "runtime name for recipe node");
+            pipeline["nodes"].push_back({{"id", n.at("id")}, {"type", name}, {"name", n.at("name")},
+                                         {"parameters", n.at("parameters")}});
+        }
+        for (const auto& l : lowered.at("links"))
+            pipeline["links"].push_back({{"start_node", l.at("from_node")}, {"end_node", l.at("to_node")},
+                                         {"start_pin_index", l.at("from_pin_index")},
+                                         {"end_pin_index", l.at("to_pin_index")}});
+        cyxwiz::PipelineExecutor executor;
+        Check(executor.ExecutePipeline(pipeline.dump()),
+              "recipe with a SQL step runs: " + executor.GetLastError());
+        const auto result = registry.GetArrowDataset("ds_filter_3");
+        Check(result && result->GetArrowTable()->num_rows() == 2,
+              "recipe: SQL parse then filter keeps the 2 nonempty verses");
+        registry.UnregisterTabularDataset("ds_filter_3");
+        registry.UnregisterTabularDataset("ds_sql_2");
+    }
+
+    const auto rejects = [&](const json& step, const std::string& needle, const std::string& what) {
+        cyxwiz::PipelineExecutor executor;
+        const bool ran = executor.ExecutePipeline(graph(step));
+        Check(!ran && executor.GetLastError().find(needle) != std::string::npos,
+              what + " (got: " + executor.GetLastError() + ")");
+    };
+    rejects(sql_node(2, "SELECT * FROM document", "document", false), "sql_contract_version",
+            "an unversioned (older source-shaped) SQL node is not executed");
+    rejects(sql_node(2, "SELECT 1 AS a; SELECT 2 AS b", "document", true), "exactly one statement",
+            "two statements are rejected");
+    rejects(sql_node(2, "CREATE TABLE copy AS SELECT * FROM document", "document", true),
+            "read-only SELECT", "a non-SELECT statement is rejected");
+    rejects(sql_node(2, "SELECT * FROM read_csv('" + parquet_path.generic_string() + "')", "document", true),
+            "disabled", "file access from SQL is refused by DuckDB itself");
+    rejects(sql_node(2, "SELECT [1, 2] AS numbers FROM document", "document", true),
+            "cannot be returned exactly", "a list result column fails closed instead of turning into text");
+    rejects(sql_node(2, "SELECT * FROM document", "1doc", true), "must start with a letter",
+            "an invalid input alias is rejected");
+    rejects(sql_node(2, "SELECT * FROM missing_table", "document", true), "missing_table",
+            "an unknown table is reported by name");
+    rejects(sql_node(2, "SELECT verse_number FROM document", "document", true), "verse_number",
+            "a column the input does not have is reported by name before running (bad schema)");
+
+    // Cancellation reaches DuckDB: a long query stops soon after RequestCancel.
+    {
+        cyxwiz::PipelineExecutor executor;
+        std::thread canceller([&executor] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            executor.RequestCancel();
+        });
+        const auto start = std::chrono::steady_clock::now();
+        const bool ran = executor.ExecutePipeline(graph(sql_node(2,
+            "SELECT count(*) AS n FROM range(20000000000) AS r(x), document", "document", true)));
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        canceller.join();
+        Check(!ran, "a cancelled SQL step does not report success");
+        Check(elapsed < std::chrono::seconds(20), "cancellation stops the query promptly");
+    }
+
+    fs::remove(parquet_path);
+    cyxwiz::AsyncTaskManager::Instance().Shutdown();
+    std::cout << "SQL step (contract 1) passed\n";
+}
+
+// TOFIX101 package E: the Row Count Check step passes data through when the
+// count holds and stops the run when it does not.
+void CheckRowCountCheckStep() {
+    namespace fs = std::filesystem;
+    using json = nlohmann::json;
+    const fs::path csv = fs::temp_directory_path() / "cyxwiz_row_count_check.csv";
+    {
+        std::ofstream file(csv);
+        file << "id,text,empty_text\n1,In the beginning,false\n2,,true\n3,And God said,false\n"
+                "4,,true\n5,Let there be light,false\n";
+    }
+    const json input = {{"id", 1}, {"type", "DataInput"}, {"name", "Verses"},
+        {"parameters", {{"source_type", "file"}, {"type", "csv"}, {"file_path", csv.string()},
+                        {"has_header", "true"}}}};
+    const auto check = [](int id, json params) {
+        return json{{"id", id}, {"type", "RowCountCheck"}, {"name", "Check"}, {"parameters", params}};
+    };
+    const auto run = [&](const json& step, std::string& error) {
+        const json graph = {{"nodes", json::array({input, step})},
+                            {"links", json::array({{{"start_node", 1}, {"end_node", step.at("id")}}})}};
+        cyxwiz::PipelineExecutor executor;
+        const bool ok = executor.ExecutePipeline(graph.dump());
+        error = executor.GetLastError();
+        return ok;
+    };
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    std::string error;
+
+    Check(run(check(2, {{"check_name", "all verses"}, {"expected_rows", "5"}}), error),
+          "exact row count passes: " + error);
+    const auto passed = registry.GetArrowDataset("ds_operator_RowCountCheck_2");
+    const auto source = registry.GetArrowDataset("ds_datainput_1");
+    Check(passed && source && passed->GetArrowTable()->Equals(*source->GetArrowTable(), true),
+          "a passing check hands the same table downstream");
+    Check(run(check(2, {{"check_name", "empty verses"}, {"expected_rows", "2"},
+                        {"count_true_column", "empty_text"}}), error),
+          "counting rows where a boolean column is true passes: " + error);
+    Check(run(check(2, {{"min_rows", "3"}, {"max_rows", "5"}}), error), "a range check passes: " + error);
+
+    Check(!run(check(2, {{"check_name", "all verses"}, {"expected_rows", "6"}}), error) &&
+              error.find("'all verses' failed: expected exactly 6 rows, found 5") != std::string::npos,
+          "a wrong count stops the run with the numbers (got: " + error + ")");
+    Check(!run(check(2, {{"expected_rows", "3"}, {"count_true_column", "empty_text"}}), error) &&
+              error.find("rows where empty_text is true, found 2") != std::string::npos,
+          "a wrong conditional count names the column (got: " + error + ")");
+    Check(!run(check(2, {{"max_rows", "4"}}), error) && error.find("at most 4") != std::string::npos,
+          "an upper bound is enforced (got: " + error + ")");
+    Check(!run(check(2, {{"expected_rows", "5"}, {"count_true_column", "text"}}), error) &&
+              error.find("must be boolean") != std::string::npos,
+          "a non-boolean count column is rejected (got: " + error + ")");
+    Check(!run(check(2, {{"expected_rows", "5"}, {"count_true_column", "missing"}}), error) &&
+              error.find("'missing' not found") != std::string::npos,
+          "a missing count column is rejected (got: " + error + ")");
+    Check(!run(check(2, {{"check_name", "nothing set"}}), error) &&
+              error.find("expected_rows") != std::string::npos,
+          "a check without an expectation is a configuration error (got: " + error + ")");
+    Check(!run(check(2, {{"expected_rows", "five"}}), error) &&
+              error.find("whole number") != std::string::npos,
+          "a non-numeric expectation is rejected (got: " + error + ")");
+    Check(!run(check(2, {{"expected_rows", "5"}, {"on_failure", "quarantine"}}), error),
+          "policies other than stop are not accepted yet");
+
+    registry.UnregisterTabularDataset("ds_operator_RowCountCheck_2");
+    fs::remove(csv);
+    cyxwiz::AsyncTaskManager::Instance().Shutdown();
+    std::cout << "Row Count Check step passed\n";
+}
+
+void CheckPreparationRecipe() {
+    namespace fs = std::filesystem;
+    using gui::NodeType;
+    using json = nlohmann::json;
+    const auto T = [](NodeType type) { return static_cast<int>(type); };
+    const auto Name = [](int type) {
+        const char* name = cyxwiz::ResolvePipelineRuntimeLegacyTypeName(static_cast<NodeType>(type));
+        Check(name != nullptr, "runtime name for node type " + std::to_string(type));
+        return std::string(name);
+    };
+    const fs::path csv = fs::temp_directory_path() / "cyxwiz_recipe_verses.csv";
+    {
+        std::ofstream file(csv);
+        file << "id,book,text,empty_text\n1,GEN,In the beginning,false\n2,GEN,,true\n"
+                "3,EXO,These are the names,false\n4,GEN,And the earth,false\n";
+    }
+    const json input = {{"id", 1}, {"type", T(NodeType::DataInput)}, {"name", "Verses"},
+        {"parameters", {{"source_type", "file"}, {"type", "csv"}, {"file_path", csv.string()},
+                        {"has_header", "true"}}}};
+    const json filter = {{"id", 2}, {"type", T(NodeType::FilterRows)}, {"name", "Keep nonempty"},
+        {"parameters", {{"condition", "empty_text = false"}}}};
+    const json select = {{"id", 3}, {"type", T(NodeType::SelectColumns)}, {"name", "Keep text"},
+        {"parameters", {{"columns", "id,book,text"}}}};
+    const auto link = [](int id, int from, int to) {
+        return json{{"id", id}, {"from_node", from}, {"to_node", to},
+                    {"from_pin_index", 0}, {"to_pin_index", 0}};
+    };
+    const json recipe_wrapper = {{"id", 5}, {"type", T(NodeType::Subgraph)}, {"name", "web_review"},
+        {"parameters", {{cyxwiz::kRecipeRoleParameter, cyxwiz::kPreparationRecipeRole},
+                        {cyxwiz::kRecipeContractParameter, cyxwiz::kPreparationRecipeContractVersion}}}};
+    const auto Document = [&](const json& wrapper, const json& steps, const json& internal,
+                              const json& inputs, const json& outputs) {
+        return json{{"nodes", json::array({input, wrapper})},
+                    {"links", json::array({link(10, 1, 5)})},
+                    {"subgraph_contract_version", 1},
+                    {"subgraphs", json::array({{{"node_id", 5}, {"expanded", false},
+                        {"nodes", steps}, {"links", internal},
+                        {"inputs", inputs}, {"outputs", outputs}}})}};
+    };
+    const json in_bind = json::array({{{"node_id", 2}, {"pin_index", 0}}});
+    const json out_bind = json::array({{{"node_id", 3}, {"pin_index", 0}}});
+    const json doc = Document(recipe_wrapper, json::array({filter, select}),
+                              json::array({link(11, 2, 3)}), in_bind, out_bind);
+
+    const json lowered = cyxwiz::LowerPreparationRecipes(doc);
+    Check(lowered.at("nodes").size() == 3, "lowering keeps the source and both steps, drops the wrapper");
+    Check(lowered.at("links").size() == 2, "lowering rewires the wrapper link and keeps the internal link");
+    Check(lowered.at("recipe_steps").at("2") == 5 && lowered.at("recipe_steps").at("3") == 5,
+          "each step is attributed to its recipe");
+    bool rewired = false;
+    for (const auto& l : lowered.at("links"))
+        rewired |= l.at("from_node") == 1 && l.at("to_node") == 2;
+    Check(rewired, "the source now feeds the first recipe step");
+
+    const auto ToPipeline = [&](const json& nodes, const json& links) {
+        json p{{"nodes", json::array()}, {"links", json::array()}};
+        for (const auto& n : nodes)
+            p["nodes"].push_back({{"id", n.at("id")}, {"type", Name(n.at("type").get<int>())},
+                                  {"name", n.at("name")}, {"parameters", n.at("parameters")}});
+        for (const auto& l : links)
+            p["links"].push_back({{"start_node", l.at("from_node")}, {"end_node", l.at("to_node")},
+                                  {"start_pin_index", l.at("from_pin_index")},
+                                  {"end_pin_index", l.at("to_pin_index")}});
+        return p.dump();
+    };
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const auto RunAndTake = [&](const std::string& pipeline, const std::string& dataset) {
+        cyxwiz::PipelineExecutor executor;
+        Check(executor.ExecutePipeline(pipeline), "pipeline run: " + executor.GetLastError());
+        const auto result = registry.GetArrowDataset(dataset);
+        Check(result != nullptr, "result dataset " + dataset);
+        return result->GetArrowTable();
+    };
+    const auto via_recipe = RunAndTake(ToPipeline(lowered.at("nodes"), lowered.at("links")),
+                                       "ds_select_3");
+    const auto via_nodes = RunAndTake(
+        ToPipeline(json::array({input, filter, select}), json::array({link(10, 1, 2), link(11, 2, 3)})),
+        "ds_select_3");
+    Check(via_recipe->num_rows() == 3 && via_recipe->num_columns() == 3,
+          "recipe keeps the 3 nonempty rows and the 3 selected columns");
+    Check(via_recipe->Equals(*via_nodes, true), "recipe output equals the plain-node graph output");
+
+    const auto Rejects = [&](const json& document, const std::string& needle, const std::string& what) {
+        std::string error;
+        try { (void)cyxwiz::LowerPreparationRecipes(document); } catch (const std::exception& e) { error = e.what(); }
+        Check(error.find(needle) != std::string::npos, what + " (got: " + error + ")");
+    };
+    json visual = recipe_wrapper;
+    visual["parameters"] = json::object();
+    Rejects(Document(visual, json::array({filter, select}), json::array({link(11, 2, 3)}), in_bind, out_bind),
+            "visual group", "a plain visual group is never silently executable");
+    json future = recipe_wrapper;
+    future["parameters"][cyxwiz::kRecipeContractParameter] = "2";
+    Rejects(Document(future, json::array({filter, select}), json::array({link(11, 2, 3)}), in_bind, out_bind),
+            "contract version", "an unknown recipe contract version is rejected");
+    Rejects(Document(recipe_wrapper, json::array({filter, select}), json::array({link(11, 2, 3)}),
+                     json::array({in_bind.at(0), {{"node_id", 3}, {"pin_index", 0}}}), out_bind),
+            "exactly one dataset input", "contract 1 takes one input");
+    json inner_source = input;
+    inner_source["id"] = 6;
+    Rejects(Document(recipe_wrapper, json::array({filter, inner_source}), json::array(), in_bind,
+                     json::array({{{"node_id", 2}, {"pin_index", 0}}})),
+            "pipeline stages", "a source inside a recipe is rejected");
+    json dangling = select;
+    dangling["id"] = 7;
+    Rejects(Document(recipe_wrapper, json::array({filter, select, dangling}),
+                     json::array({link(11, 2, 3), link(12, 2, 7)}), in_bind, out_bind),
+            "does not lead to the recipe output", "a dangling step is rejected");
+    const json join = {{"id", 8}, {"type", T(NodeType::JoinTables)}, {"name", "Join"},
+        {"parameters", {{"left_on", "id"}, {"right_on", "id"}, {"join_type", "inner"}}}};
+    Rejects(Document(recipe_wrapper, json::array({filter, join}), json::array({link(13, 2, 8)}), in_bind,
+                     json::array({{{"node_id", 8}, {"pin_index", 0}}})),
+            "needs 2", "a join with only one bound input is rejected");
+
+    registry.UnregisterTabularDataset("ds_select_3");
+    fs::remove(csv);
+    cyxwiz::AsyncTaskManager::Instance().Shutdown();
+    std::cout << "Preparation Recipe lowering passed\n";
+}
+
 int main(int argc, char** argv) {
     if (argc == 6 && std::string(argv[1]) == "--html-selection") {
         std::ifstream file(argv[3], std::ios::binary);
@@ -960,6 +1375,52 @@ int main(int argc, char** argv) {
     if (argc == 5 && std::string(argv[1]) == "--html-text") {
         CheckArchiveTextPipeline(argv[2],argv[3],argv[4],true); return 0;
     }
+    // Runs one pipeline JSON file (runtime node names) as the product would,
+    // for real-data probes such as the Berean WEB SQL step. Exit 0 on success.
+    // Runs a saved graph document (numeric node types, optional recipes) the
+    // way the node editor does: lower Preparation Recipes, map runtime names,
+    // execute. Headless rehearsal of a saved graph in a fresh process.
+    if (argc == 3 && std::string(argv[1]) == "--run-graph-document") {
+        std::ifstream file(argv[2], std::ios::binary);
+        Check(file.good(), std::string("Cannot open graph document ") + argv[2]);
+        const auto document = nlohmann::json::parse(file);
+        nlohmann::json lowered;
+        try {
+            lowered = cyxwiz::LowerPreparationRecipes(document);
+        } catch (const std::exception& e) {
+            std::cout << "PIPELINE FAILED: " << e.what() << std::endl;
+            return 1;
+        }
+        nlohmann::json pipeline{{"nodes", nlohmann::json::array()}, {"links", nlohmann::json::array()}};
+        for (const auto& n : lowered.at("nodes")) {
+            const char* name = cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
+                static_cast<gui::NodeType>(n.at("type").get<int>()));
+            Check(name != nullptr, "no runtime name for node type " + std::to_string(n.at("type").get<int>()));
+            pipeline["nodes"].push_back({{"id", n.at("id")}, {"type", name}, {"name", n.at("name")},
+                                         {"parameters", n.at("parameters")}});
+        }
+        for (const auto& l : lowered.at("links"))
+            pipeline["links"].push_back({{"start_node", l.at("from_node")}, {"end_node", l.at("to_node")},
+                                         {"start_pin_index", l.value("from_pin_index", 0)},
+                                         {"end_pin_index", l.value("to_pin_index", 0)}});
+        cyxwiz::PipelineExecutor executor;
+        const bool ok = executor.ExecutePipeline(pipeline.dump());
+        std::cout << (ok ? std::string("PIPELINE OK") : "PIPELINE FAILED: " + executor.GetLastError())
+                  << std::endl;
+        cyxwiz::AsyncTaskManager::Instance().Shutdown();
+        return ok ? 0 : 1;
+    }
+    if (argc == 3 && std::string(argv[1]) == "--run-pipeline") {
+        std::ifstream file(argv[2], std::ios::binary);
+        Check(file.good(), std::string("Cannot open pipeline file ") + argv[2]);
+        const std::string pipeline((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        cyxwiz::PipelineExecutor executor;
+        const bool ok = executor.ExecutePipeline(pipeline);
+        std::cout << (ok ? std::string("PIPELINE OK") : "PIPELINE FAILED: " + executor.GetLastError())
+                  << std::endl;
+        cyxwiz::AsyncTaskManager::Instance().Shutdown();
+        return ok ? 0 : 1;
+    }
     if (argc == 5 && std::string(argv[1]) == "--archive-text") {
         CheckArchiveTextPipeline(argv[2], argv[3], argv[4]); return 0;
     }
@@ -968,7 +1429,27 @@ int main(int argc, char** argv) {
         CheckOrderedTextAggregation();
         return 0;
     }
+    if (argc == 2 && std::string(argv[1]) == "--project-relative-input") {
+        CheckProjectRelativeDataInput();
+        return 0;
+    }
     if (argc == 1) CheckOrderedTextAggregation();
+    if (argc == 1) CheckProjectRelativeDataInput();
+    if (argc == 2 && std::string(argv[1]) == "--preparation-recipe") {
+        CheckPreparationRecipe();
+        return 0;
+    }
+    if (argc == 1) CheckPreparationRecipe();
+    if (argc == 2 && std::string(argv[1]) == "--sql-step") {
+        CheckSqlStep();
+        return 0;
+    }
+    if (argc == 1) CheckSqlStep();
+    if (argc == 2 && std::string(argv[1]) == "--row-count-check") {
+        CheckRowCountCheckStep();
+        return 0;
+    }
+    if (argc == 1) CheckRowCountCheckStep();
     if(argc==2 && std::string(argv[1])=="--document-token-windows") { CheckDocumentWindowPipeline(); return 0; }
     if (argc == 2 &&
         std::string(argv[1]) == "--async-task-terminal-contract") {
@@ -1796,11 +2277,13 @@ int main(int argc, char** argv) {
 
     cyxwiz::PipelineExecutor sql_query_executor;
     Check(!sql_query_executor.ExecutePipeline(sql_query_json),
-          "SQLQuery should fail closed until SQL source loading is real");
-    Check(sql_query_executor.GetLastError().find(
-              "SQL query source execution is not implemented") !=
+          "an older source-shaped SQLQuery node (no input, no contract) is not executed");
+    // Central validation stops it first: the SQL step needs an input table.
+    // An unversioned SQL node that does have an input is rejected by contract
+    // in CheckSqlStep.
+    Check(sql_query_executor.GetLastError().find("requires an input connection") !=
               std::string::npos,
-          "SQLQuery fail-closed error should be specific: " +
+          "the older source-shaped SQLQuery rejection is specific: " +
               sql_query_executor.GetLastError());
 
     const std::string hdf5_json =

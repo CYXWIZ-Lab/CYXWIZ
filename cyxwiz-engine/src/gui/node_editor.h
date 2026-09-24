@@ -596,6 +596,10 @@ enum class NodeType {
     // Appended to preserve existing serialized numeric NodeType ids.
     RegressionModelPredictor, // Apply a fitted linear/polynomial artifact
 
+    // ===== Appended Data Studio Check step (TOFIX101 package E) =====
+    // Appended to preserve existing serialized numeric NodeType ids.
+    RowCountCheck,      // Pass through; stop the run when a row count is wrong
+
     // Special sentinel value
     Unknown
 };
@@ -924,6 +928,10 @@ class NodeEditor {
 public:
     NodeEditor();
     ~NodeEditor();
+
+    // Cancels background work this editor owns (the data pipeline run) and
+    // drops its pending UI delivery. Called on project close and destruction.
+    void CancelOwnedBackgroundWork();
 
     void Render();
 
@@ -1326,6 +1334,11 @@ private:
     void ToggleSubgraphExpansion(int node_id);
     bool IsSubgraphNode(int node_id) const;
     SubgraphData* GetSubgraphData(int node_id);
+    bool IsPreparationRecipeNode(int node_id) const;
+    // Marks a subgraph as a Preparation Recipe after validating the recipe
+    // contract, or turns it back into a visual group. Returns false and shows
+    // the reason when the subgraph does not qualify.
+    bool SetSubgraphPreparationRecipe(int node_id, bool recipe);
     bool IsSubgraphMember(int node_id) const;
 
     // Framework-specific generators
@@ -1504,6 +1517,11 @@ private:
     // UI-owned rejection feedback, rendered even when the Studio tab is hidden.
     bool graph_busy_dialog_pending_ = false;
     std::string graph_busy_message_;
+    // Why a pipeline or recipe action could not proceed (same rendering rule).
+    bool pipeline_notice_pending_ = false;
+    std::string pipeline_notice_;
+    void ShowPipelineNotice(std::string message);
+    bool SubmitDataPipelineJson(nlohmann::json pipeline_json);
 
     // Empty graph warning popup state
     bool show_empty_graph_warning_ = false;
@@ -1595,6 +1613,9 @@ private:
     // ===== Unified Canvas Phase 2: Data Pipeline Execution =====
     uint64_t pipeline_task_id_ = 0;
     std::shared_ptr<cyxwiz::PipelineExecutionTracker> pipeline_execution_tracker_;
+    // Lifetime token for background work this editor owns; destroying the
+    // editor cancels that work and discards its pending UI delivery.
+    std::shared_ptr<const void> task_owner_token_ = std::make_shared<int>(0);
     bool pipeline_execution_active_ = false;
     ExecutionContext execution_context_;
 

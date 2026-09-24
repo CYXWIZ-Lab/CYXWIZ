@@ -196,6 +196,9 @@ Console::Console()
 }
 
 Console::~Console() {
+  // A running pip command is asked to stop (it terminates its process) and
+  // any output still queued for this console is dropped.
+  cyxwiz::AsyncTaskManager::Instance().CancelOwnedBy(task_owner_token_);
   local_shell_sessions_.clear();
   agent_llm_.reset();
   python_repl_.reset();
@@ -1529,12 +1532,24 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
   // Run command asynchronously using AsyncTaskManager
   auto &task_mgr = cyxwiz::AsyncTaskManager::Instance();
 
-  // Capture 'this' pointer for thread-safe logging
+  // The worker only posts to the UI thread; 'this' is dereferenced there,
+  // and only while the owner token (a member) is alive.
   Console *console_ptr = this;
+  const std::weak_ptr<const void> owner = task_owner_token_;
 
   task_mgr.RunAsync(
       "pip command",
-      [console_ptr, venv_pip, pip_arguments](cyxwiz::LambdaTask &task) {
+      [console_ptr, owner, venv_pip, pip_arguments](cyxwiz::LambdaTask &task) {
+        // Output is marshalled to the UI thread and dropped once the
+        // console is gone; the worker never dereferences it.
+        const auto emit = [&owner, console_ptr](
+                              void (Console::*add)(const std::string &),
+                              std::string text) {
+          cyxwiz::AsyncTaskManager::Instance().PostToMainThread(
+              owner, [console_ptr, add, text = std::move(text)] {
+                (console_ptr->*add)(text);
+              });
+        };
         task.ReportProgress(0.1f, "Starting pip command...");
 
 #ifdef _WIN32
@@ -1551,7 +1566,7 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
 
         HANDLE hStdoutRead, hStdoutWrite;
         if (!CreatePipe(&hStdoutRead, &hStdoutWrite, &sa, 0)) {
-          console_ptr->AddError("Failed to create pipe for command output");
+          emit(&Console::AddError, "Failed to create pipe for command output");
           task.MarkFailed("Failed to create pipe");
           return;
         }
@@ -1572,7 +1587,7 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
         if (!CreateProcessA(NULL, const_cast<char *>(cmd_copy.c_str()), NULL,
                             NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si,
                             &pi)) {
-          console_ptr->AddError("Failed to execute pip command");
+          emit(&Console::AddError, "Failed to execute pip command");
           CloseHandle(hStdoutRead);
           CloseHandle(hStdoutWrite);
           task.MarkFailed("Failed to create process");
@@ -1602,7 +1617,7 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
               line.pop_back();
             }
             if (!line.empty()) {
-              console_ptr->AddInfo(line);
+              emit(&Console::AddInfo, line);
             }
             line_buffer = line_buffer.substr(pos + 1);
           }
@@ -1610,14 +1625,14 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
           // Check for cancellation
           if (task.IsCancelRequested()) {
             TerminateProcess(pi.hProcess, 1);
-            console_ptr->AddWarning("Command cancelled by user");
+            emit(&Console::AddWarning, "Command cancelled by user");
             break;
           }
         }
 
         // Print remaining buffer
         if (!line_buffer.empty()) {
-          console_ptr->AddInfo(line_buffer);
+          emit(&Console::AddInfo, line_buffer);
         }
 
         WaitForSingleObject(pi.hProcess, INFINITE);
@@ -1632,16 +1647,16 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
         task.ReportProgress(1.0f, "Command finished");
 
         if (exit_code == 0) {
-          console_ptr->AddSuccess("Command completed successfully");
+          emit(&Console::AddSuccess, "Command completed successfully");
         } else {
-          console_ptr->AddError("Command failed with exit code: " +
+          emit(&Console::AddError, "Command failed with exit code: " +
                                 std::to_string(exit_code));
           task.MarkFailed("Exit code: " + std::to_string(exit_code));
         }
 #else
         int output_pipe[2];
         if (pipe(output_pipe) != 0) {
-          console_ptr->AddError("Failed to create pipe for command output");
+          emit(&Console::AddError, "Failed to create pipe for command output");
           task.MarkFailed("Failed to create pipe");
           return;
         }
@@ -1650,7 +1665,7 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
         if (child < 0) {
           close(output_pipe[0]);
           close(output_pipe[1]);
-          console_ptr->AddError("Failed to execute pip command");
+          emit(&Console::AddError, "Failed to execute pip command");
           task.MarkFailed("Failed to fork process");
           return;
         }
@@ -1678,7 +1693,7 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
           close(output_pipe[0]);
           kill(child, SIGTERM);
           waitpid(child, nullptr, 0);
-          console_ptr->AddError("Failed to read pip command output");
+          emit(&Console::AddError, "Failed to read pip command output");
           task.MarkFailed("Failed to open command output");
           return;
         }
@@ -1694,13 +1709,13 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
             line.pop_back();
           }
           if (!line.empty()) {
-            console_ptr->AddInfo(line);
+            emit(&Console::AddInfo, line);
           }
 
           // Check for cancellation
           if (task.IsCancelRequested()) {
             kill(child, SIGTERM);
-            console_ptr->AddWarning("Command cancelled by user");
+            emit(&Console::AddWarning, "Command cancelled by user");
             cancelled = true;
             break;
           }
@@ -1716,9 +1731,9 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
 
         const int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
         if (exit_code == 0) {
-          console_ptr->AddSuccess("Command completed successfully");
+          emit(&Console::AddSuccess, "Command completed successfully");
         } else {
-          console_ptr->AddError("Command failed with exit code: " +
+          emit(&Console::AddError, "Command failed with exit code: " +
                                 std::to_string(exit_code));
           task.MarkFailed("Exit code: " + std::to_string(exit_code));
         }
@@ -1729,7 +1744,8 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
         if (!success && !error.empty()) {
           spdlog::error("Pip command task failed: {}", error);
         }
-      });
+      },
+      owner);
 }
 
 void Console::ExecCommand(const char *command) {

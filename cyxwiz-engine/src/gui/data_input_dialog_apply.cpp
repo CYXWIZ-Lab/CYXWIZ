@@ -3,6 +3,8 @@
 #include "node_config_dialog.h"
 #include "loaders/data_loader.h"
 #include "../core/data_registry.h"
+#include "../core/project_data_path.h"
+#include "../core/project_manager.h"
 
 #include <chrono>
 #include <cstring>
@@ -90,8 +92,11 @@ void DataInputDialog::Apply() {
     }
 
     // Common parameters
-    node_->parameters["file_path"] = file_path_;
-    node_->parameters["folder_path"] = folder_path_;
+    // Sources inside the project are saved project-relative so the graph is
+    // portable; loaders resolve them back (core/project_data_path.h).
+    const std::string& project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+    node_->parameters["file_path"] = cyxwiz::MakeProjectRelativePath(file_path_, project_root);
+    node_->parameters["folder_path"] = cyxwiz::MakeProjectRelativePath(folder_path_, project_root);
     node_->parameters["configured"] = "true";
     // Data Input owns physical loading only. Remove the former role hint so
     // saved graphs cannot override the named Training/Validation/Test inputs
@@ -315,9 +320,10 @@ void DataInputDialog::Apply() {
             return;
         }
 
-        const std::string text_source_path =
+        const std::string text_source_path = cyxwiz::ResolveProjectDataPath(
             text_corpus_ready ? std::string(folder_path_)
-                              : std::string(file_path_);
+                              : std::string(file_path_),
+            cyxwiz::ProjectManager::Instance().GetProjectRoot());
 
         std::string previous_dataset_name;
         if (auto pit = node_->parameters.find("dataset_name");
@@ -465,7 +471,8 @@ void DataInputDialog::Apply() {
 
         cyxwiz::loaders::ApplyContext ctx;
         ctx.dataset_name          = loaded_dataset_name_;
-        ctx.source_path           = file_path_;
+        ctx.source_path           = cyxwiz::ResolveProjectDataPath(
+            file_path_, cyxwiz::ProjectManager::Instance().GetProjectRoot());
         ctx.previous_dataset_name = previous_dataset_name;
 
         ctx.detected_file_type = data_input::FileTypeParam(detected_type_);
@@ -496,7 +503,7 @@ void DataInputDialog::Apply() {
 
         auto state = std::make_shared<AsyncLoadState>();
         state->dataset_name = loaded_dataset_name_;
-        state->source_path  = file_path_;
+        state->source_path  = ctx.source_path;
         async_load_state_   = state;
         is_loading_async_   = true;
 
@@ -553,7 +560,8 @@ void DataInputDialog::Apply() {
 
         cyxwiz::loaders::ApplyContext ctx;
         ctx.dataset_name           = loaded_dataset_name_;
-        ctx.source_path            = folder_path_;
+        ctx.source_path            = cyxwiz::ResolveProjectDataPath(
+            folder_path_, cyxwiz::ProjectManager::Instance().GetProjectRoot());
         ctx.previous_dataset_name  = previous_dataset_name;
         ctx.audio_labels_csv       = audio_labels_csv_;
         ctx.audio_filename_col     = audio_filename_col_;
@@ -584,7 +592,7 @@ void DataInputDialog::Apply() {
 
         auto state = std::make_shared<AsyncLoadState>();
         state->dataset_name = loaded_dataset_name_;
-        state->source_path  = folder_path_;
+        state->source_path  = ctx.source_path;
         async_load_state_   = state;
         is_loading_async_   = true;
 
@@ -642,7 +650,8 @@ void DataInputDialog::Apply() {
 
         cyxwiz::loaders::ApplyContext ctx;
         ctx.dataset_name          = loaded_dataset_name_;
-        ctx.source_path           = folder_path_;
+        ctx.source_path           = cyxwiz::ResolveProjectDataPath(
+            folder_path_, cyxwiz::ProjectManager::Instance().GetProjectRoot());
         ctx.previous_dataset_name = previous_dataset_name;
         ctx.image_labels_csv      = labels_csv_;
         ctx.image_layout          = static_cast<int>(image_layout_);
@@ -664,7 +673,7 @@ void DataInputDialog::Apply() {
 
         auto state = std::make_shared<AsyncLoadState>();
         state->dataset_name = loaded_dataset_name_;
-        state->source_path  = folder_path_;
+        state->source_path  = ctx.source_path;
         async_load_state_   = state;
         is_loading_async_   = true;
 

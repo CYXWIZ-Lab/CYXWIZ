@@ -1,6 +1,7 @@
 #include "node_editor.h"
 #include "subgraph_presentation.h"
 #include "subgraph_document.h"
+#include "../core/preparation_recipe.h"
 #include "properties.h"
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
@@ -360,6 +361,54 @@ void NodeEditor::ToggleSubgraphExpansion(int node_id) {
     } else {
         ExpandSubgraph(node_id);
     }
+}
+
+bool NodeEditor::IsPreparationRecipeNode(int node_id) const {
+    const MLNode* node = FindNodeById(node_id);
+    if (!node || node->type != NodeType::Subgraph) return false;
+    const auto it = node->parameters.find(cyxwiz::kRecipeRoleParameter);
+    return it != node->parameters.end() && it->second == cyxwiz::kPreparationRecipeRole;
+}
+
+bool NodeEditor::SetSubgraphPreparationRecipe(int node_id, bool recipe) {
+    MLNode* wrapper = nullptr;
+    for (auto& node : nodes_) if (node.id == node_id) wrapper = &node;
+    SubgraphData* data = GetSubgraphData(node_id);
+    if (!wrapper || !data || wrapper->type != NodeType::Subgraph) return false;
+    if (!recipe) {
+        SaveUndoState();
+        wrapper->parameters.erase(cyxwiz::kRecipeRoleParameter);
+        wrapper->parameters.erase(cyxwiz::kRecipeContractParameter);
+        spdlog::info("Subgraph {} is now a visual group", node_id);
+        return true;
+    }
+    // Validate against the saved form, exactly what will be lowered at run time.
+    std::string why;
+    try {
+        nlohmann::json document;
+        detail::WriteEditorGraphContent(document, nodes_, links_, subgraphs_, {});
+        for (const auto& record : document.at("subgraphs")) {
+            if (record.at("node_id").get<int>() != node_id) continue;
+            for (const auto& node : document.at("nodes")) {
+                if (node.at("id").get<int>() == node_id) {
+                    why = cyxwiz::PreparationRecipeRejection(node, record);
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        why = e.what();
+    }
+    if (!why.empty()) {
+        spdlog::warn("Not a Preparation Recipe: {}", why);
+        ShowPipelineNotice("This subgraph cannot be a Preparation Recipe.\n\n" + why);
+        return false;
+    }
+    SaveUndoState();
+    wrapper->parameters[cyxwiz::kRecipeRoleParameter] = cyxwiz::kPreparationRecipeRole;
+    wrapper->parameters[cyxwiz::kRecipeContractParameter] =
+        cyxwiz::kPreparationRecipeContractVersion;
+    spdlog::info("Subgraph {} is now a Preparation Recipe", node_id);
+    return true;
 }
 
 bool NodeEditor::IsSubgraphNode(int node_id) const {

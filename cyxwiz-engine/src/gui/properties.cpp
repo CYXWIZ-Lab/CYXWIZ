@@ -283,6 +283,12 @@ void Properties::Render() {
             bool is_dialog_only =
                 properties_contract::IsDialogOnlyPropertiesNode(metadata);
 
+            // Scope every widget below by node: parameter widgets are keyed by
+            // parameter name, so without this two nodes of the same type share
+            // widget IDs, and a text box still active when the selection
+            // changes writes its buffer into the newly selected node.
+            ImGui::PushID(selected_node_->id);
+
             // Phase 3: Section-based rendering
             RenderGeneralSection(*selected_node_);
 
@@ -320,6 +326,7 @@ void Properties::Render() {
                 // Node Executor section (for analytics nodes like KMeans, PCA, etc.)
                 RenderExecutorSection(*selected_node_);
             }
+            ImGui::PopID();
         }
     }
     ImGui::End();

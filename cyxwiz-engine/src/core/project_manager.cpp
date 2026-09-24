@@ -267,7 +267,8 @@ bool CreateProjectVenv(const fs::path& project_dir, std::string* error_out) {
     return false;
 }
 
-void QueueProjectVenvCreation(const fs::path& project_dir, const std::string& project_name) {
+void QueueProjectVenvCreation(const fs::path& project_dir, const std::string& project_name,
+                              std::weak_ptr<const void> session) {
     std::string project_root = project_dir.string();
     std::string task_name = "Create Python venv";
     if (!project_name.empty()) {
@@ -292,7 +293,8 @@ void QueueProjectVenvCreation(const fs::path& project_dir, const std::string& pr
             } else {
                 spdlog::error("Project venv creation failed for {}: {}", project_root, error);
             }
-        });
+        },
+        std::move(session));
 }
 
 std::string ToLower(std::string value) {
@@ -421,6 +423,23 @@ ProjectManager& ProjectManager::Instance() {
     return instance;
 }
 
+void ProjectManager::BeginProjectSession() {
+    EndProjectSession();  // switching projects closes the previous session
+    session_token_ = std::make_shared<int>(0);
+}
+
+void ProjectManager::EndProjectSession() {
+    if (!session_token_) {
+        return;
+    }
+    const size_t cancelled =
+        cyxwiz::AsyncTaskManager::Instance().CancelOwnedBy(session_token_);
+    if (cancelled > 0) {
+        spdlog::info("Project session ended: cancelled {} background task(s)", cancelled);
+    }
+    session_token_.reset();
+}
+
 void ProjectManager::NotifyProjectVenvReady(const std::string& project_root) {
     if (on_venv_ready_) {
         on_venv_ready_(project_root);
@@ -501,6 +520,7 @@ bool ProjectManager::CreateProject(const std::string& name, const std::string& l
         }
 
         // Set up project state
+        BeginProjectSession();
         project_root_ = project_dir.string();
         project_name_ = name;
         project_file_path_ = (project_dir / (name + ".cyxwiz")).string();
@@ -522,7 +542,7 @@ bool ProjectManager::CreateProject(const std::string& name, const std::string& l
 
         spdlog::info("Project created: {} at {}", name, project_root_);
 
-        QueueProjectVenvCreation(project_dir, name);
+        QueueProjectVenvCreation(project_dir, name, GetSessionToken());
 
         // Add to recent projects
         AddToRecentProjects(name, project_file_path_);
@@ -574,6 +594,7 @@ bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
         }
 
         // Set up project state
+        BeginProjectSession();
         project_file_path_ = fs::absolute(file_path).string();
         project_root_ = file_path.parent_path().string();
         project_name_ = config_.name;
@@ -638,8 +659,8 @@ bool ProjectManager::OpenProject(const std::string& cyxwiz_file_path) {
                             spdlog::info("Virtual environment created for legacy project");
                             task.ReportProgress(1.0f, "Virtual environment ready");
                         }
-                    }
-                );
+                    },
+                    nullptr, nullptr, GetSessionToken());
             } else {
                 spdlog::error("Cannot create venv for legacy project: no system Python configured");
             }
@@ -661,6 +682,10 @@ void ProjectManager::CloseProject() {
     }
 
     std::string old_root = project_root_;
+
+    // Work owned by this project stops here and never reports into the next
+    // one (TOFIX101 section 7: project close cancels owned work).
+    EndProjectSession();
 
     // Clear state
     project_root_.clear();

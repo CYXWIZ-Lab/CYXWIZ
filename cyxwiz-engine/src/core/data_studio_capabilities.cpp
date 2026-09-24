@@ -42,7 +42,7 @@ DataStudioCapability ResolveDataStudioCapability(
             return result;
         }
         result.state = DataStudioActionState::ExploreOnly;
-        result.reason = "Queries run in this editor. SQL execution in saved pipelines is not implemented.";
+        result.reason = "Scratch queries run in this editor. To save a query in a pipeline or recipe, use a SQL Query step.";
         return result;
     }
     if (!support.pipeline_executor_supported ||

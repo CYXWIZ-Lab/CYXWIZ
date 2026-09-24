@@ -212,6 +212,87 @@ DuckDBConnector::DuckDBConnector() {
     }
 }
 
+DuckDBConnector::DuckDBConnector(const DuckDBConnectorPolicy& policy) {
+    try {
+        duckdb::DBConfig config;
+        if (!policy.allow_external_access) {
+            config.SetOptionByName("enable_external_access", duckdb::Value::BOOLEAN(false));
+            config.SetOptionByName("autoinstall_known_extensions", duckdb::Value::BOOLEAN(false));
+            config.SetOptionByName("autoload_known_extensions", duckdb::Value::BOOLEAN(false));
+            config.SetOptionByName("lock_configuration", duckdb::Value::BOOLEAN(true));
+        }
+        db_ = std::make_unique<duckdb::DuckDB>(nullptr, &config);
+        conn_ = std::make_unique<duckdb::Connection>(*db_);
+        spdlog::debug("DuckDB connector initialized (in-memory, external access {})",
+                      policy.allow_external_access ? "allowed" : "disabled");
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to initialize restricted DuckDB: {}", e.what());
+        last_error_ = e.what();
+        conn_.reset();
+        db_.reset();
+    }
+}
+
+std::string DuckDBConnector::ReadOnlySelectRejection(const std::string& sql) {
+    if (!conn_) return "DuckDB connection not initialized";
+    try {
+        auto statements = conn_->ExtractStatements(sql);
+        if (statements.size() != 1) {
+            return "the SQL step takes exactly one statement; found " +
+                   std::to_string(statements.size());
+        }
+        if (statements.front()->type != duckdb::StatementType::SELECT_STATEMENT) {
+            return "only a read-only SELECT (or WITH ... SELECT) is allowed in a SQL step";
+        }
+        return {};
+    } catch (const std::exception& e) {
+        return std::string("the SQL does not parse: ") + e.what();
+    }
+}
+
+std::string DuckDBConnector::UnsupportedResultColumns(const std::string& sql) {
+    if (!conn_) return "DuckDB connection not initialized";
+    try {
+        auto prepared = conn_->Prepare(sql);
+        if (prepared->HasError()) return prepared->GetError();
+        const auto& names = prepared->GetNames();
+        const auto& types = prepared->GetTypes();
+        std::string unsupported;
+        for (size_t i = 0; i < types.size(); ++i) {
+            switch (types[i].id()) {
+            case duckdb::LogicalTypeId::BOOLEAN:
+            case duckdb::LogicalTypeId::TINYINT:
+            case duckdb::LogicalTypeId::SMALLINT:
+            case duckdb::LogicalTypeId::INTEGER:
+            case duckdb::LogicalTypeId::BIGINT:
+            case duckdb::LogicalTypeId::UTINYINT:
+            case duckdb::LogicalTypeId::USMALLINT:
+            case duckdb::LogicalTypeId::UINTEGER:
+            case duckdb::LogicalTypeId::UBIGINT:
+            case duckdb::LogicalTypeId::FLOAT:
+            case duckdb::LogicalTypeId::DOUBLE:
+            case duckdb::LogicalTypeId::VARCHAR:
+                break;
+            default:
+                unsupported += (unsupported.empty() ? "" : ", ") + std::string("'") +
+                               names[i] + "' (" + types[i].ToString() + ")";
+            }
+        }
+        if (!unsupported.empty()) {
+            return "result column(s) " + unsupported +
+                   " have a type that cannot be returned exactly; CAST them in the query "
+                   "(for example to VARCHAR, BIGINT or DOUBLE)";
+        }
+        return {};
+    } catch (const std::exception& e) {
+        return e.what();
+    }
+}
+
+void DuckDBConnector::Interrupt() {
+    if (conn_) conn_->Interrupt();
+}
+
 DuckDBConnector::~DuckDBConnector() {
     // Close connection and database
     conn_.reset();
