@@ -2,11 +2,23 @@ name: CPU Base POSIX
 
 on:
   workflow_call:
+    inputs:
+      cyxwiz_release:
+        description: Engine release version stamped into CPU-base packages
+        type: string
+        default: "0.2.0"
+      pack_version:
+        description: CPU-base package revision (raise it for a same-version update)
+        type: string
+        default: "1"
 
 permissions:
   contents: read
 
 env:
+  # Release identity; ordinary push/PR runs use the defaults.
+  CYXWIZ_RELEASE: ${{ inputs.cyxwiz_release || '0.2.0' }}
+  CYXWIZ_PACK_VERSION: ${{ inputs.pack_version || '1' }}
   VCPKG_BINARY_SOURCES: >-
     clear;files,${{ github.workspace }}/vcpkg-binary-cache,readwrite
 
@@ -192,13 +204,13 @@ jobs:
       - name: Build deterministic CPU-base artifact
         run: |
           python redist/scripts/package_release.py base \
-            --version 0.2.0 \
-            --pack-version 1 \
+            --version "$CYXWIZ_RELEASE" \
+            --pack-version "$CYXWIZ_PACK_VERSION" \
             --build-dir build/bin \
             --arrayfire-dir deps/arrayfire \
             --generated-utc 2026-08-20T00:00:00Z
           mkdir -p cpu-base-artifact
-          cp redist/output/cyxwiz-base-0.2.0-1-${{ matrix.package_suffix }}.zip* \
+          cp "redist/output/cyxwiz-base-${CYXWIZ_RELEASE}-${CYXWIZ_PACK_VERSION}-${{ matrix.package_suffix }}.zip"* \
             cpu-base-artifact/
 
       - uses: actions/upload-artifact@v4
@@ -240,8 +252,8 @@ jobs:
       - name: Install and verify on fresh runner
         run: |
           python redist/scripts/verify_cpu_base_package.py \
-            cpu-base-artifact/cyxwiz-base-0.2.0-1-${{ matrix.package_suffix }}.zip \
-            --manifest cpu-base-artifact/cyxwiz-base-0.2.0-1-${{ matrix.package_suffix }}.zip.manifest.json \
+            "cpu-base-artifact/cyxwiz-base-${CYXWIZ_RELEASE}-${CYXWIZ_PACK_VERSION}-${{ matrix.package_suffix }}.zip" \
+            --manifest "cpu-base-artifact/cyxwiz-base-${CYXWIZ_RELEASE}-${CYXWIZ_PACK_VERSION}-${{ matrix.package_suffix }}.zip.manifest.json" \
             --install-root cpu-base-install \
             --artifact-id ${{ matrix.artifact }}-cpu-base \
             --evidence clean-machine-evidence/${{ matrix.artifact }}-cpu-base.json
