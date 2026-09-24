@@ -185,7 +185,20 @@ if(CYXWIZ_ENABLE_PYTHON)
         set(PYBIND11_FINDPYTHON ON)
     endif()
 
+    if(APPLE AND TARGET Iconv::Iconv AND Iconv_INCLUDE_DIR MATCHES "/[^/]+\\.sdk/usr/include/?$")
+        get_target_property(_cyxwiz_iconv_include_dirs Iconv::Iconv INTERFACE_INCLUDE_DIRECTORIES)
+        if(_cyxwiz_iconv_include_dirs)
+            list(REMOVE_ITEM _cyxwiz_iconv_include_dirs "${Iconv_INCLUDE_DIR}")
+            set_property(TARGET Iconv::Iconv PROPERTY
+                INTERFACE_INCLUDE_DIRECTORIES "${_cyxwiz_iconv_include_dirs}")
+        endif()
+        unset(_cyxwiz_iconv_include_dirs)
+    endif()
+
     if(Python3_FOUND)
+        unset(PYTHON_MODULE_EXTENSION CACHE)
+        unset(PYTHON_MODULE_DEBUG_POSTFIX CACHE)
+        unset(PYTHON_IS_DEBUG CACHE)
         find_package(pybind11 CONFIG QUIET)
     endif()
 
