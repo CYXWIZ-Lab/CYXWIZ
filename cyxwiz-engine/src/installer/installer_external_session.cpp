@@ -55,14 +55,22 @@ bool StageExternalInstallerSession(
                                  std::filesystem::perms::owner_all);
 #endif
     std::uintmax_t bytes = 0;
-    std::set<std::filesystem::path> copied;
+    std::set<std::string> copied;
     const auto copy = [&](const std::filesystem::path &source,
                           const std::filesystem::path &relative) {
       if (!runtime::IsCanonicalBackendPackRelativePath(
               relative.generic_string()))
         throw std::runtime_error("Unsafe installer session member");
-      if (!copied.insert(relative).second)
+#ifdef _WIN32
+      // The loader reports import-table casing (VCRUNTIME140.dll) while the
+      // canonical relative path has on-disk casing; both name one NTFS file.
+      if (!copied.insert(runtime::FoldBackendPackPath(relative.generic_string()))
+               .second)
         return;
+#else
+      if (!copied.insert(relative.generic_string()).second)
+        return;
+#endif
       const auto exact = std::filesystem::canonical(source);
       if (!std::filesystem::is_regular_file(exact))
         throw std::runtime_error(

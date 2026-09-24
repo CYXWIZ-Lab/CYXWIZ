@@ -150,6 +150,16 @@ void TestExternalSessionStaging() {
   Check(!cyxwiz::installer::StageExternalInstallerSession(
             source, metadata, {}, source / "nested", error),
         "Session must not stage inside its source");
+#ifdef _WIN32
+  // The Windows loader reports import-table casing that differs from disk.
+  Write(source / "vcruntime140.dll", "loaded runtime");
+  const auto cased_output = temporary.path() / "session-cased";
+  const bool cased_staged = cyxwiz::installer::StageExternalInstallerSession(
+      source, metadata, {source / "VCRUNTIME140.dll"}, cased_output, error);
+  Check(cased_staged, "Loader casing must not stage one file twice: " + error);
+  Check(std::filesystem::exists(cased_output / "vcruntime140.dll"),
+        "Case-folded module must still be staged");
+#endif
   Check(cyxwiz::installer::InstallerPathWithin(source / "child", source) &&
             !cyxwiz::installer::InstallerPathWithin(
                 temporary.path() / "source-other", source),
