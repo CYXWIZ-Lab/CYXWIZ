@@ -445,6 +445,9 @@ std::vector<std::string> SplitSimpleCsvRow(const std::string& line) {
         value.push_back(ch);
     }
 
+    if (!value.empty() && value.back() == '\r') {
+        value.pop_back();
+    }
     values.push_back(value);
     return values;
 }

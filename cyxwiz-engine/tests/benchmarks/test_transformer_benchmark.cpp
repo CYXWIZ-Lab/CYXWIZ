@@ -28,7 +28,7 @@ template<class Model> void FixedParameters(Model& model){
         if(i->first.find("grad_")!=std::string::npos){i=p.erase(i);continue;}
         i->second=Fixture(i->second.Shape(),offset+=0.2f);
         if(i->first.find("gamma")!=std::string::npos){
-            auto*data=i->second.MutableData<float>();for(size_t j=0;j<i->second.NumElements();++j)data[j]+=1;
+            auto*data=i->second.template MutableData<float>();for(size_t j=0;j<i->second.NumElements();++j)data[j]+=1;
             i->second.GetSemanticArray().eval();
         }++i;
     }model.SetParameters(p);

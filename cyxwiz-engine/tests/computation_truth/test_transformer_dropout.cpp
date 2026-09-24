@@ -44,7 +44,7 @@ auto Configure(Layer& layer) {
         if(it->first.find("grad_")!=std::string::npos) {it=params.erase(it);continue;}
         it->second=Fixture(it->second.Shape(),offset+=0.43f);
         if(it->first.find("gamma")!=std::string::npos) {
-            auto* p=it->second.MutableData<float>();
+            auto* p=it->second.template MutableData<float>();
             for(size_t i=0;i<it->second.NumElements();++i) p[i]+=1.0f;
             it->second.GetSemanticArray().eval();
         }
@@ -161,7 +161,7 @@ void CompatibilityAndCombinedDropout() {
     const auto a=legacy.Forward(x),b=explicit_zero.Forward(x);
     const af::array after=af::randu(8);af::setSeed(99);const af::array expected=af::randu(8);
     Check(af::allTrue<bool>(after==expected),"zero dropout must not consume RNG");
-    for(size_t i=0;i<a.NumElements();++i) Check(a.ReadData<float>()[i]==b.ReadData<float>()[i],"legacy zero dropout compatibility");
+    for(size_t i=0;i<a.NumElements();++i) Check(a.template ReadData<float>()[i]==b.template ReadData<float>()[i],"legacy zero dropout compatibility");
     for(bool pre:{false,true}) {
         Layer combined(4,2,5,0.1f,pre,0.25f);Configure(combined);
         combined.SetTraining(true);af::setSeed(81);hosts=fallbacks=0;

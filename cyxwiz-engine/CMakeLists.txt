@@ -3349,11 +3349,14 @@ target_link_libraries(test_graph_training_sequence_preflight PRIVATE
     cyxwiz-backend
 )
 
+target_compile_definitions(test_graph_training_sequence_preflight PRIVATE
+    CYXWIZ_PLOTTING_MODULE
+)
+
 if(WIN32)
     target_compile_definitions(test_graph_training_sequence_preflight PRIVATE
         _CRT_SECURE_NO_WARNINGS
         NOMINMAX
-        CYXWIZ_PLOTTING_MODULE
     )
 endif()
 
@@ -3412,11 +3415,14 @@ target_link_libraries(test_text_gui_training_launch PRIVATE
     cyxwiz-backend
 )
 
+target_compile_definitions(test_text_gui_training_launch PRIVATE
+    CYXWIZ_PLOTTING_MODULE
+)
+
 if(WIN32)
     target_compile_definitions(test_text_gui_training_launch PRIVATE
         _CRT_SECURE_NO_WARNINGS
         NOMINMAX
-        CYXWIZ_PLOTTING_MODULE
     )
 endif()
 
