@@ -109,7 +109,16 @@ TEST_CASE("Fused attention memory and speed vs ArrayFire", "[.][attention_benchm
     if (const char* oneapi = std::getenv("CYXWIZ_ONEAPI_TEST_DEVICE"); oneapi && *oneapi) {
         routes.push_back({AF_BACKEND_ONEAPI, std::atoi(oneapi), {256, 512, 1024, 2048}});
     }
+    // CYXWIZ_ATTENTION_BENCH_BACKEND=cuda|opencl|oneapi restricts the routes.
+    const char* only = std::getenv("CYXWIZ_ATTENTION_BENCH_BACKEND");
     for (const auto& route : routes) {
+        if (only && *only) {
+            const std::string want(only);
+            const bool match = (want == "cuda" && route.backend == AF_BACKEND_CUDA) ||
+                               (want == "opencl" && route.backend == AF_BACKEND_OPENCL) ||
+                               (want == "oneapi" && route.backend == AF_BACKEND_ONEAPI);
+            if (!match) continue;
+        }
         try {
             af::setBackend(route.backend);
             if (route.device >= af::getDeviceCount()) continue;
@@ -124,15 +133,21 @@ TEST_CASE("Fused attention memory and speed vs ArrayFire", "[.][attention_benchm
                     route.device, name);
         std::printf("%-8s | %-28s | %-28s\n", "context", "fused: ms / held MB", "ArrayFire: ms / held MB");
         for (const size_t seq : route.contexts) {
-            const Measurement fused = Run(seq, true);
-            const Measurement plain = Run(seq, false);
             auto cell = [](const Measurement& m) {
                 char text[64];
                 if (m.ok) std::snprintf(text, sizeof(text), "%9.1f / %8.1f", m.milliseconds, m.held_mb);
                 else std::snprintf(text, sizeof(text), "failed (%.18s)", m.error.c_str());
                 return std::string(text);
             };
-            std::printf("%-8zu | %-28s | %-28s\n", seq, cell(fused).c_str(), cell(plain).c_str());
+            // Each cell is printed as soon as it is measured (a crash in one
+            // path keeps the other's number).
+            std::printf("%-8zu | ", seq);
+            std::fflush(stdout);
+            const Measurement fused = Run(seq, true);
+            std::printf("%-28s | ", cell(fused).c_str());
+            std::fflush(stdout);
+            const Measurement plain = Run(seq, false);
+            std::printf("%-28s\n", cell(plain).c_str());
             std::fflush(stdout);
         }
     }
@@ -141,16 +156,33 @@ TEST_CASE("Fused attention memory and speed vs ArrayFire", "[.][attention_benchm
 
 // Kernel-level timing for tuning: fused forward and backward separately
 // (median of 5), CUDA, batch 4, 8 heads, causal.
+// CYXWIZ_ATTENTION_TUNING_BACKEND=oneapi times the (host-staged) oneAPI tenant
+// on CYXWIZ_ONEAPI_TEST_DEVICE instead of CUDA; the staging copies are part
+// of the measured time, as they are in training.
 TEST_CASE("Fused attention kernel timing", "[.][attention_tuning]") {
+    const char* backend_name = std::getenv("CYXWIZ_ATTENTION_TUNING_BACKEND");
+    const bool oneapi = backend_name && std::string(backend_name) == "oneapi";
     try {
-        af::setBackend(AF_BACKEND_CUDA);
+        if (oneapi) {
+            const char* device = std::getenv("CYXWIZ_ONEAPI_TEST_DEVICE");
+            if (!device || !*device) {
+                WARN("CYXWIZ_ONEAPI_TEST_DEVICE is not set");
+                return;
+            }
+            af::setBackend(AF_BACKEND_ONEAPI);
+            af::setDevice(std::atoi(device));
+        } else {
+            af::setBackend(AF_BACKEND_CUDA);
+        }
     } catch (...) {
-        WARN("ArrayFire CUDA backend not available");
+        WARN("ArrayFire backend not available");
         return;
     }
-    std::printf("\n%-10s %-8s | %-12s %-12s\n", "head_dim", "context", "forward ms", "backward ms");
+    std::printf("\n%s\n%-10s %-8s | %-12s %-12s\n", oneapi ? "oneAPI tenant (host-staged)" : "CUDA tenant",
+                "head_dim", "context", "forward ms", "backward ms");
+    const std::vector<size_t> contexts = oneapi ? std::vector<size_t>{256, 1024, 2048} : std::vector<size_t>{1024, 4096};
     for (const int head_dim : {32, 64}) {
-        for (const size_t seq : {1024u, 4096u}) {
+        for (const size_t seq : contexts) {
             cyxwiz::NeuralOpRequest request;
             request.op = cyxwiz::NeuralOp::AttentionForward;
             request.target = cyxwiz::CaptureCurrentNeuralDeviceTarget();
