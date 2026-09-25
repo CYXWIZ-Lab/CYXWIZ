@@ -396,9 +396,28 @@ int RunInstaller(const std::vector<std::string> &arguments,
   if (!visual_warning.empty())
     operation_message = visual_warning;
 
+  // Verify All runs in the Engine; pick its results up while this window is
+  // open instead of only at startup or after an installer operation.
+  const auto verification_evidence =
+      cyxwiz::installer::RouteQualificationEvidencePath();
+  auto evidence_stamp =
+      cyxwiz::installer::ReadEvidenceStamp(verification_evidence);
+  auto next_evidence_check = std::chrono::steady_clock::now();
+
   while (!glfwWindowShouldClose(window)) {
     cyxwiz::installer::gui::WaitForInstallerFrame(
         window, operation_running);
+    if (!operation_running &&
+        std::chrono::steady_clock::now() >= next_evidence_check) {
+      next_evidence_check =
+          std::chrono::steady_clock::now() + std::chrono::seconds(2);
+      const auto stamp =
+          cyxwiz::installer::ReadEvidenceStamp(verification_evidence);
+      if (stamp != evidence_stamp) {
+        evidence_stamp = stamp;
+        catalog = platform->Refresh();
+      }
+    }
     if (operation_running && glfwWindowShouldClose(window)) {
       glfwSetWindowShouldClose(window, GLFW_FALSE);
       view_state.close_confirmation_requested = true;

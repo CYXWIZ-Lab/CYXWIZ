@@ -909,6 +909,23 @@ std::filesystem::path DefaultCyxWizInstallRoot(
 #endif
 }
 
+std::filesystem::path RouteQualificationEvidencePath() {
+    return GetRouteQualificationCachePath();
+}
+
+EvidenceStamp ReadEvidenceStamp(const std::filesystem::path &path) {
+    EvidenceStamp stamp;
+    std::error_code error;
+    const auto write_time = std::filesystem::last_write_time(path, error);
+    if (error) return stamp;
+    const auto size = std::filesystem::file_size(path, error);
+    if (error) return stamp;
+    stamp.write_time = write_time;
+    stamp.size = size;
+    stamp.present = true;
+    return stamp;
+}
+
 bool IsClaimableCyxWizInstallRoot(const std::filesystem::path &install_root,
                                   std::string &error) {
     std::error_code status_error;

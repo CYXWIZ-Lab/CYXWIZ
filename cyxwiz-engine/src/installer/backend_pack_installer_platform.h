@@ -5,6 +5,7 @@
 #include "installer_cuda_prerequisite.h"
 #include "installer_progress_channel.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -88,5 +89,18 @@ std::filesystem::path DefaultCyxWizInstallRoot(
 // claim a missing or empty folder, or one that is already a CyxWiz install.
 bool IsClaimableCyxWizInstallRoot(const std::filesystem::path &install_root,
                                   std::string &error);
+
+// The Engine's route-verification results, which Refresh() reads.
+std::filesystem::path RouteQualificationEvidencePath();
+
+// Cheap change detector for that file: write time and size, or empty when the
+// file is absent.
+struct EvidenceStamp {
+    std::filesystem::file_time_type write_time{};
+    std::uintmax_t size = 0;
+    bool present = false;
+    bool operator==(const EvidenceStamp &) const = default;
+};
+EvidenceStamp ReadEvidenceStamp(const std::filesystem::path &path);
 
 }  // namespace cyxwiz::installer

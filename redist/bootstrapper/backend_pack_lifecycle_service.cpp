@@ -488,6 +488,34 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
         }
         source = resolved_source.get();
     }
+    // Check the whole delivery before transferring anything: the archive and
+    // its extracted components share this volume, and finding the shortfall
+    // only after a multi-GiB transfer wastes the user's time and bandwidth.
+    {
+        std::uint64_t extracted_bytes = 0;
+        for (const auto& component : manifest.components) {
+            extracted_bytes += component.size;
+        }
+        std::error_code space_error;
+        const bool cached = std::filesystem::is_regular_file(artifact, space_error);
+        const std::uint64_t required =
+            extracted_bytes + (cached ? 0 : manifest.archive.size);
+        auto probe = runtime_root_;
+        while (!probe.empty() && !std::filesystem::exists(probe, space_error)) {
+            probe = probe.parent_path();
+        }
+        space_error.clear();
+        const auto disk = std::filesystem::space(probe, space_error);
+        if (!space_error && disk.available < required) {
+            return Finish(
+                BackendPackLifecycleStatus::AcquisitionFailure,
+                "Insufficient free space: " + manifest.pack_id + " needs " +
+                    std::to_string((required + (1ULL << 20) - 1) >> 20) +
+                    " MiB on the installation drive, " +
+                    std::to_string(disk.available >> 20) + " MiB available",
+                manifest.pack_id, manifest.backend);
+        }
+    }
     const auto acquired = acquirer_.Acquire(
         *source, artifact, manifest.archive.size, manifest.archive.sha256,
         request.acquisition_disk_budget_bytes, request.acquisition_retry);
