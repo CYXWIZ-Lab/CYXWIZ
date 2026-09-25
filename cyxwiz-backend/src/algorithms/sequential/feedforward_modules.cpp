@@ -689,7 +689,12 @@ LearnedPositionalEmbeddingModule::LearnedPositionalEmbeddingModule(size_t d_mode
         weight_ = Tensor::FromSemanticArray(w, shape);
         grad_weight_ = Tensor::Zeros(shape);
         return;
-    } catch (const af::exception&) {
+    } catch (const af::exception& e) {
+        ThrowIfArrayFireNativeCpuFallbackForbidden(
+            "LearnedPositionalEmbeddingModule::LearnedPositionalEmbeddingModule",
+            ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
+            BuildArrayFireBackendFallbackContext("max_sequence_length=" + std::to_string(max_sequence_length_) +
+                                                 "; d_model=" + std::to_string(d_model_)));
     }
 #endif
     std::mt19937 gen(std::random_device{}());

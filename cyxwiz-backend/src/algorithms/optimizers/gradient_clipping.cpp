@@ -1,5 +1,6 @@
 #include "cyxwiz/optimizers/gradient_clipping.h"
 #include "../arrayfire_backend_utils.h"
+#include "../arrayfire_host_materialization.h"
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -24,11 +25,8 @@ float ClipGradientsByGlobalNorm(std::map<std::string, Tensor>& gradients, float 
             total = total + af::sum(g * g);
         }
         float host = 0.0f;
-        {
-            const ScopedArrayFireHostSyncAttribution attribution(
-                ArrayFireHostSyncCategory::OutputMaterialization, "ClipGradientsByGlobalNorm::Norm");
-            total.host(&host);
-        }
+        MaterializeArrayFireToHost(total, &host, ArrayFireHostSyncCategory::OutputMaterialization,
+                                   "ClipGradientsByGlobalNorm::Norm", "scalar", "gradient_norm_readback");
         squared = host;
     } catch (const af::exception& e) {
         ThrowIfArrayFireNativeCpuFallbackForbidden(
