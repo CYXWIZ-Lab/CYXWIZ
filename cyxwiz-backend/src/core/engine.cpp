@@ -41,6 +41,9 @@ const char* ArrayFireErrorName(af_err error) {
 }
 
 void LogActiveDevice(const char* backend_name, DeviceType type, int device_id) {
+    // Only successful startup activations reach here: this is the process
+    // device until the owner selects another one.
+    Device::RecordProcessDevice(type, device_id);
     const DeviceInfo info = Device(type, device_id).GetInfo();
     spdlog::info(
         "{} backend active - Device {}: {} (metadata={})",
@@ -144,6 +147,7 @@ bool TryActivateCpuBackend() {
     try {
         af::setBackend(AF_BACKEND_CPU);
         af::setDevice(0);
+        Device::RecordProcessDevice(DeviceType::CPU, 0);
         spdlog::info("ArrayFire CPU backend active");
         return true;
     } catch (af::exception& error) {

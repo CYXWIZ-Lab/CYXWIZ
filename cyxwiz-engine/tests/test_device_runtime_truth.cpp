@@ -4,6 +4,7 @@
 #include <exception>
 #include <iostream>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -56,6 +57,24 @@ int main() {
         cyxwiz::Device equivalent_cpu(cyxwiz::DeviceType::CPU, 0);
         Check(equivalent_cpu.IsActive(),
               "IsActive should compare backend/device identity, not object address");
+
+        // The process device is visible from a worker thread even though
+        // ArrayFire's active backend is thread-local there (the training
+        // executor resolves its route on such a thread).
+        const auto process_device = cyxwiz::Device::GetProcessDevice();
+        Check(process_device.has_value() &&
+                  process_device->type == cyxwiz::DeviceType::CPU &&
+                  process_device->device_id == 0,
+              "SetActive must record the process device");
+        bool worker_sees_process_device = false;
+        std::thread worker([&] {
+            const auto seen = cyxwiz::Device::GetProcessDevice();
+            worker_sees_process_device = seen.has_value() &&
+                seen->type == cyxwiz::DeviceType::CPU && seen->device_id == 0;
+        });
+        worker.join();
+        Check(worker_sees_process_device,
+              "a worker thread must see the process device selected on the main thread");
 
         if (initialized_here) {
             cyxwiz::Shutdown();

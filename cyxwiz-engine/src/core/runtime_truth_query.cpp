@@ -559,7 +559,18 @@ public:
             truth.active_preflight_stage = training.preflight_stage;
         } else {
             try {
-                if (auto* process = Device::GetCurrentDevice()) {
+                // The process-wide selection first: the thread-local runtime
+                // device is ArrayFire's default on any thread that never
+                // selected one.
+                if (const auto selected = Device::GetProcessDevice()) {
+                    truth.active_available = true;
+                    truth.active_source = "process_runtime";
+                    truth.active_backend =
+                        ExecutionDeviceSelectionBackendName(selected->type);
+                    truth.active_device_id = selected->device_id;
+                    truth.active_device_name =
+                        Device(selected->type, selected->device_id).GetInfo().name;
+                } else if (auto* process = Device::GetCurrentDevice()) {
                     truth.active_available = true;
                     truth.active_source = "process_runtime";
                     truth.active_backend =

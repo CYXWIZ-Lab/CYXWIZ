@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <optional>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -127,6 +128,17 @@ CYXWIZ_API DeviceRouteResolution ResolvePhysicalDeviceRoute(
     const std::string& physical_fingerprint);
 CYXWIZ_API bool IsUncertifiedOneAPITrainingEnabled();
 
+// The device the process selected on its controlling thread: startup
+// activation, an explicit SetActive(), or a committed Devices-tab selection.
+// ArrayFire's active backend is thread-local, so a freshly created worker
+// thread sees ArrayFire's default backend (CUDA, else oneAPI, else ...), not
+// the selected one; anything deriving "the process device" on another thread
+// must read this record instead of Device::GetCurrentDevice().
+struct ProcessDeviceSelection {
+    DeviceType type = DeviceType::CPU;
+    int device_id = 0;
+};
+
 class CYXWIZ_API Device {
 public:
     Device(DeviceType type, int device_id = 0);
@@ -141,7 +153,13 @@ public:
     bool IsActive() const;
 
     static std::vector<DeviceInfo> GetAvailableDevices();
+    // Thread-local runtime truth (ArrayFire's active backend on the calling
+    // thread). See ProcessDeviceSelection for cross-thread use.
     static Device* GetCurrentDevice();
+    // Process-wide selected device, recorded by successful activations on
+    // the controlling thread; empty until the process selected one.
+    static std::optional<ProcessDeviceSelection> GetProcessDevice();
+    static void RecordProcessDevice(DeviceType type, int device_id);
 
 private:
     DeviceType type_;

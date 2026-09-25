@@ -518,6 +518,7 @@ DeviceActivationResult Device::ActivateExact(bool validate_execution) const {
 void Device::SetActive() {
     const auto activation = ActivateExact(false);
     if (activation.success) {
+        RecordProcessDevice(type_, device_id_);
         spdlog::info("Switched to {} backend, device {}",
                      DeviceTypeDisplayName(type_), device_id_);
         return;
@@ -535,6 +536,7 @@ void Device::SetActive() {
     if (cpu_activation.success) {
         type_ = DeviceType::CPU;
         device_id_ = 0;
+        RecordProcessDevice(type_, device_id_);
     } else {
         spdlog::error(
             "ArrayFire CPU activation failed: stage={} error={} ({})",
@@ -582,6 +584,27 @@ std::vector<DeviceInfo> Device::GetAvailableDevices() {
 
     spdlog::info("Total devices found: {}", devices.size());
     return devices;
+}
+
+namespace {
+std::mutex& ProcessDeviceMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+std::optional<ProcessDeviceSelection>& ProcessDeviceSlot() {
+    static std::optional<ProcessDeviceSelection> slot;
+    return slot;
+}
+}  // namespace
+
+std::optional<ProcessDeviceSelection> Device::GetProcessDevice() {
+    std::lock_guard<std::mutex> lock(ProcessDeviceMutex());
+    return ProcessDeviceSlot();
+}
+
+void Device::RecordProcessDevice(DeviceType type, int device_id) {
+    std::lock_guard<std::mutex> lock(ProcessDeviceMutex());
+    ProcessDeviceSlot() = ProcessDeviceSelection{type, device_id};
 }
 
 Device* Device::GetCurrentDevice() {

@@ -130,6 +130,7 @@ inline void CommitExecutionDeviceSelectionState(
     std::lock_guard<std::mutex> lock(PendingExecutionDeviceSelectionMutex());
     SavedExecutionDeviceSelectionSlot() = selection;
     PendingExecutionDeviceSelectionSlot() = selection;
+    Device::RecordProcessDevice(selection.type, selection.device_id);
 }
 
 inline std::optional<PendingExecutionDeviceSelection>
@@ -385,9 +386,13 @@ inline DeviceActivationResult MakeRouteQualificationFailure(
 }
 
 // The route a training run will request: the pending selection, else the
-// saved selection, else the current process device. Returns false when no
-// process device exists. Shared by the run preflight and the Compile preview so
-// both judge the same route.
+// saved selection, else the device the process selected (startup activation
+// or SetActive, recorded process-wide), else the calling thread's ArrayFire
+// device. Returns false when none exists. Shared by the run preflight and the
+// Compile preview so both judge the same route. The process record matters
+// because the preflight runs on the training worker thread, where
+// Device::GetCurrentDevice() reports ArrayFire's thread default (e.g. oneAPI
+// on a machine without CUDA) rather than the selected route.
 inline bool ResolveRequestedExecutionRoute(
     const std::vector<DeviceInfo>& inventory,
     DeviceType& requested_type,
@@ -427,6 +432,9 @@ inline bool ResolveRequestedExecutionRoute(
                     "Saved physical device identity could not be resolved uniquely";
             }
         }
+    } else if (const auto process = Device::GetProcessDevice()) {
+        requested_type = process->type;
+        requested_device_id = process->device_id;
     } else if (const auto* current = Device::GetCurrentDevice()) {
         requested_type = current->GetType();
         requested_device_id = current->GetDeviceId();

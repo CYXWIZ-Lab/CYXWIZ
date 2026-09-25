@@ -30,6 +30,7 @@ add_executable(cyxwiz-tests
     unit/test_nvidia_provider_rnn_parity.cpp
     unit/test_opencl_provider_parity.cpp
     unit/test_neural_device_resident.cpp
+    unit/test_device_process_selection.cpp
     unit/test_fused_attention_benchmark.cpp
     unit/test_rnn_layer.cpp
     unit/test_arrayfire_host_materialization.cpp
