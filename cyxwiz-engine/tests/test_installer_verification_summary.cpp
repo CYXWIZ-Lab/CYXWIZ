@@ -41,7 +41,8 @@ void TestBestMeasuredAndProductionSafeFailureText() {
     snapshot.routes.push_back(PassedRoute(
         cyxwiz::DeviceType::CPU, 0, "base-v1", "System CPU", 4.0));
     snapshot.routes.push_back(PassedRoute(
-        cyxwiz::DeviceType::CUDA, 0, "cuda-v1", "Discrete GPU", 2.0));
+        cyxwiz::DeviceType::CUDA, 0, "cuda-v1",
+        "NVIDIA_GeForce_GTX_1050_Ti", 0.4712345));
 
     cyxwiz::RouteQualificationRecord failed;
     failed.type = cyxwiz::DeviceType::ONEAPI;
@@ -75,6 +76,10 @@ void TestBestMeasuredAndProductionSafeFailureText() {
           "two active verified routes should be comparable");
     Check(summary.routes[1].best_measured,
           "lowest comparable median should be the best measured route");
+    Check(summary.performance_message.find(
+              "CUDA - NVIDIA GeForce GTX 1050 Ti (device 0) at 0.47 ms median") !=
+              std::string::npos,
+          "best measured text should use the readable name and rounded ms");
     Check(summary.routes[2].status ==
               cyxwiz::InstallerRouteVerificationStatus::TimedOut,
           "timeout should have a typed user-facing status");

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <sstream>
 
 namespace cyxwiz {
@@ -105,10 +106,27 @@ std::string ActionFor(InstallerRouteVerificationStatus status) {
     return "Run Verify All again.";
 }
 
+// Same wording as the Engine device cards (compute_device_presentation.cpp):
+// ArrayFire names like "NVIDIA_GeForce_GTX_1050_Ti" read with spaces.
+std::string CleanName(std::string name) {
+    std::replace(name.begin(), name.end(), '_', ' ');
+    const auto first = name.find_first_not_of(' ');
+    if (first == std::string::npos) return {};
+    const auto last = name.find_last_not_of(' ');
+    return name.substr(first, last - first + 1);
+}
+
+std::string FormatMs(double ms) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), ms < 1.0 ? "%.2f ms" : "%.1f ms", ms);
+    return buffer;
+}
+
 std::string RouteLabel(const InstallerRouteVerificationResult& route) {
     std::ostringstream label;
     label << route.backend;
-    if (!route.display_name.empty()) label << " - " << route.display_name;
+    const std::string name = CleanName(route.display_name);
+    if (!name.empty()) label << " - " << name;
     label << " (device " << route.device_id << ')';
     return label.str();
 }
@@ -191,8 +209,8 @@ InstallerVerificationSummary BuildInstallerVerificationSummary(
         fastest->best_measured = true;
         std::ostringstream message;
         message << "Best measured configuration: " << RouteLabel(*fastest)
-                << " at " << fastest->benchmark_median_iteration_ms
-                << " ms median per benchmark iteration (compared across "
+                << " at " << FormatMs(fastest->benchmark_median_iteration_ms)
+                << " median per benchmark iteration (compared across "
                 << summary.comparable_benchmark_count
                 << " active verified routes).";
         summary.performance_message = message.str();
