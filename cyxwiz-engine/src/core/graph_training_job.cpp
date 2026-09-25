@@ -243,6 +243,7 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
             }
         });
     }
+    if (callbacks.on_start) callbacks.on_start(epochs, batch_size);
     try {
         executor->Train(epochs, batch_size, callbacks.on_batch, callbacks.on_epoch);
     } catch (const std::exception& e) {

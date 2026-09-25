@@ -33,6 +33,8 @@
 #include "terminal_handler.h"
 #include "node_client.h"
 #include "job_executor.h"
+#include "core/compute_runtime_paths.h"
+#include "core/route_qualification_snapshot.h"
 #include "node_service.h"
 #include "job_execution_service.h"
 #include "core/backend_manager.h"
@@ -367,6 +369,20 @@ int main(int argc, char** argv) {
         // Load config if specified
         if (!daemon_config.config_path.empty() && backend_config_mgr) {
             backend_config_mgr->Load(daemon_config.config_path);
+        }
+
+        // Route qualification evidence for this machine (the file the Engine
+        // and installer verify into): training jobs run only on qualified routes.
+        {
+            const auto qualification = cyxwiz::LoadAndInstallRouteQualificationSnapshot(
+                cyxwiz::GetRouteQualificationCachePath());
+            if (qualification.loaded) {
+                spdlog::info("Route qualification: {} route(s) from matrix {}", qualification.route_count,
+                             qualification.matrix_id);
+            } else {
+                spdlog::warn("Route qualification: {} - training jobs will be refused until routes are "
+                             "verified on this machine", qualification.message);
+            }
         }
 
         // Get current device for job execution

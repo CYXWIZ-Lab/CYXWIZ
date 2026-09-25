@@ -80,6 +80,7 @@ void DevicePool::Refresh() {
         state.name = info.name;
         state.total_memory = info.memory_total;
         state.available_memory = info.memory_available;
+        state.available_memory_known = info.memory_available_known;
         state.used_memory = info.memory_total - info.memory_available;
         state.utilization = 0.0f;
         state.in_use = false;
@@ -279,6 +280,7 @@ void DevicePool::UpdateDeviceMetrics(int device_id) {
             if (dev.device_id == device_id) {
                 dev.used_memory = alloc_bytes;
                 dev.available_memory = dev.total_memory - alloc_bytes;
+                dev.available_memory_known = dev.total_memory > 0;
 
                 // Estimate utilization based on lock ratio
                 if (dev.total_memory > 0) {
@@ -410,6 +412,10 @@ int DevicePool::SelectFirstAvailable(size_t required_memory_mb) {
 }
 
 bool DevicePool::MeetsRequirements(const DeviceState& state, size_t required_memory_mb) const {
+    // Unknown free memory is not "no free memory": a device whose backend
+    // cannot report it would otherwise never take a job (queued forever).
+    if (!state.available_memory_known) return true;
+
     // Check minimum available memory config
     size_t min_available_bytes = config_.min_available_memory_mb * 1024 * 1024;
     if (state.available_memory < min_available_bytes) {

@@ -130,11 +130,6 @@ private:
     // Execute job in worker thread (synchronous)
     void ExecuteJob(const std::string& job_id);
 
-    // Dataset loading
-    bool LoadDataset(const std::string& dataset_uri,
-                    std::vector<cyxwiz::Tensor>& train_data,
-                    std::vector<cyxwiz::Tensor>& train_labels);
-
     // Model building from definition (returns SequentialModel for training)
     // input_size: If > 0, use this as the input size for the first layer
     std::unique_ptr<cyxwiz::SequentialModel> BuildModel(const std::string& model_definition, size_t input_size = 0);
@@ -147,30 +142,6 @@ private:
 
     // Progress reporting
     void ReportProgress(const std::string& job_id, JobState* state);
-
-    // Helper: Parse hyperparameters
-    std::unordered_map<std::string, double> ParseHyperparameters(
-        const google::protobuf::Map<std::string, std::string>& hyper_params);
-
-    // Helper: Create optimizer from hyperparameters
-    std::unique_ptr<cyxwiz::Optimizer> CreateOptimizer(
-        const std::unordered_map<std::string, double>& hyperparameters);
-
-    // Dataset loading helpers
-    bool LoadMockDataset(std::vector<cyxwiz::Tensor>& train_data,
-                        std::vector<cyxwiz::Tensor>& train_labels);
-
-    bool LoadMNISTDataset(const std::string& path,
-                         std::vector<cyxwiz::Tensor>& train_data,
-                         std::vector<cyxwiz::Tensor>& train_labels);
-
-    bool LoadCIFAR10Dataset(const std::string& path,
-                           std::vector<cyxwiz::Tensor>& train_data,
-                           std::vector<cyxwiz::Tensor>& train_labels);
-
-    bool LoadCSVDataset(const std::string& path,
-                       std::vector<cyxwiz::Tensor>& train_data,
-                       std::vector<cyxwiz::Tensor>& train_labels);
 
     // Process pending jobs when a device becomes available
     void ProcessPendingJobs();

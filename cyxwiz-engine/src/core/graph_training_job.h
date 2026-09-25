@@ -31,6 +31,8 @@ struct GraphTrainingJobRequest {
 };
 
 struct GraphTrainingJobCallbacks {
+    // Once the graph is compiled and prepared, before the first batch.
+    std::function<void(int epochs, int batch_size)> on_start;
     BatchCallback on_batch;
     EpochCallback on_epoch;
     // Polled between batches; true stops the run (reported as cancelled).

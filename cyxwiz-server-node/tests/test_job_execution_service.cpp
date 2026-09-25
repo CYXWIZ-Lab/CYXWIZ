@@ -7,6 +7,9 @@
 #include <jwt-cpp/traits/nlohmann-json/traits.h>
 
 #include "../src/job_execution_service.h"
+#include "../src/job_executor.h"
+#include "../../cyxwiz-engine/tests/causal_lm_token_window_fixture.h"
+#include "../../cyxwiz-engine/tests/route_qualification_test_fixture.h"
 #include "execution.grpc.pb.h"
 
 using namespace cyxwiz::server_node;
@@ -569,6 +572,112 @@ TEST_CASE("JobExecutionService - Multiple Concurrent Jobs", "[p2p][concurrent]")
     }
 
     REQUIRE(completed_jobs == num_jobs);
+}
+
+// ===== JobExecutor: local jobs train through the shared core (TOFIX118 P2) =====
+
+namespace {
+
+struct JobOutcome {
+    std::mutex mutex;
+    std::condition_variable done;
+    bool finished = false;
+    bool success = false;
+    std::string error;
+    int epochs_reported = 0;
+};
+
+// Runs one job on a fresh executor and waits for its completion callback.
+void RunLocalJob(const JobConfig& config, JobOutcome& outcome) {
+    cyxwiz::servernode::JobExecutor executor("test_node");
+    executor.SetProgressCallback([&outcome](const std::string&, double, const cyxwiz::servernode::TrainingMetrics&) {
+        std::lock_guard<std::mutex> lock(outcome.mutex);
+        ++outcome.epochs_reported;
+    });
+    executor.SetCompletionCallback([&outcome](const std::string&, bool success, const std::string& error) {
+        std::lock_guard<std::mutex> lock(outcome.mutex);
+        outcome.finished = true;
+        outcome.success = success;
+        outcome.error = error;
+        outcome.done.notify_all();
+    });
+    REQUIRE(executor.ExecuteJobAsync(config));
+    {
+        std::unique_lock<std::mutex> lock(outcome.mutex);
+        REQUIRE(outcome.done.wait_for(lock, std::chrono::minutes(3), [&outcome] { return outcome.finished; }));
+    }
+    // The worker drops its job state after the callback; wait for that before
+    // the executor goes away.
+    for (int i = 0; i < 500 && executor.GetActiveJobCount() > 0; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    REQUIRE(executor.GetActiveJobCount() == 0);
+}
+
+}  // namespace
+
+TEST_CASE("JobExecutor - trains a graph job through the shared core", "[job_executor][training]") {
+    namespace fs = std::filesystem;
+    const fs::path root = CYXWIZ_SOURCE_ROOT;
+    const fs::path work = fs::temp_directory_path() / "cyxwiz_node_job_executor_test";
+    std::error_code ec;
+    fs::remove_all(work, ec);
+    fs::create_directories(work);
+    const fs::path parquet = work / "tokens.parquet";
+    REQUIRE(cyxwiz::test::WriteTokenWindows(root, parquet, 0, 8));
+    cyxwiz::test::InstallQualifiedRouteSnapshot();
+
+    JobConfig config;
+    config.set_job_id("node_graph_job");
+    config.set_job_type(JOB_TYPE_TRAINING);
+    auto graph = cyxwiz::test::LoadTokenWindowGraph(root);
+    for (auto& node : graph["nodes"]) {
+        if (node.value("type", -1) == static_cast<int>(gui::NodeType::DataLoader)) {
+            node["parameters"]["checkpoint_dir"] = (work / "checkpoints").string();
+        }
+    }
+    config.set_model_definition(graph.dump());
+    config.set_dataset_uri("file://" + parquet.generic_string());
+    config.set_epochs(2);
+
+    JobOutcome outcome;
+    RunLocalJob(config, outcome);
+    INFO(outcome.error);
+    CHECK(outcome.success);
+    CHECK(outcome.epochs_reported == 2);
+    fs::remove_all(work, ec);
+}
+
+TEST_CASE("JobExecutor - refuses jobs the shared core cannot train", "[job_executor][refusal]") {
+    const std::string graph =
+        cyxwiz::test::LoadTokenWindowGraph(std::filesystem::path(CYXWIZ_SOURCE_ROOT)).dump();
+    struct Case {
+        const char* name;
+        std::string model_definition;
+        std::string dataset_uri;
+        const char* reason;
+    };
+    const std::vector<Case> cases = {
+        {"no graph", "", "", "no model definition"},
+        {"retired MNIST loader", graph, "file://mnist/./data/mnist", "retired loader"},
+        {"mock data", graph, "mock://random", "mock datasets are not trained"},
+        {"unknown scheme", graph, "ipfs://QmTest123", "unsupported dataset_uri scheme"},
+    };
+    for (const auto& c : cases) {
+        SECTION(c.name) {
+            JobConfig config;
+            config.set_job_id(std::string("refused_") + c.name);
+            config.set_job_type(JOB_TYPE_TRAINING);
+            config.set_model_definition(c.model_definition);
+            config.set_dataset_uri(c.dataset_uri);
+            JobOutcome outcome;
+            RunLocalJob(config, outcome);
+            INFO(outcome.error);
+            CHECK_FALSE(outcome.success);
+            CHECK(outcome.error.find(c.reason) != std::string::npos);
+            CHECK(outcome.epochs_reported == 0);
+        }
+    }
 }
 
 // Main function to run tests

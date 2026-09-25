@@ -75,18 +75,9 @@ set(CYXWIZ_HAS_OPENCV ON)
 # ImNodes for visual node editor - integrated manually
 # Source: https://github.com/Nelarius/imnodes
 
-# Plugin training hooks: GUI-free, shared by the plugin SDK and the training
-# core (TOFIX118 P2), linked once into any executable that has both.
-add_library(cyxwiz-training-hooks STATIC
-    src/plugin/registries/plugin_training_hook_manager.cpp
-    src/plugin/registries/plugin_node_registry.cpp
-)
-target_include_directories(cyxwiz-training-hooks PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(cyxwiz-training-hooks PUBLIC spdlog::spdlog)
-set_target_properties(cyxwiz-training-hooks PROPERTIES CXX_STANDARD 20 POSITION_INDEPENDENT_CODE ON)
-if(WIN32)
-    target_compile_definitions(cyxwiz-training-hooks PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
-endif()
+# Plugin training hooks and the training core (TOFIX118 P2): shared with the
+# Server Node, defined in cmake/CyxWizTrainingCore.cmake.
+include(${CMAKE_SOURCE_DIR}/cmake/CyxWizTrainingCore.cmake)
 
 # Plugin SDK static library (shared between engine and plugins)
 add_library(cyxwiz-plugin-sdk STATIC
@@ -4344,78 +4335,8 @@ set_target_properties(test_console_session_model PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-# ===== TrainingExecutor test and benchmark runtime =====
-set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
-    src/core/training_executor.cpp
-    src/core/training_generation_preview.cpp
-    src/core/language_model_generation.cpp
-    src/core/training_scheduler_controller.cpp
-    src/core/regression_target_transform.cpp
-    src/core/preprocessing_state.cpp
-    src/core/training_batcher_setup.cpp
-    src/core/sparse_training_batcher_setup.cpp
-    src/core/sparse_feature_dataset.cpp
-    src/core/sparse_feature_dataset_batcher.cpp
-    src/core/sparse_feature_dataset_batcher_balancing.cpp
-    src/core/classification_decision.cpp
-    src/core/arrow_dataset.cpp
-    src/core/arrow_dataset_batcher.cpp
-    src/core/model_builder.cpp
-    src/core/spatial_batch_layout.cpp
-    src/core/executable_model.cpp
-    src/core/graph_executable_model.cpp
-    src/core/parquet_backed_dataset.cpp
-    src/core/parquet_arrow_batcher.cpp
-    src/core/dataset_base.cpp
-    src/core/checkpoint_manager.cpp
-    src/core/crash_run_recorder.cpp
-    src/core/training_trace_collector.cpp
-    src/core/route_qualification_snapshot.cpp
-    src/core/runtime_log_store.cpp
-)
-
-# ===== cyxwiz-training-core (TOFIX118 P2) =====
-# The GUI-free compile-and-train path shared by every host: graph compiler,
-# model builder, training/test executors, Arrow/Parquet/sequence/sparse
-# batchers, checkpoints, trace and route qualification. The Engine, the
-# harness tests and (next) the Server Node link it; hosts adapt their own
-# datasets to IBatchers and install dataset hooks (graph_compiler_dataset_hooks.h).
-add_library(cyxwiz-training-core STATIC
-    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
-    src/core/graph_compiler.cpp
-    src/core/graph_compiler_dataset_hooks.cpp
-    src/core/graph_node_factory.cpp
-    src/core/graph_document.cpp
-    src/core/graph_training_prep.cpp
-    src/core/graph_training_job.cpp
-    src/core/compiled_graph_plan.cpp
-    src/core/graph_topology_utils.cpp
-    src/core/node_metadata_registry.cpp
-    src/core/pipeline_runtime_capabilities.cpp
-    src/core/sequence_arrow_batcher.cpp
-)
-target_include_directories(cyxwiz-training-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(cyxwiz-training-core PUBLIC
-    Arrow::arrow_shared
-    Parquet::parquet_shared
-    spdlog::spdlog
-    fmt::fmt
-    nlohmann_json::nlohmann_json
-    cyxwiz-backend
-    cyxwiz-training-hooks
-)
-set_target_properties(cyxwiz-training-core PROPERTIES CXX_STANDARD 20)
-if(WIN32)
-    target_compile_definitions(cyxwiz-training-core PUBLIC _CRT_SECURE_NO_WARNINGS NOMINMAX)
-endif()
-# node_metadata_registry lists data-convert formats by the same flags the
-# Engine uses (definitions only; the adapters stay in their own targets).
-if(TARGET OpenXLSX::OpenXLSX)
-    target_compile_definitions(cyxwiz-training-core PRIVATE CYXWIZ_HAS_XLSX)
-endif()
-if(HighFive_FOUND)
-    target_compile_definitions(cyxwiz-training-core PRIVATE CYXWIZ_HAS_HDF5)
-endif()
+# TrainingExecutor harness sources and cyxwiz-training-core come from
+# cmake/CyxWizTrainingCore.cmake (included above).
 target_link_libraries(cyxwiz-engine PRIVATE cyxwiz-training-core)
 
 

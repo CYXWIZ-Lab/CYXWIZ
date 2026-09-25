@@ -47,6 +47,11 @@ if(CYXWIZ_BUILD_TUI)
     message(STATUS "TUI mode enabled - FTXUI found")
 endif()
 
+# ========== Shared training core (TOFIX118 P2) ==========
+# Jobs train with the Engine's graph loader, compiler, preparation and
+# executor (cyxwiz-training-core); defined once for both hosts.
+include(${CMAKE_SOURCE_DIR}/cmake/CyxWizTrainingCore.cmake)
+
 # ========== Shared Core Sources (Used by both daemon and client) ==========
 set(SHARED_CORE_SOURCES
     src/core/backend_manager.cpp
@@ -166,6 +171,7 @@ if(CYXWIZ_BUILD_DAEMON)
     )
 
     target_link_libraries(cyxwiz-server-daemon PRIVATE
+        cyxwiz-training-core
         fmt::fmt
         spdlog::spdlog
         nlohmann_json::nlohmann_json
@@ -392,6 +398,7 @@ if(CYXWIZ_BUILD_TESTS)
     )
 
     target_link_libraries(test_job_execution_service PRIVATE
+        cyxwiz-training-core
         Catch2::Catch2
         Catch2::Catch2WithMain
         fmt::fmt
@@ -409,6 +416,7 @@ if(CYXWIZ_BUILD_TESTS)
 
     target_compile_definitions(test_job_execution_service PRIVATE
         CYXWIZ_P2P_TEST_SHORT_DISCONNECT_WAIT
+        CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
     )
 
     if(WIN32)
@@ -483,6 +491,7 @@ if(CYXWIZ_BUILD_TESTS)
     )
 
     target_link_libraries(standalone_p2p_server PRIVATE
+        cyxwiz-training-core
         cyxwiz-backend
         cyxwiz-protocol
         gRPC::grpc++

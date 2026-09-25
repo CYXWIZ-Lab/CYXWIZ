@@ -15,6 +15,9 @@
 #include <cyxwiz/layers/linear.h>
 #include <cyxwiz/loss.h>
 
+// Shared training core (after node_client.h: gRPC sets up winsock first)
+#include "core/graph_training_job.h"
+
 namespace cyxwiz {
 namespace servernode {
 
@@ -521,355 +524,6 @@ void JobExecutor::ExecuteJob(const std::string& job_id) {
     }
 }
 
-bool JobExecutor::LoadDataset(
-    const std::string& dataset_uri,
-    std::vector<cyxwiz::Tensor>& train_data,
-    std::vector<cyxwiz::Tensor>& train_labels)
-{
-    spdlog::info("Loading dataset from: {}", dataset_uri);
-
-    // Parse URI format: protocol://type/path
-    // Examples:
-    //   file://mnist/./data/mnist
-    //   file://cifar10/./data/cifar10
-    //   file://csv/./data/train.csv
-    //   mock://random
-
-    if (dataset_uri.find("mock://") == 0) {
-        return LoadMockDataset(train_data, train_labels);
-    }
-
-    if (dataset_uri.find("file://") == 0) {
-        std::string remainder = dataset_uri.substr(7); // Remove "file://"
-
-        // Find first slash to separate type from path
-        size_t slash_pos = remainder.find('/');
-        if (slash_pos == std::string::npos) {
-            spdlog::error("Invalid file URI format: {}", dataset_uri);
-            return false;
-        }
-
-        std::string dataset_type = remainder.substr(0, slash_pos);
-        std::string path = remainder.substr(slash_pos + 1);
-
-        spdlog::info("Dataset type: {}, path: {}", dataset_type, path);
-
-        if (dataset_type == "mnist") {
-            return LoadMNISTDataset(path, train_data, train_labels);
-        } else if (dataset_type == "cifar10") {
-            return LoadCIFAR10Dataset(path, train_data, train_labels);
-        } else if (dataset_type == "csv") {
-            return LoadCSVDataset(path, train_data, train_labels);
-        } else {
-            spdlog::error("Unknown dataset type: {}", dataset_type);
-            return false;
-        }
-    }
-
-    spdlog::error("Unsupported dataset URI scheme: {}", dataset_uri);
-    return false;
-}
-
-bool JobExecutor::LoadMockDataset(
-    std::vector<cyxwiz::Tensor>& train_data,
-    std::vector<cyxwiz::Tensor>& train_labels)
-{
-    spdlog::info("Generating mock dataset...");
-
-    // Generate random data for testing
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-    std::uniform_int_distribution<int> label_dis(0, 9);
-
-    int num_samples = 1000;
-    int input_dim = 784;  // 28x28 for MNIST-like
-    int num_classes = 10;
-
-    for (int i = 0; i < num_samples; ++i) {
-        // Create input tensor
-        std::vector<float> data(input_dim);
-        for (int j = 0; j < input_dim; ++j) {
-            data[j] = dis(gen);
-        }
-
-        std::vector<size_t> data_shape = {1, static_cast<size_t>(input_dim)};
-        cyxwiz::Tensor tensor(data_shape, data.data(), cyxwiz::DataType::Float32);
-        train_data.push_back(std::move(tensor));
-
-        // Create one-hot label tensor
-        std::vector<float> label(num_classes, 0.0f);
-        label[label_dis(gen)] = 1.0f;
-
-        std::vector<size_t> label_shape = {1, static_cast<size_t>(num_classes)};
-        cyxwiz::Tensor label_tensor(label_shape, label.data(), cyxwiz::DataType::Float32);
-        train_labels.push_back(std::move(label_tensor));
-    }
-
-    spdlog::info("Generated {} mock training samples ({} features, {} classes)",
-                 num_samples, input_dim, num_classes);
-    return true;
-}
-
-bool JobExecutor::LoadMNISTDataset(
-    const std::string& path,
-    std::vector<cyxwiz::Tensor>& train_data,
-    std::vector<cyxwiz::Tensor>& train_labels)
-{
-    spdlog::info("Loading MNIST dataset from: {}", path);
-
-    // MNIST binary format:
-    // train-images-idx3-ubyte: magic (4 bytes), num_images (4), rows (4), cols (4), then pixels
-    // train-labels-idx1-ubyte: magic (4 bytes), num_labels (4), then labels
-
-    std::string images_file = path + "/train-images-idx3-ubyte";
-    std::string labels_file = path + "/train-labels-idx1-ubyte";
-
-    // Try alternate naming
-    if (!std::filesystem::exists(images_file)) {
-        images_file = path + "/train-images.idx3-ubyte";
-        labels_file = path + "/train-labels.idx1-ubyte";
-    }
-
-    std::ifstream images(images_file, std::ios::binary);
-    std::ifstream labels(labels_file, std::ios::binary);
-
-    if (!images.is_open() || !labels.is_open()) {
-        spdlog::error("Failed to open MNIST files in: {}", path);
-        spdlog::error("Tried: {}", images_file);
-        return false;
-    }
-
-    // Read image file header (big-endian)
-    auto read_int32_be = [](std::ifstream& file) -> int32_t {
-        unsigned char bytes[4];
-        file.read(reinterpret_cast<char*>(bytes), 4);
-        return (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
-    };
-
-    int32_t magic_images = read_int32_be(images);
-    int32_t num_images = read_int32_be(images);
-    int32_t num_rows = read_int32_be(images);
-    int32_t num_cols = read_int32_be(images);
-
-    int32_t magic_labels = read_int32_be(labels);
-    int32_t num_labels = read_int32_be(labels);
-
-    if (magic_images != 2051 || magic_labels != 2049) {
-        spdlog::error("Invalid MNIST file format (magic: {}, {})", magic_images, magic_labels);
-        return false;
-    }
-
-    if (num_images != num_labels) {
-        spdlog::error("MNIST image/label count mismatch: {} images vs {} labels", num_images, num_labels);
-        return false;
-    }
-
-    spdlog::info("MNIST: {} images, {}x{} pixels", num_images, num_rows, num_cols);
-
-    int image_size = num_rows * num_cols;
-    std::vector<uint8_t> image_buffer(image_size);
-    int num_classes = 10;
-
-    // Limit for testing (use all for production)
-    int max_samples = std::min(num_images, 60000);
-
-    for (int i = 0; i < max_samples; ++i) {
-        // Read image pixels
-        images.read(reinterpret_cast<char*>(image_buffer.data()), image_size);
-
-        // Convert to float and normalize
-        std::vector<float> image_float(image_size);
-        for (int j = 0; j < image_size; ++j) {
-            image_float[j] = static_cast<float>(image_buffer[j]) / 255.0f;
-        }
-
-        std::vector<size_t> data_shape = {1, static_cast<size_t>(image_size)};
-        cyxwiz::Tensor tensor(data_shape, image_float.data(), cyxwiz::DataType::Float32);
-        train_data.push_back(std::move(tensor));
-
-        // Read label and create one-hot encoding
-        uint8_t label;
-        labels.read(reinterpret_cast<char*>(&label), 1);
-
-        std::vector<float> label_onehot(num_classes, 0.0f);
-        if (label < num_classes) {
-            label_onehot[label] = 1.0f;
-        }
-
-        std::vector<size_t> label_shape = {1, static_cast<size_t>(num_classes)};
-        cyxwiz::Tensor label_tensor(label_shape, label_onehot.data(), cyxwiz::DataType::Float32);
-        train_labels.push_back(std::move(label_tensor));
-    }
-
-    spdlog::info("Loaded {} MNIST samples", train_data.size());
-    return true;
-}
-
-bool JobExecutor::LoadCIFAR10Dataset(
-    const std::string& path,
-    std::vector<cyxwiz::Tensor>& train_data,
-    std::vector<cyxwiz::Tensor>& train_labels)
-{
-    spdlog::info("Loading CIFAR-10 dataset from: {}", path);
-
-    // CIFAR-10 binary format:
-    // Each file has 10000 samples
-    // Each sample: 1 byte label + 3072 bytes image (32x32x3)
-
-    std::vector<std::string> batch_files = {
-        path + "/data_batch_1.bin",
-        path + "/data_batch_2.bin",
-        path + "/data_batch_3.bin",
-        path + "/data_batch_4.bin",
-        path + "/data_batch_5.bin"
-    };
-
-    const int image_size = 32 * 32 * 3;
-    int num_classes = 10;
-
-    for (const auto& batch_file : batch_files) {
-        std::ifstream file(batch_file, std::ios::binary);
-
-        if (!file.is_open()) {
-            spdlog::warn("Could not open CIFAR-10 batch: {}", batch_file);
-            continue;
-        }
-
-        spdlog::info("Reading batch: {}", batch_file);
-
-        for (int i = 0; i < 10000; ++i) {
-            // Read label
-            uint8_t label;
-            file.read(reinterpret_cast<char*>(&label), 1);
-            if (file.eof()) break;
-
-            // Read image
-            std::vector<uint8_t> image_buffer(image_size);
-            file.read(reinterpret_cast<char*>(image_buffer.data()), image_size);
-
-            if (file.gcount() != image_size) break;
-
-            // Convert to float and normalize
-            std::vector<float> image_float(image_size);
-            for (int j = 0; j < image_size; ++j) {
-                image_float[j] = static_cast<float>(image_buffer[j]) / 255.0f;
-            }
-
-            std::vector<size_t> data_shape = {1, static_cast<size_t>(image_size)};
-            cyxwiz::Tensor tensor(data_shape, image_float.data(), cyxwiz::DataType::Float32);
-            train_data.push_back(std::move(tensor));
-
-            // Create one-hot label
-            std::vector<float> label_onehot(num_classes, 0.0f);
-            if (label < num_classes) {
-                label_onehot[label] = 1.0f;
-            }
-
-            std::vector<size_t> label_shape = {1, static_cast<size_t>(num_classes)};
-            cyxwiz::Tensor label_tensor(label_shape, label_onehot.data(), cyxwiz::DataType::Float32);
-            train_labels.push_back(std::move(label_tensor));
-        }
-    }
-
-    if (train_data.empty()) {
-        spdlog::error("No CIFAR-10 samples loaded");
-        return false;
-    }
-
-    spdlog::info("Loaded {} CIFAR-10 samples", train_data.size());
-    return true;
-}
-
-bool JobExecutor::LoadCSVDataset(
-    const std::string& path,
-    std::vector<cyxwiz::Tensor>& train_data,
-    std::vector<cyxwiz::Tensor>& train_labels)
-{
-    spdlog::info("Loading CSV dataset from: {}", path);
-
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        spdlog::error("Failed to open CSV file: {}", path);
-        return false;
-    }
-
-    std::string line;
-    int line_num = 0;
-    bool has_header = false;
-    int num_features = -1;
-    int max_label = 0;
-
-    // First pass: determine structure and max label
-    std::vector<std::vector<float>> all_features;
-    std::vector<int> all_labels;
-
-    while (std::getline(file, line)) {
-        line_num++;
-        if (line.empty()) continue;
-
-        std::vector<float> features;
-        std::stringstream ss(line);
-        std::string value;
-
-        while (std::getline(ss, value, ',')) {
-            try {
-                float f = std::stof(value);
-                features.push_back(f);
-            } catch (...) {
-                if (line_num == 1) {
-                    has_header = true;
-                    break;
-                }
-            }
-        }
-
-        if (features.empty()) continue;
-        if (has_header && line_num == 1) continue;
-
-        // Last column is label
-        int label = static_cast<int>(features.back());
-        features.pop_back();
-
-        if (num_features < 0) {
-            num_features = static_cast<int>(features.size());
-        }
-
-        all_features.push_back(features);
-        all_labels.push_back(label);
-        max_label = std::max(max_label, label);
-    }
-
-    if (all_features.empty()) {
-        spdlog::error("No samples loaded from CSV");
-        return false;
-    }
-
-    int num_classes = max_label + 1;
-    spdlog::info("CSV: {} samples, {} features, {} classes", all_features.size(), num_features, num_classes);
-
-    // Convert to tensors
-    for (size_t i = 0; i < all_features.size(); ++i) {
-        std::vector<size_t> data_shape = {1, static_cast<size_t>(num_features)};
-        cyxwiz::Tensor tensor(data_shape, all_features[i].data(), cyxwiz::DataType::Float32);
-        train_data.push_back(std::move(tensor));
-
-        // Create one-hot label
-        std::vector<float> label_onehot(num_classes, 0.0f);
-        if (all_labels[i] < num_classes) {
-            label_onehot[all_labels[i]] = 1.0f;
-        }
-
-        std::vector<size_t> label_shape = {1, static_cast<size_t>(num_classes)};
-        cyxwiz::Tensor label_tensor(label_shape, label_onehot.data(), cyxwiz::DataType::Float32);
-        train_labels.push_back(std::move(label_tensor));
-    }
-
-    spdlog::info("Loaded {} CSV samples", train_data.size());
-    return true;
-}
-
-// NodeType enum values from Engine (must match gui::NodeType exactly)
 enum class EngineNodeType {
     // Core Layers
     Dense = 0,
@@ -1308,181 +962,117 @@ std::unique_ptr<cyxwiz::SequentialModel> JobExecutor::BuildModelFromDefinition(c
     return BuildModel(model_definition, input_size);
 }
 
-bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
-    spdlog::info("Starting training for job: {}", job_id);
+namespace {
 
-    const auto& config = state->config;
-    int total_epochs = config.epochs();
-    int batch_size = config.batch_size();
-
-    // Parse hyperparameters
-    auto hyperparams = ParseHyperparameters(config.hyperparameters());
-    double learning_rate = 0.001;
-    if (hyperparams.count("learning_rate") > 0) {
-        learning_rate = hyperparams["learning_rate"];
-    }
-
-    // Load dataset
-    std::vector<cyxwiz::Tensor> train_data;
-    std::vector<cyxwiz::Tensor> train_labels;
-
-    if (!LoadDataset(config.dataset_uri(), train_data, train_labels)) {
-        spdlog::error("Failed to load dataset");
+// The job's dataset as Data Input files for RunGraphTrainingJob. Empty: the
+// graph's own Data Input paths (files on this node). "file://<path>" or
+// "file://parquet/<path>" / "file://arrow/<path>": that file replaces the
+// graph's single Data Input. Legacy MNIST/CIFAR/CSV/mock URIs are refused.
+bool ResolveJobDatasetFiles(const std::string& dataset_uri, const std::string& graph_json,
+                            std::map<std::string, std::string>& files, std::string& error) {
+    if (dataset_uri.empty()) return true;
+    if (dataset_uri.rfind("mock://", 0) == 0) {
+        error = "mock datasets are not trained (dataset_uri '" + dataset_uri + "')";
         return false;
     }
-
-    // Build model from definition
-    std::string model_definition = config.model_definition();
-    auto model = BuildModel(model_definition);
-
-    // Fail closed (tofix118 P1): a job whose model cannot be built fails with
-    // the reason; the node never reports synthetic loss/accuracy as training.
-    if (model == nullptr || model->Size() == 0) {
-        throw std::runtime_error(
-            "Model could not be built from the job's model definition (see the node log for the "
-            "unsupported layer); the job was not trained");
-    }
-    const bool use_real_training = true;
-    spdlog::info("Training with {} layers", model->Size());
-
-    spdlog::info("Beginning training: {} epochs, batch size {}, lr {}, samples={}",
-                total_epochs, batch_size, learning_rate, train_data.size());
-
-    // Initialize metrics
-    state->current_metrics.total_epochs = total_epochs;
-    state->current_metrics.learning_rate = learning_rate;
-
-    // Create optimizer if using real training
-    std::unique_ptr<cyxwiz::Optimizer> optimizer;
-    if (use_real_training) {
-        optimizer = CreateOptimizer(hyperparams);
-        if (!optimizer) {
-            optimizer = cyxwiz::CreateOptimizer(cyxwiz::OptimizerType::SGD, learning_rate);
-        }
-        model->SetTraining(true);
-    }
-
-    // Calculate batches per epoch
-    size_t num_samples = train_data.size();
-    size_t batches_per_epoch = (num_samples + batch_size - 1) / batch_size;
-
-    for (int epoch = 1; epoch <= total_epochs; ++epoch) {
-        // Check for cancellation
-        if (state->should_cancel) {
-            spdlog::info("Training cancelled at epoch {}", epoch);
-            return false;
-        }
-
-        state->current_metrics.current_epoch = epoch;
-        double epoch_loss = 0.0;
-        int correct = 0;
-        int total = 0;
-
-        if (use_real_training) {
-            // ===== REAL TRAINING LOOP =====
-            for (size_t batch_idx = 0; batch_idx < batches_per_epoch; ++batch_idx) {
-                if (state->should_cancel) break;
-
-                // Get batch indices
-                size_t start = batch_idx * batch_size;
-                size_t end = std::min(start + batch_size, num_samples);
-                [[maybe_unused]] size_t current_batch_size = end - start;
-
-                // Stack batch data
-                std::vector<cyxwiz::Tensor> batch_inputs;
-                std::vector<cyxwiz::Tensor> batch_targets;
-                for (size_t i = start; i < end; ++i) {
-                    batch_inputs.push_back(train_data[i]);
-                    batch_targets.push_back(train_labels[i]);
-                }
-
-                // Simple batch processing: use first sample for now
-                // TODO: Proper batch stacking when Tensor batch operations are ready
-                if (batch_inputs.empty()) continue;
-
-                auto& input = batch_inputs[0];
-                auto& target = batch_targets[0];
-
-                // Forward pass
-                cyxwiz::Tensor output = model->Forward(input);
-
-                // Compute loss (CrossEntropy for classification)
-                cyxwiz::CrossEntropyLoss loss_fn;
-                cyxwiz::Tensor loss_tensor = loss_fn.Forward(output, target);
-
-                // Get scalar loss value from tensor
-                float batch_loss = 0.0f;
-                if (loss_tensor.NumElements() > 0) {
-                    batch_loss = *loss_tensor.Data<float>();
-                }
-                epoch_loss += batch_loss;
-
-                // Backward pass
-                cyxwiz::Tensor grad = loss_fn.Backward(output, target);
-                model->Backward(grad);
-
-                // Update weights
-                model->UpdateParameters(optimizer.get());
-
-                // Compute accuracy for this sample
-                size_t output_size = output.NumElements();
-                size_t target_size = target.NumElements();
-                if (output_size > 0 && target_size > 0) {
-                    const float* output_data = output.Data<float>();
-                    const float* target_data = target.Data<float>();
-
-                    // Find argmax for prediction
-                    int pred = 0;
-                    float max_val = output_data[0];
-                    for (size_t i = 1; i < output_size; ++i) {
-                        if (output_data[i] > max_val) {
-                            max_val = output_data[i];
-                            pred = static_cast<int>(i);
-                        }
-                    }
-
-                    // Find argmax for target (assuming one-hot)
-                    int label = 0;
-                    max_val = target_data[0];
-                    for (size_t i = 1; i < target_size; ++i) {
-                        if (target_data[i] > max_val) {
-                            max_val = target_data[i];
-                            label = static_cast<int>(i);
-                        }
-                    }
-
-                    if (pred == label) correct++;
-                    total++;
-                }
+    std::string path = dataset_uri;
+    if (path.rfind("file://", 0) == 0) {
+        path = path.substr(7);
+        for (const char* legacy : {"mnist/", "cifar10/", "csv/"}) {
+            if (path.rfind(legacy, 0) == 0) {
+                error = "dataset_uri '" + dataset_uri + "' uses a retired loader; send Parquet or Arrow IPC "
+                        "(file://<path>) or leave it empty to use the graph's Data Input paths";
+                return false;
             }
-
-            // Average loss over batches
-            epoch_loss /= batches_per_epoch;
-            double accuracy = (total > 0) ? static_cast<double>(correct) / total : 0.0;
-
-            state->current_metrics.loss = epoch_loss;
-            state->current_metrics.accuracy = accuracy;
-
         }
+        for (const char* typed : {"parquet/", "arrow/"}) {
+            if (path.rfind(typed, 0) == 0) path = path.substr(std::string(typed).size());
+        }
+    } else if (dataset_uri.find("://") != std::string::npos) {
+        error = "unsupported dataset_uri scheme: " + dataset_uri;
+        return false;
+    }
+    std::vector<std::string> inputs;
+    try {
+        const auto graph = nlohmann::json::parse(graph_json);
+        for (const auto& node : graph.at("nodes")) {
+            if (node.value("type", -1) != static_cast<int>(gui::NodeType::DataInput)) continue;
+            const auto params = node.value("parameters", nlohmann::json::object());
+            inputs.push_back(params.value("dataset_name", std::string()));
+        }
+    } catch (const std::exception& e) {
+        error = std::string("the job's graph is not valid JSON: ") + e.what();
+        return false;
+    }
+    if (inputs.size() != 1 || inputs.front().empty()) {
+        error = "dataset_uri names one file but the graph has " + std::to_string(inputs.size()) +
+                " Data Inputs; leave dataset_uri empty to use the graph's own paths";
+        return false;
+    }
+    files[inputs.front()] = path;
+    return true;
+}
 
-        state->current_metrics.samples_processed = epoch * static_cast<int64_t>(num_samples);
+}  // namespace
 
-        // Calculate elapsed time
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now - state->start_time);
-        state->current_metrics.time_elapsed_ms = elapsed.count();
+bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
+    spdlog::info("Starting training for job: {}", job_id);
+    const auto& config = state->config;
 
-        // Report progress every epoch
-        ReportProgress(job_id, state);
-
-        spdlog::info("Job {} - Epoch {}/{}: Loss={:.4f}, Acc={:.2f}%",
-                    job_id, epoch, total_epochs, state->current_metrics.loss,
-                    state->current_metrics.accuracy * 100.0);
+    // TOFIX118 P2: the node trains with the Engine's compiler, preparation and
+    // executor (RunGraphTrainingJob); unsupported graphs and inputs fail with
+    // the reason instead of training something else.
+    cyxwiz::GraphTrainingJobRequest request;
+    request.graph_json = config.model_definition();
+    if (request.graph_json.empty()) {
+        throw std::runtime_error("the job has no model definition (graph)");
+    }
+    std::string error;
+    if (!ResolveJobDatasetFiles(config.dataset_uri(), request.graph_json, request.dataset_files, error)) {
+        throw std::runtime_error(error);
+    }
+    request.epochs_override = config.epochs();
+    request.batch_size_override = config.batch_size();
+    if (!config.hyperparameters().empty()) {
+        spdlog::warn("Job {}: hyperparameters are not applied; the graph's optimizer and Data Loader "
+                     "settings are used", job_id);
     }
 
-    spdlog::info("Training completed successfully for job: {}", job_id);
+    cyxwiz::GraphTrainingJobCallbacks callbacks;
+    callbacks.on_start = [state](int epochs, int batch_size) {
+        state->current_metrics.total_epochs = epochs;
+        spdlog::info("Beginning training: {} epochs, batch size {}", epochs, batch_size);
+    };
+    callbacks.on_epoch = [this, &job_id, state](int epoch, float train_loss, float train_acc, float val_loss,
+                                                float val_acc, float) {
+        auto& metrics = state->current_metrics;
+        metrics.current_epoch = epoch;
+        metrics.loss = train_loss;
+        metrics.accuracy = train_acc;
+        if (val_loss >= 0.0f) metrics.custom_metrics["val_loss"] = val_loss;
+        if (val_acc >= 0.0f) metrics.custom_metrics["val_accuracy"] = val_acc;
+        metrics.time_elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - state->start_time)
+                                      .count();
+        ReportProgress(job_id, state);
+        spdlog::info("Job {} - Epoch {}/{}: Loss={:.4f}, Acc={:.2f}%", job_id, epoch, metrics.total_epochs,
+                     metrics.loss, metrics.accuracy * 100.0);
+    };
+    callbacks.should_cancel = [state] { return state->should_cancel.load(); };
 
+    auto result = cyxwiz::RunGraphTrainingJob(request, callbacks);
+    if (result.cancelled) {
+        spdlog::info("Training cancelled for job: {}", job_id);
+        return false;
+    }
+    if (!result.ok) {
+        throw std::runtime_error(result.error);
+    }
+    {
+        std::lock_guard<std::mutex> lock(state->model_mutex);
+        state->model = std::move(result.model);
+    }
+    spdlog::info("Training completed successfully for job: {}", job_id);
     return true;
 }
 
@@ -1536,42 +1126,6 @@ void JobExecutor::ReportProgress(const std::string& job_id, JobState* state) {
             ""  // log_message - empty for now
         );
     }
-}
-
-std::unordered_map<std::string, double> JobExecutor::ParseHyperparameters(
-    const google::protobuf::Map<std::string, std::string>& hyper_params)
-{
-    std::unordered_map<std::string, double> result;
-
-    for (const auto& pair : hyper_params) {
-        try {
-            result[pair.first] = std::stod(pair.second);
-        } catch (const std::exception& e) {
-            spdlog::warn("Failed to parse hyperparameter {}: {}", pair.first, e.what());
-        }
-    }
-
-    return result;
-}
-
-std::unique_ptr<cyxwiz::Optimizer> JobExecutor::CreateOptimizer(
-    const std::unordered_map<std::string, double>& hyperparameters)
-{
-    double learning_rate = 0.001;
-    if (hyperparameters.count("learning_rate") > 0) {
-        learning_rate = hyperparameters.at("learning_rate");
-    }
-
-    // Check for optimizer type in hyperparameters
-    cyxwiz::OptimizerType opt_type = cyxwiz::OptimizerType::Adam; // Default
-
-    // Note: optimizer type is passed as string in hyperparameters
-    // For simplicity, we check if "sgd" or "adamw" keys exist with value 1.0
-    // Actually, we need to check the string value from the original map
-
-    // Create and return optimizer
-    spdlog::info("Creating optimizer with learning_rate: {}", learning_rate);
-    return cyxwiz::CreateOptimizer(opt_type, learning_rate);
 }
 
 void JobExecutor::ProcessPendingJobs() {
