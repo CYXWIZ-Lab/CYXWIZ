@@ -88,7 +88,9 @@ struct RouteQualificationOptions {
     std::string pack_id;
     std::string runtime_version;
     std::optional<RuntimeQualificationIdentity> runtime_identity;
-    std::chrono::milliseconds operation_timeout{20000};
+    // Each operation starts a fresh process; OpenCL on NVIDIA alone takes
+    // 12-21 s to initialise there, so 20 s produced false timeouts.
+    std::chrono::milliseconds operation_timeout{60000};
     size_t output_limit_bytes = 64 * 1024;
     bool benchmark_verified_routes = false;
     std::chrono::milliseconds benchmark_timeout{60000};

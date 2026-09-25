@@ -18,8 +18,8 @@ struct BackendPackQualificationAdapterOptions {
     std::filesystem::path cache_path;
     RuntimeQualificationFailurePolicy failure_policy =
         RuntimeQualificationFailurePolicy::KeepInstalledUnqualified;
-    std::chrono::milliseconds operation_timeout{20000};
-    std::chrono::milliseconds discovery_timeout{20000};
+    std::chrono::milliseconds operation_timeout{60000};
+    std::chrono::milliseconds discovery_timeout{60000};
     std::size_t output_limit_bytes = 64 * 1024;
     RouteQualificationCancelCheck should_cancel;
 };

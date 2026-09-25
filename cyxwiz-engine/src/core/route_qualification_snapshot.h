@@ -104,6 +104,8 @@ struct RouteQualificationRecord {
     int failure_count = 0;
     int timeout_count = 0;
     int crash_count = 0;
+    // Operations skipped after the route's first failure decided its verdict.
+    int not_run_count = 0;
     bool certified = false;
     std::string display_name;
     DeviceKind device_kind = DeviceKind::Unknown;

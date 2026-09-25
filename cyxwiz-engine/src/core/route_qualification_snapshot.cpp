@@ -275,19 +275,20 @@ std::string ValidateRouteRecord(
     }
     if (route.pass_count < 0 || route.unavailable_count < 0 ||
         route.failure_count < 0 || route.timeout_count < 0 ||
-        route.crash_count < 0) {
+        route.crash_count < 0 || route.not_run_count < 0) {
         return "Qualification route contains a negative outcome count";
     }
     const int64_t classified = static_cast<int64_t>(route.pass_count) +
         route.unavailable_count + route.failure_count + route.timeout_count +
-        route.crash_count;
+        route.crash_count + route.not_run_count;
     if (classified != route.operation_count) {
         return "Qualification route contains inconsistent outcome counts";
     }
     const bool outcomes_certify =
         route.pass_count == route.operation_count &&
         route.unavailable_count == 0 && route.failure_count == 0 &&
-        route.timeout_count == 0 && route.crash_count == 0;
+        route.timeout_count == 0 && route.crash_count == 0 &&
+        route.not_run_count == 0;
     if (route.certified != outcomes_certify) {
         return "Qualification route certification disagrees with outcomes";
     }
@@ -401,6 +402,7 @@ RouteQualificationSnapshot ParseSnapshot(const nlohmann::json& document) {
         route.failure_count = RequiredInt(route_json, "failure_count");
         route.timeout_count = RequiredInt(route_json, "timeout_count");
         route.crash_count = RequiredInt(route_json, "crash_count");
+        route.not_run_count = OptionalInt(route_json, "not_run_count");
         route.display_name = OptionalString(route_json, "display_name");
         route.device_kind =
             ParseOptionalDeviceKind(route_json, route.device_kind_known);
@@ -580,6 +582,7 @@ bool SaveRouteQualificationSnapshotAtomic(
             {"failure_count", route.failure_count},
             {"timeout_count", route.timeout_count},
             {"crash_count", route.crash_count},
+            {"not_run_count", route.not_run_count},
             {"certified", route.certified}};
 
         record["benchmark_id"] = route.benchmark_id.empty()

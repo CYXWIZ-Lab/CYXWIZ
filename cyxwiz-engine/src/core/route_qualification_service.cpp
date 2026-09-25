@@ -1187,13 +1187,20 @@ RouteQualificationRunResult RouteQualificationService::Verify(
                 case RouteProbeStatus::Crashed: ++record.crash_count; break;
                 default: break;
             }
-            if (probe.status != RouteProbeStatus::Passed &&
-                record.failure.category == RouteFailureCategory::None) {
-                record.failure = FailureFor(
-                    probe, operations[operation_index], options.matrix_id,
-                    static_cast<int>(std::min<int64_t>(
-                        options.operation_timeout.count(),
-                        (std::numeric_limits<int>::max)())));
+            if (probe.status != RouteProbeStatus::Passed) {
+                if (record.failure.category == RouteFailureCategory::None) {
+                    record.failure = FailureFor(
+                        probe, operations[operation_index], options.matrix_id,
+                        static_cast<int>(std::min<int64_t>(
+                            options.operation_timeout.count(),
+                            (std::numeric_limits<int>::max)())));
+                }
+                // One failure already decides the route; each remaining
+                // operation would cost a fresh process and could only hang
+                // or crash the same way.
+                record.not_run_count = static_cast<int>(
+                    operations.size() - operation_index - 1);
+                break;
             }
         }
         record.certified = record.pass_count == record.operation_count;

@@ -953,9 +953,11 @@ TEST_CASE("Qualification service attributes the first exact operation failure",
     std::error_code cleanup_error;
     std::filesystem::remove_all(root, cleanup_error);
 
+    std::vector<std::string> invoked;
     cyxwiz::RouteQualificationService service(
-        [](const cyxwiz::RouteProbeInvocation& invocation,
-           const cyxwiz::RouteQualificationCancelCheck&) {
+        [&invoked](const cyxwiz::RouteProbeInvocation& invocation,
+                   const cyxwiz::RouteQualificationCancelCheck&) {
+            invoked.push_back(invocation.operation);
             cyxwiz::RouteProbeResult result;
             if (invocation.operation == "sum") {
                 result.status = cyxwiz::RouteProbeStatus::Crashed;
@@ -990,7 +992,14 @@ TEST_CASE("Qualification service attributes the first exact operation failure",
     const auto& record = result.snapshot->routes.front();
     CHECK_FALSE(record.certified);
     CHECK(record.crash_count == 1);
-    CHECK(record.pass_count + record.crash_count == record.operation_count);
+    // The first failure decides the route: nothing runs after the crash.
+    REQUIRE_FALSE(invoked.empty());
+    CHECK(invoked.back() == "sum");
+    CHECK(record.pass_count == static_cast<int>(invoked.size()) - 1);
+    CHECK(record.not_run_count ==
+          record.operation_count - static_cast<int>(invoked.size()));
+    CHECK(record.pass_count + record.crash_count + record.not_run_count ==
+          record.operation_count);
     CHECK(record.failure.stage == cyxwiz::RouteFailureStage::Operation);
     CHECK(record.failure.category ==
           cyxwiz::RouteFailureCategory::ChildProcessCrash);
