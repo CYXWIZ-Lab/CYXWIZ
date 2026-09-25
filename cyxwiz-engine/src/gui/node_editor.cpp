@@ -1,4 +1,5 @@
 #include "node_editor.h"
+#include "../core/graph_node_factory.h"
 #include "subgraph_presentation.h"
 #include "node_documentation.h"
 #include "graph_replacement_policy.h"
@@ -268,28 +269,7 @@ NodeEditor::~NodeEditor() {
 }
 
 std::vector<int> NodeEditor::SyncSqlStepInputPins(MLNode& node) {
-    std::vector<int> removed;
-    if (node.type != NodeType::SQLQuery) return removed;
-    auto aliases = cyxwiz::SqlStepInputAliases(node.parameters);
-    if (aliases.size() > cyxwiz::kSqlMaxInputs) aliases.resize(cyxwiz::kSqlMaxInputs);
-    for (size_t i = 0; i < aliases.size(); ++i) {
-        if (i < node.inputs.size()) {
-            node.inputs[i].name = aliases[i];
-            continue;
-        }
-        NodePin pin;
-        pin.id = next_pin_id_++;
-        pin.type = PinType::Dataset;
-        pin.name = aliases[i];
-        pin.is_input = true;
-        pin.description = "Table named '" + aliases[i] + "' inside the query";
-        node.inputs.push_back(std::move(pin));
-    }
-    while (node.inputs.size() > aliases.size()) {
-        removed.push_back(node.inputs.back().id);
-        node.inputs.pop_back();
-    }
-    return removed;
+    return gui::SyncSqlStepInputPins(node, next_pin_id_);
 }
 
 void NodeEditor::SyncParameterDrivenPins() {

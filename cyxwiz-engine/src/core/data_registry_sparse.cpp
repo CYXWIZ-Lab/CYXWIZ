@@ -1,4 +1,5 @@
 #include "data_registry.h"
+#include "graph_compiler_dataset_hooks.h"
 #include "sparse_feature_dataset.h"
 
 #include <arrow/chunked_array.h>
@@ -6,6 +7,21 @@
 #include <spdlog/spdlog.h>
 
 namespace cyxwiz {
+
+namespace {
+
+// The graph dataset catalog's sparse lookup (the rest is installed by
+// data_registry_utils.cpp; either may run first).
+const bool kGraphSparseCatalogInstalled = [] {
+    GraphDatasetCatalog catalog = GetGraphDatasetCatalog();
+    catalog.sparse_dataset = [](const std::string& name) {
+        return DataRegistry::Instance().GetSparseFeatureDataset(name);
+    };
+    SetGraphDatasetCatalog(std::move(catalog));
+    return true;
+}();
+
+}  // namespace
 namespace {
 
 constexpr const char* kMaterializedSuffix = "__materialized";

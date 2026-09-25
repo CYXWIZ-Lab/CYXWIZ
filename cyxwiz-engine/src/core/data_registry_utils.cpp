@@ -668,7 +668,9 @@ namespace {
 // The graph compiler (training core) reads datasets through this catalog;
 // any binary that links the registry installs it before main.
 const bool kGraphDatasetCatalogInstalled = [] {
-    GraphDatasetCatalog catalog;
+    // Sparse lookups are installed by data_registry_sparse.cpp (either may run
+    // first, so each keeps what the other installed).
+    GraphDatasetCatalog catalog = GetGraphDatasetCatalog();
     catalog.arrow_dataset = [](const std::string& name) { return DataRegistry::Instance().GetArrowDataset(name); };
     catalog.parquet_dataset = [](const std::string& name) {
         return DataRegistry::Instance().GetParquetBackedDataset(name);

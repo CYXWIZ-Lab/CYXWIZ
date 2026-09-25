@@ -3,6 +3,7 @@
 #include "graph_compiler.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
+#include "sparse_feature_dataset.h"
 
 namespace cyxwiz {
 
@@ -53,6 +54,11 @@ std::shared_ptr<ArrowDataset> GraphArrowDataset(const std::string& name) {
 std::shared_ptr<ParquetBackedDataset> GraphParquetDataset(const std::string& name) {
     const auto& catalog = Catalog();
     return (!name.empty() && catalog.parquet_dataset) ? catalog.parquet_dataset(name) : nullptr;
+}
+
+std::shared_ptr<const SparseFeatureDataset> GraphSparseDataset(const std::string& name) {
+    const auto& catalog = Catalog();
+    return (!name.empty() && catalog.sparse_dataset) ? catalog.sparse_dataset(name) : nullptr;
 }
 
 bool GraphDatasetIsKind(const std::string& name, GraphDatasetKind kind) {

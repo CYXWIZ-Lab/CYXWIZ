@@ -1,6 +1,6 @@
 #pragma once
 
-#include "node_editor.h"
+#include "../core/graph_model.h"
 
 #include <nlohmann/json.hpp>
 

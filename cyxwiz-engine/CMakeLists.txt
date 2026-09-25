@@ -79,6 +79,7 @@ set(CYXWIZ_HAS_OPENCV ON)
 # core (TOFIX118 P2), linked once into any executable that has both.
 add_library(cyxwiz-training-hooks STATIC
     src/plugin/registries/plugin_training_hook_manager.cpp
+    src/plugin/registries/plugin_node_registry.cpp
 )
 target_include_directories(cyxwiz-training-hooks PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(cyxwiz-training-hooks PUBLIC spdlog::spdlog)
@@ -90,7 +91,6 @@ endif()
 # Plugin SDK static library (shared between engine and plugins)
 add_library(cyxwiz-plugin-sdk STATIC
     src/plugin/plugin_context.cpp
-    src/plugin/registries/plugin_node_registry.cpp
     src/plugin/registries/plugin_panel_registry.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
     src/plugin/registries/plugin_analytics_registry.cpp
@@ -1314,6 +1314,7 @@ add_executable(test_sparse_feature_registry
     tests/test_sparse_feature_registry.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/sparse_feature_dataset.cpp
 )
 
@@ -1323,6 +1324,8 @@ target_include_directories(test_sparse_feature_registry PRIVATE
 
 target_link_libraries(test_sparse_feature_registry PRIVATE
     Arrow::arrow_shared
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
     spdlog::spdlog
     fmt::fmt
 )
@@ -2445,6 +2448,7 @@ add_executable(test_node_contract_gates
     src/core/node_metadata_registry.cpp
     src/core/pipeline_runtime_capabilities.cpp
     src/gui/node_editor_nodes.cpp
+    src/core/graph_node_factory.cpp
     src/gui/properties_contract.cpp
     src/plugin/registries/plugin_node_registry.cpp
 )
@@ -3285,6 +3289,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/sequence_arrow_batcher.cpp
     src/core/preprocessing_state.cpp
     src/gui/graph_training_launcher.cpp
+    src/core/graph_training_prep.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/async_task_manager.cpp
     src/core/training_trace_collector.cpp
@@ -3375,6 +3380,7 @@ set_target_properties(test_graph_training_sequence_preflight PROPERTIES
 add_executable(test_text_gui_training_launch
     tests/test_text_gui_training_launch.cpp
     src/gui/graph_training_launcher.cpp
+    src/core/graph_training_prep.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/async_task_manager.cpp
     src/core/training_trace_collector.cpp
@@ -3844,6 +3850,9 @@ endif()
 add_executable(cyxwiz-graph-compile-check
     tests/tool_graph_compile_check.cpp
     src/core/graph_compiler.cpp
+    src/core/graph_document.cpp
+    src/core/graph_node_factory.cpp
+    src/plugin/registries/plugin_node_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/training_scheduler_controller.cpp
     src/core/compiled_graph_plan.cpp
@@ -4375,6 +4384,10 @@ add_library(cyxwiz-training-core STATIC
     ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
     src/core/graph_compiler.cpp
     src/core/graph_compiler_dataset_hooks.cpp
+    src/core/graph_node_factory.cpp
+    src/core/graph_document.cpp
+    src/core/graph_training_prep.cpp
+    src/core/graph_training_job.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
     src/core/node_metadata_registry.cpp
@@ -5025,7 +5038,7 @@ set_target_properties(test_html_document_text_unavailable PROPERTIES RUNTIME_OUT
 
 # Visual subgraph persistence uses the actual node factory, without renderer startup.
 add_executable(test_subgraph_document tests/test_subgraph_document.cpp
-    src/gui/subgraph_document.cpp src/gui/node_editor_nodes.cpp
+    src/gui/subgraph_document.cpp src/gui/node_editor_nodes.cpp src/core/graph_node_factory.cpp
     src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp
     src/plugin/registries/plugin_node_registry.cpp)
 target_include_directories(test_subgraph_document PRIVATE src external/imnodes)
@@ -5075,3 +5088,9 @@ add_executable(test_training_progress_estimate tests/test_training_progress_esti
 # ===== Test: cyxwiz-training-core is self-contained (TOFIX118 P2) =====
 add_executable(test_training_core_link tests/test_training_core_link.cpp)
 target_link_libraries(test_training_core_link PRIVATE cyxwiz-training-core)
+
+# ===== Test: headless graph training job on the core alone (TOFIX118 P2) =====
+add_executable(test_graph_training_job tests/test_graph_training_job.cpp)
+target_link_libraries(test_graph_training_job PRIVATE cyxwiz-training-core)
+target_compile_definitions(test_graph_training_job PRIVATE
+    CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")

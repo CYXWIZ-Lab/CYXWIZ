@@ -17,6 +17,7 @@ namespace cyxwiz {
 enum class PreprocessingDomain;
 class ArrowDataset;
 class ParquetBackedDataset;
+class SparseFeatureDataset;
 
 struct GraphCompilerDatasetHooks {
     // True when a loaded dataset of this name is held by some loader.
@@ -52,6 +53,7 @@ struct GraphTextDatasetInfo {
 struct GraphDatasetCatalog {
     std::function<std::shared_ptr<ArrowDataset>(const std::string& name)> arrow_dataset;
     std::function<std::shared_ptr<ParquetBackedDataset>(const std::string& name)> parquet_dataset;
+    std::function<std::shared_ptr<const SparseFeatureDataset>(const std::string& name)> sparse_dataset;
     std::function<bool(const std::string& name, GraphDatasetKind kind)> is_kind;
     std::function<std::optional<GraphTextDatasetInfo>(const std::string& name)> text_info;
     // The file a tabular dataset was loaded from (source fingerprinting).
@@ -63,6 +65,7 @@ GraphDatasetCatalog GetGraphDatasetCatalog();
 
 std::shared_ptr<ArrowDataset> GraphArrowDataset(const std::string& name);
 std::shared_ptr<ParquetBackedDataset> GraphParquetDataset(const std::string& name);
+std::shared_ptr<const SparseFeatureDataset> GraphSparseDataset(const std::string& name);
 bool GraphDatasetIsKind(const std::string& name, GraphDatasetKind kind);
 std::optional<GraphTextDatasetInfo> GraphTextDatasetInfoFor(const std::string& name);
 std::optional<std::string> GraphDatasetSourcePath(const std::string& name);

@@ -12,6 +12,7 @@
 // reports only the issues it does not have (node names are normalized so a
 // renamed node does not count as a new issue).
 #include "../src/core/graph_compiler.h"
+#include "../src/core/graph_document.h"
 #include "../src/gui/loaders/data_loader.h"
 
 #include <nlohmann/json.hpp>
@@ -37,12 +38,8 @@ namespace {
 
 using json = nlohmann::json;
 
-std::string ParameterText(const json& value) {
-    if (value.is_string()) return value.get<std::string>();
-    if (value.is_boolean()) return value.get<bool>() ? "true" : "false";
-    return value.dump();
-}
-
+// The shared loader (the editor's): node factory pins, parameter migrations
+// and links resolved by pin index, so unwired pins are reported as in the Engine.
 bool LoadGraph(const std::filesystem::path& path, std::vector<gui::MLNode>& nodes,
                std::vector<gui::NodeLink>& links, std::string& error) {
     std::ifstream in(path, std::ios::binary);
@@ -52,39 +49,10 @@ bool LoadGraph(const std::filesystem::path& path, std::vector<gui::MLNode>& node
     }
     std::stringstream buffer;
     buffer << in.rdbuf();
-    json root;
-    try {
-        root = json::parse(buffer.str());
-    } catch (const std::exception& e) {
-        error = std::string("invalid JSON: ") + e.what();
-        return false;
-    }
-    if (!root.contains("nodes") || !root["nodes"].is_array() || !root.contains("links") || !root["links"].is_array()) {
-        error = "graph needs nodes and links arrays";
-        return false;
-    }
-    for (const auto& node_json : root["nodes"]) {
-        gui::MLNode node;
-        node.id = node_json.value("id", 0);
-        node.type = static_cast<gui::NodeType>(node_json.value("type", 0));
-        node.name = node_json.value("name", std::string("node"));
-        node.category = static_cast<gui::NodeCategory>(node_json.value("category", static_cast<int>(node.category)));
-        if (node_json.contains("parameters") && node_json["parameters"].is_object()) {
-            for (auto it = node_json["parameters"].begin(); it != node_json["parameters"].end(); ++it) {
-                node.parameters[it.key()] = ParameterText(it.value());
-            }
-        }
-        nodes.push_back(std::move(node));
-    }
-    for (const auto& link_json : root["links"]) {
-        gui::NodeLink link;
-        link.id = link_json.value("id", 0);
-        link.from_node = link_json.value("from_node", 0);
-        link.to_node = link_json.value("to_node", 0);
-        link.from_pin = link_json.value("from_pin", 0);
-        link.to_pin = link_json.value("to_pin", 0);
-        links.push_back(std::move(link));
-    }
+    cyxwiz::GraphDocument document;
+    if (!cyxwiz::ParseGraphDocument(buffer.str(), document, error)) return false;
+    nodes = std::move(document.nodes);
+    links = std::move(document.links);
     return true;
 }
 
