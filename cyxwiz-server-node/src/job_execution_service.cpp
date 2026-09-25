@@ -532,6 +532,10 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
         std::atomic<bool> training_success{false};
         std::string training_error;
         std::mutex error_mutex;
+        // Last real epoch metrics, reported on completion (never invented).
+        double final_loss = 0.0;
+        double final_accuracy = 0.0;
+        int epochs_completed = 0;
         session->should_stop = false;
         session->is_paused = false;
 
@@ -642,7 +646,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             spdlog::info("[P2P WORKFLOW] STEP 5: Starting training with RemoteDataLoader");
             spdlog::info("  Data batches will be fetched from Engine on-demand");
         } else {
-            spdlog::warn("[P2P WORKFLOW] No JobExecutor available - using SIMULATED training");
+            spdlog::error("[P2P WORKFLOW] No JobExecutor and no remote dataset - the job cannot train");
         }
 
         session->is_running = true;
@@ -724,16 +728,31 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                     loss_ptr = std::shared_ptr<cyxwiz::Loss>(cyxwiz::CreateLoss(cyxwiz::LossType::CrossEntropy).release());
                     spdlog::info("Created Adam optimizer with lr={} and CrossEntropy loss", learning_rate);
                 } else {
-                    spdlog::warn("[P2P WORKFLOW] Failed to build model - falling back to simulated training");
+                    spdlog::error("[P2P WORKFLOW] Failed to build the model from the job definition");
                 }
             }
 
-            bool use_real_training = (model_ptr && model_ptr->Size() > 0 && optimizer_ptr && loss_ptr);
-            if (use_real_training) {
-                spdlog::info("[P2P WORKFLOW] Using REAL model training");
-            } else {
-                spdlog::warn("[P2P WORKFLOW] Using SIMULATED training (no model/dataset info)");
+            // Fail closed (tofix118 P1): without a built model, optimizer, loss and
+            // a remote dataset the job fails with the reason; the node never
+            // streams synthetic loss/accuracy as if it had trained.
+            const bool use_real_training = (model_ptr && model_ptr->Size() > 0 && optimizer_ptr && loss_ptr &&
+                                            use_remote && train_loader);
+            if (!use_real_training) {
+                std::string reason = !use_remote ? "the job has no remote dataset for the built-in trainer"
+                                   : input_size == 0 ? "dataset information could not be obtained from the Engine"
+                                   : "the model could not be built from the job definition";
+                {
+                    std::lock_guard<std::mutex> err_lock(error_mutex);
+                    training_error = "Job not trained: " + reason + " (the node does not simulate training)";
+                }
+                spdlog::error("[P2P WORKFLOW] {}", training_error);
+                training_success = false;
+                training_complete = true;
+                queue_cv.notify_one();
+                return;
             }
+            spdlog::info("[P2P WORKFLOW] Using real model training");
+            bool batch_failed = false;
 
             for (int epoch = 1; epoch <= total_epochs && !session->should_stop; ++epoch) {
                 // Check if paused at epoch boundary
@@ -953,14 +972,14 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
                             } catch (const std::exception& e) {
                                 spdlog::error("Training error on batch {}: {}", batches_processed, e.what());
-                                // Fall back to simulated values on error
-                                loss = 2.0 / (epoch + batches_processed * 0.01);
-                                accuracy = std::min(0.99, 0.5 + epoch * 0.05 + batches_processed * 0.001);
+                                std::lock_guard<std::mutex> err_lock(error_mutex);
+                                training_error = "Training failed on batch " + std::to_string(batches_processed) +
+                                                 ": " + e.what();
+                                batch_failed = true;
                             }
-                        } else {
-                            // Simulated training
-                            loss = 2.0 / (epoch + batches_processed * 0.01);
-                            accuracy = std::min(0.99, 0.5 + epoch * 0.05 + batches_processed * 0.001);
+                        }
+                        if (batch_failed) {
+                            break;
                         }
 
                         // Report batch progress
@@ -970,7 +989,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
                         auto* log = batch_update.mutable_log();
                         log->set_level(cyxwiz::protocol::LogMessage::DEBUG);
-                        log->set_source(use_real_training ? "RealTraining" : "SimulatedTraining");
+                        log->set_source("RealTraining");
                         log->set_message("Batch " + std::to_string(batches_processed) +
                                        ": loss=" + std::to_string(loss).substr(0, 6) +
                                        ", acc=" + std::to_string(accuracy * 100).substr(0, 5) + "%");
@@ -983,10 +1002,15 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                     }
                     spdlog::info("Epoch {} completed: {} batches, loss={:.4f}, acc={:.2f}%",
                                 epoch, batches_processed, loss, accuracy * 100);
-                } else {
-                    // Original simulated values (no remote data loader)
-                    loss = 2.0 / (epoch + 1);
-                    accuracy = std::min(0.99, 0.5 + epoch * 0.05);
+                }
+                if (batch_failed) {
+                    break;
+                }
+                {
+                    std::lock_guard<std::mutex> err_lock(error_mutex);
+                    final_loss = loss;
+                    final_accuracy = accuracy;
+                    epochs_completed = epoch;
                 }
 
                 // Send epoch progress update
@@ -1050,7 +1074,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 }
             }
 
-            training_success = !session->should_stop;
+            training_success = !session->should_stop && !batch_failed;
             training_complete = true;
             queue_cv.notify_one();
         });
@@ -1124,19 +1148,25 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             auto* complete = complete_update.mutable_complete();
             complete->set_success(true);
 
-            // Get final metrics from session or executor
-            (*complete->mutable_final_metrics())["loss"] = 0.1;
-            (*complete->mutable_final_metrics())["accuracy"] = 0.95;
-            complete->set_total_epochs_completed(session->job_config.epochs());
-
-            // Set weights location (for download)
-            session->final_weights_path = "/tmp/models/" + current_job_id + ".pt";
-            complete->set_weights_location(session->final_weights_path);
-
-            // Store for download after job cleanup
+            // Final metrics are the last completed epoch's real values.
             {
+                std::lock_guard<std::mutex> lock(error_mutex);
+                (*complete->mutable_final_metrics())["loss"] = final_loss;
+                (*complete->mutable_final_metrics())["accuracy"] = final_accuracy;
+                complete->set_total_epochs_completed(epochs_completed);
+            }
+
+            // Only advertise weights that were actually written (tofix118 P4
+            // owns saving weights of streamed jobs).
+            const std::string weights_path = SavePartialModel(current_job_id);
+            if (!weights_path.empty()) {
+                session->final_weights_path = weights_path;
+                complete->set_weights_location(weights_path);
                 std::lock_guard<std::mutex> lock(completed_models_mutex_);
-                completed_model_paths_[current_job_id] = session->final_weights_path;
+                completed_model_paths_[current_job_id] = weights_path;
+            } else {
+                spdlog::warn("[P2P WORKFLOW] No trained weights were saved for job {}; none advertised",
+                             current_job_id);
             }
         } else if (session->should_stop) {
             // User-initiated stop - send COMPLETE with success=false (NOT an error)
@@ -1146,7 +1176,10 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
             // Provide partial metrics if available
             (*complete->mutable_final_metrics())["stopped_by_user"] = 1.0;
-            complete->set_total_epochs_completed(0);  // TODO: track actual epochs completed
+            {
+                std::lock_guard<std::mutex> lock(error_mutex);
+                complete->set_total_epochs_completed(epochs_completed);
+            }
 
             // Save partial model and provide download location
             std::string partial_model_path = SavePartialModel(current_job_id);
@@ -1393,9 +1426,9 @@ grpc::Status JobExecutionServiceImpl::DownloadWeights(
         file.seekg(0, std::ios::beg);
         spdlog::info("Reading weights file: {} ({} bytes)", weights_path, total_size);
     } else {
-        // File doesn't exist - use simulated data (for testing)
-        total_size = 50 * 1024 * 1024; // 50MB simulated
-        spdlog::warn("Weights file not found, sending simulated data: {}", weights_path);
+        // Fail closed (tofix118 P1): never stream placeholder bytes as weights.
+        spdlog::error("Weights file not found for job {}: {}", request->job_id(), weights_path);
+        return grpc::Status(grpc::StatusCode::NOT_FOUND, "Weights file not found: " + weights_path);
     }
 
     const size_t chunk_size = request->chunk_size() > 0 ?
@@ -1407,14 +1440,9 @@ grpc::Status JobExecutionServiceImpl::DownloadWeights(
     while (offset < total_size) {
         size_t current_chunk = std::min(chunk_size, total_size - offset);
 
-        if (file.is_open()) {
-            file.read(buffer.data(), current_chunk);
-            current_chunk = file.gcount();
-            if (current_chunk == 0) break;
-        } else {
-            // Fill with dummy data for testing
-            std::fill(buffer.begin(), buffer.begin() + current_chunk, 'W');
-        }
+        file.read(buffer.data(), current_chunk);
+        current_chunk = file.gcount();
+        if (current_chunk == 0) break;
 
         cyxwiz::protocol::WeightsChunk chunk;
         chunk.set_data(buffer.data(), current_chunk);
@@ -1883,19 +1911,9 @@ std::string JobExecutionServiceImpl::SaveCheckpoint(const std::string& job_id,
             }
         }
 
-        // If no job executor or weights, save placeholder
-        std::ofstream file(checkpoint_path, std::ios::binary);
-        if (file) {
-            // Write minimal checkpoint header
-            file << "CYXWIZ_CKPT\n";
-            file << "job_id=" << job_id << "\n";
-            file << "epoch=" << epoch << "\n";
-            file << "batch=" << batch << "\n";
-            file.close();
-            spdlog::info("Checkpoint placeholder saved: {}", checkpoint_path.string());
-            return checkpoint_path.string();
-        }
-
+        // Fail closed (tofix118 P1): no weights means no checkpoint; never
+        // write a placeholder file and report it as saved.
+        spdlog::error("Checkpoint for job {} not saved: no model weights are available", job_id);
         return "";
     } catch (const std::exception& e) {
         spdlog::error("Failed to save checkpoint for job {}: {}", job_id, e.what());

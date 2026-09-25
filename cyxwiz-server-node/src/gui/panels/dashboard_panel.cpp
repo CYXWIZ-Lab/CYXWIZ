@@ -1051,11 +1051,11 @@ void DashboardPanel::UpdateMetrics() {
     // Get uptime
     uptime_seconds_ = GetTickCount64() / 1000;
 
-    // Generate simulated per-core usage (actual per-core requires more complex PDH queries)
+    // Per-core usage is not measured on this path (needs PDH per-core
+    // counters). Do not display invented values: show every core at the
+    // measured overall usage (previously random per-core variation).
     for (int i = 0; i < static_cast<int>(per_core_usage_.size()); ++i) {
-        // Add some variation per core
-        float variation = static_cast<float>(rand() % 20 - 10) / 100.0f;
-        per_core_usage_[i] = std::clamp(cpu_usage_ + variation, 0.0f, 1.0f);
+        per_core_usage_[i] = cpu_usage_;
 
         // Update per-core history
         if (i < static_cast<int>(per_core_history_.size())) {

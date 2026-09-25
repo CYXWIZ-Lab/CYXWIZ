@@ -1335,14 +1335,15 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
     std::string model_definition = config.model_definition();
     auto model = BuildModel(model_definition);
 
-    // Check if model was built successfully
-    bool use_real_training = (model != nullptr && model->Size() > 0);
-
-    if (use_real_training) {
-        spdlog::info("Using REAL training with {} layers", model->Size());
-    } else {
-        spdlog::warn("Model not built - falling back to SIMULATED training");
+    // Fail closed (tofix118 P1): a job whose model cannot be built fails with
+    // the reason; the node never reports synthetic loss/accuracy as training.
+    if (model == nullptr || model->Size() == 0) {
+        throw std::runtime_error(
+            "Model could not be built from the job's model definition (see the node log for the "
+            "unsupported layer); the job was not trained");
     }
+    const bool use_real_training = true;
+    spdlog::info("Training with {} layers", model->Size());
 
     spdlog::info("Beginning training: {} epochs, batch size {}, lr {}, samples={}",
                 total_epochs, batch_size, learning_rate, train_data.size());
@@ -1462,19 +1463,6 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
             state->current_metrics.loss = epoch_loss;
             state->current_metrics.accuracy = accuracy;
 
-        } else {
-            // ===== SIMULATED TRAINING (fallback) =====
-            double progress = static_cast<double>(epoch) / total_epochs;
-            double initial_loss = 2.3;
-            double target_loss = 0.1;
-            epoch_loss = initial_loss * std::exp(-3.0 * progress) + target_loss;
-            double accuracy = 0.1 + 0.85 * progress;
-
-            state->current_metrics.loss = epoch_loss;
-            state->current_metrics.accuracy = accuracy;
-
-            // Simulate some processing time
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
 
         state->current_metrics.samples_processed = epoch * static_cast<int64_t>(num_samples);
@@ -1488,14 +1476,12 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
         // Report progress every epoch
         ReportProgress(job_id, state);
 
-        spdlog::info("Job {} - Epoch {}/{}: Loss={:.4f}, Acc={:.2f}% [{}]",
+        spdlog::info("Job {} - Epoch {}/{}: Loss={:.4f}, Acc={:.2f}%",
                     job_id, epoch, total_epochs, state->current_metrics.loss,
-                    state->current_metrics.accuracy * 100.0,
-                    use_real_training ? "REAL" : "SIMULATED");
+                    state->current_metrics.accuracy * 100.0);
     }
 
-    spdlog::info("Training completed successfully for job: {} [{}]",
-                job_id, use_real_training ? "REAL TRAINING" : "SIMULATED");
+    spdlog::info("Training completed successfully for job: {}", job_id);
 
     return true;
 }

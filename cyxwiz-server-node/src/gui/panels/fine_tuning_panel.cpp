@@ -600,33 +600,11 @@ void FineTuningPanel::LoadModelInfo(const std::string& model_path) {
 
     if (model_path.empty()) return;
 
-    // Try loading via daemon
-    auto* client = GetDaemonClient();
-    if (client && client->IsConnected()) {
-        // TODO: Add GetModelLayers RPC to daemon
-        // For now, use placeholder data
-    }
-
-    // Placeholder: simulate layer info
-    // In a real implementation, this would parse the model file
-    model_layers_ = {
-        {"conv1", "Conv2d", 9408, true, true},
-        {"bn1", "BatchNorm2d", 128, true, true},
-        {"layer1.0.conv1", "Conv2d", 36864, true, true},
-        {"layer1.0.bn1", "BatchNorm2d", 128, true, true},
-        {"layer1.0.conv2", "Conv2d", 36864, true, true},
-        {"layer1.0.bn2", "BatchNorm2d", 128, true, true},
-        {"layer2.0.conv1", "Conv2d", 73728, true, true},
-        {"layer2.0.bn1", "BatchNorm2d", 256, true, true},
-        {"layer2.0.conv2", "Conv2d", 147456, true, true},
-        {"layer2.0.bn2", "BatchNorm2d", 256, true, true},
-        {"fc", "Linear", 512000, true, true},
-    };
-
-    config_.layer_trainable.resize(model_layers_.size(), 1);  // 1 = trainable
-    model_info_loaded_ = true;
-
-    spdlog::info("Loaded model info for fine-tuning: {}", model_path);
+    // The daemon has no GetModelLayers RPC yet. Do not show invented layers
+    // (this panel previously listed a fixed ResNet layout for any file).
+    model_load_error_ = "Layer inspection is not available yet: the node cannot read model layers "
+                        "(daemon GetModelLayers RPC missing).";
+    spdlog::warn("Fine-tuning: {} ({})", model_load_error_, model_path);
 }
 
 void FineTuningPanel::RefreshModelList() {
@@ -772,17 +750,11 @@ void FineTuningPanel::StartFineTuning() {
         return;
     }
 
-    // Build fine-tuning job config and submit
-    // TODO: Add SubmitFineTuningJob RPC to daemon
-
-    // Placeholder implementation
-    spdlog::info("Starting fine-tuning job: model={}, dataset={}, epochs={}, lr={:.2e}",
-        config_.model_path, config_.dataset_path, config_.epochs, config_.initial_lr);
-
-    // For now, simulate job submission
-    is_training_ = true;
-    training_progress_ = 0.0f;
-    training_job_id_ = "finetune-" + std::to_string(std::time(nullptr));
+    // The daemon has no SubmitFineTuningJob RPC yet. Fail closed instead of
+    // showing a job that was never submitted (previously simulated).
+    training_error_ = "Fine-tuning submission is not implemented in the node yet "
+                      "(daemon SubmitFineTuningJob RPC missing); no job was started.";
+    spdlog::warn("Fine-tuning: {}", training_error_);
 
     // In a real implementation:
     // std::string error;
