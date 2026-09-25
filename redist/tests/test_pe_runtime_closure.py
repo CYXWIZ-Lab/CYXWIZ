@@ -89,5 +89,28 @@ class PeRuntimeClosureTests(unittest.TestCase):
             self.assertEqual([], pe.audit_msvc_runtime_closure(root))
 
 
+    def test_cpu_base_must_not_link_gpu_runtimes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "cyxwiz-backend.dll").write_bytes(
+                synthetic_pe(["af.dll", "OpenCL.dll", "cudart64_12.dll"])
+            )
+            (root / "cyxwiz-engine.exe").write_bytes(
+                synthetic_pe(["cyxwiz-backend.dll", "KERNEL32.dll"])
+            )
+            self.assertEqual(
+                ["cyxwiz-backend.dll imports cudart64_12.dll, opencl.dll"],
+                pe.audit_gpu_runtime_imports(root),
+            )
+
+    def test_unified_arrayfire_import_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "cyxwiz-backend.dll").write_bytes(
+                synthetic_pe(["af.dll", "VCRUNTIME140.dll"])
+            )
+            self.assertEqual([], pe.audit_gpu_runtime_imports(root))
+
+
 if __name__ == "__main__":
     unittest.main()

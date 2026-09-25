@@ -3,24 +3,14 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstddef>
+#include <cstdint>
 #include <iomanip>
 #include <sstream>
 #include <string>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
-
-#ifdef CYXWIZ_ENABLE_OPENCL
-#define CL_TARGET_OPENCL_VERSION 120
-#ifdef __APPLE__
-#include <OpenCL/opencl.h>
-#include <OpenCL/cl_ext.h>
-#else
-#include <CL/cl.h>
-#include <CL/cl_ext.h>
-#endif
-#include <af/opencl.h>
-#endif
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -62,167 +52,6 @@ std::string PciFingerprint(const DeviceInfo& info) {
 }
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
-#ifdef CYXWIZ_ENABLE_OPENCL
-template <typename Value>
-bool QueryOpenClValue(cl_device_id device,
-                      cl_device_info field,
-                      Value& value) {
-    return clGetDeviceInfo(device,
-                           field,
-                           sizeof(Value),
-                           &value,
-                           nullptr) == CL_SUCCESS;
-}
-
-std::string QueryOpenClString(cl_device_id device, cl_device_info field) {
-    size_t size = 0;
-    if (clGetDeviceInfo(device, field, 0, nullptr, &size) != CL_SUCCESS ||
-        size <= 1) {
-        return {};
-    }
-    std::string value(size, '\0');
-    if (clGetDeviceInfo(device, field, size, value.data(), nullptr) !=
-        CL_SUCCESS) {
-        return {};
-    }
-    while (!value.empty() && value.back() == '\0') value.pop_back();
-    return value;
-}
-
-std::string QueryOpenClPlatformString(cl_platform_id platform,
-                                     cl_platform_info field) {
-    size_t size = 0;
-    if (clGetPlatformInfo(platform, field, 0, nullptr, &size) != CL_SUCCESS ||
-        size <= 1) {
-        return {};
-    }
-    std::string value(size, '\0');
-    if (clGetPlatformInfo(platform, field, size, value.data(), nullptr) !=
-        CL_SUCCESS) {
-        return {};
-    }
-    while (!value.empty() && value.back() == '\0') value.pop_back();
-    return value;
-}
-
-#if (defined(CL_DEVICE_UUID_KHR) && defined(CL_UUID_SIZE_KHR)) || \
-    (defined(CL_DEVICE_LUID_KHR) && defined(CL_LUID_SIZE_KHR) && \
-     defined(CL_DEVICE_LUID_VALID_KHR)) || \
-    defined(CL_DEVICE_PCI_BUS_INFO_KHR) || \
-    (defined(CL_DEVICE_PCI_BUS_ID_NV) && defined(CL_DEVICE_PCI_SLOT_ID_NV))
-bool HasOpenClExtension(const std::string& extensions,
-                        const std::string& extension) {
-    size_t position = 0;
-    while ((position = extensions.find(extension, position)) !=
-           std::string::npos) {
-        const bool left = position == 0 || extensions[position - 1] == ' ';
-        const size_t end = position + extension.size();
-        const bool right = end == extensions.size() || extensions[end] == ' ';
-        if (left && right) return true;
-        position = end;
-    }
-    return false;
-}
-#endif
-
-void EnrichOpenClIdentity(DeviceInfo& info) {
-    const cl_device_id device = afcl::getDeviceId();
-
-    cl_device_type type = 0;
-    if (QueryOpenClValue(device, CL_DEVICE_TYPE, type)) {
-        if ((type & CL_DEVICE_TYPE_CPU) != 0) {
-            info.kind = DeviceKind::CPU;
-        } else if ((type & CL_DEVICE_TYPE_GPU) != 0) {
-            info.kind = DeviceKind::GPU;
-        } else if ((type & CL_DEVICE_TYPE_ACCELERATOR) != 0) {
-            info.kind = DeviceKind::Accelerator;
-        }
-    }
-
-    cl_ulong total_memory = 0;
-    if (QueryOpenClValue(device, CL_DEVICE_GLOBAL_MEM_SIZE, total_memory) &&
-        total_memory > 0) {
-        info.memory_total = static_cast<size_t>(total_memory);
-        info.memory_total_known = true;
-    }
-
-    info.provider = QueryOpenClString(device, CL_DEVICE_VENDOR);
-    info.provider_known = !info.provider.empty();
-    info.driver_version = QueryOpenClString(device, CL_DRIVER_VERSION);
-    info.driver_version_known = !info.driver_version.empty();
-    info.hardware_vendor_id_known = QueryOpenClValue(
-        device, CL_DEVICE_VENDOR_ID, info.hardware_vendor_id);
-
-    cl_platform_id platform = nullptr;
-    if (!info.provider_known &&
-        QueryOpenClValue(device, CL_DEVICE_PLATFORM, platform) && platform) {
-        info.provider = QueryOpenClPlatformString(platform, CL_PLATFORM_VENDOR);
-        info.provider_known = !info.provider.empty();
-    }
-
-    const std::string extensions =
-        QueryOpenClString(device, CL_DEVICE_EXTENSIONS);
-
-#if defined(CL_DEVICE_UUID_KHR) && defined(CL_UUID_SIZE_KHR)
-    if (HasOpenClExtension(extensions, "cl_khr_device_uuid")) {
-        std::array<unsigned char, CL_UUID_SIZE_KHR> uuid{};
-        if (QueryOpenClValue(device, CL_DEVICE_UUID_KHR, uuid)) {
-            info.hardware_uuid = HexBytes(uuid.data(), uuid.size());
-            info.hardware_uuid_known = !info.hardware_uuid.empty();
-        }
-    }
-#endif
-
-#if defined(CL_DEVICE_LUID_KHR) && defined(CL_LUID_SIZE_KHR) && \
-    defined(CL_DEVICE_LUID_VALID_KHR)
-    if (HasOpenClExtension(extensions, "cl_khr_device_uuid")) {
-        cl_bool luid_valid = CL_FALSE;
-        std::array<unsigned char, CL_LUID_SIZE_KHR> luid{};
-        if (QueryOpenClValue(
-                device, CL_DEVICE_LUID_VALID_KHR, luid_valid) &&
-            luid_valid == CL_TRUE &&
-            QueryOpenClValue(device, CL_DEVICE_LUID_KHR, luid)) {
-            info.hardware_luid = HexBytes(luid.data(), luid.size());
-            info.hardware_luid_known = !info.hardware_luid.empty();
-        }
-    }
-#endif
-
-#if defined(CL_DEVICE_PCI_BUS_INFO_KHR)
-    if (HasOpenClExtension(extensions, "cl_khr_pci_bus_info")) {
-        cl_device_pci_bus_info_khr pci{};
-        if (QueryOpenClValue(device, CL_DEVICE_PCI_BUS_INFO_KHR, pci)) {
-            info.pci_domain = static_cast<int>(pci.pci_domain);
-            info.pci_bus = static_cast<int>(pci.pci_bus);
-            info.pci_device = static_cast<int>(pci.pci_device);
-            info.pci_function = static_cast<int>(pci.pci_function);
-            info.pci_location_known = true;
-        }
-    }
-#endif
-
-#if defined(CL_DEVICE_PCI_BUS_ID_NV) && defined(CL_DEVICE_PCI_SLOT_ID_NV)
-    if (!info.pci_location_known &&
-        HasOpenClExtension(extensions, "cl_nv_device_attribute_query")) {
-        cl_uint bus = 0;
-        cl_uint slot = 0;
-        cl_uint domain = 0;
-        if (QueryOpenClValue(device, CL_DEVICE_PCI_BUS_ID_NV, bus) &&
-            QueryOpenClValue(device, CL_DEVICE_PCI_SLOT_ID_NV, slot)) {
-#if defined(CL_DEVICE_PCI_DOMAIN_ID_NV)
-            QueryOpenClValue(device, CL_DEVICE_PCI_DOMAIN_ID_NV, domain);
-#endif
-            info.pci_domain = static_cast<int>(domain);
-            info.pci_bus = static_cast<int>(bus);
-            info.pci_device = static_cast<int>(slot >> 3U);
-            info.pci_function = static_cast<int>(slot & 0x7U);
-            info.pci_location_known = true;
-        }
-    }
-#endif
-}
-#endif
-
 class DynamicLibrary {
 public:
 #ifdef _WIN32
@@ -266,6 +95,217 @@ template <typename Function>
 Function FindFunction(const DynamicLibrary& library, const char* symbol) {
     return reinterpret_cast<Function>(library.Find(symbol));
 }
+
+#ifdef CYXWIZ_ENABLE_OPENCL
+// OpenCL identity is resolved at runtime, like CUDA above: the portable backend
+// must not import OpenCL or afopencl, so a machine without the OpenCL pack or
+// an ICD loader still loads it. Values below are the Khronos cl.h/cl_ext.h ABI.
+using ClDeviceId = void*;
+using ClPlatformId = void*;
+using ClInt = std::int32_t;
+using ClUint = std::uint32_t;
+using ClUlong = std::uint64_t;
+using ClBool = ClUint;
+
+constexpr ClInt kClSuccess = 0;
+constexpr ClBool kClTrue = 1;
+constexpr ClUint kClDeviceType = 0x1000;
+constexpr ClUint kClDeviceVendorId = 0x1001;
+constexpr ClUint kClDeviceGlobalMemSize = 0x101F;
+constexpr ClUint kClDeviceVendor = 0x102C;
+constexpr ClUint kClDriverVersion = 0x102D;
+constexpr ClUint kClDeviceExtensions = 0x1030;
+constexpr ClUint kClDevicePlatform = 0x1031;
+constexpr ClUint kClPlatformVendor = 0x0903;
+constexpr ClUlong kClDeviceTypeCpu = 1U << 1U;
+constexpr ClUlong kClDeviceTypeGpu = 1U << 2U;
+constexpr ClUlong kClDeviceTypeAccelerator = 1U << 3U;
+constexpr ClUint kClDeviceUuidKhr = 0x106A;
+constexpr ClUint kClDeviceLuidValidKhr = 0x106C;
+constexpr ClUint kClDeviceLuidKhr = 0x106D;
+constexpr std::size_t kClUuidSizeKhr = 16;
+constexpr std::size_t kClLuidSizeKhr = 8;
+constexpr ClUint kClDevicePciBusInfoKhr = 0x410F;
+constexpr ClUint kClDevicePciBusIdNv = 0x4008;
+constexpr ClUint kClDevicePciSlotIdNv = 0x4009;
+constexpr ClUint kClDevicePciDomainIdNv = 0x400A;
+
+struct ClPciBusInfoKhr {
+    ClUint pci_domain;
+    ClUint pci_bus;
+    ClUint pci_device;
+    ClUint pci_function;
+};
+
+struct OpenClIdentityApi {
+    using GetDeviceInfo =
+        ClInt (*)(ClDeviceId, ClUint, std::size_t, void*, std::size_t*);
+    using GetPlatformInfo =
+        ClInt (*)(ClPlatformId, ClUint, std::size_t, void*, std::size_t*);
+    GetDeviceInfo get_device_info = nullptr;
+    GetPlatformInfo get_platform_info = nullptr;
+
+    template <typename Value>
+    bool Query(ClDeviceId device, ClUint field, Value& value) const {
+        return get_device_info(device, field, sizeof(Value), &value,
+                               nullptr) == kClSuccess;
+    }
+
+    std::string QueryString(ClDeviceId device, ClUint field) const {
+        std::size_t size = 0;
+        if (get_device_info(device, field, 0, nullptr, &size) != kClSuccess ||
+            size <= 1) {
+            return {};
+        }
+        std::string value(size, '\0');
+        if (get_device_info(device, field, size, value.data(), nullptr) !=
+            kClSuccess) {
+            return {};
+        }
+        while (!value.empty() && value.back() == '\0') value.pop_back();
+        return value;
+    }
+
+    std::string QueryPlatformString(ClPlatformId platform, ClUint field) const {
+        std::size_t size = 0;
+        if (!get_platform_info ||
+            get_platform_info(platform, field, 0, nullptr, &size) !=
+                kClSuccess ||
+            size <= 1) {
+            return {};
+        }
+        std::string value(size, '\0');
+        if (get_platform_info(platform, field, size, value.data(), nullptr) !=
+            kClSuccess) {
+            return {};
+        }
+        while (!value.empty() && value.back() == '\0') value.pop_back();
+        return value;
+    }
+};
+
+bool HasOpenClExtension(const std::string& extensions,
+                        const std::string& extension) {
+    size_t position = 0;
+    while ((position = extensions.find(extension, position)) !=
+           std::string::npos) {
+        const bool left = position == 0 || extensions[position - 1] == ' ';
+        const size_t end = position + extension.size();
+        const bool right = end == extensions.size() || extensions[end] == ' ';
+        if (left && right) return true;
+        position = end;
+    }
+    return false;
+}
+
+void EnrichOpenClIdentity(DeviceInfo& info) {
+#ifdef _WIN32
+    DynamicLibrary arrayfire_opencl(L"afopencl.dll", true);
+    DynamicLibrary opencl(L"OpenCL.dll");
+#elif defined(__APPLE__)
+    DynamicLibrary arrayfire_opencl("libafopencl.dylib", true);
+    DynamicLibrary opencl("/System/Library/Frameworks/OpenCL.framework/OpenCL");
+#else
+    DynamicLibrary arrayfire_opencl("libafopencl.so", true);
+    DynamicLibrary opencl("libOpenCL.so.1");
+#endif
+
+    using AfGetDeviceId = af_err (*)(ClDeviceId*);
+    const auto af_get_device_id =
+        FindFunction<AfGetDeviceId>(arrayfire_opencl, "afcl_get_device_id");
+    OpenClIdentityApi api;
+    api.get_device_info = FindFunction<OpenClIdentityApi::GetDeviceInfo>(
+        opencl, "clGetDeviceInfo");
+    api.get_platform_info = FindFunction<OpenClIdentityApi::GetPlatformInfo>(
+        opencl, "clGetPlatformInfo");
+
+    ClDeviceId device = nullptr;
+    if (!af_get_device_id || !api.get_device_info ||
+        af_get_device_id(&device) != AF_SUCCESS || device == nullptr) {
+        return;
+    }
+
+    ClUlong type = 0;
+    if (api.Query(device, kClDeviceType, type)) {
+        if ((type & kClDeviceTypeCpu) != 0) {
+            info.kind = DeviceKind::CPU;
+        } else if ((type & kClDeviceTypeGpu) != 0) {
+            info.kind = DeviceKind::GPU;
+        } else if ((type & kClDeviceTypeAccelerator) != 0) {
+            info.kind = DeviceKind::Accelerator;
+        }
+    }
+
+    ClUlong total_memory = 0;
+    if (api.Query(device, kClDeviceGlobalMemSize, total_memory) &&
+        total_memory > 0) {
+        info.memory_total = static_cast<size_t>(total_memory);
+        info.memory_total_known = true;
+    }
+
+    info.provider = api.QueryString(device, kClDeviceVendor);
+    info.provider_known = !info.provider.empty();
+    info.driver_version = api.QueryString(device, kClDriverVersion);
+    info.driver_version_known = !info.driver_version.empty();
+    ClUint vendor_id = 0;
+    info.hardware_vendor_id_known =
+        api.Query(device, kClDeviceVendorId, vendor_id);
+    if (info.hardware_vendor_id_known) info.hardware_vendor_id = vendor_id;
+
+    ClPlatformId platform = nullptr;
+    if (!info.provider_known &&
+        api.Query(device, kClDevicePlatform, platform) && platform) {
+        info.provider = api.QueryPlatformString(platform, kClPlatformVendor);
+        info.provider_known = !info.provider.empty();
+    }
+
+    const std::string extensions =
+        api.QueryString(device, kClDeviceExtensions);
+
+    if (HasOpenClExtension(extensions, "cl_khr_device_uuid")) {
+        std::array<unsigned char, kClUuidSizeKhr> uuid{};
+        if (api.Query(device, kClDeviceUuidKhr, uuid)) {
+            info.hardware_uuid = HexBytes(uuid.data(), uuid.size());
+            info.hardware_uuid_known = !info.hardware_uuid.empty();
+        }
+        ClBool luid_valid = 0;
+        std::array<unsigned char, kClLuidSizeKhr> luid{};
+        if (api.Query(device, kClDeviceLuidValidKhr, luid_valid) &&
+            luid_valid == kClTrue &&
+            api.Query(device, kClDeviceLuidKhr, luid)) {
+            info.hardware_luid = HexBytes(luid.data(), luid.size());
+            info.hardware_luid_known = !info.hardware_luid.empty();
+        }
+    }
+
+    if (HasOpenClExtension(extensions, "cl_khr_pci_bus_info")) {
+        ClPciBusInfoKhr pci{};
+        if (api.Query(device, kClDevicePciBusInfoKhr, pci)) {
+            info.pci_domain = static_cast<int>(pci.pci_domain);
+            info.pci_bus = static_cast<int>(pci.pci_bus);
+            info.pci_device = static_cast<int>(pci.pci_device);
+            info.pci_function = static_cast<int>(pci.pci_function);
+            info.pci_location_known = true;
+        }
+    }
+
+    if (!info.pci_location_known &&
+        HasOpenClExtension(extensions, "cl_nv_device_attribute_query")) {
+        ClUint bus = 0;
+        ClUint slot = 0;
+        ClUint domain = 0;
+        if (api.Query(device, kClDevicePciBusIdNv, bus) &&
+            api.Query(device, kClDevicePciSlotIdNv, slot)) {
+            api.Query(device, kClDevicePciDomainIdNv, domain);
+            info.pci_domain = static_cast<int>(domain);
+            info.pci_bus = static_cast<int>(bus);
+            info.pci_device = static_cast<int>(slot >> 3U);
+            info.pci_function = static_cast<int>(slot & 0x7U);
+            info.pci_location_known = true;
+        }
+    }
+}
+#endif
 
 struct CudaUuid {
     char bytes[16];

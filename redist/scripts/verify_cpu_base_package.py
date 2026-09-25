@@ -41,7 +41,10 @@ from macho_runtime_closure import (  # noqa: E402
     is_system_dependency,
     parse_otool_dependencies,
 )
-from pe_runtime_closure import audit_msvc_runtime_closure  # noqa: E402
+from pe_runtime_closure import (  # noqa: E402
+    audit_gpu_runtime_imports,
+    audit_msvc_runtime_closure,
+)
 
 
 class CpuBaseSmokeError(RuntimeError):
@@ -413,6 +416,13 @@ def verify(
         if missing_runtime:
             raise CpuBaseSmokeError(
                 "MSVC runtime is not app-local: " + "; ".join(missing_runtime)
+            )
+        # GPU stacks come from optional packs through ArrayFire's plugin
+        # loader; a direct import would stop the base loading without them.
+        gpu_imports = audit_gpu_runtime_imports(install_root)
+        if gpu_imports:
+            raise CpuBaseSmokeError(
+                "CPU base links a GPU runtime directly: " + "; ".join(gpu_imports)
             )
 
     suffix = ".exe" if os.name == "nt" else ""

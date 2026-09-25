@@ -602,11 +602,9 @@ if(CYXWIZ_HAS_ARRAYFIRE)
     endif()
 
     if(CYXWIZ_ENABLE_OPENCL)
-        find_package(OpenCL REQUIRED)
-        target_link_libraries(cyxwiz-backend PUBLIC
-            ArrayFire::afopencl
-            OpenCL::OpenCL  # OpenCL library for clGetDeviceInfo()
-        )
+        # Keep OpenCL runtime-selected via ArrayFire, like CUDA: device
+        # identity resolves clGetDeviceInfo and afcl_get_device_id at runtime,
+        # so the portable backend never imports OpenCL or afopencl.
         target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_ENABLE_OPENCL)
     endif()
 endif()

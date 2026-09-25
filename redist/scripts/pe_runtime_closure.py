@@ -15,6 +15,15 @@ MSVC_RUNTIME = re.compile(
 )
 
 
+# GPU runtimes belong to optional packs or vendor drivers; the portable base
+# must reach them only through ArrayFire's runtime plugin loading.
+GPU_RUNTIME = re.compile(
+    r"(?:af(?:cuda|opencl|oneapi)|opencl|nvcuda|cudart64_\d+|cublas(?:lt)?64_\d+"
+    r"|nvrtc64_[0-9_]+|sycl\d*)\.dll",
+    re.IGNORECASE,
+)
+
+
 class PeFormatError(ValueError):
     pass
 
@@ -85,6 +94,25 @@ def pe_imported_dlls(path: Path) -> list[str]:
     except (struct.error, ValueError, UnicodeDecodeError) as error:
         raise PeFormatError(f"{path.name} has a malformed import table") from error
     return names
+
+
+def audit_gpu_runtime_imports(
+    root: Path,
+    read_imports: Callable[[Path], Iterable[str]] = pe_imported_dlls,
+) -> list[str]:
+    """Return images in a CPU base that link a GPU runtime directly."""
+    problems: list[str] = []
+    for image in sorted(
+        path for path in root.rglob("*")
+        if path.is_file() and path.suffix.lower() in PE_SUFFIXES and is_pe(path)
+    ):
+        linked = sorted(
+            {name.lower() for name in read_imports(image) if GPU_RUNTIME.fullmatch(name)}
+        )
+        if linked:
+            relative = image.relative_to(root).as_posix()
+            problems.append(f"{relative} imports {', '.join(linked)}")
+    return problems
 
 
 def audit_msvc_runtime_closure(

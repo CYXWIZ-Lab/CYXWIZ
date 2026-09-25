@@ -177,8 +177,9 @@ jobs:
             -DCYXWIZ_ENABLE_PYTORCH=OFF \
             -DCYXWIZ_BUILD_MUJOCO_PLUGIN=OFF \
             -DCYXWIZ_BUILD_ASSISTANT_PLUGIN=OFF \
-            -DCYXWIZ_ENABLE_CUDA=OFF \
-            -DCYXWIZ_ENABLE_OPENCL=OFF
+            -DCYXWIZ_ENABLE_CUDA=ON \
+            -DCYXWIZ_ENABLE_OPENCL=ON \
+            -DCYXWIZ_ENABLE_NCCL=OFF
 
       - name: Save vcpkg binary cache
         if: always()
