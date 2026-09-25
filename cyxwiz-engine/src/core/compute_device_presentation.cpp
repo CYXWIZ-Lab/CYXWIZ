@@ -377,7 +377,7 @@ void Recommend(CardBuild& build, const std::optional<ComputeFastestRoute>& faste
     std::string reason = best->route_label + " is the verified route for training on this device";
     if (best_ms > 0.0) reason += " (median " + FormatMs(best_ms) + ")";
     reason += ".";
-    if (best->type == DeviceType::OPENCL && has_oneapi) {
+    if (best->type == DeviceType::OPENCL && has_oneapi && !build.cpu) {
         reason += " OpenCL is preferred over oneAPI here until ArrayFire exposes its SYCL queue.";
     }
     std::vector<std::string> others;

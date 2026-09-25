@@ -13,6 +13,7 @@
 #include "../../core/training_trace_collector.h"
 #include "../../core/window_manager.h"
 
+#include <algorithm>
 #include <cstring>
 #include <exception>
 #include <filesystem>
@@ -69,9 +70,22 @@ void ToolbarPanel::RenderPreferencesDialog() {
         ImGui::OpenPopup("Preferences");
         ImVec2 center = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-        ImGui::SetNextWindowSize(ImVec2(1000, 760), ImGuiCond_Appearing);
+        // Fit the Engine window: a fixed 1000x760 overflowed smaller windows and
+        // clipped the OK / Cancel footer.
+        const ImVec2 viewport = ImGui::GetMainViewport()->WorkSize;
+        const ImVec2 limit(viewport.x * 0.92f, viewport.y * 0.92f);
+        ImGui::SetNextWindowSize(
+            ImVec2((std::min)(1000.0f, limit.x), (std::min)(760.0f, limit.y)),
+            ImGuiCond_Appearing);
+        ImGui::SetNextWindowSizeConstraints(
+            ImVec2((std::min)(560.0f, limit.x), (std::min)(360.0f, limit.y)), limit);
 
         if (ImGui::BeginPopupModal("Preferences", &show_preferences_dialog_)) {
+            // Tabs scroll inside their own region so OK / Cancel stay visible
+            // at the bottom however long a tab is.
+            const float footer_height = ImGui::GetTextLineHeight() + 16.0f +
+                ImGui::GetStyle().ItemSpacing.y * 4.0f + 6.0f;
+            ImGui::BeginChild("PreferencesBody", ImVec2(0.0f, -footer_height));
             // Tab bar for different preference sections
             if (ImGui::BeginTabBar("PreferenceTabs")) {
 
@@ -1140,6 +1154,8 @@ void ToolbarPanel::RenderPreferencesDialog() {
                             }
                             const bool verify_all = !selected_only;
                             options.benchmark_verified_routes = verify_all;
+                            // One isolated process per route (backend loads once).
+                            options.batch_operations = true;
                             const bool with_recovery =
                                 selected_only && routes.size() > 1;
                             const auto service =
@@ -1278,6 +1294,23 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 cyxwiz::Device::GetAvailableDevices(), false);
                         }
                         if (training_active) ImGui::EndDisabled();
+                        // Failures used to reach only the task log; show them here.
+                        const bool task_failed =
+                            qualification_task &&
+                            qualification_task->GetState() == cyxwiz::TaskState::Failed;
+                        if (task_failed || !device_selection_error_.empty()) {
+                            ImGui::PushTextWrapPos(0.0f);
+                            ImGui::TextColored(
+                                ImVec4(1.0f, 0.48f, 0.45f, 1.0f),
+                                "%s Verification did not complete: %s",
+                                ICON_FA_TRIANGLE_EXCLAMATION,
+                                task_failed
+                                    ? qualification_task->GetErrorMessage().c_str()
+                                    : device_selection_error_.c_str());
+                            ImGui::TextDisabled(
+                                "Saved results were not changed. Fix the cause and verify again.");
+                            ImGui::PopTextWrapPos();
+                        }
                     }
 
                     if (!qualification_running) {
@@ -1362,8 +1395,8 @@ void ToolbarPanel::RenderPreferencesDialog() {
 
                 ImGui::EndTabBar();
             }
+            ImGui::EndChild();
 
-            ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
 
