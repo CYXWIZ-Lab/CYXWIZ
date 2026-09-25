@@ -48,9 +48,11 @@ void ExportDialog::SetModelData(
     const TrainingMetrics* metrics,
     const std::string& graph_json,
     uint64_t graph_hash,
-    const ExportOptions& trained_metadata
+    const ExportOptions& trained_metadata,
+    std::optional<ProcessDeviceSelection> model_device
 ) {
     model_ = model;
+    model_device_ = model_device;
     optimizer_ = optimizer;
     metrics_ = metrics;
     graph_json_ = graph_json;
@@ -416,11 +418,12 @@ void ExportDialog::StartExport() {
     const std::string output_path = output_path_;
     const uint64_t graph_hash = graph_hash_;
     const ExportOptions options = export_options_;
+    const auto model_device = model_device_;
 
     // Start export in background thread
     export_thread_ = std::make_unique<std::thread>(
         [this, model, optimizer, metrics, graph_json, output_path, graph_hash,
-         options]() {
+         options, model_device]() {
         ModelExporter exporter;
 
         auto progress_callback = [this](int current, int total, const std::string& status) {
@@ -432,15 +435,34 @@ void ExportDialog::StartExport() {
             }
         };
 
-        ExportResult result = exporter.Export(
-            *model,
-            optimizer,
-            metrics,
-            graph_json,
-            output_path,
-            options,
-            progress_callback
-        );
+        // A new thread starts on ArrayFire's default backend, which can
+        // differ from the one holding the weights (OpenCL training with a
+        // oneAPI default); reading them there fails with error 503.
+        ExportResult result;
+        bool device_ready = true;
+        if (model_device) {
+            const auto activation =
+                Device(model_device->type, model_device->device_id)
+                    .ActivateExact(false);
+            if (!activation.success) {
+                device_ready = false;
+                result.success = false;
+                result.error_message =
+                    "Could not switch export to the device that holds the "
+                    "trained model: " + activation.message;
+            }
+        }
+        if (device_ready) {
+            result = exporter.Export(
+                *model,
+                optimizer,
+                metrics,
+                graph_json,
+                output_path,
+                options,
+                progress_callback
+            );
+        }
 
         last_result_ = result;
         completed_export_options_ = options;

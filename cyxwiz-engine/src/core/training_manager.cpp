@@ -25,6 +25,13 @@
 namespace cyxwiz {
 
 namespace {
+std::optional<ProcessDeviceSelection> CurrentThreadModelDevice() {
+    if (const auto* device = Device::GetCurrentDevice()) {
+        return ProcessDeviceSelection{device->GetType(), device->GetDeviceId()};
+    }
+    return std::nullopt;
+}
+
 
 void NormalizeTrainingNumWorkers(TrainingConfiguration& config,
                                  const char* context) {
@@ -317,6 +324,19 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
     CheckpointEvaluationLoadResult result;
     namespace fs = std::filesystem;
 
+    // Build the model on the selected device, as training does; this runs
+    // on a task worker, which otherwise starts on ArrayFire's default
+    // backend (oneAPI on an Intel-only machine, not the selected route).
+    if (const auto selected = Device::GetProcessDevice()) {
+        const auto activation =
+            Device(selected->type, selected->device_id).ActivateExact(false);
+        if (!activation.success) {
+            spdlog::warn("TrainingManager: could not select device type={} id={} for checkpoint loading: {}",
+                         static_cast<int>(selected->type), selected->device_id,
+                         activation.message);
+        }
+    }
+
     const auto was_cancelled = [&cancel_requested]() {
         return cancel_requested && cancel_requested();
     };
@@ -444,6 +464,8 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
 
         active_model_info_ = ActiveModelInfo{};
         active_model_info_.origin = ActiveModelOrigin::LoadedCheckpoint;
+        // The model was built on this thread's active backend.
+        active_model_info_.model_device = CurrentThreadModelDevice();
         active_model_info_.checkpoint_path = resolved.string();
         active_model_info_.graph_fingerprint = graph_fingerprint;
         active_model_info_.effective_dataset_name = config.dataset_name;
@@ -1268,6 +1290,8 @@ void TrainingManager::TrainingThreadFunc(
             last_metrics_ = final_metrics;
             active_model_info_ = ActiveModelInfo{};
             active_model_info_.origin = ActiveModelOrigin::TrainedInSession;
+            // Training worker thread: its active backend holds the weights.
+            active_model_info_.model_device = CurrentThreadModelDevice();
             active_model_info_.checkpoint_path = final_metrics.checkpoint_used;
             const auto& completed_config = current_executor_->GetConfig();
             active_model_info_.evaluation_config = completed_config;

@@ -1275,7 +1275,8 @@ MainWindow::MainWindow()
                         : 0,
                     trained_info.evaluation_config
                         ? cyxwiz::TrainingExportMetadata(*trained_info.evaluation_config)
-                        : cyxwiz::ExportOptions{});
+                        : cyxwiz::ExportOptions{},
+                    trained_info.model_device);
                 spdlog::info("Loaded trained model into Export dialog");
             } else {
                 spdlog::warn("No trained model available for export");
