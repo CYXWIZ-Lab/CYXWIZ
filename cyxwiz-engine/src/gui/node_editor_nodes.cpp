@@ -1885,23 +1885,9 @@ MLNode NodeEditor::CreateNodeWithIds(NodeType type,
             // SQL step (contract 1): input table -> read-only SELECT -> result.
             // The output stays pin 0, so older source-shaped graphs keep their
             // links; without sql_contract_version they are rejected at run.
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Input";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Result";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["query"] = "SELECT * FROM input";
-            node.parameters["input_alias"] = "input";
-            node.parameters["sql_contract_version"] = "1";
+            // Schema-led so every declared parameter (incl. input_aliases for
+            // multi-input steps) is seeded with its metadata default.
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
