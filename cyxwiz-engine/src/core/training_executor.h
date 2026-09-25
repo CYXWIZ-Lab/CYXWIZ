@@ -145,6 +145,12 @@ struct ResolvedExternalBatchers {
     BatcherPhase test_phase = BatcherPhase::Test;
 };
 
+// Builds a run's role batchers on the training thread once the batch size is
+// known. Hosts adapt their own dataset types with it (the Engine's DataRegistry
+// datasets: legacy_dataset_batchers.h).
+using ExternalBatcherFactory =
+    std::function<ResolvedExternalBatchers(const TrainingConfiguration& config, int batch_size)>;
+
 /**
  * TrainingExecutor - Executes ML training based on compiled graph configuration
  *
@@ -159,11 +165,10 @@ struct ResolvedExternalBatchers {
 class TrainingExecutor {
 public:
     /**
-     * Create a training executor
-     * @param config Compiled training configuration from GraphCompiler
-     * @param dataset Dataset handle from DataRegistry
+     * Create a training executor whose batchers the host builds on the
+     * training thread (External mode), e.g. for DataRegistry datasets.
      */
-    TrainingExecutor(TrainingConfiguration config, DatasetHandle dataset);
+    TrainingExecutor(TrainingConfiguration config, ExternalBatcherFactory batcher_factory);
 
     /**
      * Create a training executor with Arrow dataset (modern API)
@@ -302,25 +307,23 @@ private:
         size_t token_count = 0;
     };
 
-    // Three possible dataset backings. Exactly one of dataset_ / arrow_dataset_ /
-    // parquet_dataset_ is populated at construction time, based on which
-    // constructor was called. mode_ is the tag the Train() function uses
-    // to pick the right batcher implementation.
+    // Dataset backing chosen by the constructor; mode_ is the tag Train()
+    // uses to pick the batcher implementation. Every mode runs through the
+    // IBatcher (or ISequenceBatcher) loops.
     enum class DatasetMode {
-        Legacy,   // DatasetHandle + legacy DatasetBatcher
         Arrow,    // ArrowDataset + ArrowDatasetBatcher
-        External, // Image/Audio/Text IBatcher constructed by TrainingManager
+        External, // IBatchers from the host (image/audio/text, DataRegistry datasets)
         SequenceExternal, // Token-tagging ISequenceBatcher constructed upstream
         Parquet   // ParquetBackedDataset + ParquetArrowBatcher (disk-backed)
     };
 
     TrainingConfiguration config_;
-    DatasetHandle dataset_;
     std::shared_ptr<ArrowDataset> arrow_dataset_;
     std::shared_ptr<ParquetBackedDataset> parquet_dataset_;
     std::string label_column_;
-    DatasetMode mode_ = DatasetMode::Legacy;
+    DatasetMode mode_ = DatasetMode::External;
     ResolvedExternalBatchers external_batchers_;
+    ExternalBatcherFactory external_batcher_factory_;
     std::unique_ptr<ISequenceBatcher> sequence_batcher_;
     std::vector<std::string> sequence_id_to_label_;
 
@@ -352,20 +355,6 @@ private:
      * Initialize the training components by building model from config
      */
     bool Initialize(int batch_size);
-
-    /**
-     * Run a single training epoch
-     */
-    void RunTrainingEpoch(
-        DatasetBatcher& batcher,
-        int epoch,
-        BatchCallback batch_cb
-    );
-
-    /**
-     * Run validation
-     */
-    void RunValidation(DatasetBatcher& batcher);
 
     /**
      * Run a single training epoch through any IBatcher implementation.

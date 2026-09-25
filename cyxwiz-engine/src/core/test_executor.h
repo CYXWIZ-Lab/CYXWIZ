@@ -99,6 +99,13 @@ struct TestingMetrics {
 using TestBatchCallback = std::function<void(int batch, int total, float running_accuracy)>;
 using TestCompleteCallback = std::function<void(const TestingMetrics&)>;
 
+// Test batcher built by the host when the run starts (batch size known), and
+// optional class names to label metrics with.
+struct ExternalTestSource {
+    std::function<std::unique_ptr<IBatcher>(const TrainingConfiguration& config, int batch_size)> make_batcher;
+    std::vector<std::string> class_names;
+};
+
 /**
  * TestExecutor - Runs inference on test data and computes metrics
  *
@@ -111,11 +118,10 @@ using TestCompleteCallback = std::function<void(const TestingMetrics&)>;
 class TestExecutor {
 public:
     /**
-     * Create a test executor
-     * @param config Compiled training configuration from GraphCompiler
-     * @param dataset Dataset handle from DataRegistry
+     * Create a test executor for a host-built test batcher (e.g. DataRegistry
+     * or text datasets, see legacy_dataset_batchers.h).
      */
-    TestExecutor(TrainingConfiguration config, DatasetHandle dataset);
+    TestExecutor(TrainingConfiguration config, ExternalTestSource source);
     TestExecutor(TrainingConfiguration config,
                  std::shared_ptr<ArrowDataset> arrow_dataset,
                  std::string label_column,
@@ -124,7 +130,6 @@ public:
                  std::shared_ptr<ParquetBackedDataset> parquet_dataset,
                  std::string label_column,
                  TestDatasetScope dataset_scope);
-    TestExecutor(TrainingConfiguration config, const DataRegistry::TextDatasetEntry& text_entry);
 
     ~TestExecutor();
 
@@ -168,11 +173,9 @@ public:
 
 private:
     TrainingConfiguration config_;
-    DatasetHandle dataset_;
     std::shared_ptr<ArrowDataset> arrow_dataset_;
     std::shared_ptr<ParquetBackedDataset> parquet_dataset_;
-    DataRegistry::TextDatasetEntry text_entry_;
-    bool use_text_dataset_ = false;
+    ExternalTestSource external_source_;
     bool use_arrow_dataset_ = false;
     bool use_parquet_dataset_ = false;
     TestDatasetScope dataset_scope_ =

@@ -239,7 +239,7 @@ bool TrainingManager::StartTrainingCommon(
 #ifndef CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS
 bool TrainingManager::StartTraining(
     TrainingConfiguration config,
-    DatasetHandle dataset,
+    ExternalBatcherFactory batcher_factory,
     int epochs,
     int batch_size,
     std::weak_ptr<TrainingPlotPanel> plot_panel,
@@ -260,7 +260,8 @@ bool TrainingManager::StartTraining(
 
     NormalizeTrainingNumWorkers(config, "TrainingManager");
 
-    auto executor = std::make_unique<TrainingExecutor>(std::move(config), dataset);
+    auto executor = std::make_unique<TrainingExecutor>(
+        std::move(config), std::move(batcher_factory));
     return StartTrainingCommon(
         std::move(executor), epochs, batch_size, plot_panel,
         std::move(node_editor_callback),
@@ -309,6 +310,7 @@ bool TrainingManager::HasTrainedModel() const {
 
 CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
     const TrainingConfiguration& config,
+    std::shared_ptr<ArrowDataset> dataset,
     const std::string& checkpoint_path,
     const std::string& graph_fingerprint,
     std::function<bool()> cancel_requested) {
@@ -362,9 +364,7 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
     // sequence batcher from its prepared dataset (token-window metadata). Do the
     // same here so Run Test can verify that test data uses the model's vocabulary.
     TrainingConfiguration prepared = config;
-    if (!PrepareSequenceEvaluationVocabulary(
-            prepared, DataRegistry::Instance().GetArrowDataset(prepared.dataset_name),
-            result.error_message)) {
+    if (!PrepareSequenceEvaluationVocabulary(prepared, dataset, result.error_message)) {
         return result;
     }
 

@@ -1,3 +1,4 @@
+#include "../core/legacy_dataset_batchers.h"
 #include "../core/training_export_metadata.h"
 // Windows header order fix - must come first to prevent winsock conflicts
 #ifdef _WIN32
@@ -1021,7 +1022,10 @@ MainWindow::MainWindow()
                 task.ReportProgress(0.65f, "Inspecting checkpoint...");
                 *load_result = cyxwiz::TrainingManager::Instance()
                     .LoadCheckpointForEvaluation(
-                        evaluation_config, selected_path, graph_fingerprint,
+                        evaluation_config,
+                        cyxwiz::DataRegistry::Instance().GetArrowDataset(
+                            evaluation_config.dataset_name),
+                        selected_path, graph_fingerprint,
                         [&task]() { return task.IsCancelRequested(); });
                 if (task.IsCancelRequested()) {
                     return;
@@ -3826,7 +3830,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             spdlog::info("Starting legacy training: dataset={}, epochs={}, batch_size={}",
                          dataset_name, epochs, batch_size);
             return tm.StartTraining(
-                std::move(dispatch_config), dataset, epochs, batch_size,
+                std::move(dispatch_config),
+                cyxwiz::LegacyTrainingBatcherFactory(dataset), epochs, batch_size,
                 plot_panel, std::move(callback));
         };
 
@@ -5852,8 +5857,8 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
             return;
         }
 
-        started = cyxwiz::TestManager::Instance().StartTestingText(
-            std::move(config), *text_entry, test_batch_size, model, nullptr);
+        started = cyxwiz::TestManager::Instance().StartTesting(
+            std::move(config), cyxwiz::TextTestSource(*text_entry), test_batch_size, model, nullptr);
     } else {
         auto dataset = registry.GetDataset(dataset_name);
         if (!dataset) {
@@ -5863,7 +5868,7 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         }
 
         started = cyxwiz::TestManager::Instance().StartTesting(
-            std::move(config), dataset, test_batch_size, model, nullptr);
+            std::move(config), cyxwiz::LegacyTestSource(dataset), test_batch_size, model, nullptr);
     }
 
     if (started) {

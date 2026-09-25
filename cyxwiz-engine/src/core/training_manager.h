@@ -75,7 +75,7 @@ public:
      */
     bool StartTraining(
         TrainingConfiguration config,
-        DatasetHandle dataset,
+        ExternalBatcherFactory batcher_factory,
         int epochs,
         int batch_size,
         std::weak_ptr<TrainingPlotPanel> plot_panel = {},
@@ -226,9 +226,12 @@ public:
     /**
      * Build the active graph model, validate a local checkpoint against it,
      * and atomically install the loaded model for Test/Export use.
+     * @param dataset The graph's prepared training dataset (the caller resolves
+     *        it; causal-LM graphs take their frozen vocabulary from it).
      */
     CheckpointEvaluationLoadResult LoadCheckpointForEvaluation(
         const TrainingConfiguration& config,
+        std::shared_ptr<ArrowDataset> dataset,
         const std::string& checkpoint_path,
         const std::string& graph_fingerprint = "",
         std::function<bool()> cancel_requested = {});

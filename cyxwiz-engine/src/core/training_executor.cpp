@@ -23,11 +23,6 @@
 #include "sequence_training_step.h"
 #include "training_batcher_setup.h"
 #include "training_parameter_contract.h"
-#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
-#include "data_registry.h"
-#include "../preprocessing/preprocessing_config.h"
-#include "../preprocessing/statistics_calculator.h"
-#endif
 #include "../plugin/registries/plugin_training_hook_manager.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
@@ -590,12 +585,14 @@ void AddRegressionMetricScalars(
 // TrainingExecutor Implementation
 // ============================================================================
 
-TrainingExecutor::TrainingExecutor(TrainingConfiguration config, DatasetHandle dataset)
+TrainingExecutor::TrainingExecutor(TrainingConfiguration config,
+                                   ExternalBatcherFactory batcher_factory)
     : config_(std::move(config))
-    , dataset_(dataset)
-    , mode_(DatasetMode::Legacy)
+    , mode_(DatasetMode::External)
+    , external_batcher_factory_(std::move(batcher_factory))
 {
-    spdlog::info("TrainingExecutor: Created with {} layers, input_size={}, output_size={}",
+    spdlog::info("TrainingExecutor: Created with host-built batchers, {} layers, "
+                 "input_size={}, output_size={}",
                  config_.layers.size(), config_.input_size, config_.output_size);
 }
 
@@ -1059,14 +1056,9 @@ void TrainingExecutor::Train(
     CrashRunRecorder::Instance().MarkActiveModelCheckpoint(
         "", 0, 0, "run_final_state");
 
-    // Create batchers - Arrow in-memory, Parquet disk-backed, external, or
-    // legacy. Modern paths flow through IBatcher pointers; legacy keeps the
-    // existing DatasetBatcher loop for now.
+    // Create batchers - Arrow in-memory, Parquet disk-backed, host-built
+    // (external) or sequence. All flow through IBatcher / ISequenceBatcher.
     TrainingBatcherSet modern_batchers;
-#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
-    std::unique_ptr<DatasetBatcher> legacy_train_batcher;
-    std::unique_ptr<DatasetBatcher> legacy_val_batcher;
-#endif
 
     // Non-owning IBatcher pointers point at whichever concrete batcher the
     // selected mode owns. Arrow, Parquet, image, audio, and text all share the
@@ -1098,9 +1090,19 @@ void TrainingExecutor::Train(
         active_val_ibatcher = modern_batchers.val;
         active_test_ibatcher = modern_batchers.test;
     } else if (mode_ == DatasetMode::External) {
-        // External batchers are constructed by TrainingManager for
-        // image/audio/text datasets with the compiled graph config already
-        // applied. The executor only owns the common training loop.
+        // External batchers come from the host: built by TrainingManager for
+        // image/audio/text datasets, or by the host's factory here on the
+        // training thread (DataRegistry datasets, whose setup may compute
+        // statistics). The executor only owns the common training loop.
+        if (external_batcher_factory_ && !external_batchers_.train) {
+            try {
+                external_batchers_ = external_batcher_factory_(config_, batch_size);
+            } catch (const std::exception& e) {
+                spdlog::error("TrainingExecutor: preparing the dataset batchers failed: {}", e.what());
+                fail_run(std::string("dataset_batcher_setup_failed: ") + e.what());
+                return;
+            }
+        }
         spdlog::info("TrainingExecutor: Using external batcher for training "
                      "(batch_size={}, num_workers={}, {} samples)",
                      batch_size, config_.num_workers,
@@ -1135,89 +1137,9 @@ void TrainingExecutor::Train(
         num_train_samples = sequence_batcher_->GetNumSamples();
         active_sequence_batcher = sequence_batcher_.get();
     } else {
-#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
-        // Legacy DatasetHandle batching
-        spdlog::info("TrainingExecutor: Using legacy dataset for training "
-                     "(batch_size={}, shuffle={}, drop_last={}, num_workers={})",
-                     batch_size, config_.shuffle, config_.drop_last, config_.num_workers);
-
-        // Honor DataLoader node config (or defaults if no such node).
-        // Validation batcher never shuffles and never drops the last batch.
-        legacy_train_batcher = std::make_unique<DatasetBatcher>(
-            dataset_, batch_size, DatasetSplit::Train,
-            config_.shuffle, config_.drop_last, config_.num_workers,
-            static_cast<uint32_t>(config_.dataloader_seed));
-        legacy_val_batcher = std::make_unique<DatasetBatcher>(
-            dataset_, batch_size, DatasetSplit::Validation, false, false, config_.num_workers,
-            static_cast<uint32_t>(config_.dataloader_seed));
-
-        // Apply NEW preprocessing pipeline (if configured)
-        const std::string dataset_name = !config_.dataset_name.empty()
-            ? config_.dataset_name
-            : dataset_.GetName();
-        DataRegistry& registry = DataRegistry::Instance();
-
-        if (registry.HasPreprocessingConfig(dataset_name)) {
-            spdlog::info("TrainingExecutor: Found preprocessing config for dataset '{}'", dataset_name);
-
-            PreprocessingConfig preprocessing_config = registry.GetPreprocessingConfig(dataset_name);
-
-            if (preprocessing_config.enabled) {
-                legacy_train_batcher->SetPreprocessingConfig(preprocessing_config);
-                legacy_val_batcher->SetPreprocessingConfig(preprocessing_config);
-
-                spdlog::info("TrainingExecutor: Computing dataset statistics...");
-                DatasetStatistics stats = StatisticsCalculator::Compute(
-                    dataset_name, &registry,
-                    [](float progress) {
-                        spdlog::debug("Statistics computation: {:.1f}%", progress * 100.0f);
-                    }
-                );
-
-                if (stats.is_valid) {
-                    legacy_train_batcher->InitializePreprocessing(stats);
-                    legacy_val_batcher->InitializePreprocessing(stats);
-                    spdlog::info("TrainingExecutor: Preprocessing pipeline initialized");
-                }
-            }
-        }
-
-        // Load augmentation pipeline
-        if (registry.HasAugmentationPipeline(dataset_name)) {
-            auto aug_pipeline = registry.GetAugmentationPipeline(dataset_name);
-            if (aug_pipeline) {
-                legacy_train_batcher->SetAugmentationPipeline(aug_pipeline);
-                legacy_train_batcher->SetApplyAugmentationOnTrain(true);
-            }
-        }
-
-        // Apply OLD preprocessing settings
-        if (config_.preprocessing.has_normalization) {
-            legacy_train_batcher->SetLegacyNormalization(config_.preprocessing.norm_mean,
-                                                         config_.preprocessing.norm_std);
-            legacy_val_batcher->SetLegacyNormalization(config_.preprocessing.norm_mean,
-                                                       config_.preprocessing.norm_std);
-        }
-
-        if (UsesScalarBinaryTargets(config_.loss_type)) {
-            legacy_train_batcher->SetLegacyScalarLabelMode(true);
-            legacy_val_batcher->SetLegacyScalarLabelMode(true);
-        } else if (config_.preprocessing.has_onehot) {
-            legacy_train_batcher->SetLegacyOneHotEncoding(config_.preprocessing.num_classes);
-            legacy_val_batcher->SetLegacyOneHotEncoding(config_.preprocessing.num_classes);
-        }
-
-        legacy_train_batcher->SetFlatten(true);
-        legacy_val_batcher->SetFlatten(true);
-
-        num_train_samples = legacy_train_batcher->GetNumSamples();
-        num_val_samples = legacy_val_batcher->GetNumSamples();
-#else
-        spdlog::error("TrainingExecutor: legacy DatasetHandle mode is disabled "
-                      "for this modern-only test build");
-        fail_run("legacy_dataset_mode_disabled");
+        spdlog::error("TrainingExecutor: no batcher for this dataset mode");
+        fail_run("unsupported_dataset_mode");
         return;
-#endif
     }
 
     if (active_train_ibatcher) {
@@ -1406,16 +1328,9 @@ void TrainingExecutor::Train(
         }
 
         spdlog::debug("TrainingExecutor: About to call RunTrainingEpoch");
-        // Run training epoch - dispatch by dataset mode. Arrow and Parquet
-        // batchers both flow through RunTrainingEpochArrow via their shared
-        // IBatcher base; legacy DatasetBatcher stays on its own path.
-        if (mode_ == DatasetMode::Legacy) {
-#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
-            RunTrainingEpoch(*legacy_train_batcher, epoch, batch_cb);
-#else
-            break;
-#endif
-        } else if (mode_ == DatasetMode::SequenceExternal &&
+        // Run training epoch - dispatch by dataset mode. Sequence batchers
+        // use the sequence loop; every other mode is an IBatcher.
+        if (mode_ == DatasetMode::SequenceExternal &&
                    active_sequence_batcher) {
             RunTrainingEpochSequence(*active_sequence_batcher, epoch, batch_cb);
         } else if (active_train_ibatcher) {
@@ -1440,12 +1355,7 @@ void TrainingExecutor::Train(
         if (should_validate_this_epoch) {
             model_->SetTraining(false);
         }
-        if (should_validate_this_epoch && mode_ == DatasetMode::Legacy) {
-#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
-            RunValidation(*legacy_val_batcher);
-            validation_ran_this_epoch = true;
-#endif
-        } else if (should_validate_this_epoch &&
+        if (should_validate_this_epoch &&
                    mode_ == DatasetMode::SequenceExternal &&
                    active_sequence_batcher) {
             active_sequence_batcher->SetPhase(BatcherPhase::Val);
@@ -1665,12 +1575,7 @@ void TrainingExecutor::Train(
         }
 
         // Reset batchers for next epoch
-        if (mode_ == DatasetMode::Legacy) {
-#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
-            legacy_train_batcher->Reset();
-            legacy_val_batcher->Reset();
-#endif
-        } else {
+        {
             if (mode_ == DatasetMode::SequenceExternal &&
                 active_sequence_batcher) {
                 active_sequence_batcher->Reset();
@@ -1918,392 +1823,6 @@ void TrainingExecutor::Train(
         throw;
     }
 }
-
-#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
-void TrainingExecutor::RunTrainingEpoch(
-    DatasetBatcher& batcher,
-    int epoch,
-    BatchCallback batch_cb)
-{
-    float epoch_loss = 0.0f;
-    float loss_weight_sum = 0.0f;
-    const bool regression_metrics = UsesRegressionMetrics(config_);
-    RegressionMetricAccumulator regression(
-        &config_.regression_target_transform);
-    Tensor device_loss_sum;
-    bool device_loss_sum_initialized = false;
-    Tensor device_loss_weight_sum;
-    bool device_loss_weight_sum_initialized = false;
-    Tensor device_accuracy_counts;
-    bool device_accuracy_counts_initialized = false;
-    const auto metric_ignore_index = ClassificationMetricIgnoreIndex(config_);
-    int batch_num = 0;
-    float current_loss = 0.0f;
-    float current_acc = 0.0f;
-
-    size_t total_batches = batcher.GetNumBatches();
-    AttachGraphScheduleIfPending(total_batches);
-
-    UpdateMetrics([total_batches](TrainingMetrics& m) {
-        m.total_batches = static_cast<int>(total_batches);
-        m.current_batch = 0;
-    });
-
-    // Epoch wall-clock start for the periodic progress log below -
-    // mirrors RunTrainingEpochArrow so both training paths have the
-    // same "training is alive" feedback loop.
-    const auto epoch_start_time = std::chrono::steady_clock::now();
-
-    while (!batcher.IsEpochComplete()) {
-        if (ShouldStop()) break;
-        if (!WaitWhilePaused()) break;
-
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
-            static_cast<int>(total_batches));
-        const auto fetch_start = std::chrono::steady_clock::now();
-        Batch batch = batcher.GetNextBatch();
-        const auto fetch_ms = std::chrono::duration<float, std::milli>(
-            std::chrono::steady_clock::now() - fetch_start).count();
-        if (!batch.IsValid()) break;
-
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
-            static_cast<int>(total_batches), 0.0f, 0.0f, fetch_ms);
-
-        batch_num++;
-
-        // Forward pass through model
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::Forward, epoch, batch_num,
-            static_cast<int>(total_batches));
-        const auto forward_start = std::chrono::steady_clock::now();
-        Tensor predictions = Forward(batch.data);
-        const auto forward_ms = std::chrono::duration<float, std::milli>(
-            std::chrono::steady_clock::now() - forward_start).count();
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::Forward, epoch, batch_num,
-            static_cast<int>(total_batches), 0.0f, 0.0f, forward_ms);
-
-        // DEBUG: Log sample values for first batch of first epoch.
-        if (epoch == 1 && batch_num == 1 &&
-            !ShouldMaterializeFirstBatchDebugSamples(config_)) {
-            RecordSkippedFirstBatchDebugSampleDump();
-        } else if (epoch == 1 && batch_num == 1) {
-            const ScopedArrayFireHostSyncAttribution debug_sync_attribution(
-                ArrayFireHostSyncCategory::DebugSampleDump,
-                "TrainingExecutor::FirstBatchDebugSampleDump");
-            const float* input_data = batch.data.ReadData<float>();
-            const float* pred_data_debug = predictions.ReadData<float>();
-            const float* target_data_debug = batch.labels.ReadData<float>();
-
-            // Log input data range
-            float min_input = input_data[0], max_input = input_data[0];
-            const auto& input_shape = batch.data.Shape();
-            if (input_shape.size() < 2) {
-                spdlog::error("TrainingExecutor: Expected 2D input, got {}D", input_shape.size());
-                break;
-            }
-            size_t input_size = input_shape[0] * input_shape[1];
-            for (size_t i = 1; i < std::min(input_size, size_t(1000)); ++i) {
-                min_input = std::min(min_input, input_data[i]);
-                max_input = std::max(max_input, input_data[i]);
-            }
-            spdlog::info("DEBUG: Input data range: [{:.4f}, {:.4f}]", min_input, max_input);
-
-            // Log first sample prediction
-            spdlog::info("DEBUG: First sample predictions:");
-            std::string pred_str = "  [";
-            for (size_t c = 0; c < config_.output_size; ++c) {
-                pred_str += fmt::format("{:.4f}", pred_data_debug[c]);
-                if (c < config_.output_size - 1) pred_str += ", ";
-            }
-            pred_str += "]";
-            spdlog::info("{}", pred_str);
-
-            // Log first sample target
-            spdlog::info("DEBUG: First sample target:");
-            std::string target_str = "  [";
-            for (size_t c = 0; c < config_.output_size; ++c) {
-                target_str += fmt::format("{:.1f}", target_data_debug[c]);
-                if (c < config_.output_size - 1) target_str += ", ";
-            }
-            target_str += "]";
-            spdlog::info("{}", target_str);
-        }
-
-        // Compute loss
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::ComputeLoss, epoch, batch_num,
-            static_cast<int>(total_batches));
-        float batch_loss = current_loss;
-        std::string loss_status = "device_resident";
-        LossAggregationWeightValue loss_weight;
-        if (regression_metrics) {
-            batch_loss = ComputeLoss(predictions, batch.labels);
-            loss_weight = ResolveLossAggregationWeight(*loss_, batch.size);
-            loss_weight_sum += loss_weight.host;
-            epoch_loss += batch_loss * loss_weight.host;
-            loss_status = std::isfinite(batch_loss) ? "ok" : "failed";
-        } else {
-            Tensor loss_tensor = ComputeLossTensor(predictions, batch.labels);
-            loss_weight = ResolveLossAggregationWeight(*loss_, batch.size);
-            Tensor weighted_loss = loss_weight.device != nullptr
-                ? ApplyDeviceScalar(loss_tensor, *loss_weight.device, false)
-                : loss_tensor * loss_weight.host;
-            AccumulateDeviceScalar(
-                device_loss_sum,
-                device_loss_sum_initialized,
-                weighted_loss);
-            if (loss_weight.device != nullptr) {
-                AccumulateDeviceScalar(
-                    device_loss_weight_sum,
-                    device_loss_weight_sum_initialized,
-                    *loss_weight.device);
-            } else {
-                loss_weight_sum += loss_weight.host;
-            }
-        }
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::ComputeLoss, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss, 0.0f, 0.0f,
-            loss_status,
-            loss_status == "failed" ? "Training loss became NaN or Inf." : "");
-
-        // Compute objective-appropriate metrics.
-        if (regression_metrics) {
-            AddRegressionMetricScalars(
-                regression,
-                predictions,
-                batch.labels,
-                batch.size,
-                config_.output_size,
-                config_);
-        } else {
-            const auto accuracy_scalar = BuildClassificationDecisionScalar(
-                predictions, batch.labels, batch.size, config_.output_size,
-                ClassificationDecisionModeForLoss(config_.loss_type),
-                metric_ignore_index);
-            AccumulateDeviceClassificationCounts(
-                device_accuracy_counts,
-                device_accuracy_counts_initialized,
-                accuracy_scalar.counts);
-        }
-
-        // Backward pass
-        CrashRunRecorder::Instance().MarkStage(
-            TrainingTraceStage::Backward, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss);
-        const auto backward_start = std::chrono::steady_clock::now();
-        Backward(predictions, batch.labels);
-        const auto backward_ms = std::chrono::duration<float, std::milli>(
-            std::chrono::steady_clock::now() - backward_start).count();
-        TrainingTraceCollector::Instance().RecordStage(
-            TrainingTraceStage::Backward, epoch, batch_num,
-            static_cast<int>(total_batches), batch_loss, 0.0f, backward_ms);
-
-        const bool should_report = ShouldReportTrainingBatch(
-            config_, batch_num, static_cast<int>(total_batches),
-            batcher.IsEpochComplete());
-        if (!regression_metrics && should_report) {
-            current_loss = ReadAccumulatedLoss(
-                device_loss_sum, *loss_, loss_weight_sum,
-                device_loss_weight_sum_initialized
-                    ? &device_loss_weight_sum
-                    : nullptr);
-            const auto accuracy_count = ReadClassificationDecisionScalar(
-                ClassificationDecisionScalar{device_accuracy_counts},
-                "TrainingExecutor::ReadAccumulatedAccuracy");
-            current_acc = accuracy_count.total > 0
-                ? static_cast<float>(accuracy_count.correct) /
-                      static_cast<float>(accuracy_count.total)
-                : 0.0f;
-            batch_loss = current_loss;
-        } else if (regression_metrics) {
-            current_loss = FinalizeAggregatedLoss(
-                *loss_, epoch_loss, loss_weight_sum);
-        }
-
-        // Update metrics
-        const float current_mae = regression.Mae();
-        const float current_rmse = regression.Rmse();
-
-        AccumulateGradientsAndMaybeStep(
-            epoch, batch_num, static_cast<int>(total_batches),
-            batch_loss, current_acc, loss_weight.host, loss_weight.device,
-            batcher.IsEpochComplete());
-
-        UpdateMetrics([batch_num, current_loss, current_acc,
-                       current_mae, current_rmse,
-                       regression_metrics](TrainingMetrics& m) {
-            m.current_batch = batch_num;
-            m.train_loss = current_loss;
-            m.train_accuracy = current_acc;
-            if (regression_metrics) {
-                m.train_mae = current_mae;
-                m.train_rmse = current_rmse;
-            }
-        });
-
-        // Periodic progress log - mirror of RunTrainingEpochArrow's
-        // version so non-Arrow training paths (legacy DatasetBatcher)
-        // also get per-50-batch liveness signals.
-        if (ShouldLogTrainingBatch(config_, batch_num)) {
-            const auto now = std::chrono::steady_clock::now();
-            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - epoch_start_time).count();
-            const float elapsed_s = elapsed_ms / 1000.0f;
-            const float rate = elapsed_ms > 0
-                ? (batch_num * 1000.0f / static_cast<float>(elapsed_ms))
-                : 0.0f;
-            if (regression_metrics) {
-                spdlog::info(
-                    "Epoch {} [{}/{}] loss={:.4f} mae={:.4f} rmse={:.4f} "
-                    "({:.1f}s, {:.1f} batches/s)",
-                    epoch, batch_num, total_batches, current_loss,
-                    current_mae, current_rmse, elapsed_s, rate);
-            } else {
-                spdlog::info("Epoch {} [{}/{}] loss={:.4f} acc={:.2f}% "
-                             "({:.1f}s, {:.1f} batches/s)",
-                             epoch, batch_num, total_batches,
-                             current_loss, current_acc * 100.0f,
-                             elapsed_s, rate);
-            }
-        }
-
-        // Batch callback
-        if (batch_cb) {
-            CrashRunRecorder::Instance().MarkStage(
-                TrainingTraceStage::BatchCallback, epoch, batch_num,
-                static_cast<int>(total_batches), batch_loss, current_acc);
-            TrainingTraceCollector::Instance().RecordStage(
-                TrainingTraceStage::BatchCallback, epoch, batch_num,
-                static_cast<int>(total_batches), batch_loss, current_acc);
-            batch_cb(epoch, batch_num, static_cast<int>(total_batches), current_loss, current_acc);
-        }
-    }
-
-    // Final epoch metrics
-    float final_loss = current_loss;
-    float final_acc = current_acc;
-    const float final_mae = regression.Mae();
-    const float final_rmse = regression.Rmse();
-
-    UpdateMetrics([final_loss, final_acc, final_mae, final_rmse,
-                   regression_metrics](TrainingMetrics& m) {
-        m.train_loss = final_loss;
-        m.train_accuracy = final_acc;
-        if (regression_metrics) {
-            m.train_mae = final_mae;
-            m.train_rmse = final_rmse;
-        }
-    });
-    CrashRunRecorder::Instance().MarkStage(
-        TrainingTraceStage::EpochComplete, epoch, batch_num,
-        static_cast<int>(total_batches), final_loss, final_acc);
-    TrainingTraceCollector::Instance().RecordStage(
-        TrainingTraceStage::EpochComplete, epoch, batch_num,
-        static_cast<int>(total_batches), final_loss, final_acc);
-}
-
-void TrainingExecutor::RunValidation(DatasetBatcher& batcher) {
-    float val_loss = 0.0f;
-    float loss_weight_sum = 0.0f;
-    Tensor device_loss_sum;
-    bool device_loss_sum_initialized = false;
-    Tensor device_loss_weight_sum;
-    bool device_loss_weight_sum_initialized = false;
-    const bool regression_metrics = UsesRegressionMetrics(config_);
-    RegressionMetricAccumulator regression(
-        &config_.regression_target_transform);
-    int correct = 0;
-    int total = 0;
-    const auto metric_ignore_index = ClassificationMetricIgnoreIndex(config_);
-    batcher.Reset();
-
-    while (!batcher.IsEpochComplete()) {
-        if (ShouldStop()) break;
-
-        Batch batch = batcher.GetNextBatch();
-        if (!batch.IsValid()) break;
-
-        // Forward pass only (no backprop)
-        Tensor predictions = Forward(batch.data);
-
-        // Compute loss
-        if (regression_metrics) {
-            const float batch_loss = ComputeLoss(predictions, batch.labels);
-            const float loss_weight = LossAggregationWeight(*loss_, batch.size);
-            val_loss += batch_loss * loss_weight;
-            loss_weight_sum += loss_weight;
-        } else {
-            Tensor loss_tensor = ComputeLossTensor(predictions, batch.labels);
-            const auto loss_weight =
-                ResolveLossAggregationWeight(*loss_, batch.size);
-            Tensor weighted_loss = loss_weight.device != nullptr
-                ? ApplyDeviceScalar(loss_tensor, *loss_weight.device, false)
-                : loss_tensor * loss_weight.host;
-            AccumulateDeviceScalar(
-                device_loss_sum, device_loss_sum_initialized, weighted_loss);
-            if (loss_weight.device != nullptr) {
-                AccumulateDeviceScalar(
-                    device_loss_weight_sum,
-                    device_loss_weight_sum_initialized,
-                    *loss_weight.device);
-            } else {
-                loss_weight_sum += loss_weight.host;
-            }
-        }
-
-        // Compute objective-appropriate metrics.
-        if (regression_metrics) {
-            AddRegressionMetricScalars(
-                regression,
-                predictions,
-                batch.labels,
-                batch.size,
-                config_.output_size,
-                config_);
-        } else {
-            const auto accuracy_count = CountClassificationDecisionScalars(
-                predictions, batch.labels, batch.size, config_.output_size,
-                ClassificationDecisionModeForLoss(config_.loss_type),
-                metric_ignore_index);
-            correct += static_cast<int>(accuracy_count.correct);
-            total += static_cast<int>(accuracy_count.total);
-        }
-    }
-
-    float final_loss = 0.0f;
-    if (regression_metrics) {
-        final_loss = FinalizeAggregatedLoss(
-            *loss_, val_loss, loss_weight_sum);
-    } else if (device_loss_sum_initialized) {
-        final_loss = ReadAccumulatedLoss(
-            device_loss_sum,
-            *loss_,
-            loss_weight_sum,
-            device_loss_weight_sum_initialized
-                ? &device_loss_weight_sum
-                : nullptr,
-            "TrainingExecutor::ReadValidationLoss");
-    }
-    float final_acc = total > 0 ? static_cast<float>(correct) / total : 0.0f;
-    const float final_mae = regression.Mae();
-    const float final_rmse = regression.Rmse();
-
-    UpdateMetrics([final_loss, final_acc, final_mae, final_rmse,
-                   regression_metrics](TrainingMetrics& m) {
-        m.val_loss = final_loss;
-        m.val_accuracy = final_acc;
-        if (regression_metrics) {
-            m.val_mae = final_mae;
-            m.val_rmse = final_rmse;
-        }
-        m.has_validation_metrics = true;
-    });
-}
-#endif
 
 Tensor TrainingExecutor::Forward(const Tensor& input) {
     if (!model_) {

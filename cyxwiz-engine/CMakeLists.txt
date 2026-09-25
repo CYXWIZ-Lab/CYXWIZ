@@ -146,6 +146,8 @@ set(ENGINE_SOURCES
     src/core/image_dataset_batcher.cpp
     src/core/audio_dataset_batcher.cpp
     src/core/text_dataset_batcher.cpp
+    src/core/legacy_dataset_batchers.cpp
+    src/core/text_test_source.cpp
     src/core/text_arrow_adapter.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/arrow_converters.cpp
@@ -4429,9 +4431,9 @@ add_executable(test_training_executor_dataset_handle
     tests/legacy_dataset_harness_stubs.cpp
     ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
     src/core/dataset_batcher.cpp
+    src/core/legacy_dataset_batchers.cpp
 )
-configure_training_executor_harness(
-    test_training_executor_dataset_handle LEGACY)
+configure_training_executor_harness(test_training_executor_dataset_handle)
 
 add_custom_target(copy_test_training_executor_arrow_parquet_fixture
     COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -4460,6 +4462,7 @@ add_executable(test_training_manager_session
     tests/test_training_manager_session.cpp
     ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
     src/core/training_manager.cpp
+    src/core/sequence_arrow_batcher.cpp
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
 )

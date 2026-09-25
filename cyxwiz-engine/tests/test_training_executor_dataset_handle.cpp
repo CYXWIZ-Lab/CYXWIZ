@@ -1,3 +1,4 @@
+#include "../src/core/legacy_dataset_batchers.h"
 #include "../src/core/crash_run_recorder.h"
 #include "../src/core/data_registry.h"
 #include "../src/core/dataset_base.h"
@@ -134,7 +135,7 @@ void CheckPausedLifecycle(
     const std::string action_name = cancel ? "cancel" : "resume";
     CommitCpuPreferencesSelection();
     cyxwiz::TrainingExecutor executor(
-        MakeConfig(work_dir / action_name), dataset);
+        MakeConfig(work_dir / action_name), cyxwiz::LegacyTrainingBatcherFactory(dataset));
     std::atomic<int> batch_callback_count{0};
     std::atomic<bool> pause_requested{false};
     cyxwiz::TrainingMetrics final_metrics;
@@ -255,7 +256,7 @@ void CheckRuntimeFailureLifecycle(
     const std::filesystem::path& work_dir) {
     CommitCpuPreferencesSelection();
     cyxwiz::TrainingExecutor executor(
-        MakeConfig(work_dir / "runtime-failure"), dataset);
+        MakeConfig(work_dir / "runtime-failure"), cyxwiz::LegacyTrainingBatcherFactory(dataset));
     constexpr const char* reason =
         "injected_legacy_dataset_lifecycle_failure";
     int completion_callback_count = 0;

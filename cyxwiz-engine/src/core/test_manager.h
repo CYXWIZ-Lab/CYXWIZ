@@ -52,9 +52,11 @@ public:
      * @param on_complete Callback when testing completes
      * @return true if testing started, false if already testing
      */
+    // Host-built test batcher (DataRegistry and text datasets: see
+    // legacy_dataset_batchers.h).
     bool StartTesting(
         TrainingConfiguration config,
-        DatasetHandle dataset,
+        ExternalTestSource source,
         int batch_size,
         std::shared_ptr<SequentialModel> model = nullptr,
         TestCompleteCallback on_complete = nullptr
@@ -74,13 +76,6 @@ public:
         std::shared_ptr<ParquetBackedDataset> dataset,
         std::string label_column,
         TestDatasetScope dataset_scope,
-        int batch_size,
-        std::shared_ptr<SequentialModel> model = nullptr,
-        TestCompleteCallback on_complete = nullptr
-    );
-    bool StartTestingText(
-        TrainingConfiguration config,
-        const DataRegistry::TextDatasetEntry& text_entry,
         int batch_size,
         std::shared_ptr<SequentialModel> model = nullptr,
         TestCompleteCallback on_complete = nullptr

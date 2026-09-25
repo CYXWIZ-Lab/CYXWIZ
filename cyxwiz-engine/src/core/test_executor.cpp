@@ -56,11 +56,12 @@ int ConfusionMatrix::GetTotal() const {
 // TestExecutor Implementation
 // ============================================================================
 
-TestExecutor::TestExecutor(TrainingConfiguration config, DatasetHandle dataset)
+TestExecutor::TestExecutor(TrainingConfiguration config, ExternalTestSource source)
     : config_(std::move(config))
-    , dataset_(dataset)
+    , external_source_(std::move(source))
 {
-    spdlog::info("TestExecutor: Created with {} layers, input_size={}, output_size={}",
+    spdlog::info("TestExecutor: Created with a host-built test batcher, {} layers, "
+                 "input_size={}, output_size={}",
                  config_.layers.size(), config_.input_size, config_.output_size);
 }
 
@@ -90,17 +91,6 @@ TestExecutor::TestExecutor(
     , parquet_label_column_(std::move(label_column))
 {
     spdlog::info("TestExecutor: Created for Parquet-backed dataset with {} layers, input_size={}, output_size={}",
-                 config_.layers.size(), config_.input_size, config_.output_size);
-}
-
-TestExecutor::TestExecutor(
-    TrainingConfiguration config,
-    const DataRegistry::TextDatasetEntry& text_entry)
-    : config_(std::move(config))
-    , text_entry_(text_entry)
-    , use_text_dataset_(true)
-{
-    spdlog::info("TestExecutor: Created for text dataset with {} layers, input_size={}, output_size={}",
                  config_.layers.size(), config_.input_size, config_.output_size);
 }
 
@@ -200,12 +190,12 @@ bool TestExecutor::Initialize(int /*batch_size*/) {
         }
     });
 
-    if (use_text_dataset_ && !text_entry_.class_names.empty()) {
+    if (!external_source_.class_names.empty()) {
         UpdateMetrics([this](TestingMetrics& m) {
-            m.confusion_matrix.class_names = text_entry_.class_names;
+            m.confusion_matrix.class_names = external_source_.class_names;
             for (size_t i = 0; i < m.per_class_metrics.size() &&
-                               i < text_entry_.class_names.size(); ++i) {
-                m.per_class_metrics[i].class_name = text_entry_.class_names[i];
+                               i < external_source_.class_names.size(); ++i) {
+                m.per_class_metrics[i].class_name = external_source_.class_names[i];
             }
         });
     }
@@ -278,10 +268,7 @@ void TestExecutor::Test(
     });
 
     // Create the test batcher using the dataset type that was trained.
-#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
-    std::unique_ptr<DatasetBatcher> legacy_test_batcher;
-    std::unique_ptr<TextDatasetBatcher> text_test_batcher;
-#endif
+    std::unique_ptr<IBatcher> external_test_batcher;
     std::unique_ptr<ArrowDatasetBatcher> arrow_test_batcher;
     std::unique_ptr<ParquetArrowBatcher> parquet_test_batcher;
 
@@ -303,56 +290,13 @@ void TestExecutor::Test(
             dataset_scope_ == TestDatasetScope::EntireProvidedDataset
                 ? std::move(batchers.parquet_train)
                 : std::move(batchers.parquet_test);
-#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
-    } else if (use_text_dataset_) {
-        text_test_batcher = std::make_unique<TextDatasetBatcher>(
-            text_entry_,
-            config_.text_preprocessing,
-            batch_size,
-            config_.train_ratio,
-            config_.val_ratio,
-            config_.test_ratio,
-            false,
-            config_.num_workers,
-            static_cast<uint32_t>(config_.dataloader_seed),
-            config_.stratified,
-            static_cast<uint32_t>(std::max(0, config_.split_seed)),
-            false,
-            "none",
-            "max",
-            static_cast<uint32_t>(std::max(0, config_.balance_seed)));
-        text_test_batcher->SetPhase(BatcherPhase::Test);
-        text_test_batcher->Reset();
-
-        if (UsesScalarBinaryTargets(config_.loss_type)) {
-            text_test_batcher->SetScalarLabelMode(true);
-        } else if (config_.preprocessing.has_onehot &&
-                   config_.preprocessing.num_classes > 0) {
-            text_test_batcher->SetOneHotEncoding(config_.preprocessing.num_classes);
-        } else if (config_.output_size > 0) {
-            text_test_batcher->SetOneHotEncoding(config_.output_size);
+    } else if (external_source_.make_batcher) {
+        external_test_batcher = external_source_.make_batcher(config_, batch_size);
+        if (!external_test_batcher) {
+            throw std::runtime_error("The test dataset could not be prepared");
         }
     } else {
-        legacy_test_batcher = std::make_unique<DatasetBatcher>(
-            dataset_, batch_size, DatasetSplit::Test, false, false, config_.num_workers,
-            static_cast<uint32_t>(config_.dataloader_seed));
-
-        if (config_.preprocessing.has_normalization) {
-            legacy_test_batcher->SetLegacyNormalization(config_.preprocessing.norm_mean,
-                                                        config_.preprocessing.norm_std);
-        }
-
-        if (UsesScalarBinaryTargets(config_.loss_type)) {
-            legacy_test_batcher->SetLegacyScalarLabelMode(true);
-        } else if (config_.preprocessing.has_onehot) {
-            legacy_test_batcher->SetLegacyOneHotEncoding(config_.preprocessing.num_classes);
-        }
-
-        legacy_test_batcher->SetFlatten(true);
-#else
-    } else {
-        throw std::runtime_error("This test harness only supports Arrow/Parquet sources");
-#endif
+        throw std::runtime_error("TestExecutor has no test dataset");
     }
 
     size_t total_batches = 0;
@@ -360,12 +304,8 @@ void TestExecutor::Test(
         total_batches = arrow_test_batcher ? arrow_test_batcher->GetNumBatches() : 0;
     } else if (use_parquet_dataset_) {
         total_batches = parquet_test_batcher ? parquet_test_batcher->GetNumBatches() : 0;
-#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
-    } else if (use_text_dataset_) {
-        total_batches = text_test_batcher ? text_test_batcher->GetNumBatches() : 0;
     } else {
-        total_batches = legacy_test_batcher ? legacy_test_batcher->GetNumBatches() : 0;
-#endif
+        total_batches = external_test_batcher ? external_test_batcher->GetNumBatches() : 0;
     }
     UpdateMetrics([total_batches](TestingMetrics& m) {
         m.total_batches = static_cast<int>(total_batches);
@@ -412,12 +352,8 @@ void TestExecutor::Test(
             batch = arrow_test_batcher->GetNextBatch();
         } else if (use_parquet_dataset_) {
             batch = parquet_test_batcher->GetNextBatch();
-#ifndef CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
-        } else if (use_text_dataset_) {
-            batch = text_test_batcher->GetNextBatch();
         } else {
-            batch = legacy_test_batcher->GetNextBatch();
-#endif
+            batch = external_test_batcher->GetNextBatch();
         }
 
         if (!batch.IsValid()) break;
