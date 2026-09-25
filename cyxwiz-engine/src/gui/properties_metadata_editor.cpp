@@ -1,4 +1,5 @@
 #include "properties_metadata_editor.h"
+#include "../core/transformer_configuration_policy.h"
 #include "properties_parameter_rules.h"
 #include "node_editor.h"
 #include "../core/file_dialogs.h"
@@ -330,6 +331,8 @@ void RenderParameter(
         } else {
             validation_errors.erase(param.name);
         }
+        // Architecture preset <-> block fields (TransformerDecoder, tofix112).
+        cyxwiz::ApplyTransformerPresetEdit(node.type, node.parameters, param.name);
         invalidate();
         has_error = validation_errors.count(param.name) > 0;
     }

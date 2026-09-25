@@ -1,4 +1,7 @@
 #include "training_executor.h"
+#include <set>
+#include <cyxwiz/optimizers/adam.h>
+#include <cyxwiz/optimizers/gradient_clipping.h>
 #include "training_generation_preview.h"
 #include "spatial_batch_layout.h"
 #include "spatial_sequential_head.h"
@@ -806,6 +809,17 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
     loss_ = std::move(built.loss);
     optimizer_ = std::move(built.optimizer);
     scheduler_controller_.reset();
+    ConfigureWeightDecayExclusions();
+    graph_schedule_pending_ = false;
+    if (config_.lr_schedule != "none") {
+        if (scheduler_specification_.has_value()) {
+            spdlog::warn("TrainingExecutor: an explicitly configured scheduler overrides the "
+                         "optimizer node lr_schedule={}", config_.lr_schedule);
+        } else {
+            graph_schedule_pending_ = true;
+            UpdateMetrics([this](TrainingMetrics& m) { m.learning_rate = config_.learning_rate; });
+        }
+    }
     if (scheduler_specification_.has_value()) {
         scheduler_controller_ =
             std::make_unique<TrainingSchedulerController>(
@@ -845,6 +859,7 @@ void TrainingExecutor::Train(
     }
 
     is_training_.store(true);
+    training_epochs_ = std::max(1, epochs);
     stop_requested_.store(false);
     is_paused_.store(false);
 
@@ -1927,6 +1942,7 @@ void TrainingExecutor::RunTrainingEpoch(
     float current_acc = 0.0f;
 
     size_t total_batches = batcher.GetNumBatches();
+    AttachGraphScheduleIfPending(total_batches);
 
     UpdateMetrics([total_batches](TrainingMetrics& m) {
         m.total_batches = static_cast<int>(total_batches);
@@ -2520,6 +2536,11 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
         TrainingTraceStage::UpdateParameters, epoch, batch_num,
         total_batches, batch_loss, current_acc);
 
+    if (config_.grad_clip_norm > 0.0f) {
+        const float norm = ClipGradientsByGlobalNorm(averaged_grads, config_.grad_clip_norm);
+        UpdateMetrics([norm](TrainingMetrics& m) { m.grad_norm = norm; });
+    }
+
     const auto optimizer_start = std::chrono::steady_clock::now();
     auto params = model_->GetParameters();
     optimizer_->Step(params, averaged_grads);
@@ -2545,6 +2566,72 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
     gradient_accumulation_device_weight_ = Tensor();
     gradient_accumulation_device_weight_initialized_ = false;
     return true;
+}
+
+void TrainingExecutor::ConfigureWeightDecayExclusions() {
+    if (config_.weight_decay_exclude == "none") return;
+    auto* adam = dynamic_cast<AdamOptimizer*>(optimizer_.get());
+    if (!adam) {
+        throw std::runtime_error("TrainingExecutor: weight_decay_exclude needs the AdamW optimizer");
+    }
+    // 1-D tensors are biases and normalization scales/shifts; embedding tables
+    // are the Embedding and learned-position modules (SequentialModel names
+    // parameters "layer<i>.<name>").
+    std::set<std::string> excluded;
+    std::set<std::string> embedding_prefixes;
+    if (config_.weight_decay_exclude == "norms_biases_embeddings") {
+        SequentialModel* sequential = model_->AsSequentialModel();
+        if (!sequential) {
+            throw std::runtime_error(
+                "TrainingExecutor: weight_decay_exclude=norms_biases_embeddings needs a sequential model");
+        }
+        for (size_t i = 0; i < sequential->Size(); ++i) {
+            Module* module = sequential->GetModule(i);
+            if (dynamic_cast<EmbeddingModule*>(module) || dynamic_cast<LearnedPositionalEmbeddingModule*>(module)) {
+                embedding_prefixes.insert("layer" + std::to_string(i) + ".");
+            }
+        }
+    }
+    size_t total = 0;
+    for (const auto& [name, tensor] : model_->GetParameters()) {
+        ++total;
+        bool embedding = false;
+        for (const auto& prefix : embedding_prefixes) embedding = embedding || name.rfind(prefix, 0) == 0;
+        if (tensor.Shape().size() < 2 || embedding) excluded.insert(name);
+    }
+    spdlog::info("TrainingExecutor: AdamW weight decay skips {} of {} parameter tensors ({})",
+                 excluded.size(), total, config_.weight_decay_exclude);
+    adam->SetNoDecayParameters(std::move(excluded));
+}
+
+void TrainingExecutor::AttachGraphScheduleIfPending(size_t batches_per_epoch) {
+    if (!graph_schedule_pending_) return;
+    graph_schedule_pending_ = false;
+    const int accumulation = training_contract::ClampGradientAccumulationSteps(config_.grad_accum_steps);
+    const long long per_epoch = (static_cast<long long>(batches_per_epoch) + accumulation - 1) / accumulation;
+    const long long total = std::max<long long>(1, per_epoch * std::max(1, training_epochs_));
+    if (total > std::numeric_limits<int>::max()) {
+        throw std::runtime_error("TrainingExecutor: lr_schedule step count exceeds the supported range");
+    }
+    WarmupDecayLRSchedulerSpec spec;
+    spec.peak_lr = config_.learning_rate;
+    spec.total_steps = static_cast<int>(total);
+    spec.warmup_steps = static_cast<int>(std::llround(config_.warmup_ratio * static_cast<double>(total)));
+    spec.decay = config_.lr_schedule == "warmup_linear" ? "linear"
+               : config_.lr_schedule == "warmup_constant" ? "constant" : "cosine";
+    spec.min_lr_ratio = config_.min_lr_ratio;
+    scheduler_controller_ = std::make_unique<TrainingSchedulerController>(spec);
+    std::string error;
+    if (!scheduler_controller_->Attach(*optimizer_, std::nullopt, error)) {
+        scheduler_controller_.reset();
+        throw std::runtime_error("TrainingExecutor: lr_schedule could not be attached: " + error);
+    }
+    spdlog::info("TrainingExecutor: lr_schedule={} peak_lr={:.6g} warmup_steps={} total_updates={} "
+                 "min_lr_ratio={:.3g} first_lr={:.6g}",
+                 config_.lr_schedule, spec.peak_lr, spec.warmup_steps, spec.total_steps,
+                 spec.min_lr_ratio, scheduler_controller_->GetScheduler()->GetLR());
+    const double first_lr = scheduler_controller_->GetScheduler()->GetLR();
+    UpdateMetrics([first_lr](TrainingMetrics& m) { m.learning_rate = first_lr; });
 }
 
 void TrainingExecutor::ApplySchedulerAdvance(
@@ -2644,6 +2731,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
     SequenceTagMetrics aggregate_metrics;
 
     const size_t total_batches = batcher.GetNumBatches();
+    AttachGraphScheduleIfPending(total_batches);
     UpdateMetrics([total_batches](TrainingMetrics& m) {
         m.total_batches = static_cast<int>(total_batches);
         m.current_batch = 0;
@@ -2778,12 +2866,17 @@ void TrainingExecutor::RunTrainingEpochSequence(
             const float rate = elapsed_ms > 0
                 ? (batch_num * 1000.0f / static_cast<float>(elapsed_ms))
                 : 0.0f;
+            const auto snapshot = GetMetrics();
             spdlog::info("Epoch {} [{}/{}] seq_loss={:.4f} "
                          "token_acc={:.2f}% entity_f1={:.2f}% "
-                         "({:.1f}s, {:.1f} batches/s)",
+                         "({:.1f}s, {:.1f} batches/s) lr={:.3g}{}",
                          epoch, batch_num, total_batches, current_loss,
                          current_acc * 100.0f, current_f1 * 100.0f,
-                         elapsed_s, rate);
+                         elapsed_s, rate,
+                         snapshot.learning_rate > 0.0 ? snapshot.learning_rate
+                                                      : static_cast<double>(config_.learning_rate),
+                         config_.grad_clip_norm > 0.0f
+                             ? fmt::format(" grad_norm={:.3g}", snapshot.grad_norm) : std::string());
         }
 
         if (batch_cb) {
@@ -2937,6 +3030,7 @@ void TrainingExecutor::RunTrainingEpochArrow(
     spdlog::debug("RunTrainingEpochArrow: Getting num batches");
     size_t total_batches = batcher.GetNumBatches();
     spdlog::debug("RunTrainingEpochArrow: total_batches={}", total_batches);
+    AttachGraphScheduleIfPending(total_batches);
 
     UpdateMetrics([total_batches](TrainingMetrics& m) {
         m.total_batches = static_cast<int>(total_batches);

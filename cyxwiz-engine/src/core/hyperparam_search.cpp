@@ -277,6 +277,12 @@ void HyperparamSearch::RunSearchThread() {
 
         // Run the trial
         TrialResult result = RunTrial(trial, params, categorical_params);
+        if (!result.error_message.empty()) {
+            // A trial that cannot train stops the whole search (fail closed).
+            std::lock_guard<std::mutex> lock(results_mutex_);
+            results_.push_back(result);
+            break;
+        }
 
         // Store result
         {
@@ -362,36 +368,14 @@ TrialResult HyperparamSearch::RunTrial(
     }
     spdlog::info("Trial {} params: {}", trial_id, param_str);
 
-    // TODO: Integrate with actual TrainingExecutor
-    // For now, simulate training with random results
-    std::uniform_real_distribution<float> loss_dist(0.1f, 2.0f);
-    std::uniform_real_distribution<float> acc_dist(0.5f, 0.99f);
-
-    // Simulate epochs
-    for (int epoch = 0; epoch < config_.epochs_per_trial && !stop_requested_.load(); ++epoch) {
-        // Wait while paused
-        while (is_paused_.load() && !stop_requested_.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-
-        if (stop_requested_.load()) break;
-
-        // Simulate training time
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-        // Update progress
-        result.epochs_completed = epoch + 1;
-        result.train_loss = loss_dist(rng_);
-        result.train_accuracy = acc_dist(rng_);
-        result.val_loss = loss_dist(rng_);
-        result.val_accuracy = acc_dist(rng_);
-
-        if (on_trial_progress_) {
-            on_trial_progress_(trial_id, epoch + 1, result.val_loss, result.val_accuracy);
-        }
-    }
-
-    result.completed = !stop_requested_.load();
+    // Trials are not connected to TrainingExecutor yet. Fail closed: a trial
+    // must never report invented losses or accuracies as if it had trained
+    // (tofix112 recipe audit 2026-09-25; the previous stub returned random values).
+    result.completed = false;
+    result.error_message =
+        "Hyperparameter search does not train models yet; no trial results are produced. "
+        "Run the candidate graphs directly and compare their validation loss.";
+    spdlog::error("Trial {}: {}", trial_id, result.error_message);
 
     auto trial_end = std::chrono::steady_clock::now();
     result.duration_seconds = std::chrono::duration_cast<std::chrono::milliseconds>(

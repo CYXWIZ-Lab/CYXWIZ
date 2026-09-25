@@ -32,6 +32,13 @@ public:
     bool IsFrozen() const { return frozen_; }
     void SetFrozen(bool frozen) { frozen_ = frozen; }
 
+    // Tied output projection (weight sharing): a later layer that projects
+    // with this table hands its weight gradient here during its backward; the
+    // next Backward adds it to the lookup gradient, so the optimizer and the
+    // checkpoint see one shared [num_embeddings, embedding_dim] tensor.
+    void AddPendingWeightGradient(const Tensor& gradient);
+    const Tensor& GetWeight() const { return weight_; }
+
 private:
     int num_embeddings_;
     int embedding_dim_;
@@ -41,6 +48,7 @@ private:
 
     Tensor weight_;
     Tensor grad_weight_;
+    Tensor pending_weight_gradient_;  // from a tied output projection
     Tensor cached_indices_;
 
     void InitializeWeights();

@@ -4,6 +4,7 @@
 #include <arrayfire.h>
 #endif
 #include <cmath>
+#include <random>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -488,6 +489,14 @@ PositionalEncodingModule::PositionalEncodingModule(
 }
 
 Tensor PositionalEncodingModule::Forward(const Tensor& input) {
+    return ForwardAt(input, 0);
+}
+
+Tensor PositionalEncodingModule::ForwardIncremental(const Tensor& input, size_t position_offset) {
+    return ForwardAt(input, position_offset);
+}
+
+Tensor PositionalEncodingModule::ForwardAt(const Tensor& input, size_t position_offset) {
     input_cache_ = input.Clone();
     const auto& shape = input.Shape();
     if (input.GetDataType() != DataType::Float32 ||
@@ -496,7 +505,7 @@ Tensor PositionalEncodingModule::Forward(const Tensor& input) {
         throw std::runtime_error(
             "PositionalEncodingModule: input must be Float32 [batch, seq_len, d_model]");
     }
-    if (shape[1] > max_sequence_length_) {
+    if (shape[1] + position_offset > max_sequence_length_) {
         throw std::runtime_error(
             "PositionalEncodingModule: sequence length exceeds max_sequence_length");
     }
@@ -507,7 +516,7 @@ Tensor PositionalEncodingModule::Forward(const Tensor& input) {
         // backend. Preserve the native formula's double intermediate and
         // Float32 encoding before adding it to the model activations.
         const af::dim4 dims(1, static_cast<dim_t>(shape[1]), static_cast<dim_t>(d_model_));
-        const af::array position = af::range(dims, 1, f64);
+        const af::array position = af::range(dims, 1, f64) + static_cast<double>(position_offset);
         const af::array dimension = af::range(dims, 2, f64);
         const af::array angle = position / af::pow(10000.0, 2.0 * af::floor(dimension / 2.0) /
                                                            static_cast<double>(d_model_));
@@ -540,7 +549,7 @@ Tensor PositionalEncodingModule::Forward(const Tensor& input) {
         for (size_t pos = 0; pos < seq_len; ++pos) {
             for (size_t dim = 0; dim < d_model_; ++dim) {
                 const size_t offset = (b * seq_len + pos) * d_model_ + dim;
-                const double angle = static_cast<double>(pos) /
+                const double angle = static_cast<double>(pos + position_offset) /
                     std::pow(10000.0, static_cast<double>(2 * (dim / 2)) /
                                       static_cast<double>(d_model_));
                 const double encoded = (dim % 2 == 0)
@@ -560,6 +569,242 @@ Tensor PositionalEncodingModule::Backward(const Tensor& grad_output) {
 
 std::string PositionalEncodingModule::GetName() const {
     return "PositionalEncoding(d_model=" + std::to_string(d_model_) + ")";
+}
+
+// ============================================================================
+// TiedOutputProjectionModule Implementation
+// ============================================================================
+
+TiedOutputProjectionModule::TiedOutputProjectionModule(EmbeddingModule& embedding, bool use_bias)
+    : embedding_(embedding), use_bias_(use_bias) {
+    if (use_bias_) {
+        bias_ = Tensor::Zeros({embedding_.NumEmbeddings()});
+        grad_bias_ = Tensor::Zeros({embedding_.NumEmbeddings()});
+    }
+}
+
+Tensor TiedOutputProjectionModule::Forward(const Tensor& input) {
+    const auto& shape = input.Shape();
+    const size_t width = embedding_.EmbeddingDim();
+    const size_t vocab = embedding_.NumEmbeddings();
+    if (input.GetDataType() != DataType::Float32 || shape.size() != 3 || shape[2] != width) {
+        throw std::runtime_error("TiedOutputProjection: input must be Float32 [batch, seq_len, embedding_dim]");
+    }
+    cached_input_ = input;
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const af::array x = input.GetSemanticArray();
+        const dim_t rows = static_cast<dim_t>(shape[0] * shape[1]);
+        af::array logits = af::matmul(af::moddims(x, rows, static_cast<dim_t>(width)),
+                                      embedding_.GetLayer().GetWeight().GetSemanticArray(), AF_MAT_NONE, AF_MAT_TRANS);
+        if (use_bias_) {
+            logits = logits + af::tile(af::moddims(bias_.GetSemanticArray(), 1, static_cast<dim_t>(vocab)),
+                                       af::dim4(rows));
+        }
+        logits = af::moddims(logits, af::dim4(x.dims(0), x.dims(1), static_cast<dim_t>(vocab)));
+        logits.eval();
+        return Tensor::FromSemanticArray(logits, {shape[0], shape[1], vocab});
+    } catch (const af::exception& e) {
+        ThrowIfArrayFireNativeCpuFallbackForbidden(
+            "TiedOutputProjectionModule::Forward", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
+            BuildArrayFireBackendFallbackContext(BuildTensorShapeContext("input", shape)));
+    }
+#endif
+    throw std::runtime_error("TiedOutputProjection needs the ArrayFire path");
+}
+
+Tensor TiedOutputProjectionModule::Backward(const Tensor& grad_output) {
+    const auto& shape = cached_input_.Shape();
+    const size_t width = embedding_.EmbeddingDim();
+    const size_t vocab = embedding_.NumEmbeddings();
+    if (grad_output.Shape() != std::vector<size_t>{shape[0], shape[1], vocab}) {
+        throw std::runtime_error("TiedOutputProjection: backward shape does not match forward");
+    }
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const dim_t rows = static_cast<dim_t>(shape[0] * shape[1]);
+        const af::array dy = af::moddims(grad_output.GetSemanticArray(), rows, static_cast<dim_t>(vocab));
+        const af::array x = af::moddims(cached_input_.GetSemanticArray(), rows, static_cast<dim_t>(width));
+        const af::array weight = embedding_.GetLayer().GetWeight().GetSemanticArray();
+        af::array dweight = af::matmul(dy, x, AF_MAT_TRANS);  // [vocab, width]
+        af::array dx = af::moddims(af::matmul(dy, weight), cached_input_.GetSemanticArray().dims());
+        dweight.eval();
+        dx.eval();
+        if (use_bias_) {
+            af::array db = af::flat(af::sum(dy, 0));
+            db.eval();
+            grad_bias_ = Tensor::FromSemanticArray(db, {vocab});
+        }
+        embedding_.GetLayer().AddPendingWeightGradient(Tensor::FromSemanticArray(dweight, {vocab, width}));
+        return Tensor::FromSemanticArray(dx, shape);
+    } catch (const af::exception& e) {
+        ThrowIfArrayFireNativeCpuFallbackForbidden(
+            "TiedOutputProjectionModule::Backward", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
+            BuildArrayFireBackendFallbackContext(BuildTensorShapeContext("grad_output", grad_output.Shape())));
+    }
+#endif
+    throw std::runtime_error("TiedOutputProjection needs the ArrayFire path");
+}
+
+std::map<std::string, Tensor> TiedOutputProjectionModule::GetParameters() {
+    if (!use_bias_) return {};
+    return {{"bias", bias_}};
+}
+
+void TiedOutputProjectionModule::SetParameters(const std::map<std::string, Tensor>& params) {
+    const auto it = params.find("bias");
+    if (use_bias_ && it != params.end()) {
+        if (it->second.Shape() != std::vector<size_t>{embedding_.NumEmbeddings()}) {
+            throw std::invalid_argument("TiedOutputProjection bias must be [num_embeddings]");
+        }
+        bias_ = it->second;
+    }
+}
+
+std::map<std::string, Tensor> TiedOutputProjectionModule::GetGradients() {
+    if (!use_bias_) return {};
+    return {{"bias", grad_bias_}};
+}
+
+std::string TiedOutputProjectionModule::GetName() const {
+    return "TiedOutputProjection(" + std::to_string(embedding_.EmbeddingDim()) + " -> " +
+           std::to_string(embedding_.NumEmbeddings()) + (use_bias_ ? ", bias" : "") + ")";
+}
+
+// ============================================================================
+// LearnedPositionalEmbeddingModule Implementation
+// ============================================================================
+
+LearnedPositionalEmbeddingModule::LearnedPositionalEmbeddingModule(size_t d_model,
+                                                                   size_t max_sequence_length)
+    : d_model_(d_model), max_sequence_length_(max_sequence_length) {
+    if (d_model_ < 1 || max_sequence_length_ < 1) {
+        throw std::invalid_argument("LearnedPositionalEmbedding needs positive d_model and max_sequence_length");
+    }
+    const std::vector<size_t> shape{max_sequence_length_, d_model_};
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array w = af::randn(af::dim4(static_cast<dim_t>(max_sequence_length_), static_cast<dim_t>(d_model_))) * 0.02f;
+        w.eval();
+        weight_ = Tensor::FromSemanticArray(w, shape);
+        grad_weight_ = Tensor::Zeros(shape);
+        return;
+    } catch (const af::exception&) {
+    }
+#endif
+    std::mt19937 gen(std::random_device{}());
+    std::normal_distribution<float> normal(0.0f, 0.02f);
+    weight_ = Tensor(shape, DataType::Float32);
+    float* w = weight_.MutableData<float>();
+    for (size_t i = 0; i < max_sequence_length_ * d_model_; ++i) w[i] = normal(gen);
+    grad_weight_ = Tensor::Zeros(shape);
+}
+
+Tensor LearnedPositionalEmbeddingModule::Forward(const Tensor& input) {
+    return ForwardAt(input, 0);
+}
+
+Tensor LearnedPositionalEmbeddingModule::ForwardIncremental(const Tensor& input, size_t position_offset) {
+    return ForwardAt(input, position_offset);
+}
+
+Tensor LearnedPositionalEmbeddingModule::ForwardAt(const Tensor& input, size_t position_offset) {
+    const auto& shape = input.Shape();
+    if (input.GetDataType() != DataType::Float32 || shape.size() != 3 ||
+        shape[0] == 0 || shape[1] == 0 || shape[2] != d_model_) {
+        throw std::runtime_error("LearnedPositionalEmbedding: input must be Float32 [batch, seq_len, d_model]");
+    }
+    if (shape[1] + position_offset > max_sequence_length_) {
+        throw std::runtime_error("LearnedPositionalEmbedding: sequence length exceeds max_sequence_length");
+    }
+    cached_seq_len_ = shape[1];
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const dim_t seq = static_cast<dim_t>(shape[1]);
+        const double first = static_cast<double>(position_offset);
+        const af::array table = weight_.GetSemanticArray()(af::seq(first, first + static_cast<double>(seq - 1)), af::span);
+        const af::array output = input.GetSemanticArray() +
+            af::tile(af::moddims(table, af::dim4(1, seq, static_cast<dim_t>(d_model_))),
+                     af::dim4(static_cast<dim_t>(shape[0])));
+        output.eval();
+        return Tensor::FromSemanticArray(output, shape);
+    } catch (const af::exception& e) {
+        ThrowIfArrayFireNativeCpuFallbackForbidden(
+            "LearnedPositionalEmbeddingModule::Forward", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
+            BuildArrayFireBackendFallbackContext(BuildTensorShapeContext("input", shape)));
+    }
+#endif
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "LearnedPositionalEmbeddingModule::Forward");
+    Tensor output(shape, DataType::Float32);
+    const float* src = input.ReadData<float>();
+    const float* w = weight_.ReadData<float>();
+    float* dst = output.MutableData<float>();
+    for (size_t b = 0; b < shape[0]; ++b)
+        for (size_t p = 0; p < shape[1]; ++p)
+            for (size_t d = 0; d < d_model_; ++d) {
+                const size_t offset = (b * shape[1] + p) * d_model_ + d;
+                dst[offset] = src[offset] + w[(p + position_offset) * d_model_ + d];
+            }
+    return output;
+}
+
+Tensor LearnedPositionalEmbeddingModule::Backward(const Tensor& grad_output) {
+    const auto& shape = grad_output.Shape();
+    if (shape.size() != 3 || shape[1] != cached_seq_len_ || shape[2] != d_model_) {
+        throw std::runtime_error("LearnedPositionalEmbedding: backward shape does not match forward");
+    }
+    const std::vector<size_t> weight_shape{max_sequence_length_, d_model_};
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        const dim_t seq = static_cast<dim_t>(shape[1]);
+        const af::array used = af::moddims(af::sum(grad_output.GetSemanticArray(), 0),
+                                           af::dim4(seq, static_cast<dim_t>(d_model_)));
+        af::array grad = af::constant(0.0f, af::dim4(static_cast<dim_t>(max_sequence_length_),
+                                                    static_cast<dim_t>(d_model_)));
+        grad(af::seq(0, static_cast<double>(seq - 1)), af::span) = used;
+        grad.eval();
+        grad_weight_ = Tensor::FromSemanticArray(grad, weight_shape);
+        return grad_output;
+    } catch (const af::exception& e) {
+        ThrowIfArrayFireNativeCpuFallbackForbidden(
+            "LearnedPositionalEmbeddingModule::Backward", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
+            BuildArrayFireBackendFallbackContext(BuildTensorShapeContext("grad_output", shape)));
+    }
+#endif
+    const ScopedArrayFireHostSyncAttribution attribution(
+        ArrayFireHostSyncCategory::LayerCpuPath, "LearnedPositionalEmbeddingModule::Backward");
+    grad_weight_ = Tensor::Zeros(weight_shape);
+    float* g = grad_weight_.MutableData<float>();
+    const float* dy = grad_output.ReadData<float>();
+    for (size_t b = 0; b < shape[0]; ++b)
+        for (size_t p = 0; p < shape[1]; ++p)
+            for (size_t d = 0; d < d_model_; ++d)
+                g[p * d_model_ + d] += dy[(b * shape[1] + p) * d_model_ + d];
+    return grad_output;
+}
+
+std::map<std::string, Tensor> LearnedPositionalEmbeddingModule::GetParameters() {
+    return {{"weight", weight_}};
+}
+
+void LearnedPositionalEmbeddingModule::SetParameters(const std::map<std::string, Tensor>& params) {
+    const auto it = params.find("weight");
+    if (it == params.end()) return;
+    if (it->second.GetDataType() != DataType::Float32 ||
+        it->second.Shape() != std::vector<size_t>{max_sequence_length_, d_model_}) {
+        throw std::invalid_argument("LearnedPositionalEmbedding weight must be Float32 [max_sequence_length, d_model]");
+    }
+    weight_ = it->second;
+}
+
+std::map<std::string, Tensor> LearnedPositionalEmbeddingModule::GetGradients() {
+    return {{"weight", grad_weight_}};
+}
+
+std::string LearnedPositionalEmbeddingModule::GetName() const {
+    return "LearnedPositionalEmbedding(max_len=" + std::to_string(max_sequence_length_) +
+           ", d_model=" + std::to_string(d_model_) + ")";
 }
 
 } // namespace cyxwiz

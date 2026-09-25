@@ -696,6 +696,87 @@ bool OneCycleLR::ImportState(
 }
 
 // ============================================================================
+// WarmupDecayLR Implementation
+// ============================================================================
+
+WarmupDecayLR::WarmupDecayLR(Optimizer* optimizer, double peak_lr, int warmup_steps, int total_steps,
+                             std::string decay, double min_lr_ratio)
+    : optimizer_(optimizer), peak_lr_(peak_lr), warmup_steps_(warmup_steps), total_steps_(total_steps),
+      decay_(std::move(decay)), min_lr_ratio_(min_lr_ratio) {
+    RequireOptimizer(optimizer_, "WarmupDecayLR");
+    RequireFinitePositive(peak_lr_, "WarmupDecayLR", "peak_lr");
+    if (total_steps_ <= 0 || warmup_steps_ < 0 || warmup_steps_ > total_steps_) {
+        throw std::invalid_argument("WarmupDecayLR requires 0 <= warmup_steps <= total_steps and total_steps > 0");
+    }
+    if (decay_ != "cosine" && decay_ != "linear" && decay_ != "constant") {
+        throw std::invalid_argument("WarmupDecayLR decay must be cosine, linear or constant");
+    }
+    if (!std::isfinite(min_lr_ratio_) || min_lr_ratio_ < 0.0 || min_lr_ratio_ > 1.0) {
+        throw std::invalid_argument("WarmupDecayLR min_lr_ratio must be in [0, 1]");
+    }
+    base_lr_ = peak_lr_;
+    current_lr_ = RateForUpdate(1);
+    optimizer_->SetLearningRate(current_lr_);
+}
+
+double WarmupDecayLR::RateForUpdate(int update) const {
+    update = std::max(1, std::min(update, total_steps_));
+    if (update <= warmup_steps_) {
+        return peak_lr_ * static_cast<double>(update) / static_cast<double>(warmup_steps_);
+    }
+    if (decay_ == "constant" || total_steps_ == warmup_steps_) {
+        return peak_lr_;
+    }
+    const double floor = peak_lr_ * min_lr_ratio_;
+    const double progress = static_cast<double>(update - warmup_steps_) /
+                            static_cast<double>(total_steps_ - warmup_steps_);
+    if (decay_ == "linear") {
+        return floor + (peak_lr_ - floor) * (1.0 - progress);
+    }
+    return floor + (peak_lr_ - floor) * 0.5 * (1.0 + std::cos(M_PI * progress));
+}
+
+void WarmupDecayLR::Step(int completed_updates, float /*metric*/) {
+    if (completed_updates < 0) {
+        throw std::out_of_range("WarmupDecayLR completed update count cannot be negative");
+    }
+    completed_ = completed_updates;
+    current_lr_ = RateForUpdate(completed_updates + 1);
+    optimizer_->SetLearningRate(current_lr_);
+}
+
+void WarmupDecayLR::Reset() {
+    completed_ = 0;
+    current_lr_ = RateForUpdate(1);
+    optimizer_->SetLearningRate(current_lr_);
+}
+
+bool WarmupDecayLR::ExportState(SchedulerState& state, std::string& error) const {
+    error.clear();
+    state = MakeSchedulerState(
+        "WarmupDecayLR", base_lr_, current_lr_, completed_,
+        {{"peak_lr", peak_lr_}, {"warmup_steps", static_cast<double>(warmup_steps_)},
+         {"total_steps", static_cast<double>(total_steps_)}, {"min_lr_ratio", min_lr_ratio_}},
+        {{"decay", decay_}});
+    return true;
+}
+
+bool WarmupDecayLR::ImportState(const SchedulerState& state, std::string& error) {
+    const std::map<std::string, double> expected{
+        {"peak_lr", peak_lr_}, {"warmup_steps", static_cast<double>(warmup_steps_)},
+        {"total_steps", static_cast<double>(total_steps_)}, {"min_lr_ratio", min_lr_ratio_}};
+    if (!ValidateSchedulerState(state, "WarmupDecayLR", base_lr_, expected, {{"decay", decay_}}, error) ||
+        !state.values.empty() || state.last_step < 0 || state.last_step > total_steps_) {
+        if (error.empty()) error = "WarmupDecayLR scheduler state values are invalid.";
+        return false;
+    }
+    completed_ = state.last_step;
+    current_lr_ = RateForUpdate(completed_ + 1);
+    optimizer_->SetLearningRate(current_lr_);
+    return true;
+}
+
+// ============================================================================
 // Factory Function
 // ============================================================================
 

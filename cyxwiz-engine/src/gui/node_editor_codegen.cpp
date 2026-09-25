@@ -1,4 +1,5 @@
 #include "node_editor.h"
+#include <cstdlib>
 #include "activation_codegen_contract.h"
 #include "panels/script_editor.h"
 #include "../core/async_task_manager.h"
@@ -729,6 +730,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
     code += "import torch.nn as nn\n";
     code += "import torch.nn.functional as F\n";
     code += "import torch.optim as optim\n";
+    code += "import math\n";
     code += "import numpy as np\n\n";
 
     code += "class PositionalEncoding(nn.Module):\n";
@@ -757,52 +759,130 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
     code += "        causal_mask = torch.triu(torch.ones(x.size(1), x.size(1), device=x.device, dtype=torch.bool), diagonal=1)\n";
     code += "        return self.block(x, src_mask=causal_mask)\n\n";
     // Configurable decoder block (tofix112): RMSNorm / gated GLU-family FFN /
-    // activation / bias. Emitted as explicit PyTorch so exports match the
-    // backend math (gelu = tanh approximation, SwiGLU = act(gate(x)) * up(x)).
-    code += "class ConfigurableCausalDecoderBlock(nn.Module):\n";
-    code += "    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.0, norm_first=False, ffn_dropout=0.0,\n";
-    code += "                 norm_type='layer_norm', norm_eps=1e-5, ffn_type='mlp', ffn_activation='relu', ffn_bias=True,\n";
-    code += "                 position_encoding='external', rope_base=10000.0):\n";
+    // activation / biases / RoPE / QK-norm. Emitted as explicit PyTorch so exports
+    // match the backend math (gelu = tanh approximation, SwiGLU = act(gate(x)) * up(x)).
+    // verify_transformer_block_options.py executes exactly these lines as its
+    // PyTorch reference, so keep them one `code +=` per source line.
+    code += "class SquaredReLU(nn.Module):\n";
+    code += "    def forward(self, x):\n";
+    code += "        return torch.relu(x).square()\n";
+    code += "\n";
+    code += "class ConfigurableAttention(nn.Module):\n";
+    code += "    # Self-attention with the CyxWiz options; returns (output, None) like nn.MultiheadAttention (key/value args unused).\n";
+    code += "    def __init__(self, d_model, nhead, dropout=0.0, bias=True, num_kv_heads=0, causal=True, qk_norm=False,\n";
+    code += "                 norm_eps=1e-5, position_encoding='none', rope_base=10000.0, rope_fraction=1.0,\n";
+    code += "                 sliding_window=0, logit_softcap=0.0):\n";
     code += "        super().__init__()\n";
-    code += "        self.norm_first = norm_first\n";
-    code += "        self.nhead, self.rope, self.rope_base, self.attn_dropout = nhead, position_encoding == 'rope', rope_base, dropout\n";
-    code += "        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)\n";
-    code += "        make_norm = (lambda: nn.RMSNorm(d_model, eps=norm_eps)) if norm_type == 'rms_norm' else (lambda: nn.LayerNorm(d_model, eps=norm_eps))\n";
-    code += "        self.norm1, self.norm2 = make_norm(), make_norm()\n";
-    code += "        self.linear1 = nn.Linear(d_model, dim_feedforward, bias=ffn_bias)  # up\n";
-    code += "        self.linear2 = nn.Linear(dim_feedforward, d_model, bias=ffn_bias)  # down\n";
-    code += "        self.gate = nn.Linear(d_model, dim_feedforward, bias=ffn_bias) if ffn_type == 'gated' else None\n";
-    code += "        self.act = {'relu': nn.ReLU(), 'gelu': nn.GELU(approximate='tanh'), 'silu': nn.SiLU(), 'mish': nn.Mish(),\n";
-    code += "                    'elu': nn.ELU(), 'selu': nn.SELU(), 'leaky_relu': nn.LeakyReLU(0.01), 'sigmoid': nn.Sigmoid(),\n";
-    code += "                    'tanh': nn.Tanh(), 'hardswish': nn.Hardswish()}[ffn_activation]\n";
-    code += "        self.dropout1, self.dropout3, self.ffn_dropout = nn.Dropout(dropout), nn.Dropout(dropout), nn.Dropout(ffn_dropout)\n\n";
+    code += "        self.nhead, self.kv_heads, self.head_dim = nhead, num_kv_heads or nhead, d_model // nhead\n";
+    code += "        self.q_proj = nn.Linear(d_model, d_model, bias=bias)\n";
+    code += "        self.k_proj = nn.Linear(d_model, self.kv_heads * self.head_dim, bias=bias)\n";
+    code += "        self.v_proj = nn.Linear(d_model, self.kv_heads * self.head_dim, bias=bias)\n";
+    code += "        self.out_proj = nn.Linear(d_model, d_model, bias=bias)\n";
+    code += "        # QK-norm: per-head RMSNorm of queries and keys before the scores (OLMo 2, Gemma 3, Qwen3)\n";
+    code += "        self.q_norm = nn.RMSNorm(self.head_dim, eps=norm_eps) if qk_norm else None\n";
+    code += "        self.k_norm = nn.RMSNorm(self.head_dim, eps=norm_eps) if qk_norm else None\n";
+    code += "        self.causal, self.position_encoding, self.rope_base = causal, position_encoding, rope_base\n";
+    code += "        self.rope_dims = int(rope_fraction * self.head_dim / 2 + 1e-6) * 2\n";
+    code += "        self.sliding_window, self.logit_softcap, self.dropout = sliding_window, logit_softcap, nn.Dropout(dropout)\n";
+    code += "\n";
     code += "    def _rotary(self, x):\n";
-    code += "        # half-split RoPE: x*cos + rotate_half(x)*sin, frequencies base^(-2i/head_dim)\n";
-    code += "        seq, dim = x.size(-2), x.size(-1)\n";
+    code += "        # half-split RoPE on the first rope_dims features: x*cos + rotate_half(x)*sin, base^(-2i/rope_dims)\n";
+    code += "        seq, dim = x.size(-2), self.rope_dims\n";
     code += "        inv_freq = self.rope_base ** (-torch.arange(0, dim, 2, device=x.device, dtype=x.dtype) / dim)\n";
     code += "        angle = torch.arange(seq, device=x.device, dtype=x.dtype)[:, None] * inv_freq[None, :]\n";
     code += "        cos, sin = torch.cat([angle.cos(), angle.cos()], -1), torch.cat([angle.sin(), angle.sin()], -1)\n";
-    code += "        x1, x2 = x[..., :dim // 2], x[..., dim // 2:]\n";
-    code += "        return x * cos + torch.cat([-x2, x1], -1) * sin\n\n";
-    code += "    def _self_attention(self, x):\n";
-    code += "        if not self.rope:\n";
-    code += "            causal_mask = torch.triu(torch.ones(x.size(1), x.size(1), device=x.device, dtype=torch.bool), diagonal=1)\n";
-    code += "            return self.dropout1(self.self_attn(x, x, x, attn_mask=causal_mask, need_weights=False)[0])\n";
+    code += "        rot, rest = x[..., :dim], x[..., dim:]\n";
+    code += "        x1, x2 = rot[..., :dim // 2], rot[..., dim // 2:]\n";
+    code += "        return torch.cat([rot * cos + torch.cat([-x2, x1], -1) * sin, rest], -1)\n";
+    code += "\n";
+    code += "    def _alibi_slopes(self):\n";
+    code += "        # Press et al. 2022, including head counts that are not a power of two\n";
+    code += "        power_of_two = lambda n: [(2.0 ** (-8.0 / n)) ** i for i in range(1, n + 1)]\n";
+    code += "        closest = 2 ** math.floor(math.log2(self.nhead))\n";
+    code += "        return power_of_two(closest) + power_of_two(2 * closest)[0::2][:self.nhead - closest]\n";
+    code += "\n";
+    code += "    def forward(self, x, key=None, value=None, need_weights=False):\n";
     code += "        batch, seq, width = x.shape\n";
-    code += "        q, k, v = torch.nn.functional.linear(x, self.self_attn.in_proj_weight, self.self_attn.in_proj_bias).chunk(3, -1)\n";
-    code += "        heads = lambda t: t.view(batch, seq, self.nhead, width // self.nhead).transpose(1, 2)\n";
-    code += "        q, k, v = self._rotary(heads(q)), self._rotary(heads(k)), heads(v)\n";
-    code += "        context = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=self.attn_dropout if self.training else 0.0)\n";
-    code += "        return self.dropout1(self.self_attn.out_proj(context.transpose(1, 2).reshape(batch, seq, width)))\n\n";
-    code += "    def _feed_forward(self, x):\n";
+    code += "        q = self.q_proj(x).view(batch, seq, self.nhead, self.head_dim).transpose(1, 2)\n";
+    code += "        k = self.k_proj(x).view(batch, seq, self.kv_heads, self.head_dim).transpose(1, 2)\n";
+    code += "        v = self.v_proj(x).view(batch, seq, self.kv_heads, self.head_dim).transpose(1, 2)\n";
+    code += "        if self.q_norm is not None:\n";
+    code += "            q, k = self.q_norm(q), self.k_norm(k)\n";
+    code += "        if self.position_encoding == 'rope':\n";
+    code += "            q, k = self._rotary(q), self._rotary(k)\n";
+    code += "        groups = self.nhead // self.kv_heads\n";
+    code += "        k, v = k.repeat_interleave(groups, dim=1), v.repeat_interleave(groups, dim=1)\n";
+    code += "        scores = q @ k.transpose(-2, -1) / math.sqrt(self.head_dim)\n";
+    code += "        if self.logit_softcap > 0:\n";
+    code += "            scores = self.logit_softcap * torch.tanh(scores / self.logit_softcap)\n";
+    code += "        pos = torch.arange(seq, device=x.device)\n";
+    code += "        if self.position_encoding == 'alibi':\n";
+    code += "            slopes = torch.tensor(self._alibi_slopes(), device=x.device, dtype=x.dtype)\n";
+    code += "            scores = scores + slopes[:, None, None] * (pos[None, :] - pos[:, None]).to(x.dtype)\n";
+    code += "        if self.causal:\n";
+    code += "            hidden = pos[None, :] > pos[:, None]\n";
+    code += "            if self.sliding_window > 0:\n";
+    code += "                hidden = hidden | (pos[:, None] - pos[None, :] >= self.sliding_window)\n";
+    code += "            scores = scores.masked_fill(hidden, float('-inf'))\n";
+    code += "        context = self.dropout(torch.softmax(scores, -1)) @ v\n";
+    code += "        return self.out_proj(context.transpose(1, 2).reshape(batch, seq, width)), None\n";
+    code += "\n";
+    code += "class ConfigurableCausalDecoderBlock(nn.Module):\n";
+    code += "    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.0, norm_first=False, ffn_dropout=0.0,\n";
+    code += "                 norm_type='layer_norm', norm_eps=1e-5, ffn_type='mlp', ffn_activation='relu', ffn_bias=True,\n";
+    code += "                 position_encoding='external', rope_base=10000.0, attention_bias=True, qk_norm=False,\n";
+    code += "                 rope_fraction=1.0, block_layout='sequential', sandwich_norm=False, residual_init_scale=1.0,\n";
+    code += "                 attn_logit_softcap=0.0, sliding_window=0, num_kv_heads=0):\n";
+    code += "        super().__init__()\n";
+    code += "        self.norm_first, self.parallel = norm_first, block_layout == 'parallel'\n";
+    code += "        self.self_attn = ConfigurableAttention(d_model, nhead, dropout, attention_bias, num_kv_heads, True, qk_norm,\n";
+    code += "                                               norm_eps, 'none' if position_encoding == 'external' else position_encoding,\n";
+    code += "                                               rope_base, rope_fraction, sliding_window, attn_logit_softcap)\n";
+    code += "        make_norm = (lambda: nn.RMSNorm(d_model, eps=norm_eps)) if norm_type == 'rms_norm' else (lambda: nn.LayerNorm(d_model, eps=norm_eps))\n";
+    code += "        self.norm1 = make_norm()\n";
+    code += "        self.norm2 = None if self.parallel else make_norm()  # parallel blocks share norm1\n";
+    code += "        # sandwich norm (Gemma 2/3): also normalize each sub-layer output before the residual add\n";
+    code += "        self.post_attn_norm = make_norm() if sandwich_norm else None\n";
+    code += "        self.post_ffn_norm = make_norm() if sandwich_norm else None\n";
+    code += "        self.linear1 = nn.Linear(d_model, dim_feedforward, bias=ffn_bias)  # up\n";
+    code += "        self.linear2 = nn.Linear(dim_feedforward, d_model, bias=ffn_bias)  # down\n";
+    code += "        self.gate = nn.Linear(d_model, dim_feedforward, bias=ffn_bias) if ffn_type == 'gated' else None\n";
+    code += "        self.act = {'relu': nn.ReLU(), 'gelu': nn.GELU(approximate='tanh'), 'gelu_exact': nn.GELU(), 'silu': nn.SiLU(),\n";
+    code += "                    'mish': nn.Mish(), 'elu': nn.ELU(), 'selu': nn.SELU(), 'leaky_relu': nn.LeakyReLU(0.01),\n";
+    code += "                    'sigmoid': nn.Sigmoid(), 'tanh': nn.Tanh(), 'hardswish': nn.Hardswish(),\n";
+    code += "                    'squared_relu': SquaredReLU()}[ffn_activation]\n";
+    code += "        self.dropout1, self.dropout3, self.ffn_dropout = nn.Dropout(dropout), nn.Dropout(dropout), nn.Dropout(ffn_dropout)\n";
+    code += "        if residual_init_scale != 1.0:\n";
+    code += "            with torch.no_grad():  # GPT-2 style scaled init of the residual output projections\n";
+    code += "                self.self_attn.out_proj.weight.mul_(residual_init_scale)\n";
+    code += "                self.linear2.weight.mul_(residual_init_scale)\n";
+    code += "\n";
+    code += "    def _ffn(self, x):\n";
     code += "        hidden = self.act(self.gate(x)) * self.linear1(x) if self.gate is not None else self.act(self.linear1(x))\n";
-    code += "        return self.dropout3(self.linear2(self.ffn_dropout(hidden)))\n\n";
+    code += "        return self.linear2(self.ffn_dropout(hidden))\n";
+    code += "\n";
     code += "    def forward(self, x):\n";
+    code += "        attend = lambda h: self.self_attn(h)[0]\n";
+    code += "        if self.parallel:\n";
+    code += "            h = self.norm1(x)\n";
+    code += "            return x + self.dropout1(attend(h)) + self.dropout3(self._ffn(h))\n";
+    code += "        if self.post_attn_norm is not None:\n";
+    code += "            x = x + self.dropout1(self.post_attn_norm(attend(self.norm1(x))))\n";
+    code += "            return x + self.dropout3(self.post_ffn_norm(self._ffn(self.norm2(x))))\n";
     code += "        if self.norm_first:\n";
-    code += "            x = x + self._self_attention(self.norm1(x))\n";
-    code += "            return x + self._feed_forward(self.norm2(x))\n";
-    code += "        x = self.norm1(x + self._self_attention(x))\n";
-    code += "        return self.norm2(x + self._feed_forward(x))\n\n";
+    code += "            x = x + self.dropout1(attend(self.norm1(x)))\n";
+    code += "            return x + self.dropout3(self._ffn(self.norm2(x)))\n";
+    code += "        x = self.norm1(x + self.dropout1(attend(x)))\n";
+    code += "        return self.norm2(x + self.dropout3(self._ffn(x)))\n";
+    code += "\n";
+    code += "class LearnedPositionalEncoding(nn.Module):\n";
+    code += "    # GPT-2 learned absolute positions: x + weight[:seq_len]\n";
+    code += "    def __init__(self, d_model, max_len=512):\n";
+    code += "        super().__init__()\n";
+    code += "        self.weight = nn.Parameter(torch.randn(max_len, d_model) * 0.02)\n";
+    code += "\n";
+    code += "    def forward(self, x):\n";
+    code += "        return x + self.weight[:x.size(1)]\n\n";
 
     // Model class
     code += "class GeneratedModel(nn.Module):\n";
@@ -811,6 +891,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
 
     // Generate layer definitions
     int layer_idx = 0;
+    int embedding_layer_idx = -1;  // for tie_embedding on a TimeDistributed head
     for (int node_id : sorted_ids) {
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
@@ -825,6 +906,14 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
         std::string layer_code = NodeTypeToPythonLayer(*node);
         if (!layer_code.empty()) {
             code += "        self.layer" + std::to_string(layer_idx) + " = " + layer_code + "\n";
+            if (node->type == NodeType::Embedding) {
+                embedding_layer_idx = layer_idx;
+            }
+            if (node->type == NodeType::TimeDistributed && embedding_layer_idx >= 0 &&
+                PythonBoolLiteral(GetParamOrDefault(*node, "tie_embedding", "false")) == "True") {
+                code += "        self.layer" + std::to_string(layer_idx) + ".weight = self.layer" +
+                        std::to_string(embedding_layer_idx) + ".weight  # tied input/output embeddings\n";
+            }
             layer_idx++;
         }
     }
@@ -905,6 +994,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
 
             // ===== Embedding =====
             case NodeType::Embedding:
+            case NodeType::TimeDistributed:
                 code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
                 break;
 
@@ -994,9 +1084,9 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
     code += "    model = GeneratedModel()\n";
     code += "    print(model)\n\n";
 
-    code += "    # Loss and optimizer\n";
+    code += "    # Loss and optimizer (from the graph's optimizer node)\n";
     code += "    criterion = nn.CrossEntropyLoss()\n";
-    code += "    optimizer = optim.Adam(model.parameters(), lr=0.001)\n\n";
+    code += PyTorchOptimizerSetup();
 
     code += "    # TODO: Add your training data here\n";
     code += "    # Example training loop:\n";
@@ -1006,8 +1096,113 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
     code += "    #         output = model(data)\n";
     code += "    #         loss = criterion(output, target)\n";
     code += "    #         loss.backward()\n";
-    code += "    #         optimizer.step()\n";
+    code += PyTorchStepLines();
 
+    return code;
+}
+
+// Training recipe in PyTorch terms, read from the first optimizer node
+// (tofix112): optimizer + hyperparameters, AdamW no-decay groups, per-update
+// warmup/decay LambdaLR matching WarmupDecayLR, and global-norm clipping.
+const MLNode* NodeEditor::FindExportOptimizerNode() const {
+    for (const auto& node : nodes_) {
+        switch (node.type) {
+            case NodeType::SGD: case NodeType::Adam: case NodeType::AdamW:
+            case NodeType::RMSprop: case NodeType::Adagrad: case NodeType::NAdam:
+                return &node;
+            default:
+                break;
+        }
+    }
+    return nullptr;
+}
+
+std::string NodeEditor::PyTorchOptimizerSetup() const {
+    const MLNode* node = FindExportOptimizerNode();
+    if (!node) {
+        return "    optimizer = optim.Adam(model.parameters(), lr=0.001)  # no optimizer node in the graph\n\n";
+    }
+    const std::string lr = GetParamOrAliases(*node, {"learning_rate", "lr"}, "0.001");
+    const std::string betas = "(" + GetParamOrDefault(*node, "beta1", "0.9") + ", " +
+                              GetParamOrDefault(*node, "beta2", "0.999") + ")";
+    const std::string eps = GetParamOrDefault(*node, "epsilon", "1e-8");
+    std::string code;
+    std::string params = "model.parameters()";
+    switch (node->type) {
+        case NodeType::SGD:
+            code += "    optimizer = optim.SGD(" + params + ", lr=" + lr + ", momentum=" +
+                    GetParamOrDefault(*node, "momentum", "0.9") + ")\n";
+            break;
+        case NodeType::AdamW: {
+            const std::string decay = GetParamOrDefault(*node, "weight_decay", "0.01");
+            const std::string exclude = GetParamOrDefault(*node, "weight_decay_exclude", "none");
+            if (exclude != "none") {
+                code += "    # weight_decay_exclude=" + exclude + ": 1-D tensors (biases, norm scales)";
+                code += exclude == "norms_biases_embeddings" ? " and embedding tables skip decay\n" : " skip decay\n";
+                code += "    embedding_ids = {id(m.weight) for m in model.modules() if isinstance(m, (nn.Embedding, LearnedPositionalEncoding))}\n";
+                code += "    no_decay = [p for p in model.parameters() if p.ndim < 2";
+                code += exclude == "norms_biases_embeddings" ? " or id(p) in embedding_ids]\n" : "]\n";
+                code += "    decay = [p for p in model.parameters() if all(p is not q for q in no_decay)]\n";
+                params = "[{'params': decay, 'weight_decay': " + decay + "}, {'params': no_decay, 'weight_decay': 0.0}]";
+            }
+            code += "    optimizer = optim.AdamW(" + params + ", lr=" + lr + ", betas=" + betas + ", eps=" + eps +
+                    ", weight_decay=" + decay + ")\n";
+            break;
+        }
+        case NodeType::RMSprop:
+            code += "    optimizer = optim.RMSprop(" + params + ", lr=" + lr + ", alpha=" +
+                    GetParamOrDefault(*node, "alpha", "0.99") + ", eps=" + eps + ", momentum=" +
+                    GetParamOrDefault(*node, "momentum", "0.0") + ")\n";
+            break;
+        case NodeType::Adagrad:
+            code += "    optimizer = optim.Adagrad(" + params + ", lr=" + lr + ", eps=" +
+                    GetParamOrDefault(*node, "epsilon", "1e-10") + ")\n";
+            break;
+        case NodeType::NAdam:
+            code += "    optimizer = optim.NAdam(" + params + ", lr=" + lr + ", betas=" + betas + ", eps=" + eps + ")\n";
+            break;
+        default:
+            code += "    optimizer = optim.Adam(" + params + ", lr=" + lr + ", betas=" + betas + ", eps=" + eps + ")\n";
+            break;
+    }
+    const std::string schedule = GetParamOrDefault(*node, "lr_schedule", "none");
+    if (schedule != "none") {
+        const std::string decay = schedule == "warmup_linear" ? "linear"
+                                : schedule == "warmup_constant" ? "constant" : "cosine";
+        code += "    # lr_schedule=" + schedule + " per optimizer update (CyxWiz WarmupDecayLR)\n";
+        code += "    total_updates = 1000  # TODO: epochs * ceil(batches_per_epoch / grad_accum_steps)\n";
+        code += "    warmup = round(" + GetParamOrDefault(*node, "warmup_ratio", "0.02") + " * total_updates)\n";
+        code += "    min_ratio = " + GetParamOrDefault(*node, "min_lr_ratio", "0.1") + "\n";
+        code += "    def lr_factor(done):  # done = completed updates; returns the factor for the next one\n";
+        code += "        u = min(max(done + 1, 1), total_updates)\n";
+        code += "        if u <= warmup:\n";
+        code += "            return u / warmup\n";
+        if (decay == "constant") {
+            code += "        return 1.0\n";
+        } else {
+            code += "        p = (u - warmup) / max(1, total_updates - warmup)\n";
+            code += decay == "linear"
+                ? "        return min_ratio + (1 - min_ratio) * (1 - p)\n"
+                : "        return min_ratio + (1 - min_ratio) * 0.5 * (1 + math.cos(math.pi * p))\n";
+        }
+        code += "    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_factor)\n";
+    }
+    return code + "\n";
+}
+
+std::string NodeEditor::PyTorchStepLines() const {
+    const MLNode* node = FindExportOptimizerNode();
+    std::string code;
+    if (node) {
+        const std::string clip = GetParamOrDefault(*node, "grad_clip_norm", "0");
+        if (std::strtod(clip.c_str(), nullptr) > 0.0) {
+            code += "    #         torch.nn.utils.clip_grad_norm_(model.parameters(), " + clip + ")\n";
+        }
+    }
+    code += "    #         optimizer.step()\n";
+    if (node && GetParamOrDefault(*node, "lr_schedule", "none") != "none") {
+        code += "    #         scheduler.step()\n";
+    }
     return code;
 }
 
@@ -1705,6 +1900,24 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
     }
 
     switch (node.type) {
+        case NodeType::TimeDistributed: {
+            // Per-token Dense head; nn.Linear acts on the last axis of [batch, seq, features].
+            const std::string units = GetParamOrAliases(node, {"units", "out_features"}, "128");
+            if (PythonBoolLiteral(GetParamOrDefault(node, "tie_embedding", "false")) == "True") {
+                std::string width = "AUTO";
+                for (const auto& other : nodes_) {
+                    if (other.type == NodeType::Embedding) {
+                        width = GetParamOrDefault(other, "embedding_dim", "512");
+                        break;
+                    }
+                }
+                code = "nn.Linear(" + width + ", " + units + ", bias=False)";
+            } else {
+                code = "nn.LazyLinear(" + units + ")";
+            }
+            break;
+        }
+
         case NodeType::Dense: {
             std::string units = "64";
             auto it = node.parameters.find("units");
@@ -1748,9 +1961,28 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
                 node, {"dropout", "dropout_rate"}, "0.0");
             const std::string use_bias = PythonBoolLiteral(
                 GetParamOrDefault(node, "use_bias", "true"));
-            code = "nn.MultiheadAttention(embed_dim=" + embed_dim +
-                   ", num_heads=" + num_heads + ", dropout=" + dropout +
-                   ", bias=" + use_bias + ", batch_first=True)";
+            const std::string causal = PythonBoolLiteral(GetParamOrDefault(node, "causal", "false"));
+            const std::string qk_norm = PythonBoolLiteral(GetParamOrDefault(node, "qk_norm", "false"));
+            const std::string position = GetParamOrDefault(node, "position_encoding", "none");
+            const std::string kv_heads = GetParamOrDefault(node, "num_kv_heads", "0");
+            const std::string window = GetParamOrDefault(node, "sliding_window", "0");
+            const std::string softcap = GetParamOrDefault(node, "attn_logit_softcap", "0");
+            const bool plain = causal == "False" && qk_norm == "False" && position == "none" &&
+                               std::strtod(kv_heads.c_str(), nullptr) == 0.0 &&
+                               std::strtod(window.c_str(), nullptr) == 0.0 &&
+                               std::strtod(softcap.c_str(), nullptr) == 0.0;
+            if (plain) {
+                code = "nn.MultiheadAttention(embed_dim=" + embed_dim +
+                       ", num_heads=" + num_heads + ", dropout=" + dropout +
+                       ", bias=" + use_bias + ", batch_first=True)";
+            } else {
+                code = "ConfigurableAttention(" + embed_dim + ", " + num_heads + ", dropout=" + dropout +
+                       ", bias=" + use_bias + ", num_kv_heads=" + kv_heads + ", causal=" + causal +
+                       ", qk_norm=" + qk_norm + ", position_encoding='" + position + "', rope_base=" +
+                       GetParamOrDefault(node, "rope_base", "10000") + ", rope_fraction=" +
+                       GetParamOrDefault(node, "rope_fraction", "1.0") + ", sliding_window=" + window +
+                       ", logit_softcap=" + softcap + ")";
+            }
             break;
         }
 
@@ -1817,9 +2049,24 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             const std::string ffn_bias = PythonBoolLiteral(GetParamOrDefault(node, "ffn_bias", "true"));
             const std::string position_encoding = GetParamOrDefault(node, "position_encoding", "external");
             const std::string rope_base = GetParamOrDefault(node, "rope_base", "10000");
+            const std::string attention_bias = PythonBoolLiteral(GetParamOrDefault(node, "attention_bias", "true"));
+            const std::string qk_norm = PythonBoolLiteral(GetParamOrDefault(node, "qk_norm", "false"));
+            const std::string rope_fraction = GetParamOrDefault(node, "rope_fraction", "1.0");
+            const std::string block_layout = GetParamOrDefault(node, "block_layout", "sequential");
+            const std::string sandwich_norm = PythonBoolLiteral(GetParamOrDefault(node, "sandwich_norm", "false"));
+            const std::string residual_init_scale = GetParamOrDefault(node, "residual_init_scale", "1.0");
+            const std::string attn_logit_softcap = GetParamOrDefault(node, "attn_logit_softcap", "0");
+            const std::string sliding_window = GetParamOrDefault(node, "sliding_window", "0");
+            const std::string num_kv_heads = GetParamOrDefault(node, "num_kv_heads", "0");
+            const auto is_one = [](const std::string& v) { return std::strtod(v.c_str(), nullptr) == 1.0; };
+            const auto is_zero = [](const std::string& v) { return std::strtod(v.c_str(), nullptr) == 0.0; };
             const bool classic = norm_type == "layer_norm" && ffn_type == "mlp" &&
                                  ffn_activation == "relu" && ffn_bias == "True" &&
                                  position_encoding == "external" &&
+                                 attention_bias == "True" && qk_norm == "False" &&
+                                 is_one(rope_fraction) && block_layout == "sequential" &&
+                                 sandwich_norm == "False" && is_one(residual_init_scale) &&
+                                 is_zero(attn_logit_softcap) && is_zero(sliding_window) && is_zero(num_kv_heads) &&
                                  (norm_eps == "0.00001" || norm_eps == "1e-5" || norm_eps == "1e-05");
             if (classic) {
                 code = "CausalTransformerDecoderBlock(d_model=" + d_model + ", nhead=" + nhead +
@@ -1833,7 +2080,12 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
                        GetParamOrDefault(node, "ffn_dropout", "0.0") + ", norm_type='" + norm_type +
                        "', norm_eps=" + norm_eps + ", ffn_type='" + ffn_type + "', ffn_activation='" +
                        ffn_activation + "', ffn_bias=" + ffn_bias + ", position_encoding='" +
-                       position_encoding + "', rope_base=" + rope_base + ")";
+                       position_encoding + "', rope_base=" + rope_base + ", attention_bias=" +
+                       attention_bias + ", qk_norm=" + qk_norm + ", rope_fraction=" + rope_fraction +
+                       ", block_layout='" + block_layout + "', sandwich_norm=" + sandwich_norm +
+                       ", residual_init_scale=" + residual_init_scale + ", attn_logit_softcap=" +
+                       attn_logit_softcap + ", sliding_window=" + sliding_window +
+                       ", num_kv_heads=" + num_kv_heads + ")";
             }
             break;
         }
@@ -1843,7 +2095,9 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
                 node, {"d_model", "embed_dim"}, "512");
             const std::string max_len = GetParamOrAliases(
                 node, {"max_sequence_length", "max_len", "max_length", "max_seq_len"}, "5000");
-            code = "PositionalEncoding(d_model=" + d_model + ", max_len=" + max_len + ")";
+            code = GetParamOrDefault(node, "encoding_type", "sinusoidal") == "learned"
+                ? "LearnedPositionalEncoding(d_model=" + d_model + ", max_len=" + max_len + ")"
+                : "PositionalEncoding(d_model=" + d_model + ", max_len=" + max_len + ")";
             break;
         }
 
@@ -2197,9 +2451,17 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
                 node, {"dropout", "dropout_rate"}, "0.0");
             const std::string use_bias = PythonBoolLiteral(
                 GetParamOrDefault(node, "use_bias", "true"));
-            code = "cx.MultiHeadAttention(embed_dim=" + embed_dim +
+            code = "cx.AttentionModule(embed_dim=" + embed_dim +
                    ", num_heads=" + num_heads + ", dropout=" + dropout +
-                   ", use_bias=" + use_bias + ")";
+                   ", use_bias=" + use_bias +
+                   ", causal=" + PythonBoolLiteral(GetParamOrDefault(node, "causal", "false")) +
+                   ", qk_norm=" + PythonBoolLiteral(GetParamOrDefault(node, "qk_norm", "false")) +
+                   ", position_encoding='" + GetParamOrDefault(node, "position_encoding", "none") +
+                   "', rope_base=" + GetParamOrDefault(node, "rope_base", "10000") +
+                   ", rope_fraction=" + GetParamOrDefault(node, "rope_fraction", "1.0") +
+                   ", num_kv_heads=" + GetParamOrDefault(node, "num_kv_heads", "0") +
+                   ", sliding_window=" + GetParamOrDefault(node, "sliding_window", "0") +
+                   ", logit_softcap=" + GetParamOrDefault(node, "attn_logit_softcap", "0") + ")";
             break;
         }
 
@@ -2242,7 +2504,16 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
                    "', ffn_activation='" + GetParamOrDefault(node, "ffn_activation", "relu") +
                    "', ffn_bias=" + PythonBoolLiteral(GetParamOrDefault(node, "ffn_bias", "true")) +
                    ", position_encoding='" + GetParamOrDefault(node, "position_encoding", "external") +
-                   "', rope_base=" + GetParamOrDefault(node, "rope_base", "10000") + ")";
+                   "', rope_base=" + GetParamOrDefault(node, "rope_base", "10000") +
+                   ", attention_bias=" + PythonBoolLiteral(GetParamOrDefault(node, "attention_bias", "true")) +
+                   ", qk_norm=" + PythonBoolLiteral(GetParamOrDefault(node, "qk_norm", "false")) +
+                   ", rope_fraction=" + GetParamOrDefault(node, "rope_fraction", "1.0") +
+                   ", block_layout='" + GetParamOrDefault(node, "block_layout", "sequential") +
+                   "', sandwich_norm=" + PythonBoolLiteral(GetParamOrDefault(node, "sandwich_norm", "false")) +
+                   ", residual_init_scale=" + GetParamOrDefault(node, "residual_init_scale", "1.0") +
+                   ", attn_logit_softcap=" + GetParamOrDefault(node, "attn_logit_softcap", "0") +
+                   ", sliding_window=" + GetParamOrDefault(node, "sliding_window", "0") +
+                   ", num_kv_heads=" + GetParamOrDefault(node, "num_kv_heads", "0") + ")";
             break;
         }
 
@@ -2315,7 +2586,9 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
                 node, {"d_model", "embed_dim"}, "512");
             const std::string max_len = GetParamOrAliases(
                 node, {"max_sequence_length", "max_len", "max_length", "max_seq_len"}, "5000");
-            code = "cx.PositionalEncoding(d_model=" + d_model +
+            code = std::string(GetParamOrDefault(node, "encoding_type", "sinusoidal") == "learned"
+                                   ? "cx.LearnedPositionalEmbedding(d_model="
+                                   : "cx.PositionalEncoding(d_model=") + d_model +
                    ", max_sequence_length=" + max_len + ")";
             break;
         }

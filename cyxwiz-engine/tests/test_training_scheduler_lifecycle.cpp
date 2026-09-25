@@ -9,6 +9,8 @@
 
 #include <cyxwiz/device.h>
 #include <cyxwiz/optimizers/sgd.h>
+#include <cyxwiz/optimizers/adam.h>
+#include <cyxwiz/optimizers/gradient_clipping.h>
 #include <cyxwiz/scheduler.h>
 
 #include <arrow/api.h>
@@ -18,6 +20,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -439,6 +442,86 @@ void TestBestCheckpointRestoresSchedulerCursor(
           "active scheduler cursor should align with the restored best model");
 }
 
+// Graph training recipe (optimizer node, tofix112 2026-09-25): per-update
+// warmup + cosine schedule attached from the real batch count, global-norm
+// clipping and AdamW weight-decay exclusions.
+double ExpectedWarmupCosine(int update, int warmup, int total, double peak, double min_ratio) {
+    update = std::max(1, std::min(update, total));
+    if (update <= warmup) return peak * update / warmup;
+    const double floor = peak * min_ratio;
+    const double progress = static_cast<double>(update - warmup) / (total - warmup);
+    return floor + (peak - floor) * 0.5 * (1.0 + std::cos(3.14159265358979323846 * progress));
+}
+
+void TestGraphLearningRateScheduleAndRecipe(
+    const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+    const std::filesystem::path& work_dir) {
+    auto config = MakeConfig(work_dir / "graph-schedule-checkpoints");
+    config.optimizer_type = gui::NodeType::AdamW;
+    config.weight_decay = 0.01f;
+    config.weight_decay_exclude = "norms_and_biases";
+    config.lr_schedule = "warmup_cosine";
+    config.warmup_ratio = 0.25f;
+    config.min_lr_ratio = 0.1f;
+    config.grad_clip_norm = 0.05f;
+    cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    const auto metrics = Run(executor, 4);
+    // 4 training rows, batch 2: 2 updates per epoch, 8 in total, warmup 2.
+    Check(metrics.optimizer_step_count == 8, "graph schedule run should make 8 updates");
+    Check(metrics.learning_rate_history.size() == 8,
+          "warmup_cosine should advance after every optimizer update");
+    for (int n = 1; n <= 8; ++n) {
+        CheckNear(metrics.learning_rate_history[n - 1],
+                  ExpectedWarmupCosine(n + 1, 2, 8, static_cast<double>(0.08f), static_cast<double>(0.1f)), 1e-9,
+                  "warmup_cosine rate after update " + std::to_string(n));
+    }
+    Check(metrics.grad_norm > 0.0f, "grad_clip_norm should record the gradient norm");
+
+    // Scheduler unit values, export/import.
+    cyxwiz::SGDOptimizer sgd(0.1);
+    cyxwiz::WarmupDecayLR schedule(&sgd, 0.1, 10, 110, "cosine", 0.1);
+    CheckNear(sgd.GetLearningRate(), 0.01, 1e-12, "first update uses peak / warmup");
+    CheckNear(schedule.RateForUpdate(10), 0.1, 1e-12, "end of warmup reaches peak");
+    CheckNear(schedule.RateForUpdate(60), 0.01 + 0.09 * 0.5, 1e-12, "cosine midpoint");
+    CheckNear(schedule.RateForUpdate(110), 0.01, 1e-12, "cosine ends at the floor");
+    cyxwiz::WarmupDecayLR linear(&sgd, 0.1, 0, 100, "linear", 0.0);
+    CheckNear(linear.RateForUpdate(50), 0.05, 1e-12, "linear decay midpoint");
+    schedule.Step(37);
+    cyxwiz::SchedulerState state;
+    std::string error;
+    Check(schedule.ExportState(state, error), "WarmupDecayLR export: " + error);
+    cyxwiz::SGDOptimizer other(0.1);
+    cyxwiz::WarmupDecayLR restored(&other, 0.1, 10, 110, "cosine", 0.1);
+    Check(restored.ImportState(state, error), "WarmupDecayLR import: " + error);
+    CheckNear(other.GetLearningRate(), schedule.RateForUpdate(38), 1e-12, "restored schedule continues");
+    cyxwiz::WarmupDecayLR mismatched(&other, 0.1, 10, 120, "cosine", 0.1);
+    Check(!mismatched.ImportState(state, error), "state for a different schedule must be refused");
+
+    // Global-norm clipping.
+    const float values[] = {3.0f, 4.0f};
+    std::map<std::string, cyxwiz::Tensor> grads{{"g", cyxwiz::Tensor({2}, values, cyxwiz::DataType::Float32)}};
+    const float norm = cyxwiz::ClipGradientsByGlobalNorm(grads, 1.0f);
+    CheckNear(norm, 5.0, 1e-5, "global norm before clipping");
+    const float* clipped = grads.at("g").Data<float>();
+    CheckNear(clipped[0], 0.6, 1e-5, "clipped gradient x");
+    CheckNear(clipped[1], 0.8, 1e-5, "clipped gradient y");
+
+    // AdamW no-decay set: with zero gradients only the decay moves weights.
+    cyxwiz::AdamWOptimizer adamw(0.1, 0.9, 0.999, 1e-8, 0.5);
+    adamw.SetNoDecayParameters({"bias"});
+    const float ones[] = {1.0f, 1.0f};
+    const float zeros[] = {0.0f, 0.0f};
+    std::map<std::string, cyxwiz::Tensor> params{
+        {"weight", cyxwiz::Tensor({2}, ones, cyxwiz::DataType::Float32)},
+        {"bias", cyxwiz::Tensor({2}, ones, cyxwiz::DataType::Float32)}};
+    std::map<std::string, cyxwiz::Tensor> zero_grads{
+        {"weight", cyxwiz::Tensor({2}, zeros, cyxwiz::DataType::Float32)},
+        {"bias", cyxwiz::Tensor({2}, zeros, cyxwiz::DataType::Float32)}};
+    adamw.Step(params, zero_grads);
+    CheckNear(params.at("weight").Data<float>()[0], 0.95, 1e-6, "decayed parameter");
+    CheckNear(params.at("bias").Data<float>()[0], 1.0, 1e-6, "excluded parameter keeps its value");
+}
+
 }  // namespace
 
 int main() {
@@ -458,6 +541,7 @@ int main() {
     TestPlateauSkipsEmptyValidationPartition(dataset, work_dir);
     TestOneCycleUsesRealOptimizerUpdates(dataset, work_dir);
     TestBestCheckpointRestoresSchedulerCursor(dataset, work_dir);
+    TestGraphLearningRateScheduleAndRecipe(dataset, work_dir);
 
     fs::remove_all(work_dir);
     std::cout << "Training scheduler lifecycle passed\n";

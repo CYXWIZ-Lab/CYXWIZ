@@ -36,6 +36,9 @@ struct LanguageModelGenerationConfig {
     bool include_prompt = true;
     size_t max_context_tokens = 0;
     std::function<bool()> should_cancel; // Called between tokens; no callback preserves legacy behavior.
+    // Reuse attention keys/values between tokens when every module supports
+    // incremental decoding (same tokens as full recomputation, much faster).
+    bool use_kv_cache = true;
 };
 
 struct NextTokenCandidate {
@@ -67,6 +70,7 @@ struct LanguageModelGenerationResult {
     size_t max_new_tokens = 0;
     size_t remaining_budget = 0;
     bool include_prompt = true;
+    bool used_kv_cache = false;  // true when the KV-cached path produced the tokens
 };
 
 std::vector<std::string> ValidateLanguageModelGenerationConfig(

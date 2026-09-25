@@ -692,10 +692,12 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Applies one shared bias-enabled Dense projection to every timestep.",
         "Input [batch, sequence, features] becomes [batch, sequence, units]. "
         "This node is a specific Dense sequence head, not a generic layer wrapper.",
-        {{"units", "Per-timestep output features/classes"}},
+        {{"units", "Per-timestep output features/classes"},
+         {"tie_embedding", "Language-model head: reuse the upstream Embedding table (logits = h E^T, no bias)"}},
         {
             "Use after a sequence-producing recurrent or transformer layer",
-            "All timesteps share the same weights and bias"
+            "All timesteps share the same weights and bias",
+            "tie_embedding needs input width = embedding_dim and units = vocabulary size; PyTorch export does not cover this node yet"
         },
         "Recurrent"
     };
@@ -801,9 +803,11 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "One decoder-only Transformer block with masked self-attention, residual "
         "paths, normalization, and an internal feed-forward network. The feed-forward "
         "path is Dense(d_model -> dim_feedforward) -> activation -> Dense(dim_feedforward -> d_model), "
-        "or a gated GLU-family network. Defaults are the original 2017 block; a LLaMA-style block is "
-        "norm_first=true, norm_type=rms_norm, ffn_type=gated, ffn_activation=silu (SwiGLU), ffn_bias=false, "
-        "position_encoding=rope.",
+        "or a gated GLU-family network. Defaults are the original 2017 block; architecture_preset=llama_style "
+        "sets norm_first=true, norm_type=rms_norm, ffn_type=gated, ffn_activation=silu (SwiGLU), ffn_bias=false, "
+        "position_encoding=rope, attention_bias=false. qk_norm adds per-head query/key RMSNorm (OLMo 2, Gemma 3, Qwen3). "
+        "Also: ALiBi positions, partial RoPE, parallel (GPT-J/PaLM) and sandwich (Gemma) layouts, grouped-query "
+        "attention, sliding window, logit soft-cap and GPT-2 residual init scaling.",
         "Stack multiple nodes for depth. Internal attention projections and Dense/FC "
         "layers are owned by this composite node; edit dim_feedforward to change the "
         "hidden Dense width. Add another TransformerDecoder node to add a block. The Memory pin is reserved and fails "
@@ -819,15 +823,25 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"norm_type", "layer_norm or rms_norm (RMSNorm: scale only, no mean centring; LLaMA)"},
             {"norm_eps", "Epsilon inside the normalization square root (default 1e-5)"},
             {"ffn_type", "mlp, or gated: act(gate(x)) * up(x) then down; adds a third weight matrix"},
-            {"ffn_activation", "relu, gelu (tanh approximation), silu/Swish, mish, elu, selu, leaky_relu, sigmoid, tanh, hardswish; gated+silu = SwiGLU, gated+gelu = GEGLU"},
+            {"architecture_preset", "custom, classic or llama_style; fills the block fields, editing one switches to custom"},
+            {"ffn_activation", "relu, gelu (tanh approximation), gelu_exact (erf), silu/Swish, mish, elu, selu, leaky_relu, sigmoid, tanh, hardswish, squared_relu; gated+silu = SwiGLU, gated+gelu = GEGLU"},
             {"ffn_bias", "Learn biases in the feed-forward Dense layers (LLaMA turns this off)"},
             {"position_encoding", "external (Positional Encoding node) or rope (rotary embedding inside self-attention)"},
-            {"rope_base", "Rotary frequency base, default 10000"}
+            {"rope_base", "Rotary frequency base, default 10000"},
+            {"attention_bias", "Learn biases in the attention Q/K/V/output projections (LLaMA turns this off)"},
+            {"qk_norm", "Per-head RMSNorm of queries and keys before the scores; stabilises training at higher learning rates"},
+            {"rope_fraction", "Partial RoPE: fraction of head features rotated (GPT-NeoX 0.25)"},
+            {"block_layout", "sequential, or parallel (GPT-J/PaLM: x + attn(n(x)) + ffn(n(x)); pre-norm only)"},
+            {"sandwich_norm", "Gemma-style extra norm on each sub-layer output before the residual add (pre-norm only)"},
+            {"num_kv_heads", "Grouped-query attention key/value heads; 0 = num_heads, 1 = multi-query"},
+            {"sliding_window", "Mistral-style local causal window; 0 = full"},
+            {"attn_logit_softcap", "Gemma 2 soft-cap on attention scores; 0 = off"},
+            {"residual_init_scale", "Scales initial attention-output and FFN-down weights (GPT-2: 1/sqrt(2N))"}
         },
         {
             "d_model must divide evenly by num_heads",
             "Autoregressive generation loops remain a separate future contract",
-            "position_encoding=rope rotates queries and keys inside attention (ArrayFire path only); ALiBi and learned positions are planned (tofix112 phase 3)"
+            "position_encoding=rope/alibi, qk_norm, grouped-query attention and soft-capping run on the ArrayFire attention path only; the native CPU fallback refuses them with a clear error"
         },
         "Attention"
     };

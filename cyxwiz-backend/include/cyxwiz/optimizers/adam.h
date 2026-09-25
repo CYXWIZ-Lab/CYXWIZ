@@ -4,6 +4,7 @@
 #include "cyxwiz/tensor.h"
 
 #include <map>
+#include <set>
 #include <string>
 
 namespace cyxwiz {
@@ -23,7 +24,13 @@ public:
     bool ExportState(OptimizerState& state, std::string& error) const override;
     bool ImportState(const OptimizerState& state, std::string& error) override;
 
+    // Parameters that skip decoupled weight decay (AdamW): typically biases,
+    // normalization scales and embedding tables. Adam ignores it (no decay).
+    void SetNoDecayParameters(std::set<std::string> names) { no_decay_parameters_ = std::move(names); }
+    const std::set<std::string>& GetNoDecayParameters() const { return no_decay_parameters_; }
+
 protected:
+    std::set<std::string> no_decay_parameters_;
     std::map<std::string, double> AdamHyperparameters() const;
     void StepImpl(std::map<std::string, Tensor>& parameters,
                   const std::map<std::string, Tensor>& gradients,

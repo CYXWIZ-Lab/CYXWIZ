@@ -545,6 +545,13 @@ struct TrainingConfiguration {
     float epsilon = 1e-8f;
     float rmsprop_alpha = 0.99f;
     float weight_decay = 0.0f;
+    // Training recipe (optimizer node, all optimizers): per-update learning-rate
+    // schedule, global-norm gradient clipping, AdamW weight-decay exclusions.
+    std::string lr_schedule = "none";   // none | warmup_cosine | warmup_linear | warmup_constant
+    float warmup_ratio = 0.02f;         // fraction of all optimizer updates spent warming up
+    float min_lr_ratio = 0.1f;          // decay floor as a fraction of learning_rate
+    float grad_clip_norm = 0.0f;        // 0 = off
+    std::string weight_decay_exclude = "none";  // none | norms_and_biases | norms_biases_embeddings
 
     // Validation
     bool is_valid = false;

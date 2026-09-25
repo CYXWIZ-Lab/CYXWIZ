@@ -24,7 +24,9 @@ enum class ActivationType {
     Mish,      // x * tanh(softplus(x))
     Hardswish, // PyTorch-style hardswish
     SELU,      // Scaled Exponential Linear Unit
-    PReLU      // Parametric ReLU (learnable alpha)
+    PReLU,     // Parametric ReLU (learnable alpha)
+    SquaredReLU,  // relu(x)^2 (Primer, So et al. 2021)
+    GELUExact     // x * Phi(x) with erf (torch GELU(approximate="none")); GELU above is the tanh form
 };
 
 // ============================================================================
@@ -181,6 +183,28 @@ public:
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output, const Tensor& input) override;
     std::string GetName() const override { return "Hardswish"; }
+};
+
+// ============================================================================
+// SquaredReLU - relu(x)^2 (Primer); derivative 2*relu(x)
+// ============================================================================
+
+class CYXWIZ_API SquaredReLUActivation : public Activation {
+public:
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output, const Tensor& input) override;
+    std::string GetName() const override { return "SquaredReLU"; }
+};
+
+// ============================================================================
+// GELUExact - x * Phi(x) = 0.5 * x * (1 + erf(x / sqrt(2)))
+// ============================================================================
+
+class CYXWIZ_API GELUExactActivation : public Activation {
+public:
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output, const Tensor& input) override;
+    std::string GetName() const override { return "GELUExact"; }
 };
 
 

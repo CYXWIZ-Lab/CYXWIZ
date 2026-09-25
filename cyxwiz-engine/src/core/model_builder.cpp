@@ -31,20 +31,38 @@ cyxwiz::TransformerBlockOptions ToTransformerBlockOptions(const cyxwiz::Transfor
     options.ffn_type = c.ffn_type == "gated" ? cyxwiz::TransformerFeedForwardType::Gated
                                              : cyxwiz::TransformerFeedForwardType::Mlp;
     options.ffn_bias = c.ffn_bias;
-    static const std::map<std::string, cyxwiz::ActivationType> activations = {
-        {"relu", cyxwiz::ActivationType::ReLU}, {"gelu", cyxwiz::ActivationType::GELU},
-        {"silu", cyxwiz::ActivationType::SiLU}, {"mish", cyxwiz::ActivationType::Mish},
-        {"elu", cyxwiz::ActivationType::ELU}, {"selu", cyxwiz::ActivationType::SELU},
-        {"leaky_relu", cyxwiz::ActivationType::LeakyReLU}, {"sigmoid", cyxwiz::ActivationType::Sigmoid},
-        {"tanh", cyxwiz::ActivationType::Tanh}, {"hardswish", cyxwiz::ActivationType::Hardswish}};
-    const auto it = activations.find(c.ffn_activation);
-    if (it == activations.end()) {
+    if (!cyxwiz::TransformerFfnActivationFromName(c.ffn_activation, options.ffn_activation)) {
         throw std::runtime_error("TransformerDecoder ffn_activation '" + c.ffn_activation + "' is not mapped");
     }
-    options.ffn_activation = it->second;
     options.position_encoding = c.position_encoding == "rope" ? cyxwiz::TransformerPositionEncoding::Rope
                                                               : cyxwiz::TransformerPositionEncoding::External;
     options.rope_base = c.rope_base;
+    if (c.position_encoding == "alibi") options.position_encoding = cyxwiz::TransformerPositionEncoding::Alibi;
+    options.attention_bias = c.attention_bias;
+    options.qk_norm = c.qk_norm;
+    options.rope_fraction = c.rope_fraction;
+    options.block_layout = c.block_layout == "parallel" ? cyxwiz::TransformerBlockLayout::Parallel
+                                                        : cyxwiz::TransformerBlockLayout::Sequential;
+    options.sandwich_norm = c.sandwich_norm;
+    options.residual_init_scale = c.residual_init_scale;
+    options.attn_logit_softcap = c.attn_logit_softcap;
+    options.sliding_window = static_cast<int>(c.sliding_window);
+    options.num_kv_heads = static_cast<int>(c.num_kv_heads);
+    return options;
+}
+
+// MultiHeadAttention node options (tofix112), validated by the policy.
+cyxwiz::MultiHeadAttentionOptions ToMultiHeadAttentionOptions(const cyxwiz::TransformerConfiguration& c) {
+    cyxwiz::MultiHeadAttentionOptions options;
+    options.causal = c.causal;
+    options.sliding_window = static_cast<int>(c.sliding_window);
+    options.num_kv_heads = static_cast<int>(c.num_kv_heads);
+    options.qk_norm = c.qk_norm;
+    options.rope = c.position_encoding == "rope";
+    options.rope_base = c.rope_base;
+    options.rope_fraction = c.rope_fraction;
+    options.alibi = c.position_encoding == "alibi";
+    options.logit_softcap = c.attn_logit_softcap;
     return options;
 }
 }  // namespace
@@ -816,7 +834,8 @@ bool BuildSequential(
                     embed_dim,
                     transformer_configuration.num_heads,
                     transformer_configuration.dropout,
-                    transformer_configuration.use_bias);
+                    transformer_configuration.use_bias,
+                    ToMultiHeadAttentionOptions(transformer_configuration));
 
                 bool next_is_sequence_layer = false;
                 if (i + 1 < config.layers.size()) {
@@ -851,11 +870,16 @@ bool BuildSequential(
                         "feature width");
                 }
 
-                model.Add<PositionalEncodingModule>(
-                    d_model, transformer_configuration.max_sequence_length);
-                spdlog::info("  [{}] PositionalEncoding(d_model={}, max_len={}) - output "
+                if (transformer_configuration.encoding_type == "learned") {
+                    model.Add<LearnedPositionalEmbeddingModule>(
+                        d_model, transformer_configuration.max_sequence_length);
+                } else {
+                    model.Add<PositionalEncodingModule>(
+                        d_model, transformer_configuration.max_sequence_length);
+                }
+                spdlog::info("  [{}] PositionalEncoding({}, d_model={}, max_len={}) - output "
                              "[batch, {}, {}]",
-                             i, d_model,
+                             i, transformer_configuration.encoding_type, d_model,
                              transformer_configuration.max_sequence_length,
                              current_sequence_length, d_model);
                 current_input_size = d_model;
@@ -917,6 +941,34 @@ bool BuildSequential(
                                                     config.output_size > 0 ? config.output_size : 64));
                 if (out_features < 1) {
                     out_features = 1;
+                }
+                const auto tie_it = layer_cfg.parameters.find("tie_embedding");
+                const bool tie = tie_it != layer_cfg.parameters.end() &&
+                                 (tie_it->second == "true" || tie_it->second == "1" || tie_it->second == "True");
+                if (tie) {
+                    // Share the nearest upstream Embedding table (tofix112):
+                    // logits = h E^T, no bias, one saved tensor.
+                    EmbeddingModule* embedding = nullptr;
+                    for (size_t k = model.Size(); k-- > 0 && !embedding;) {
+                        embedding = dynamic_cast<EmbeddingModule*>(model.GetModule(k));
+                    }
+                    if (!embedding) {
+                        throw std::runtime_error(
+                            "TimeDistributed tie_embedding=true needs an Embedding node earlier in the model");
+                    }
+                    if (embedding->EmbeddingDim() != current_input_size ||
+                        embedding->NumEmbeddings() != out_features) {
+                        throw std::runtime_error(
+                            "TimeDistributed tie_embedding=true needs input width = embedding_dim (" +
+                            std::to_string(embedding->EmbeddingDim()) + ") and units = vocabulary size (" +
+                            std::to_string(embedding->NumEmbeddings()) + "); got " +
+                            std::to_string(current_input_size) + " -> " + std::to_string(out_features));
+                    }
+                    model.Add<TiedOutputProjectionModule>(*embedding, false);
+                    spdlog::info("  [{}] TiedOutputProjection({} -> {}) shares the Embedding table",
+                                 i, current_input_size, out_features);
+                    current_input_size = out_features;
+                    break;
                 }
                 model.Add<TimeDistributedDenseModule>(current_input_size,
                                                       out_features,

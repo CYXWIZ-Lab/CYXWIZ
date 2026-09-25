@@ -6,8 +6,9 @@ Checks every TransformerDecoder block option against an explicit PyTorch
 reference: RMSNorm vs LayerNorm, gated (GLU-family) vs plain MLP feed-forward,
 each supported feed-forward activation, and feed-forward bias on/off, in both
 post-norm and pre-norm layouts, as two-block causal stacks. The reference class
-is the same one the Engine's PyTorch export emits (ConfigurableCausalDecoderBlock),
-so this also proves exported code matches the backend.
+is executed from the text the Engine's PyTorch export emits
+(ConfigurableCausalDecoderBlock in node_editor_codegen.cpp), so this also proves
+exported code matches the backend.
 
 Compares outputs, input gradients and every parameter gradient
 (atol 3e-5, rtol 3e-4, as verify_transformer_stacks.py).
@@ -15,13 +16,14 @@ Compares outputs, input gradients and every parameter gradient
   py -3.12 verify_transformer_block_options.py --runtime <build>/bin/Release \
       --output <dir> --backend cpu --dll-dir "C:/Program Files/ArrayFire/v3/lib"
 """
-import argparse, ctypes, hashlib, json, os, sys
+import argparse, ctypes, hashlib, json, math, os, sys
 from pathlib import Path
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--runtime', required=True, type=Path)
 parser.add_argument('--output', required=True, type=Path)
 parser.add_argument('--backend', choices=['cpu', 'cuda', 'opencl'], default='cpu')
+parser.add_argument('--device', type=int, default=0, help='device index for the backend (OpenCL: 1 = Intel iGPU here)')
 parser.add_argument('--dll-dir', action='append', type=Path, default=[])
 args = parser.parse_args()
 if os.name != 'nt':
@@ -35,79 +37,58 @@ from torch import nn
 backend_handle = ctypes.WinDLL(str(BIN / 'cyxwiz-backend.dll'))
 import pycyxwiz as cx
 torch.set_num_threads(1)
-activation = cx.Device(getattr(cx.DeviceType, args.backend.upper()), 0).activate_exact(True)
+activation = cx.Device(getattr(cx.DeviceType, args.backend.upper()), args.device).activate_exact(True)
 assert activation.success and activation.execution_validated, activation.message
 
-D_MODEL, HEADS, FF = 8, 2, 12
+D_MODEL, HEADS, FF = 16, 4, 12
 
 
-class ConfigurableCausalDecoderBlock(nn.Module):
-    # Identical to the class emitted by node_editor_codegen.cpp.
-    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.0, norm_first=False, ffn_dropout=0.0,
-                 norm_type='layer_norm', norm_eps=1e-5, ffn_type='mlp', ffn_activation='relu', ffn_bias=True,
-                 position_encoding='external', rope_base=10000.0):
-        super().__init__()
-        self.norm_first = norm_first
-        self.nhead, self.rope, self.rope_base, self.attn_dropout = nhead, position_encoding == 'rope', rope_base, dropout
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
-        make_norm = (lambda: nn.RMSNorm(d_model, eps=norm_eps)) if norm_type == 'rms_norm' else (lambda: nn.LayerNorm(d_model, eps=norm_eps))
-        self.norm1, self.norm2 = make_norm(), make_norm()
-        self.linear1 = nn.Linear(d_model, dim_feedforward, bias=ffn_bias)  # up
-        self.linear2 = nn.Linear(dim_feedforward, d_model, bias=ffn_bias)  # down
-        self.gate = nn.Linear(d_model, dim_feedforward, bias=ffn_bias) if ffn_type == 'gated' else None
-        self.act = {'relu': nn.ReLU(), 'gelu': nn.GELU(approximate='tanh'), 'silu': nn.SiLU(), 'mish': nn.Mish(),
-                    'elu': nn.ELU(), 'selu': nn.SELU(), 'leaky_relu': nn.LeakyReLU(0.01), 'sigmoid': nn.Sigmoid(),
-                    'tanh': nn.Tanh(), 'hardswish': nn.Hardswish()}[ffn_activation]
-        self.dropout1, self.dropout3, self.ffn_dropout = nn.Dropout(dropout), nn.Dropout(dropout), nn.Dropout(ffn_dropout)
+CODEGEN = Path(__file__).resolve().parents[3] / 'src' / 'gui' / 'node_editor_codegen.cpp'
 
-    def _rotary(self, x):
-        # half-split RoPE: x*cos + rotate_half(x)*sin, frequencies base^(-2i/head_dim)
-        seq, dim = x.size(-2), x.size(-1)
-        inv_freq = self.rope_base ** (-torch.arange(0, dim, 2, device=x.device, dtype=x.dtype) / dim)
-        angle = torch.arange(seq, device=x.device, dtype=x.dtype)[:, None] * inv_freq[None, :]
-        cos, sin = torch.cat([angle.cos(), angle.cos()], -1), torch.cat([angle.sin(), angle.sin()], -1)
-        x1, x2 = x[..., :dim // 2], x[..., dim // 2:]
-        return x * cos + torch.cat([-x2, x1], -1) * sin
 
-    def _self_attention(self, x):
-        if not self.rope:
-            causal_mask = torch.triu(torch.ones(x.size(1), x.size(1), device=x.device, dtype=torch.bool), diagonal=1)
-            return self.dropout1(self.self_attn(x, x, x, attn_mask=causal_mask, need_weights=False)[0])
-        batch, seq, width = x.shape
-        q, k, v = torch.nn.functional.linear(x, self.self_attn.in_proj_weight, self.self_attn.in_proj_bias).chunk(3, -1)
-        heads = lambda t: t.view(batch, seq, self.nhead, width // self.nhead).transpose(1, 2)
-        q, k, v = self._rotary(heads(q)), self._rotary(heads(k)), heads(v)
-        context = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=self.attn_dropout if self.training else 0.0)
-        return self.dropout1(self.self_attn.out_proj(context.transpose(1, 2).reshape(batch, seq, width)))
+def exported_block_source():
+    """The PyTorch text the Engine's export emits for the configurable block."""
+    lines = CODEGEN.read_text(encoding='utf-8').splitlines()
+    first = next(i for i, l in enumerate(lines) if l.strip() == 'code += "class SquaredReLU(nn.Module):\\n";')
+    out = []
+    for line in lines[first:]:
+        text = line.strip()
+        if not text.startswith('code += "'):
+            break
+        out.append(text[len('code += "'):-2].encode('utf-8').decode('unicode_escape'))
+    return ''.join(out)
 
-    def _feed_forward(self, x):
-        hidden = self.act(self.gate(x)) * self.linear1(x) if self.gate is not None else self.act(self.linear1(x))
-        return self.dropout3(self.linear2(self.ffn_dropout(hidden)))
 
-    def forward(self, x):
-        if self.norm_first:
-            x = x + self._self_attention(self.norm1(x))
-            return x + self._feed_forward(self.norm2(x))
-        x = self.norm1(x + self._self_attention(x))
-        return self.norm2(x + self._feed_forward(x))
-
+# The reference IS the exported code: parity here also proves the export.
+EXPORTED_BLOCK = exported_block_source()
+exec(compile(EXPORTED_BLOCK, str(CODEGEN) + ' (exported ConfigurableCausalDecoderBlock)', 'exec'), globals())
 
 def tensor(a):
     return cx.Tensor.from_numpy(np.ascontiguousarray(a, dtype=np.float32))
 
 
+def attention_mapping(attn, prefix, grads=False):
+    """Backend attention parameter names -> ConfigurableAttention tensors."""
+    pick = (lambda t: t.grad) if grads else (lambda t: t)
+    out = {}
+    for letter, proj in (('q', attn.q_proj), ('k', attn.k_proj), ('v', attn.v_proj), ('o', attn.out_proj)):
+        out[f'{prefix}W_{letter}'] = pick(proj.weight)
+        if proj.bias is not None:
+            out[f'{prefix}b_{letter}'] = pick(proj.bias)
+    if attn.q_norm is not None:
+        out[f'{prefix}q_norm_gamma'] = pick(attn.q_norm.weight)
+        out[f'{prefix}k_norm_gamma'] = pick(attn.k_norm.weight)
+    return out
+
+
 def mapping(ref, grads=False):
     """Backend parameter name -> PyTorch tensor (or its .grad)."""
     pick = (lambda t: t.grad) if grads else (lambda t: t)
-    out = {}
-    attn = ref.self_attn
-    for i, letter in enumerate('qkv'):
-        out[f'self_attn.W_{letter}'] = pick(attn.in_proj_weight)[i * D_MODEL:(i + 1) * D_MODEL]
-        out[f'self_attn.b_{letter}'] = pick(attn.in_proj_bias)[i * D_MODEL:(i + 1) * D_MODEL]
-    out['self_attn.W_o'] = pick(attn.out_proj.weight)
-    out['self_attn.b_o'] = pick(attn.out_proj.bias)
-    for name in ('norm1', 'norm2'):
+    out = attention_mapping(ref.self_attn, 'self_attn.', grads)
+    for name in ('norm1', 'norm2', 'post_attn_norm', 'post_ffn_norm'):
         norm = getattr(ref, name)
+        if norm is None:
+            continue
         out[f'{name}.gamma'] = pick(norm.weight)
         if isinstance(norm, nn.LayerNorm):
             out[f'{name}.beta'] = pick(norm.bias)
@@ -136,7 +117,10 @@ def case(options, pre):
         ref = ConfigurableCausalDecoderBlock(D_MODEL, HEADS, FF, 0.0, pre, 0.0, **options)
         # Non-trivial norm scales/shifts so gamma/beta gradients are exercised.
         with torch.no_grad():
-            for norm in (ref.norm1, ref.norm2):
+            for norm in (ref.norm1, ref.norm2, ref.post_attn_norm, ref.post_ffn_norm,
+                         ref.self_attn.q_norm, ref.self_attn.k_norm):
+                if norm is None:
+                    continue
                 norm.weight.uniform_(0.5, 1.5)
                 if getattr(norm, 'bias', None) is not None:
                     norm.bias.uniform_(-0.2, 0.2)
@@ -185,15 +169,42 @@ CASES = [
     {'position_encoding': 'rope'},                                  # RoPE only
     {'position_encoding': 'rope', 'rope_base': 500.0},
     {'norm_type': 'rms_norm', 'ffn_type': 'gated', 'ffn_activation': 'silu', 'ffn_bias': False,
-     'position_encoding': 'rope'},                                  # full LLaMA-style block
-] + [{'ffn_activation': a} for a in ('silu', 'mish', 'elu', 'selu', 'leaky_relu', 'tanh', 'hardswish')]
+     'position_encoding': 'rope', 'attention_bias': False},        # full LLaMA-style block (preset llama_style)
+    {'attention_bias': False},
+    {'qk_norm': True},
+    {'qk_norm': True, 'norm_eps': 1e-6, 'position_encoding': 'rope'},
+    {'norm_type': 'rms_norm', 'ffn_type': 'gated', 'ffn_activation': 'silu', 'ffn_bias': False,
+     'position_encoding': 'rope', 'attention_bias': False, 'qk_norm': True},  # LLaMA + QK-norm (Qwen3-like, no GQA)
+    {'ffn_type': 'gated', 'ffn_activation': 'squared_relu'},
+    # groups 2-4 (2026-09-25)
+    {'position_encoding': 'alibi'},
+    {'position_encoding': 'rope', 'rope_fraction': 0.5},
+    {'position_encoding': 'rope', 'rope_fraction': 0.75, 'qk_norm': True},  # rounds down to 2 of 4
+    {'num_kv_heads': 2},
+    {'num_kv_heads': 1, 'position_encoding': 'rope'},
+    {'num_kv_heads': 2, 'qk_norm': True, 'attention_bias': False},
+    {'sliding_window': 2},
+    {'sliding_window': 3, 'position_encoding': 'alibi'},
+    {'attn_logit_softcap': 1.0},
+    {'attn_logit_softcap': 0.5, 'position_encoding': 'rope', 'qk_norm': True},
+    {'block_layout': 'parallel', 'pre_only': True},
+    {'block_layout': 'parallel', 'norm_type': 'rms_norm', 'ffn_type': 'gated', 'ffn_activation': 'gelu',
+     'position_encoding': 'rope', 'pre_only': True},                       # GPT-J / PaLM-like
+    {'sandwich_norm': True, 'pre_only': True},
+    {'sandwich_norm': True, 'norm_type': 'rms_norm', 'ffn_type': 'gated', 'ffn_activation': 'gelu',
+     'position_encoding': 'rope', 'qk_norm': True, 'attn_logit_softcap': 2.0, 'num_kv_heads': 2,
+     'sliding_window': 4, 'attention_bias': False, 'ffn_bias': False, 'pre_only': True},  # Gemma-2/3-like
+] + [{'ffn_activation': a} for a in ('silu', 'mish', 'elu', 'selu', 'leaky_relu', 'tanh', 'hardswish',
+                                     'gelu_exact', 'squared_relu')]
 
 results = {'torch_version': torch.__version__, 'device': 'ArrayFire ' + args.backend,
            'shape': [2, 5, D_MODEL], 'heads': HEADS, 'dim_feedforward': FF,
            'atol': 3e-5, 'rtol': 3e-4, 'cases': []}
 failures = []
 for options in CASES:
-    for pre in (False, True):
+    options = dict(options)
+    pre_only = options.pop('pre_only', False)
+    for pre in ((True,) if pre_only else (False, True)):
         try:
             result = case(options, pre)
             results['cases'].append(result)
@@ -202,11 +213,78 @@ for options in CASES:
         except AssertionError as error:
             failures.append({'options': options, 'norm_first': pre, 'error': str(error)[:2000]})
             print('FAIL', options or 'classic', 'norm_first=', pre, str(error)[:600], flush=True)
+
+
+def run_extra(label, fn):
+    try:
+        result = fn()
+        result['label'] = label
+        results['cases'].append(result)
+        print('PASS', label, 'max_abs_error=%.2e' % result['max_abs_error'], flush=True)
+    except AssertionError as error:
+        failures.append({'label': label, 'error': str(error)[:2000]})
+        print('FAIL', label, str(error)[:600], flush=True)
+
+
+def learned_positions_case():
+    torch.manual_seed(52)
+    ref = LearnedPositionalEncoding(D_MODEL, 7)
+    module = cx.LearnedPositionalEmbedding(D_MODEL, 7)
+    module.set_parameters({'weight': tensor(ref.weight.detach().numpy())})
+    x = torch.randn(2, 5, D_MODEL, requires_grad=True)
+    upstream = torch.randn_like(x)
+    expected = ref(x)
+    errors = {'output': compare(module.forward(tensor(x.detach().numpy())).to_numpy(), expected)}
+    expected.backward(upstream)
+    errors['input_gradient'] = compare(module.backward(tensor(upstream.numpy())).to_numpy(), x.grad)
+    errors['weight_gradient'] = compare(module.get_gradients()['weight'].to_numpy(), ref.weight.grad)
+    return {'max_abs_error': max(errors.values()), 'errors': errors}
+
+
+def attention_module_case(options):
+    torch.manual_seed(52)
+    bias = options.get('bias', True)
+    ref = ConfigurableAttention(D_MODEL, HEADS, 0.0, bias, options.get('num_kv_heads', 0), options.get('causal', False),
+                                options.get('qk_norm', False), 1e-5, options.get('position_encoding', 'none'),
+                                options.get('rope_base', 10000.0), options.get('rope_fraction', 1.0),
+                                options.get('sliding_window', 0), options.get('logit_softcap', 0.0))
+    with torch.no_grad():
+        for norm in (ref.q_norm, ref.k_norm):
+            if norm is not None:
+                norm.weight.uniform_(0.5, 1.5)
+    module = cx.AttentionModule(D_MODEL, HEADS, 0.0, bias, **{k: v for k, v in options.items() if k != 'bias'})
+    module.set_training(True)
+    params = {k: tensor(v.detach().numpy()) for k, v in attention_mapping(ref, '').items()}
+    module.set_parameters(params)
+    assert set(module.get_parameters()) == set(params), sorted(set(module.get_parameters()) ^ set(params))
+    x = torch.randn(2, 5, D_MODEL, requires_grad=True)
+    upstream = torch.randn_like(x)
+    expected = ref(x)[0]
+    errors = {'output': compare(module.forward(tensor(x.detach().numpy())).to_numpy(), expected)}
+    expected.backward(upstream)
+    errors['input_gradient'] = compare(module.backward(tensor(upstream.numpy())).to_numpy(), x.grad)
+    grads = module.get_gradients()
+    for name, value in attention_mapping(ref, '', grads=True).items():
+        errors[name] = compare(grads[name].to_numpy(), value)
+    return {'options': options, 'max_abs_error': max(errors.values()), 'errors': errors}
+
+
+run_extra('learned positions', learned_positions_case)
+for attention_options in [
+    {},
+    {'causal': True},
+    {'causal': True, 'position_encoding': 'rope', 'qk_norm': True},
+    {'causal': True, 'position_encoding': 'alibi', 'sliding_window': 3},
+    {'position_encoding': 'rope', 'rope_fraction': 0.5, 'num_kv_heads': 2},  # bidirectional
+    {'causal': True, 'logit_softcap': 1.0, 'num_kv_heads': 1, 'bias': False},
+]:
+    run_extra('attention module ' + json.dumps(attention_options),
+              lambda o=attention_options: attention_module_case(o))
 results['failures'] = failures
 results['hashes'] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
-                     for p in [BIN / 'cyxwiz-backend.dll', Path(cx.__file__), Path(__file__)]}
+                     for p in [BIN / 'cyxwiz-backend.dll', Path(cx.__file__), Path(__file__), CODEGEN]}
 args.output.mkdir(parents=True, exist_ok=True)
-(args.output / f'block_options_parity_{args.backend}.json').write_text(json.dumps(results, indent=2) + '\n',
+(args.output / f'block_options_parity_{args.backend}{args.device}.json').write_text(json.dumps(results, indent=2) + '\n',
                                                                         encoding='utf-8')
 print('SUMMARY', len(results['cases']), 'passed,', len(failures), 'failed', flush=True)
 sys.exit(1 if failures else 0)

@@ -270,6 +270,13 @@ LanguageModelGenerationResult GenerateTokenIdsWithReport(
     result.steps.reserve(config.max_new_tokens);
 
     std::mt19937 rng(seed);
+    const bool use_cache = config.use_kv_cache && model.SupportsIncrementalDecoding();
+    result.used_kv_cache = use_cache;
+    struct CacheRelease {  // free cached keys/values however generation ends
+        SequentialModel& model;
+        bool active;
+        ~CacheRelease() { if (active) model.ResetIncrementalState(); }
+    } cache_release{model, use_cache};
     for (size_t step = 0; step < config.max_new_tokens; ++step) {
         if (config.should_cancel && config.should_cancel()) {
             result.stop_reason = LanguageModelGenerationStopReason::UserCancelled;
@@ -280,11 +287,15 @@ LanguageModelGenerationResult GenerateTokenIdsWithReport(
             break;
         }
 
-        Tensor input({1, generated.size()}, generated.data(), DataType::Int64);
-        Tensor logits = model.Forward(input);
+        // Cached path: the prompt once, then only the newest token.
+        const bool incremental_step = use_cache && step > 0;
+        const size_t fed = incremental_step ? 1 : generated.size();
+        Tensor input({1, fed}, generated.data() + (generated.size() - fed), DataType::Int64);
+        Tensor logits = use_cache ? model.ForwardIncremental(input, generated.size() - fed)
+                                  : model.Forward(input);
         const auto& shape = logits.Shape();
         if (shape.size() != 3 || shape[0] != 1 ||
-            shape[1] != generated.size() || shape[2] == 0 ||
+            shape[1] != fed || shape[2] == 0 ||
             logits.GetDataType() != DataType::Float32) {
             throw std::invalid_argument(
                 "GenerateTokenIdsWithReport model must return Float32 [1, seq, vocab] logits");

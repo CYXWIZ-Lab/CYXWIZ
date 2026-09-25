@@ -50,6 +50,11 @@ std::unique_ptr<LRScheduler> BuildScheduler(
                     spec.warmup_epochs,
                     spec.base_lr,
                     spec.start_lr);
+            } else if constexpr (
+                std::is_same_v<Spec, WarmupDecayLRSchedulerSpec>) {
+                return std::make_unique<WarmupDecayLR>(
+                    &optimizer, spec.peak_lr, spec.warmup_steps,
+                    spec.total_steps, spec.decay, spec.min_lr_ratio);
             } else {
                 return std::make_unique<OneCycleLR>(
                     &optimizer,
@@ -126,6 +131,18 @@ bool ValidateTrainingSchedulerSpec(
                     error = "LinearWarmupLR requires positive warmup_epochs "
                             "and finite non-negative base/start learning rates";
                 }
+            } else if constexpr (
+                std::is_same_v<Spec, WarmupDecayLRSchedulerSpec>) {
+                if (!IsFinitePositive(spec.peak_lr) || spec.total_steps <= 0 ||
+                    spec.warmup_steps < 0 || spec.warmup_steps > spec.total_steps ||
+                    (spec.decay != "cosine" && spec.decay != "linear" &&
+                     spec.decay != "constant") ||
+                    !std::isfinite(spec.min_lr_ratio) || spec.min_lr_ratio < 0.0 ||
+                    spec.min_lr_ratio > 1.0) {
+                    error = "WarmupDecayLR requires positive peak_lr/total_steps, "
+                            "0 <= warmup_steps <= total_steps, decay cosine/linear/"
+                            "constant and min_lr_ratio in [0,1]";
+                }
             } else {
                 if (!IsFinitePositive(spec.max_lr) || spec.total_steps <= 0 ||
                     !std::isfinite(spec.pct_start) || spec.pct_start < 0.0 ||
@@ -143,7 +160,8 @@ bool ValidateTrainingSchedulerSpec(
 
 TrainingSchedulerCadence GetTrainingSchedulerCadence(
     const TrainingSchedulerSpec& specification) {
-    if (std::holds_alternative<OneCycleLRSchedulerSpec>(specification)) {
+    if (std::holds_alternative<OneCycleLRSchedulerSpec>(specification) ||
+        std::holds_alternative<WarmupDecayLRSchedulerSpec>(specification)) {
         return TrainingSchedulerCadence::OptimizerUpdate;
     }
     if (std::holds_alternative<ReduceLROnPlateauSchedulerSpec>(

@@ -61,8 +61,12 @@ private:
 // original decoder exactly: LayerNorm, Dense -> ReLU -> Dense, biases on.
 enum class TransformerNormType { LayerNorm, RMSNorm };
 // External: positions come from outside the block (e.g. a PositionalEncoding
-// node). Rope: rotary position embedding inside self-attention.
-enum class TransformerPositionEncoding { External, Rope };
+// node). Rope: rotary position embedding inside self-attention. Alibi: linear
+// distance bias on the self-attention scores (no position input at all).
+enum class TransformerPositionEncoding { External, Rope, Alibi };
+// Sequential: x + attn, then + ffn. Parallel (GPT-J, PaLM; pre-norm only):
+// y = x + attn(norm1(x)) + ffn(norm1(x)); norm2 is unused.
+enum class TransformerBlockLayout { Sequential, Parallel };
 enum class TransformerFeedForwardType {
     Mlp,    // down(act(up(x)))
     Gated   // down(act(gate(x)) * up(x)): sigmoid=GLU, ReLU=ReGLU, GELU=GEGLU, SiLU=SwiGLU
@@ -76,14 +80,43 @@ struct CYXWIZ_API TransformerBlockOptions {
     bool ffn_bias = true;
     TransformerPositionEncoding position_encoding = TransformerPositionEncoding::External;
     float rope_base = 10000.0f;
+    // Bias vectors in the attention Q/K/V/output projections (LLaMA: off).
+    bool attention_bias = true;
+    // Per-head RMSNorm of queries and keys before the scores (OLMo 2, Gemma 3,
+    // Qwen3); uses norm_eps; applies to self-attention.
+    bool qk_norm = false;
+    // Fraction of each head's features RoPE rotates (partial RoPE, GPT-NeoX).
+    float rope_fraction = 1.0f;
+    TransformerBlockLayout block_layout = TransformerBlockLayout::Sequential;
+    // Sandwich norm (Gemma 2/3; pre-norm only): x + post_norm(sublayer(norm(x))).
+    bool sandwich_norm = false;
+    // Multiplies the initial weights of the residual output projections
+    // (attention W_o, FFN down) - GPT-2 uses 1/sqrt(2 * num_blocks).
+    float residual_init_scale = 1.0f;
+    // Self-attention logit soft-cap (Gemma 2); 0 disables.
+    float attn_logit_softcap = 0.0f;
+    // Each position attends to at most this many most recent positions
+    // including itself (Mistral); 0 = full causal attention.
+    int sliding_window = 0;
+    // Key/value heads for grouped-query attention; 0 = num_heads (standard).
+    int num_kv_heads = 0;
 
     bool IsClassic() const {
         return norm_type == TransformerNormType::LayerNorm && norm_eps == 1e-5f &&
                ffn_type == TransformerFeedForwardType::Mlp &&
                ffn_activation == ActivationType::ReLU && ffn_bias &&
-               position_encoding == TransformerPositionEncoding::External;
+               position_encoding == TransformerPositionEncoding::External &&
+               attention_bias && !qk_norm && rope_fraction == 1.0f &&
+               block_layout == TransformerBlockLayout::Sequential && !sandwich_norm &&
+               residual_init_scale == 1.0f && attn_logit_softcap == 0.0f &&
+               sliding_window == 0 && num_kv_heads == 0;
     }
 };
+
+// Feed-forward activation names shared by the Engine, pycyxwiz and exports:
+// relu, gelu (tanh approximation), gelu_exact (erf), silu, mish, elu, selu,
+// leaky_relu, sigmoid, tanh, hardswish, squared_relu. Returns false for others.
+CYXWIZ_API bool TransformerFfnActivationFromName(const std::string& name, ActivationType& out);
 
 class CYXWIZ_API TransformerDecoderLayer : public Layer {
 public:
@@ -110,7 +143,14 @@ public:
 
     void SetTraining(bool training) override;
 
+    // KV-cached decoding of positions [position_offset, +seq_len) through the
+    // self-attention cache (decoder-only path, inference).
+    Tensor ForwardIncremental(const Tensor& input, size_t position_offset);
+    void ResetIncrementalState();
+
     static Tensor GenerateCausalMask(int size);
+    // Causal mask that also hides keys `window` or more positions back.
+    static Tensor GenerateCausalMask(int size, int window);
     Tensor GetLastMemoryGradient() const;
 
 private:
@@ -126,6 +166,8 @@ private:
     std::unique_ptr<Layer> norm1_;
     std::unique_ptr<Layer> norm2_;
     std::unique_ptr<Layer> norm3_;
+    std::unique_ptr<Layer> post_attn_norm_;  // sandwich_norm only
+    std::unique_ptr<Layer> post_ffn_norm_;   // sandwich_norm only
     std::unique_ptr<DenseLayer> linear1_;   // up projection
     std::unique_ptr<DenseLayer> linear2_;   // down projection
     std::unique_ptr<DenseLayer> ffn_gate_;  // gate projection (gated FFN only)
@@ -149,6 +191,13 @@ private:
     std::unique_ptr<Layer> MakeNorm() const;
     Tensor FeedForward(const Tensor& flat_input);          // [rows, d_model] -> [rows, d_model]
     Tensor FeedForwardBackward(const Tensor& grad_flat);   // inverse of FeedForward
+    Tensor SequenceFeedForward(const Tensor& input);       // [B,S,d] -> [B,S,d] incl. dropout3
+    Tensor SequenceFeedForwardBackward(const Tensor& grad);
+    bool UsesModernPreNormPath() const {
+        return norm_first_ && (options_.block_layout == TransformerBlockLayout::Parallel || options_.sandwich_norm);
+    }
+    Tensor ForwardModernPreNorm(const Tensor& input, const Tensor& mask);
+    Tensor BackwardModernPreNorm(const Tensor& grad_output);
 };
 
 } // namespace cyxwiz

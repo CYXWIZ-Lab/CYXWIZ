@@ -9,6 +9,7 @@
 #include "../src/gui/node_import_guardrails.h"
 #include "../src/gui/properties_contract.h"
 #include "../src/gui/properties_truth.h"
+#include <cyxwiz/layers/transformer.h>
 
 #include <algorithm>
 #include <cmath>
@@ -1110,14 +1111,168 @@ void CheckTransformerFamilyReferenceContract(
                   TypeId(type));
     }
 
+    // The configurable block choices (tofix112) belong to the decoder only and
+    // are dropdowns, so the Properties panel shows every supported value.
+    const auto* decoder = metadata.GetMetadata(gui::NodeType::TransformerDecoder);
+    const auto* encoder = metadata.GetMetadata(gui::NodeType::TransformerEncoder);
+    const auto choices = [](const cyxwiz::NodeMetadata* meta, const std::string& name) {
+        for (const auto& param : meta->parameters) {
+            if (param.name == name && param.type == "enum") return param.enum_values;
+        }
+        return std::vector<std::string>{};
+    };
+    Check(choices(decoder, "norm_type") == std::vector<std::string>{"layer_norm", "rms_norm"} &&
+              choices(decoder, "ffn_type") == std::vector<std::string>{"mlp", "gated"} &&
+              choices(decoder, "position_encoding") == std::vector<std::string>{"external", "rope", "alibi"} &&
+              choices(decoder, "ffn_activation") == cyxwiz::TransformerFfnActivations() &&
+              ParameterMatches(decoder, "ffn_bias", "bool", "true") &&
+              ParameterMatches(decoder, "rope_base", "float", "10000") &&
+              ParameterMatches(decoder, "norm_eps", "float", "0.00001") &&
+              choices(decoder, "architecture_preset") ==
+                  std::vector<std::string>{"custom", "classic", "gpt2_style", "llama_style"} &&
+              choices(decoder, "block_layout") == std::vector<std::string>{"sequential", "parallel"} &&
+              ParameterMatches(decoder, "sandwich_norm", "bool", "false") &&
+              ParameterMatches(decoder, "num_kv_heads", "int", "0") &&
+              ParameterMatches(decoder, "sliding_window", "int", "0") &&
+              ParameterMatches(decoder, "attn_logit_softcap", "float", "0") &&
+              ParameterMatches(decoder, "residual_init_scale", "float", "1.0") &&
+              ParameterMatches(decoder, "rope_fraction", "float", "1.0") &&
+              ParameterMatches(decoder, "attention_bias", "bool", "true") &&
+              ParameterMatches(decoder, "qk_norm", "bool", "false"),
+          "TransformerDecoder should offer every block choice as a dropdown");
+    // Every preset name offered by the dropdown has a definition, and back.
+    for (const auto& name : choices(decoder, "architecture_preset")) {
+        Check(name == "custom" || cyxwiz::TransformerArchitecturePresets().count(name) == 1,
+              "architecture preset without definition: " + name);
+    }
+    Check(cyxwiz::TransformerArchitecturePresets().size() + 1 ==
+              choices(decoder, "architecture_preset").size(),
+          "every preset definition should be offered in the dropdown");
+    for (const auto* name : {"norm_type", "ffn_type", "ffn_activation", "ffn_bias",
+                             "position_encoding", "rope_base", "norm_eps",
+                             "attention_bias", "qk_norm", "architecture_preset", "rope_fraction",
+                             "block_layout", "sandwich_norm", "num_kv_heads", "sliding_window",
+                             "attn_logit_softcap", "residual_init_scale"}) {
+        Check(!HasParameter(encoder, name),
+              std::string("TransformerEncoder rejects block choices and must not offer ") + name);
+    }
+
+    {
+        // Preset behaviour (tofix112 phase 4): choosing fills the fields, a
+        // later edit switches to custom, a hand-edited mismatch fails closed.
+        using P = std::map<std::string, std::string>;
+        const auto decoder_type = gui::NodeType::TransformerDecoder;
+        P params{{"d_model", "8"}, {"num_heads", "2"}, {"architecture_preset", "llama_style"}};
+        Check(cyxwiz::ApplyTransformerPresetEdit(decoder_type, params, "architecture_preset") &&
+                  params["norm_type"] == "rms_norm" && params["ffn_type"] == "gated" &&
+                  params["ffn_activation"] == "silu" && params["ffn_bias"] == "false" &&
+                  params["position_encoding"] == "rope" && params["attention_bias"] == "false" &&
+                  params["norm_first"] == "true" && params["qk_norm"] == "false",
+              "choosing llama_style should fill every block field");
+        cyxwiz::TransformerConfiguration resolved_preset;
+        Check(!cyxwiz::ResolveTransformerConfiguration(decoder_type, params, resolved_preset) &&
+                  resolved_preset.architecture_preset == "llama_style" && !resolved_preset.attention_bias,
+              "a filled preset should resolve");
+        params["qk_norm"] = "true";
+        Check(cyxwiz::ApplyTransformerPresetEdit(decoder_type, params, "qk_norm") &&
+                  params["architecture_preset"] == "custom",
+              "editing a block field away from the preset should switch to custom");
+        Check(!cyxwiz::ResolveInvalidTransformerConfigurationReason(decoder_type, params).has_value(),
+              "custom with qk_norm should resolve");
+        P same{{"d_model", "8"}, {"num_heads", "2"}, {"architecture_preset", "classic"}};
+        Check(!cyxwiz::ApplyTransformerPresetEdit(decoder_type, same, "ffn_bias") &&
+                  same["architecture_preset"] == "classic",
+              "an edit that still matches the preset keeps it");
+        P mismatch{{"d_model", "8"}, {"num_heads", "2"}, {"architecture_preset", "llama_style"},
+                   {"norm_type", "layer_norm"}};
+        Check(cyxwiz::ResolveInvalidTransformerConfigurationReason(decoder_type, mismatch).has_value(),
+              "a preset that does not describe the block must fail closed");
+        for (const auto* activation : {"gelu_exact", "squared_relu"}) {
+            Check(!cyxwiz::ResolveInvalidTransformerConfigurationReason(
+                      decoder_type, P{{"d_model", "8"}, {"num_heads", "2"}, {"ffn_activation", activation}}),
+                  std::string("decoder should accept ffn_activation=") + activation);
+            cyxwiz::ActivationType type;
+            Check(cyxwiz::TransformerFfnActivationFromName(activation, type),
+                  std::string("backend should map ffn_activation=") + activation);
+        }
+        for (const auto& name : cyxwiz::TransformerFfnActivations()) {
+            cyxwiz::ActivationType type;
+            Check(cyxwiz::TransformerFfnActivationFromName(name, type),
+                  "Engine activation without backend mapping: " + name);
+        }
+        // Groups 2-4 policy.
+        const auto invalid = [&](P params) {
+            params.emplace("d_model", "16");
+            params.emplace("num_heads", "4");
+            return cyxwiz::ResolveInvalidTransformerConfigurationReason(decoder_type, params).has_value();
+        };
+        Check(!invalid({{"position_encoding", "alibi"}}), "decoder accepts alibi");
+        Check(!invalid({{"position_encoding", "rope"}, {"rope_fraction", "0.5"}}), "decoder accepts partial rope");
+        Check(invalid({{"position_encoding", "rope"}, {"rope_fraction", "0.25"}}),
+              "rope_fraction leaving no rotary pair (head width 4) must fail");
+        Check(invalid({{"rope_fraction", "0.5"}}), "rope_fraction without rope must fail");
+        Check(!invalid({{"num_kv_heads", "2"}}) && !invalid({{"num_kv_heads", "1"}}), "decoder accepts GQA/MQA");
+        Check(invalid({{"num_kv_heads", "3"}}), "num_kv_heads must divide num_heads");
+        Check(invalid({{"block_layout", "parallel"}}), "parallel needs norm_first");
+        Check(!invalid({{"block_layout", "parallel"}, {"norm_first", "true"}}), "parallel pre-norm is valid");
+        Check(invalid({{"block_layout", "parallel"}, {"norm_first", "true"}, {"sandwich_norm", "true"}}),
+              "parallel with sandwich must fail");
+        Check(invalid({{"sandwich_norm", "true"}}), "sandwich needs norm_first");
+        Check(invalid({{"sliding_window", "-1"}}) && invalid({{"attn_logit_softcap", "-1"}}) &&
+                  invalid({{"residual_init_scale", "0"}}),
+              "negative window/softcap and zero init scale must fail");
+        P gpt2{{"d_model", "16"}, {"num_heads", "4"}, {"architecture_preset", "gpt2_style"}};
+        Check(cyxwiz::ApplyTransformerPresetEdit(decoder_type, gpt2, "architecture_preset") &&
+                  gpt2["ffn_activation"] == "gelu" && gpt2["norm_first"] == "true" &&
+                  !invalid(gpt2),
+              "gpt2_style preset should fill and resolve");
+        gpt2["block_layout"] = "parallel";
+        Check(cyxwiz::ApplyTransformerPresetEdit(decoder_type, gpt2, "block_layout") &&
+                  gpt2["architecture_preset"] == "custom",
+              "changing block_layout away from a preset switches to custom");
+        // MultiHeadAttention node options.
+        const auto attention_invalid = [&](P params) {
+            params.emplace("embed_dim", "16");
+            params.emplace("num_heads", "4");
+            return cyxwiz::ResolveInvalidTransformerConfigurationReason(gui::NodeType::MultiHeadAttention, params)
+                .has_value();
+        };
+        Check(!attention_invalid({{"causal", "true"}, {"position_encoding", "rope"}, {"qk_norm", "true"},
+                                  {"num_kv_heads", "2"}}),
+              "attention node accepts causal rope qk_norm gqa");
+        Check(attention_invalid({{"position_encoding", "alibi"}}) &&
+                  attention_invalid({{"sliding_window", "2"}}),
+              "attention node alibi and sliding_window need causal");
+        const auto* attention_meta = metadata.GetMetadata(gui::NodeType::MultiHeadAttention);
+        Check(choices(attention_meta, "position_encoding") == std::vector<std::string>{"none", "rope", "alibi"} &&
+                  ParameterMatches(attention_meta, "causal", "bool", "false"),
+              "attention node should offer its options");
+        P positional_params{{"d_model", "16"}, {"encoding_type", "learned"}};
+        Check(!cyxwiz::ResolveInvalidTransformerConfigurationReason(gui::NodeType::PositionalEncoding,
+                                                                   positional_params),
+              "positional encoding accepts learned");
+        positional_params["encoding_type"] = "rotary";
+        Check(cyxwiz::ResolveInvalidTransformerConfigurationReason(gui::NodeType::PositionalEncoding,
+                                                                  positional_params).has_value(),
+              "unknown encoding_type must fail");
+        for (const auto* key : {"qk_norm", "attention_bias"}) {
+            Check(cyxwiz::ResolveInvalidTransformerConfigurationReason(
+                      gui::NodeType::TransformerEncoder,
+                      P{{"d_model", "8"}, {"num_heads", "2"}, {key, std::string(key) == "qk_norm" ? "true" : "false"}})
+                      .has_value(),
+                  std::string("TransformerEncoder must refuse ") + key);
+        }
+    }
+
     const auto* positional =
         metadata.GetMetadata(gui::NodeType::PositionalEncoding);
     Check(positional != nullptr && positional->IsImplemented(),
           "PositionalEncoding metadata should be executable");
     Check(ParameterMatches(positional, "d_model", "int", "512") &&
               ParameterMatches(positional, "max_sequence_length", "int", "5000") &&
-              positional->parameters.size() == 2,
-          "PositionalEncoding should expose only its two consumed fields");
+              ParameterMatches(positional, "encoding_type", "enum", "sinusoidal") &&
+              positional->parameters.size() == 3,
+          "PositionalEncoding should expose only its three consumed fields");
     Check(!HasParameter(positional, "max_len") &&
               !HasParameter(positional, "dropout"),
           "PositionalEncoding must not expose legacy or ignored fields");
@@ -6086,8 +6241,9 @@ int main() {
           "TimeDistributed metadata should expose tensor logits output");
     Check(time_distributed_meta->inputs.size() == 1 &&
               time_distributed_meta->inputs[0].required &&
-              time_distributed_meta->parameters.size() == 1 &&
+              time_distributed_meta->parameters.size() == 2 &&
               ParameterMatches(time_distributed_meta, "units", "int", "128") &&
+              ParameterMatches(time_distributed_meta, "tie_embedding", "bool", "false") &&
               time_distributed_meta->help_text.find("not a generic wrapper") !=
                   std::string::npos,
           "TimeDistributed should expose only its concrete Dense sequence-head contract");

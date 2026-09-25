@@ -2457,6 +2457,28 @@ void ExtractOptimizerConfiguration(const gui::MLNode& node,
                  node.id, node.name, errors::Compiler::InvalidParameter);
     }
 
+    // Training recipe shared by every optimizer node.
+    const auto parse_choice = [&](const std::string& key, const std::vector<std::string>& allowed,
+                                  std::string& destination) {
+        const auto it = node.parameters.find(key);
+        if (it == node.parameters.end() || it->second.empty()) return;
+        if (std::find(allowed.begin(), allowed.end(), it->second) == allowed.end()) {
+            std::string list;
+            for (const auto& value : allowed) list += (list.empty() ? "" : ", ") + value;
+            AddIssue(config, IssueLevel::Error,
+                     "Invalid optimizer parameter '" + key + "': must be one of " + list,
+                     node.id, node.name, errors::Compiler::InvalidParameter);
+            return;
+        }
+        destination = it->second;
+    };
+    parse_choice("lr_schedule", {"none", "warmup_cosine", "warmup_linear", "warmup_constant"},
+                 config.lr_schedule);
+    parse("warmup_ratio", config.warmup_ratio, 0.0f, true, 1.0f, false, config.warmup_ratio);
+    parse("min_lr_ratio", config.min_lr_ratio, 0.0f, true, 1.0f, true, config.min_lr_ratio);
+    parse("grad_clip_norm", config.grad_clip_norm, 0.0f, true,
+          std::numeric_limits<float>::max(), true, config.grad_clip_norm);
+
     switch (node.type) {
         case gui::NodeType::SGD:
             parse("momentum", config.momentum, 0.0f, true, 1.0f, false,
@@ -2482,6 +2504,9 @@ void ExtractOptimizerConfiguration(const gui::MLNode& node,
                 parse("weight_decay", config.weight_decay, 0.0f, true,
                       std::numeric_limits<float>::max(), true,
                       config.weight_decay);
+                parse_choice("weight_decay_exclude",
+                             {"none", "norms_and_biases", "norms_biases_embeddings"},
+                             config.weight_decay_exclude);
             }
             break;
         case gui::NodeType::RMSprop:

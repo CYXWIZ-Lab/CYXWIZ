@@ -3,7 +3,9 @@
 #include "gui/panels/language_model_generation_panel_metadata.h"
 
 #include <cyxwiz/sequential.h>
+#include <cyxwiz/layers/transformer.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -466,6 +468,106 @@ void TestInvalidModelOutput() {
 
 } // namespace
 
+// KV cache (tofix112 phase 5): for every block design, the cached path must
+// give the same next-token logits as full recomputation at every step, and
+// greedy generation must return the same tokens.
+void TestKvCacheMatchesFullRecompute() {
+    using cyxwiz::TransformerBlockOptions;
+    constexpr size_t kVocab = 11, kWidth = 16, kHeads = 4, kFeedForward = 24;
+    struct Variant {
+        std::string label;
+        TransformerBlockOptions options;
+        bool pre_norm;
+        int positions;  // 0 none, 1 sinusoidal, 2 learned
+    };
+    std::vector<Variant> variants;
+    variants.push_back({"classic + sinusoidal", {}, false, 1});
+    TransformerBlockOptions llama;
+    llama.norm_type = cyxwiz::TransformerNormType::RMSNorm;
+    llama.ffn_type = cyxwiz::TransformerFeedForwardType::Gated;
+    llama.ffn_activation = cyxwiz::ActivationType::SiLU;
+    llama.ffn_bias = false;
+    llama.attention_bias = false;
+    llama.position_encoding = cyxwiz::TransformerPositionEncoding::Rope;
+    variants.push_back({"llama_style", llama, true, 0});
+    TransformerBlockOptions gemma = llama;
+    gemma.position_encoding = cyxwiz::TransformerPositionEncoding::Alibi;
+    gemma.sandwich_norm = true;
+    gemma.qk_norm = true;
+    gemma.num_kv_heads = 2;
+    gemma.sliding_window = 4;
+    gemma.attn_logit_softcap = 3.0f;
+    variants.push_back({"alibi + gqa + window + softcap + sandwich", gemma, true, 0});
+    TransformerBlockOptions parallel = llama;
+    parallel.block_layout = cyxwiz::TransformerBlockLayout::Parallel;
+    parallel.num_kv_heads = 1;
+    parallel.rope_fraction = 0.5f;
+    variants.push_back({"parallel + mqa + partial rope + learned positions + tied head", parallel, true, 2});
+
+    for (const auto& variant : variants) {
+        cyxwiz::SequentialModel model;
+        model.Add<cyxwiz::EmbeddingModule>(kVocab, kWidth);
+        if (variant.positions == 1) model.Add<cyxwiz::PositionalEncodingModule>(kWidth, 64);
+        if (variant.positions == 2) model.Add<cyxwiz::LearnedPositionalEmbeddingModule>(kWidth, 64);
+        for (int block = 0; block < 2; ++block) {
+            model.Add<cyxwiz::TransformerDecoderModule>(kWidth, kHeads, kFeedForward, 0.0f, variant.pre_norm, 0.0f,
+                                                        variant.options);
+        }
+        model.Add<cyxwiz::LayerNormModule>(std::vector<int>{static_cast<int>(kWidth)});
+        if (variant.positions == 2) {  // also exercise the tied output head
+            model.Add<cyxwiz::TiedOutputProjectionModule>(
+                *dynamic_cast<cyxwiz::EmbeddingModule*>(model.GetModule(0)), false);
+        } else {
+            model.Add<cyxwiz::TimeDistributedDenseModule>(kWidth, kVocab);
+        }
+        model.SetTraining(false);
+        Check(model.SupportsIncrementalDecoding(), variant.label + ": model should support KV-cached decoding");
+
+        // Teacher-forced logits: prefill 3 tokens, then one token at a time.
+        const std::vector<int64_t> tokens = {1, 4, 7, 2, 9, 3, 3, 5, 10, 0, 6, 8};
+        const size_t prefill = 3;
+        float worst = 0.0f;
+        for (size_t length = prefill; length <= tokens.size(); ++length) {
+            const size_t fed = length == prefill ? prefill : 1;
+            const cyxwiz::Tensor step_input({1, fed}, tokens.data() + (length - fed), cyxwiz::DataType::Int64);
+            const cyxwiz::Tensor cached = model.ForwardIncremental(step_input, length - fed);
+            const cyxwiz::Tensor full_input({1, length}, tokens.data(), cyxwiz::DataType::Int64);
+            const cyxwiz::Tensor full = model.Forward(full_input);
+            Check(cached.Shape() == std::vector<size_t>{1, fed, kVocab}, variant.label + ": cached logits shape");
+            const cyxwiz::Tensor cached_last = cached.Slice(1, -1);
+            const cyxwiz::Tensor full_last = full.Slice(1, -1);
+            const float* a = cached_last.ReadData<float>();
+            const float* b = full_last.ReadData<float>();
+            for (size_t v = 0; v < kVocab; ++v) {
+                CheckNear(a[v], b[v], 2e-4f, variant.label + ": cached vs full logits at length " +
+                                                 std::to_string(length));
+                worst = std::max(worst, std::fabs(a[v] - b[v]));
+            }
+        }
+        model.ResetIncrementalState();
+
+        cyxwiz::LanguageModelGenerationConfig config;
+        config.max_new_tokens = 10;
+        config.use_kv_cache = true;
+        const auto cached_report = cyxwiz::GenerateTokenIdsWithReport(model, {1, 4, 7}, config, 52);
+        config.use_kv_cache = false;
+        const auto full_report = cyxwiz::GenerateTokenIdsWithReport(model, {1, 4, 7}, config, 52);
+        Check(cached_report.used_kv_cache && !full_report.used_kv_cache, variant.label + ": cache path selection");
+        Check(cached_report.token_ids == full_report.token_ids,
+              variant.label + ": greedy tokens must match with and without the KV cache");
+        std::cout << "KV cache parity: " << variant.label << " max |logit diff| " << worst << "\n";
+    }
+
+    // Modules without incremental support fall back to full recomputation.
+    cyxwiz::SequentialModel scripted;
+    scripted.Add<ScriptedLogitModule>();
+    Check(!scripted.SupportsIncrementalDecoding(), "scripted module has no incremental support");
+    cyxwiz::LanguageModelGenerationConfig config;
+    config.max_new_tokens = 2;
+    Check(!cyxwiz::GenerateTokenIdsWithReport(scripted, {1}, config).used_kv_cache,
+          "unsupported models must use full recomputation");
+}
+
 void TestTrainingGenerationPreview();
 
 int main(int argc, char** argv) {
@@ -485,6 +587,7 @@ int main(int argc, char** argv) {
     TestDeviceGenerationReadback();
     TestInvalidModelOutput();
     TestTrainingGenerationPreview();
+    TestKvCacheMatchesFullRecompute();
     TestConfigValidation();
     TestStopReasonNames();
     TestGreedyTopKDistribution();

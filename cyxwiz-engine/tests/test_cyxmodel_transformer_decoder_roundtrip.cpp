@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <algorithm>
 #include <iostream>
 #include <map>
 #include <string>
@@ -250,6 +251,74 @@ int main() {
                  {{"norm_first", "true"}, {"norm_type", "rms_norm"}, {"ffn_type", "gated"},
                   {"ffn_activation", "silu"}, {"ffn_bias", "false"}, {"position_encoding", "rope"}},
                  llama, true);
+
+    // Preset llama_style plus QK-norm and squared ReLU (tofix112 group 1):
+    // attention biases absent, q/k norm gammas present, both must round-trip.
+    cyxwiz::TransformerBlockOptions modern = llama;
+    modern.attention_bias = false;
+    modern.qk_norm = true;
+    modern.ffn_activation = cyxwiz::ActivationType::SquaredReLU;
+    RunRoundTrip("qk_norm_no_attention_bias",
+                 {{"norm_first", "true"}, {"norm_type", "rms_norm"}, {"ffn_type", "gated"},
+                  {"ffn_activation", "squared_relu"}, {"ffn_bias", "false"}, {"position_encoding", "rope"},
+                  {"attention_bias", "false"}, {"qk_norm", "true"}},
+                 modern, true);
+
+    // Groups 2-4: grouped-query attention, ALiBi, sandwich norm, soft-cap,
+    // sliding window, residual init scale; key/value weights are narrower.
+    cyxwiz::TransformerBlockOptions gemma = modern;
+    gemma.position_encoding = cyxwiz::TransformerPositionEncoding::Alibi;
+    gemma.sandwich_norm = true;
+    gemma.num_kv_heads = 1;
+    gemma.attn_logit_softcap = 2.0f;
+    gemma.sliding_window = 3;
+    gemma.residual_init_scale = 0.5f;
+    RunRoundTrip("gqa_alibi_sandwich",
+                 {{"norm_first", "true"}, {"norm_type", "rms_norm"}, {"ffn_type", "gated"},
+                  {"ffn_activation", "squared_relu"}, {"ffn_bias", "false"}, {"position_encoding", "alibi"},
+                  {"attention_bias", "false"}, {"qk_norm", "true"}, {"sandwich_norm", "true"},
+                  {"num_kv_heads", "1"}, {"attn_logit_softcap", "2"}, {"sliding_window", "3"},
+                  {"residual_init_scale", "0.5"}},
+                 gemma, true);
+    cyxwiz::TransformerBlockOptions parallel = llama;
+    parallel.block_layout = cyxwiz::TransformerBlockLayout::Parallel;
+    RunRoundTrip("parallel",
+                 {{"norm_first", "true"}, {"norm_type", "rms_norm"}, {"ffn_type", "gated"},
+                  {"ffn_activation", "silu"}, {"ffn_bias", "false"}, {"position_encoding", "rope"},
+                  {"block_layout", "parallel"}},
+                 parallel, true);
+
+    // residual_init_scale scales only the residual output projections at
+    // construction: with 0.001 every W_o and FFN-down weight lies within
+    // 0.001 x its initialization bound while W_q keeps its full range.
+    {
+        cyxwiz::TransformerBlockOptions scaled;
+        scaled.residual_init_scale = 0.001f;
+        cyxwiz::TransformerDecoderLayer layer(16, 4, 32, 0.0f, true, 0.0f, scaled);
+        const auto params = layer.GetParameters();
+        const auto max_abs = [&](const std::string& name) {
+            const cyxwiz::Tensor& t = params.at(name);
+            const float* data = t.Data<float>();
+            float m = 0.0f;
+            for (size_t i = 0; i < t.NumElements(); ++i) m = std::max(m, std::fabs(data[i]));
+            return m;
+        };
+        cyxwiz::TransformerDecoderLayer reference(16, 4, 32, 0.0f, true, 0.0f, cyxwiz::TransformerBlockOptions{});
+        const auto reference_params = reference.GetParameters();
+        const auto reference_max = [&](const std::string& name) {
+            const cyxwiz::Tensor& t = reference_params.at(name);
+            const float* data = t.Data<float>();
+            float m = 0.0f;
+            for (size_t i = 0; i < t.NumElements(); ++i) m = std::max(m, std::fabs(data[i]));
+            return m;
+        };
+        Check(max_abs("self_attn.W_o") < 0.01f * reference_max("self_attn.W_o"), "residual_init_scale must scale W_o");
+        Check(max_abs("linear2.weights") < 0.01f * reference_max("linear2.weights"),
+              "residual_init_scale must scale the FFN down projection");
+        Check(max_abs("self_attn.W_q") > 0.1f * reference_max("self_attn.W_q"), "residual_init_scale must not scale W_q");
+        Check(max_abs("linear1.weights") > 0.1f * reference_max("linear1.weights"),
+              "residual_init_scale must not scale the FFN up projection");
+    }
 
     // Policy: invalid choices fail closed with the field named; the encoder
     // rejects block options it does not implement instead of ignoring them.

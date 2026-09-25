@@ -306,6 +306,41 @@ private:
 };
 
 /**
+ * Per-optimizer-update warmup then decay (the usual LLM schedule):
+ * update u (1-based) of total_steps uses
+ *   warmup (u <= warmup_steps):  peak * u / warmup_steps
+ *   then progress p = (u - warmup_steps) / (total_steps - warmup_steps):
+ *     cosine:   floor + (peak - floor) * (1 + cos(pi * p)) / 2
+ *     linear:   floor + (peak - floor) * (1 - p)
+ *     constant: peak
+ * with floor = peak * min_lr_ratio. Step(n) is called after update n and
+ * sets the rate for update n + 1.
+ */
+class CYXWIZ_API WarmupDecayLR : public LRScheduler {
+public:
+    WarmupDecayLR(Optimizer* optimizer, double peak_lr, int warmup_steps, int total_steps,
+                  std::string decay = "cosine", double min_lr_ratio = 0.1);
+
+    void Step(int completed_updates, float metric = 0.0f) override;
+    double GetLR() const override { return current_lr_; }
+    std::string GetName() const override { return "WarmupDecayLR"; }
+    void Reset() override;
+    bool ExportState(SchedulerState& state, std::string& error) const override;
+    bool ImportState(const SchedulerState& state, std::string& error) override;
+    // Rate for 1-based update `update` (pure; used by Step and tests).
+    double RateForUpdate(int update) const;
+
+private:
+    Optimizer* optimizer_;
+    double peak_lr_;
+    int warmup_steps_;
+    int total_steps_;
+    std::string decay_;
+    double min_lr_ratio_;
+    int completed_ = 0;
+};
+
+/**
  * Factory function to create schedulers
  */
 CYXWIZ_API std::unique_ptr<LRScheduler> CreateScheduler(

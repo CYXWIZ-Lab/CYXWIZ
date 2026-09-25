@@ -168,6 +168,19 @@ public:
      */
     void Unfreeze() { trainable_ = true; }
 
+    // Incremental (KV-cached) decoding for causal language models. A module
+    // is PositionWise when each output position depends only on the same input
+    // position (embeddings, norms over features, dense layers, activations):
+    // it can process just the new tokens with Forward. Stateful modules keep
+    // per-sequence state (attention key/value caches, position offsets) and
+    // implement ForwardIncremental. Unsupported modules make the model fall
+    // back to full recomputation.
+    enum class IncrementalDecoding { Unsupported, PositionWise, Stateful };
+    virtual IncrementalDecoding GetIncrementalDecoding() const { return IncrementalDecoding::Unsupported; }
+    // input holds positions [position_offset, position_offset + seq_len).
+    virtual Tensor ForwardIncremental(const Tensor& input, size_t /*position_offset*/) { return Forward(input); }
+    virtual void ResetIncrementalState() {}
+
 protected:
     bool is_training_ = true;
     bool trainable_ = true;  // For transfer learning - frozen layers won't update
@@ -408,6 +421,7 @@ private:
 // [batch, seq_len, in_features] -> [batch, seq_len, out_features].
 class CYXWIZ_API TimeDistributedDenseModule : public Module {
 public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
     TimeDistributedDenseModule(size_t in_features,
                                size_t out_features,
                                bool use_bias = true);
@@ -430,6 +444,7 @@ private:
 // Token embedding lookup: [batch, seq_len] -> [batch, seq_len, embedding_dim].
 class CYXWIZ_API EmbeddingModule : public Module {
 public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
     EmbeddingModule(size_t num_embeddings, size_t embedding_dim,
                     int padding_idx = -1, float max_norm = 0.0f);
 
@@ -441,6 +456,9 @@ public:
     void LoadPretrainedWeights(const Tensor& weights, bool freeze = false);
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    EmbeddingLayer& GetLayer() { return *layer_; }
+    size_t NumEmbeddings() const { return num_embeddings_; }
+    size_t EmbeddingDim() const { return embedding_dim_; }
 
 private:
     std::unique_ptr<EmbeddingLayer> layer_;
@@ -448,6 +466,32 @@ private:
     size_t embedding_dim_;
     int padding_idx_;
     float max_norm_;
+};
+
+// Output projection tied to an EmbeddingModule's table (GPT-2 / most small
+// LMs): logits[b, s, v] = sum_d h[b, s, d] * E[v, d] (+ bias[v]). The table
+// stays owned by the embedding; this module's weight gradient is added to
+// the embedding's gradient, so the weights are shared and saved once. The
+// embedding module must outlive this module (same SequentialModel).
+class CYXWIZ_API TiedOutputProjectionModule : public Module {
+public:
+    TiedOutputProjectionModule(EmbeddingModule& embedding, bool use_bias = false);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return use_bias_; }
+    std::string GetName() const override;
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
+
+private:
+    EmbeddingModule& embedding_;
+    bool use_bias_;
+    Tensor bias_;
+    Tensor grad_bias_;
+    Tensor cached_input_;
 };
 
 // Focused token-feature fusion for sequence taggers.
@@ -493,10 +537,43 @@ public:
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
     std::string GetName() const override;
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::Stateful; }
+    Tensor ForwardIncremental(const Tensor& input, size_t position_offset) override;
 
 private:
+    Tensor ForwardAt(const Tensor& input, size_t position_offset);
     size_t d_model_;
     size_t max_sequence_length_;
+};
+
+/**
+ * @brief Learned absolute position embeddings (GPT-2): output = input + P[0:seq_len].
+ *
+ * `weight` is [max_sequence_length, d_model], initialized N(0, 0.02). Consumes
+ * and returns `[batch, seq_len, d_model]`; the weight gradient is the batch sum
+ * of the output gradient for the used positions (zero for the others).
+ */
+class CYXWIZ_API LearnedPositionalEmbeddingModule : public Module {
+public:
+    LearnedPositionalEmbeddingModule(size_t d_model, size_t max_sequence_length = 512);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::Stateful; }
+    Tensor ForwardIncremental(const Tensor& input, size_t position_offset) override;
+
+private:
+    Tensor ForwardAt(const Tensor& input, size_t position_offset);
+    size_t d_model_;
+    size_t max_sequence_length_;
+    size_t cached_seq_len_ = 0;
+    Tensor weight_;
+    Tensor grad_weight_;
 };
 
 /**
@@ -704,6 +781,9 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::Stateful; }
+    Tensor ForwardIncremental(const Tensor& input, size_t position_offset) override;
+    void ResetIncrementalState() override;
 
 private:
     std::unique_ptr<TransformerDecoderLayer> layer_;
@@ -721,11 +801,29 @@ private:
  * cross-attention is intentionally not exposed through SequentialModel yet;
  * graph/compiler support must define that contract first.
  */
+// Attention-level choices for the standalone MultiHeadAttention node
+// (tofix112): the same options the decoder block uses, so research blocks can
+// be composed from separate nodes. Defaults are plain bidirectional attention.
+struct CYXWIZ_API MultiHeadAttentionOptions {
+    bool causal = false;          // hide future positions
+    int sliding_window = 0;       // causal only; 0 = full
+    int num_kv_heads = 0;         // 0 = num_heads (grouped-query attention otherwise)
+    bool qk_norm = false;
+    float qk_norm_eps = 1e-5f;
+    bool rope = false;
+    float rope_base = 10000.0f;
+    float rope_fraction = 1.0f;
+    bool alibi = false;           // causal only
+    float logit_softcap = 0.0f;
+};
+
 class CYXWIZ_API MultiHeadAttentionModule : public Module {
 public:
     MultiHeadAttentionModule(size_t embed_dim, size_t num_heads,
                              float dropout = 0.0f,
                              bool use_bias = true);
+    MultiHeadAttentionModule(size_t embed_dim, size_t num_heads, float dropout,
+                             bool use_bias, const MultiHeadAttentionOptions& options);
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
@@ -735,6 +833,12 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    // Only causal attention can decode incrementally.
+    IncrementalDecoding GetIncrementalDecoding() const override {
+        return options_.causal ? IncrementalDecoding::Stateful : IncrementalDecoding::Unsupported;
+    }
+    Tensor ForwardIncremental(const Tensor& input, size_t position_offset) override;
+    void ResetIncrementalState() override;
 
 private:
     std::unique_ptr<MultiHeadAttentionLayer> layer_;
@@ -742,6 +846,7 @@ private:
     size_t num_heads_;
     float dropout_;
     bool use_bias_;
+    MultiHeadAttentionOptions options_;
 };
 
 /**
@@ -749,6 +854,7 @@ private:
  */
 class CYXWIZ_API ReLUModule : public Module {
 public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
     ReLUModule();
 
     Tensor Forward(const Tensor& input) override;
@@ -784,6 +890,7 @@ private:
  */
 class CYXWIZ_API SigmoidModule : public Module {
 public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
     SigmoidModule();
 
     Tensor Forward(const Tensor& input) override;
@@ -799,6 +906,7 @@ private:
  */
 class CYXWIZ_API TanhModule : public Module {
 public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
     TanhModule();
 
     Tensor Forward(const Tensor& input) override;
@@ -830,6 +938,7 @@ private:
  */
 class CYXWIZ_API DropoutModule : public Module {
 public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
     DropoutModule(float p = 0.5f);
 
     Tensor Forward(const Tensor& input) override;
@@ -996,6 +1105,7 @@ private:
  */
 class CYXWIZ_API LeakyReLUModule : public Module {
 public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
     LeakyReLUModule(float negative_slope = 0.01f);
 
     Tensor Forward(const Tensor& input) override;
@@ -1012,6 +1122,7 @@ private:
  */
 class CYXWIZ_API ELUModule : public Module {
 public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
     ELUModule(float alpha = 1.0f);
 
     Tensor Forward(const Tensor& input) override;
@@ -1028,6 +1139,7 @@ private:
  */
 class CYXWIZ_API GELUModule : public Module {
 public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
     GELUModule();
 
     Tensor Forward(const Tensor& input) override;
@@ -1043,6 +1155,7 @@ private:
  */
 class CYXWIZ_API SwishModule : public Module {
 public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
     SwishModule();
 
     Tensor Forward(const Tensor& input) override;
@@ -1058,6 +1171,7 @@ private:
  */
 class CYXWIZ_API MishModule : public Module {
 public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
     MishModule();
 
     Tensor Forward(const Tensor& input) override;
@@ -1124,6 +1238,10 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return elementwise_affine_; }
     std::string GetName() const override;
+    // Position-wise only when it normalizes over the feature axis alone.
+    IncrementalDecoding GetIncrementalDecoding() const override {
+        return normalized_shape_.size() == 1 ? IncrementalDecoding::PositionWise : IncrementalDecoding::Unsupported;
+    }
 
 private:
     std::unique_ptr<LayerNormLayer> layer_;
@@ -1237,6 +1355,12 @@ public:
      * @return Output tensor
      */
     Tensor Forward(const Tensor& input);
+    // KV-cached decoding (see Module::IncrementalDecoding). Supported when
+    // every module is PositionWise or Stateful. ForwardIncremental(input, 0)
+    // starts a new sequence; later calls continue at position_offset.
+    bool SupportsIncrementalDecoding() const;
+    Tensor ForwardIncremental(const Tensor& input, size_t position_offset);
+    void ResetIncrementalState();
 
     /** Execute a CSR input through a Linear first module, then continue dense. */
     Tensor ForwardSparseCsr(const LinearSparseCsrBatchView& input);

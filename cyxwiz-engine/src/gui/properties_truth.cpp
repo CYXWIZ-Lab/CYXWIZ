@@ -1,4 +1,5 @@
 #include "properties_truth.h"
+#include <tuple>
 #include "../core/training_randomness.h"
 #include "../core/dense_activation_configuration_policy.h"
 #include "../core/normalization_regularization_configuration_policy.h"
@@ -1074,6 +1075,23 @@ void AddOptimizerTruth(NodeTruthReport& report, const MLNode& node) {
         report.properties.push_back(std::move(truth));
     };
 
+    // Training recipe (every optimizer).
+    report.properties.push_back(ResolveStringProperty(
+        node, "LR schedule", "lr_schedule", "none", TruthOwner::Runtime, true, false, false));
+    add_bounded("warmup_ratio", "Warmup ratio", "0.02", 0.0, true, 1.0, false);
+    add_bounded("min_lr_ratio", "Minimum LR ratio", "0.1", 0.0, true, 1.0, true);
+    {
+        auto clip = ResolveFloatProperty(node, "Gradient clip norm", "grad_clip_norm", "0",
+                                         TruthOwner::Runtime, true, false);
+        RequireFloatAtLeast(clip, "grad_clip_norm", 0.0, true);
+        report.properties.push_back(std::move(clip));
+    }
+    if (node.type == NodeType::AdamW) {
+        report.properties.push_back(ResolveStringProperty(
+            node, "Weight decay exclude", "weight_decay_exclude", "none",
+            TruthOwner::Runtime, true, false, false));
+    }
+
     switch (node.type) {
         case NodeType::SGD:
             add_bounded("momentum", "Momentum", "0.9", 0.0, true,
@@ -1415,6 +1433,10 @@ void AddCoreLayerTruth(NodeTruthReport& report, const MLNode& node) {
                   "GraphCompiler and ModelBuilder use units as the linear output width.");
         RequirePositiveInt(units, "units");
         report.properties.push_back(std::move(units));
+        if (node.type == NodeType::TimeDistributed) {
+            report.properties.push_back(ResolveBoolProperty(
+                node, "Tie to Embedding", "tie_embedding", false, TruthOwner::Runtime, true, false));
+        }
 
         const std::string* activation = FindParameter(node, "activation");
         if (activation && !activation->empty() && *activation != "none") {
@@ -1750,6 +1772,9 @@ void AddTransformerTruth(NodeTruthReport& report, const MLNode& node) {
             "Sequences longer than this bound fail closed.");
         RequirePositiveInt(maximum_length, "max_sequence_length");
         report.properties.push_back(std::move(maximum_length));
+        report.properties.push_back(ResolveStringProperty(
+            node, "Encoding type", "encoding_type", "sinusoidal",
+            TruthOwner::Runtime, true, false, false));
     } else {
         auto heads = ResolveAliasedIntProperty(
             node,
@@ -1781,6 +1806,21 @@ void AddTransformerTruth(NodeTruthReport& report, const MLNode& node) {
             report.properties.push_back(ResolveBoolProperty(
                 node, "Projection bias", "use_bias", true,
                 TruthOwner::Runtime, true, false));
+            // Attention options (tofix112); validated by the shared policy.
+            report.properties.push_back(ResolveBoolProperty(
+                node, "Causal", "causal", false, TruthOwner::Runtime, true, false));
+            report.properties.push_back(ResolveBoolProperty(
+                node, "QK norm", "qk_norm", false, TruthOwner::Runtime, true, false));
+            for (const auto& [label, key, fallback] : std::vector<std::tuple<const char*, const char*, const char*>>{
+                     {"Position encoding", "position_encoding", "none"},
+                     {"Key/value heads", "num_kv_heads", "0"},
+                     {"RoPE base", "rope_base", "10000"},
+                     {"RoPE fraction", "rope_fraction", "1.0"},
+                     {"Sliding window", "sliding_window", "0"},
+                     {"Logit soft-cap", "attn_logit_softcap", "0"}}) {
+                report.properties.push_back(ResolveStringProperty(
+                    node, label, key, fallback, TruthOwner::Runtime, true, false, false));
+            }
         } else {
             auto feedforward = ResolveAliasedIntProperty(
                 node,
@@ -1803,6 +1843,9 @@ void AddTransformerTruth(NodeTruthReport& report, const MLNode& node) {
                 TruthOwner::Runtime, true, false));
             // Block choices (tofix112); validated by the shared transformer policy.
             report.properties.push_back(ResolveStringProperty(
+                node, "Architecture preset", "architecture_preset", "custom",
+                TruthOwner::Runtime, true, false, false));
+            report.properties.push_back(ResolveStringProperty(
                 node, "Normalization", "norm_type", "layer_norm",
                 TruthOwner::Runtime, true, false, false));
             report.properties.push_back(ResolveStringProperty(
@@ -1817,6 +1860,27 @@ void AddTransformerTruth(NodeTruthReport& report, const MLNode& node) {
             report.properties.push_back(ResolveStringProperty(
                 node, "Position encoding", "position_encoding", "external",
                 TruthOwner::Runtime, true, false, false));
+            report.properties.push_back(ResolveBoolProperty(
+                node, "Attention bias", "attention_bias", true,
+                TruthOwner::Runtime, true, false));
+            report.properties.push_back(ResolveBoolProperty(
+                node, "QK norm", "qk_norm", false,
+                TruthOwner::Runtime, true, false));
+            report.properties.push_back(ResolveStringProperty(
+                node, "Block layout", "block_layout", "sequential",
+                TruthOwner::Runtime, true, false, false));
+            report.properties.push_back(ResolveBoolProperty(
+                node, "Sandwich norm", "sandwich_norm", false,
+                TruthOwner::Runtime, true, false));
+            for (const auto& [label, key, fallback] : std::vector<std::tuple<const char*, const char*, const char*>>{
+                     {"RoPE fraction", "rope_fraction", "1.0"},
+                     {"Key/value heads", "num_kv_heads", "0"},
+                     {"Sliding window", "sliding_window", "0"},
+                     {"Attention logit soft-cap", "attn_logit_softcap", "0"},
+                     {"Residual init scale", "residual_init_scale", "1.0"}}) {
+                report.properties.push_back(ResolveStringProperty(
+                    node, label, key, fallback, TruthOwner::Runtime, true, false, false));
+            }
 
             if (const std::string* layers = FindParameter(node, "num_layers")) {
                 auto layer_count = ResolveIntProperty(

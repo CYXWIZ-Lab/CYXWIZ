@@ -85,6 +85,32 @@ Tensor SequentialModel::Forward(const Tensor& input) {
     return current;
 }
 
+bool SequentialModel::SupportsIncrementalDecoding() const {
+    if (modules_.empty()) return false;
+    for (const auto& module : modules_) {
+        if (module->GetIncrementalDecoding() == Module::IncrementalDecoding::Unsupported) return false;
+    }
+    return true;
+}
+
+Tensor SequentialModel::ForwardIncremental(const Tensor& input, size_t position_offset) {
+    if (!SupportsIncrementalDecoding()) {
+        throw std::runtime_error("SequentialModel: a module does not support incremental decoding");
+    }
+    if (position_offset == 0) ResetIncrementalState();
+    Tensor current = input;
+    for (auto& module : modules_) {
+        current = module->GetIncrementalDecoding() == Module::IncrementalDecoding::Stateful
+            ? module->ForwardIncremental(current, position_offset)
+            : module->Forward(current);
+    }
+    return current;
+}
+
+void SequentialModel::ResetIncrementalState() {
+    for (auto& module : modules_) module->ResetIncrementalState();
+}
+
 bool SequentialModel::SupportsSparseCsrInput() const {
     return !modules_.empty() &&
            dynamic_cast<const LinearModule*>(modules_.front().get()) != nullptr;

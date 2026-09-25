@@ -217,13 +217,14 @@ void AdamOptimizer::StepImpl(
     const float b2 = static_cast<float>(beta2_);
     const float lr = static_cast<float>(learning_rate_);
     const float eps = static_cast<float>(epsilon_);
-    const float wd = static_cast<float>(weight_decay);
+    const float base_wd = static_cast<float>(weight_decay);
     const bool arrayfire_available =
         optimizer_detail::OptimizerArrayFireAvailable();
 
     for (auto& param_pair : parameters) {
         const std::string& name = param_pair.first;
         Tensor& param = param_pair.second;
+        const float wd = no_decay_parameters_.count(name) ? 0.0f : base_wd;
 
         auto grad_it = gradients.find(name);
         if (grad_it == gradients.end()) continue;

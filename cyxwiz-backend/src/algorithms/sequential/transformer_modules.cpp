@@ -138,6 +138,14 @@ Tensor TransformerDecoderModule::Forward(const Tensor& input) {
     return layer_->Forward(input);
 }
 
+Tensor TransformerDecoderModule::ForwardIncremental(const Tensor& input, size_t position_offset) {
+    return layer_->ForwardIncremental(input, position_offset);
+}
+
+void TransformerDecoderModule::ResetIncrementalState() {
+    layer_->ResetIncrementalState();
+}
+
 Tensor TransformerDecoderModule::Backward(const Tensor& grad_output) {
     return layer_->Backward(grad_output);
 }

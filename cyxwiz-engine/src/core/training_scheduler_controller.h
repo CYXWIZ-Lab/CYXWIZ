@@ -45,13 +45,23 @@ struct OneCycleLRSchedulerSpec {
     double final_div_factor = 10000.0;
 };
 
+// Per-optimizer-update warmup then cosine/linear/constant decay (LLM recipe).
+struct WarmupDecayLRSchedulerSpec {
+    double peak_lr = 0.001;
+    int warmup_steps = 0;
+    int total_steps = 1;
+    std::string decay = "cosine";
+    double min_lr_ratio = 0.1;
+};
+
 using TrainingSchedulerSpec = std::variant<
     StepLRSchedulerSpec,
     ExponentialLRSchedulerSpec,
     CosineAnnealingLRSchedulerSpec,
     ReduceLROnPlateauSchedulerSpec,
     LinearWarmupLRSchedulerSpec,
-    OneCycleLRSchedulerSpec>;
+    OneCycleLRSchedulerSpec,
+    WarmupDecayLRSchedulerSpec>;
 
 enum class TrainingSchedulerCadence {
     CompletedEpoch,

@@ -152,6 +152,7 @@ set(BACKEND_SOURCES
     src/algorithms/optimizers/optimizer_utils.cpp
     src/algorithms/optimizers/sgd.cpp
     src/algorithms/optimizers/adam_family.cpp
+    src/algorithms/optimizers/gradient_clipping.cpp
     src/algorithms/optimizers/adaptive_optimizers.cpp
     src/algorithms/optimizers/lamb.cpp
     src/algorithms/optimizers/lr_warmup.cpp

@@ -1,5 +1,6 @@
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/layers/attention.h>
+#include <cyxwiz/layers/transformer.h>
 #include <cyxwiz/loss.h>
 #include <cyxwiz/optimizers/sgd.h>
 #include <cyxwiz/tensor.h>
@@ -11,7 +12,9 @@
 #include <torch/torch.h>
 #endif
 
+#include <algorithm>
 #include <cmath>
+#include <memory>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -2630,6 +2633,393 @@ void TestFullyBlockedAttentionRows() {
     }
 }
 
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+// LibTorch oracle for the configurable decoder block (tofix112): every block
+// option as two-block causal stacks, post- and pre-norm. The reference is
+// written from the published definitions with LibTorch autograd, independent
+// of the Python export; compares output, input gradient and every parameter
+// gradient.
+namespace block_oracle {
+
+using Params = std::map<std::string, torch::Tensor>;
+
+torch::Tensor Activation(const torch::Tensor& x, cyxwiz::ActivationType type) {
+    using cyxwiz::ActivationType;
+    switch (type) {
+        case ActivationType::ReLU: return torch::relu(x);
+        case ActivationType::GELU: return torch::gelu(x, "tanh");
+        case ActivationType::GELUExact: return torch::gelu(x);
+        case ActivationType::SiLU: case ActivationType::Swish: return torch::silu(x);
+        case ActivationType::Mish: return x * torch::tanh(torch::softplus(x));
+        case ActivationType::ELU: return torch::elu(x, 1.0);
+        case ActivationType::SELU: return torch::selu(x);
+        case ActivationType::LeakyReLU: return torch::leaky_relu(x, 0.01);
+        case ActivationType::Sigmoid: return torch::sigmoid(x);
+        case ActivationType::Tanh: return torch::tanh(x);
+        case ActivationType::Hardswish: return x * torch::clamp(x + 3.0, 0.0, 6.0) / 6.0;
+        case ActivationType::SquaredReLU: return torch::relu(x).square();
+        default: throw std::runtime_error("block oracle: activation not covered");
+    }
+}
+
+torch::Tensor Rms(const torch::Tensor& x, const torch::Tensor& gamma, double eps) {
+    return x * torch::rsqrt(x.square().mean(-1, true) + eps) * gamma;
+}
+
+// Half-split rotary embedding of the first `dim` features of [B, H, S, Dh],
+// positions from 0; the remaining features pass through (partial RoPE).
+torch::Tensor Rotary(const torch::Tensor& x, double base, int64_t dim) {
+    const int64_t seq = x.size(2);
+    auto inv_freq = torch::pow(base, -torch::arange(0, dim, 2, torch::kFloat64) / static_cast<double>(dim));
+    auto angle = (torch::arange(seq, torch::kFloat64).unsqueeze(1) * inv_freq.unsqueeze(0)).to(torch::kFloat32);
+    auto cos = torch::cat({angle.cos(), angle.cos()}, -1);
+    auto sin = torch::cat({angle.sin(), angle.sin()}, -1);
+    auto rot = x.slice(-1, 0, dim), rest = x.slice(-1, dim, x.size(3));
+    auto x1 = rot.slice(-1, 0, dim / 2), x2 = rot.slice(-1, dim / 2, dim);
+    return torch::cat({rot * cos + torch::cat({-x2, x1}, -1) * sin, rest}, -1);
+}
+
+// ALiBi slopes (Press et al. 2022), written independently of the backend.
+std::vector<double> AlibiSlopes(int heads) {
+    auto power_of_two = [](int n) {
+        std::vector<double> out;
+        for (int i = 1; i <= n; ++i) out.push_back(std::pow(std::pow(2.0, -8.0 / n), i));
+        return out;
+    };
+    const int closest = 1 << static_cast<int>(std::floor(std::log2(heads)));
+    std::vector<double> slopes = power_of_two(closest);
+    const std::vector<double> extra = power_of_two(2 * closest);
+    for (int i = 0; static_cast<int>(slopes.size()) < heads; i += 2) slopes.push_back(extra[i]);
+    return slopes;
+}
+
+torch::Tensor Linear(const torch::Tensor& x, const Params& p, const std::string& weight, const std::string& bias) {
+    auto it = p.find(bias);
+    return torch::nn::functional::linear(x, p.at(weight), it == p.end() ? torch::Tensor() : it->second);
+}
+
+torch::Tensor Norm(const torch::Tensor& x, const Params& p, const std::string& name,
+                   const cyxwiz::TransformerBlockOptions& o) {
+    if (o.norm_type == cyxwiz::TransformerNormType::RMSNorm) return Rms(x, p.at(name + ".gamma"), o.norm_eps);
+    return torch::layer_norm(x, {x.size(-1)}, p.at(name + ".gamma"), p.at(name + ".beta"), o.norm_eps);
+}
+
+torch::Tensor Attention(const torch::Tensor& x, const Params& p, int heads,
+                        const cyxwiz::TransformerBlockOptions& o) {
+    const int64_t b = x.size(0), s = x.size(1), d = x.size(2), dh = d / heads;
+    const int64_t kv = o.num_kv_heads > 0 ? o.num_kv_heads : heads;
+    auto split = [&](const torch::Tensor& t, int64_t n) { return t.view({b, s, n, dh}).transpose(1, 2); };
+    auto q = split(Linear(x, p, "self_attn.W_q", "self_attn.b_q"), heads);
+    auto k = split(Linear(x, p, "self_attn.W_k", "self_attn.b_k"), kv);
+    auto v = split(Linear(x, p, "self_attn.W_v", "self_attn.b_v"), kv);
+    if (o.qk_norm) {
+        q = Rms(q, p.at("self_attn.q_norm_gamma"), o.norm_eps);
+        k = Rms(k, p.at("self_attn.k_norm_gamma"), o.norm_eps);
+    }
+    if (o.position_encoding == cyxwiz::TransformerPositionEncoding::Rope) {
+        const int64_t rot = static_cast<int64_t>(o.rope_fraction * dh / 2.0 + 1e-6) * 2;
+        q = Rotary(q, o.rope_base, rot);
+        k = Rotary(k, o.rope_base, rot);
+    }
+    k = k.repeat_interleave(heads / kv, 1);  // grouped-query attention
+    v = v.repeat_interleave(heads / kv, 1);
+    auto scores = torch::matmul(q, k.transpose(-2, -1)) / std::sqrt(static_cast<double>(dh));
+    if (o.attn_logit_softcap > 0.0f) {
+        scores = o.attn_logit_softcap * torch::tanh(scores / o.attn_logit_softcap);
+    }
+    auto pos = torch::arange(s, torch::kFloat32);
+    auto distance = pos.unsqueeze(0) - pos.unsqueeze(1);  // key position - query position
+    if (o.position_encoding == cyxwiz::TransformerPositionEncoding::Alibi) {
+        const auto slopes = AlibiSlopes(heads);
+        std::vector<float> values(slopes.begin(), slopes.end());
+        auto slope = torch::tensor(values).view({heads, 1, 1});
+        scores = scores + slope * distance;
+    }
+    // Additive -1e9 above the diagonal, and for keys `sliding_window` or more back.
+    auto hidden = distance > 0;
+    if (o.sliding_window > 0) hidden = hidden.logical_or(-distance >= o.sliding_window);
+    scores = scores + hidden.to(torch::kFloat32) * -1e9;
+    auto context = torch::matmul(torch::softmax(scores, -1), v).transpose(1, 2).reshape({b, s, d});
+    return Linear(context, p, "self_attn.W_o", "self_attn.b_o");
+}
+
+torch::Tensor FeedForward(const torch::Tensor& x, const Params& p, const cyxwiz::TransformerBlockOptions& o) {
+    auto up = Linear(x, p, "linear1.weights", "linear1.bias");
+    auto hidden = o.ffn_type == cyxwiz::TransformerFeedForwardType::Gated
+        ? Activation(Linear(x, p, "ffn_gate.weights", "ffn_gate.bias"), o.ffn_activation) * up
+        : Activation(up, o.ffn_activation);
+    return Linear(hidden, p, "linear2.weights", "linear2.bias");
+}
+
+torch::Tensor Block(const torch::Tensor& x, const Params& p, int heads, bool pre,
+                    const cyxwiz::TransformerBlockOptions& o) {
+    if (o.block_layout == cyxwiz::TransformerBlockLayout::Parallel) {
+        auto n = Norm(x, p, "norm1", o);
+        return x + Attention(n, p, heads, o) + FeedForward(n, p, o);
+    }
+    if (o.sandwich_norm) {
+        auto h = x + Norm(Attention(Norm(x, p, "norm1", o), p, heads, o), p, "post_attn_norm", o);
+        return h + Norm(FeedForward(Norm(h, p, "norm2", o), p, o), p, "post_ffn_norm", o);
+    }
+    if (pre) {
+        auto h = x + Attention(Norm(x, p, "norm1", o), p, heads, o);
+        return h + FeedForward(Norm(h, p, "norm2", o), p, o);
+    }
+    auto h = Norm(x + Attention(x, p, heads, o), p, "norm1", o);
+    return Norm(h + FeedForward(h, p, o), p, "norm2", o);
+}
+
+// Random parameters with the backend's names and [out, in] weight layout.
+Params MakeParams(int d, int heads, int ff, const cyxwiz::TransformerBlockOptions& o) {
+    Params p;
+    auto w = [&](const std::string& name, std::vector<int64_t> shape) {
+        p[name] = (torch::rand(shape) * 0.6 - 0.3).requires_grad_(true);
+    };
+    auto scale = [&](const std::string& name, int64_t n) {
+        p[name] = (torch::rand({n}) + 0.5).requires_grad_(true);
+    };
+    const int dh = d / heads;
+    const int kv_width = (o.num_kv_heads > 0 ? o.num_kv_heads : heads) * dh;
+    w("self_attn.W_q", {d, d});
+    w("self_attn.W_k", {kv_width, d});
+    w("self_attn.W_v", {kv_width, d});
+    w("self_attn.W_o", {d, d});
+    if (o.attention_bias) {
+        w("self_attn.b_q", {d});
+        w("self_attn.b_k", {kv_width});
+        w("self_attn.b_v", {kv_width});
+        w("self_attn.b_o", {d});
+    }
+    if (o.qk_norm) {
+        scale("self_attn.q_norm_gamma", dh);
+        scale("self_attn.k_norm_gamma", dh);
+    }
+    std::vector<std::string> norms{"norm1"};
+    if (o.block_layout != cyxwiz::TransformerBlockLayout::Parallel) norms.push_back("norm2");
+    if (o.sandwich_norm) {
+        norms.push_back("post_attn_norm");
+        norms.push_back("post_ffn_norm");
+    }
+    for (const auto& n : norms) {
+        scale(n + ".gamma", d);
+        if (o.norm_type == cyxwiz::TransformerNormType::LayerNorm) w(n + ".beta", {d});
+    }
+    w("linear1.weights", {ff, d});
+    w("linear2.weights", {d, ff});
+    if (o.ffn_type == cyxwiz::TransformerFeedForwardType::Gated) w("ffn_gate.weights", {ff, d});
+    if (o.ffn_bias) {
+        w("linear1.bias", {ff});
+        w("linear2.bias", {d});
+        if (o.ffn_type == cyxwiz::TransformerFeedForwardType::Gated) w("ffn_gate.bias", {ff});
+    }
+    return p;
+}
+
+cyxwiz::Tensor ToBackend(const torch::Tensor& t) {
+    const torch::Tensor c = t.detach().contiguous().to(torch::kFloat32);
+    std::vector<size_t> shape(c.sizes().begin(), c.sizes().end());
+    return cyxwiz::Tensor(shape, c.data_ptr<float>(), cyxwiz::DataType::Float32);
+}
+
+float MaxError(const cyxwiz::Tensor& actual, const torch::Tensor& expected, const std::string& label) {
+    const std::vector<float> want = TensorToVector(expected);
+    Check(actual.NumElements() == want.size(), label + " element count");
+    const float* got = actual.Data<float>();
+    float worst = 0.0f;
+    for (size_t i = 0; i < want.size(); ++i) {
+        const float tolerance = 3e-5f + 3e-4f * std::fabs(want[i]);
+        CheckNear(got[i], want[i], tolerance, label);
+        worst = std::max(worst, std::fabs(got[i] - want[i]));
+    }
+    return worst;
+}
+
+float RunCase(const std::string& label, const cyxwiz::TransformerBlockOptions& o, bool pre) {
+    constexpr int kD = 16, kHeads = 4, kFF = 12;
+    torch::manual_seed(52);
+    std::vector<Params> params;
+    std::vector<std::unique_ptr<cyxwiz::TransformerDecoderLayer>> layers;
+    for (int i = 0; i < 2; ++i) {
+        params.push_back(MakeParams(kD, kHeads, kFF, o));
+        auto layer = std::make_unique<cyxwiz::TransformerDecoderLayer>(kD, kHeads, kFF, 0.0f, pre, 0.0f, o);
+        layer->SetTraining(true);
+        std::map<std::string, cyxwiz::Tensor> backend;
+        for (const auto& [name, value] : params.back()) backend[name] = ToBackend(value);
+        layer->SetParameters(backend);
+        // Every trainable backend tensor of the used path has a reference twin.
+        for (const auto& [name, value] : layer->GetParameters()) {
+            if (name.find(".grad_") != std::string::npos || name.rfind("cross_attn.", 0) == 0 ||
+                name.rfind("norm3.", 0) == 0) continue;
+            Check(params.back().count(name) == 1, label + " backend parameter without reference: " + name);
+        }
+        layers.push_back(std::move(layer));
+    }
+    auto x = (torch::rand({2, 5, kD}) * 2.0 - 1.0).requires_grad_(true);
+    auto upstream = torch::rand({2, 5, kD}) * 2.0 - 1.0;
+    torch::Tensor expected = x;
+    cyxwiz::Tensor actual = ToBackend(x);
+    for (int i = 0; i < 2; ++i) {
+        expected = Block(expected, params[i], kHeads, pre, o);
+        actual = layers[i]->Forward(actual);
+    }
+    float worst = MaxError(actual, expected, label + " output");
+    expected.backward(upstream);
+    cyxwiz::Tensor derivative = ToBackend(upstream);
+    for (int i = 1; i >= 0; --i) derivative = layers[i]->Backward(derivative);
+    worst = std::max(worst, MaxError(derivative, x.grad(), label + " input gradient"));
+    for (int i = 0; i < 2; ++i) {
+        const auto grads = layers[i]->GetParameters();
+        for (const auto& [name, value] : params[i]) {
+            const auto dot = name.rfind('.');
+            const std::string key = name.substr(0, dot) + ".grad_" + name.substr(dot + 1);
+            Check(grads.count(key) == 1, label + " missing gradient " + key);
+            worst = std::max(worst, MaxError(grads.at(key), value.grad(),
+                                             label + " layer" + std::to_string(i) + " " + key));
+        }
+    }
+    return worst;
+}
+
+}  // namespace block_oracle
+
+void TestConfigurableDecoderBlockLibTorchParity() {
+    using cyxwiz::ActivationType;
+    using cyxwiz::TransformerBlockOptions;
+    struct Case { std::string label; TransformerBlockOptions options; };
+    std::vector<Case> cases;
+    auto add = [&](const std::string& label, auto&& edit) {
+        TransformerBlockOptions o;
+        edit(o);
+        cases.push_back({label, o});
+    };
+    const auto rms = cyxwiz::TransformerNormType::RMSNorm;
+    const auto gated = cyxwiz::TransformerFeedForwardType::Gated;
+    const auto rope = cyxwiz::TransformerPositionEncoding::Rope;
+    add("classic", [](TransformerBlockOptions&) {});
+    add("rms_norm", [&](TransformerBlockOptions& o) { o.norm_type = rms; });
+    add("rms_norm eps 1e-6", [&](TransformerBlockOptions& o) { o.norm_type = rms; o.norm_eps = 1e-6f; });
+    add("ffn_bias off", [](TransformerBlockOptions& o) { o.ffn_bias = false; });
+    add("attention_bias off", [](TransformerBlockOptions& o) { o.attention_bias = false; });
+    add("rope", [&](TransformerBlockOptions& o) { o.position_encoding = rope; });
+    add("rope base 500", [&](TransformerBlockOptions& o) { o.position_encoding = rope; o.rope_base = 500.0f; });
+    add("qk_norm", [](TransformerBlockOptions& o) { o.qk_norm = true; });
+    add("qk_norm + rope", [&](TransformerBlockOptions& o) { o.qk_norm = true; o.position_encoding = rope; });
+    for (const auto& [name, type] : std::vector<std::pair<std::string, ActivationType>>{
+             {"relu", ActivationType::ReLU}, {"gelu", ActivationType::GELU},
+             {"gelu_exact", ActivationType::GELUExact}, {"silu", ActivationType::SiLU},
+             {"mish", ActivationType::Mish}, {"elu", ActivationType::ELU}, {"selu", ActivationType::SELU},
+             {"leaky_relu", ActivationType::LeakyReLU}, {"sigmoid", ActivationType::Sigmoid},
+             {"tanh", ActivationType::Tanh}, {"hardswish", ActivationType::Hardswish},
+             {"squared_relu", ActivationType::SquaredReLU}}) {
+        const ActivationType t = type;
+        add("mlp " + name, [t](TransformerBlockOptions& o) { o.ffn_activation = t; });
+        add("gated " + name, [&, t](TransformerBlockOptions& o) { o.ffn_type = gated; o.ffn_activation = t; });
+    }
+    add("llama_style", [&](TransformerBlockOptions& o) {
+        o.norm_type = rms; o.ffn_type = gated; o.ffn_activation = ActivationType::SiLU;
+        o.ffn_bias = false; o.position_encoding = rope; o.attention_bias = false;
+    });
+    add("llama_style + qk_norm", [&](TransformerBlockOptions& o) {
+        o.norm_type = rms; o.ffn_type = gated; o.ffn_activation = ActivationType::SiLU;
+        o.ffn_bias = false; o.position_encoding = rope; o.attention_bias = false; o.qk_norm = true;
+    });
+    // Groups 2-4 (2026-09-25).
+    const auto alibi = cyxwiz::TransformerPositionEncoding::Alibi;
+    const auto parallel = cyxwiz::TransformerBlockLayout::Parallel;
+    add("alibi", [&](TransformerBlockOptions& o) { o.position_encoding = alibi; });
+    add("rope fraction 0.5", [&](TransformerBlockOptions& o) { o.position_encoding = rope; o.rope_fraction = 0.5f; });
+    add("rope fraction 0.75 + qk_norm", [&](TransformerBlockOptions& o) {
+        o.position_encoding = rope; o.rope_fraction = 0.75f; o.qk_norm = true; });
+    add("gqa 2 kv heads", [](TransformerBlockOptions& o) { o.num_kv_heads = 2; });
+    add("mqa + rope", [&](TransformerBlockOptions& o) { o.num_kv_heads = 1; o.position_encoding = rope; });
+    add("gqa + qk_norm, no attention bias", [](TransformerBlockOptions& o) {
+        o.num_kv_heads = 2; o.qk_norm = true; o.attention_bias = false; });
+    add("sliding window 2", [](TransformerBlockOptions& o) { o.sliding_window = 2; });
+    add("sliding window 3 + alibi", [&](TransformerBlockOptions& o) { o.sliding_window = 3; o.position_encoding = alibi; });
+    add("softcap 1", [](TransformerBlockOptions& o) { o.attn_logit_softcap = 1.0f; });
+    add("softcap 0.5 + rope + qk_norm", [&](TransformerBlockOptions& o) {
+        o.attn_logit_softcap = 0.5f; o.position_encoding = rope; o.qk_norm = true; });
+    std::vector<Case> pre_only;
+    auto add_pre = [&](const std::string& label, auto&& edit) {
+        TransformerBlockOptions o;
+        edit(o);
+        pre_only.push_back({label, o});
+    };
+    add_pre("parallel", [&](TransformerBlockOptions& o) { o.block_layout = parallel; });
+    add_pre("parallel gpt-j-like", [&](TransformerBlockOptions& o) {
+        o.block_layout = parallel; o.norm_type = rms; o.ffn_type = gated;
+        o.ffn_activation = ActivationType::GELU; o.position_encoding = rope; });
+    add_pre("sandwich", [](TransformerBlockOptions& o) { o.sandwich_norm = true; });
+    add_pre("gemma-like", [&](TransformerBlockOptions& o) {
+        o.sandwich_norm = true; o.norm_type = rms; o.ffn_type = gated; o.ffn_activation = ActivationType::GELU;
+        o.position_encoding = rope; o.qk_norm = true; o.attn_logit_softcap = 2.0f; o.num_kv_heads = 2;
+        o.sliding_window = 4; o.attention_bias = false; o.ffn_bias = false; });
+    float worst = 0.0f;
+    size_t runs = 0;
+    for (const auto& c : pre_only) {
+        const std::string label = "LibTorch block oracle [" + c.label + ", pre-norm]";
+        worst = std::max(worst, block_oracle::RunCase(label, c.options, true));
+        ++runs;
+    }
+    for (const auto& c : cases) {
+        for (const bool pre : {false, true}) {
+            const std::string label = "LibTorch block oracle [" + c.label + (pre ? ", pre-norm]" : ", post-norm]");
+            worst = std::max(worst, block_oracle::RunCase(label, c.options, pre));
+            ++runs;
+        }
+    }
+    std::cout << "LibTorch configurable decoder block oracle: " << runs
+              << " two-block cases passed, max abs error " << worst << "\n";
+}
+#endif
+
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+// Tied input/output embeddings (tofix112): logits = E[tokens]-path output
+// projected with the same table, and the table gradient is the sum of the
+// lookup gradient and the projection gradient. Repeated token ids exercise the
+// vectorized scatter-add.
+void TestTiedEmbeddingLibTorchParity() {
+    constexpr int64_t kVocab = 7, kWidth = 5;
+    torch::manual_seed(52);
+    auto table = (torch::rand({kVocab, kWidth}) - 0.5).requires_grad_(true);
+    auto tokens = torch::tensor({{1, 3, 1, 6}, {0, 3, 3, 2}}, torch::kInt64);
+    auto hidden = torch::embedding(table, tokens);
+    auto logits = torch::nn::functional::linear(torch::tanh(hidden), table);
+    auto upstream = torch::rand(logits.sizes()) - 0.5;
+    logits.backward(upstream);
+
+    cyxwiz::SequentialModel model;
+    model.Add<cyxwiz::EmbeddingModule>(kVocab, kWidth);
+    auto* embedding = dynamic_cast<cyxwiz::EmbeddingModule*>(model.GetModule(0));
+    Check(embedding != nullptr, "embedding module");
+    model.Add<cyxwiz::TanhModule>();
+    model.Add<cyxwiz::TiedOutputProjectionModule>(*embedding, false);
+    model.SetTraining(true);
+    const torch::Tensor table_values = table.detach().contiguous();
+    embedding->SetParameters({{"weight", cyxwiz::Tensor({kVocab, kWidth}, table_values.data_ptr<float>(),
+                                                        cyxwiz::DataType::Float32)}});
+    const std::vector<int64_t> ids = TensorToInt64Vector(tokens);
+    const cyxwiz::Tensor input({2, 4}, ids.data(), cyxwiz::DataType::Int64);
+    const cyxwiz::Tensor out = model.Forward(input);
+    const std::vector<float> expected_logits = TensorToVector(logits);
+    Check(out.NumElements() == expected_logits.size(), "tied logits size");
+    for (size_t i = 0; i < expected_logits.size(); ++i) {
+        CheckNear(out.Data<float>()[i], expected_logits[i], 2e-5f, "tied logits match LibTorch");
+    }
+    const std::vector<float> up = TensorToVector(upstream);
+    model.Backward(cyxwiz::Tensor(out.Shape(), up.data(), cyxwiz::DataType::Float32));
+    const auto grads = model.GetGradients();
+    Check(grads.count("layer0.weight") == 1 && grads.size() == 1,
+          "the shared table is the only trainable tensor");
+    const std::vector<float> expected_grad = TensorToVector(table.grad());
+    for (size_t i = 0; i < expected_grad.size(); ++i) {
+        CheckNear(grads.at("layer0.weight").Data<float>()[i], expected_grad[i], 2e-5f,
+                  "tied table gradient = lookup + projection (LibTorch)");
+    }
+    std::cout << "LibTorch tied embedding oracle passed\n";
+}
+#endif
+
 int main() {
     try {
         TestNearRejectsNonfinite();
@@ -2646,6 +3036,10 @@ int main() {
         TestTransformerDecoderCausalForwardParity();
         TestTransformerDecoderCrossAttentionBackwardParity();
         TestTransformerDecoderTwoBlockCausalStackBackwardParity();
+#if defined(CYXWIZ_HAS_PYTORCH) && !defined(_DEBUG)
+        TestConfigurableDecoderBlockLibTorchParity();
+        TestTiedEmbeddingLibTorchParity();
+#endif
         TestGenerationSamplingDistributionParity();
         TestTinyCausalLanguageModelLogitsAndLossParity();
         TestTinyTransformerCrossEntropyTrainingStepSanity();

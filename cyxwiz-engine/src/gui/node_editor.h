@@ -1347,6 +1347,10 @@ private:
 
     // Framework-specific generators
     std::string GeneratePyTorchCode(const std::vector<int>& sorted_ids);
+    // PyTorch export of the optimizer node's training recipe (tofix112).
+    const MLNode* FindExportOptimizerNode() const;
+    std::string PyTorchOptimizerSetup() const;
+    std::string PyTorchStepLines() const;
     std::string GenerateTensorFlowCode(const std::vector<int>& sorted_ids);
     std::string GenerateKerasCode(const std::vector<int>& sorted_ids);
     std::string GeneratePyCyxWizCode(const std::vector<int>& sorted_ids);

@@ -1,4 +1,5 @@
 #include "cyxwiz/layers/embedding.h"
+#include <vector>
 #include "layer_arrayfire_utils.h"
 #include "cyxwiz/backend_placement_observation.h"
 #include "../arrayfire_backend_utils.h"
@@ -328,17 +329,41 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
             grad_output.GetSemanticArray(), shape.size() == 2, batch_size,
             sequence_length,
             static_cast<size_t>(embedding_dim_));
-        grad.eval();
 
-        // Scatter-add gradients to the weight matrix
+        // Scatter-add token rows into the table in one pass: keep valid
+        // tokens, sort by id, sum rows per id (sumByKey), assign once. The
+        // previous per-token loop issued one device update per token.
+        std::vector<int32_t> keys;
+        std::vector<uint32_t> rows;
+        keys.reserve(total_indices);
+        rows.reserve(total_indices);
         for (size_t i = 0; i < total_indices; ++i) {
-            int32_t idx = indices_ptr[i];
+            const int32_t idx = indices_ptr[i];
             if (idx >= 0 && idx < num_embeddings_ && idx != padding_idx_) {
-                dw(idx, af::span) += grad(CheckedIntDim(i, "embedding grad index"),
-                                          af::span);
+                keys.push_back(idx);
+                rows.push_back(static_cast<uint32_t>(CheckedIntDim(i, "embedding grad index")));
             }
         }
+        if (!keys.empty()) {
+            const af::array key_array(static_cast<dim_t>(keys.size()), keys.data());
+            const af::array row_array(static_cast<dim_t>(rows.size()), rows.data());
+            const af::array token_rows = af::lookup(grad, row_array, 0);
+            if (keys.size() == 1) {
+                // sumByKey needs a key vector; one token is a direct row write.
+                dw(key_array, af::span) = token_rows;
+            } else {
+                af::array sorted_keys, order;
+                af::sort(sorted_keys, order, key_array, 0, true);
+                af::array unique_keys, sums;
+                af::sumByKey(unique_keys, sums, sorted_keys, af::lookup(token_rows, order, 0), 0);
+                dw(unique_keys, af::span) = sums;
+            }
+        }
+        if (!pending_weight_gradient_.Shape().empty()) {
+            dw = dw + pending_weight_gradient_.GetSemanticArray();
+        }
         dw.eval();
+        pending_weight_gradient_ = Tensor();
 
         grad_weight_ = Tensor::FromSemanticArray(
             dw, {static_cast<size_t>(num_embeddings_),
@@ -392,8 +417,21 @@ Tensor EmbeddingLayer::Backward(const Tensor& grad_output) {
             }
         }
     }
+    if (!pending_weight_gradient_.Shape().empty()) {
+        const float* pending = pending_weight_gradient_.ReadData<float>();
+        for (size_t i = 0; i < static_cast<size_t>(num_embeddings_) * embedding_dim_; ++i) dw[i] += pending[i];
+        pending_weight_gradient_ = Tensor();
+    }
 
     return Tensor();
+}
+
+void EmbeddingLayer::AddPendingWeightGradient(const Tensor& gradient) {
+    const std::vector<size_t> shape{static_cast<size_t>(num_embeddings_), static_cast<size_t>(embedding_dim_)};
+    if (gradient.GetDataType() != DataType::Float32 || gradient.Shape() != shape) {
+        throw std::invalid_argument("Embedding tied gradient must be Float32 [num_embeddings, embedding_dim]");
+    }
+    pending_weight_gradient_ = pending_weight_gradient_.Shape().empty() ? gradient : pending_weight_gradient_ + gradient;
 }
 
 Tensor EmbeddingLayer::GetEmbedding(int index) const {

@@ -43,6 +43,7 @@ struct TrainingMetrics {
     int optimizer_step_count = 0;
     int scheduler_step_count = 0;
     double learning_rate = 0.0;
+    float grad_norm = 0.0f;  // global gradient norm before clipping (grad_clip_norm > 0)
     size_t train_sample_count = 0;
     size_t val_sample_count = 0;
     size_t test_sample_count = 0;
@@ -338,6 +339,12 @@ private:
     std::optional<TrainingSchedulerSpec> scheduler_specification_;
     std::optional<TrainingSchedulerResumeState> scheduler_resume_state_;
     std::unique_ptr<TrainingSchedulerController> scheduler_controller_;
+    // Graph lr_schedule (optimizer node): attached when the first epoch knows
+    // its batch count, because the schedule is defined over optimizer updates.
+    bool graph_schedule_pending_ = false;
+    int training_epochs_ = 1;
+    void AttachGraphScheduleIfPending(size_t batches_per_epoch);
+    void ConfigureWeightDecayExclusions();
 
     // Internal training methods
 

@@ -391,6 +391,10 @@ std::unique_ptr<Activation> CreateActivation(ActivationType type, float alpha) {
             return std::make_unique<SELUActivation>();
         case ActivationType::PReLU:
             return std::make_unique<PReLUActivation>(1, alpha);
+        case ActivationType::SquaredReLU:
+            return std::make_unique<SquaredReLUActivation>();
+        case ActivationType::GELUExact:
+            return std::make_unique<GELUExactActivation>();
         default:
             throw std::runtime_error("Unknown activation type");
     }
@@ -863,6 +867,78 @@ Tensor HardswishActivation::Backward(const Tensor& grad_output, const Tensor& in
     });
 }
 
+
+// ============================================================================
+// SquaredReLU Implementation
+// ============================================================================
+
+Tensor SquaredReLUActivation::Forward(const Tensor& input) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array r = af::max(TensorToAf(input), 0.0f);
+        return AfToTensor(r * r);
+    } catch (const af::exception& e) {
+        LogActivationFallbackOnce("SquaredReLU::Forward", e.what(), input, "input");
+    }
+#endif
+    return CpuElementwiseActivationForward(input, "SquaredReLU", [](float x) {
+        return x > 0.0f ? x * x : 0.0f;
+    });
+}
+
+Tensor SquaredReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array dx = TensorToAf(grad_output) * (2.0f * af::max(TensorToAf(input), 0.0f));
+        return AfToTensor(dx);
+    } catch (const af::exception& e) {
+        LogActivationFallbackOnce("SquaredReLU::Backward", e.what(), grad_output, "grad_output");
+    }
+#endif
+    return CpuElementwiseActivationBackward(grad_output, input, "SquaredReLU", [](float x) {
+        return x > 0.0f ? 2.0f * x : 0.0f;
+    });
+}
+
+// ============================================================================
+// GELUExact Implementation (erf form)
+// ============================================================================
+
+namespace {
+constexpr float kInvSqrt2 = 0.70710678118654752f;
+constexpr float kInvSqrt2Pi = 0.39894228040143268f;  // 1 / sqrt(2*pi)
+}
+
+Tensor GELUExactActivation::Forward(const Tensor& input) {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array x = TensorToAf(input);
+        return AfToTensor(0.5f * x * (1.0f + af::erf(x * kInvSqrt2)));
+    } catch (const af::exception& e) {
+        LogActivationFallbackOnce("GELUExact::Forward", e.what(), input, "input");
+    }
+#endif
+    return CpuElementwiseActivationForward(input, "GELUExact", [](float x) {
+        return 0.5f * x * (1.0f + std::erf(x * kInvSqrt2));
+    });
+}
+
+Tensor GELUExactActivation::Backward(const Tensor& grad_output, const Tensor& input) {
+    // d/dx x*Phi(x) = Phi(x) + x*phi(x)
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    try {
+        af::array x = TensorToAf(input);
+        af::array cdf = 0.5f * (1.0f + af::erf(x * kInvSqrt2));
+        af::array pdf = kInvSqrt2Pi * af::exp(-0.5f * x * x);
+        return AfToTensor(TensorToAf(grad_output) * (cdf + x * pdf));
+    } catch (const af::exception& e) {
+        LogActivationFallbackOnce("GELUExact::Backward", e.what(), grad_output, "grad_output");
+    }
+#endif
+    return CpuElementwiseActivationBackward(grad_output, input, "GELUExact", [](float x) {
+        return 0.5f * (1.0f + std::erf(x * kInvSqrt2)) + x * kInvSqrt2Pi * std::exp(-0.5f * x * x);
+    });
+}
 
 // ============================================================================
 // SELU Implementation - Scaled Exponential Linear Unit

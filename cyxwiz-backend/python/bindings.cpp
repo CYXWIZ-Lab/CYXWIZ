@@ -755,6 +755,8 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("backward", &cyxwiz::EmbeddingLayer::Backward,
              py::arg("grad_output"),
              "Backward pass: accumulate gradients for used embeddings")
+        .def("get_gradients", &cyxwiz::EmbeddingLayer::GetGradients,
+             "Get the weight gradient from the last backward pass")
         .def("get_parameters", &cyxwiz::EmbeddingLayer::GetParameters,
              "Get parameters {'weight': Tensor}")
         .def("set_parameters", &cyxwiz::EmbeddingLayer::SetParameters,
@@ -959,26 +961,33 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def(py::init([](int d_model, int nhead, int dim_feedforward, float dropout, bool norm_first,
                          float ffn_dropout, const std::string& norm_type, float norm_eps,
                          const std::string& ffn_type, const std::string& ffn_activation, bool ffn_bias,
-                         const std::string& position_encoding, float rope_base) {
+                         const std::string& position_encoding, float rope_base,
+                         bool attention_bias, bool qk_norm, float rope_fraction,
+                         const std::string& block_layout, bool sandwich_norm, float residual_init_scale,
+                         float attn_logit_softcap, int sliding_window, int num_kv_heads) {
                  cyxwiz::TransformerBlockOptions options;
                  if (norm_type == "rms_norm") options.norm_type = cyxwiz::TransformerNormType::RMSNorm;
                  else if (norm_type != "layer_norm") throw std::invalid_argument("norm_type must be layer_norm or rms_norm");
                  if (ffn_type == "gated") options.ffn_type = cyxwiz::TransformerFeedForwardType::Gated;
                  else if (ffn_type != "mlp") throw std::invalid_argument("ffn_type must be mlp or gated");
-                 static const std::map<std::string, cyxwiz::ActivationType> activations = {
-                     {"relu", cyxwiz::ActivationType::ReLU}, {"gelu", cyxwiz::ActivationType::GELU},
-                     {"silu", cyxwiz::ActivationType::SiLU}, {"mish", cyxwiz::ActivationType::Mish},
-                     {"elu", cyxwiz::ActivationType::ELU}, {"selu", cyxwiz::ActivationType::SELU},
-                     {"leaky_relu", cyxwiz::ActivationType::LeakyReLU}, {"sigmoid", cyxwiz::ActivationType::Sigmoid},
-                     {"tanh", cyxwiz::ActivationType::Tanh}, {"hardswish", cyxwiz::ActivationType::Hardswish}};
-                 const auto it = activations.find(ffn_activation);
-                 if (it == activations.end()) throw std::invalid_argument("unknown ffn_activation: " + ffn_activation);
-                 options.ffn_activation = it->second;
+                 if (!cyxwiz::TransformerFfnActivationFromName(ffn_activation, options.ffn_activation))
+                     throw std::invalid_argument("unknown ffn_activation: " + ffn_activation);
                  options.norm_eps = norm_eps;
                  options.ffn_bias = ffn_bias;
                  if (position_encoding == "rope") options.position_encoding = cyxwiz::TransformerPositionEncoding::Rope;
-                 else if (position_encoding != "external") throw std::invalid_argument("position_encoding must be external or rope");
+                 else if (position_encoding == "alibi") options.position_encoding = cyxwiz::TransformerPositionEncoding::Alibi;
+                 else if (position_encoding != "external") throw std::invalid_argument("position_encoding must be external, rope or alibi");
+                 if (block_layout == "parallel") options.block_layout = cyxwiz::TransformerBlockLayout::Parallel;
+                 else if (block_layout != "sequential") throw std::invalid_argument("block_layout must be sequential or parallel");
+                 options.rope_fraction = rope_fraction;
+                 options.sandwich_norm = sandwich_norm;
+                 options.residual_init_scale = residual_init_scale;
+                 options.attn_logit_softcap = attn_logit_softcap;
+                 options.sliding_window = sliding_window;
+                 options.num_kv_heads = num_kv_heads;
                  options.rope_base = rope_base;
+                 options.attention_bias = attention_bias;
+                 options.qk_norm = qk_norm;
                  return std::make_unique<cyxwiz::TransformerDecoderLayer>(
                      d_model, nhead, dim_feedforward, dropout, norm_first, ffn_dropout, options);
              }),
@@ -987,8 +996,15 @@ PYBIND11_MODULE(pycyxwiz, m) {
              py::arg("norm_type") = "layer_norm", py::arg("norm_eps") = 1e-5f,
              py::arg("ffn_type") = "mlp", py::arg("ffn_activation") = "relu", py::arg("ffn_bias") = true,
              py::arg("position_encoding") = "external", py::arg("rope_base") = 10000.0f,
+             py::arg("attention_bias") = true, py::arg("qk_norm") = false, py::arg("rope_fraction") = 1.0f,
+             py::arg("block_layout") = "sequential", py::arg("sandwich_norm") = false,
+             py::arg("residual_init_scale") = 1.0f, py::arg("attn_logit_softcap") = 0.0f,
+             py::arg("sliding_window") = 0, py::arg("num_kv_heads") = 0,
              "Create a configurable decoder block (tofix112): norm_type layer_norm|rms_norm, "
-             "ffn_type mlp|gated, ffn_activation (gelu = tanh approximation), ffn_bias")
+             "ffn_type mlp|gated, ffn_activation (gelu = tanh approximation, gelu_exact = erf), "
+             "ffn_bias, position_encoding external|rope|alibi, rope_fraction, attention_bias, qk_norm, "
+             "block_layout sequential|parallel, sandwich_norm, residual_init_scale, attn_logit_softcap, "
+             "sliding_window, num_kv_heads")
         .def("forward", static_cast<cyxwiz::Tensor (cyxwiz::TransformerDecoderLayer::*)(const cyxwiz::Tensor&)>(&cyxwiz::TransformerDecoderLayer::Forward),
              py::arg("input"),
              "Self-attention only forward pass")
@@ -1015,9 +1031,14 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("set_training", &cyxwiz::TransformerDecoderLayer::SetTraining,
              py::arg("training"),
              "Set training mode (affects dropout)")
-        .def_static("generate_causal_mask", &cyxwiz::TransformerDecoderLayer::GenerateCausalMask,
+        .def_static("generate_causal_mask",
+             static_cast<cyxwiz::Tensor (*)(int)>(&cyxwiz::TransformerDecoderLayer::GenerateCausalMask),
              py::arg("size"),
-             "Generate causal mask for autoregressive decoding");
+             "Generate causal mask for autoregressive decoding")
+        .def_static("generate_causal_mask",
+             static_cast<cyxwiz::Tensor (*)(int, int)>(&cyxwiz::TransformerDecoderLayer::GenerateCausalMask),
+             py::arg("size"), py::arg("window"),
+             "Causal mask that also hides keys `window` or more positions back (sliding window)");
 
     // Flatten Layer
     py::class_<cyxwiz::FlattenLayer, cyxwiz::Layer>(m, "Flatten")
@@ -2070,7 +2091,9 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("Mish", cyxwiz::ActivationType::Mish)
         .value("Hardswish", cyxwiz::ActivationType::Hardswish)
         .value("SELU", cyxwiz::ActivationType::SELU)
-        .value("PReLU", cyxwiz::ActivationType::PReLU);
+        .value("PReLU", cyxwiz::ActivationType::PReLU)
+        .value("SquaredReLU", cyxwiz::ActivationType::SquaredReLU)
+        .value("GELUExact", cyxwiz::ActivationType::GELUExact);
 
     // Activation base class
     py::class_<cyxwiz::Activation>(m, "Activation")
@@ -2296,6 +2319,39 @@ PYBIND11_MODULE(pycyxwiz, m) {
              py::arg("d_model"),
              py::arg("max_sequence_length") = 5000,
              "Create a CPU-backed sinusoidal positional encoding module");
+
+    // Self-attention module with the tofix112 attention options (MultiHeadAttention node).
+    py::class_<cyxwiz::MultiHeadAttentionModule, cyxwiz::Module>(m, "AttentionModule")
+        .def(py::init([](size_t embed_dim, size_t num_heads, float dropout, bool use_bias, bool causal,
+                         bool qk_norm, float qk_norm_eps, const std::string& position_encoding, float rope_base,
+                         float rope_fraction, int num_kv_heads, int sliding_window, float logit_softcap) {
+                 cyxwiz::MultiHeadAttentionOptions options;
+                 options.causal = causal;
+                 options.qk_norm = qk_norm;
+                 options.qk_norm_eps = qk_norm_eps;
+                 if (position_encoding == "rope") options.rope = true;
+                 else if (position_encoding == "alibi") options.alibi = true;
+                 else if (position_encoding != "none") throw std::invalid_argument("position_encoding must be none, rope or alibi");
+                 options.rope_base = rope_base;
+                 options.rope_fraction = rope_fraction;
+                 options.num_kv_heads = num_kv_heads;
+                 options.sliding_window = sliding_window;
+                 options.logit_softcap = logit_softcap;
+                 return std::make_unique<cyxwiz::MultiHeadAttentionModule>(embed_dim, num_heads, dropout, use_bias, options);
+             }),
+             py::arg("embed_dim"), py::arg("num_heads"), py::arg("dropout") = 0.0f, py::arg("use_bias") = true,
+             py::kw_only(), py::arg("causal") = false, py::arg("qk_norm") = false, py::arg("qk_norm_eps") = 1e-5f,
+             py::arg("position_encoding") = "none", py::arg("rope_base") = 10000.0f, py::arg("rope_fraction") = 1.0f,
+             py::arg("num_kv_heads") = 0, py::arg("sliding_window") = 0, py::arg("logit_softcap") = 0.0f,
+             "Self-attention module: causal mask, QK-norm, RoPE/ALiBi, grouped-query heads, sliding window, soft-cap");
+
+    // Learned absolute position embeddings (GPT-2); tofix112 group 2.
+    py::class_<cyxwiz::LearnedPositionalEmbeddingModule, cyxwiz::Module>(
+        m, "LearnedPositionalEmbedding")
+        .def(py::init<size_t, size_t>(),
+             py::arg("d_model"),
+             py::arg("max_sequence_length") = 512,
+             "Create a learned position embedding table [max_sequence_length, d_model]");
 
     // SequentialModel - the main model class
     py::class_<cyxwiz::SequentialModel>(m, "Sequential",
