@@ -37,6 +37,11 @@ struct RouteProbeInvocation {
     std::vector<std::filesystem::path> runtime_dll_directories;
     std::optional<RuntimeQualificationIdentity> runtime_identity;
     bool enumerate_backend = false;
+    // Batch mode (operation is a comma-separated list): when positive, the
+    // deadline restarts at this length each time an operation passes, so a
+    // hang is caught within one operation instead of the whole batch.
+    std::chrono::milliseconds per_operation_timeout{0};
+    std::function<void(size_t)> on_operation_passed;
 };
 
 struct RouteProbeResult {
@@ -97,6 +102,11 @@ struct RouteQualificationOptions {
     std::filesystem::path probe_runtime_root;
     std::filesystem::path probe_working_directory;
     std::vector<std::filesystem::path> probe_runtime_dll_directories;
+    // Run a route's whole operation matrix in one isolated probe process
+    // (backend loaded once) instead of one process per operation.
+    bool batch_operations = false;
+    // Batch mode: time allowed for backend load and device activation.
+    std::chrono::milliseconds startup_timeout{60000};
 };
 
 enum class RuntimeQualificationFailurePolicy {

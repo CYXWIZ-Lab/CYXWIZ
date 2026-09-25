@@ -1014,6 +1014,86 @@ TEST_CASE("Qualification service attributes the first exact operation failure",
     std::filesystem::remove_all(root, cleanup_error);
 }
 
+TEST_CASE("Batch verification runs one isolated probe per route",
+          "[device][qualification][route]") {
+    RouteQualificationStateGuard state_guard;
+    const auto root = std::filesystem::temp_directory_path() /
+        "cyxwiz-route-qualification-service-batch";
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(root, cleanup_error);
+
+    const auto operations = cyxwiz::RequiredRouteQualificationOperations();
+    REQUIRE(operations.size() > 6);
+    const std::string failing(operations[5]);
+    std::vector<cyxwiz::RouteProbeInvocation> calls;
+    cyxwiz::RouteQualificationService service(
+        [&](const cyxwiz::RouteProbeInvocation& invocation,
+            const cyxwiz::RouteQualificationCancelCheck&) {
+            calls.push_back(invocation);
+            cyxwiz::RouteProbeResult result;
+            const bool gpu = invocation.type == cyxwiz::DeviceType::ONEAPI;
+            for (size_t i = 0; i < operations.size(); ++i) {
+                if (gpu && i == 5) break;
+                result.output += "probe_result schema=1 operation=" +
+                    std::string(operations[i]) + " status=pass\n";
+            }
+            result.status = gpu ? cyxwiz::RouteProbeStatus::Crashed
+                                : cyxwiz::RouteProbeStatus::Passed;
+            if (gpu) {
+                result.exit_code = static_cast<int>(0xC0000005u);
+                result.output += "probe_event operation=" + failing +
+                    " stage=create_begin\n";
+                result.last_probe_stage = "create_begin";
+            }
+            return result;
+        });
+    cyxwiz::DeviceInfo gpu;
+    gpu.type = cyxwiz::DeviceType::ONEAPI;
+    gpu.device_id = 0;
+    gpu.name = "Intel Test GPU";
+    gpu.name_known = true;
+    gpu.kind = cyxwiz::DeviceKind::GPU;
+    // Like real oneAPI routes: named from af_info_string, metadata unsupported.
+    gpu.metadata_status = cyxwiz::DeviceMetadataStatus::Unsupported;
+    cyxwiz::DeviceInfo cpu;
+    cpu.type = cyxwiz::DeviceType::CPU;
+    cpu.device_id = 0;
+    cpu.name = "Test CPU";
+    cpu.name_known = true;
+    cpu.kind = cyxwiz::DeviceKind::CPU;
+    cpu.metadata_status = cyxwiz::DeviceMetadataStatus::Available;
+
+    cyxwiz::RouteQualificationOptions options;
+    options.probe_executable = root / "fake-probe";
+    options.cache_path = root / "route-qualification.json";
+    options.matrix_id = "service-batch";
+    options.pack_id = "test-pack";
+    options.batch_operations = true;
+    const auto result = service.VerifyAll({gpu, cpu}, options);
+
+    INFO(result.message);
+    REQUIRE(result.published);
+    REQUIRE(calls.size() == 2);
+    CHECK(calls[0].operation.find(',') != std::string::npos);
+    CHECK(calls[0].per_operation_timeout == options.operation_timeout);
+    const auto& routes = result.snapshot->routes;
+    REQUIRE(routes.size() == 2);
+    const auto& failed = routes[0].type == cyxwiz::DeviceType::ONEAPI
+        ? routes[0] : routes[1];
+    const auto& passed = routes[0].type == cyxwiz::DeviceType::CPU
+        ? routes[0] : routes[1];
+    CHECK_FALSE(failed.certified);
+    CHECK(failed.pass_count == 5);
+    CHECK(failed.crash_count == 1);
+    CHECK(failed.not_run_count == static_cast<int>(operations.size()) - 6);
+    CHECK(failed.failure.operation == failing);
+    CHECK(failed.failure.category ==
+          cyxwiz::RouteFailureCategory::ChildProcessCrash);
+    CHECK(failed.identity_source == "arrayfire_info_string");
+    CHECK(passed.certified);
+    CHECK(passed.pass_count == static_cast<int>(operations.size()));
+}
+
 TEST_CASE("Qualification cancellation preserves previously accepted evidence",
           "[device][selection][qualification][service][cancel]") {
     RouteQualificationStateGuard state_guard;
@@ -1435,6 +1515,18 @@ TEST_CASE("Backend pack lifecycle qualification uses exact staged routes",
             qualification_invocations.push_back(invocation);
             cyxwiz::RouteProbeResult result;
             result.status = cyxwiz::RouteProbeStatus::Passed;
+            // Batch mode: one pass line per requested operation.
+            size_t start = 0;
+            while (start <= invocation.operation.size()) {
+                const size_t comma = invocation.operation.find(',', start);
+                result.output += "probe_result schema=1 operation=" +
+                    invocation.operation.substr(
+                        start, comma == std::string::npos ? std::string::npos
+                                                          : comma - start) +
+                    " status=pass\n";
+                if (comma == std::string::npos) break;
+                start = comma + 1;
+            }
             return result;
         });
     cyxwiz::BackendPackQualificationAdapterOptions options;

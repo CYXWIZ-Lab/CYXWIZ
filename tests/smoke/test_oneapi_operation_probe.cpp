@@ -55,6 +55,9 @@ struct ProbeOptions {
   std::string backend_name = "oneapi";
   int device_id = 0;
   std::string operation;
+  // Batch mode: "--operation a,b,c" runs each in order after one backend
+  // load and device activation; single-operation runs have one entry.
+  std::vector<std::string> operations;
   bool enumerate_backend = false;
 };
 
@@ -137,14 +140,25 @@ ProbeOptions ParseOptions(int argc, char **argv) {
   if (options.operation.empty()) {
     throw std::invalid_argument("operation must not be empty");
   }
-  if (std::find(kRequiredOperations, std::end(kRequiredOperations),
-                options.operation) == std::end(kRequiredOperations)) {
-    if (options.operation != kDenseComputeBenchmark) {
-      throw std::invalid_argument(
-          "operation is not in the released qualification manifest: " +
-          options.operation);
+  size_t start = 0;
+  while (start <= options.operation.size()) {
+    const size_t comma = options.operation.find(',', start);
+    const std::string name = options.operation.substr(
+        start, comma == std::string::npos ? std::string::npos : comma - start);
+    if (name.empty()) {
+      throw std::invalid_argument("operation list contains an empty name");
     }
+    if (std::find(kRequiredOperations, std::end(kRequiredOperations), name) ==
+            std::end(kRequiredOperations) &&
+        name != kDenseComputeBenchmark) {
+      throw std::invalid_argument(
+          "operation is not in the released qualification manifest: " + name);
+    }
+    options.operations.push_back(name);
+    if (comma == std::string::npos) break;
+    start = comma + 1;
   }
+  options.operation = options.operations.front();
   return options;
 }
 
@@ -588,19 +602,26 @@ int main(int argc, char **argv) {
               << " effective_device=" << af::getDevice()
               << " arrayfire_version=" << major << '.' << minor << '.'
               << patch << std::endl;
-    const bool inspect_runtime = options.operation == "constant";
-    if (inspect_runtime)
-      PrintLoadedRuntimeModules("selected");
+    // Each operation reports its own result line; the first failure throws
+    // and ends the process, so the parent attributes it to that operation.
+    ProbeOptions current = options;
+    for (const auto &operation : options.operations) {
+      current.operation = operation;
+      active_operation = operation;
+      const bool inspect_runtime = operation == "constant";
+      if (inspect_runtime)
+        PrintLoadedRuntimeModules("selected");
 
-    RunOperation(options);
-    if (inspect_runtime)
-      PrintLoadedRuntimeModules("completed");
-    std::cout << "probe_result schema=1 backend=" << options.backend_name
-              << " device_id=" << options.device_id
-              << " operation=" << options.operation
-              << " status=pass effective_backend="
-              << static_cast<int>(af::getActiveBackend())
-              << " effective_device=" << af::getDevice() << std::endl;
+      RunOperation(current);
+      if (inspect_runtime)
+        PrintLoadedRuntimeModules("completed");
+      std::cout << "probe_result schema=1 backend=" << options.backend_name
+                << " device_id=" << options.device_id
+                << " operation=" << operation
+                << " status=pass effective_backend="
+                << static_cast<int>(af::getActiveBackend())
+                << " effective_device=" << af::getDevice() << std::endl;
+    }
     return 0;
   } catch (af::exception &error) {
     std::cerr << "probe_result schema=1 backend=" << active_backend_name

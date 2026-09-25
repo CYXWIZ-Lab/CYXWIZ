@@ -52,6 +52,31 @@ const char* BackendName(DeviceType type) {
     }
 }
 
+size_t CountPassedOperations(const std::string& output) {
+    size_t count = 0;
+    size_t position = 0;
+    while ((position = output.find("probe_result ", position)) != std::string::npos) {
+        const size_t end = output.find('\n', position);
+        const auto line = output.substr(position, end == std::string::npos
+                                                     ? std::string::npos
+                                                     : end - position);
+        if (line.find(" status=pass") != std::string::npos) ++count;
+        position += 13;
+    }
+    return count;
+}
+
+void ExtendBatchDeadline(const RouteProbeInvocation& invocation,
+                         const std::string& output, size_t& passed,
+                         std::chrono::steady_clock::time_point& deadline) {
+    if (invocation.per_operation_timeout.count() <= 0) return;
+    const size_t now_passed = CountPassedOperations(output);
+    if (now_passed <= passed) return;
+    passed = now_passed;
+    deadline = std::chrono::steady_clock::now() + invocation.per_operation_timeout;
+    if (invocation.on_operation_passed) invocation.on_operation_passed(passed);
+}
+
 std::string CurrentRuntimeVersion() {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     return AF_VERSION;
@@ -217,6 +242,16 @@ RouteQualificationRecord RecordFor(
         : (route.metadata_status == DeviceMetadataStatus::Available
                ? "arrayfire_device_metadata"
                : std::string{});
+    // oneAPI names come from af_info_string when af::deviceInfo is
+    // unsupported; evidence with a name or kind must say where it came from.
+    if (record.identity_source.empty() &&
+        (!record.display_name.empty() || record.device_kind_known)) {
+        record.identity_source =
+            route.metadata_status == DeviceMetadataStatus::Unsupported &&
+                    !record.display_name.empty()
+                ? "arrayfire_info_string"
+                : "backend_reported";
+    }
     record.operation_count = static_cast<int>(std::size(kOperations));
     return record;
 }
@@ -724,10 +759,12 @@ RouteProbeResult RunIsolatedRouteProbe(
         else TerminateProcess(process.hProcess, 1);
     };
 
-    const auto deadline = std::chrono::steady_clock::now() + invocation.timeout;
+    auto deadline = std::chrono::steady_clock::now() + invocation.timeout;
+    size_t operations_passed = 0;
     bool done = false;
     while (!done) {
         DrainPipe(read_pipe, result.output, invocation.output_limit_bytes);
+        ExtendBatchDeadline(invocation, result.output, operations_passed, deadline);
         if (result.output.size() >= invocation.output_limit_bytes) {
             terminate();
             result.infrastructure_error = "Isolated route probe exceeded its output limit";
@@ -800,7 +837,8 @@ RouteProbeResult RunIsolatedRouteProbe(
         return result;
     }
     fcntl(pipe_fds[0], F_SETFL, fcntl(pipe_fds[0], F_GETFL) | O_NONBLOCK);
-    const auto deadline = std::chrono::steady_clock::now() + invocation.timeout;
+    auto deadline = std::chrono::steady_clock::now() + invocation.timeout;
+    size_t operations_passed = 0;
     int wait_status = 0;
     bool done = false;
     std::array<char, 4096> buffer{};
@@ -809,6 +847,7 @@ RouteProbeResult RunIsolatedRouteProbe(
                                    std::min(buffer.size(),
                                             invocation.output_limit_bytes - result.output.size()));
         if (count > 0) result.output.append(buffer.data(), static_cast<size_t>(count));
+        ExtendBatchDeadline(invocation, result.output, operations_passed, deadline);
         if (result.output.size() >= invocation.output_limit_bytes) {
             kill(-child, SIGKILL);
             result.infrastructure_error = "Isolated route probe exceeded its output limit";
@@ -1134,6 +1173,90 @@ RouteQualificationRunResult RouteQualificationService::Verify(
             record.pack_id = RuntimePackIdForRoute(
                 *options.runtime_identity, route.type);
         }
+        if (options.batch_operations) {
+            // One isolated process per route: the backend loads once and the
+            // operations run in order; the first failure still ends the route.
+            RouteQualificationProgress progress;
+            progress.status = RouteQualificationRunStatus::Running;
+            progress.route_index = route_index;
+            progress.route_count = routes.size();
+            progress.operation_index = 0;
+            progress.operation_count = operations.size();
+            progress.backend = BackendName(route.type);
+            progress.device_id = route.device_id;
+            progress.operation = std::string(operations.front());
+            progress.message = "Verifying exact compute route";
+            SetProgress(progress, on_progress);
+
+            std::string joined;
+            for (const auto operation : operations) {
+                if (!joined.empty()) joined += ',';
+                joined += operation;
+            }
+            RouteProbeInvocation invocation;
+            invocation.executable = options.probe_executable;
+            invocation.type = route.type;
+            invocation.device_id = route.device_id;
+            invocation.operation = joined;
+            invocation.timeout = options.startup_timeout + options.operation_timeout;
+            invocation.per_operation_timeout = options.operation_timeout;
+            invocation.output_limit_bytes = (std::min<size_t>)(
+                options.output_limit_bytes * operations.size(), 1024 * 1024);
+            invocation.runtime_root = options.probe_runtime_root;
+            invocation.working_directory = options.probe_working_directory;
+            invocation.runtime_dll_directories =
+                options.probe_runtime_dll_directories;
+            invocation.runtime_identity = options.runtime_identity;
+            invocation.on_operation_passed = [&](size_t passed) {
+                const size_t next = (std::min)(passed, operations.size() - 1);
+                progress.operation_index = next;
+                progress.operation = std::string(operations[next]);
+                SetProgress(progress, on_progress);
+            };
+            const auto probe = runner_(invocation, [this] {
+                return cancel_requested_.load();
+            });
+            if (probe.status == RouteProbeStatus::Cancelled ||
+                cancel_requested_.load()) {
+                progress.status = RouteQualificationRunStatus::Cancelled;
+                progress.message = "Route qualification cancelled; accepted evidence was unchanged";
+                SetProgress(progress, on_progress);
+                return {progress.status, false, progress.message, std::nullopt};
+            }
+            if (probe.status == RouteProbeStatus::InfrastructureFailure) {
+                progress.status = RouteQualificationRunStatus::InfrastructureFailure;
+                progress.message = probe.infrastructure_error.empty()
+                    ? "The isolated route probe could not run"
+                    : probe.infrastructure_error;
+                SetProgress(progress, on_progress);
+                return {progress.status, false, progress.message, std::nullopt};
+            }
+            const size_t passed =
+                (std::min)(CountPassedOperations(probe.output), operations.size());
+            record.pass_count = static_cast<int>(passed);
+            if (!(probe.status == RouteProbeStatus::Passed &&
+                  passed == operations.size())) {
+                const size_t failed_index = (std::min)(passed, operations.size() - 1);
+                // A clean exit that skipped an operation is still a failure.
+                auto failed = probe;
+                if (failed.status == RouteProbeStatus::Passed) {
+                    failed.status = RouteProbeStatus::Failed;
+                }
+                switch (failed.status) {
+                    case RouteProbeStatus::Unavailable: ++record.unavailable_count; break;
+                    case RouteProbeStatus::TimedOut: ++record.timeout_count; break;
+                    case RouteProbeStatus::Crashed: ++record.crash_count; break;
+                    default: ++record.failure_count; break;
+                }
+                record.failure = FailureFor(
+                    failed, operations[failed_index], options.matrix_id,
+                    static_cast<int>(std::min<int64_t>(
+                        options.operation_timeout.count(),
+                        (std::numeric_limits<int>::max)())));
+                record.not_run_count = static_cast<int>(
+                    operations.size() - failed_index - 1);
+            }
+        } else
         for (size_t operation_index = 0;
              operation_index < operations.size(); ++operation_index) {
             RouteQualificationProgress progress;
