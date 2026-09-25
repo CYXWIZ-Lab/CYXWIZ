@@ -213,23 +213,22 @@ DatasetModality DatasetModalityFromNode(const gui::MLNode& node) {
 DatasetStorageKind DatasetStorageKindFromRegistry(
     const std::string& dataset_name) {
     if (dataset_name.empty()) return DatasetStorageKind::Unknown;
-    auto& registry = DataRegistry::Instance();
-    if (registry.GetArrowDataset(dataset_name)) {
+    if (GraphArrowDataset(dataset_name)) {
         return DatasetStorageKind::InMemoryArrow;
     }
-    if (registry.GetParquetBackedDataset(dataset_name)) {
+    if (GraphParquetDataset(dataset_name)) {
         return DatasetStorageKind::DiskBackedParquet;
     }
-    if (registry.IsSparseFeatureDataset(dataset_name)) {
+    if (GraphDatasetIsKind(dataset_name, GraphDatasetKind::Sparse)) {
         return DatasetStorageKind::SparseFeatureCSR;
     }
-    if (registry.IsImageDataset(dataset_name)) {
+    if (GraphDatasetIsKind(dataset_name, GraphDatasetKind::Image)) {
         return DatasetStorageKind::ImageCached;
     }
-    if (registry.IsAudioDataset(dataset_name)) {
+    if (GraphDatasetIsKind(dataset_name, GraphDatasetKind::Audio)) {
         return DatasetStorageKind::AudioCached;
     }
-    if (registry.IsTextDataset(dataset_name)) {
+    if (GraphDatasetIsKind(dataset_name, GraphDatasetKind::Text)) {
         return DatasetStorageKind::TextCached;
     }
     return DatasetStorageKind::Unknown;
@@ -279,18 +278,16 @@ std::string FingerprintFileIdentity(const std::string& source_path) {
 
 void PopulateDatasetSourceProvenance(DatasetSourceRef& source) {
     if (!source.IsSupplied()) return;
-    auto& registry = DataRegistry::Instance();
     std::shared_ptr<arrow::Schema> schema;
-    if (auto arrow_dataset = registry.GetArrowDataset(source.dataset_name)) {
+    if (auto arrow_dataset = GraphArrowDataset(source.dataset_name)) {
         source.storage_kind = DatasetStorageKind::InMemoryArrow;
         source.row_count = arrow_dataset->GetNumRows();
         schema = arrow_dataset->GetSchema();
-    } else if (auto parquet_dataset =
-                   registry.GetParquetBackedDataset(source.dataset_name)) {
+    } else if (auto parquet_dataset = GraphParquetDataset(source.dataset_name)) {
         source.storage_kind = DatasetStorageKind::DiskBackedParquet;
         source.row_count = parquet_dataset->GetNumRows();
         schema = parquet_dataset->GetSchema();
-    } else if (registry.IsSparseFeatureDataset(source.dataset_name)) {
+    } else if (GraphDatasetIsKind(source.dataset_name, GraphDatasetKind::Sparse)) {
         source.storage_kind = DatasetStorageKind::SparseFeatureCSR;
     }
     if (schema) {
@@ -299,7 +296,7 @@ void PopulateDatasetSourceProvenance(DatasetSourceRef& source) {
         source.feature_schema_fingerprint = FingerprintArrowSchema(
             schema, source.label_column, true);
     }
-    if (auto source_path = registry.GetTabularSourcePath(source.dataset_name)) {
+    if (auto source_path = GraphDatasetSourcePath(source.dataset_name)) {
         source.source_fingerprint = FingerprintFileIdentity(*source_path);
     }
 }
@@ -530,19 +527,16 @@ void ValidateDenseTextVectorizerMaterializerMemory(
         return;
     }
 
-    auto& reg = DataRegistry::Instance();
     size_t sample_count = 0;
     size_t full_vocab_size = 0;
-    if (const auto* text_entry =
-            reg.GetTextDatasetEntry(config.dataset_name)) {
-        sample_count = text_entry->num_samples;
-        full_vocab_size = text_entry->vocab_size;
+    if (const auto text_info = GraphTextDatasetInfoFor(config.dataset_name)) {
+        sample_count = text_info->num_samples;
+        full_vocab_size = text_info->vocab_size;
     }
     if (sample_count == 0) {
-        if (auto arrow_ds = reg.GetArrowDataset(config.dataset_name)) {
+        if (auto arrow_ds = GraphArrowDataset(config.dataset_name)) {
             sample_count = static_cast<size_t>(arrow_ds->GetNumRows());
-        } else if (auto pq_ds =
-                       reg.GetParquetBackedDataset(config.dataset_name)) {
+        } else if (auto pq_ds = GraphParquetDataset(config.dataset_name)) {
             sample_count = static_cast<size_t>(pq_ds->GetNumRows());
         }
     }
@@ -1990,9 +1984,8 @@ void ApplyTextInputShape(TrainingConfiguration& config) {
         config.text_preprocessing.has_padding_node;
 
     if (!graph_overrides_length && !config.dataset_name.empty()) {
-        if (const auto* entry =
-                DataRegistry::Instance().GetTextDatasetEntry(config.dataset_name)) {
-            max_length = entry->max_length;
+        if (const auto text_info = GraphTextDatasetInfoFor(config.dataset_name)) {
+            max_length = text_info->max_length;
         }
     }
 
@@ -4102,12 +4095,9 @@ TrainingConfiguration GraphCompiler::Compile(
             : std::string();
 
         std::shared_ptr<arrow::Schema> tabular_schema;
-        auto& data_registry = DataRegistry::Instance();
-        if (auto arrow_dataset =
-                data_registry.GetArrowDataset(config.dataset_name)) {
+        if (auto arrow_dataset = GraphArrowDataset(config.dataset_name)) {
             tabular_schema = arrow_dataset->GetSchema();
-        } else if (auto parquet_dataset =
-                       data_registry.GetParquetBackedDataset(config.dataset_name)) {
+        } else if (auto parquet_dataset = GraphParquetDataset(config.dataset_name)) {
             tabular_schema = parquet_dataset->GetSchema();
         }
 
@@ -5050,11 +5040,10 @@ TrainingConfiguration GraphCompiler::Compile(
                  "",
                  errors::Compiler::InvalidParameter);
     } else if (dataset_node && !config.dataset_name.empty()) {
-        auto& reg = DataRegistry::Instance();
         int64_t total_rows = 0;
-        if (auto arrow_ds = reg.GetArrowDataset(config.dataset_name)) {
+        if (auto arrow_ds = GraphArrowDataset(config.dataset_name)) {
             total_rows = arrow_ds->GetNumRows();
-        } else if (auto pq_ds = reg.GetParquetBackedDataset(config.dataset_name)) {
+        } else if (auto pq_ds = GraphParquetDataset(config.dataset_name)) {
             total_rows = pq_ds->GetNumRows();
         }
         if (total_rows > 0) {
@@ -5313,7 +5302,7 @@ TrainingConfiguration GraphCompiler::Compile(
             if (preview.enabled) {
                 if (!config.sequence_batch.create_causal_lm_targets)
                     throw std::invalid_argument("Generation previews require causal next-token targets");
-                auto dataset = DataRegistry::Instance().GetArrowDataset(config.dataset_name);
+                auto dataset = GraphArrowDataset(config.dataset_name);
                 auto metadata = dataset ? dataset->GetSchema()->metadata() : nullptr;
                 auto get = [&](const char* key) -> std::string {
                     if (!metadata) throw std::invalid_argument("Generation previews require an Arrow token-window dataset with vocabulary metadata");

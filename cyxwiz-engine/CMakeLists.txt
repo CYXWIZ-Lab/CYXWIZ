@@ -131,6 +131,7 @@ set(ENGINE_SOURCES
     src/core/data_registry.cpp
     src/core/data_registry_config.cpp
     src/core/data_registry_utils.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/data_convert_service.cpp
     src/core/data_preview_service.cpp
     src/core/datasets/kaggle_dataset.cpp
@@ -1255,6 +1256,7 @@ add_executable(test_arrow_integration
     src/core/duckdb_connector.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/dataset_base.cpp
 )
 
@@ -2516,6 +2518,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/data_convert_service.cpp
     src/core/data_analyzer.cpp
     src/core/dataset_base.cpp
@@ -2611,6 +2614,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/data_convert_service.cpp
     src/core/data_analyzer.cpp
     src/core/dataset_base.cpp
@@ -2703,6 +2707,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/data_convert_service.cpp
     src/core/data_analyzer.cpp
     src/core/dataset_base.cpp
@@ -3330,6 +3335,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/arrow_dataset.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/dataset_base.cpp
     src/core/parquet_backed_dataset.cpp
 )
@@ -3393,6 +3399,7 @@ add_executable(test_text_gui_training_launch
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/sparse_feature_dataset.cpp
     src/core/sparse_feature_dataset_batcher.cpp
     src/core/sparse_feature_dataset_batcher_balancing.cpp
@@ -4043,6 +4050,7 @@ add_executable(test_data_preview_service
     src/core/data_preview_service.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/dataset_base.cpp
     src/core/arrow_dataset.cpp
     src/core/parquet_backed_dataset.cpp
@@ -4853,6 +4861,7 @@ add_executable(test_pipeline_materializer_cache
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry_utils.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/sparse_feature_dataset.cpp
     src/core/dataset_base.cpp
     src/core/parquet_backed_dataset.cpp
@@ -5062,3 +5071,7 @@ endif()
 set_target_properties(test_async_task_lifecycle PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 add_executable(test_training_progress_estimate tests/test_training_progress_estimate.cpp)
+
+# ===== Test: cyxwiz-training-core is self-contained (TOFIX118 P2) =====
+add_executable(test_training_core_link tests/test_training_core_link.cpp)
+target_link_libraries(test_training_core_link PRIVATE cyxwiz-training-core)

@@ -2,6 +2,7 @@
 // Extracted from data_registry.cpp to reduce file size
 // Contains: Versioning, Preprocessing, Augmentation, Annotation, Arrow integration
 
+#include "graph_compiler_dataset_hooks.h"
 #include "data_registry.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
@@ -660,3 +661,43 @@ void DataRegistry::ClearAllTabularDatasets() {
 }
 
 } // namespace cyxwiz
+
+namespace cyxwiz {
+namespace {
+
+// The graph compiler (training core) reads datasets through this catalog;
+// any binary that links the registry installs it before main.
+const bool kGraphDatasetCatalogInstalled = [] {
+    GraphDatasetCatalog catalog;
+    catalog.arrow_dataset = [](const std::string& name) { return DataRegistry::Instance().GetArrowDataset(name); };
+    catalog.parquet_dataset = [](const std::string& name) {
+        return DataRegistry::Instance().GetParquetBackedDataset(name);
+    };
+    catalog.is_kind = [](const std::string& name, GraphDatasetKind kind) {
+        auto& registry = DataRegistry::Instance();
+        switch (kind) {
+        case GraphDatasetKind::Sparse: return registry.IsSparseFeatureDataset(name);
+        case GraphDatasetKind::Image: return registry.IsImageDataset(name);
+        case GraphDatasetKind::Audio: return registry.IsAudioDataset(name);
+        case GraphDatasetKind::Text: return registry.IsTextDataset(name);
+        }
+        return false;
+    };
+    catalog.text_info = [](const std::string& name) -> std::optional<GraphTextDatasetInfo> {
+        const auto* entry = DataRegistry::Instance().GetTextDatasetEntry(name);
+        if (!entry) return std::nullopt;
+        GraphTextDatasetInfo info;
+        info.num_samples = entry->num_samples;
+        info.vocab_size = entry->vocab_size;
+        info.max_length = entry->max_length;
+        return info;
+    };
+    catalog.source_path = [](const std::string& name) {
+        return DataRegistry::Instance().GetTabularSourcePath(name);
+    };
+    SetGraphDatasetCatalog(std::move(catalog));
+    return true;
+}();
+
+}  // namespace
+}  // namespace cyxwiz
