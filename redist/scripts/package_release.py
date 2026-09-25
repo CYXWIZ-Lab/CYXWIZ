@@ -645,9 +645,11 @@ def package_arrayfire_backend(
             ("nvrtc64_*.dll", "CUDA NVRTC runtime"),
         ):
             copy_required_group(roots, pattern, destination, label)
+        # cuDNN is deliberately excluded: afcuda does not import it and the
+        # CyxWiz neural providers use cuBLAS + fused cells (tofix68).
         copy_optional_groups(
             roots,
-            ("cublasLt64_*.dll", "cusparse64_*.dll", "nvrtc-builtins*.dll", "nvJitLink*.dll", "cudnn*.dll"),
+            ("cublasLt64_*.dll", "cusparse64_*.dll", "nvrtc-builtins*.dll", "nvJitLink*.dll"),
             destination,
         )
     if backend == "oneapi" and lib_suffix == ".dll":
@@ -875,7 +877,10 @@ def compatibility_contract(backend: str) -> dict[str, object]:
         recommendations = ["cuda", "oneapi", "cpu"]
         confidence = "stable_hardware"
     else:
-        kinds = ["cpu", "gpu", "accelerator"]
+        # No CPU: the SYCL CPU device recompiles kernels per process (sum took
+        # 65-93 s on the dev box) while the native CPU route runs the whole
+        # benchmark in milliseconds (tofix119 D).
+        kinds = ["gpu", "accelerator"]
         providers = ["sycl-unified-runtime"]
         recommendations = ["opencl", "cpu"]
         confidence = "stable_hardware"
