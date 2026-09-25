@@ -2286,7 +2286,7 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           "Return Sequences", "Output", true, false},
          {"dropout", "float", "0.0", "Must remain 0.0; use an explicit Dropout node", {}, "0.0-0.0",
           "Dropout", "Regularization", true, false},
-         {"nonlinearity", "string", "tanh", "Cell nonlinearity: tanh or relu", {"tanh", "relu"}, "",
+         {"nonlinearity", "enum", "tanh", "Cell nonlinearity: tanh or relu", {"tanh", "relu"}, "",
           "Nonlinearity", "Recurrent", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
