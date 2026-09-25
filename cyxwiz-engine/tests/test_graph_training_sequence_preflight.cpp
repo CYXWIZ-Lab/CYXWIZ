@@ -342,6 +342,21 @@ void CheckLaunchReadinessAtCompile(cyxwiz::DataRegistry& registry) {
     issues=gui::CheckGraphLaunchReadiness(nodes,config,registry,&unqualified);
     Check(count(issues,cyxwiz::IssueLevel::Warning,"fall back to ArrayFire CPU")==1 &&
           count(issues,cyxwiz::IssueLevel::Error,"")==0,"a qualified CPU fallback is a warning");
+    // Qualified device, fallback allowed, CPU recovery unverified: an Info note.
+    cyxwiz::RequestedRouteTrainingReadiness no_recovery=qualified;
+    no_recovery.type=cyxwiz::DeviceType::OPENCL;no_recovery.route_name="Iris Xe";
+    no_recovery.cpu_recovery_qualified=false;
+    issues=gui::CheckGraphLaunchReadiness(nodes,config,registry,&no_recovery);
+    Check(count(issues,cyxwiz::IssueLevel::Info,"CPU recovery is not verified")==1 &&
+          count(issues,cyxwiz::IssueLevel::Error,"")==0 && count(issues,cyxwiz::IssueLevel::Warning,"")==0,
+          "an unverified CPU recovery route is reported as information, not an error");
+    no_recovery.cpu_recovery_qualified=true;
+    Check(gui::CheckGraphLaunchReadiness(nodes,config,registry,&no_recovery).empty(),
+          "a verified CPU recovery route reports nothing");
+    no_recovery.cpu_recovery_qualified=false;config.forbid_native_cpu_fallback=true;
+    Check(gui::CheckGraphLaunchReadiness(nodes,config,registry,&no_recovery).empty(),
+          "strict runs never fall back, so recovery is not mentioned");
+    config.forbid_native_cpu_fallback=false;
     auto data_only=config;data_only.layers.clear();
     Check(gui::CheckGraphLaunchReadiness(nodes,data_only,registry,&unqualified).empty(),
           "graphs without a model are not judged on the training device");

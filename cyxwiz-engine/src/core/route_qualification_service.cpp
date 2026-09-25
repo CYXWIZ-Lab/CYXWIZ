@@ -898,6 +898,13 @@ RouteQualificationRunResult RouteQualificationService::VerifyAll(
     return Verify(routes, options, false, on_progress);
 }
 
+RouteQualificationRunResult RouteQualificationService::VerifyRoutes(
+    const std::vector<DeviceInfo>& routes,
+    const RouteQualificationOptions& options,
+    std::function<void(const RouteQualificationProgress&)> on_progress) {
+    return Verify(routes, options, true, on_progress);
+}
+
 RuntimeQualificationResult
 RouteQualificationService::VerifyStagedRuntimeRoutes(
     const std::vector<DeviceInfo>& affected_routes,

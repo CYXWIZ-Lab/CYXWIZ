@@ -1232,8 +1232,11 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         route_qualification_task_refreshed_ = true;
                     }
 
+                    // selected_only: Verify Selected (merge into existing
+                    // evidence, no benchmark); otherwise Verify All (replace).
                     const auto begin_verification =
-                        [&](std::vector<cyxwiz::DeviceInfo> routes) {
+                        [&](std::vector<cyxwiz::DeviceInfo> routes,
+                            bool selected_only) {
                             if (routes.empty() || qualification_running ||
                                 training_active) {
                                 return;
@@ -1271,8 +1274,10 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 options.pack_id =
                                     "local-arrayfire-installation";
                             }
-                            const bool verify_all = routes.size() > 1;
+                            const bool verify_all = !selected_only;
                             options.benchmark_verified_routes = verify_all;
+                            const bool with_recovery =
+                                selected_only && routes.size() > 1;
                             const auto service =
                                 route_qualification_service_;
                             route_qualification_task_refreshed_ = false;
@@ -1281,7 +1286,9 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 cyxwiz::AsyncTaskManager::Instance().RunAsync(
                                     verify_all
                                         ? "Verify all compute routes"
-                                        : "Verify compute route",
+                                        : with_recovery
+                                            ? "Verify compute route and CPU recovery"
+                                            : "Verify compute route",
                                     [service,
                                      routes = std::move(routes),
                                      options = std::move(options),
@@ -1308,15 +1315,18 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                                                   progress.device_id) +
                                                               " " + progress.operation);
                                                   })
-                                            : service->VerifyRoute(
-                                                  routes.front(), options,
+                                            : service->VerifyRoutes(
+                                                  routes, options,
                                                   [&](const auto& progress) {
                                                       const float total =
                                                           static_cast<float>(
+                                                              progress.route_count *
                                                               progress.operation_count);
                                                       task.ReportProgress(
                                                           total > 0.0f
                                                               ? static_cast<float>(
+                                                                    progress.route_index *
+                                                                        progress.operation_count +
                                                                     progress.operation_index) /
                                                                     total
                                                               : 0.0f,
@@ -1339,7 +1349,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
 
                     if (backend_manager_verify_requested) {
                         begin_verification(
-                            cyxwiz::Device::GetAvailableDevices());
+                            cyxwiz::Device::GetAvailableDevices(), false);
                     }
 
                     if (qualification_running) {
@@ -1379,22 +1389,35 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 cached_devices_[selected_device_index_].device_id;
                             auto inventory =
                                 cyxwiz::Device::GetAvailableDevices();
+                            // The selected route plus the ArrayFire CPU route:
+                            // a run falls back to CPU only when that route is
+                            // qualified too, so verify both in one go.
                             inventory.erase(
                                 std::remove_if(
                                     inventory.begin(), inventory.end(),
                                     [&](const auto& route) {
-                                        return route.type != selected_type ||
-                                               route.device_id != selected_id;
+                                        const bool selected =
+                                            route.type == selected_type &&
+                                            route.device_id == selected_id;
+                                        const bool cpu_recovery =
+                                            selected_type != cyxwiz::DeviceType::CPU &&
+                                            route.type == cyxwiz::DeviceType::CPU;
+                                        return !selected && !cpu_recovery;
                                     }),
                                 inventory.end());
-                            begin_verification(std::move(inventory));
+                            std::stable_partition(
+                                inventory.begin(), inventory.end(),
+                                [&](const auto& route) {
+                                    return route.type == selected_type;
+                                });
+                            begin_verification(std::move(inventory), true);
                         }
                         if (!can_verify_selected) ImGui::EndDisabled();
                         ImGui::SameLine();
                         if (training_active) ImGui::BeginDisabled();
                         if (ImGui::Button(ICON_FA_LIST_CHECK " Verify All")) {
                             begin_verification(
-                                cyxwiz::Device::GetAvailableDevices());
+                                cyxwiz::Device::GetAvailableDevices(), false);
                         }
                         if (training_active) ImGui::EndDisabled();
                     }

@@ -143,6 +143,13 @@ public:
         const std::vector<DeviceInfo>& routes,
         const RouteQualificationOptions& options,
         std::function<void(const RouteQualificationProgress&)> on_progress = {});
+    // Verifies the given routes and merges them into the installed evidence
+    // (like VerifyRoute, unlike VerifyAll which replaces it). Used to qualify
+    // a selected device together with its ArrayFire CPU recovery route.
+    RouteQualificationRunResult VerifyRoutes(
+        const std::vector<DeviceInfo>& routes,
+        const RouteQualificationOptions& options,
+        std::function<void(const RouteQualificationProgress&)> on_progress = {});
     RuntimeQualificationResult VerifyStagedRuntimeRoutes(
         const std::vector<DeviceInfo>& affected_routes,
         const RuntimeQualificationIdentity& identity,

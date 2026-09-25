@@ -577,7 +577,9 @@ inline ExecutionDeviceContext PrepareExecutionDeviceForRun(
                 "Requested ArrayFire device preflight failed (" +
                 FormatActivationFailure(requested_activation) +
                 "); ArrayFire CPU recovery is not qualified (" +
-                effective_qualification.message + ")");
+                effective_qualification.message +
+                "). Verify the device in Preferences > Devices > Verify Selected "
+                "(it also verifies the CPU recovery route), then train again");
         }
 
         effective_activation =

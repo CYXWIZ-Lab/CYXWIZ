@@ -1070,6 +1070,54 @@ TEST_CASE("Qualification cancellation preserves previously accepted evidence",
     std::filesystem::remove_all(root, cleanup_error);
 }
 
+TEST_CASE("Verify Selected merges the device and its CPU recovery route into existing evidence",
+          "[device][selection][qualification][service]") {
+    RouteQualificationStateGuard state_guard;
+    cyxwiz::ClearRouteQualificationSnapshot();
+    const auto root = std::filesystem::temp_directory_path() /
+        "cyxwiz-route-qualification-service-recovery";
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(root, cleanup_error);
+    cyxwiz::RouteQualificationService service(
+        [](const cyxwiz::RouteProbeInvocation&,
+           const cyxwiz::RouteQualificationCancelCheck&) {
+            cyxwiz::RouteProbeResult result;
+            result.status = cyxwiz::RouteProbeStatus::Passed;
+            result.output = "probe_event stage=read_complete";
+            return result;
+        });
+    const auto make_route = [](cyxwiz::DeviceType type, int id) {
+        cyxwiz::DeviceInfo route;
+        route.type = type;
+        route.device_id = id;
+        return route;
+    };
+    cyxwiz::RouteQualificationOptions options;
+    options.probe_executable = root / "fake-probe";
+    options.cache_path = root / "route-qualification.json";
+    options.matrix_id = "recovery-merge";
+    options.pack_id = "test-pack";
+
+    const auto earlier = make_route(cyxwiz::DeviceType::OPENCL, 1);
+    REQUIRE(service.VerifyRoute(earlier, options).published);
+
+    const auto gpu = make_route(cyxwiz::DeviceType::OPENCL, 0);
+    const auto cpu = make_route(cyxwiz::DeviceType::CPU, 0);
+    std::vector<cyxwiz::RouteQualificationProgress> progress;
+    const auto result = service.VerifyRoutes(
+        {gpu, cpu}, options, [&](const auto& update) { progress.push_back(update); });
+    INFO(result.message);
+    REQUIRE(result.published);
+    REQUIRE(result.snapshot.has_value());
+    CHECK(result.snapshot->routes.size() == 3);  // earlier evidence kept
+    CHECK(cyxwiz::EvaluateRouteQualification(earlier).qualified);
+    CHECK(cyxwiz::EvaluateRouteQualification(gpu).qualified);
+    CHECK(cyxwiz::EvaluateRouteQualification(cpu).qualified);
+    REQUIRE_FALSE(progress.empty());
+    CHECK(progress.back().route_count == 2);
+    std::filesystem::remove_all(root, cleanup_error);
+}
+
 TEST_CASE("Single-route verification does not relabel legacy evidence",
           "[device][selection][qualification][service][migration]") {
     RouteQualificationStateGuard state_guard;

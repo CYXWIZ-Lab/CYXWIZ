@@ -1264,6 +1264,16 @@ std::vector<cyxwiz::ValidationIssue> CheckGraphLaunchReadiness(
                         preview.message + "). Run Preferences > Devices > Verify Selected before training.",
                     cyxwiz::errors::Training::InvalidTrainingSetup});
             }
+        } else if (preview.route_available && preview.authorized &&
+                   preview.type != cyxwiz::DeviceType::CPU &&
+                   !config.forbid_native_cpu_fallback && !preview.cpu_recovery_qualified) {
+            const std::string device = preview.route_name.empty()
+                ? std::string("the selected device") : "'" + preview.route_name + "'";
+            issues.push_back({cyxwiz::IssueLevel::Info, -1, "",
+                "CPU recovery is not verified on this machine: if " + device +
+                    " fails its launch check, the run stops instead of falling back to ArrayFire CPU. "
+                    "Preferences > Devices > Verify Selected now verifies the CPU route with the device.",
+                cyxwiz::errors::Training::InvalidTrainingSetup});
         }
     }
 
