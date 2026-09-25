@@ -11,6 +11,8 @@
 #include <functional>
 #include <string>
 #include <thread>
+#include <optional>
+#include <cyxwiz/device.h>
 
 namespace cyxwiz {
 
@@ -33,6 +35,11 @@ struct ActiveModelInfo {
     std::string effective_dataset_name;
     std::string effective_label_column;
     CheckpointMetadata checkpoint_metadata;
+    // Backend and device that hold the model's weights. ArrayFire arrays
+    // belong to the backend that created them and the active backend is
+    // per thread, so work on another thread (export) must switch to this
+    // first. Empty when unknown.
+    std::optional<ProcessDeviceSelection> model_device;
 };
 
 struct CheckpointEvaluationLoadResult {

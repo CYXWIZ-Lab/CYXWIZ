@@ -8,6 +8,8 @@
 #include <functional>
 #include <memory>
 #include <thread>
+#include <optional>
+#include <cyxwiz/device.h>
 #include <atomic>
 #include <mutex>
 
@@ -41,7 +43,8 @@ public:
         const TrainingMetrics* metrics,
         const std::string& graph_json,
         uint64_t graph_hash,
-        const ExportOptions& trained_metadata = {}
+        const ExportOptions& trained_metadata = {},
+        std::optional<ProcessDeviceSelection> model_device = std::nullopt
     );
 
     // Callbacks
@@ -74,6 +77,7 @@ private:
 
     // Model data (non-owning pointers)
     SequentialModel* model_ = nullptr;
+    std::optional<ProcessDeviceSelection> model_device_;
     const Optimizer* optimizer_ = nullptr;
     const TrainingMetrics* metrics_ = nullptr;
     std::string graph_json_;

@@ -531,6 +531,10 @@ void RenderVerificationSummary(const InstallerVerificationSummary &summary) {
   ImGui::Spacing();
   for (const auto &card : cards) {
     ImGui::PushID(card.key.c_str());
+    // The installer theme turns child borders off; device cards keep one so
+    // each device reads as its own panel, as in Engine Preferences.
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.055f, 0.115f, 0.19f, 1.0f));
     ImGui::BeginChild("card", ImVec2(0.0f, 0.0f),
                       ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY |
                           ImGuiChildFlags_AlwaysUseWindowPadding);
@@ -585,6 +589,8 @@ void RenderVerificationSummary(const InstallerVerificationSummary &summary) {
       ImGui::PopID();
     }
     ImGui::EndChild();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
     ImGui::PopID();
     ImGui::Spacing();
   }
