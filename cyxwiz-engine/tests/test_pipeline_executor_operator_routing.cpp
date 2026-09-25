@@ -909,6 +909,36 @@ void CheckTokenizerProjectVocabulary() {
     std::cout<<"Tokenizer project vocabulary passed\n";
 }
 
+void CheckExportPathBase() {
+    // New export nodes resolve a relative path against the project root, like
+    // Data Input; nodes without path_base (older graphs) keep the exports folder.
+    namespace fs=std::filesystem;
+    const auto project=fs::temp_directory_path()/"cyxwiz_export_path_base";
+    fs::remove_all(project); fs::create_directories(project);
+    const auto csv=project/"in.csv";
+    { std::ofstream file(csv); file << "a,b\n1,2\n3,4\n"; }
+    const auto run=[&](const std::string& export_params) {
+        const std::string graph=
+            R"({"nodes":[{"id":93001,"type":"DataInput","name":"In","parameters":{"source_type":"file","type":"csv","has_header":"true","file_path":")"+JsonEscapePath(csv.string())+
+            R"("}},{"id":93002,"type":"ExportParquet","name":"Out","parameters":{)"+export_params+
+            R"(}}],"links":[{"start_node":93001,"end_node":93002}]})";
+        cyxwiz::PipelineExecutor executor;
+        executor.SetProjectRoot(project.string());
+        executor.SetExportRoot((project/"exports").string());
+        Check(executor.ExecutePipeline(graph),"export path base: "+executor.GetLastError());
+    };
+    run(R"("file_path":"out/project.parquet","path_base":"project")");
+    Check(fs::exists(project/"out"/"project.parquet"),"path_base=project writes under the project root");
+    run(R"("file_path":"out/legacy.parquet")");
+    Check(fs::exists(project/"exports"/"out"/"legacy.parquet"),"no path_base keeps the exports folder (older graphs)");
+    run(R"("file_path":"out/explicit.parquet","path_base":"exports")");
+    Check(fs::exists(project/"exports"/"out"/"explicit.parquet"),"path_base=exports writes under exports");
+    run(R"("file_path":"","path_base":"project")");
+    Check(!fs::is_empty(project/"exports"),"an empty path still uses the exports folder");
+    fs::remove_all(project);
+    std::cout<<"Export path base passed\n";
+}
+
 void CheckBooleanFiltering() {
     const auto path = std::filesystem::temp_directory_path() /
         "cyxwiz_filter_boolean_regression.csv";
@@ -1651,6 +1681,8 @@ int main(int argc, char** argv) {
     if (argc == 1) CheckSqlNamedInputs();
     if(argc==2 && std::string(argv[1])=="--document-token-windows") { CheckDocumentWindowPipeline(); return 0; }
     if(argc==2 && std::string(argv[1])=="--tokenizer-project-vocab") { CheckTokenizerProjectVocabulary(); return 0; }
+    if(argc==2 && std::string(argv[1])=="--export-path-base") { CheckExportPathBase(); return 0; }
+    if(argc==1) CheckExportPathBase();
     if(argc==1) CheckTokenizerProjectVocabulary();
     if (argc == 2 &&
         std::string(argv[1]) == "--async-task-terminal-contract") {

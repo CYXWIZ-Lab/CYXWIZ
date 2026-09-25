@@ -1276,6 +1276,7 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
         "Universal data exporter - supports CSV and Parquet", "", "",
         {{"Data", PinType::Dataset, true, "Input dataset"}}, {},
         {{"file_path", "file", "", "Output file", {}, "*.csv;*.parquet"},
+         {"path_base", "enum", "project", "Where a relative output path is resolved: project (the project folder, like Data Input paths) or exports (the project exports folder; graphs saved before 2026-09-24 load with this). An empty path always writes to the exports folder.", {"project", "exports"}, "", "Relative To", "Output", false, true},
          {"file_type", "enum", "csv", "Output format", {"csv", "parquet"}, ""},
          {"configured", "bool", "false", "Dialog configured", {}, "", "", "", false, false,
           ParameterConsumption::UiOnly}},
@@ -3765,19 +3766,22 @@ void NodeMetadataRegistry::InitializeExportNodes() {
     RegisterNode({NodeType::ExportCSV, NodeCategory::DataSources, "Export CSV", ICON_FA_FILE_EXPORT,
         {"export", "csv", "save"}, 0, false, "Export Arrow table to CSV file", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
-        {{"file_path", "file", "", "Output file", {}, "*.csv"}},
+        {{"file_path", "file", "", "Output file", {}, "*.csv"},
+         {"path_base", "enum", "project", "Where a relative output path is resolved: project (the project folder, like Data Input paths) or exports (the project exports folder; graphs saved before 2026-09-24 load with this). An empty path always writes to the exports folder.", {"project", "exports"}, "", "Relative To", "Output", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ExportParquet, NodeCategory::DataSources, "Export Parquet", ICON_FA_FILE_EXPORT,
         {"export", "parquet"}, 0, false, "Export Arrow table to Parquet file", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
-        {{"file_path", "file", "", "Output file", {}, "*.parquet"}},
+        {{"file_path", "file", "", "Output file", {}, "*.parquet"},
+         {"path_base", "enum", "project", "Where a relative output path is resolved: project (the project folder, like Data Input paths) or exports (the project exports folder; graphs saved before 2026-09-24 load with this). An empty path always writes to the exports folder.", {"project", "exports"}, "", "Relative To", "Output", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ExportJSON, NodeCategory::DataSources, "Export JSON", ICON_FA_FILE_EXPORT,
         {"export", "json"}, 0, false, "Export Arrow table to JSON file", "", "",
         {{"Table", PinType::Dataset, true, "Table"}}, {},
-        {{"file_path", "file", "", "Output file", {}, "*.json"}},
+        {{"file_path", "file", "", "Output file", {}, "*.json"},
+         {"path_base", "enum", "project", "Where a relative output path is resolved: project (the project folder, like Data Input paths) or exports (the project exports folder; graphs saved before 2026-09-24 load with this). An empty path always writes to the exports folder.", {"project", "exports"}, "", "Relative To", "Output", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ExportSQL, NodeCategory::DataSources, "Export SQL (planned)", ICON_FA_DATABASE,

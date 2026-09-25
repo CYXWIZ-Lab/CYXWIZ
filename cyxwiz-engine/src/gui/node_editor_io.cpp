@@ -122,6 +122,14 @@ static void MigrateLegacyNodeParameters(NodeType type,
         case NodeType::DataInput:
             cyxwiz::MigrateDataInputFormatAliases(params);
             break;
+        case NodeType::ExportCSV:
+        case NodeType::ExportParquet:
+        case NodeType::ExportJSON:
+        case NodeType::DataOutput:
+            // Saved before path_base existed: relative outputs meant the exports
+            // folder. Make that explicit so reopening never moves an output.
+            if (params.find("path_base") == params.end()) params["path_base"] = "exports";
+            break;
         case NodeType::TimeSeriesWindow:
             CopyLegacyColumnIfMissing(params, "value_col", "target_column", prefer_legacy);
             CopyLegacyColumnIfMissing(params, "value_col", "column", prefer_legacy);

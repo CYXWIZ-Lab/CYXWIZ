@@ -13,8 +13,9 @@ namespace cyxwiz {
 // path is returned unchanged, which keeps the previous behaviour (relative to
 // the process working directory) for headless callers that have no project.
 //
-// Exports already resolve relative paths against the project exports folder;
-// this gives sources the same portability.
+// Export nodes resolve a relative path against the project root too when
+// their path_base is "project" (new nodes); graphs saved before that setting
+// load with path_base "exports" (the project exports folder), unchanged.
 inline std::string ResolveProjectDataPath(const std::string& path,
                                           const std::string& project_root) {
     if (path.empty() || project_root.empty()) {

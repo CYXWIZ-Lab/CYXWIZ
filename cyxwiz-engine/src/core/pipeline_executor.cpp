@@ -2287,11 +2287,16 @@ std::filesystem::path DefaultExportDirectory(
         : temp / "cyxwiz" / "exports";
 }
 
+// A relative output path resolves against the project folder when the node's
+// path_base is "project" (new nodes, same rule as Data Input sources), and
+// against the exports folder otherwise (graphs saved before path_base existed
+// are migrated to "exports" on load; headless graphs without the key keep it).
 std::string ResolveDatasetExportPath(
     const std::map<std::string, std::string>& parameters,
     const std::string& fallback_stem,
     const std::string& extension,
-    const std::string& default_root) {
+    const std::string& default_root,
+    const std::string& project_root = {}) {
 
     const std::string raw_path = NormalizeDataOutputPath(parameters);
     const std::string clean_extension =
@@ -2320,8 +2325,12 @@ std::string ResolveDatasetExportPath(
         }
     }
 
+    const auto base_it = parameters.find("path_base");
+    const bool project_base = base_it != parameters.end() && base_it->second == "project" &&
+                              !raw_path.empty() && !project_root.empty();
     if (resolved.is_relative()) {
-        resolved = DefaultExportDirectory(default_root) / resolved;
+        resolved = project_base ? std::filesystem::path(project_root) / resolved
+                                : DefaultExportDirectory(default_root) / resolved;
     }
 
     const auto parent = resolved.parent_path();
@@ -4329,7 +4338,7 @@ bool PipelineExecutor::ExecuteDataOutput(const Node& node, ExecutionContext& ctx
         return false;
     }
     const std::string output_path = ResolveDatasetExportPath(
-        node.parameters, input_dataset_name, extension, export_root_);
+        node.parameters, input_dataset_name, extension, export_root_, project_root_);
 
     spdlog::info("[Pipeline] DataOutput exporting to {} (format: {})", output_path, format);
 
@@ -4757,7 +4766,7 @@ bool PipelineExecutor::ExecuteSaveDataset(const Node& node, ExecutionContext& ct
             return false;
         }
         output_path = ResolveDatasetExportPath(
-            node.parameters, output_name, extension, export_root_);
+            node.parameters, output_name, extension, export_root_, project_root_);
     }
 
     spdlog::info("[Data Studio] Saving dataset '{}' as '{}'", input_dataset_name, output_name);
@@ -7056,7 +7065,7 @@ bool PipelineExecutor::ExecuteExportCSV(const Node& node, ExecutionContext& ctx)
     }
 
     const std::string output_path = ResolveDatasetExportPath(
-        node.parameters, input_dataset_name, ".csv", export_root_);
+        node.parameters, input_dataset_name, ".csv", export_root_, project_root_);
 
     spdlog::info("[Data Studio] Exporting to CSV: {}", output_path);
     auto& registry = DataRegistry::Instance();
@@ -7082,7 +7091,7 @@ bool PipelineExecutor::ExecuteExportJSON(const Node& node, ExecutionContext& ctx
     }
 
     const std::string output_path = ResolveDatasetExportPath(
-        node.parameters, input_dataset_name, ".json", export_root_);
+        node.parameters, input_dataset_name, ".json", export_root_, project_root_);
 
     spdlog::info("[Data Studio] Exporting to JSON: {}", output_path);
     auto& registry = DataRegistry::Instance();
@@ -7145,7 +7154,7 @@ bool PipelineExecutor::ExecuteExportParquet(const Node& node, ExecutionContext& 
     }
 
     const std::string output_path = ResolveDatasetExportPath(
-        node.parameters, input_dataset_name, ".parquet", export_root_);
+        node.parameters, input_dataset_name, ".parquet", export_root_, project_root_);
 
     spdlog::info("[Data Studio] Exporting to Parquet: {}", output_path);
     auto& registry = DataRegistry::Instance();
