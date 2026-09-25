@@ -15,7 +15,7 @@
 #include "pipeline_runtime_capabilities.h"
 #include "cyxwiz/backend_placement_observation.h"
 #include "cyxwiz/recurrent_cuda_placement.h"
-#include "../gui/loaders/data_loader.h"
+#include "graph_compiler_dataset_hooks.h"
 #include "../gui/node_import_guardrails.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -4045,8 +4045,7 @@ TrainingConfiguration GraphCompiler::Compile(
         // their entries). GetByRegisteredDataset returns non-null iff
         // ANY loader claims the name — same semantics as the 5-way OR
         // this replaces.
-        const bool in_registry = !config.dataset_name.empty() &&
-            loaders::GetByRegisteredDataset(config.dataset_name) != nullptr;
+        const bool in_registry = GraphDatasetIsRegistered(config.dataset_name);
 
         if (in_registry) {
             // Data IS loaded, regardless of the hint. Log when we had to
@@ -4096,11 +4095,7 @@ TrainingConfiguration GraphCompiler::Compile(
         auto cat_it_lbl = dataset_node->parameters.find("file_category");
         const std::string cat_str = (cat_it_lbl != dataset_node->parameters.end())
             ? cat_it_lbl->second : std::string();
-        bool labels_from_structure = false;
-        if (auto* cat_loader = loaders::GetByCategory(
-                loaders::FileCategoryFromString(cat_str))) {
-            labels_from_structure = cat_loader->LabelsFromStructure();
-        }
+        const bool labels_from_structure = GraphCategoryLabelsFromStructure(cat_str);
 
         const std::string requested_label_col = dataset_node->parameters.count("label_column")
             ? dataset_node->parameters.at("label_column")
@@ -4547,9 +4542,8 @@ TrainingConfiguration GraphCompiler::Compile(
         const std::string cat = (cat_it != dataset_node->parameters.end())
             ? cat_it->second : std::string();
 
-        if (auto* cat_loader = loaders::GetByCategory(
-                loaders::FileCategoryFromString(cat))) {
-            config.preprocessing_domain = cat_loader->Domain(cat);
+        if (const auto domain = GraphCategoryPreprocessingDomain(cat)) {
+            config.preprocessing_domain = *domain;
         }
     }
 
@@ -5113,9 +5107,8 @@ TrainingConfiguration GraphCompiler::Compile(
         const std::string cat = (cat_it != dataset_node->parameters.end())
             ? cat_it->second : std::string();
 
-        if (auto* cat_loader = loaders::GetByCategory(
-                loaders::FileCategoryFromString(cat))) {
-            config.preprocessing_domain = cat_loader->Domain(cat);
+        if (const auto domain = GraphCategoryPreprocessingDomain(cat)) {
+            config.preprocessing_domain = *domain;
         }
 
         for (const auto& node : nodes) {

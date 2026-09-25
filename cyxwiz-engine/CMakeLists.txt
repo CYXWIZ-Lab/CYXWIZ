@@ -75,13 +75,24 @@ set(CYXWIZ_HAS_OPENCV ON)
 # ImNodes for visual node editor - integrated manually
 # Source: https://github.com/Nelarius/imnodes
 
+# Plugin training hooks: GUI-free, shared by the plugin SDK and the training
+# core (TOFIX118 P2), linked once into any executable that has both.
+add_library(cyxwiz-training-hooks STATIC
+    src/plugin/registries/plugin_training_hook_manager.cpp
+)
+target_include_directories(cyxwiz-training-hooks PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(cyxwiz-training-hooks PUBLIC spdlog::spdlog)
+set_target_properties(cyxwiz-training-hooks PROPERTIES CXX_STANDARD 20 POSITION_INDEPENDENT_CODE ON)
+if(WIN32)
+    target_compile_definitions(cyxwiz-training-hooks PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+
 # Plugin SDK static library (shared between engine and plugins)
 add_library(cyxwiz-plugin-sdk STATIC
     src/plugin/plugin_context.cpp
     src/plugin/registries/plugin_node_registry.cpp
     src/plugin/registries/plugin_panel_registry.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
-    src/plugin/registries/plugin_training_hook_manager.cpp
     src/plugin/registries/plugin_analytics_registry.cpp
     src/plugin/security/permission_store.cpp
     src/plugin/security/permission_dialog.cpp
@@ -91,6 +102,7 @@ add_library(cyxwiz-plugin-sdk STATIC
 )
 target_include_directories(cyxwiz-plugin-sdk PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(cyxwiz-plugin-sdk PUBLIC
+    cyxwiz-training-hooks
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     imgui::imgui
@@ -111,7 +123,6 @@ set(ENGINE_SOURCES
     src/core/window_manager.cpp
     src/core/compute_runtime_config.cpp
     src/core/arrayfire_backend_discovery_isolation.cpp
-    src/core/route_qualification_snapshot.cpp
     src/core/route_qualification_service.cpp
     src/core/route_recommendation.cpp
     src/core/data_registry_core.cpp
@@ -121,7 +132,6 @@ set(ENGINE_SOURCES
     src/core/data_registry_utils.cpp
     src/core/data_convert_service.cpp
     src/core/data_preview_service.cpp
-    src/core/dataset_base.cpp
     src/core/datasets/kaggle_dataset.cpp
     src/core/datasets/hdf5_dataset.cpp
     src/core/datasets/image_csv_dataset.cpp
@@ -135,29 +145,18 @@ set(ENGINE_SOURCES
     src/core/datasets/image_folder_dataset.cpp
     src/core/datasets/huggingface_dataset.cpp
     src/core/datasets/custom_dataset.cpp
-    src/core/arrow_dataset.cpp
-    src/core/sparse_feature_dataset.cpp
     src/core/sparse_feature_dataset_cache.cpp
-    src/core/sparse_feature_dataset_batcher.cpp
-    src/core/sparse_feature_dataset_batcher_balancing.cpp
-    src/core/sparse_training_batcher_setup.cpp
-    src/core/parquet_backed_dataset.cpp
-    src/core/parquet_arrow_batcher.cpp
     src/core/image_dataset_batcher.cpp
     src/core/audio_dataset_batcher.cpp
     src/core/text_dataset_batcher.cpp
     src/core/legacy_dataset_batchers.cpp
     src/core/text_test_source.cpp
     src/core/text_arrow_adapter.cpp
-    src/core/arrow_dataset_batcher.cpp
     src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
     src/core/pipeline_executor.cpp  # Unified Canvas Phase 2: Moved from data_studio
     src/core/sql_transform.cpp  # TOFIX101 package C SQL step
-    src/core/preprocessing_state.cpp  # Versioned fitted preprocessing artifacts
-    src/core/regression_target_transform.cpp  # Original-unit regression metrics
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
-    src/core/pipeline_runtime_capabilities.cpp  # Data Studio runtime support truth
     src/core/data_studio_execution_plan.cpp  # Track 22 typed Data Studio plan
     src/core/preparation_recipe.cpp  # TOFIX101 package B recipe lowering
     src/core/data_studio_capabilities.cpp
@@ -165,30 +164,24 @@ set(ENGINE_SOURCES
     src/core/pipeline_materializer.cpp  # Cat-1 IPipelineOperator integration into training launch
     src/core/materialization_cache.cpp  # Persistent prepared dataset materialization cache
     src/core/annotation_manager.cpp
-    src/core/node_metadata_registry.cpp  # Node Browser: metadata registry
     src/core/texture_manager.cpp
     src/core/async_task_manager.cpp
     src/core/backend_pack_catalog_adapter.cpp
     src/core/backend_pack_manager_model.cpp
     src/core/runtime_console_commands.cpp
     src/core/runtime_truth_query.cpp
-    src/core/runtime_log_store.cpp
     src/core/runtime_log_filter.cpp
     src/core/runtime_log_inspector.cpp
     src/core/runtime_log_export.cpp
     src/core/support_redaction.cpp
     src/core/large_text_file.cpp
     src/core/dataset_audit.cpp
-    src/core/graph_compiler.cpp
-    src/core/compiled_graph_plan.cpp
     src/core/graph_executor.cpp
     src/core/rl_training_executor.cpp
     src/core/rl_script_generator.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
-    src/core/model_builder.cpp
     src/core/synthetic_batch.cpp
-    src/core/spatial_batch_layout.cpp
     src/core/debug_executor.cpp
     src/core/debug_numerics.cpp
     src/core/debug_batch_inspector.cpp
@@ -207,24 +200,12 @@ set(ENGINE_SOURCES
     src/core/debug_training_graph_diff.cpp
     src/core/debug_error_code_timeline.cpp
     src/core/preflight_validator.cpp
-    src/core/crash_run_recorder.cpp
     src/core/text_preprocessing_tracer.cpp
     src/core/smoke_run_executor.cpp
     src/core/debug_recommendation_engine.cpp
-    src/core/training_trace_collector.cpp
     src/core/debug_run_store.cpp
-    src/core/graph_topology_utils.cpp
-    src/core/training_batcher_setup.cpp
-    src/core/classification_decision.cpp
-    src/core/training_scheduler_controller.cpp
-    src/core/sequence_arrow_batcher.cpp
     src/core/metric_learning_metrics.cpp
-    src/core/training_executor.cpp
-    src/core/training_generation_preview.cpp
-    src/core/language_model_generation.cpp
     src/core/training_manager.cpp
-    src/core/executable_model.cpp
-    src/core/graph_executable_model.cpp
     src/core/test_executor.cpp
     src/core/test_executor_sequence.cpp
     # Node executors (shared logic for nodes and panels)
@@ -291,11 +272,9 @@ set(ENGINE_SOURCES
     src/core/graph_compile_task.cpp
     src/core/checkpoint_manifest.cpp
     src/core/checkpoint_payload_io.cpp
-    src/core/checkpoint_manager.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
     src/core/model_analyzer.cpp
-    src/core/language_model_generation.cpp
     src/core/language_model_training.cpp
     src/core/model_converter.cpp
     src/core/file_dialogs.cpp
@@ -2882,6 +2861,7 @@ set_target_properties(test_pattern_template_guard PROPERTIES
 add_executable(test_graph_compiler_deferred_nodes
     tests/test_graph_compiler_deferred_nodes.cpp
     src/core/graph_compiler.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
     src/core/node_metadata_registry.cpp
@@ -2928,6 +2908,7 @@ add_executable(test_graph_compiler_causal_lm_shape
     src/core/runtime_log_store.cpp
     src/core/route_qualification_snapshot.cpp
     src/core/graph_compiler.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
     src/core/node_metadata_registry.cpp
@@ -2967,6 +2948,7 @@ set_target_properties(test_graph_compiler_causal_lm_shape PROPERTIES
 add_executable(test_bert_encoder_contracts
     tests/test_bert_encoder_contracts.cpp
     src/core/graph_compiler.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
     src/core/node_metadata_registry.cpp
@@ -3005,6 +2987,7 @@ set_target_properties(test_bert_encoder_contracts PROPERTIES
 add_executable(test_recurrent_backend_placement
     tests/test_recurrent_backend_placement.cpp
     src/core/graph_compiler.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
     src/core/node_metadata_registry.cpp
@@ -3543,6 +3526,7 @@ add_executable(test_cyxmodel_layernorm_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
     src/core/node_metadata_registry.cpp
@@ -3591,6 +3575,7 @@ add_executable(test_cyxmodel_mha_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
     src/core/node_metadata_registry.cpp
@@ -3639,6 +3624,7 @@ add_executable(test_cyxmodel_transformer_encoder_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
     src/core/node_metadata_registry.cpp
@@ -3686,6 +3672,7 @@ add_executable(test_cyxmodel_transformer_decoder_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
     src/core/node_metadata_registry.cpp
@@ -3734,6 +3721,7 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
     src/core/node_metadata_registry.cpp
@@ -3777,6 +3765,7 @@ set_target_properties(test_cyxmodel_causal_lm_generation_roundtrip PROPERTIES
 add_executable(test_saved_ner_sequence_smoke
     tests/test_saved_ner_sequence_smoke.cpp
     src/core/graph_compiler.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/training_scheduler_controller.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -3845,6 +3834,7 @@ endif()
 add_executable(cyxwiz-graph-compile-check
     tests/tool_graph_compile_check.cpp
     src/core/graph_compiler.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
     src/core/training_scheduler_controller.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -4362,8 +4352,48 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     src/core/training_trace_collector.cpp
     src/core/route_qualification_snapshot.cpp
     src/core/runtime_log_store.cpp
-    src/plugin/registries/plugin_training_hook_manager.cpp
 )
+
+# ===== cyxwiz-training-core (TOFIX118 P2) =====
+# The GUI-free compile-and-train path shared by every host: graph compiler,
+# model builder, training/test executors, Arrow/Parquet/sequence/sparse
+# batchers, checkpoints, trace and route qualification. The Engine, the
+# harness tests and (next) the Server Node link it; hosts adapt their own
+# datasets to IBatchers and install dataset hooks (graph_compiler_dataset_hooks.h).
+add_library(cyxwiz-training-core STATIC
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
+    src/core/graph_compiler.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
+    src/core/compiled_graph_plan.cpp
+    src/core/graph_topology_utils.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/sequence_arrow_batcher.cpp
+)
+target_include_directories(cyxwiz-training-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(cyxwiz-training-core PUBLIC
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+    cyxwiz-training-hooks
+)
+set_target_properties(cyxwiz-training-core PROPERTIES CXX_STANDARD 20)
+if(WIN32)
+    target_compile_definitions(cyxwiz-training-core PUBLIC _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+# node_metadata_registry lists data-convert formats by the same flags the
+# Engine uses (definitions only; the adapters stay in their own targets).
+if(TARGET OpenXLSX::OpenXLSX)
+    target_compile_definitions(cyxwiz-training-core PRIVATE CYXWIZ_HAS_XLSX)
+endif()
+if(HighFive_FOUND)
+    target_compile_definitions(cyxwiz-training-core PRIVATE CYXWIZ_HAS_HDF5)
+endif()
+target_link_libraries(cyxwiz-engine PRIVATE cyxwiz-training-core)
+
 
 function(configure_training_executor_harness target_name)
     target_include_directories(${target_name} PRIVATE
@@ -4371,6 +4401,7 @@ function(configure_training_executor_harness target_name)
     )
 
     target_link_libraries(${target_name} PRIVATE
+        cyxwiz-training-core
         Arrow::arrow_shared
         Parquet::parquet_shared
         spdlog::spdlog

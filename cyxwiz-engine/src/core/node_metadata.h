@@ -3,7 +3,7 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include "../gui/node_editor.h"  // For NodeType, NodeCategory, PinType
+#include "graph_model.h"  // NodeType, NodeCategory, PinType
 
 namespace cyxwiz {
 

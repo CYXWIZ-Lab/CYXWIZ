@@ -7,7 +7,7 @@
 #include "training_parameter_contract.h"
 #include "training_generation_preview_settings.h"
 #include <core/regression_target_transform.h>
-#include "../gui/node_editor.h"
+#include "graph_model.h"
 #include "../preprocessing/preprocessing_config.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/layer.h>

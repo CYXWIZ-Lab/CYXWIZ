@@ -5,6 +5,7 @@
 #include <functional>
 #include <unordered_map>
 #include "../../core/node_metadata.h"
+#include <imgui.h>
 
 namespace gui {
 

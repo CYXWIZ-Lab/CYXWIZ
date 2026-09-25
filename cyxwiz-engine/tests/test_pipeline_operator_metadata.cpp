@@ -1892,7 +1892,7 @@ void CheckImplementedRecurrentConfigurationContract(
               ParameterMatches(rnn, "bidirectional", "bool", "false") &&
               ParameterMatches(rnn, "return_sequences", "bool", "false") &&
               ParameterMatches(rnn, "dropout", "float", "0.0") &&
-              ParameterMatches(rnn, "nonlinearity", "string", "tanh") &&
+              ParameterMatches(rnn, "nonlinearity", "enum", "tanh") &&
               !HasParameter(rnn, "activation"),
           "RNN metadata must preserve its saved fields");
     CheckSupportAxis(rnn, "Compile", "supported", true, TypeId(gui::NodeType::RNN));

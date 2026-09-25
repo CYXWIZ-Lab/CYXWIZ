@@ -1,3 +1,5 @@
+#include "../../core/graph_compiler_dataset_hooks.h"
+#include "../../core/graph_compiler.h"
 #include "data_loader.h"
 #include "audio_loader.h"
 #include "image_loader.h"
@@ -151,5 +153,29 @@ FileCategory FileCategoryFromString(const std::string& s) {
     if (s == "timeseries") return FileCategory::TimeSeries;
     return FileCategory::Tabular;  // "tabular" + unknown default
 }
+
+namespace {
+
+// The graph compiler (training core) asks the loader registry through hooks;
+// any binary that links the loaders installs them here, before main.
+const bool kGraphCompilerHooksInstalled = [] {
+    cyxwiz::GraphCompilerDatasetHooks hooks;
+    hooks.is_dataset_registered = [](const std::string& name) {
+        return GetByRegisteredDataset(name) != nullptr;
+    };
+    hooks.labels_from_structure = [](const std::string& category) -> std::optional<bool> {
+        if (auto* loader = GetByCategory(FileCategoryFromString(category))) return loader->LabelsFromStructure();
+        return std::nullopt;
+    };
+    hooks.preprocessing_domain =
+        [](const std::string& category) -> std::optional<cyxwiz::PreprocessingDomain> {
+        if (auto* loader = GetByCategory(FileCategoryFromString(category))) return loader->Domain(category);
+        return std::nullopt;
+    };
+    cyxwiz::SetGraphCompilerDatasetHooks(std::move(hooks));
+    return true;
+}();
+
+}  // namespace
 
 }  // namespace cyxwiz::loaders

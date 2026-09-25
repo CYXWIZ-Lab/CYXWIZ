@@ -2,6 +2,7 @@
 
 #include "../panel.h"
 #include "../../core/node_metadata.h"
+#include <imgui.h>
 #include <functional>
 
 namespace cyxwiz {
