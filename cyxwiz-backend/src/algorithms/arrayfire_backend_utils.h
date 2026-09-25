@@ -34,6 +34,9 @@ enum class ArrayFireHostSyncCategory {
     LossInputValidation,
     MetricCpuPath,
     MetricInputValidation,
+    // Provider tenants that cannot share ArrayFire's device memory (oneAPI)
+    // stage inputs through host memory.
+    ProviderHostStaging,
 };
 
 struct ArrayFireHostSyncAttribution {

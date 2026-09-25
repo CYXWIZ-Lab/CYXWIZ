@@ -178,10 +178,17 @@ struct NeuralDeviceQueue {
     void* cl_context = nullptr;    // cl_context (not retained)
     void* cl_queue = nullptr;      // cl_command_queue (not retained)
     void* cl_device = nullptr;     // cl_device_id
+    // oneAPI: ArrayFire exposes no SYCL queue, so the provider opens its own
+    // queue on the device ArrayFire reports (name + platform from its device
+    // listing) and runs on host-staged data.
+    std::string oneapi_device_name;
+    std::string oneapi_platform_name;
 };
 
 // One caller-owned device buffer, locked for the duration of the call.
-// CUDA: a float* device pointer; OpenCL: a cl_mem. Layout per op contract.
+// CUDA: a float* device pointer; OpenCL: a cl_mem; oneAPI: a host float*
+// (the oneAPI tenant is host-staged, see neural_device_interop.cpp). Layout
+// per op contract.
 struct NeuralDeviceBuffer {
     void* handle = nullptr;
     size_t elements = 0;

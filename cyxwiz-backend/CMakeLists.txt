@@ -452,6 +452,94 @@ if(CYXWIZ_HAS_ARRAYFIRE)
         endif()
     endif()
 
+    # Optional oneAPI (SYCL) neural provider (tofix112 phase 5b, tenant #3):
+    # fused attention on ArrayFire's oneAPI backend. The kernels are a
+    # separate library built with the Intel DPC++ compiler (icx) and loaded
+    # at runtime by oneapi_sycl_provider.cpp, so cyxwiz-backend itself keeps
+    # building with the host compiler. OFF by default. The toolkit must be
+    # the SYCL generation ArrayFire's afoneapi links (sycl8 = oneAPI 2025.x).
+    option(CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER
+           "Enable the optional oneAPI (SYCL) neural-network provider" OFF)
+    if(CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER)
+        set(_cyxwiz_oneapi_default "")
+        if(DEFINED ENV{CMPLR_ROOT})
+            set(_cyxwiz_oneapi_default "$ENV{CMPLR_ROOT}")
+        elseif(DEFINED ENV{ONEAPI_ROOT})
+            set(_cyxwiz_oneapi_default "$ENV{ONEAPI_ROOT}/compiler/latest")
+        endif()
+        set(CYXWIZ_ONEAPI_COMPILER_ROOT "${_cyxwiz_oneapi_default}" CACHE PATH
+            "Intel oneAPI DPC++ compiler root (holds bin/icx and the env script), e.g. D:/Intel/oneAPI/2025.1")
+        if(WIN32)
+            set(_cyxwiz_icx "${CYXWIZ_ONEAPI_COMPILER_ROOT}/bin/icx.exe")
+            set(_cyxwiz_oneapi_env "${CYXWIZ_ONEAPI_COMPILER_ROOT}/oneapi-vars.bat")
+            if(NOT EXISTS "${_cyxwiz_oneapi_env}")
+                set(_cyxwiz_oneapi_env "${CYXWIZ_ONEAPI_COMPILER_ROOT}/env/vars.bat")
+            endif()
+            set(_cyxwiz_oneapi_kernels_name "cyxwiz-oneapi-kernels.dll")
+        else()
+            set(_cyxwiz_icx "${CYXWIZ_ONEAPI_COMPILER_ROOT}/bin/icpx")
+            set(_cyxwiz_oneapi_env "${CYXWIZ_ONEAPI_COMPILER_ROOT}/env/vars.sh")
+            set(_cyxwiz_oneapi_kernels_name "libcyxwiz-oneapi-kernels.so")
+        endif()
+        if(EXISTS "${_cyxwiz_icx}" AND EXISTS "${_cyxwiz_oneapi_env}")
+            message(STATUS "oneAPI DNN provider enabled (DPC++ at ${CYXWIZ_ONEAPI_COMPILER_ROOT})")
+            set(_cyxwiz_oneapi_src "${CMAKE_CURRENT_SOURCE_DIR}/oneapi/cyxwiz_oneapi_kernels.cpp")
+            set(_cyxwiz_oneapi_hdr "${CMAKE_CURRENT_SOURCE_DIR}/oneapi/cyxwiz_oneapi_kernels.h")
+            set(_cyxwiz_oneapi_out_dir "${CMAKE_CURRENT_BINARY_DIR}/oneapi")
+            set(_cyxwiz_oneapi_out "${_cyxwiz_oneapi_out_dir}/${_cyxwiz_oneapi_kernels_name}")
+            file(MAKE_DIRECTORY "${_cyxwiz_oneapi_out_dir}")
+            if(WIN32)
+                # icx on Windows needs the MSVC environment of the host compiler.
+                string(REGEX REPLACE "/Tools/MSVC/.*$" "" _cyxwiz_vc_dir "${CMAKE_CXX_COMPILER}")
+                set(_cyxwiz_vcvars "${_cyxwiz_vc_dir}/Auxiliary/Build/vcvars64.bat")
+                file(TO_NATIVE_PATH "${_cyxwiz_vcvars}" _n_vcvars)
+                file(TO_NATIVE_PATH "${_cyxwiz_oneapi_env}" _n_env)
+                file(TO_NATIVE_PATH "${_cyxwiz_oneapi_src}" _n_src)
+                file(TO_NATIVE_PATH "${_cyxwiz_oneapi_out}" _n_out)
+                set(_cyxwiz_oneapi_script "${_cyxwiz_oneapi_out_dir}/build_oneapi_kernels.bat")
+                file(WRITE "${_cyxwiz_oneapi_script}"
+                    "@echo off\r\n"
+                    "call \"${_n_vcvars}\" >nul || exit /b 1\r\n"
+                    "call \"${_n_env}\" --force >nul 2>nul\r\n"
+                    "icx -fsycl /nologo /EHsc /O2 /DNDEBUG /LD \"${_n_src}\" /Fe:\"${_n_out}\" || exit /b 1\r\n")
+                set(_cyxwiz_oneapi_command cmd /c "${_cyxwiz_oneapi_script}")
+            else()
+                set(_cyxwiz_oneapi_script "${_cyxwiz_oneapi_out_dir}/build_oneapi_kernels.sh")
+                file(WRITE "${_cyxwiz_oneapi_script}"
+                    "set -e\n"
+                    ". \"${_cyxwiz_oneapi_env}\" >/dev/null 2>&1 || true\n"
+                    "icpx -fsycl -O2 -DNDEBUG -fPIC -shared \"${_cyxwiz_oneapi_src}\" -o \"${_cyxwiz_oneapi_out}\"\n")
+                set(_cyxwiz_oneapi_command sh "${_cyxwiz_oneapi_script}")
+            endif()
+            add_custom_command(
+                OUTPUT "${_cyxwiz_oneapi_out}"
+                COMMAND ${_cyxwiz_oneapi_command}
+                DEPENDS "${_cyxwiz_oneapi_src}" "${_cyxwiz_oneapi_hdr}"
+                COMMENT "Building oneAPI SYCL kernels with the Intel DPC++ compiler"
+                VERBATIM)
+            add_custom_target(cyxwiz-oneapi-kernels ALL DEPENDS "${_cyxwiz_oneapi_out}")
+            add_dependencies(cyxwiz-backend cyxwiz-oneapi-kernels)
+            # The provider looks for the kernels next to the backend library.
+            add_custom_command(TARGET cyxwiz-backend POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_cyxwiz_oneapi_out}" "$<TARGET_FILE_DIR:cyxwiz-backend>"
+                VERBATIM)
+            install(FILES "${_cyxwiz_oneapi_out}" DESTINATION bin)
+            target_sources(cyxwiz-backend PRIVATE
+                src/algorithms/providers/oneapi_sycl_provider.cpp
+            )
+            target_compile_definitions(cyxwiz-backend PUBLIC
+                CYXWIZ_HAS_ONEAPI_DNN_PROVIDER)
+            set(CYXWIZ_HAS_ONEAPI_DNN_PROVIDER TRUE)
+        else()
+            message(WARNING
+                "CYXWIZ_ENABLE_ONEAPI_DNN_PROVIDER=ON but the DPC++ compiler was not "
+                "found under CYXWIZ_ONEAPI_COMPILER_ROOT='${CYXWIZ_ONEAPI_COMPILER_ROOT}' "
+                "- provider disabled")
+            set(CYXWIZ_HAS_ONEAPI_DNN_PROVIDER FALSE)
+        endif()
+    endif()
+
     if(CYXWIZ_ENABLE_CUDA)
         # Keep CUDA backend support runtime-selected via ArrayFire.
         # Do not link CUDA runtime directly to avoid requiring cudart on non-NVIDIA systems.

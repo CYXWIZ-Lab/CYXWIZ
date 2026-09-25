@@ -169,6 +169,8 @@ const char* ArrayFireHostSyncCategoryName(
             return "metric_cpu_path";
         case ArrayFireHostSyncCategory::MetricInputValidation:
             return "metric_input_validation";
+        case ArrayFireHostSyncCategory::ProviderHostStaging:
+            return "provider_host_staging";
         case ArrayFireHostSyncCategory::CheckpointOutput:
             return "checkpoint_output";
         case ArrayFireHostSyncCategory::AlgorithmCpuPath:

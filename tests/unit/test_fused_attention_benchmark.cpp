@@ -20,6 +20,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -98,11 +99,16 @@ TEST_CASE("Fused attention memory and speed vs ArrayFire", "[.][attention_benchm
         int device;
         std::vector<size_t> contexts;
     };
-    const std::vector<Route> routes = {
+    std::vector<Route> routes = {
         {AF_BACKEND_CUDA, 0, {256, 512, 1024, 2048, 4096, 8192}},
         {AF_BACKEND_OPENCL, 0, {256, 512, 1024, 2048, 4096}},
         {AF_BACKEND_OPENCL, 1, {256, 512, 1024, 2048}},
     };
+    // oneAPI is opt-in (selecting an unqualified device can crash inside
+    // ArrayFire): CYXWIZ_ONEAPI_TEST_DEVICE=<index>, as in the unit tests.
+    if (const char* oneapi = std::getenv("CYXWIZ_ONEAPI_TEST_DEVICE"); oneapi && *oneapi) {
+        routes.push_back({AF_BACKEND_ONEAPI, std::atoi(oneapi), {256, 512, 1024, 2048}});
+    }
     for (const auto& route : routes) {
         try {
             af::setBackend(route.backend);
@@ -111,10 +117,11 @@ TEST_CASE("Fused attention memory and speed vs ArrayFire", "[.][attention_benchm
         } catch (...) {
             continue;
         }
-        char name[64];
-        af::deviceInfo(name, nullptr, nullptr, nullptr);
+        char name[64] = "?";
+        if (route.backend != AF_BACKEND_ONEAPI) af::deviceInfo(name, nullptr, nullptr, nullptr);  // unsupported there
         std::printf("\n%s device %d (%s); held MB is exact on CUDA only\n",
-                    route.backend == AF_BACKEND_CUDA ? "CUDA" : "OpenCL", route.device, name);
+                    route.backend == AF_BACKEND_CUDA ? "CUDA" : route.backend == AF_BACKEND_ONEAPI ? "oneAPI" : "OpenCL",
+                    route.device, name);
         std::printf("%-8s | %-28s | %-28s\n", "context", "fused: ms / held MB", "ArrayFire: ms / held MB");
         for (const size_t seq : route.contexts) {
             const Measurement fused = Run(seq, true);

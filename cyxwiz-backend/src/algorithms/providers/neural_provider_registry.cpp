@@ -28,6 +28,11 @@ void RegisterNvidiaCublasNeuralProvider(NeuralProviderRegistry& registry);
 // is enumerated. Tenant #2 of the device-keyed dispatch.
 void RegisterOpenclCellNeuralProvider(NeuralProviderRegistry& registry);
 #endif
+#ifdef CYXWIZ_HAS_ONEAPI_DNN_PROVIDER
+// Defined in oneapi_sycl_provider.cpp; registers when the SYCL kernel
+// library is installed next to the backend. Tenant #3.
+void RegisterOneapiSyclNeuralProvider(NeuralProviderRegistry& registry);
+#endif
 
 const char* NeuralOpName(NeuralOp op) {
     switch (op) {
@@ -95,6 +100,9 @@ NeuralProviderRegistry& NeuralProviderRegistry::Instance() {
 #endif
 #ifdef CYXWIZ_HAS_OPENCL_DNN_PROVIDER
         RegisterOpenclCellNeuralProvider(registry);
+#endif
+#ifdef CYXWIZ_HAS_ONEAPI_DNN_PROVIDER
+        RegisterOneapiSyclNeuralProvider(registry);
 #endif
     });
     return registry;

@@ -17,8 +17,11 @@
 #endif
 #include <arrayfire.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -40,6 +43,12 @@ struct BackendGuard {
         }
     }
 };
+
+// Device-resident calls never read back to the host, except on oneAPI,
+// whose tenant is host-staged: one attributed read per input.
+int ExpectedHostSyncs(size_t inputs) {
+    return af::getActiveBackend() == AF_BACKEND_ONEAPI ? static_cast<int>(inputs) : 0;
+}
 
 void RunProbe(af::Backend backend, int device, const char* label) {
     BackendGuard guard;
@@ -75,7 +84,7 @@ void RunProbe(af::Backend backend, int device, const char* label) {
     }
     INFO(label << " provider " << provider->ProviderId() << ": " << status.detail);
     REQUIRE(status.ok);
-    CHECK(g_host_syncs == 0);
+    CHECK(g_host_syncs == ExpectedHostSyncs(1));
     REQUIRE(outputs.size() == 1);
     REQUIRE(outputs[0].Shape() == std::vector<size_t>{request.elements});
 
@@ -132,6 +141,66 @@ bool ActiveDeviceServed() {
     std::vector<cyxwiz::Tensor> outputs;
     return cyxwiz::ExecuteNeuralOpOnDevice(*provider, request, {&input}, {{4}}, outputs).ok;
 }
+
+// When set, references and error reductions run on ArrayFire's CPU backend
+// instead of the device under test. Used for the oneAPI tenant: ArrayFire
+// 3.10's own oneAPI kernels intermittently fault on the Intel CPU OpenCL
+// runtime (seen in af::max over [257, 257, 3, 2] scores; tofix112), and an
+// independent backend is the stronger oracle anyway.
+bool g_reference_on_cpu = false;
+
+class ReferenceBackend {
+public:
+    ReferenceBackend() : active_(g_reference_on_cpu) {
+        if (!active_) return;
+        backend_ = af::getActiveBackend();
+        device_ = af::getDevice();
+    }
+    ~ReferenceBackend() {
+        if (!active_ || !entered_) return;
+        try {
+            af::setBackend(backend_);
+            af::setDevice(device_);
+        } catch (...) {
+        }
+    }
+    ReferenceBackend(const ReferenceBackend&) = delete;
+    ReferenceBackend& operator=(const ReferenceBackend&) = delete;
+
+    // Call before Enter(): copies a device array for the reference backend.
+    af::array Move(const af::array& a) {
+        if (!active_) return a;
+        REQUIRE_FALSE(entered_);
+        std::vector<float> host(static_cast<size_t>(a.elements()));
+        a.as(f32).host(host.data());
+        staged_.push_back({a.dims(), std::move(host)});
+        return af::array();  // placeholder, rebuilt by Enter()
+    }
+    // Switches to the CPU backend and rebuilds the moved arrays there, in
+    // the order they were moved.
+    void Enter(std::initializer_list<af::array*> targets) {
+        if (!active_) return;
+        REQUIRE(targets.size() == staged_.size());
+        af::setBackend(AF_BACKEND_CPU);
+        entered_ = true;
+        size_t i = 0;
+        for (af::array* target : targets) {
+            *target = af::array(staged_[i].dims, staged_[i].data.data());
+            ++i;
+        }
+    }
+
+private:
+    struct Staged {
+        af::dim4 dims;
+        std::vector<float> data;
+    };
+    bool active_ = false;
+    bool entered_ = false;
+    af::Backend backend_ = AF_BACKEND_CPU;
+    int device_ = 0;
+    std::vector<Staged> staged_;
+};
 
 struct AttentionCase {
     const char* label;
@@ -219,11 +288,18 @@ void RunAttentionForward(const AttentionCase& c) {
     }
     INFO(c.label << ": " << status.detail);
     REQUIRE(status.ok);
-    CHECK(g_host_syncs == 0);
+    CHECK(g_host_syncs == ExpectedHostSyncs(inputs.size()));
+    af::array rq = Q, rk = K, rv = V, rs = slopes;
+    af::array out_o = outputs[0].GetSemanticArray(), out_lse = outputs[1].GetSemanticArray();
+    ReferenceBackend reference;
+    if (g_reference_on_cpu) {
+        for (af::array* a : {&rq, &rk, &rv, &rs, &out_o, &out_lse}) *a = reference.Move(*a);
+        reference.Enter({&rq, &rk, &rv, &rs, &out_o, &out_lse});
+    }
     af::array O, LSE;
-    ReferenceAttention(c, Q, K, V, slopes, request.softmax_scale, O, LSE);
-    const float o_error = af::max<float>(af::abs(outputs[0].GetSemanticArray() - O));
-    const float lse_error = af::max<float>(af::abs(outputs[1].GetSemanticArray() - LSE));
+    ReferenceAttention(c, rq, rk, rv, rs, request.softmax_scale, O, LSE);
+    const float o_error = af::max<float>(af::abs(out_o - af::moddims(O, out_o.dims())));
+    const float lse_error = af::max<float>(af::abs(out_lse - af::moddims(LSE, out_lse.dims())));
     INFO(c.label << ": max |O - ref| = " << o_error << ", max |LSE - ref| = " << lse_error);
     CHECK(o_error < 2e-5f);
     CHECK(lse_error < 2e-5f);
@@ -331,12 +407,19 @@ void RunAttentionBackward(const AttentionCase& c) {
     }
     INFO(c.label << ": " << status.detail);
     REQUIRE(status.ok);
-    CHECK(g_host_syncs == 0);
+    CHECK(g_host_syncs == ExpectedHostSyncs(inputs.size()));
+    af::array rq = Q, rk = K, rv = V, rgo = dO, rs = slopes;
+    af::array g_q = grads[0].GetSemanticArray(), g_k = grads[1].GetSemanticArray(), g_v = grads[2].GetSemanticArray();
+        ReferenceBackend reference;
+    if (g_reference_on_cpu) {
+        for (af::array* a : {&rq, &rk, &rv, &rgo, &rs, &g_q, &g_k, &g_v}) *a = reference.Move(*a);
+        reference.Enter({&rq, &rk, &rv, &rgo, &rs, &g_q, &g_k, &g_v});
+    }
     af::array dQ, dK, dV;
-    ReferenceAttentionBackward(c, Q, K, V, dO, slopes, request.softmax_scale, dQ, dK, dV);
-    const float eq = af::max<float>(af::abs(grads[0].GetSemanticArray() - dQ));
-    const float ek = af::max<float>(af::abs(grads[1].GetSemanticArray() - dK));
-    const float ev = af::max<float>(af::abs(grads[2].GetSemanticArray() - dV));
+    ReferenceAttentionBackward(c, rq, rk, rv, rgo, rs, request.softmax_scale, dQ, dK, dV);
+    const float eq = af::max<float>(af::abs(g_q - af::moddims(dQ, g_q.dims())));
+    const float ek = af::max<float>(af::abs(g_k - af::moddims(dK, g_k.dims())));
+    const float ev = af::max<float>(af::abs(g_v - af::moddims(dV, g_v.dims())));
     INFO(c.label << ": max |dQ| err " << eq << ", |dK| err " << ek << ", |dV| err " << ev);
     CHECK(eq < 5e-5f);
     CHECK(ek < 5e-5f);
@@ -490,11 +573,19 @@ void RunAttentionDropout(const AttentionCase& c, float p, uint64_t seed) {
                                             {{d, sq, b, hq}, {d, sk, b, hk}, {d, sk, b, hk}, {sq, b, hq}}, grads).ok);
 
     // Reference with the same mask.
+    af::array Q_ref = Q, K_ref = K, V_ref = V, dO_ref = dO;
+    af::array f_o = forward[0].GetSemanticArray(), g_q = grads[0].GetSemanticArray();
+    af::array g_k = grads[1].GetSemanticArray(), g_v = grads[2].GetSemanticArray();
+    ReferenceBackend reference;
+    if (g_reference_on_cpu) {
+        for (af::array* a : {&Q_ref, &K_ref, &V_ref, &dO_ref, &f_o, &g_q, &g_k, &g_v}) *a = reference.Move(*a);
+        reference.Enter({&Q_ref, &K_ref, &V_ref, &dO_ref, &f_o, &g_q, &g_k, &g_v});
+    }
     double kept_fraction = 0.0;
     const af::array mask = DropoutMask(c.batch, c.heads, c.sq, c.sk, seed, p, kept_fraction);
     const int groups = c.heads / c.kv_heads;
-    af::array qh = af::reorder(Q, 1, 0, 2, 3), kh = af::reorder(K, 1, 0, 2, 3), vh = af::reorder(V, 1, 0, 2, 3);
-    const af::array goh = af::reorder(dO, 1, 0, 2, 3);
+    af::array qh = af::reorder(Q_ref, 1, 0, 2, 3), kh = af::reorder(K_ref, 1, 0, 2, 3), vh = af::reorder(V_ref, 1, 0, 2, 3);
+    const af::array goh = af::reorder(dO_ref, 1, 0, 2, 3);
     if (groups > 1) {
         af::array idx = af::floor(af::range(af::dim4(c.heads)) / groups).as(s32);
         kh = af::lookup(kh, idx, 3);
@@ -520,10 +611,10 @@ void RunAttentionDropout(const AttentionCase& c, float p, uint64_t seed) {
         dv = af::moddims(af::sum(af::moddims(dv, af::dim4(c.sk * c.head_dim * c.batch, groups, c.kv_heads)), 1),
                          af::dim4(c.sk, c.head_dim, c.batch, c.kv_heads));
     }
-    const float eo = af::max<float>(af::abs(forward[0].GetSemanticArray() - af::reorder(o_ref, 1, 0, 2, 3)));
-    const float eq = af::max<float>(af::abs(grads[0].GetSemanticArray() - af::reorder(dq, 1, 0, 2, 3)));
-    const float ek = af::max<float>(af::abs(grads[1].GetSemanticArray() - af::reorder(dk, 1, 0, 2, 3)));
-    const float ev = af::max<float>(af::abs(grads[2].GetSemanticArray() - af::reorder(dv, 1, 0, 2, 3)));
+    const float eo = af::max<float>(af::abs(f_o - af::moddims(af::reorder(o_ref, 1, 0, 2, 3), f_o.dims())));
+    const float eq = af::max<float>(af::abs(g_q - af::moddims(af::reorder(dq, 1, 0, 2, 3), g_q.dims())));
+    const float ek = af::max<float>(af::abs(g_k - af::moddims(af::reorder(dk, 1, 0, 2, 3), g_k.dims())));
+    const float ev = af::max<float>(af::abs(g_v - af::moddims(af::reorder(dv, 1, 0, 2, 3), g_v.dims())));
     INFO(c.label << " p=" << p << ": kept " << kept_fraction << ", errors O " << eo << " dQ " << eq << " dK " << ek
                  << " dV " << ev);
     CHECK(std::abs(kept_fraction - (1.0 - p)) < 0.02);
@@ -606,6 +697,75 @@ TEST_CASE("Attention layers with dropout train through the fused kernels",
     const auto params = layer.GetParameters();
     CHECK(af::sum<float>(af::abs(params.at("grad_W_q").GetSemanticArray())) > 0.0f);
     af::setBackend(AF_BACKEND_CPU);
+}
+
+// oneAPI tenant. Selecting an unqualified oneAPI device can crash inside
+// ArrayFire itself (older iGPU drivers), so the device is opt-in:
+// CYXWIZ_ONEAPI_TEST_DEVICE=<ArrayFire oneAPI device index>.
+TEST_CASE("Fused attention matches the materialized reference on oneAPI",
+          "[neural_provider][device_resident][attention][oneapi]") {
+    const char* chosen = std::getenv("CYXWIZ_ONEAPI_TEST_DEVICE");
+    if (!chosen || !*chosen) {
+        WARN("CYXWIZ_ONEAPI_TEST_DEVICE is not set; oneAPI tenant not exercised");
+        return;
+    }
+    const int device = std::atoi(chosen);
+    BackendGuard guard;
+    try {
+        guard.previous = af::getActiveBackend();
+        guard.previous_device = af::getDevice();
+        af::setBackend(AF_BACKEND_ONEAPI);
+        af::setDevice(device);
+        guard.active = true;
+    } catch (...) {
+        WARN("ArrayFire oneAPI backend or device " << device << " not available; oneAPI tenant not exercised");
+        return;
+    }
+    INFO("oneAPI device " << device << ": " << af::infoString());
+    cyxwiz::NeuralOpRequest probe;
+    probe.target = cyxwiz::CaptureCurrentNeuralDeviceTarget();
+    if (cyxwiz::NeuralProviderRegistry::Instance().ListServing(probe.target).empty()) {
+        WARN("no oneAPI provider (kernel library not built); oneAPI tenant not exercised");
+        return;
+    }
+    RunProbe(AF_BACKEND_ONEAPI, device, "oneapi");
+    REQUIRE(ActiveDeviceServed());
+    struct ReferenceOnCpu {
+        ReferenceOnCpu() { g_reference_on_cpu = true; }
+        ~ReferenceOnCpu() { g_reference_on_cpu = false; }
+    } reference_on_cpu;
+    const AttentionCase cases[] = {
+        {"causal d64", 2, 4, 4, 100, 100, 64, 0, true, 0, 0.0f, false},
+        {"bidirectional d32", 2, 2, 2, 70, 90, 32, 0, false, 0, 0.0f, false},
+        {"gqa 4q/2kv", 2, 4, 2, 65, 65, 32, 0, true, 0, 0.0f, false},
+        {"mqa 4q/1kv d16", 1, 4, 1, 40, 40, 16, 0, true, 0, 0.0f, false},
+        {"sliding window 17 + softcap", 2, 2, 2, 130, 130, 32, 0, true, 17, 3.0f, false},
+        {"alibi + kv-cache step", 2, 4, 2, 1, 101, 32, 100, true, 0, 0.0f, true},
+        {"kv-cache prefill chunk (offset 64)", 1, 2, 2, 7, 71, 64, 64, true, 9, 2.0f, false},
+        {"head_dim 128", 1, 2, 2, 33, 33, 128, 0, true, 0, 0.0f, false},
+        {"head_dim 8", 3, 2, 2, 257, 257, 8, 0, true, 0, 0.0f, false},
+        {"head_dim 48 (bucket 64)", 1, 2, 2, 50, 50, 48, 0, true, 0, 0.0f, false},
+        {"alibi", 2, 4, 4, 60, 60, 32, 0, true, 0, 0.0f, true},
+        {"alibi + gqa", 2, 4, 2, 60, 60, 32, 0, true, 0, 0.0f, true},
+        {"kv-cache step, gqa, no alibi", 2, 4, 2, 1, 101, 32, 100, true, 0, 0.0f, false},
+        {"kv-cache step, alibi, mha", 2, 4, 4, 1, 101, 32, 100, true, 0, 0.0f, true},
+    };
+    for (const auto& c : cases) RunAttentionForward(c);
+    for (const auto& c : cases) RunAttentionBackward(c);
+    RunDropoutCasesOn(AF_BACKEND_ONEAPI, device);
+
+    // The attention layer takes the fused path on this device too.
+    cyxwiz::MultiHeadAttentionLayer layer(32, 4, 0.0f, true);
+    layer.DeclareStandardMask(true, 0);
+    const cyxwiz::Tensor input = cyxwiz::Tensor::FromSemanticArray(af::randu(2, 40, 32) - 0.5f, {2, 40, 32});
+    const cyxwiz::Tensor mask = cyxwiz::TransformerDecoderLayer::GenerateCausalMask(40);
+    layer.SetTraining(true);
+    const af::array out = layer.Forward(input, input, input, &mask).GetSemanticArray();
+    CHECK(layer.LastForwardUsedFusedAttention());
+    const cyxwiz::Tensor grad =
+        layer.Backward(cyxwiz::Tensor::FromSemanticArray(af::constant(0.01f, 2, 40, 32), {2, 40, 32}));
+    CHECK(af::allTrue<bool>(af::isNaN(grad.GetSemanticArray()) == 0));
+    CHECK(af::allTrue<bool>(af::isNaN(out) == 0));
 }
 
 TEST_CASE("Device-resident requests fail closed without a serving provider",

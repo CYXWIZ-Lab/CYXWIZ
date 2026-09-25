@@ -35,6 +35,10 @@ enum class BackendFallbackReason {
     // slower than native CPU on (hidden below the retention floor). Not a
     // contract failure, so it gets its own persisted name.
     OpenclProviderBelowRetentionFloor,
+    // oneAPI (SYCL) provider, device-resident attention (tofix112 phase 5b).
+    OneapiProviderUnavailable,
+    OneapiProviderUnsupportedContract,
+    OneapiProviderExecutionFailed,
 };
 
 constexpr const char* BackendFallbackReasonName(BackendFallbackReason reason) {
@@ -77,6 +81,12 @@ constexpr const char* BackendFallbackReasonName(BackendFallbackReason reason) {
         return "opencl_provider_execution_failed";
     case BackendFallbackReason::OpenclProviderBelowRetentionFloor:
         return "opencl_provider_below_retention_floor";
+    case BackendFallbackReason::OneapiProviderUnavailable:
+        return "oneapi_provider_unavailable";
+    case BackendFallbackReason::OneapiProviderUnsupportedContract:
+        return "oneapi_provider_unsupported_contract";
+    case BackendFallbackReason::OneapiProviderExecutionFailed:
+        return "oneapi_provider_execution_failed";
     }
     return "backend_internal_error";
 }

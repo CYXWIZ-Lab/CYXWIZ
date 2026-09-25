@@ -165,14 +165,18 @@ TEST_CASE("Neural provider registry dispatches on the selected device",
           "cyxwiz.test-stub-opencl");
     CHECK(opencl_pick->Platform() == DeviceType::OPENCL);
 
-    // No provider serves the CPU or oneAPI family here: fail closed, the
-    // portable path decides. A default-constructed request (CPU target)
-    // therefore never selects a provider.
+    // No provider serves the CPU family, and the fixture's cell request is
+    // unserved on oneAPI too (the oneAPI tenant, when built and installed,
+    // covers device-resident attention only): fail closed, the portable
+    // path decides. A default-constructed request (CPU target) therefore
+    // never selects a provider.
     CHECK(registry.FindSupporting(MakeFixtureRequest(DeviceType::CPU)) ==
           nullptr);
     CHECK(registry.FindSupporting(MakeFixtureRequest(DeviceType::ONEAPI)) ==
           nullptr);
+#ifndef CYXWIZ_HAS_ONEAPI_DNN_PROVIDER
     CHECK(registry.ListServing({DeviceType::ONEAPI, 0}).empty());
+#endif
     cyxwiz::NeuralOpRequest unfilled = MakeFixtureRequest(DeviceType::CUDA);
     unfilled.target = {};
     CHECK(unfilled.target.platform == DeviceType::CPU);
