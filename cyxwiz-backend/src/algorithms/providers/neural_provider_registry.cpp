@@ -39,6 +39,7 @@ const char* NeuralOpName(NeuralOp op) {
     case NeuralOp::GruBackward: return "gru_backward";
     case NeuralOp::AttentionForward: return "attention_forward";
     case NeuralOp::AttentionBackward: return "attention_backward";
+    case NeuralOp::DeviceProbe: return "device_probe";
     }
     return "unknown_neural_op";
 }

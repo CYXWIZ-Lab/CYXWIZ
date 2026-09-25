@@ -66,6 +66,8 @@ MultiHeadAttentionModule::MultiHeadAttentionModule(size_t embed_dim, size_t num_
     if (options_.alibi) layer_->SetAlibi(true);
     if (options_.qk_norm) layer_->SetQKNorm(true, options_.qk_norm_eps);
     layer_->SetLogitSoftcap(options_.logit_softcap);
+    // Forward passes the standard causal mask, or no mask when not causal.
+    layer_->DeclareStandardMask(options_.causal, options_.sliding_window);
 }
 
 Tensor MultiHeadAttentionModule::Forward(const Tensor& input) {

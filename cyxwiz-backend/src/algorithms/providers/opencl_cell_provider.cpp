@@ -32,6 +32,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -429,6 +431,395 @@ struct ClBuffer {
     }
 };
 
+// Device-resident (v2) kernels, built in ArrayFire's own context so they can
+// read and write ArrayFire's cl_mem buffers on ArrayFire's queue
+// (tofix112 phase 5b). Separate from the cell program.
+constexpr const char* kDeviceKernelSource = R"CLC(
+__kernel void cyx_device_probe(__global const float* x, __global float* y, int n) {
+    const int i = get_global_id(0);
+    if (i < n) y[i] = 2.0f * x[i];
+}
+)CLC";
+
+constexpr const char* kAttentionKernelSource = R"CLC(
+// Fused attention (tofix112 phase 5b), same algorithm and contract as the
+// CUDA tenant: one work-item per query (or key) row, ATTN_BR rows per
+// work-group, ATTN_BC-row K/V (or Q/dO) tiles in local memory, online
+// softmax; HEAD_DIM is a build-time define.
+#define ATTN_BR 64
+#define ATTN_BC 32
+
+// Counter-based attention-dropout mask, identical to the CUDA tenant's.
+float cyx_keep(ulong seed, ulong index, float p) {
+    if (p <= 0.0f) return 1.0f;
+    ulong z = seed + index * 0x9E3779B97F4A7C15UL;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9UL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBUL;
+    z ^= z >> 31;
+    const float u = (float)(z >> 40) * (1.0f / 16777216.0f);
+    return u >= p ? 1.0f / (1.0f - p) : 0.0f;
+}
+
+float cyx_score(float dot, float scale, float softcap, float slope_term, float* tanh_out) {
+    float x = dot * scale;
+    float t = 0.0f;
+    if (softcap > 0.0f) { t = tanh(x / softcap); x = softcap * t; }
+    *tanh_out = t;
+    return x + slope_term;
+}
+
+__kernel __attribute__((reqd_work_group_size(ATTN_BR, 1, 1)))
+void cyx_attention_forward(__global const float* Q, __global const float* K, __global const float* V,
+                           __global const float* slopes, int has_slopes, __global float* O, __global float* LSE,
+                           int B, int H, int KVH, int Sq, int Sk, int q_offset,
+                           int causal, int window, float softcap, float scale, float dropout, ulong seed)
+{
+    __local float Ks[ATTN_BC][HEAD_DIM];
+    __local float Vs[ATTN_BC][HEAD_DIM];
+    const int lid = get_local_id(0);
+    const int h = get_group_id(1);
+    const int b = get_group_id(2);
+    const int kvh = h / (H / KVH);
+    const int row = get_group_id(0) * ATTN_BR + lid;
+    const bool active = row < Sq;
+    const int qpos = row + q_offset;
+    const size_t q_base = (((size_t)h * B + b) * Sq + row) * HEAD_DIM;
+    const size_t kv_base = ((size_t)kvh * B + b) * Sk * HEAD_DIM;
+    float q[HEAD_DIM];
+    float acc[HEAD_DIM];
+    for (int d = 0; d < HEAD_DIM; ++d) { q[d] = active ? Q[q_base + d] : 0.0f; acc[d] = 0.0f; }
+    const float slope = has_slopes ? slopes[h] : 0.0f;
+    float m = -INFINITY;
+    float l = 0.0f;
+    const int first_q = get_group_id(0) * ATTN_BR + q_offset;
+    const int last_q = min(Sq, (int)(get_group_id(0) + 1) * ATTN_BR) - 1 + q_offset;
+    const int k_end = causal ? min(Sk, last_q + 1) : Sk;
+    int k_begin = window > 0 ? max(0, first_q - window + 1) : 0;
+    k_begin = (k_begin / ATTN_BC) * ATTN_BC;
+    for (int k0 = k_begin; k0 < k_end; k0 += ATTN_BC) {
+        for (int idx = lid; idx < ATTN_BC * HEAD_DIM; idx += ATTN_BR) {
+            const int j = idx / HEAD_DIM;
+            const int d = idx - j * HEAD_DIM;
+            const int key = k0 + j;
+            const bool in = key < Sk;
+            Ks[j][d] = in ? K[kv_base + (size_t)key * HEAD_DIM + d] : 0.0f;
+            Vs[j][d] = in ? V[kv_base + (size_t)key * HEAD_DIM + d] : 0.0f;
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+        if (active) {
+            float s[ATTN_BC];
+            float tile_max = -INFINITY;
+            for (int j = 0; j < ATTN_BC; ++j) {
+                const int key = k0 + j;
+                const bool valid = key < Sk && (!causal || key <= qpos) && (window <= 0 || qpos - key < window);
+                if (!valid) { s[j] = -INFINITY; continue; }
+                float dot = 0.0f;
+                for (int d = 0; d < HEAD_DIM; ++d) dot += q[d] * Ks[j][d];
+                float t;
+                const float x = cyx_score(dot, scale, softcap, has_slopes ? slope * (float)(key - qpos) : 0.0f, &t);
+                s[j] = x;
+                tile_max = fmax(tile_max, x);
+            }
+            if (tile_max > -INFINITY) {
+                const float m_new = fmax(m, tile_max);
+                const float correction = (m == -INFINITY) ? 0.0f : exp(m - m_new);
+                l *= correction;
+                for (int d = 0; d < HEAD_DIM; ++d) acc[d] *= correction;
+                const ulong drop_row = (((ulong)b * H + h) * Sq + row) * Sk;
+                for (int j = 0; j < ATTN_BC; ++j) {
+                    if (s[j] == -INFINITY) continue;
+                    const float p = exp(s[j] - m_new);
+                    l += p;
+                    const float pk = p * cyx_keep(seed, drop_row + (ulong)(k0 + j), dropout);
+                    for (int d = 0; d < HEAD_DIM; ++d) acc[d] += pk * Vs[j][d];
+                }
+                m = m_new;
+            }
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+    if (active) {
+        const float inv = l > 0.0f ? 1.0f / l : 0.0f;
+        for (int d = 0; d < HEAD_DIM; ++d) O[q_base + d] = acc[d] * inv;
+        LSE[((size_t)h * B + b) * Sq + row] = l > 0.0f ? m + log(l) : -INFINITY;
+    }
+}
+
+__kernel void cyx_attention_backward_delta(__global const float* O, __global const float* dO,
+                                           __global float* delta, int rows)
+{
+    const int r = get_global_id(0);
+    if (r >= rows) return;
+    float sum = 0.0f;
+    for (int d = 0; d < HEAD_DIM; ++d) sum += O[(size_t)r * HEAD_DIM + d] * dO[(size_t)r * HEAD_DIM + d];
+    delta[r] = sum;
+}
+
+__kernel __attribute__((reqd_work_group_size(ATTN_BR, 1, 1)))
+void cyx_attention_backward_dq(__global const float* Q, __global const float* K, __global const float* V,
+                               __global const float* dO, __global const float* LSE, __global const float* delta,
+                               __global const float* slopes, int has_slopes, __global float* dQ,
+                               int B, int H, int KVH, int Sq, int Sk, int q_offset,
+                               int causal, int window, float softcap, float scale, float dropout, ulong seed)
+{
+    __local float Ks[ATTN_BC][HEAD_DIM];
+    __local float Vs[ATTN_BC][HEAD_DIM];
+    const int lid = get_local_id(0);
+    const int h = get_group_id(1);
+    const int b = get_group_id(2);
+    const int kvh = h / (H / KVH);
+    const int row = get_group_id(0) * ATTN_BR + lid;
+    const bool active = row < Sq;
+    const int qpos = row + q_offset;
+    const size_t row_index = ((size_t)h * B + b) * Sq + row;
+    const size_t q_base = row_index * HEAD_DIM;
+    const size_t kv_base = ((size_t)kvh * B + b) * Sk * HEAD_DIM;
+    float q[HEAD_DIM], go[HEAD_DIM], dq[HEAD_DIM];
+    for (int d = 0; d < HEAD_DIM; ++d) {
+        q[d] = active ? Q[q_base + d] : 0.0f;
+        go[d] = active ? dO[q_base + d] : 0.0f;
+        dq[d] = 0.0f;
+    }
+    const float lse = active ? LSE[row_index] : 0.0f;
+    const float dl = active ? delta[row_index] : 0.0f;
+    const float slope = has_slopes ? slopes[h] : 0.0f;
+    const int first_q = get_group_id(0) * ATTN_BR + q_offset;
+    const int last_q = min(Sq, (int)(get_group_id(0) + 1) * ATTN_BR) - 1 + q_offset;
+    const int k_end = causal ? min(Sk, last_q + 1) : Sk;
+    int k_begin = window > 0 ? max(0, first_q - window + 1) : 0;
+    k_begin = (k_begin / ATTN_BC) * ATTN_BC;
+    for (int k0 = k_begin; k0 < k_end; k0 += ATTN_BC) {
+        for (int idx = lid; idx < ATTN_BC * HEAD_DIM; idx += ATTN_BR) {
+            const int j = idx / HEAD_DIM;
+            const int d = idx - j * HEAD_DIM;
+            const int key = k0 + j;
+            const bool in = key < Sk;
+            Ks[j][d] = in ? K[kv_base + (size_t)key * HEAD_DIM + d] : 0.0f;
+            Vs[j][d] = in ? V[kv_base + (size_t)key * HEAD_DIM + d] : 0.0f;
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+        if (active && lse > -INFINITY) {
+            for (int j = 0; j < ATTN_BC; ++j) {
+                const int key = k0 + j;
+                const bool valid = key < Sk && (!causal || key <= qpos) && (window <= 0 || qpos - key < window);
+                if (!valid) continue;
+                float dot = 0.0f, dp = 0.0f;
+                for (int d = 0; d < HEAD_DIM; ++d) { dot += q[d] * Ks[j][d]; dp += go[d] * Vs[j][d]; }
+                float t;
+                const float x = cyx_score(dot, scale, softcap, has_slopes ? slope * (float)(key - qpos) : 0.0f, &t);
+                const float p = exp(x - lse);
+                const float keep = cyx_keep(seed, (((ulong)b * H + h) * Sq + row) * Sk + key, dropout);
+                float ds = p * (dp * keep - dl);
+                if (softcap > 0.0f) ds *= (1.0f - t * t);
+                ds *= scale;
+                for (int d = 0; d < HEAD_DIM; ++d) dq[d] += ds * Ks[j][d];
+            }
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+    if (active) {
+        for (int d = 0; d < HEAD_DIM; ++d) dQ[q_base + d] = dq[d];
+    }
+}
+
+__kernel __attribute__((reqd_work_group_size(ATTN_BR, 1, 1)))
+void cyx_attention_backward_dkdv(__global const float* Q, __global const float* K, __global const float* V,
+                                 __global const float* dO, __global const float* LSE, __global const float* delta,
+                                 __global const float* slopes, int has_slopes, __global float* dK, __global float* dV,
+                                 int B, int H, int KVH, int Sq, int Sk, int q_offset,
+                                 int causal, int window, float softcap, float scale, float dropout, ulong seed)
+{
+    __local float Qs[ATTN_BC][HEAD_DIM];
+    __local float Gs[ATTN_BC][HEAD_DIM];
+    __local float Ls[ATTN_BC];
+    __local float Ds[ATTN_BC];
+    const int lid = get_local_id(0);
+    const int kvh = get_group_id(1);
+    const int b = get_group_id(2);
+    const int key = get_group_id(0) * ATTN_BR + lid;
+    const bool active = key < Sk;
+    const size_t k_base = (((size_t)kvh * B + b) * Sk + key) * HEAD_DIM;
+    float k[HEAD_DIM], v[HEAD_DIM], dk[HEAD_DIM], dv[HEAD_DIM];
+    for (int d = 0; d < HEAD_DIM; ++d) {
+        k[d] = active ? K[k_base + d] : 0.0f;
+        v[d] = active ? V[k_base + d] : 0.0f;
+        dk[d] = 0.0f;
+        dv[d] = 0.0f;
+    }
+    const int groups = H / KVH;
+    const int first_key = get_group_id(0) * ATTN_BR;
+    const int last_key = min(Sk, (int)(get_group_id(0) + 1) * ATTN_BR) - 1;
+    int q_begin = causal ? max(0, first_key - q_offset) : 0;
+    q_begin = (q_begin / ATTN_BC) * ATTN_BC;
+    const int q_end = window > 0 ? min(Sq, last_key + window - q_offset) : Sq;
+    for (int g = 0; g < groups; ++g) {
+        const int h = kvh * groups + g;
+        const float slope = has_slopes ? slopes[h] : 0.0f;
+        const size_t head_rows = ((size_t)h * B + b) * Sq;
+        for (int i0 = q_begin; i0 < q_end; i0 += ATTN_BC) {
+            for (int idx = lid; idx < ATTN_BC * HEAD_DIM; idx += ATTN_BR) {
+                const int i = idx / HEAD_DIM;
+                const int d = idx - i * HEAD_DIM;
+                const int row = i0 + i;
+                const bool in = row < Sq;
+                Qs[i][d] = in ? Q[(head_rows + row) * HEAD_DIM + d] : 0.0f;
+                Gs[i][d] = in ? dO[(head_rows + row) * HEAD_DIM + d] : 0.0f;
+            }
+            for (int i = lid; i < ATTN_BC; i += ATTN_BR) {
+                const int row = i0 + i;
+                Ls[i] = row < Sq ? LSE[head_rows + row] : -INFINITY;
+                Ds[i] = row < Sq ? delta[head_rows + row] : 0.0f;
+            }
+            barrier(CLK_LOCAL_MEM_FENCE);
+            if (active) {
+                for (int i = 0; i < ATTN_BC; ++i) {
+                    const int row = i0 + i;
+                    const int qpos = row + q_offset;
+                    const bool valid = row < Sq && Ls[i] > -INFINITY && (!causal || key <= qpos) &&
+                                       (window <= 0 || qpos - key < window);
+                    if (!valid) continue;
+                    float dot = 0.0f, dp = 0.0f;
+                    for (int d = 0; d < HEAD_DIM; ++d) { dot += Qs[i][d] * k[d]; dp += Gs[i][d] * v[d]; }
+                    float t;
+                    const float x = cyx_score(dot, scale, softcap, has_slopes ? slope * (float)(key - qpos) : 0.0f, &t);
+                    const float p = exp(x - Ls[i]);
+                    const float keep = cyx_keep(seed, (((ulong)b * H + h) * Sq + row) * Sk + key, dropout);
+                    float ds = p * (dp * keep - Ds[i]);
+                    if (softcap > 0.0f) ds *= (1.0f - t * t);
+                    ds *= scale;
+                    const float pk = p * keep;
+                    for (int d = 0; d < HEAD_DIM; ++d) {
+                        dv[d] += pk * Gs[i][d];
+                        dk[d] += ds * Qs[i][d];
+                    }
+                }
+            }
+            barrier(CLK_LOCAL_MEM_FENCE);
+        }
+    }
+    if (active) {
+        for (int d = 0; d < HEAD_DIM; ++d) { dK[k_base + d] = dk[d]; dV[k_base + d] = dv[d]; }
+    }
+}
+)CLC";
+
+class DeviceResidentProgram {
+public:
+    ~DeviceResidentProgram() {
+        ReleaseAttention();
+        if (probe_) clReleaseKernel(probe_);
+        if (program_) clReleaseProgram(program_);
+    }
+
+    bool Ensure(cl_context context, cl_device_id device, std::string& failure) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (ready_ && context == context_ && device == device_) return true;
+        if (probe_) clReleaseKernel(probe_);
+        if (program_) clReleaseProgram(program_);
+        probe_ = nullptr;
+        program_ = nullptr;
+        ready_ = false;
+        cl_int err = CL_SUCCESS;
+        const char* source = kDeviceKernelSource;
+        const size_t length = std::strlen(kDeviceKernelSource);
+        program_ = clCreateProgramWithSource(context, 1, &source, &length, &err);
+        if (err != CL_SUCCESS) {
+            failure = "OpenCL device program creation failed (" + std::to_string(err) + ")";
+            return false;
+        }
+        err = clBuildProgram(program_, 1, &device, "-cl-std=CL1.2", nullptr, nullptr);
+        if (err != CL_SUCCESS) {
+            size_t log_size = 0;
+            clGetProgramBuildInfo(program_, device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &log_size);
+            std::string log(log_size, '\0');
+            clGetProgramBuildInfo(program_, device, CL_PROGRAM_BUILD_LOG, log_size, log.data(), nullptr);
+            failure = "OpenCL device program build failed: " + log;
+            return false;
+        }
+        probe_ = clCreateKernel(program_, "cyx_device_probe", &err);
+        if (err != CL_SUCCESS) {
+            failure = "OpenCL device kernel lookup failed: cyx_device_probe";
+            return false;
+        }
+        context_ = context;
+        device_ = device;
+        ready_ = true;
+        return true;
+    }
+
+    cl_kernel Probe() const { return probe_; }
+    std::mutex& Mutex() { return mutex_; }
+
+    struct AttentionKernels {
+        cl_program program = nullptr;
+        cl_kernel forward = nullptr;
+        cl_kernel delta = nullptr;
+        cl_kernel dq = nullptr;
+        cl_kernel dkdv = nullptr;
+    };
+    // Attention kernels for ArrayFire's context/device and a head width;
+    // built on first use. Caller holds Mutex().
+    const AttentionKernels* Attention(cl_context context, cl_device_id device, int head_dim, std::string& failure) {
+        if (context != attention_context_ || device != attention_device_) {
+            ReleaseAttention();
+            attention_context_ = context;
+            attention_device_ = device;
+        }
+        auto found = attention_.find(head_dim);
+        if (found != attention_.end()) return &found->second;
+        cl_int err = CL_SUCCESS;
+        const char* source = kAttentionKernelSource;
+        const size_t length = std::strlen(kAttentionKernelSource);
+        AttentionKernels kernels;
+        kernels.program = clCreateProgramWithSource(context, 1, &source, &length, &err);
+        if (err != CL_SUCCESS) {
+            failure = "OpenCL attention program creation failed (" + std::to_string(err) + ")";
+            return nullptr;
+        }
+        const std::string options = "-cl-std=CL1.2 -DHEAD_DIM=" + std::to_string(head_dim);
+        err = clBuildProgram(kernels.program, 1, &device, options.c_str(), nullptr, nullptr);
+        if (err != CL_SUCCESS) {
+            size_t log_size = 0;
+            clGetProgramBuildInfo(kernels.program, device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &log_size);
+            std::string log(log_size, '\0');
+            clGetProgramBuildInfo(kernels.program, device, CL_PROGRAM_BUILD_LOG, log_size, log.data(), nullptr);
+            clReleaseProgram(kernels.program);
+            failure = "OpenCL attention program build failed: " + log;
+            return nullptr;
+        }
+        kernels.forward = clCreateKernel(kernels.program, "cyx_attention_forward", &err);
+        if (err == CL_SUCCESS) kernels.delta = clCreateKernel(kernels.program, "cyx_attention_backward_delta", &err);
+        if (err == CL_SUCCESS) kernels.dq = clCreateKernel(kernels.program, "cyx_attention_backward_dq", &err);
+        if (err == CL_SUCCESS) kernels.dkdv = clCreateKernel(kernels.program, "cyx_attention_backward_dkdv", &err);
+        if (err != CL_SUCCESS) {
+            for (cl_kernel k : {kernels.forward, kernels.delta, kernels.dq, kernels.dkdv}) if (k) clReleaseKernel(k);
+            clReleaseProgram(kernels.program);
+            failure = "OpenCL attention kernel lookup failed";
+            return nullptr;
+        }
+        return &(attention_[head_dim] = kernels);
+    }
+
+private:
+    void ReleaseAttention() {
+        for (auto& [dim, k] : attention_) {
+            for (cl_kernel kernel : {k.forward, k.delta, k.dq, k.dkdv}) if (kernel) clReleaseKernel(kernel);
+            if (k.program) clReleaseProgram(k.program);
+        }
+        attention_.clear();
+    }
+    std::map<int, AttentionKernels> attention_;
+    cl_context attention_context_ = nullptr;
+    cl_device_id attention_device_ = nullptr;
+
+    std::mutex mutex_;
+    bool ready_ = false;
+    cl_context context_ = nullptr;
+    cl_device_id device_ = nullptr;
+    cl_program program_ = nullptr;
+    cl_kernel probe_ = nullptr;
+};
+
 // Per-device compiled state: context, in-order queue, program, kernels.
 class OpenclExecutionState {
 public:
@@ -653,6 +1044,31 @@ public:
                 "; this provider serves opencl only";
             return capability;
         }
+        // v2 device-resident ops run in ArrayFire's context on its device
+        // (tofix112 phase 5b), so the enumerated-device check does not apply.
+        if ((request.op == NeuralOp::AttentionForward || request.op == NeuralOp::AttentionBackward) &&
+            request.device_resident) {
+            capability.detail = AttentionContractError(request);
+            if (!capability.detail.empty()) return capability;
+            capability.supported = true;
+            capability.reason = BackendFallbackReason::BackendInternalError;
+            return capability;
+        }
+        if (request.op == NeuralOp::DeviceProbe || request.device_resident) {
+            if (request.op != NeuralOp::DeviceProbe || !request.device_resident) {
+                capability.detail = "device-resident execution covers device_probe and attention";
+                return capability;
+            }
+            if (request.dtype != DataType::Float32 || request.elements == 0 ||
+                request.elements > static_cast<size_t>(std::numeric_limits<int>::max())) {
+                capability.detail = "device_probe needs Float32 and 1..INT_MAX elements";
+                return capability;
+            }
+            capability.supported = true;
+            capability.reason = BackendFallbackReason::BackendInternalError;
+            capability.detail.clear();
+            return capability;
+        }
         if (request.target.device_id < 0 ||
             static_cast<size_t>(request.target.device_id) >=
                 probe_.gpu_devices.size()) {
@@ -772,6 +1188,10 @@ public:
 
     NeuralOpStatus Execute(const NeuralOpRequest& request,
                            NeuralOpBuffers& buffers) override {
+        if (request.device_resident) {
+            return Fail(BackendFallbackReason::OpenclProviderUnsupportedContract,
+                        "device-resident requests run through ExecuteDevice");
+        }
         const NeuralCapability capability = QueryCapability(request);
         if (!capability.supported) {
             return Fail(capability.reason, capability.detail);
@@ -1332,8 +1752,190 @@ private:
         return Ok();
     }
 
+    static std::string AttentionContractError(const NeuralOpRequest& r) {
+        if (r.dtype != DataType::Float32) return "attention contract is Float32 only";
+        if (r.batch == 0 || r.heads == 0 || r.kv_heads == 0 || r.seq == 0 || r.kv_seq == 0) {
+            return "attention dimensions must be positive";
+        }
+        if (r.heads % r.kv_heads != 0) return "heads must be a multiple of kv_heads";
+        if (r.head_dim == 0 || r.head_dim > 128) return "attention head_dim must be 1..128";
+        if (r.position_strategy != NeuralPositionStrategy::None &&
+            r.position_strategy != NeuralPositionStrategy::Alibi) {
+            return "attention kernels take positions as none or alibi (RoPE is applied before the call)";
+        }
+        if (!(r.softmax_scale > 0.0f) || !(r.logit_softcap >= 0.0f)) return "attention scale must be positive";
+        if (!(r.attention_dropout >= 0.0f) || !(r.attention_dropout < 1.0f)) {
+            return "attention dropout must be in [0, 1)";
+        }
+        const size_t limit = static_cast<size_t>(std::numeric_limits<int>::max());
+        if (r.seq > limit || r.kv_seq > limit || r.query_offset > limit || r.sliding_window > limit) {
+            return "attention sizes exceed the int range";
+        }
+        return {};
+    }
+
+    NeuralOpStatus ExecuteAttention(const NeuralOpRequest& r, NeuralDeviceOpBuffers& buffers) {
+        const bool backward = r.op == NeuralOp::AttentionBackward;
+        const bool alibi = r.position_strategy == NeuralPositionStrategy::Alibi;
+        const size_t q_elements = r.head_dim * r.seq * r.batch * r.heads;
+        const size_t kv_elements = r.head_dim * r.kv_seq * r.batch * r.kv_heads;
+        const size_t rows = r.seq * r.batch * r.heads;
+        const auto& in = buffers.inputs;
+        const auto& out = buffers.outputs;
+        const bool shapes_ok = backward
+            ? (in.size() == (alibi ? 7u : 6u) && out.size() == 4 && in[0].elements == q_elements &&
+               in[1].elements == kv_elements && in[2].elements == kv_elements && in[3].elements == q_elements &&
+               in[4].elements == q_elements && in[5].elements == rows && (!alibi || in[6].elements == r.heads) &&
+               out[0].elements == q_elements && out[1].elements == kv_elements && out[2].elements == kv_elements &&
+               out[3].elements == rows)
+            : (in.size() == (alibi ? 4u : 3u) && out.size() == 2 && in[0].elements == q_elements &&
+               in[1].elements == kv_elements && in[2].elements == kv_elements &&
+               (!alibi || in[3].elements == r.heads) && out[0].elements == q_elements && out[1].elements == rows);
+        if (!shapes_ok) {
+            return Fail(BackendFallbackReason::OpenclProviderUnsupportedContract,
+                        "attention buffers do not match the request");
+        }
+        const auto context = static_cast<cl_context>(buffers.queue.cl_context);
+        const auto device = static_cast<cl_device_id>(buffers.queue.cl_device);
+        const auto queue = static_cast<cl_command_queue>(buffers.queue.cl_queue);
+        std::lock_guard<std::mutex> lock(device_program_.Mutex());
+        std::string failure;
+        const auto* kernels = device_program_.Attention(context, device, static_cast<int>(r.head_dim), failure);
+        if (!kernels) return ExecFail(failure);
+        const auto mem = [](const NeuralDeviceBuffer& b) { return static_cast<cl_mem>(b.handle); };
+        cl_mem slopes = alibi ? mem(in[alibi && backward ? 6 : 3]) : nullptr;
+        const int has_slopes = alibi ? 1 : 0;
+        const int batch = static_cast<int>(r.batch), heads = static_cast<int>(r.heads);
+        const int kv_heads = static_cast<int>(r.kv_heads), sq = static_cast<int>(r.seq), sk = static_cast<int>(r.kv_seq);
+        const int offset = static_cast<int>(r.query_offset), causal = r.causal ? 1 : 0;
+        const int window = static_cast<int>(r.sliding_window);
+        const float softcap = r.logit_softcap, scale = r.softmax_scale;
+        cl_uint arg = 0;
+        bool ok = true;
+        const auto set_mem = [&](cl_kernel k, cl_mem m) {
+            ok = ok && clSetKernelArg(k, arg++, sizeof(cl_mem), &m) == CL_SUCCESS;
+        };
+        const auto set_int = [&](cl_kernel k, int v) {
+            ok = ok && clSetKernelArg(k, arg++, sizeof(int), &v) == CL_SUCCESS;
+        };
+        const auto set_float = [&](cl_kernel k, float v) {
+            ok = ok && clSetKernelArg(k, arg++, sizeof(float), &v) == CL_SUCCESS;
+        };
+        const float dropout = r.training ? r.attention_dropout : 0.0f;
+        const cl_ulong seed = static_cast<cl_ulong>(r.dropout_seed);
+        const auto set_tail = [&](cl_kernel k) {
+            for (int v : {batch, heads, kv_heads, sq, sk, offset, causal, window}) set_int(k, v);
+            set_float(k, softcap);
+            set_float(k, scale);
+            set_float(k, dropout);
+            ok = ok && clSetKernelArg(k, arg++, sizeof(cl_ulong), &seed) == CL_SUCCESS;
+        };
+        // Some OpenCL runtimes (e.g. Intel's CPU device) execute commands out
+        // of order; explicit barriers order our kernels against ArrayFire's
+        // work and against each other. They are free on in-order queues.
+        const auto barrier = [&]() {
+            ok = ok && clEnqueueBarrierWithWaitList(queue, 0, nullptr, nullptr) == CL_SUCCESS;
+        };
+        barrier();
+        const size_t local[3] = {64, 1, 1};
+        const auto launch3 = [&](cl_kernel k, size_t rows_to_cover, size_t dim1) {
+            const size_t global[3] = {((rows_to_cover + 63) / 64) * 64, dim1, r.batch};
+            ok = ok && clEnqueueNDRangeKernel(queue, k, 3, nullptr, global, local, 0, nullptr, nullptr) == CL_SUCCESS;
+        };
+        if (!backward) {
+            cl_kernel k = kernels->forward;
+            arg = 0;
+            set_mem(k, mem(in[0])); set_mem(k, mem(in[1])); set_mem(k, mem(in[2]));
+            set_mem(k, slopes); set_int(k, has_slopes);
+            set_mem(k, mem(out[0])); set_mem(k, mem(out[1]));
+            set_tail(k);
+            launch3(k, r.seq, r.heads);
+            barrier();
+            return ok ? Ok() : ExecFail("attention_forward launch failed");
+        }
+        cl_kernel kd = kernels->delta;
+        arg = 0;
+        set_mem(kd, mem(in[3])); set_mem(kd, mem(in[4])); set_mem(kd, mem(out[3])); set_int(kd, static_cast<int>(rows));
+        const size_t delta_global = ((rows + 63) / 64) * 64;
+        const size_t delta_local = 64;
+        ok = ok && clEnqueueNDRangeKernel(queue, kd, 1, nullptr, &delta_global, &delta_local, 0, nullptr, nullptr) ==
+                       CL_SUCCESS;
+        barrier();  // dQ and dK/dV read delta
+        cl_kernel kq = kernels->dq;
+        arg = 0;
+        set_mem(kq, mem(in[0])); set_mem(kq, mem(in[1])); set_mem(kq, mem(in[2])); set_mem(kq, mem(in[4]));
+        set_mem(kq, mem(in[5])); set_mem(kq, mem(out[3])); set_mem(kq, slopes); set_int(kq, has_slopes);
+        set_mem(kq, mem(out[0]));
+        set_tail(kq);
+        launch3(kq, r.seq, r.heads);
+        cl_kernel kkv = kernels->dkdv;
+        arg = 0;
+        set_mem(kkv, mem(in[0])); set_mem(kkv, mem(in[1])); set_mem(kkv, mem(in[2])); set_mem(kkv, mem(in[4]));
+        set_mem(kkv, mem(in[5])); set_mem(kkv, mem(out[3])); set_mem(kkv, slopes); set_int(kkv, has_slopes);
+        set_mem(kkv, mem(out[1])); set_mem(kkv, mem(out[2]));
+        set_tail(kkv);
+        launch3(kkv, r.kv_seq, r.kv_heads);
+        barrier();
+        return ok ? Ok() : ExecFail("attention_backward launch failed");
+    }
+
+    NeuralOpStatus ExecuteDevice(const NeuralOpRequest& request,
+                                 NeuralDeviceOpBuffers& buffers) override {
+        const NeuralCapability capability = QueryCapability(request);
+        if (!capability.supported) return Fail(capability.reason, capability.detail);
+        if (buffers.queue.platform != DeviceType::OPENCL || !buffers.queue.cl_context ||
+            !buffers.queue.cl_queue || !buffers.queue.cl_device) {
+            return Fail(BackendFallbackReason::OpenclProviderUnsupportedContract,
+                        "device-resident execution needs an OpenCL context, queue and device");
+        }
+        // This tenant serves GPU devices (like its v1 ops). ArrayFire's OpenCL
+        // backend can also expose CPU devices; those keep the ArrayFire path.
+        cl_device_type device_type = 0;
+        if (clGetDeviceInfo(static_cast<cl_device_id>(buffers.queue.cl_device), CL_DEVICE_TYPE, sizeof(device_type),
+                            &device_type, nullptr) != CL_SUCCESS ||
+            (device_type & CL_DEVICE_TYPE_GPU) == 0) {
+            return Fail(BackendFallbackReason::OpenclProviderUnsupportedContract,
+                        "the active OpenCL device is not a GPU; this tenant serves GPU devices only");
+        }
+        if (request.op == NeuralOp::AttentionForward || request.op == NeuralOp::AttentionBackward) {
+            return ExecuteAttention(request, buffers);
+        }
+        if (buffers.inputs.size() != 1 || buffers.outputs.size() != 1 ||
+            buffers.inputs[0].elements != request.elements ||
+            buffers.outputs[0].elements != request.elements) {
+            return Fail(BackendFallbackReason::OpenclProviderUnsupportedContract,
+                        "device_probe needs one input and one output of request.elements");
+        }
+        const auto context = static_cast<cl_context>(buffers.queue.cl_context);
+        const auto device = static_cast<cl_device_id>(buffers.queue.cl_device);
+        std::string failure;
+        if (!device_program_.Ensure(context, device, failure)) return ExecFail(failure);
+        std::lock_guard<std::mutex> lock(device_program_.Mutex());
+        cl_kernel kernel = device_program_.Probe();
+        cl_mem x = static_cast<cl_mem>(buffers.inputs[0].handle);
+        cl_mem y = static_cast<cl_mem>(buffers.outputs[0].handle);
+        const int n = static_cast<int>(request.elements);
+        if (clSetKernelArg(kernel, 0, sizeof(cl_mem), &x) != CL_SUCCESS ||
+            clSetKernelArg(kernel, 1, sizeof(cl_mem), &y) != CL_SUCCESS ||
+            clSetKernelArg(kernel, 2, sizeof(int), &n) != CL_SUCCESS) {
+            return ExecFail("device_probe argument binding failed");
+        }
+        const size_t local = 64;
+        const size_t global = ((request.elements + local - 1) / local) * local;
+        // Enqueue on ArrayFire's queue between barriers (ordered with its work
+        // even on out-of-order queues), no finish.
+        const auto probe_queue = static_cast<cl_command_queue>(buffers.queue.cl_queue);
+        if (clEnqueueBarrierWithWaitList(probe_queue, 0, nullptr, nullptr) != CL_SUCCESS ||
+            clEnqueueNDRangeKernel(probe_queue, kernel, 1, nullptr, &global, &local, 0, nullptr, nullptr) != CL_SUCCESS ||
+            clEnqueueBarrierWithWaitList(probe_queue, 0, nullptr, nullptr) != CL_SUCCESS) {
+            return ExecFail("device_probe launch failed");
+        }
+        return Ok();
+    }
+
     OpenclRuntimeProbe probe_;
     std::vector<std::unique_ptr<OpenclExecutionState>> states_;
+    DeviceResidentProgram device_program_;
 };
 
 } // namespace

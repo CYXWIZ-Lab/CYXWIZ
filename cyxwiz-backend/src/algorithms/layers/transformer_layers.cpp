@@ -359,6 +359,8 @@ TransformerDecoderLayer::TransformerDecoderLayer(int d_model, int nhead,
         self_attn_->SetQKNorm(true, options_.norm_eps);
     }
     self_attn_->SetLogitSoftcap(options_.attn_logit_softcap);
+    // The decoder-only path always passes GenerateCausalMask(seq, window).
+    self_attn_->DeclareStandardMask(true, options_.sliding_window);
     norm1_ = MakeNorm();
     norm2_ = MakeNorm();
     norm3_ = MakeNorm();
@@ -502,6 +504,7 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& input) {
         throw std::invalid_argument("TransformerDecoderLayer sequence exceeds causal-mask size limit");
     }
     Tensor causal_mask = GenerateCausalMask(static_cast<int>(shape[1]), options_.sliding_window);
+    self_attn_->DeclareStandardMask(true, options_.sliding_window);
 
     if (UsesModernPreNormPath()) {
         return ForwardModernPreNorm(input, causal_mask);
@@ -552,6 +555,9 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
         throw std::invalid_argument(
             "TransformerDecoderLayer block_layout=parallel and sandwich_norm support the decoder-only path only");
     }
+    // The caller's tgt_mask is arbitrary here: keep self-attention on the
+    // ArrayFire path, which applies the mask as given.
+    self_attn_->ClearStandardMaskDeclaration();
     cached_input_ = tgt;
     cached_memory_ = memory;
     cached_has_cross_attention_ = true;

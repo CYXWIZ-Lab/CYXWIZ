@@ -1,4 +1,5 @@
 #include "cyxwiz/layers/attention.h"
+#include <algorithm>
 #include "../arrayfire_backend_utils.h"
 #include "layer_arrayfire_utils.h"
 
@@ -227,6 +228,12 @@ void MultiHeadAttentionLayer::ResetKvCache() {
     cache_k_ = Tensor();
     cache_v_ = Tensor();
     cache_positions_ = 0;
+}
+
+void MultiHeadAttentionLayer::DeclareStandardMask(bool causal, int sliding_window) {
+    fused_declared_ = true;
+    fused_causal_ = causal;
+    fused_window_ = causal ? std::max(0, sliding_window) : 0;
 }
 
 void MultiHeadAttentionLayer::SetAlibi(bool enabled) {
@@ -522,12 +529,13 @@ Tensor MultiHeadAttentionLayer::Backward(const Tensor& grad_output) {
         cached_key_.Shape() != kv_shape || cached_value_.Shape() != kv_shape ||
         cached_Q_.Shape() != q_shape || cached_K_.Shape() != projected_kv_shape ||
         cached_V_.Shape() != projected_kv_shape || cached_context_.Shape() != q_shape ||
-        cached_attn_weights_.Shape() != std::vector<size_t>{seq_len_q, seq_len_kv, batch_size, num_heads} ||
+        (!cached_fused_ &&
+         cached_attn_weights_.Shape() != std::vector<size_t>{seq_len_q, seq_len_kv, batch_size, num_heads}) ||
         W_q_.Shape() != weight_shape || W_k_.Shape() != kv_weight_shape ||
         W_v_.Shape() != kv_weight_shape || W_o_.Shape() != weight_shape) {
         throw std::runtime_error("MultiHeadAttention backward cache/parameter shape mismatch");
     }
-    if (cached_attention_dropout_ &&
+    if (cached_attention_dropout_ && !cached_fused_ &&
         (dropout_mask_.GetDataType() != DataType::Float32 ||
          dropout_mask_.Shape() != std::vector<size_t>{seq_len_q, seq_len_kv, batch_size, num_heads})) {
         throw std::runtime_error("MultiHeadAttention backward dropout mask shape mismatch");

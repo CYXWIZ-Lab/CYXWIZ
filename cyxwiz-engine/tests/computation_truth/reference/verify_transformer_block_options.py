@@ -22,7 +22,7 @@ from pathlib import Path
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--runtime', required=True, type=Path)
 parser.add_argument('--output', required=True, type=Path)
-parser.add_argument('--backend', choices=['cpu', 'cuda', 'opencl'], default='cpu')
+parser.add_argument('--backend', choices=['cpu', 'cuda', 'opencl', 'oneapi'], default='cpu')
 parser.add_argument('--device', type=int, default=0, help='device index for the backend (OpenCL: 1 = Intel iGPU here)')
 parser.add_argument('--dll-dir', action='append', type=Path, default=[])
 args = parser.parse_args()

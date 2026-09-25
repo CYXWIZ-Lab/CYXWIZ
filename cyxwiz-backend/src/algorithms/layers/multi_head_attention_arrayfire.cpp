@@ -1,4 +1,8 @@
 #include "cyxwiz/layers/attention.h"
+#include "cyxwiz/neural_provider.h"
+#include <spdlog/spdlog.h>
+#include <atomic>
+#include <cstdint>
 #include <limits>
 #include <cmath>
 #include <vector>
@@ -107,6 +111,81 @@ af::array AlibiBias(const std::vector<float>& slopes, dim_t sq, dim_t sk, dim_t 
 
 } // namespace
 
+bool MultiHeadAttentionLayer::TryFusedAttention(const void* qh_ptr, const void* kh_ptr, const void* vh_ptr,
+                                                size_t batch, size_t sq, size_t sk, size_t query_offset,
+                                                bool causal, int window, void* context_ptr) {
+    if (fused_disabled_ || !fused_declared_) return false;
+    const af::array& qh = *static_cast<const af::array*>(qh_ptr);  // [Sq, D, B, H]
+    const af::array& kh = *static_cast<const af::array*>(kh_ptr);  // [Sk, D, B, KVH]
+    const af::array& vh = *static_cast<const af::array*>(vh_ptr);
+    NeuralOpRequest request;
+    request.op = NeuralOp::AttentionForward;
+    request.target = CaptureCurrentNeuralDeviceTarget();
+    request.device_resident = true;
+    request.training = training_;
+    request.batch = batch;
+    request.heads = static_cast<size_t>(num_heads_);
+    request.kv_heads = static_cast<size_t>(num_kv_heads_);
+    request.seq = sq;
+    request.kv_seq = sk;
+    request.head_dim = static_cast<size_t>(head_dim_);
+    request.query_offset = query_offset;
+    request.causal = causal;
+    request.sliding_window = window > 0 ? static_cast<size_t>(window) : 0;
+    request.logit_softcap = logit_softcap_;
+    request.softmax_scale = scale_;
+    request.position_strategy = alibi_ ? NeuralPositionStrategy::Alibi : NeuralPositionStrategy::None;
+    const bool drop = training_ && dropout_ > 0.0f && !incremental_;
+    if (drop) {
+        // Reproducible per run: ArrayFire's training seed plus a process-wide
+        // call counter (the same op sequence gives the same masks).
+        static std::atomic<uint64_t> calls{0};
+        uint64_t z = static_cast<uint64_t>(af::getSeed()) + 0x9E3779B97F4A7C15ull * (calls.fetch_add(1) + 1);
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        request.attention_dropout = dropout_;
+        request.dropout_seed = z ^ (z >> 31);
+    }
+    auto provider = NeuralProviderRegistry::Instance().FindSupporting(request);
+    if (!provider) return false;
+    const size_t d = static_cast<size_t>(head_dim_), h = request.heads, kvh = request.kv_heads;
+    const Tensor q = Tensor::FromSemanticArray(af::reorder(qh, 1, 0, 2, 3), {d, sq, batch, h});
+    const Tensor k = Tensor::FromSemanticArray(af::reorder(kh, 1, 0, 2, 3), {d, sk, batch, kvh});
+    const Tensor v = Tensor::FromSemanticArray(af::reorder(vh, 1, 0, 2, 3), {d, sk, batch, kvh});
+    std::vector<const Tensor*> inputs{&q, &k, &v};
+    if (alibi_) {
+        if (fused_slopes_.Shape() != std::vector<size_t>{h}) {
+            const std::vector<float> slopes = AlibiSlopes();
+            fused_slopes_ = Tensor::FromSemanticArray(af::array(static_cast<dim_t>(h), slopes.data()), {h});
+        }
+        inputs.push_back(&fused_slopes_);
+    }
+    std::vector<Tensor> outputs;
+    const NeuralOpStatus status =
+        ExecuteNeuralOpOnDevice(*provider, request, inputs, {{d, sq, batch, h}, {sq, batch, h}}, outputs);
+    if (!status.ok) {
+        fused_disabled_ = true;
+        spdlog::warn("MultiHeadAttention: fused attention provider {} failed ({}); this layer uses the "
+                     "ArrayFire path from now on", provider->ProviderId(), status.detail);
+        return false;
+    }
+    if (!fused_logged_) {
+        fused_logged_ = true;
+        spdlog::info("MultiHeadAttention: fused attention via {} (heads={}, kv_heads={}, head_dim={})",
+                     provider->ProviderId(), h, kvh, d);
+    }
+    *static_cast<af::array*>(context_ptr) = af::reorder(outputs[0].GetSemanticArray(), 1, 0, 2, 3);
+    if (!incremental_) {
+        fused_dropout_seed_ = drop ? request.dropout_seed : 0;
+        cached_fused_q_ = q;
+        cached_fused_k_ = k;
+        cached_fused_v_ = v;
+        cached_fused_o_ = std::move(outputs[0]);
+        cached_fused_lse_ = std::move(outputs[1]);
+    }
+    return true;
+}
+
 Tensor MultiHeadAttentionLayer::ForwardArrayFire(
     const Tensor& query, const Tensor& key, const Tensor& value, const Tensor* mask) {
     const auto project = [this](const Tensor& input, const Tensor& weight,
@@ -140,6 +219,32 @@ Tensor MultiHeadAttentionLayer::ForwardArrayFire(
         qh = ApplyRotary(qh, rope_base_, 1.0f, RotaryDims());
         kh = ApplyRotary(kh, rope_base_, 1.0f, RotaryDims());
     }
+    // Fused provider path: the declared mask is rebuilt inside the kernel.
+    if (fused_declared_ && (fused_causal_ || mask == nullptr)) {
+        af::array context_heads;
+        if (TryFusedAttention(&qh, &kh, &vh, query.Shape()[0], query.Shape()[1], key.Shape()[1], 0,
+                              fused_causal_, fused_window_, &context_heads)) {
+            Tensor context = Tensor::FromSemanticArray(JoinHeads(context_heads), query.Shape());
+            Tensor output = project(context, W_o_, b_o_);
+            output.GetSemanticArray().eval();
+            cached_query_ = query;
+            cached_key_ = key;
+            cached_value_ = value;
+            cached_Q_ = std::move(q);
+            cached_K_ = std::move(k);
+            cached_V_ = std::move(v);
+            cached_context_ = std::move(context);
+            cached_attn_weights_ = Tensor();
+            cached_self_attention_ = (&query == &key && &key == &value);
+            cached_attention_dropout_ = training_ && dropout_ > 0.0f;  // regenerated from the seed, not stored
+            dropout_mask_ = Tensor();
+            cached_grad_key_ = Tensor();
+            cached_grad_value_ = Tensor();
+            cached_fused_ = true;
+            return output;
+        }
+    }
+    cached_fused_ = false;
     kh = ExpandKvHeads(kh, groups);
     vh = ExpandKvHeads(vh, groups);
     af::array scores = af::matmul(qh, kh, AF_MAT_NONE, AF_MAT_TRANS) * scale_;
@@ -244,6 +349,50 @@ Tensor MultiHeadAttentionLayer::BackwardArrayFire(const Tensor& grad_output) {
         q = ApplyRotary(q, rope_base_, 1.0f, RotaryDims());
         k = ApplyRotary(k, rope_base_, 1.0f, RotaryDims());
     }
+    af::array dq_heads, dk_heads, dv_heads;
+    if (cached_fused_) {
+        // Fused backward: recomputes probabilities from Q, K and the saved
+        // log-sum-exp; dK/dV come back already summed per kv head.
+        NeuralOpRequest request;
+        request.op = NeuralOp::AttentionBackward;
+        request.target = CaptureCurrentNeuralDeviceTarget();
+        request.device_resident = true;
+        request.training = true;
+        const size_t d = static_cast<size_t>(head_dim_);
+        const size_t batch = cached_query_.Shape()[0], sq = cached_query_.Shape()[1], sk = cached_key_.Shape()[1];
+        request.batch = batch;
+        request.heads = static_cast<size_t>(num_heads_);
+        request.kv_heads = static_cast<size_t>(num_kv_heads_);
+        request.seq = sq;
+        request.kv_seq = sk;
+        request.head_dim = d;
+        request.causal = fused_causal_;
+        request.sliding_window = fused_window_ > 0 ? static_cast<size_t>(fused_window_) : 0;
+        request.logit_softcap = logit_softcap_;
+        request.softmax_scale = scale_;
+        request.position_strategy = alibi_ ? NeuralPositionStrategy::Alibi : NeuralPositionStrategy::None;
+        if (cached_attention_dropout_) {
+            request.attention_dropout = dropout_;
+            request.dropout_seed = fused_dropout_seed_;
+        }
+        auto provider = NeuralProviderRegistry::Instance().FindSupporting(request);
+        if (!provider) throw std::runtime_error("MultiHeadAttention: the fused attention provider is no longer available for backward");
+        const Tensor grad_heads = Tensor::FromSemanticArray(af::reorder(dch, 1, 0, 2, 3),
+                                                            {d, sq, batch, request.heads});
+        std::vector<const Tensor*> inputs{&cached_fused_q_, &cached_fused_k_, &cached_fused_v_,
+                                          &cached_fused_o_, &grad_heads, &cached_fused_lse_};
+        if (alibi_) inputs.push_back(&fused_slopes_);
+        std::vector<Tensor> grads;
+        const NeuralOpStatus status = ExecuteNeuralOpOnDevice(
+            *provider, request, inputs,
+            {{d, sq, batch, request.heads}, {d, sk, batch, request.kv_heads}, {d, sk, batch, request.kv_heads},
+             {sq, batch, request.heads}},
+            grads);
+        if (!status.ok) throw std::runtime_error("MultiHeadAttention: fused attention backward failed: " + status.detail);
+        dq_heads = af::reorder(grads[0].GetSemanticArray(), 1, 0, 2, 3);
+        dk_heads = af::reorder(grads[1].GetSemanticArray(), 1, 0, 2, 3);
+        dv_heads = af::reorder(grads[2].GetSemanticArray(), 1, 0, 2, 3);
+    } else {
     k = ExpandKvHeads(k, groups);
     const af::array v = ExpandKvHeads(SplitHeads(cached_V_.GetSemanticArray(), head_dim_, num_kv_heads_), groups);
     const af::array a = cached_attn_weights_.GetSemanticArray();
@@ -260,8 +409,10 @@ Tensor MultiHeadAttentionLayer::BackwardArrayFire(const Tensor& grad_output) {
         const af::array t = af::tanh(af::matmul(q, k, AF_MAT_NONE, AF_MAT_TRANS) * (scale_ / logit_softcap_));
         ds = ds * (1.0f - t * t);
     }
-    af::array dq_heads = af::matmul(ds, k);
-    af::array dk_heads = ReduceKvHeads(af::matmul(ds, q, AF_MAT_TRANS), groups);
+    dq_heads = af::matmul(ds, k);
+    dk_heads = ReduceKvHeads(af::matmul(ds, q, AF_MAT_TRANS), groups);
+    dv_heads = ReduceKvHeads(af::matmul(used_attention, dch, AF_MAT_TRANS), groups);
+    }
     if (rope_) {
         dq_heads = ApplyRotary(dq_heads, rope_base_, -1.0f, RotaryDims());
         dk_heads = ApplyRotary(dk_heads, rope_base_, -1.0f, RotaryDims());
@@ -273,7 +424,6 @@ Tensor MultiHeadAttentionLayer::BackwardArrayFire(const Tensor& grad_output) {
         grad_q_gamma.eval();
         grad_k_gamma.eval();
     }
-    const af::array dv_heads = ReduceKvHeads(af::matmul(used_attention, dch, AF_MAT_TRANS), groups);
     Tensor dq = backward_project(cached_query_, JoinHeads(dq_heads), W_q_, gwq, gbq);
     Tensor dk = backward_project(cached_key_, JoinHeads(dk_heads), W_k_, gwk, gbk);
     Tensor dv = backward_project(cached_value_, JoinHeads(dv_heads), W_v_, gwv, gbv);
@@ -345,6 +495,22 @@ Tensor MultiHeadAttentionLayer::ForwardIncrementalArrayFire(const Tensor& input)
         values = af::join(0, cache_v_.GetSemanticArray(), vh);
     }
     const dim_t total = keys.dims(0);
+    af::array fused_context;
+    if (fused_declared_ &&
+        TryFusedAttention(&qh, &keys, &values, shape[0], static_cast<size_t>(new_positions),
+                          static_cast<size_t>(total), static_cast<size_t>(offset), true, incremental_window_,
+                          &fused_context)) {
+        const af::array output = project(Tensor::FromSemanticArray(JoinHeads(fused_context), shape), W_o_, b_o_);
+        output.eval();
+        keys.eval();
+        values.eval();
+        cache_k_ = Tensor::FromSemanticArray(keys, {static_cast<size_t>(total), static_cast<size_t>(head_dim_),
+                                                    shape[0], static_cast<size_t>(num_kv_heads_)});
+        cache_v_ = Tensor::FromSemanticArray(values, {static_cast<size_t>(total), static_cast<size_t>(head_dim_),
+                                                      shape[0], static_cast<size_t>(num_kv_heads_)});
+        cache_positions_ = static_cast<size_t>(total);
+        return Tensor::FromSemanticArray(output, shape);
+    }
     const af::array k_all = ExpandKvHeads(keys, groups);
     const af::array v_all = ExpandKvHeads(values, groups);
     af::array scores = af::matmul(qh, k_all, AF_MAT_NONE, AF_MAT_TRANS) * scale_;

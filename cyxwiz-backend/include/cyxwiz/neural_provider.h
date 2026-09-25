@@ -33,6 +33,10 @@ enum class NeuralOp {
     GruBackward,
     AttentionForward,
     AttentionBackward,
+    // Device-resident interface check (tofix112 phase 5b): outputs[0] =
+    // 2 * inputs[0], elementwise. Exercises caller-owned device memory on the
+    // caller's queue without any attention math.
+    DeviceProbe,
 };
 
 CYXWIZ_API const char* NeuralOpName(NeuralOp op);
@@ -119,6 +123,39 @@ struct NeuralOpRequest {
     // Incremented by CyxWiz on any weight mutation; providers may cache
     // device-resident parameter mirrors keyed by this token.
     uint64_t parameter_version = 0;
+    // v2 device-resident execution: buffers are the caller's device memory
+    // (ArrayFire arrays) and work runs on the caller's queue. Providers
+    // answer capability for this mode separately from host (v1) execution.
+    bool device_resident = false;
+    size_t elements = 0;  // DeviceProbe only
+    // Attention (device-resident) contract, tofix112 phase 5b:
+    //   inputs  Q [head_dim, seq, batch, heads]            (head_dim fastest)
+    //           K, V [head_dim, kv_seq, batch, kv_heads]
+    //           slopes [heads] when position_strategy == Alibi
+    //   outputs O [head_dim, seq, batch, heads], LSE [seq, batch, heads]
+    //           (natural-log sum of exp of the final scores per query row)
+    // Scores: s = scale * q.k; soft-capped (cap * tanh(s / cap)) when
+    // logit_softcap > 0; + slope * (key_pos - query_pos) for ALiBi; keys past
+    // the query (causal) or `sliding_window`+ positions back are excluded.
+    // Query i sits at position query_offset + i (KV-cached decoding).
+    // AttentionBackward: inputs Q, K, V, O, dO, LSE[, slopes]; outputs dQ
+    // [head_dim, seq, batch, heads], dK and dV [head_dim, kv_seq, batch,
+    // kv_heads] (summed over the query heads sharing a kv head), and a
+    // workspace delta [seq, batch, heads] = rowsum(dO * O).
+    size_t kv_heads = 0;
+    size_t head_dim = 0;
+    size_t kv_seq = 0;
+    size_t query_offset = 0;
+    bool causal = false;
+    size_t sliding_window = 0;
+    float logit_softcap = 0.0f;
+    float softmax_scale = 0.0f;
+    // Attention dropout (applied when training): probabilities are kept with
+    // 1 - p and scaled by 1/(1-p); keep/drop is a hash of (dropout_seed,
+    // ((b * heads + h) * seq + i) * kv_seq + j), so forward and backward with
+    // the same seed use the same mask. Softmax statistics (LSE) are pre-dropout.
+    float attention_dropout = 0.0f;
+    uint64_t dropout_seed = 0;
 };
 
 // Host-side CyxWiz-owned buffers, explicit copies at the boundary (v1).
@@ -129,6 +166,31 @@ struct NeuralOpBuffers {
     std::vector<const Tensor*> weights;
     std::vector<Tensor*> outputs;
     std::vector<Tensor*> gradients;
+};
+
+// v2 device-resident execution (tofix112 phase 5b). The caller's device
+// queue: ArrayFire's own CUDA stream, or its OpenCL context/queue/device, so
+// provider kernels are ordered with ArrayFire work without host syncs.
+struct NeuralDeviceQueue {
+    DeviceType platform = DeviceType::CPU;
+    int native_device = -1;        // CUDA ordinal (OpenCL: unused)
+    void* cuda_stream = nullptr;   // cudaStream_t
+    void* cl_context = nullptr;    // cl_context (not retained)
+    void* cl_queue = nullptr;      // cl_command_queue (not retained)
+    void* cl_device = nullptr;     // cl_device_id
+};
+
+// One caller-owned device buffer, locked for the duration of the call.
+// CUDA: a float* device pointer; OpenCL: a cl_mem. Layout per op contract.
+struct NeuralDeviceBuffer {
+    void* handle = nullptr;
+    size_t elements = 0;
+};
+
+struct NeuralDeviceOpBuffers {
+    NeuralDeviceQueue queue;
+    std::vector<NeuralDeviceBuffer> inputs;
+    std::vector<NeuralDeviceBuffer> outputs;
 };
 
 struct NeuralCapability {
@@ -168,7 +230,31 @@ public:
         const NeuralOpRequest& request) const = 0;
     virtual NeuralOpStatus Execute(const NeuralOpRequest& request,
                                    NeuralOpBuffers& buffers) = 0;
+    // v2: execute on caller-owned device buffers on buffers.queue. Enqueue
+    // only - no host synchronization; the caller's queue orders later work.
+    // Providers that do not implement it answer unsupported for requests
+    // with device_resident=true and keep this default.
+    virtual NeuralOpStatus ExecuteDevice(const NeuralOpRequest& request,
+                                         NeuralDeviceOpBuffers& buffers) {
+        (void)request;
+        (void)buffers;
+        NeuralOpStatus status;
+        status.reason = BackendFallbackReason::NvidiaProviderUnsupportedContract;
+        status.detail = "device-resident execution is not implemented by this provider";
+        return status;
+    }
 };
+
+// Runs a device-resident op on CyxWiz Tensors that live in ArrayFire memory:
+// locks each tensor's device buffer, captures ArrayFire's native queue for
+// the active backend, calls provider.ExecuteDevice, then unlocks. Output
+// tensors are allocated here with the given shapes (Float32) and returned
+// through `outputs`. No host copies or synchronization.
+CYXWIZ_API NeuralOpStatus ExecuteNeuralOpOnDevice(
+    INeuralNetworkProvider& provider, const NeuralOpRequest& request,
+    const std::vector<const Tensor*>& inputs,
+    const std::vector<std::vector<size_t>>& output_shapes,
+    std::vector<Tensor>& outputs);
 
 // Test-only: makes the registry answer as if no providers were registered
 // (List() empty, FindSupporting() null), so AF-vs-native oracle tests and

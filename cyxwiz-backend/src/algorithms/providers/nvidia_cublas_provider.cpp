@@ -24,6 +24,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -280,6 +282,339 @@ extern "C" __global__ void cyxwiz_gru_backward_cell(
 }
 )";
 
+// Device-resident (v2) kernels run on ArrayFire's stream with ArrayFire's
+// device memory (tofix112 phase 5b). Kept in their own module so the proven
+// cell kernels are untouched.
+constexpr const char* kDeviceKernelSource = R"(
+extern "C" __global__ void cyxwiz_device_probe(const float* x, float* y, int n) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) y[i] = 2.0f * x[i];
+}
+)";
+
+// Fused attention forward (FlashAttention-style online softmax; Dao et al.
+// 2022). One thread per query row, ATTN_BR rows per block; K/V stream
+// through shared memory in ATTN_BC-key tiles, so the [Sq, Sk] score matrix
+// never exists. HEAD_DIM is fixed per compiled module. Contract and layouts
+// in neural_provider.h (NeuralOpRequest attention fields).
+// Threads per attention block (query/key rows per block before splitting);
+// passed to the kernels as ATTN_BR.
+constexpr unsigned kAttentionBlockThreads = 128;
+
+constexpr const char* kAttentionKernelSource = R"(
+#ifndef ATTN_BR
+#define ATTN_BR 64
+#endif
+#define CYX_INF __int_as_float(0x7f800000)
+// Attention dropout without a stored mask: a counter-based hash
+// (SplitMix64 finalizer) of (seed, score index) decides keep/drop, so the
+// backward kernels regenerate exactly the forward's mask. Returns the kept
+// scale 1/(1-p) or 0.
+__device__ __forceinline__ float cyx_keep(unsigned long long seed, unsigned long long index, float p) {
+    if (p <= 0.0f) return 1.0f;
+    unsigned long long z = seed + index * 0x9E3779B97F4A7C15ull;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    z ^= z >> 31;
+    const float u = (float)(z >> 40) * (1.0f / 16777216.0f);
+    return u >= p ? 1.0f / (1.0f - p) : 0.0f;
+}
+#define ATTN_BC 32
+extern "C" __global__ void cyxwiz_attention_forward(
+    const float* __restrict__ Q, const float* __restrict__ K, const float* __restrict__ V,
+    const float* __restrict__ slopes, float* __restrict__ O, float* __restrict__ LSE,
+    int B, int H, int KVH, int Sq, int Sk, int q_offset,
+    int causal, int window, float softcap, float scale, float dropout, unsigned long long seed)
+{
+    __shared__ float Ks[ATTN_BC][HEAD_DIM];
+    __shared__ float Vs[ATTN_BC][HEAD_DIM];
+    const int h = blockIdx.y;
+    const int b = blockIdx.z;
+    const int kvh = h / (H / KVH);
+    const int row = blockIdx.x * ATTN_BR + threadIdx.x;
+    const bool active = row < Sq;
+    const int qpos = row + q_offset;
+    const size_t q_base = (((size_t)h * B + b) * Sq + row) * HEAD_DIM;
+    const size_t kv_base = ((size_t)kvh * B + b) * Sk * HEAD_DIM;
+    float q[HEAD_DIM];
+    float acc[HEAD_DIM];
+    for (int d = 0; d < HEAD_DIM; ++d) {
+        q[d] = active ? Q[q_base + d] : 0.0f;
+        acc[d] = 0.0f;
+    }
+    const float slope = slopes ? slopes[h] : 0.0f;
+    float m = -CYX_INF;
+    float l = 0.0f;
+
+    // Keys this block can see: causal stops after the block's last query;
+    // a sliding window starts at the block's first query - window + 1.
+    const int first_q = blockIdx.x * ATTN_BR + q_offset;
+    const int last_q = min(Sq, (int)(blockIdx.x + 1) * ATTN_BR) - 1 + q_offset;
+    const int k_end = causal ? min(Sk, last_q + 1) : Sk;
+    int k_begin = window > 0 ? max(0, first_q - window + 1) : 0;
+    k_begin = (k_begin / ATTN_BC) * ATTN_BC;
+
+    for (int k0 = k_begin; k0 < k_end; k0 += ATTN_BC) {
+        for (int idx = threadIdx.x; idx < ATTN_BC * HEAD_DIM; idx += ATTN_BR) {
+            const int j = idx / HEAD_DIM;
+            const int d = idx - j * HEAD_DIM;
+            const int key = k0 + j;
+            const bool in = key < Sk;
+            Ks[j][d] = in ? K[kv_base + (size_t)key * HEAD_DIM + d] : 0.0f;
+            Vs[j][d] = in ? V[kv_base + (size_t)key * HEAD_DIM + d] : 0.0f;
+        }
+        __syncthreads();
+        if (active) {
+            float s[ATTN_BC];
+            float tile_max = -CYX_INF;
+            for (int j = 0; j < ATTN_BC; ++j) {
+                const int key = k0 + j;
+                const bool valid = key < Sk && (!causal || key <= qpos) &&
+                                   (window <= 0 || qpos - key < window);
+                if (!valid) { s[j] = -CYX_INF; continue; }
+                float dot = 0.0f;
+                for (int d = 0; d < HEAD_DIM; ++d) dot += q[d] * Ks[j][d];
+                float x = dot * scale;
+                if (softcap > 0.0f) x = softcap * tanhf(x / softcap);
+                if (slopes) x += slope * (float)(key - qpos);
+                s[j] = x;
+                tile_max = fmaxf(tile_max, x);
+            }
+            if (tile_max > -CYX_INF) {
+                const float m_new = fmaxf(m, tile_max);
+                const float correction = (m == -CYX_INF) ? 0.0f : __expf(m - m_new);
+                l *= correction;
+                for (int d = 0; d < HEAD_DIM; ++d) acc[d] *= correction;
+                const unsigned long long drop_row = (((unsigned long long)b * H + h) * Sq + row) * Sk;
+                for (int j = 0; j < ATTN_BC; ++j) {
+                    if (s[j] == -CYX_INF) continue;
+                    const float p = __expf(s[j] - m_new);
+                    l += p;  // softmax statistics are taken before dropout
+                    const float pk = p * cyx_keep(seed, drop_row + (unsigned long long)(k0 + j), dropout);
+                    for (int d = 0; d < HEAD_DIM; ++d) acc[d] += pk * Vs[j][d];
+                }
+                m = m_new;
+            }
+        }
+        __syncthreads();
+    }
+    if (active) {
+        const float inv = l > 0.0f ? 1.0f / l : 0.0f;
+        for (int d = 0; d < HEAD_DIM; ++d) O[q_base + d] = acc[d] * inv;
+        LSE[((size_t)h * B + b) * Sq + row] = l > 0.0f ? m + logf(l) : -CYX_INF;
+    }
+}
+
+// ---- backward (recompute probabilities from Q, K and the saved LSE) ------
+__device__ __forceinline__ float cyx_score(float dot, float scale, float softcap, float slope_term,
+                                           float* tanh_out) {
+    float x = dot * scale;
+    float t = 0.0f;
+    if (softcap > 0.0f) { t = tanhf(x / softcap); x = softcap * t; }
+    *tanh_out = t;
+    return x + slope_term;
+}
+
+extern "C" __global__ void cyxwiz_attention_backward_delta(
+    const float* __restrict__ O, const float* __restrict__ dO, float* __restrict__ delta, int rows)
+{
+    const int r = blockIdx.x * blockDim.x + threadIdx.x;
+    if (r >= rows) return;
+    float sum = 0.0f;
+    for (int d = 0; d < HEAD_DIM; ++d) sum += O[(size_t)r * HEAD_DIM + d] * dO[(size_t)r * HEAD_DIM + d];
+    delta[r] = sum;
+}
+
+// Wide heads split each row over ATTN_SPLIT adjacent threads (partial dot
+// products combined with a warp shuffle) so per-thread arrays stay in
+// registers; ATTN_ROWS rows per 64-thread block.
+#if HEAD_DIM >= 64 && (HEAD_DIM % 2) == 0
+#define ATTN_SPLIT 2
+#else
+#define ATTN_SPLIT 1
+#endif
+#define ATTN_PART (HEAD_DIM / ATTN_SPLIT)
+#define ATTN_ROWS (ATTN_BR / ATTN_SPLIT)
+
+__device__ __forceinline__ float cyx_pair_sum(float x) {
+#if ATTN_SPLIT == 2
+    x += __shfl_xor_sync(0xffffffffu, x, 1);
+#endif
+    return x;
+}
+
+extern "C" __global__ void cyxwiz_attention_backward_dq(
+    const float* __restrict__ Q, const float* __restrict__ K, const float* __restrict__ V,
+    const float* __restrict__ dO, const float* __restrict__ LSE, const float* __restrict__ delta,
+    const float* __restrict__ slopes, float* __restrict__ dQ,
+    int B, int H, int KVH, int Sq, int Sk, int q_offset,
+    int causal, int window, float softcap, float scale, float dropout, unsigned long long seed)
+{
+    __shared__ float Ks[ATTN_BC][HEAD_DIM];
+    __shared__ float Vs[ATTN_BC][HEAD_DIM];
+    const int h = blockIdx.y;
+    const int b = blockIdx.z;
+    const int kvh = h / (H / KVH);
+    const int part = threadIdx.x % ATTN_SPLIT;
+    const int d0 = part * ATTN_PART;
+    const int row = blockIdx.x * ATTN_ROWS + threadIdx.x / ATTN_SPLIT;
+    const bool active = row < Sq;
+    const int qpos = row + q_offset;
+    const size_t row_index = ((size_t)h * B + b) * Sq + row;
+    const size_t q_base = row_index * HEAD_DIM + d0;
+    const size_t kv_base = ((size_t)kvh * B + b) * Sk * HEAD_DIM;
+    float q[ATTN_PART], go[ATTN_PART], dq[ATTN_PART];
+    #pragma unroll
+    for (int d = 0; d < ATTN_PART; ++d) {
+        q[d] = active ? Q[q_base + d] : 0.0f;
+        go[d] = active ? dO[q_base + d] : 0.0f;
+        dq[d] = 0.0f;
+    }
+    const float lse = active ? LSE[row_index] : 0.0f;
+    const float dl = active ? delta[row_index] : 0.0f;
+    const float slope = slopes ? slopes[h] : 0.0f;
+    const bool row_ok = active && lse > -CYX_INF;
+    const int first_q = blockIdx.x * ATTN_ROWS + q_offset;
+    const int last_q = min(Sq, (int)(blockIdx.x + 1) * ATTN_ROWS) - 1 + q_offset;
+    const int k_end = causal ? min(Sk, last_q + 1) : Sk;
+    int k_begin = window > 0 ? max(0, first_q - window + 1) : 0;
+    k_begin = (k_begin / ATTN_BC) * ATTN_BC;
+    const unsigned long long drop_row = (((unsigned long long)b * H + h) * Sq + row) * Sk;
+    for (int k0 = k_begin; k0 < k_end; k0 += ATTN_BC) {
+        for (int idx = threadIdx.x; idx < ATTN_BC * HEAD_DIM; idx += ATTN_BR) {
+            const int j = idx / HEAD_DIM;
+            const int d = idx - j * HEAD_DIM;
+            const int key = k0 + j;
+            const bool in = key < Sk;
+            Ks[j][d] = in ? K[kv_base + (size_t)key * HEAD_DIM + d] : 0.0f;
+            Vs[j][d] = in ? V[kv_base + (size_t)key * HEAD_DIM + d] : 0.0f;
+        }
+        __syncthreads();
+        for (int j = 0; j < ATTN_BC; ++j) {
+            const int key = k0 + j;
+            // Every lane runs the shuffles; validity only gates the update.
+            float dot = 0.0f, dp = 0.0f;
+            #pragma unroll
+            for (int d = 0; d < ATTN_PART; ++d) {
+                dot += q[d] * Ks[j][d0 + d];
+                dp += go[d] * Vs[j][d0 + d];
+            }
+            dot = cyx_pair_sum(dot);
+            dp = cyx_pair_sum(dp);
+            const bool valid = row_ok && key < Sk && (!causal || key <= qpos) && (window <= 0 || qpos - key < window);
+            if (!valid) continue;
+            float t;
+            const float x = cyx_score(dot, scale, softcap, slopes ? slope * (float)(key - qpos) : 0.0f, &t);
+            const float p = __expf(x - lse);
+            const float keep = cyx_keep(seed, drop_row + key, dropout);
+            float ds = p * (dp * keep - dl);
+            if (softcap > 0.0f) ds *= (1.0f - t * t);
+            ds *= scale;
+            #pragma unroll
+            for (int d = 0; d < ATTN_PART; ++d) dq[d] += ds * Ks[j][d0 + d];
+        }
+        __syncthreads();
+    }
+    if (active) {
+        #pragma unroll
+        for (int d = 0; d < ATTN_PART; ++d) dQ[q_base + d] = dq[d];
+    }
+}
+
+// One key row (split over ATTN_SPLIT threads) of one kv head; walks every
+// query head of its group.
+extern "C" __global__ void cyxwiz_attention_backward_dkdv(
+    const float* __restrict__ Q, const float* __restrict__ K, const float* __restrict__ V,
+    const float* __restrict__ dO, const float* __restrict__ LSE, const float* __restrict__ delta,
+    const float* __restrict__ slopes, float* __restrict__ dK, float* __restrict__ dV,
+    int B, int H, int KVH, int Sq, int Sk, int q_offset,
+    int causal, int window, float softcap, float scale, float dropout, unsigned long long seed)
+{
+    __shared__ float Qs[ATTN_BC][HEAD_DIM];
+    __shared__ float Gs[ATTN_BC][HEAD_DIM];
+    __shared__ float Ls[ATTN_BC];
+    __shared__ float Ds[ATTN_BC];
+    const int kvh = blockIdx.y;
+    const int b = blockIdx.z;
+    const int part = threadIdx.x % ATTN_SPLIT;
+    const int d0 = part * ATTN_PART;
+    const int key = blockIdx.x * ATTN_ROWS + threadIdx.x / ATTN_SPLIT;
+    const bool active = key < Sk;
+    const size_t k_base = (((size_t)kvh * B + b) * Sk + key) * HEAD_DIM + d0;
+    float k[ATTN_PART], v[ATTN_PART], dk[ATTN_PART], dv[ATTN_PART];
+    #pragma unroll
+    for (int d = 0; d < ATTN_PART; ++d) {
+        k[d] = active ? K[k_base + d] : 0.0f;
+        v[d] = active ? V[k_base + d] : 0.0f;
+        dk[d] = 0.0f;
+        dv[d] = 0.0f;
+    }
+    const int groups = H / KVH;
+    const int first_key = blockIdx.x * ATTN_ROWS;
+    const int last_key = min(Sk, (int)(blockIdx.x + 1) * ATTN_ROWS) - 1;
+    int q_begin = causal ? max(0, first_key - q_offset) : 0;
+    q_begin = (q_begin / ATTN_BC) * ATTN_BC;
+    const int q_end = window > 0 ? min(Sq, last_key + window - q_offset) : Sq;
+    for (int g = 0; g < groups; ++g) {
+        const int h = kvh * groups + g;
+        const float slope = slopes ? slopes[h] : 0.0f;
+        const size_t head_rows = ((size_t)h * B + b) * Sq;
+        for (int i0 = q_begin; i0 < q_end; i0 += ATTN_BC) {
+            for (int idx = threadIdx.x; idx < ATTN_BC * HEAD_DIM; idx += ATTN_BR) {
+                const int i = idx / HEAD_DIM;
+                const int d = idx - i * HEAD_DIM;
+                const int row = i0 + i;
+                const bool in = row < Sq;
+                Qs[i][d] = in ? Q[(head_rows + row) * HEAD_DIM + d] : 0.0f;
+                Gs[i][d] = in ? dO[(head_rows + row) * HEAD_DIM + d] : 0.0f;
+            }
+            for (int i = threadIdx.x; i < ATTN_BC; i += ATTN_BR) {
+                const int row = i0 + i;
+                Ls[i] = row < Sq ? LSE[head_rows + row] : -CYX_INF;
+                Ds[i] = row < Sq ? delta[head_rows + row] : 0.0f;
+            }
+            __syncthreads();
+            for (int i = 0; i < ATTN_BC; ++i) {
+                const int row = i0 + i;
+                const int qpos = row + q_offset;
+                float dot = 0.0f, dp = 0.0f;
+                #pragma unroll
+                for (int d = 0; d < ATTN_PART; ++d) {
+                    dot += Qs[i][d0 + d] * k[d];
+                    dp += Gs[i][d0 + d] * v[d];
+                }
+                dot = cyx_pair_sum(dot);
+                dp = cyx_pair_sum(dp);
+                const bool valid = active && row < Sq && Ls[i] > -CYX_INF && (!causal || key <= qpos) &&
+                                   (window <= 0 || qpos - key < window);
+                if (!valid) continue;
+                float t;
+                const float x = cyx_score(dot, scale, softcap, slopes ? slope * (float)(key - qpos) : 0.0f, &t);
+                const float p = __expf(x - Ls[i]);
+                const float keep = cyx_keep(seed, (((unsigned long long)b * H + h) * Sq + row) * Sk + key, dropout);
+                float ds = p * (dp * keep - Ds[i]);
+                if (softcap > 0.0f) ds *= (1.0f - t * t);
+                ds *= scale;
+                const float pk = p * keep;
+                #pragma unroll
+                for (int d = 0; d < ATTN_PART; ++d) {
+                    dv[d] += pk * Gs[i][d0 + d];
+                    dk[d] += ds * Qs[i][d0 + d];
+                }
+            }
+            __syncthreads();
+        }
+    }
+    if (active) {
+        #pragma unroll
+        for (int d = 0; d < ATTN_PART; ++d) {
+            dK[k_base + d] = dk[d];
+            dV[k_base + d] = dv[d];
+        }
+    }
+}
+)";
+
 struct NvidiaRuntimeProbe {
     bool ok = false;
     int device_count = 0;
@@ -412,6 +747,135 @@ private:
     CUfunction fill_kernel_ = nullptr;
 };
 
+// NVRTC module for the device-resident kernels, compiled once per process in
+// the primary context of the device ArrayFire uses.
+class DeviceResidentState {
+public:
+    ~DeviceResidentState() {
+        for (auto& [dim, kernel] : attention_forward_) {
+            if (kernel.module) cuModuleUnload(kernel.module);
+        }
+        if (module_) cuModuleUnload(module_);
+    }
+
+    bool Ensure(int native_device, std::string& failure) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (ready_) {
+            if (device_ == native_device) return true;
+            failure = "device-resident module is bound to CUDA device " + std::to_string(device_);
+            return false;
+        }
+        if (cudaSetDevice(native_device) != cudaSuccess || cudaFree(nullptr) != cudaSuccess) {
+            failure = "CUDA context for device " + std::to_string(native_device) + " failed";
+            return false;
+        }
+        int major = 0, minor = 0;
+        cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, native_device);
+        cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, native_device);
+        nvrtcProgram program = nullptr;
+        if (nvrtcCreateProgram(&program, kDeviceKernelSource, "cyxwiz_device.cu", 0, nullptr, nullptr) !=
+            NVRTC_SUCCESS) {
+            failure = "NVRTC program creation failed (device kernels)";
+            return false;
+        }
+        const std::string arch = "--gpu-architecture=compute_" + std::to_string(major) + std::to_string(minor);
+        const char* options[] = {arch.c_str()};
+        if (nvrtcCompileProgram(program, 1, options) != NVRTC_SUCCESS) {
+            size_t log_size = 0;
+            nvrtcGetProgramLogSize(program, &log_size);
+            std::string log(log_size, '\0');
+            nvrtcGetProgramLog(program, log.data());
+            nvrtcDestroyProgram(&program);
+            failure = "NVRTC compile failed (device kernels): " + log;
+            return false;
+        }
+        size_t ptx_size = 0;
+        nvrtcGetPTXSize(program, &ptx_size);
+        std::string ptx(ptx_size, '\0');
+        nvrtcGetPTX(program, ptx.data());
+        nvrtcDestroyProgram(&program);
+        if (cuModuleLoadData(&module_, ptx.c_str()) != CUDA_SUCCESS ||
+            cuModuleGetFunction(&probe_, module_, "cyxwiz_device_probe") != CUDA_SUCCESS) {
+            failure = "device kernel module load failed";
+            return false;
+        }
+        device_ = native_device;
+        ready_ = true;
+        return true;
+    }
+
+    CUfunction Probe() const { return probe_; }
+
+    // Attention kernels are compiled per head width (HEAD_DIM is a
+    // compile-time constant so q/acc live in registers).
+    CUfunction AttentionForward(int head_dim, std::string& failure) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto found = attention_forward_.find(head_dim);
+        if (found != attention_forward_.end()) return found->second.function;
+        int major = 0, minor = 0;
+        cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device_);
+        cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device_);
+        nvrtcProgram program = nullptr;
+        if (nvrtcCreateProgram(&program, kAttentionKernelSource, "cyxwiz_attention.cu", 0, nullptr, nullptr) !=
+            NVRTC_SUCCESS) {
+            failure = "NVRTC program creation failed (attention)";
+            return nullptr;
+        }
+        const std::string arch = "--gpu-architecture=compute_" + std::to_string(major) + std::to_string(minor);
+        const std::string dim = "-DHEAD_DIM=" + std::to_string(head_dim);
+        const std::string rows = "-DATTN_BR=" + std::to_string(kAttentionBlockThreads);
+        const char* options[] = {arch.c_str(), dim.c_str(), rows.c_str(), "--use_fast_math"};
+        if (nvrtcCompileProgram(program, 4, options) != NVRTC_SUCCESS) {
+            size_t log_size = 0;
+            nvrtcGetProgramLogSize(program, &log_size);
+            std::string log(log_size, '\0');
+            nvrtcGetProgramLog(program, log.data());
+            nvrtcDestroyProgram(&program);
+            failure = "NVRTC compile failed (attention): " + log;
+            return nullptr;
+        }
+        size_t ptx_size = 0;
+        nvrtcGetPTXSize(program, &ptx_size);
+        std::string ptx(ptx_size, '\0');
+        nvrtcGetPTX(program, ptx.data());
+        nvrtcDestroyProgram(&program);
+        CompiledKernel kernel;
+        if (cuModuleLoadData(&kernel.module, ptx.c_str()) != CUDA_SUCCESS ||
+            cuModuleGetFunction(&kernel.function, kernel.module, "cyxwiz_attention_forward") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&kernel.delta, kernel.module, "cyxwiz_attention_backward_delta") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&kernel.dq, kernel.module, "cyxwiz_attention_backward_dq") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&kernel.dkdv, kernel.module, "cyxwiz_attention_backward_dkdv") != CUDA_SUCCESS) {
+            if (kernel.module) cuModuleUnload(kernel.module);
+            failure = "attention kernel module load failed";
+            return nullptr;
+        }
+        attention_forward_[head_dim] = kernel;
+        return kernel.function;
+    }
+
+    struct CompiledKernel {
+        CUmodule module = nullptr;
+        CUfunction function = nullptr;  // forward
+        CUfunction delta = nullptr;
+        CUfunction dq = nullptr;
+        CUfunction dkdv = nullptr;
+    };
+    // All attention kernels for a head width (compiled on first use).
+    const CompiledKernel* AttentionKernels(int head_dim, std::string& failure) {
+        if (!AttentionForward(head_dim, failure)) return nullptr;
+        std::lock_guard<std::mutex> lock(mutex_);
+        return &attention_forward_.at(head_dim);
+    }
+
+private:
+    std::mutex mutex_;
+    bool ready_ = false;
+    int device_ = -1;
+    CUmodule module_ = nullptr;
+    CUfunction probe_ = nullptr;
+    std::map<int, CompiledKernel> attention_forward_;
+};
+
 struct DeviceBuffer {
     void* ptr = nullptr;
     ~DeviceBuffer() {
@@ -496,6 +960,30 @@ public:
                 std::string("request targets ") +
                 NeuralDevicePlatformName(request.target.platform) +
                 "; this provider serves cuda only";
+            return capability;
+        }
+        // v2 device-resident ops (tofix112 phase 5b).
+        if ((request.op == NeuralOp::AttentionForward || request.op == NeuralOp::AttentionBackward) &&
+            request.device_resident) {
+            capability.detail = AttentionContractError(request);
+            if (!capability.detail.empty()) return capability;
+            capability.supported = true;
+            capability.reason = BackendFallbackReason::BackendInternalError;
+            return capability;
+        }
+        if (request.op == NeuralOp::DeviceProbe || request.device_resident) {
+            if (request.op != NeuralOp::DeviceProbe || !request.device_resident) {
+                capability.detail = "device-resident execution covers device_probe and attention_forward";
+                return capability;
+            }
+            if (request.dtype != DataType::Float32 || request.elements == 0 ||
+                request.elements > static_cast<size_t>(std::numeric_limits<int>::max())) {
+                capability.detail = "device_probe needs Float32 and 1..INT_MAX elements";
+                return capability;
+            }
+            capability.supported = true;
+            capability.reason = BackendFallbackReason::BackendInternalError;
+            capability.detail.clear();
             return capability;
         }
         const bool is_rnn = request.op == NeuralOp::RnnForward ||
@@ -605,6 +1093,11 @@ public:
     NeuralOpStatus Execute(const NeuralOpRequest& request,
                            NeuralOpBuffers& buffers) override {
         NeuralOpStatus status;
+        if (request.device_resident) {
+            status.reason = BackendFallbackReason::NvidiaProviderUnsupportedContract;
+            status.detail = "device-resident requests run through ExecuteDevice";
+            return status;
+        }
         const NeuralCapability capability = QueryCapability(request);
         if (!capability.supported) {
             status.reason = capability.reason;
@@ -1238,8 +1731,167 @@ private:
         return Ok();
     }
 
+    // Shared attention contract checks (empty = supported).
+    static std::string AttentionContractError(const NeuralOpRequest& r) {
+        if (r.dtype != DataType::Float32) return "attention contract is Float32 only";
+        if (r.batch == 0 || r.heads == 0 || r.kv_heads == 0 || r.seq == 0 || r.kv_seq == 0) {
+            return "attention dimensions must be positive";
+        }
+        if (r.heads % r.kv_heads != 0) return "heads must be a multiple of kv_heads";
+        if (r.head_dim == 0 || r.head_dim > 128) return "attention head_dim must be 1..128";
+        if (r.position_strategy != NeuralPositionStrategy::None &&
+            r.position_strategy != NeuralPositionStrategy::Alibi) {
+            return "attention kernels take positions as none or alibi (RoPE is applied before the call)";
+        }
+        if (!(r.softmax_scale > 0.0f) || !(r.logit_softcap >= 0.0f)) return "attention scale must be positive";
+        if (!(r.attention_dropout >= 0.0f) || !(r.attention_dropout < 1.0f)) {
+            return "attention dropout must be in [0, 1)";
+        }
+        const size_t limit = static_cast<size_t>(std::numeric_limits<int>::max());
+        if (r.seq > limit || r.kv_seq > limit || r.query_offset > limit || r.sliding_window > limit) {
+            return "attention sizes exceed the int range";
+        }
+        return {};
+    }
+
+    NeuralOpStatus ExecuteAttentionForward(const NeuralOpRequest& r, NeuralDeviceOpBuffers& buffers) {
+        const bool alibi = r.position_strategy == NeuralPositionStrategy::Alibi;
+        const size_t q_elements = r.head_dim * r.seq * r.batch * r.heads;
+        const size_t kv_elements = r.head_dim * r.kv_seq * r.batch * r.kv_heads;
+        if (buffers.inputs.size() != (alibi ? 4u : 3u) || buffers.outputs.size() != 2 ||
+            buffers.inputs[0].elements != q_elements || buffers.inputs[1].elements != kv_elements ||
+            buffers.inputs[2].elements != kv_elements || (alibi && buffers.inputs[3].elements != r.heads) ||
+            buffers.outputs[0].elements != q_elements ||
+            buffers.outputs[1].elements != r.seq * r.batch * r.heads) {
+            return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
+                        "attention_forward buffers do not match the request (Q, K, V[, slopes] -> O, LSE)");
+        }
+        std::string failure;
+        CUfunction kernel = device_state_.AttentionForward(static_cast<int>(r.head_dim), failure);
+        if (!kernel) return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, failure);
+        void* q = buffers.inputs[0].handle;
+        void* k = buffers.inputs[1].handle;
+        void* v = buffers.inputs[2].handle;
+        void* slopes = alibi ? buffers.inputs[3].handle : nullptr;
+        void* o = buffers.outputs[0].handle;
+        void* lse = buffers.outputs[1].handle;
+        int batch = static_cast<int>(r.batch), heads = static_cast<int>(r.heads);
+        int kv_heads = static_cast<int>(r.kv_heads), sq = static_cast<int>(r.seq), sk = static_cast<int>(r.kv_seq);
+        int offset = static_cast<int>(r.query_offset), causal = r.causal ? 1 : 0;
+        int window = static_cast<int>(r.sliding_window);
+        float softcap = r.logit_softcap, scale = r.softmax_scale;
+        float dropout = r.training ? r.attention_dropout : 0.0f;
+        unsigned long long seed = r.dropout_seed;
+        void* args[] = {&q, &k, &v, &slopes, &o, &lse, &batch, &heads, &kv_heads, &sq, &sk,
+                        &offset, &causal, &window, &softcap, &scale, &dropout, &seed};
+        constexpr unsigned kRows = kAttentionBlockThreads;
+        const unsigned blocks_x = static_cast<unsigned>((r.seq + kRows - 1) / kRows);
+        if (cuLaunchKernel(kernel, blocks_x, static_cast<unsigned>(r.heads), static_cast<unsigned>(r.batch),
+                           kRows, 1, 1, 0, static_cast<CUstream>(buffers.queue.cuda_stream), args,
+                           nullptr) != CUDA_SUCCESS) {
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "attention_forward launch failed");
+        }
+        return Ok();
+    }
+
+    NeuralOpStatus ExecuteAttentionBackward(const NeuralOpRequest& r, NeuralDeviceOpBuffers& buffers) {
+        const bool alibi = r.position_strategy == NeuralPositionStrategy::Alibi;
+        const size_t q_elements = r.head_dim * r.seq * r.batch * r.heads;
+        const size_t kv_elements = r.head_dim * r.kv_seq * r.batch * r.kv_heads;
+        const size_t rows = r.seq * r.batch * r.heads;
+        const auto& in = buffers.inputs;
+        const auto& out = buffers.outputs;
+        if (in.size() != (alibi ? 7u : 6u) || out.size() != 4 || in[0].elements != q_elements ||
+            in[1].elements != kv_elements || in[2].elements != kv_elements || in[3].elements != q_elements ||
+            in[4].elements != q_elements || in[5].elements != rows || (alibi && in[6].elements != r.heads) ||
+            out[0].elements != q_elements || out[1].elements != kv_elements || out[2].elements != kv_elements ||
+            out[3].elements != rows) {
+            return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
+                        "attention_backward buffers do not match the request "
+                        "(Q, K, V, O, dO, LSE[, slopes] -> dQ, dK, dV, delta)");
+        }
+        std::string failure;
+        const auto* kernels = device_state_.AttentionKernels(static_cast<int>(r.head_dim), failure);
+        if (!kernels) return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, failure);
+        const auto stream = static_cast<CUstream>(buffers.queue.cuda_stream);
+        void* q = in[0].handle; void* k = in[1].handle; void* v = in[2].handle;
+        void* o = in[3].handle; void* go = in[4].handle; void* lse = in[5].handle;
+        void* slopes = alibi ? in[6].handle : nullptr;
+        void* dq = out[0].handle; void* dk = out[1].handle; void* dv = out[2].handle; void* delta = out[3].handle;
+        int row_count = static_cast<int>(rows);
+        int batch = static_cast<int>(r.batch), heads = static_cast<int>(r.heads);
+        int kv_heads = static_cast<int>(r.kv_heads), sq = static_cast<int>(r.seq), sk = static_cast<int>(r.kv_seq);
+        int offset = static_cast<int>(r.query_offset), causal = r.causal ? 1 : 0;
+        int window = static_cast<int>(r.sliding_window);
+        float softcap = r.logit_softcap, scale = r.softmax_scale;
+        float dropout = r.training ? r.attention_dropout : 0.0f;
+        unsigned long long seed = r.dropout_seed;
+        constexpr unsigned kRows = kAttentionBlockThreads;
+        // Must match ATTN_SPLIT in the kernel source (rows split over 2 threads).
+        const unsigned rows_per_block = (r.head_dim >= 64 && r.head_dim % 2 == 0) ? kRows / 2 : kRows;
+        void* delta_args[] = {&o, &go, &delta, &row_count};
+        void* dq_args[] = {&q, &k, &v, &go, &lse, &delta, &slopes, &dq, &batch, &heads, &kv_heads, &sq, &sk,
+                           &offset, &causal, &window, &softcap, &scale, &dropout, &seed};
+        void* dkdv_args[] = {&q, &k, &v, &go, &lse, &delta, &slopes, &dk, &dv, &batch, &heads, &kv_heads, &sq, &sk,
+                             &offset, &causal, &window, &softcap, &scale, &dropout, &seed};
+        const bool launched =
+            cuLaunchKernel(kernels->delta, static_cast<unsigned>((rows + 255) / 256), 1, 1, 256, 1, 1, 0, stream,
+                           delta_args, nullptr) == CUDA_SUCCESS &&
+            cuLaunchKernel(kernels->dq, static_cast<unsigned>((r.seq + rows_per_block - 1) / rows_per_block),
+                           static_cast<unsigned>(r.heads), static_cast<unsigned>(r.batch), kRows, 1, 1, 0, stream,
+                           dq_args, nullptr) == CUDA_SUCCESS &&
+            cuLaunchKernel(kernels->dkdv, static_cast<unsigned>((r.kv_seq + rows_per_block - 1) / rows_per_block),
+                           static_cast<unsigned>(r.kv_heads), static_cast<unsigned>(r.batch), kRows, 1, 1, 0, stream,
+                           dkdv_args, nullptr) == CUDA_SUCCESS;
+        if (!launched) {
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "attention_backward launch failed");
+        }
+        return Ok();
+    }
+
+    NeuralOpStatus ExecuteDevice(const NeuralOpRequest& request,
+                                 NeuralDeviceOpBuffers& buffers) override {
+        const NeuralCapability capability = QueryCapability(request);
+        if (!capability.supported) return Fail(capability.reason, capability.detail);
+        if (buffers.queue.platform != DeviceType::CUDA || buffers.queue.native_device < 0) {
+            return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
+                        "device-resident execution needs a CUDA queue");
+        }
+        if (request.op == NeuralOp::AttentionForward || request.op == NeuralOp::AttentionBackward) {
+            std::string failure;
+            if (!device_state_.Ensure(buffers.queue.native_device, failure)) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, failure);
+            }
+            return request.op == NeuralOp::AttentionForward ? ExecuteAttentionForward(request, buffers)
+                                                            : ExecuteAttentionBackward(request, buffers);
+        }
+        if (buffers.inputs.size() != 1 || buffers.outputs.size() != 1 ||
+            buffers.inputs[0].elements != request.elements ||
+            buffers.outputs[0].elements != request.elements) {
+            return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
+                        "device_probe needs one input and one output of request.elements");
+        }
+        std::string failure;
+        if (!device_state_.Ensure(buffers.queue.native_device, failure)) {
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, failure);
+        }
+        const int n = static_cast<int>(request.elements);
+        void* x = buffers.inputs[0].handle;
+        void* y = buffers.outputs[0].handle;
+        void* args[] = {&x, &y, const_cast<int*>(&n)};
+        const unsigned threads = 256;
+        const unsigned blocks = static_cast<unsigned>((request.elements + threads - 1) / threads);
+        // Enqueue on ArrayFire's stream: ordered with ArrayFire work, no sync.
+        if (cuLaunchKernel(device_state_.Probe(), blocks, 1, 1, threads, 1, 1, 0,
+                           static_cast<CUstream>(buffers.queue.cuda_stream), args, nullptr) != CUDA_SUCCESS) {
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "device_probe launch failed");
+        }
+        return Ok();
+    }
+
     NvidiaRuntimeProbe probe_;
     ExecutionState state_;
+    DeviceResidentState device_state_;
 };
 
 } // namespace

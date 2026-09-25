@@ -4,6 +4,7 @@
 #include "cyxwiz/layers/layer_base.h"
 #include "cyxwiz/tensor.h"
 
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -61,6 +62,17 @@ public:
     void SetLogitSoftcap(float cap);
     float GetLogitSoftcap() const { return logit_softcap_; }
     int GetNumKvHeads() const { return num_kv_heads_; }
+
+    // Fused (FlashAttention-style) provider dispatch (tofix112 phase 5b).
+    // The caller declares what its `attn_mask` argument always is: the
+    // standard causal mask (with an optional sliding window), or no mask.
+    // Only then may the layer run the fused kernel, which builds the mask
+    // itself and never materializes [Sq, Sk] scores. Without a declaration,
+    // with attention dropout, or when no provider serves the device, the
+    // ArrayFire path runs. GetAttentionWeights() is empty after a fused pass.
+    void DeclareStandardMask(bool causal, int sliding_window = 0);
+    void ClearStandardMaskDeclaration() { fused_declared_ = false; }
+    bool LastForwardUsedFusedAttention() const { return cached_fused_; }
 
     // KV-cached causal decoding (inference). Between Begin/EndIncremental,
     // Forward(q, k, v, mask) treats q as self-attention input for positions
@@ -133,6 +145,19 @@ private:
     Tensor BackwardArrayFire(const Tensor& grad_output);
     Tensor ForwardIncrementalArrayFire(const Tensor& input);
 #endif
+    // Returns true and fills context_heads ([Sq, head_dim, B, heads]) when the
+    // fused provider ran; q/k/v heads are post QK-norm/RoPE, k/v not expanded.
+    bool TryFusedAttention(const void* qh, const void* kh, const void* vh, size_t batch, size_t sq,
+                           size_t sk, size_t query_offset, bool causal, int window, void* context_heads);
+    bool fused_declared_ = false;
+    bool fused_causal_ = false;
+    int fused_window_ = 0;
+    bool fused_disabled_ = false;  // a provider failure keeps this layer on ArrayFire
+    bool fused_logged_ = false;
+    bool cached_fused_ = false;
+    Tensor cached_fused_q_, cached_fused_k_, cached_fused_v_, cached_fused_o_, cached_fused_lse_;
+    Tensor fused_slopes_;
+    uint64_t fused_dropout_seed_ = 0;  // seed of the last fused training forward (backward reuses it)
     bool incremental_ = false;
     size_t incremental_offset_ = 0;
     int incremental_window_ = 0;
