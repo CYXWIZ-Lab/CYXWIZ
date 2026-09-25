@@ -125,6 +125,7 @@ set(ENGINE_SOURCES
     src/core/arrayfire_backend_discovery_isolation.cpp
     src/core/route_qualification_service.cpp
     src/core/route_recommendation.cpp
+    src/core/compute_device_presentation.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry.cpp
@@ -361,6 +362,8 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_account_dialogs.cpp
     src/gui/panels/toolbar_preferences_dialog.cpp
     src/gui/panels/toolbar_backend_manager.cpp
+    src/gui/panels/toolbar_compute_devices.cpp
+    src/gui/ui_buttons.cpp
     src/gui/panels/toolbar_search_dialogs.cpp
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp

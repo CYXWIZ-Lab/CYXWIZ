@@ -2228,8 +2228,14 @@ TEST_CASE("oneAPI discovery survives unsupported metadata",
         if (match->metadata_status ==
             cyxwiz::DeviceMetadataStatus::Unsupported) {
             CHECK(match->metadata_error_code == AF_ERR_NOT_SUPPORTED);
-            CHECK(match->name_is_fallback);
-            CHECK_FALSE(match->name_known);
+            // The name is recovered from af_info_string (tofix119); detailed
+            // properties such as memory stay unknown.
+            CHECK(match->name_known != match->name_is_fallback);
+            if (match->name_known) {
+                CHECK_FALSE(match->name.empty());
+                CHECK(match->identity_confidence !=
+                      cyxwiz::DeviceIdentityConfidence::StableHardware);
+            }
             CHECK_FALSE(match->memory_total_known);
         } else {
             CHECK(match->metadata_status ==

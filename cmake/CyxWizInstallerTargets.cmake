@@ -154,6 +154,28 @@ if(CYXWIZ_BUILD_TESTS)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
 
+    add_executable(test_compute_device_presentation
+        "${_cyxwiz_installer_engine_dir}/tests/test_compute_device_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/compute_device_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_snapshot.cpp"
+    )
+    target_include_directories(test_compute_device_presentation PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+        "${_cyxwiz_installer_backend_dir}/include"
+        "${CMAKE_BINARY_DIR}/cyxwiz-backend/include"
+        "${_cyxwiz_installer_generated_include}"
+        "${CMAKE_SOURCE_DIR}/redist/bootstrapper"
+    )
+    target_link_libraries(test_compute_device_presentation PRIVATE
+        cyxwiz-backend
+        cyxwiz-runtime-bootstrap
+        nlohmann_json::nlohmann_json
+    )
+    set_target_properties(test_compute_device_presentation PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+
     add_executable(test_installer_product_removal
         "${_cyxwiz_installer_engine_dir}/tests/test_installer_product_removal.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
@@ -355,6 +377,7 @@ set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_transaction_journal.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_theme.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_view.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/gui/ui_buttons.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_operation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_external_session.cpp"
@@ -365,6 +388,7 @@ set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/core/backend_pack_manager_model.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/installer_pack_presentation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/installer_verification_summary.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/core/compute_device_presentation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/core/route_qualification_snapshot.cpp"
 )
 if(WIN32)

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -386,6 +387,16 @@ private:
     void RenderAccountDialogs();
     void RenderPreferencesDialog();
     bool RenderBackendManagerSection(bool training_active);
+    // Compute devices: one card per physical device (tofix119 C).
+    struct ComputeDeviceCardsContext {
+        bool training_active = false;
+        bool verification_running = false;
+        std::function<bool(size_t)> is_active;
+        std::function<bool(size_t)> is_pending;
+        std::function<bool(size_t)> is_saved;
+        std::function<void(size_t)> request_device;
+    };
+    void RenderComputeDeviceCards(const ComputeDeviceCardsContext& context);
 
     // Command Palette functionality
     void InitializeToolEntries();
@@ -645,6 +656,11 @@ private:
     uint64_t route_qualification_task_id_ = 0;
     bool route_qualification_task_refreshed_ = true;
     std::string backend_pack_details_id_;
+    // Set by a route's Verify or a pack's "Verify routes"; consumed where the
+    // verification service is started (single route or one backend, merged).
+    int pending_route_verify_index_ = -1;
+    std::string backend_pack_verify_backend_;
+    std::set<std::string> compute_route_details_open_;
     bool show_backend_pack_maintenance_confirm_ = false;
     int backend_pack_maintenance_action_ = 0;
     std::string backend_pack_maintenance_backend_;

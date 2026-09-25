@@ -2,6 +2,7 @@
 
 #include "toolbar.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../../core/compute_runtime_config.h"
 #include "../../core/compute_runtime_paths.h"
 #include "../../core/async_task_manager.h"
@@ -68,7 +69,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
         ImGui::OpenPopup("Preferences");
         ImVec2 center = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-        ImGui::SetNextWindowSize(ImVec2(650, 500), ImGuiCond_Appearing);
+        ImGui::SetNextWindowSize(ImVec2(1000, 760), ImGuiCond_Appearing);
 
         if (ImGui::BeginPopupModal("Preferences", &show_preferences_dialog_)) {
             // Tab bar for different preference sections
@@ -685,7 +686,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     backend_manager_verify_requested =
                         RenderBackendManagerSection(training_active);
 
-                    ImGui::Text("Available Compute Devices");
+                    ImGui::Text("Compute devices");
                     ImGui::Separator();
                     ImGui::Spacing();
                     ImGui::TextDisabled(
@@ -907,19 +908,6 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 selected.device_id);
                         };
 
-                        const cyxwiz::DeviceType backend_order[] = {
-                            cyxwiz::DeviceType::CPU,
-                            cyxwiz::DeviceType::CUDA,
-                            cyxwiz::DeviceType::OPENCL,
-                            cyxwiz::DeviceType::ONEAPI};
-                        const auto backend_available = [&](cyxwiz::DeviceType type) {
-                            for (const auto& candidate : cached_devices_) {
-                                if (candidate.type == static_cast<int>(type)) {
-                                    return true;
-                                }
-                            }
-                            return false;
-                        };
                         const auto request_device = [&](size_t index) {
                             const auto requested_type =
                                 static_cast<cyxwiz::DeviceType>(
@@ -934,173 +922,49 @@ void ToolbarPanel::RenderPreferencesDialog() {
                             select_candidate(index);
                         };
 
-                        ImGui::SetNextItemWidth(260.0f);
-                        if (training_active) {
-                            ImGui::BeginDisabled();
-                        }
-                        const auto selected_backend =
-                            static_cast<cyxwiz::DeviceType>(selected_backend_type_);
-                        if (ImGui::BeginCombo(
-                                "Backend",
-                                ArrayFireBackendDisplayName(selected_backend))) {
-                            for (const auto backend : backend_order) {
-                                if (!backend_available(backend)) {
-                                    continue;
-                                }
-                                const bool selected =
-                                    selected_backend_type_ == static_cast<int>(backend);
-                                const std::string label =
-                                    std::string(ArrayFireBackendIcon(backend)) + " " +
-                                    ArrayFireBackendDisplayName(backend);
-                                if (ImGui::Selectable(label.c_str(), selected)) {
-                                    selected_backend_type_ =
-                                        static_cast<int>(backend);
-                                }
-                                if (selected) {
-                                    ImGui::SetItemDefaultFocus();
-                                }
-                            }
-                            ImGui::EndCombo();
-                        }
-                        if (training_active) {
-                            ImGui::EndDisabled();
-                        }
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("Select the ArrayFire execution backend");
-                        }
-
-                        ImGui::Spacing();
-                        const auto displayed_backend =
-                            static_cast<cyxwiz::DeviceType>(selected_backend_type_);
-                        ImGui::Text("Devices on %s",
-                                    ArrayFireBackendDisplayName(displayed_backend));
-                        ImGui::Separator();
-
-                        for (size_t i = 0; i < cached_devices_.size(); ++i) {
-                            const auto& dev = cached_devices_[i];
-                            if (dev.type != selected_backend_type_) {
-                                continue;
-                            }
-
+                        const auto cards_task =
+                            route_qualification_task_id_ == 0
+                                ? std::shared_ptr<cyxwiz::AsyncTask>{}
+                                : cyxwiz::AsyncTaskManager::Instance().GetTask(
+                                      route_qualification_task_id_);
+                        ComputeDeviceCardsContext cards_context;
+                        cards_context.training_active = training_active;
+                        cards_context.verification_running =
+                            cards_task &&
+                            (cards_task->GetState() == cyxwiz::TaskState::Pending ||
+                             cards_task->GetState() == cyxwiz::TaskState::Running);
+                        cards_context.is_active = [&](size_t index) {
+                            const auto& dev = cached_devices_[index];
                             const auto type =
                                 static_cast<cyxwiz::DeviceType>(dev.type);
-                            const bool is_selected =
-                                selected_device_index_ == static_cast<int>(i);
-                            const bool is_active_device =
-                                has_run_bound_device
-                                    ? matches_active_run(dev)
-                                    : (active_device &&
-                                       active_device->GetType() == type &&
-                                       active_device->GetDeviceId() == dev.device_id);
-                            const bool is_pending_device =
-                                pending_selection.has_value() &&
-                                pending_selection->type == type &&
+                            return has_run_bound_device
+                                ? matches_active_run(dev)
+                                : (active_device && active_device->GetType() == type &&
+                                   active_device->GetDeviceId() == dev.device_id);
+                        };
+                        cards_context.is_pending = [&](size_t index) {
+                            const auto& dev = cached_devices_[index];
+                            return pending_selection.has_value() &&
+                                pending_selection->type ==
+                                    static_cast<cyxwiz::DeviceType>(dev.type) &&
                                 pending_selection->device_id == dev.device_id;
-                            const bool is_saved_device =
-                                saved_selection.has_value() &&
-                                saved_selection->type == type &&
+                        };
+                        cards_context.is_saved = [&](size_t index) {
+                            const auto& dev = cached_devices_[index];
+                            return saved_selection.has_value() &&
+                                saved_selection->type ==
+                                    static_cast<cyxwiz::DeviceType>(dev.type) &&
                                 saved_selection->device_id == dev.device_id;
-
-                            ImGui::PushID(static_cast<int>(i));
-                            if (training_active) {
-                                ImGui::BeginDisabled();
+                        };
+                        cards_context.request_device = [&](size_t index) {
+                            try {
+                                request_device(index);
+                            } catch (const std::exception& e) {
+                                spdlog::error(
+                                    "Failed to queue backend/device: {}", e.what());
                             }
-                            const bool select_clicked =
-                                ImGui::RadioButton("##device_select", is_selected);
-                            if (training_active) {
-                                ImGui::EndDisabled();
-                            }
-                            if (select_clicked && !training_active) {
-                                try {
-                                    request_device(i);
-                                } catch (const std::exception& e) {
-                                    spdlog::error(
-                                        "Failed to queue backend/device: {}", e.what());
-                                }
-                            }
-                            ImGui::SameLine();
-                            ImGui::TextColored(ArrayFireBackendColor(type),
-                                               "%s",
-                                               ArrayFireBackendIcon(type));
-                            ImGui::SameLine();
-                            ImGui::Text("%s", dev.name.c_str());
-                            ImGui::SameLine();
-                            ImGui::TextDisabled("(device %d)", dev.device_id);
-
-                            if (dev.memory_total_known) {
-                                ImGui::SameLine();
-                                const double mem_gb =
-                                    dev.memory_total / (1024.0 * 1024.0 * 1024.0);
-                                ImGui::TextDisabled("%.1f GB", mem_gb);
-                            }
-                            if (dev.name_from_qualification) {
-                                ImGui::SameLine();
-                                ImGui::TextDisabled("evidence identity");
-                            } else if (dev.name_is_fallback) {
-                                ImGui::SameLine();
-                                ImGui::TextDisabled("fallback label");
-                            }
-                            if (dev.metadata_status == static_cast<int>(
-                                    cyxwiz::DeviceMetadataStatus::Unsupported) ||
-                                dev.metadata_status == static_cast<int>(
-                                    cyxwiz::DeviceMetadataStatus::Failed)) {
-                                ImGui::SameLine();
-                                ImGui::TextDisabled("metadata limited");
-                            }
-                            if (!dev.qualification_evidence_available) {
-                                ImGui::SameLine();
-                                ImGui::TextDisabled("%s No matrix evidence",
-                                                    ICON_FA_CIRCLE_INFO);
-                            } else if (dev.matrix_qualified) {
-                                ImGui::SameLine();
-                                ImGui::TextColored(
-                                    ImVec4(0.3f, 1.0f, 0.3f, 1.0f),
-                                    "%s Verification passed",
-                                    ICON_FA_CIRCLE_CHECK);
-                            } else {
-                                ImGui::SameLine();
-                                ImGui::TextColored(
-                                    ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
-                                    "%s Verification failed",
-                                    ICON_FA_TRIANGLE_EXCLAMATION);
-                            }
-                            if (dev.matrix_qualified) {
-                                ImGui::SameLine();
-                                ImGui::TextColored(
-                                    dev.training_authorized
-                                        ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f)
-                                        : ImVec4(0.45f, 0.75f, 1.0f, 1.0f),
-                                    "%s",
-                                    dev.training_authorized
-                                        ? "Training ready"
-                                        : "Diagnostic only");
-                            }
-                            if (is_active_device) {
-                                ImGui::SameLine();
-                                ImGui::TextColored(
-                                    ImVec4(0.3f, 1.0f, 0.3f, 1.0f),
-                                    "%s %s",
-                                    ICON_FA_CIRCLE_CHECK,
-                                    has_run_bound_device
-                                        ? (training_active ? "Active run" : "Last run")
-                                        : "Active");
-                            }
-                            if (is_pending_device) {
-                                ImGui::SameLine();
-                                ImGui::TextColored(
-                                    ImVec4(1.0f, 0.85f, 0.35f, 1.0f),
-                                    "%s Next run",
-                                    ICON_FA_CLOCK);
-                            }
-                            if (is_saved_device) {
-                                ImGui::SameLine();
-                                ImGui::TextColored(
-                                    ImVec4(0.45f, 0.75f, 1.0f, 1.0f),
-                                    "%s Saved",
-                                    ICON_FA_FLOPPY_DISK);
-                            }
-                            ImGui::PopID();
-                        }
+                        };
+                        RenderComputeDeviceCards(cards_context);
 
                         if (show_oneapi_training_warning_) {
                             ImGui::OpenPopup("Compute Route Warning");
@@ -1186,7 +1050,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                       "construction. The current selection remains "
                                       "unchanged.");
                             ImGui::Spacing();
-                            if (ImGui::Button("Select ArrayFire CPU")) {
+                            if (ui::PrimaryButton("Select ArrayFire CPU")) {
                                 for (size_t i = 0; i < cached_devices_.size(); ++i) {
                                     if (cached_devices_[i].type ==
                                         static_cast<int>(cyxwiz::DeviceType::CPU)) {
@@ -1204,7 +1068,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 ImGui::CloseCurrentPopup();
                             }
                             ImGui::SameLine();
-                            if (ImGui::Button("Cancel")) {
+                            if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular)) {
                                 pending_oneapi_device_index_ = -1;
                                 ImGui::CloseCurrentPopup();
                             }
@@ -1347,9 +1211,39 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                     });
                         };
 
-                    if (backend_manager_verify_requested) {
-                        begin_verification(
-                            cyxwiz::Device::GetAvailableDevices(), false);
+                    // A route's Verify checks only that route; a pack's
+                    // "Verify this pack's routes" checks that backend. Both merge
+                    // into the saved results. Only Verify All replaces them.
+                    if (pending_route_verify_index_ >= 0 ||
+                        (backend_manager_verify_requested &&
+                         !backend_pack_verify_backend_.empty())) {
+                        const int route_index = pending_route_verify_index_;
+                        const std::string pack_backend = backend_pack_verify_backend_;
+                        pending_route_verify_index_ = -1;
+                        backend_pack_verify_backend_.clear();
+                        auto inventory = cyxwiz::Device::GetAvailableDevices();
+                        inventory.erase(
+                            std::remove_if(
+                                inventory.begin(), inventory.end(),
+                                [&](const auto& route) {
+                                    if (route_index >= 0 &&
+                                        route_index <
+                                            static_cast<int>(cached_devices_.size())) {
+                                        const auto& wanted = cached_devices_[route_index];
+                                        return !(static_cast<int>(route.type) ==
+                                                     wanted.type &&
+                                                 route.device_id == wanted.device_id);
+                                    }
+                                    const char* key =
+                                        route.type == cyxwiz::DeviceType::CPU ? "cpu"
+                                        : route.type == cyxwiz::DeviceType::CUDA ? "cuda"
+                                        : route.type == cyxwiz::DeviceType::OPENCL ? "opencl"
+                                        : route.type == cyxwiz::DeviceType::ONEAPI ? "oneapi"
+                                        : "";
+                                    return pack_backend != key;
+                                }),
+                            inventory.end());
+                        begin_verification(std::move(inventory), true);
                     }
 
                     if (qualification_running) {
@@ -1367,55 +1261,19 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                       static_cast<float>(total),
                             ImVec2(-1.0f, 0.0f));
                         ImGui::TextWrapped(
-                            "Verifying %s:%d %s",
+                            "Verifying %s device %d: %s (route %zu of %zu, operation %zu of %zu)",
                             progress.backend.c_str(), progress.device_id,
-                            progress.operation.c_str());
-                        if (ImGui::Button(ICON_FA_STOP " Cancel Verification")) {
+                            progress.operation.c_str(), progress.route_index + 1,
+                            progress.route_count, progress.operation_index + 1,
+                            progress.operation_count);
+                        if (ui::SecondaryButton(ICON_FA_STOP " Cancel verification")) {
                             route_qualification_service_->Cancel();
                             cyxwiz::AsyncTaskManager::Instance().Cancel(
                                 route_qualification_task_id_);
                         }
                     } else {
-                        const bool can_verify_selected =
-                            !training_active && selected_device_index_ >= 0 &&
-                            selected_device_index_ <
-                                static_cast<int>(cached_devices_.size());
-                        if (!can_verify_selected) ImGui::BeginDisabled();
-                        if (ImGui::Button(ICON_FA_CHECK " Verify Selected")) {
-                            const auto selected_type =
-                                static_cast<cyxwiz::DeviceType>(
-                                    cached_devices_[selected_device_index_].type);
-                            const int selected_id =
-                                cached_devices_[selected_device_index_].device_id;
-                            auto inventory =
-                                cyxwiz::Device::GetAvailableDevices();
-                            // The selected route plus the ArrayFire CPU route:
-                            // a run falls back to CPU only when that route is
-                            // qualified too, so verify both in one go.
-                            inventory.erase(
-                                std::remove_if(
-                                    inventory.begin(), inventory.end(),
-                                    [&](const auto& route) {
-                                        const bool selected =
-                                            route.type == selected_type &&
-                                            route.device_id == selected_id;
-                                        const bool cpu_recovery =
-                                            selected_type != cyxwiz::DeviceType::CPU &&
-                                            route.type == cyxwiz::DeviceType::CPU;
-                                        return !selected && !cpu_recovery;
-                                    }),
-                                inventory.end());
-                            std::stable_partition(
-                                inventory.begin(), inventory.end(),
-                                [&](const auto& route) {
-                                    return route.type == selected_type;
-                                });
-                            begin_verification(std::move(inventory), true);
-                        }
-                        if (!can_verify_selected) ImGui::EndDisabled();
-                        ImGui::SameLine();
                         if (training_active) ImGui::BeginDisabled();
-                        if (ImGui::Button(ICON_FA_LIST_CHECK " Verify All")) {
+                        if (ui::PrimaryButton(ICON_FA_SHIELD_HALVED " Verify all")) {
                             begin_verification(
                                 cyxwiz::Device::GetAvailableDevices(), false);
                         }
@@ -1452,6 +1310,9 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                         : (fastest->display_name.empty()
                                                ? "Verified route"
                                                : fastest->display_name.c_str());
+                                std::string fastest_label = name;
+                                std::replace(fastest_label.begin(),
+                                             fastest_label.end(), '_', ' ');
                                 ImGui::TextColored(
                                     ImVec4(0.3f, 1.0f, 0.3f, 1.0f),
                                     "%s Fastest verified route for the dense benchmark",
@@ -1459,7 +1320,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                 ImGui::BulletText(
                                     "%s / %s (backend ID %d)",
                                     ArrayFireBackendDisplayName(fastest->type),
-                                    name, fastest->device_id);
+                                    fastest_label.c_str(), fastest->device_id);
                                 ImGui::BulletText(
                                     "Median: %.3f ms/iteration (%d samples, %d iterations each)",
                                     fastest->median_iteration_ms,
@@ -1469,9 +1330,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                     "Fixed 512x512 dense forward/backward compute; actual model performance may differ.");
                                 if (fastest_index >= 0) {
                                     if (training_active) ImGui::BeginDisabled();
-                                    if (ImGui::Button(
-                                            ICON_FA_WAND_MAGIC_SPARKLES
-                                            " Use Benchmark Recommendation")) {
+                                    if (ui::SecondaryButton(ICON_FA_WAND_MAGIC_SPARKLES " Use fastest route")) {
                                         selected_device_index_ = fastest_index;
                                         selected_backend_type_ =
                                             cached_devices_[fastest_index].type;
@@ -1484,168 +1343,19 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                     "No performance recommendation is available. Run Verify All to benchmark every verified route.");
                             }
 
-                            bool showed_failure = false;
-                            for (const auto& candidate : cached_devices_) {
-                                if (!candidate.qualification_evidence_available ||
-                                    candidate.matrix_qualified) {
-                                    continue;
-                                }
-                                if (!showed_failure) {
-                                    ImGui::Spacing();
-                                    ImGui::Text("Routes not recommended");
-                                    showed_failure = true;
-                                }
-                                ImGui::BulletText(
-                                    "%s / %s (ID %d): %s%s%s",
-                                    ArrayFireBackendDisplayName(
-                                        static_cast<cyxwiz::DeviceType>(
-                                            candidate.type)),
-                                    candidate.name.c_str(),
-                                    candidate.device_id,
-                                    candidate.failure_category.empty()
-                                        ? "verification failed"
-                                        : candidate.failure_category.c_str(),
-                                    candidate.failed_operation.empty()
-                                        ? ""
-                                        : " at ",
-                                    candidate.failed_operation.empty()
-                                        ? ""
-                                        : candidate.failed_operation.c_str());
-                                if (!candidate.observed_failure.empty()) {
-                                    ImGui::Indent();
-                                    ImGui::TextWrapped(
-                                        "%s", candidate.observed_failure.c_str());
-                                    ImGui::Unindent();
-                                }
-                            }
                         }
                     }
 
                     ImGui::Spacing();
 
                     // Refresh button
-                    if (ImGui::Button(ICON_FA_ARROWS_ROTATE " Refresh Devices")) {
+                    if (ui::SecondaryButton(ICON_FA_ARROWS_ROTATE " Refresh devices")) {
                         devices_initialized_ = false;
                     }
 
                     ImGui::Spacing();
                     ImGui::Separator();
                     ImGui::Spacing();
-
-                    // Current device info
-                    if (selected_device_index_ >= 0 && selected_device_index_ < static_cast<int>(cached_devices_.size())) {
-                        const auto& dev = cached_devices_[selected_device_index_];
-                        ImGui::Text("Selected Device Details:");
-                        ImGui::Indent();
-                        ImGui::BulletText(
-                            "Backend: %s",
-                            ArrayFireBackendDisplayName(
-                                static_cast<cyxwiz::DeviceType>(dev.type)));
-                        ImGui::BulletText("Name: %s", dev.name.c_str());
-                        ImGui::BulletText(
-                            "Name source: %s",
-                            dev.name_from_qualification
-                                ? (dev.identity_source.empty()
-                                       ? "Qualification evidence"
-                                       : dev.identity_source.c_str())
-                                : (dev.name_is_fallback ? "Fallback"
-                                                        : "Provider metadata"));
-                        ImGui::BulletText("Backend device ID: %d", dev.device_id);
-                        ImGui::BulletText(
-                            "Device kind: %s",
-                            cyxwiz::DeviceKindName(
-                                static_cast<cyxwiz::DeviceKind>(dev.kind)));
-                        ImGui::BulletText(
-                            "Identity: %s",
-                            cyxwiz::DeviceIdentityConfidenceName(
-                                static_cast<
-                                    cyxwiz::DeviceIdentityConfidence>(
-                                        dev.identity_confidence)));
-                        ImGui::BulletText(
-                            "Provider: %s",
-                            dev.provider_known ? dev.provider.c_str()
-                                               : "Unknown");
-                        ImGui::BulletText(
-                            "Driver: %s",
-                            dev.driver_version_known
-                                ? dev.driver_version.c_str()
-                                : "Unknown");
-                        if (dev.pci_location_known) {
-                            ImGui::BulletText(
-                                "PCI: %04x:%02x:%02x.%x",
-                                dev.pci_domain,
-                                dev.pci_bus,
-                                dev.pci_device,
-                                dev.pci_function);
-                        } else {
-                            ImGui::BulletText("PCI: Unknown");
-                        }
-                        ImGui::BulletText(
-                            "Physical identity: %s",
-                            dev.physical_fingerprint_known
-                                ? dev.physical_fingerprint.c_str()
-                                : "Unknown");
-                        ImGui::BulletText(
-                            "Metadata: %s",
-                            cyxwiz::DeviceMetadataStatusName(
-                                static_cast<cyxwiz::DeviceMetadataStatus>(
-                                    dev.metadata_status)));
-                        ImGui::BulletText("Selectable: %s",
-                                          dev.device_selectable ? "Yes" : "No");
-                        ImGui::BulletText(
-                            "Route verification: %s",
-                            !dev.qualification_evidence_available
-                                ? "No evidence"
-                                : (dev.matrix_qualified ? "Passed" : "Failed"));
-                        ImGui::BulletText(
-                            "Training authorization: %s",
-                            cyxwiz::RouteTrainingAuthorizationStatusName(
-                                static_cast<
-                                    cyxwiz::RouteTrainingAuthorizationStatus>(
-                                    dev.training_authorization_status)));
-                        ImGui::BulletText(
-                            "Qualification evidence: %s",
-                            dev.qualification_evidence_available
-                                ? "Loaded"
-                                : "Not available");
-                        ImGui::TextWrapped(
-                            "Qualification evidence: %s",
-                            dev.qualification_message.c_str());
-                        ImGui::TextWrapped(
-                            "Authorization policy: %s",
-                            dev.training_authorization_message.c_str());
-                        if (!dev.observed_failure.empty()) {
-                            ImGui::BulletText(
-                                "Failure category: %s",
-                                dev.failure_category.c_str());
-                            if (!dev.failed_operation.empty()) {
-                                ImGui::BulletText(
-                                    "Failed operation: %s",
-                                    dev.failed_operation.c_str());
-                            }
-                            ImGui::TextWrapped(
-                                "Observed: %s",
-                                dev.observed_failure.c_str());
-                            ImGui::TextWrapped(
-                                "Interpretation: %s",
-                                dev.failure_interpretation.c_str());
-                            ImGui::TextWrapped(
-                                "Recommended action: %s",
-                                dev.recommended_action.c_str());
-                        }
-                        if (dev.memory_total_known) {
-                            double total_gb = dev.memory_total / (1024.0 * 1024.0 * 1024.0);
-                            if (dev.memory_available_known) {
-                                double avail_gb = dev.memory_available / (1024.0 * 1024.0 * 1024.0);
-                                ImGui::BulletText("Memory: %.2f GB total, %.2f GB available", total_gb, avail_gb);
-                            } else {
-                                ImGui::BulletText("Memory: %.2f GB total, available unknown", total_gb);
-                            }
-                        } else {
-                            ImGui::BulletText("Memory: Unknown");
-                        }
-                        ImGui::Unindent();
-                    }
 
                     ImGui::EndTabItem();
                 }
@@ -1662,7 +1372,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
             float total_width = button_width * 2 + ImGui::GetStyle().ItemSpacing.x;
             ImGui::SetCursorPosX((ImGui::GetWindowWidth() - total_width) * 0.5f);
 
-            if (ImGui::Button("OK", ImVec2(button_width, 0))) {
+            if (ui::PrimaryButton("OK", true, nullptr, ui::ButtonSize::Regular, button_width)) {
                 bool selection_committed = true;
                 if (device_selection_dirty_) {
                     if (selected_device_index_ < 0 ||
@@ -1773,7 +1483,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
+            if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular, button_width)) {
                 device_selection_dirty_ = false;
                 devices_initialized_ = false;
                 selected_device_index_ = -1;
@@ -1821,7 +1531,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                     alternative.type)) +
                             " / " + alternative.name + "##recommendation" +
                             std::to_string(index);
-                        if (ImGui::Button(label.c_str())) {
+                        if (ui::SecondaryButton(label.c_str(), true, nullptr, ui::ButtonSize::Regular)) {
                             selected_device_index_ = index;
                             selected_backend_type_ = alternative.type;
                             device_selection_dirty_ = true;
@@ -1837,7 +1547,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         "The alternative remains a candidate until OK is clicked.");
                 }
                 ImGui::Spacing();
-                if (ImGui::Button("Close")) {
+                if (ui::SecondaryButton("Close", true, nullptr, ui::ButtonSize::Regular)) {
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::EndPopup();

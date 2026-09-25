@@ -169,6 +169,7 @@ InstallerVerificationSummary BuildInstallerVerificationSummary(
             ++summary.attention_count;
         }
         summary.routes.push_back(std::move(route));
+        summary.records.push_back(record);
     }
 
     summary.comparable_benchmark_count = static_cast<std::size_t>(

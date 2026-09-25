@@ -1,6 +1,7 @@
 #include "toolbar.h"
 
 #include "../icons.h"
+#include "../ui_buttons.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/backend_pack_catalog_adapter.h"
 #include "../../core/backend_pack_manager_model.h"
@@ -29,16 +30,6 @@
 namespace cyxwiz {
 namespace {
 
-const char* PackBackendName(DeviceType type) {
-    switch (type) {
-        case DeviceType::CPU: return "CPU base";
-        case DeviceType::CUDA: return "CUDA";
-        case DeviceType::OPENCL: return "OpenCL";
-        case DeviceType::ONEAPI: return "oneAPI";
-        default: return "Unknown";
-    }
-}
-
 std::string PackBackendId(DeviceType type) {
     switch (type) {
         case DeviceType::CPU: return "cpu";
@@ -49,16 +40,12 @@ std::string PackBackendId(DeviceType type) {
     }
 }
 
-bool RenderActionButton(
-    const char* label,
-    const BackendPackActionDecision& decision) {
-    if (!decision.enabled) ImGui::BeginDisabled();
-    const bool clicked = ImGui::SmallButton(label);
-    if (!decision.enabled) ImGui::EndDisabled();
-    if (!decision.enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        ImGui::SetTooltip("%s", decision.reason.c_str());
-    }
-    return clicked && decision.enabled;
+const char* PackDisplayName(const std::string& backend) {
+    if (backend == "cpu") return "CPU base";
+    if (backend == "cuda") return "CUDA";
+    if (backend == "opencl") return "OpenCL";
+    if (backend == "oneapi") return "oneAPI";
+    return backend.c_str();
 }
 
 std::string JoinOrUnavailable(const std::vector<std::string>& values) {
@@ -309,16 +296,10 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
 
     bool verify_requested = false;
     if (!ImGui::CollapsingHeader(
-            ICON_FA_CUBES " Backend Manager",
+            ICON_FA_CUBES " Installed packs",
             ImGuiTreeNodeFlags_DefaultOpen)) {
         return false;
     }
-
-    ImGui::TextDisabled(
-        "Browse backend packs here. Device selection below remains unchanged until you click OK.");
-    ImGui::Spacing();
-    ImGui::TextDisabled(
-        "Package selection and downloads open in the standalone CyxWiz Installer. This view reports active runtime and qualification truth.");
 
     if (!next_runtime_error.empty()) {
         ImGui::TextColored(
@@ -341,6 +322,7 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
             "%s Current process identity: %s",
             ICON_FA_TRIANGLE_EXCLAMATION, identity_error.c_str());
     }
+    ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(
         backend_pack_catalog_available_
             ? ImVec4(0.45f, 0.8f, 1.0f, 1.0f)
@@ -349,22 +331,23 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
         backend_pack_catalog_message_.empty()
             ? "Signed catalog has not been loaded."
             : backend_pack_catalog_message_.c_str());
-    if (next_runtime_available &&
-        ImGui::SmallButton("Refresh signed catalog")) {
-        backend_pack_catalog_loaded_ = false;
+    ImGui::PopTextWrapPos();
+    if (next_runtime_available) {
+        if (ui::SecondaryButton("Refresh signed catalog")) {
+            backend_pack_catalog_loaded_ = false;
+        }
+        ImGui::SameLine();
     }
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!installer_manager_available);
-    if (ImGui::SmallButton("Open CyxWiz Installer...")) {
+    if (ui::SecondaryButton(
+            "Open CyxWiz Installer...", installer_manager_available,
+            "The standalone installer is available in packaged desktop builds")) {
         core::WindowManager::LaunchExecutable(
             installer_manager.string(),
             {"--runtime-root", runtime_root.string()});
     }
-    ImGui::EndDisabled();
-    if (!installer_manager_available &&
-        ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    if (ImGui::IsItemHovered() && installer_manager_available) {
         ImGui::SetTooltip(
-            "The standalone installer is available in packaged desktop builds");
+            "Package selection and downloads open in the standalone CyxWiz Installer.");
     }
     if (maintenance_pending) {
         ImGui::TextColored(
@@ -381,32 +364,40 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
             "%s Pending maintenance request is invalid: %s",
             ICON_FA_TRIANGLE_EXCLAMATION, pending_error.c_str());
     }
+    ImGui::Spacing();
 
     if (records.empty()) {
         ImGui::TextDisabled("No packaged backend-pack inventory is available.");
     } else if (ImGui::BeginTable(
-                   "BackendPackManagerTable", 5,
-                   ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                       ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Pack", ImGuiTableColumnFlags_WidthStretch, 1.4f);
-        ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, 82.0f);
-        ImGui::TableSetupColumn("Local verification", ImGuiTableColumnFlags_WidthStretch, 1.2f);
-        ImGui::TableSetupColumn("Catalog", ImGuiTableColumnFlags_WidthFixed, 78.0f);
-        ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthStretch, 2.4f);
-        ImGui::TableHeadersRow();
+                   "BackendPackManagerTable", 4,
+                   ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg |
+                       ImGuiTableFlags_SizingStretchProp |
+                       ImGuiTableFlags_PadOuterX)) {
+        ImGui::TableSetupColumn("Pack", ImGuiTableColumnFlags_WidthStretch, 1.6f);
+        ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 1.6f);
+        ImGui::TableSetupColumn("##details", ImGuiTableColumnFlags_WidthFixed,
+                                ui::ButtonWidth("Details", ui::ButtonSize::Small));
+        ImGui::TableSetupColumn("##actions", ImGuiTableColumnFlags_WidthFixed,
+                                ui::ButtonWidth("Actions", ui::ButtonSize::Small));
         for (const auto& record : records) {
             ImGui::PushID(record.pack_id.c_str());
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::Text("%s", record.backend == "cpu"
-                                   ? PackBackendName(DeviceType::CPU)
-                                   : record.backend.c_str());
+            ImGui::Text("%s", PackDisplayName(record.backend));
+            if (record.download_size_bytes > 0) {
+                ImGui::SameLine();
+                ImGui::TextDisabled(
+                    "%s", FormatBackendPackByteSize(record.download_size_bytes).c_str());
+            }
+            ImGui::PushTextWrapPos(0.0f);
             ImGui::TextDisabled("%s", record.pack_id.c_str());
             if (!record.installed_pack_id.empty() &&
                 record.installed_pack_id != record.pack_id) {
                 ImGui::TextDisabled(
                     "Installed: %s", record.installed_pack_id.c_str());
             }
+            ImGui::PopTextWrapPos();
+
             ImGui::TableNextColumn();
             const char* state = record.active
                 ? (current_matches_next ? "Active" : "Next launch")
@@ -417,111 +408,122 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
                     ? ImVec4(0.35f, 0.95f, 0.45f, 1.0f)
                     : ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
                 "%s", state);
-            ImGui::TableNextColumn();
-            if (!record.qualification_evidence_available) {
-                ImGui::TextDisabled("Needs verification");
-            } else if (record.training_authorized) {
-                ImGui::TextColored(
-                    ImVec4(0.35f, 0.95f, 0.45f, 1.0f), "Passed");
-            } else {
-                ImGui::TextColored(
-                    ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Not authorized");
-            }
-            ImGui::TableNextColumn();
+            ImGui::SameLine();
             ImGui::TextDisabled(
-                "%s", BackendPackCatalogSupportName(record.catalog_support));
+                "· %s", BackendPackCatalogSupportName(record.catalog_support));
+            if (!record.qualification_evidence_available) {
+                ImGui::TextDisabled("Routes not verified yet");
+            } else if (record.training_authorized) {
+                ImGui::TextColored(ImVec4(0.35f, 0.95f, 0.45f, 1.0f),
+                                   "At least one route verified");
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+                                   "No verified route");
+            }
+
             ImGui::TableNextColumn();
-            const auto details = EvaluateBackendPackAction(
-                BackendPackAction::Details, context, &record);
-            if (RenderActionButton("Details", details)) {
+            const bool details_open = backend_pack_details_id_ == record.pack_id;
+            if (ui::LinkButton(details_open ? "Hide" : "Details")) {
                 backend_pack_details_id_ =
-                    backend_pack_details_id_ == record.pack_id
-                        ? std::string{}
-                        : record.pack_id;
+                    details_open ? std::string{} : record.pack_id;
             }
-            ImGui::SameLine();
-            const auto verify = EvaluateBackendPackAction(
-                BackendPackAction::Verify, context, &record);
-            if (RenderActionButton("Verify", verify)) {
-                verify_requested = true;
+
+            ImGui::TableNextColumn();
+            if (ui::SecondaryButton("Actions")) {
+                ImGui::OpenPopup("pack_actions");
             }
-            ImGui::SameLine();
-            const auto install = EvaluateBackendPackAction(
-                BackendPackAction::Install, context, &record);
-            if (RenderActionButton("Install", install)) {
-                core::WindowManager::LaunchExecutable(
-                    installer_manager.string(),
-                    {"--runtime-root", runtime_root.string(),
-                     "--select", record.pack_id});
+            if (ImGui::BeginPopup("pack_actions")) {
+                const auto menu_item = [](const char* label,
+                                          const BackendPackActionDecision& decision) {
+                    const bool clicked =
+                        ImGui::MenuItem(label, nullptr, false, decision.enabled);
+                    if (!decision.enabled && !decision.reason.empty() &&
+                        ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                        ImGui::SetTooltip("%s", decision.reason.c_str());
+                    }
+                    return clicked && decision.enabled;
+                };
+                if (menu_item("Verify this pack's routes",
+                              EvaluateBackendPackAction(
+                                  BackendPackAction::Verify, context, &record))) {
+                    backend_pack_verify_backend_ = record.backend;
+                    verify_requested = true;
+                }
+                if (menu_item("Install...",
+                              EvaluateBackendPackAction(
+                                  BackendPackAction::Install, context, &record))) {
+                    core::WindowManager::LaunchExecutable(
+                        installer_manager.string(),
+                        {"--runtime-root", runtime_root.string(),
+                         "--select", record.pack_id});
+                }
+                if (menu_item("Update...",
+                              EvaluateBackendPackAction(
+                                  BackendPackAction::Update, context, &record))) {
+                    core::WindowManager::LaunchExecutable(
+                        installer_manager.string(),
+                        {"--runtime-root", runtime_root.string(),
+                         "--select", record.pack_id});
+                }
+                if (menu_item("Repair...",
+                              EvaluateBackendPackAction(
+                                  BackendPackAction::Repair, context, &record))) {
+                    backend_pack_maintenance_action_ = 2;
+                    backend_pack_maintenance_backend_ = record.backend;
+                    backend_pack_maintenance_pack_id_ = record.pack_id;
+                    show_backend_pack_maintenance_confirm_ = true;
+                }
+                ImGui::Separator();
+                if (menu_item("Remove...",
+                              EvaluateBackendPackAction(
+                                  BackendPackAction::Remove, context, &record))) {
+                    backend_pack_maintenance_action_ = 0;
+                    backend_pack_maintenance_backend_ = record.backend;
+                    backend_pack_maintenance_pack_id_ =
+                        record.installed_pack_id.empty()
+                            ? record.pack_id : record.installed_pack_id;
+                    show_backend_pack_maintenance_confirm_ = true;
+                }
+                ImGui::EndPopup();
             }
-            ImGui::SameLine();
-            const auto repair = EvaluateBackendPackAction(
-                BackendPackAction::Repair, context, &record);
-            if (RenderActionButton("Repair", repair)) {
-                backend_pack_maintenance_action_ = 2;
-                backend_pack_maintenance_backend_ = record.backend;
-                backend_pack_maintenance_pack_id_ = record.pack_id;
-                show_backend_pack_maintenance_confirm_ = true;
-            }
-            ImGui::SameLine();
-            const auto update = EvaluateBackendPackAction(
-                BackendPackAction::Update, context, &record);
-            if (RenderActionButton("Update", update)) {
-                core::WindowManager::LaunchExecutable(
-                    installer_manager.string(),
-                    {"--runtime-root", runtime_root.string(),
-                     "--select", record.pack_id});
-            }
-            ImGui::SameLine();
-            if (RenderActionButton(
-                    "Remove", EvaluateBackendPackAction(
-                        BackendPackAction::Remove, context, &record))) {
-                backend_pack_maintenance_action_ = 0;
-                backend_pack_maintenance_backend_ = record.backend;
-                backend_pack_maintenance_pack_id_ =
-                    record.installed_pack_id.empty()
-                        ? record.pack_id : record.installed_pack_id;
-                show_backend_pack_maintenance_confirm_ = true;
+
+            if (details_open) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Indent();
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("Pack ID: %s", record.pack_id.c_str());
+                ImGui::TextDisabled(
+                    "Download size: %s",
+                    FormatBackendPackByteSize(record.download_size_bytes).c_str());
+                ImGui::TextDisabled(
+                    "License: %s", JoinOrUnavailable(record.licenses).c_str());
+                ImGui::TextDisabled(
+                    "Provider requirement: %s",
+                    JoinOrUnavailable(record.provider_requirements).c_str());
+                ImGui::TextDisabled(
+                    "Catalog support: %s",
+                    BackendPackCatalogSupportName(record.catalog_support));
+                ImGui::TextDisabled(
+                    "Local verification: %s",
+                    record.qualification_evidence_available
+                        ? (record.training_authorized
+                               ? "Current evidence authorizes at least one exact route."
+                               : "Current evidence does not authorize normal training.")
+                        : "Required after install and before normal training selection.");
+                ImGui::PopTextWrapPos();
+                ImGui::Unindent();
             }
             ImGui::PopID();
         }
         ImGui::EndTable();
     }
 
-    if (!backend_pack_details_id_.empty()) {
-        const auto selected = std::find_if(
-            records.begin(), records.end(), [&](const auto& record) {
-                return record.pack_id == backend_pack_details_id_;
-            });
-        if (selected != records.end()) {
-            ImGui::SeparatorText("Pack details");
-            ImGui::BulletText("Pack ID: %s", selected->pack_id.c_str());
-            ImGui::BulletText(
-                "Download size: %s",
-                FormatBackendPackByteSize(
-                    selected->download_size_bytes).c_str());
-            ImGui::BulletText(
-                "License: %s", JoinOrUnavailable(selected->licenses).c_str());
-            ImGui::BulletText(
-                "Provider requirement: %s",
-                JoinOrUnavailable(
-                    selected->provider_requirements).c_str());
-            ImGui::BulletText(
-                "Catalog support: %s",
-                BackendPackCatalogSupportName(selected->catalog_support));
-            ImGui::TextWrapped(
-                "Local verification: %s",
-                selected->qualification_evidence_available
-                    ? (selected->training_authorized
-                           ? "Current evidence authorizes at least one exact route."
-                           : "Current evidence does not authorize normal training.")
-                    : "Required after install and before normal training selection.");
-        }
-    }
-
+    ImGui::Spacing();
     const auto rollback = EvaluateBackendPackAction(
         BackendPackAction::Rollback, context);
-    if (RenderActionButton(ICON_FA_ROTATE_LEFT " Rollback", rollback)) {
+    if (ui::DangerButton(ICON_FA_ROTATE_LEFT " Roll back runtime", rollback.enabled,
+                         rollback.reason.c_str())) {
         backend_pack_maintenance_action_ = 1;
         backend_pack_maintenance_backend_.clear();
         backend_pack_maintenance_pack_id_.clear();
@@ -529,7 +531,7 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
     }
     if (backend_pack_maintenance_queued_) {
         ImGui::SameLine();
-        if (ImGui::Button("Exit and Apply")) {
+        if (ui::PrimaryButton("Exit and Apply")) {
             if (exit_callback_) exit_callback_();
         }
         if (ImGui::IsItemHovered()) {
@@ -585,7 +587,7 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
         ImGui::TextWrapped(
             "The device candidate below will not change. The bootstrapper validates the exact runtime identity and applies this action only after the Engine has exited.");
         ImGui::Spacing();
-        if (ImGui::Button("Queue for Exit")) {
+        if (ui::PrimaryButton("Queue for Exit")) {
             runtime::BackendPackMaintenanceRequest request;
             request.action = removing
                 ? runtime::BackendPackMaintenanceAction::Remove
@@ -607,7 +609,7 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
+        if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular)) {
             backend_pack_maintenance_backend_.clear();
             backend_pack_maintenance_pack_id_.clear();
             ImGui::CloseCurrentPopup();

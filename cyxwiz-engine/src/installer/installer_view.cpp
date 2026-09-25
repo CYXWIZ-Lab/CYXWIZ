@@ -1,5 +1,6 @@
 #include "installer_view.h"
 
+#include "core/compute_device_presentation.h"
 #include "core/installer_pack_presentation.h"
 #include "gui/icons.h"
 
@@ -7,6 +8,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -460,49 +462,131 @@ void RenderLocation(InstallerViewState &state,
                      state.install_location_message.c_str());
 }
 
+ImVec4 RouteStatusColor(ComputeRouteStatus status) {
+  switch (status) {
+  case ComputeRouteStatus::Verified:
+    return kSuccess;
+  case ComputeRouteStatus::Failed:
+    return kWarning;
+  case ComputeRouteStatus::NotSupported:
+    return kDanger;
+  case ComputeRouteStatus::NeedsDriverUpdate:
+    return ImVec4(0.90f, 0.75f, 0.29f, 1.0f);
+  default:
+    return ImVec4(0.64f, 0.69f, 0.78f, 1.0f);
+  }
+}
+
+const char *RouteStatusIcon(ComputeRouteStatus status) {
+  switch (status) {
+  case ComputeRouteStatus::Verified:
+    return ICON_FA_CIRCLE_CHECK;
+  case ComputeRouteStatus::Failed:
+    return ICON_FA_TRIANGLE_EXCLAMATION;
+  case ComputeRouteStatus::NotSupported:
+    return ICON_FA_CIRCLE_XMARK;
+  case ComputeRouteStatus::NeedsDriverUpdate:
+    return ICON_FA_WRENCH;
+  default:
+    return ICON_FA_CLOCK;
+  }
+}
+
+// Same device cards and wording as CyxWiz Engine > Preferences > Compute
+// devices (shared presentation model); read-only because verification runs
+// in the Engine.
 void RenderVerificationSummary(const InstallerVerificationSummary &summary) {
   if (!summary.evidence_available)
     return;
   ImGui::Text("Verification results");
-  ImGui::TextWrapped("%s", summary.headline.c_str());
+  ImGui::PushTextWrapPos(0.0f);
+  ImGui::TextUnformatted(summary.headline.c_str());
   ImGui::TextDisabled("%s", summary.performance_message.c_str());
-  if (!summary.evidence_matches_runtime || summary.routes.empty())
+  ImGui::TextDisabled("Results come from CyxWiz Engine and update automatically "
+                      "when it finishes verifying. A route trains only after it "
+                      "is verified on this machine.");
+  ImGui::PopTextWrapPos();
+  if (!summary.evidence_matches_runtime || summary.records.empty())
     return;
 
-  if (ImGui::BeginTable("verification", 4,
-                        ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg |
-                            ImGuiTableFlags_Resizable)) {
-    ImGui::TableSetupColumn("Route");
-    ImGui::TableSetupColumn("Result");
-    ImGui::TableSetupColumn("Reason");
-    ImGui::TableSetupColumn("Benchmark");
-    ImGui::TableHeadersRow();
+  RouteQualificationSnapshot evidence;
+  evidence.routes = summary.records;
+  auto inputs = ComputeRouteInputsFromEvidence(evidence);
+  for (auto &input : inputs) {
     for (const auto &route : summary.routes) {
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("%s device %d", route.backend.c_str(), route.device_id);
-      if (!route.display_name.empty()) {
-        ImGui::TextDisabled("%s", route.display_name.c_str());
-      }
-      ImGui::TableSetColumnIndex(1);
-      ImGui::TextUnformatted(
-          InstallerRouteVerificationStatusName(route.status));
-      ImGui::TableSetColumnIndex(2);
-      ImGui::TextWrapped("%s", route.reason.c_str());
-      if (!route.recommended_action.empty()) {
-        ImGui::TextDisabled("%s", route.recommended_action.c_str());
-      }
-      ImGui::TableSetColumnIndex(3);
-      if (route.benchmark_available) {
-        ImGui::Text("%.3f ms", route.benchmark_median_iteration_ms);
-        if (route.best_measured) {
-          ImGui::TextColored(kSuccess, "Best measured");
-        }
-      } else {
-        ImGui::TextDisabled("Not available");
+      if (route.type == input.type && route.device_id == input.device_id) {
+        input.pack_active = route.active;
+        break;
       }
     }
-    ImGui::EndTable();
+  }
+  std::optional<ComputeFastestRoute> fastest;
+  for (const auto &route : summary.routes) {
+    if (route.best_measured) {
+      fastest = ComputeFastestRoute{route.type, route.device_id,
+                                    route.benchmark_median_iteration_ms};
+    }
+  }
+  const auto cards = BuildComputeDeviceCards(inputs, fastest);
+  ImGui::Spacing();
+  for (const auto &card : cards) {
+    ImGui::PushID(card.key.c_str());
+    ImGui::BeginChild("card", ImVec2(0.0f, 0.0f),
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY |
+                          ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::Text("%s", card.title.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", card.subtitle.c_str());
+    if (!card.recommended_route.empty()) {
+      ImGui::TextColored(kAccent, "%s Recommended: %s", ICON_FA_STAR,
+                         card.recommended_route.c_str());
+    } else {
+      ImGui::TextDisabled("No recommended route yet");
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", card.recommendation_reason.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::Separator();
+    for (const auto &route : card.routes) {
+      ImGui::PushID(route.route_label.c_str());
+      ImGui::PushID(route.device_id);
+      if (ImGui::BeginTable("route", 3, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("route", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("status", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("summary", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("%s", route.route_label.c_str());
+        ImGui::TextDisabled("%s", route.pack_label.c_str());
+        ImGui::TableNextColumn();
+        ImGui::TextColored(RouteStatusColor(route.status), "%s %s",
+                           RouteStatusIcon(route.status),
+                           ComputeRouteStatusName(route.status));
+        ImGui::TableNextColumn();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", route.summary.c_str());
+        for (const auto &badge : route.badges) {
+          ImGui::TextColored(kWarning, "%s", badge.c_str());
+        }
+        ImGui::PopTextWrapPos();
+        ImGui::EndTable();
+      }
+      if (ImGui::TreeNodeEx("Details", ImGuiTreeNodeFlags_SpanAvailWidth)) {
+        for (const auto &detail : route.details) {
+          ImGui::TextDisabled("%s:", detail.first.c_str());
+          ImGui::SameLine();
+          ImGui::PushTextWrapPos(0.0f);
+          ImGui::TextUnformatted(detail.second.c_str());
+          ImGui::PopTextWrapPos();
+        }
+        ImGui::TreePop();
+      }
+      ImGui::PopID();
+      ImGui::PopID();
+    }
+    ImGui::EndChild();
+    ImGui::PopID();
+    ImGui::Spacing();
   }
 }
 

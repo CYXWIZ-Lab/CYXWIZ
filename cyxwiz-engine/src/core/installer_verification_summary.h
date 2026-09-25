@@ -42,6 +42,8 @@ struct InstallerVerificationSummary {
     std::size_t attention_count = 0;
     std::size_t comparable_benchmark_count = 0;
     std::vector<InstallerRouteVerificationResult> routes;
+    // The matching evidence records, for the shared device-card presentation.
+    std::vector<RouteQualificationRecord> records;
 };
 
 InstallerVerificationSummary BuildInstallerVerificationSummary(

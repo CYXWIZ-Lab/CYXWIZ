@@ -153,6 +153,38 @@ void LogMetadataLimitationOnce(const DeviceInfo& info) {
     });
 }
 
+// ArrayFire's oneAPI plugin rejects af::deviceInfo (AF_ERR_NOT_SUPPORTED) but
+// still lists its devices in af_info_string: the active one is marked "[N]"
+// and formatted "<platform>: <name>, <memory> MB (...)". Same parsing as the
+// provider interop (neural_device_interop.cpp).
+bool ActiveDeviceIdentityFromInfoString(std::string& name, std::string& platform) {
+    char* text = nullptr;
+    if (af_info_string(&text, false) != AF_SUCCESS || !text) return false;
+    const std::string info(text);
+    af_free_host(text);
+    size_t start = 0;
+    while (start < info.size()) {
+        size_t end = info.find('\n', start);
+        if (end == std::string::npos) end = info.size();
+        const std::string line = info.substr(start, end - start);
+        start = end + 1;
+        if (line.empty() || line[0] != '[') continue;
+        const size_t marker = line.find("] ");
+        const size_t colon = line.find(": ", marker == std::string::npos ? 0 : marker);
+        const size_t memory = line.rfind(" MB");
+        const size_t comma = memory == std::string::npos ? std::string::npos
+                                                         : line.rfind(", ", memory);
+        if (marker == std::string::npos || colon == std::string::npos ||
+            comma == std::string::npos || comma <= colon) {
+            return false;
+        }
+        platform = line.substr(marker + 2, colon - marker - 2);
+        name = line.substr(colon + 2, comma - colon - 2);
+        return !name.empty();
+    }
+    return false;
+}
+
 DeviceInfo QuerySelectedArrayFireDeviceInfo(DeviceType type, int device_id) {
     DeviceInfo info{};
     info.type = type;
@@ -192,6 +224,25 @@ DeviceInfo QuerySelectedArrayFireDeviceInfo(DeviceType type, int device_id) {
             ? "Detailed device properties are unsupported by the installed ArrayFire backend"
             : "Detailed device properties could not be queried";
         LogMetadataLimitationOnce(info);
+        std::string reported_name;
+        std::string reported_platform;
+        if (type == DeviceType::ONEAPI &&
+            ActiveDeviceIdentityFromInfoString(reported_name, reported_platform)) {
+            info.name = reported_name;
+            info.name_known = true;
+            info.name_is_fallback = false;
+            info.identity_confidence = DeviceIdentityConfidence::ProviderReported;
+            if (!reported_platform.empty()) {
+                info.provider = reported_platform;
+                info.provider_known = true;
+            }
+            if (reported_name.find("Graphics") != std::string::npos ||
+                reported_name.find("GPU") != std::string::npos) {
+                info.kind = DeviceKind::GPU;
+            } else if (reported_name.find("CPU") != std::string::npos) {
+                info.kind = DeviceKind::CPU;
+            }
+        }
     }
 
     detail::EnrichSelectedDeviceIdentity(info);
