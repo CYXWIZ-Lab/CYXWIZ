@@ -353,7 +353,10 @@ bool BuildGraphDocument(const nlohmann::json& document, const nlohmann::json& co
                                            find_loaded_node(link.to_node), preserve_legacy_data_validator_outputs,
                                            preserve_legacy_evaluation_table_inputs,
                                            preserve_legacy_classical_tree_pins, link)) {
-                if (options.strict_links) throw std::runtime_error("Subgraph document contains an invalid link");
+                if (options.strict_links) {
+                    throw std::runtime_error("invalid link " + std::to_string(link.id) +
+                                             " (its pins do not exist on the loaded nodes)");
+                }
                 continue;
             }
             if (link_json.contains("link_type")) {

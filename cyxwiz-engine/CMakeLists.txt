@@ -3529,6 +3529,9 @@ add_executable(test_cyxmodel_layernorm_roundtrip
     tests/test_cyxmodel_layernorm_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/graph_document.cpp
+    src/core/graph_node_factory.cpp
+    src/plugin/registries/plugin_node_registry.cpp
     src/core/model_builder.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
@@ -3578,6 +3581,9 @@ add_executable(test_cyxmodel_mha_roundtrip
     tests/test_cyxmodel_mha_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/graph_document.cpp
+    src/core/graph_node_factory.cpp
+    src/plugin/registries/plugin_node_registry.cpp
     src/core/model_builder.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
@@ -3627,6 +3633,9 @@ add_executable(test_cyxmodel_transformer_encoder_roundtrip
     tests/test_cyxmodel_transformer_encoder_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/graph_document.cpp
+    src/core/graph_node_factory.cpp
+    src/plugin/registries/plugin_node_registry.cpp
     src/core/model_builder.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
@@ -3675,6 +3684,9 @@ add_executable(test_cyxmodel_transformer_decoder_roundtrip
     tests/test_cyxmodel_transformer_decoder_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/graph_document.cpp
+    src/core/graph_node_factory.cpp
+    src/plugin/registries/plugin_node_registry.cpp
     src/core/model_builder.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
@@ -3723,6 +3735,9 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     tests/test_cyxmodel_causal_lm_generation_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/graph_document.cpp
+    src/core/graph_node_factory.cpp
+    src/plugin/registries/plugin_node_registry.cpp
     src/core/language_model_generation.cpp
     src/core/model_builder.cpp
     src/core/spatial_batch_layout.cpp

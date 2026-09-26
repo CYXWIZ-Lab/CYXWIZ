@@ -1,7 +1,7 @@
 #pragma once
 
 #include "debug_session.h"
-#include "../gui/node_editor.h"
+#include "graph_model.h"
 #include <cstdint>
 #include <string>
 #include <vector>

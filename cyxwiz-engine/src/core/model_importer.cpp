@@ -1,4 +1,5 @@
 #include "model_importer.h"
+#include "graph_document.h"
 #include "formats/cyxmodel_archive.h"
 #include "node_metadata_registry.h"
 #include "../gui/node_import_guardrails.h"
@@ -118,60 +119,49 @@ static bool BuildModelFromGraph(
 
     try {
         using json = nlohmann::json;
-        json j = json::parse(graph_json);
-
-        // Modern serialized links carry port indices. Rebuild their contracts from
-        // the same metadata used by the editor instead of losing dataset roles.
+        const json j = json::parse(graph_json);
+        // Graphs saved by the editor carry pin indices: load them with the
+        // shared saved-graph loader (factory pins, parameter migrations, links
+        // by pin index). Older exports without indices keep the pinless
+        // reading they were written for.
         const bool has_port_indices = std::any_of(j["links"].begin(), j["links"].end(),
             [](const json& link) { return link.contains("from_pin_index") ||
                                         link.contains("to_pin_index"); });
-        auto& registry = NodeMetadataRegistry::Instance();
-        if (has_port_indices) registry.Initialize();
-        int next_pin_id = 1;
-        // Parse nodes
-        std::vector<gui::MLNode> nodes;
-        for (const auto& node_json : j["nodes"]) {
-            gui::MLNode node;
-            node.id = node_json["id"];
-            node.type = static_cast<gui::NodeType>(node_json["type"].get<int>());
-            node.name = node_json["name"];
-            if (has_port_indices) {
-                const auto* metadata = registry.GetMetadata(node.type);
-                if (!metadata) throw std::runtime_error("Missing node metadata: " + node.name);
-                ApplyStaticNodeMetadataContract(*metadata, node, next_pin_id);
+        GraphDocument document;
+        if (has_port_indices) {
+            // A link that does not resolve fails the import (the editor skips it).
+            GraphDocumentLoadOptions options;
+            options.strict_links = true;
+            std::string load_error;
+            if (!BuildGraphDocument(j, j, options, document, load_error)) {
+                error_message = (load_error.rfind("invalid link", 0) == 0 ? "Invalid serialized model graph link: "
+                                                                            : "Could not load the model graph: ") +
+                                load_error;
+                return false;
             }
-            if (node_json.contains("parameters")) {
-                node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
-            }
-            nodes.push_back(node);
-        }
-
-        // Parse links
-        std::vector<gui::NodeLink> links;
-        for (const auto& link_json : j["links"]) {
-            gui::NodeLink link;
-            link.id = link_json["id"];
-            link.from_node = link_json["from_node"];
-            link.to_node = link_json["to_node"];
-            if (has_port_indices) {
-                const auto from = std::find_if(nodes.begin(), nodes.end(),
-                    [&](const gui::MLNode& node) { return node.id == link.from_node; });
-                const auto to = std::find_if(nodes.begin(), nodes.end(),
-                    [&](const gui::MLNode& node) { return node.id == link.to_node; });
-                int from_index = 0, to_index = 0;
-                if (from == nodes.end() || to == nodes.end() ||
-                    !gui::detail::ResolveSerializedPinIndex(link_json, "from_pin_index",
-                        from->outputs.size(), from_index) ||
-                    !gui::detail::ResolveSerializedPinIndex(link_json, "to_pin_index",
-                        to->inputs.size(), to_index)) {
-                    throw std::runtime_error("Invalid serialized model graph link: " +
-                                             std::to_string(link.id));
+        } else {
+            for (const auto& node_json : j["nodes"]) {
+                gui::MLNode node;
+                node.id = node_json["id"];
+                node.type = static_cast<gui::NodeType>(node_json["type"].get<int>());
+                node.name = node_json["name"];
+                if (node_json.contains("parameters")) {
+                    node.parameters = node_json["parameters"].get<std::map<std::string, std::string>>();
                 }
-                link.from_pin = from->outputs[from_index].id;
-                link.to_pin = to->inputs[to_index].id;
+                document.nodes.push_back(node);
             }
-            links.push_back(link);
+            for (const auto& link_json : j["links"]) {
+                gui::NodeLink link;
+                link.id = link_json["id"];
+                link.from_node = link_json["from_node"];
+                link.to_node = link_json["to_node"];
+                link.from_pin = link_json.value("from_pin", 0);
+                link.to_pin = link_json.value("to_pin", 0);
+                document.links.push_back(link);
+            }
         }
+        const auto& nodes = document.nodes;
+        const auto& links = document.links;
 
         // Compile graph to get layer configuration
         GraphCompiler compiler;

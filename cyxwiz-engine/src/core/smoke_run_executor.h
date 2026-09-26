@@ -2,7 +2,7 @@
 
 #include "debug_session.h"
 #include "graph_compiler.h"
-#include "../gui/node_editor.h"
+#include "graph_model.h"
 #include <string>
 #include <vector>
 

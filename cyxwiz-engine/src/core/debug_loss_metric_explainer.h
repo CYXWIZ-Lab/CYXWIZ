@@ -2,7 +2,7 @@
 
 #include "debug_trace_record.h"
 #include "model_builder.h"
-#include "../gui/node_editor.h"
+#include "graph_model.h"
 
 #include <cstddef>
 #include <string>

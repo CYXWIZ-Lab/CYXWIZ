@@ -15,7 +15,7 @@
 //       auto val = executor.GetPinValue(scope_pin_id);
 //   }
 
-#include "../gui/node_editor.h"
+#include "graph_model.h"
 
 #include <vector>
 #include <map>

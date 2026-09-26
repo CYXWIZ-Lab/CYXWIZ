@@ -3,7 +3,7 @@
 #include "debug_graph_trace_executor.h"
 #include "debug_numerics.h"
 #include "graph_compiler.h"
-#include "../gui/node_editor.h"
+#include "graph_model.h"
 #include <cyxwiz/loss.h>
 #include <cyxwiz/optimizer.h>
 #include <cyxwiz/sequential.h>

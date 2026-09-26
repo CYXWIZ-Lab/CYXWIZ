@@ -3,7 +3,7 @@
 #include <vector>
 #include <cctype>
 #include <algorithm>
-#include "../gui/node_editor.h"
+#include "graph_model.h"
 
 #include <cerrno>
 #include <cstddef>

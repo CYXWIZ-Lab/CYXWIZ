@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../gui/node_editor.h"
+#include "graph_model.h"
 #include "normalization_regularization_configuration_policy.h"
 #include "recurrent_configuration_policy.h"
 #include "sequence_projection_configuration_policy.h"

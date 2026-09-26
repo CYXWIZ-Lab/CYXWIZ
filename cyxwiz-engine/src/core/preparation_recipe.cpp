@@ -1,6 +1,6 @@
 #include "preparation_recipe.h"
 
-#include "../gui/node_editor.h"
+#include "graph_model.h"
 #include "sql_step_contract.h"
 
 #include <map>

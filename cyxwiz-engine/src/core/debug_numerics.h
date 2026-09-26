@@ -1,7 +1,7 @@
 #pragma once
 
 #include "debug_trace_record.h"
-#include "../gui/node_editor.h"
+#include "graph_model.h"
 
 #include <cyxwiz/tensor.h>
 

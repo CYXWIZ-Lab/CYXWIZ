@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../gui/node_editor.h"
+#include "graph_model.h"
 
 #include <cyxwiz/tensor.h>
 

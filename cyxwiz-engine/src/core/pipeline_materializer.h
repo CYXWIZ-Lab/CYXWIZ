@@ -2,7 +2,7 @@
 
 #include "materialization_cache.h"
 #include "node_executors/pipeline_operator.h"
-#include "../gui/node_editor.h"
+#include "graph_model.h"
 
 #include <memory>
 #include <string>

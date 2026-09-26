@@ -2,7 +2,7 @@
 #include "error_codes.h"
 #include "training_executor.h"
 #include "node_executors/tree_model_artifact.h"
-#include "../gui/node_editor.h"
+#include "graph_model.h"
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <filesystem>
