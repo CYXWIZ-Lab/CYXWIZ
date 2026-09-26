@@ -1,4 +1,10 @@
 #include "graph_executable_model.h"
+#include "training_profile_fence.h"
+
+#include <cyxwiz/debug_hooks.h>
+
+#include <chrono>
+#include <sstream>
 
 #include <algorithm>
 #include <limits>
@@ -484,6 +490,23 @@ bool GraphExecutableModel::CanRunLinearPlan(const CompiledGraphPlan& plan,
     return true;
 }
 
+namespace {
+
+// Per-layer durations for profiling (TOFIX118 P8), reported through the
+// backend debug hook like SequentialModel's; free when nothing listens.
+void TraceLayer(const char* stage, size_t index, Module& module,
+                std::chrono::steady_clock::time_point start) {
+    if (!BackendDebugHooks::HasDebugEventCallback()) return;
+    TrainingProfileStageFence();
+    const float duration_ms =
+        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - start).count();
+    std::ostringstream message;
+    message << "layer=" << index << " name=" << module.GetName() << " duration_ms=" << duration_ms;
+    BackendDebugHooks::EmitDebugEvent(stage, message.str());
+}
+
+}  // namespace
+
 Tensor GraphExecutableModel::Forward(const Tensor& input) {
     tensor_cache_.clear();
     CacheTensor(plan_.data_node_id, plan_.data_pin_id, input);
@@ -517,7 +540,9 @@ Tensor GraphExecutableModel::Forward(const Tensor& input) {
             if (!input_tensor) {
                 throw std::runtime_error("GraphExecutableModel missing cached input tensor");
             }
+            const auto layer_start = std::chrono::steady_clock::now();
             output = module->Forward(*input_tensor);
+            TraceLayer("ModelForward", module_index, *module, layer_start);
             executed = true;
         } else if (IsGraphOpNode(node.node_id)) {
             const auto incoming = TensorIncomingEdges(plan_, node.node_id);
@@ -597,7 +622,9 @@ Tensor GraphExecutableModel::Backward(const Tensor& grad_output) {
                 throw std::runtime_error(
                     "GraphExecutableModel layer node requires exactly one input");
             }
+            const auto layer_start = std::chrono::steady_clock::now();
             Tensor input_grad = module->Backward(grad);
+            TraceLayer("ModelBackward", module_index, *module, layer_start);
             AccumulateNodeGrad(node_grads, incoming.front().from_node_id, input_grad);
         } else if (IsGraphOpNode(node.node_id)) {
             const auto incoming = TensorIncomingEdges(plan_, node.node_id);

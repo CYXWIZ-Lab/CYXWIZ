@@ -8,6 +8,7 @@
 #include <cyxwiz/memory_manager.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <cstdlib>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -732,9 +733,32 @@ void TrainingTraceCollector::StartRun(const std::string& run_id) {
     arrayfire_host_sync_count_ = 0;
     arrayfire_host_sync_bytes_ = 0;
     arrayfire_host_sync_groups_.clear();
+    stage_timings_.clear();
     declared_output_boundary_count_ = 0;
     events_since_write_ = 0;
     MaybePersistLocked(true);
+}
+
+void TrainingTraceCollector::RecordNamedTiming(const std::string& name, float duration_ms) {
+    if (!(duration_ms >= 0.0f)) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id_.empty()) return;
+    auto& timing = stage_timings_[name];
+    timing.stage = name;
+    ++timing.count;
+    timing.total_ms += duration_ms;
+    timing.max_ms = std::max(timing.max_ms, static_cast<double>(duration_ms));
+}
+
+void TrainingTraceCollector::RecordStageTiming(TrainingTraceStage stage, float duration_ms) {
+    if (!(duration_ms > 0.0f)) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (run_id_.empty()) return;
+    auto& timing = stage_timings_[CrashRunRecorder::StageName(stage)];
+    timing.stage = CrashRunRecorder::StageName(stage);
+    ++timing.count;
+    timing.total_ms += duration_ms;
+    timing.max_ms = std::max(timing.max_ms, static_cast<double>(duration_ms));
 }
 
 bool TrainingTraceCollector::ContinueRun(const std::string& run_id) {
@@ -787,6 +811,13 @@ void TrainingTraceCollector::RecordStage(TrainingTraceStage stage,
     event.duration_ms = duration_ms;
     event.status = status;
     event.message = message;
+    if (duration_ms > 0.0f) {
+        auto& timing = stage_timings_[event.stage];
+        timing.stage = event.stage;
+        ++timing.count;
+        timing.total_ms += duration_ms;
+        timing.max_ms = std::max(timing.max_ms, static_cast<double>(duration_ms));
+    }
     PopulateStageExecutionContext(event);
     PopulateMemorySnapshot(event);
     events_.push_back(event);
@@ -1463,6 +1494,7 @@ TrainingTraceSummary TrainingTraceCollector::Snapshot() const {
         HostSyncGroupValues(arrayfire_host_sync_groups_);
     summary.arrayfire_host_sync_summary =
         FormatHostSyncGroups(summary.arrayfire_host_sync_groups);
+    for (const auto& [name, timing] : stage_timings_) summary.stage_timings.push_back(timing);
     if (has_placement_plan_event_) {
         summary.placement_fingerprint =
             placement_plan_event_.placement_fingerprint;

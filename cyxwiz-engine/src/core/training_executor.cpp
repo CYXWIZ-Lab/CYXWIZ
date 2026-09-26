@@ -11,6 +11,7 @@
 #include "error_codes.h"
 #include "algorithms/arrayfire_backend_utils.h"
 #include "algorithms/arrayfire_host_materialization.h"
+#include "training_profile_fence.h"
 #include <cyxwiz/debug_hooks.h>
 #include "execution_device_context.h"
 #include "execution_device_preferences.h"
@@ -1221,7 +1222,22 @@ void TrainingExecutor::Train(
     CrashRunRecorder::Instance().UpdateSampleCount(num_train_samples);
     BackendDebugHooks::SetDebugEventCallback([](const std::string& source,
                                                 const std::string& message) {
-        if (source.rfind("Model", 0) == 0) {
+        if (source == "ModelForward" || source == "ModelBackward") {
+            // Per-layer timing: aggregated, not an event per layer per step
+            // (an event carries a memory snapshot). TOFIX118 P8.
+            const auto field = [&message](const char* key) {
+                const std::string tag = std::string(key) + "=";
+                const auto at = message.find(tag);
+                if (at == std::string::npos) return std::string();
+                const auto begin = at + tag.size();
+                return message.substr(begin, message.find(' ', begin) - begin);
+            };
+            std::string index = field("layer");
+            if (index.size() < 2) index.insert(0, 2 - index.size(), '0');
+            TrainingTraceCollector::Instance().RecordNamedTiming(
+                source + " " + index + " " + field("name"),
+                static_cast<float>(std::atof(field("duration_ms").c_str())));
+        } else if (source.rfind("Model", 0) == 0) {
             TrainingTraceCollector::Instance().RecordRuntimeEvent(source, message);
         } else {
             CrashRunRecorder::Instance().MarkBackendEvent(source, message);
@@ -2063,6 +2079,7 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
     auto params = model_->GetParameters();
     optimizer_->Step(params, averaged_grads);
     model_->SetParameters(params);
+    TrainingProfileStageFence();
     const auto optimizer_ms = std::chrono::duration<float, std::milli>(
         std::chrono::steady_clock::now() - optimizer_start).count();
 
@@ -2267,6 +2284,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
             static_cast<int>(total_batches));
         const auto fetch_start = std::chrono::steady_clock::now();
         SequenceBatch batch = batcher.GetNextSequenceBatch();
+        TrainingProfileStageFence();
         const auto fetch_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - fetch_start).count();
         if (!batch.IsValid()) break;
@@ -2293,6 +2311,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
         const auto forward_start = std::chrono::steady_clock::now();
         Tensor model_input = BuildSequenceModelInput(batch, config_);
         Tensor predictions = Forward(model_input);
+        TrainingProfileStageFence();
         const auto forward_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - forward_start).count();
         TrainingTraceCollector::Instance().RecordStage(
@@ -2302,6 +2321,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::ComputeLoss, epoch, batch_num,
             static_cast<int>(total_batches));
+        const auto loss_start = std::chrono::steady_clock::now();
         const float batch_loss = ComputeLoss(predictions, targets);
         const std::string loss_status =
             std::isfinite(batch_loss) ? "ok" : "failed";
@@ -2316,9 +2336,17 @@ void TrainingExecutor::RunTrainingEpochSequence(
                 "TrainingExecutor: sequence training loss is not finite");
         }
         size_t batch_loss_observations = 0;
+        TrainingProfileStageFence();
+        const auto metric_start = std::chrono::steady_clock::now();
+        TrainingTraceCollector::Instance().RecordNamedTiming(
+            "ComputeLoss.loss",
+            std::chrono::duration<float, std::milli>(metric_start - loss_start).count());
         if (is_language_modeling) {
             const auto accuracy_count = CountNextTokenAccuracyFromLogits(
                 predictions, targets, ignore_index);
+            TrainingTraceCollector::Instance().RecordNamedTiming(
+                "ComputeLoss.accuracy",
+                std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - metric_start).count());
             batch_loss_observations = accuracy_count.valid;
             aggregate_metrics.total_tokens += accuracy_count.valid;
             aggregate_metrics.correct_tokens += accuracy_count.correct;
@@ -2337,12 +2365,17 @@ void TrainingExecutor::RunTrainingEpochSequence(
             *loss_, batch_loss_observations);
         epoch_loss += batch_loss * loss_weight;
         loss_weight_sum += loss_weight;
+        // Loss plus the per-batch accuracy readback (both wait for the device).
+        TrainingTraceCollector::Instance().RecordStageTiming(
+            TrainingTraceStage::ComputeLoss,
+            std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - loss_start).count());
 
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::Backward, epoch, batch_num,
             static_cast<int>(total_batches), batch_loss);
         const auto backward_start = std::chrono::steady_clock::now();
         Backward(predictions, targets);
+        TrainingProfileStageFence();
         const auto backward_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - backward_start).count();
         TrainingTraceCollector::Instance().RecordStage(

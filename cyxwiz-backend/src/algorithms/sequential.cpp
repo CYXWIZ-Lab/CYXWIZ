@@ -8,6 +8,7 @@
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <cmath>
+#include <cstdlib>
 #include <random>
 #include <algorithm>
 #include <fstream>
@@ -37,6 +38,21 @@ std::string ShapeToStringForTrace(const std::vector<size_t>& shape) {
     }
     out << ']';
     return out.str();
+}
+
+// TOFIX118 P8 profiling: with CYXWIZ_PROFILE_STAGE_SYNC=1 and a trace
+// listener, wait for the device before timing each layer so the duration is
+// the layer's device work, not its dispatch.
+void ProfileLayerFence() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CYXWIZ_PROFILE_STAGE_SYNC");
+        return value && *value && std::string(value) != "0";
+    }();
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (enabled) af::sync();
+#else
+    (void)enabled;
+#endif
 }
 
 void EmitModelLayerTrace(const char* stage,
@@ -74,6 +90,7 @@ Tensor SequentialModel::Forward(const Tensor& input) {
         const auto layer_start = std::chrono::steady_clock::now();
         current = module->Forward(current);
         if (trace_layers) {
+            ProfileLayerFence();
             const auto duration_ms = std::chrono::duration<float, std::milli>(
                 std::chrono::steady_clock::now() - layer_start).count();
             EmitModelLayerTrace("ModelForward", i, module->GetName(),
@@ -152,6 +169,7 @@ Tensor SequentialModel::ForwardSparseCsr(
         const auto layer_start = std::chrono::steady_clock::now();
         current = module->Forward(current);
         if (trace_layers) {
+            ProfileLayerFence();
             const auto duration_ms = std::chrono::duration<float, std::milli>(
                 std::chrono::steady_clock::now() - layer_start).count();
             EmitModelLayerTrace(
@@ -177,6 +195,7 @@ Tensor SequentialModel::Backward(const Tensor& grad_output) {
         const auto layer_start = std::chrono::steady_clock::now();
         grad = modules_[i]->Backward(grad);
         if (trace_layers) {
+            ProfileLayerFence();
             const auto duration_ms = std::chrono::duration<float, std::milli>(
                 std::chrono::steady_clock::now() - layer_start).count();
             EmitModelLayerTrace("ModelBackward", static_cast<size_t>(i),

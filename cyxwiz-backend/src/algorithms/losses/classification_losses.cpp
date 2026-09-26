@@ -664,6 +664,72 @@ ArrayFireCrossEntropyTargets BuildArrayFireCrossEntropyTargets(
     return {target_distribution, mean_denominator_rows};
 }
 
+// Class-index cross entropy along the class axis, in the tensor's own
+// layout (TOFIX118 P8). The general path reorders the logits into rows and
+// back (full copies) and builds one-hot targets from a classes x classes
+// identity matrix (8192^2 floats per call for a Berean vocabulary); this one
+// reads the logits twice. Used when targets are class ids, no class weights,
+// no label smoothing, reduction Mean or Sum.
+struct ClassIndexCrossEntropy {
+    af::array log_sum_exp;   // per position, shaped like the logits minus the class axis
+    af::array linear_target; // flat index of each position's target logit
+    af::array valid;         // f32 1/0 per position (ignore_index -> 0)
+    af::array denominator;   // valid position count (Mean)
+    int class_axis = 0;
+    dim_t classes = 0;
+};
+
+ClassIndexCrossEntropy PrepareClassIndexCrossEntropy(const af::array& logits, const af::array& targets,
+                                                     size_t rank, int ignore_index) {
+    ClassIndexCrossEntropy prepared;
+    prepared.class_axis = static_cast<int>(rank) - 1;
+    prepared.classes = logits.dims(prepared.class_axis);
+    const dim_t positions = logits.elements() / prepared.classes;
+    af::dim4 tile_dims(1, 1, 1, 1);
+    tile_dims[prepared.class_axis] = static_cast<dim_t>(prepared.classes);
+
+    const af::array row_max = af::max(logits, prepared.class_axis);
+    prepared.log_sum_exp =
+        row_max + af::log(af::sum(af::exp(logits - af::tile(row_max, tile_dims)), prepared.class_axis));
+
+    const af::array ids = af::flat(targets).as(s32);
+    const af::array valid_mask = ids != ignore_index;
+    prepared.valid = valid_mask.as(f32);
+    const af::array safe_ids = af::select(valid_mask, ids, 0.0).as(s32);
+    // Column-major: position p's class c sits at p + c * positions.
+    prepared.linear_target = af::range(af::dim4(positions), 0, s32) + safe_ids * static_cast<int>(positions);
+    prepared.denominator = af::sum(prepared.valid);
+    return prepared;
+}
+
+af::array ClassIndexCrossEntropyLoss(const af::array& logits, const ClassIndexCrossEntropy& prepared,
+                                     bool mean) {
+    const af::array target_logit = af::lookup(af::flat(logits), prepared.linear_target);
+    const af::array per_position = (af::flat(prepared.log_sum_exp) - target_logit) * prepared.valid;
+    const af::array total = af::sum(per_position);
+    return mean ? total / prepared.denominator : total;
+}
+
+af::array ClassIndexCrossEntropyGradient(const af::array& logits, const ClassIndexCrossEntropy& prepared,
+                                         bool mean) {
+    af::dim4 tile_dims(1, 1, 1, 1);
+    tile_dims[prepared.class_axis] = static_cast<dim_t>(prepared.classes);
+    af::dim4 position_dims = logits.dims();
+    position_dims[prepared.class_axis] = 1;
+    // Same guard as the general path: an all-ignored batch divides by 1.
+    const af::array scale = mean
+        ? 1.0f / (prepared.denominator + (prepared.denominator == 0.0f).as(f32))
+        : af::constant(1.0f, 1, f32);
+    const af::array position_scale = af::moddims(prepared.valid, position_dims) *
+                                     af::tile(scale, position_dims);
+    af::array gradient = af::exp(logits - af::tile(prepared.log_sum_exp, tile_dims)) *
+                         af::tile(position_scale, tile_dims);
+    af::array flat_gradient = af::flat(gradient);
+    flat_gradient(prepared.linear_target) =
+        flat_gradient(prepared.linear_target) - af::flat(position_scale);
+    return af::moddims(flat_gradient, logits.dims());
+}
+
 af::array ApplyWeightedCrossEntropyReduction(
     const af::array& per_sample_loss,
     const af::array& mean_denominator_rows,
@@ -707,6 +773,22 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
     }
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
+        if (class_indices && class_weights_.empty() && label_smoothing_ == 0.0f &&
+            (reduction_ == Reduction::Mean || reduction_ == Reduction::Sum)) {
+            const af::array logits = TensorToAf(predictions);
+            const auto prepared = PrepareClassIndexCrossEntropy(
+                logits, TensorToAf(targets), predictions.Shape().size(), ignore_index_);
+            af::array loss = ClassIndexCrossEntropyLoss(logits, prepared, reduction_ == Reduction::Mean);
+            loss.eval();
+            cached_softmax_ = Tensor();  // the fast path does not store probabilities
+            if (reduction_ == Reduction::Mean) {
+                af::array denominator = prepared.denominator;
+                denominator.eval();
+                cached_mean_denominator_ = Tensor::FromSemanticArray(denominator, {1});
+                has_cached_mean_denominator_ = true;
+            }
+            return Tensor::FromSemanticArray(loss, {1});
+        }
         const af::array prediction_rows = ToCrossEntropyRows(
             TensorToAf(predictions), predictions.Shape());
         const af::array target_rows = class_indices
@@ -771,6 +853,15 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     try {
+        if (class_indices && class_weights_.empty() && label_smoothing_ == 0.0f &&
+            (reduction_ == Reduction::Mean || reduction_ == Reduction::Sum)) {
+            const af::array logits = TensorToAf(predictions);
+            const auto prepared = PrepareClassIndexCrossEntropy(
+                logits, TensorToAf(targets), predictions.Shape().size(), ignore_index_);
+            af::array gradient = ClassIndexCrossEntropyGradient(logits, prepared, reduction_ == Reduction::Mean);
+            gradient.eval();
+            return Tensor::FromSemanticArray(gradient, predictions.Shape());
+        }
         const af::array prediction_rows = ToCrossEntropyRows(
             TensorToAf(predictions), predictions.Shape());
         af::array softmax_rows;

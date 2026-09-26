@@ -1,48 +1,25 @@
 #pragma once
 
+#include "cyxwiz/api_export.h"
+
 #include <functional>
-#include <mutex>
 #include <string>
-#include <utility>
 
 namespace cyxwiz {
 
-class BackendDebugHooks {
+// Backend -> host debug events (layer timings, recurrent route decisions,
+// fallback reasons). The callback lives inside the backend library, so a
+// host that sets it sees events emitted from backend code too (it used to be
+// a header-local static, one copy per module, so backend events never reached
+// the Engine).
+class CYXWIZ_API BackendDebugHooks {
 public:
     using DebugEventCallback = std::function<void(const std::string& source,
                                                   const std::string& message)>;
 
-    static void SetDebugEventCallback(DebugEventCallback callback) {
-        std::lock_guard<std::mutex> lock(Mutex());
-        Callback() = std::move(callback);
-    }
-
-    static void EmitDebugEvent(const std::string& source, const std::string& message) {
-        DebugEventCallback callback;
-        {
-            std::lock_guard<std::mutex> lock(Mutex());
-            callback = Callback();
-        }
-        if (callback) {
-            callback(source, message);
-        }
-    }
-
-    static bool HasDebugEventCallback() {
-        std::lock_guard<std::mutex> lock(Mutex());
-        return static_cast<bool>(Callback());
-    }
-
-private:
-    static std::mutex& Mutex() {
-        static std::mutex mutex;
-        return mutex;
-    }
-
-    static DebugEventCallback& Callback() {
-        static DebugEventCallback callback;
-        return callback;
-    }
+    static void SetDebugEventCallback(DebugEventCallback callback);
+    static void EmitDebugEvent(const std::string& source, const std::string& message);
+    static bool HasDebugEventCallback();
 };
 
 } // namespace cyxwiz

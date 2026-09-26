@@ -5102,6 +5102,11 @@ set_target_properties(test_engine_node_parity PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Tool: training throughput profile (TOFIX118 P8) =====
+add_executable(cyxwiz-training-profile tests/tool_training_profile.cpp)
+target_link_libraries(cyxwiz-training-profile PRIVATE cyxwiz-training-core)
+set_target_properties(cyxwiz-training-profile PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: remote jobs ship whole dataset files (TOFIX118 P2) =====
 add_executable(test_dataset_file_server
     tests/test_dataset_file_server.cpp

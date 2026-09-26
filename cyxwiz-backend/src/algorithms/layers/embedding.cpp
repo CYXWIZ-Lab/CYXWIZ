@@ -232,17 +232,15 @@ Tensor EmbeddingLayer::Forward(const Tensor& input) {
         // lookup table, gathered vectors, and gradients remain on ArrayFire.
         const int32_t* indices_ptr = input.ReadData<int32_t>();
         af::array w = weight_.GetSemanticArray();
-        af::array output_flat = af::constant(
-            0.0f,
-            af::dim4(CheckedIntDim(total_indices, "embedding token count"),
-                     embedding_dim_));
-        for (size_t i = 0; i < total_indices; ++i) {
-            int32_t idx = indices_ptr[i];
-            if (idx >= 0 && idx < num_embeddings_ && idx != padding_idx_) {
-                output_flat(CheckedIntDim(i, "embedding index"), af::span) =
-                    w(idx, af::span);
-            }
-        }
+        // One gather for all tokens (TOFIX118 P8: the per-token loop issued a
+        // device copy per token - 69 of ~280 ms per Berean step). Padding and
+        // out-of-range ids give zero rows, as before.
+        const af::array ids(af::dim4(CheckedIntDim(total_indices, "embedding token count")),
+                            indices_ptr);
+        const af::array valid = (ids >= 0) && (ids < num_embeddings_) && (ids != padding_idx_);
+        const af::array safe_ids = af::select(valid, ids, 0.0);
+        af::array output_flat = af::lookup(w, safe_ids, 0);
+        output_flat = af::select(af::tile(valid, 1, embedding_dim_), output_flat, 0.0);
         output_flat.eval();
 
         af::array output = TokenRowsToSemanticOutput(

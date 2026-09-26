@@ -139,6 +139,7 @@ set(BACKEND_SOURCES
     src/core/tensor_indexing.cpp
     src/core/tensor_concat.cpp
     src/core/device.cpp
+    src/core/debug_hooks.cpp
     src/core/device_identity.cpp
     src/core/device_identity.h
     src/core/device_probe.h

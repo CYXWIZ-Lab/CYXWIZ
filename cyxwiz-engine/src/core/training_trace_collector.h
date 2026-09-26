@@ -119,6 +119,16 @@ struct TrainingTraceEvent {
     std::string placement_summary;
 };
 
+// Time spent per training stage over the run (TOFIX118 P8). Without the
+// profiling fence (CYXWIZ_PROFILE_STAGE_SYNC=1) GPU stages measure dispatch;
+// device time then shows up at the next host sync (loss/metric readback).
+struct TrainingTraceStageTiming {
+    std::string stage;
+    uint64_t count = 0;
+    double total_ms = 0.0;
+    double max_ms = 0.0;
+};
+
 struct TrainingTraceHostSyncGroup {
     std::string category;
     std::string reason;
@@ -155,6 +165,7 @@ struct TrainingTraceSummary {
     uint64_t arrayfire_host_sync_count = 0;
     uint64_t arrayfire_host_sync_bytes = 0;
     std::vector<TrainingTraceHostSyncGroup> arrayfire_host_sync_groups;
+    std::vector<TrainingTraceStageTiming> stage_timings;
     std::string arrayfire_host_sync_summary;
     std::string placement_fingerprint;
     uint64_t placement_entry_count = 0;
@@ -235,6 +246,10 @@ public:
                      float duration_ms = 0.0f,
                      const std::string& status = "ok",
                      const std::string& message = "");
+    // Adds a stage duration to the run's totals without recording an event.
+    void RecordStageTiming(TrainingTraceStage stage, float duration_ms);
+    // Same totals for a named span, e.g. "ModelForward 03 TransformerDecoder".
+    void RecordNamedTiming(const std::string& name, float duration_ms);
     void RecordRuntimeWarning(const std::string& source,
                               const std::string& message);
     void RecordRuntimeEvent(const std::string& stage,
@@ -338,6 +353,7 @@ private:
     uint64_t arrayfire_host_sync_bytes_ = 0;
     std::map<std::string, TrainingTraceHostSyncGroup>
         arrayfire_host_sync_groups_;
+    std::map<std::string, TrainingTraceStageTiming> stage_timings_;
     uint64_t declared_output_boundary_count_ = 0;
     TrainingTraceSettings settings_;
     size_t events_since_write_ = 0;
