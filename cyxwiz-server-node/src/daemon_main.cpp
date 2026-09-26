@@ -35,6 +35,7 @@
 #include "job_executor.h"
 #include "core/compute_runtime_paths.h"
 #include "core/route_qualification_snapshot.h"
+#include "core/machine_compute_preference.h"
 #include "node_service.h"
 #include "job_execution_service.h"
 #include "core/backend_manager.h"
@@ -382,6 +383,20 @@ int main(int argc, char** argv) {
             } else {
                 spdlog::warn("Route qualification: {} - training jobs will be refused until routes are "
                              "verified on this machine", qualification.message);
+            }
+        }
+
+        // This machine's preferred verified route and fallback policy (the
+        // Engine's Preferences > Devices), as the Engine applies them.
+        {
+            const auto preference = cyxwiz::ApplyMachineComputePreference();
+            if (preference.loaded && preference.config.preferred_route.has_value()) {
+                spdlog::info("Compute preference: {} device {}",
+                             cyxwiz::ExecutionDeviceSelectionBackendName(preference.config.preferred_route->type),
+                             preference.config.preferred_route->last_device_id);
+            } else {
+                spdlog::info("Compute preference: none applied ({})",
+                             preference.message.empty() ? "no preferred route" : preference.message);
             }
         }
 

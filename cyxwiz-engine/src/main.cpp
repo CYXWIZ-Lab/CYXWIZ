@@ -11,6 +11,7 @@
 #include "core/compute_runtime_config.h"
 #include "core/compute_runtime_paths.h"
 #include "core/execution_device_preferences.h"
+#include "core/machine_compute_preference.h"
 #include "core/route_qualification_snapshot.h"
 #ifdef _WIN32
 #include "windows_dll_search.h"
@@ -300,18 +301,11 @@ int main(int argc, char** argv) {
 
     const auto runtime_config_path =
         cyxwiz::GetComputeRuntimeConfigPath();
-    const auto runtime_config =
-        cyxwiz::LoadComputeRuntimeConfig(runtime_config_path);
+    const auto runtime_config = cyxwiz::ApplyMachineComputePreference();
     if (runtime_config.loaded) {
-        cyxwiz::SetNextRunExecutionPolicy(
-            runtime_config.config.default_fallback_policy);
         if (runtime_config.config.preferred_route.has_value()) {
             const auto& preferred =
                 *runtime_config.config.preferred_route;
-            cyxwiz::CommitExecutionDeviceSelectionState(
-                {preferred.type,
-                 preferred.last_device_id,
-                 preferred.physical_fingerprint});
             spdlog::info(
                 "Loaded machine compute preference: backend={} device_hint={} identity={}",
                 cyxwiz::ExecutionDeviceSelectionBackendName(preferred.type),

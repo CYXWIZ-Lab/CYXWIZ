@@ -4,11 +4,14 @@
 // breakdown and the host syncs from the training trace.
 //
 // Usage: cyxwiz-training-profile <graph.cyxgraph> [--batches N] [--warmup N]
-//                                [--out result.json]
+//                                [--out result.json] [--device opencl:0]
+// --device picks one of this machine's verified routes (cpu, cuda, opencl,
+// oneapi); without it the saved compute preference applies.
 // Set CYXWIZ_PROFILE_STAGE_SYNC=1 to charge device time to the stage that
 // issued it (removes CPU/GPU overlap; compare both runs).
 #include "../src/core/compute_runtime_paths.h"
 #include "../src/core/graph_training_job.h"
+#include "../src/core/machine_compute_preference.h"
 #include "../src/core/route_qualification_snapshot.h"
 #include "../src/core/training_trace_collector.h"
 
@@ -43,18 +46,20 @@ double Percentile(std::vector<double> values, double p) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "usage: cyxwiz-training-profile <graph.cyxgraph> [--batches N] [--warmup N] [--out file]\n";
+        std::cerr << "usage: cyxwiz-training-profile <graph.cyxgraph> [--batches N] [--warmup N] [--out file] [--device backend:id]\n";
         return 2;
     }
     const fs::path graph_path = argv[1];
     int batches = 100;
     int warmup = 10;
     fs::path out;
+    std::string device;
     for (int i = 2; i + 1 < argc; i += 2) {
         const std::string flag = argv[i];
         if (flag == "--batches") batches = std::max(1, std::atoi(argv[i + 1]));
         else if (flag == "--warmup") warmup = std::max(0, std::atoi(argv[i + 1]));
         else if (flag == "--out") out = argv[i + 1];
+        else if (flag == "--device") device = argv[i + 1];
     }
 
     // This machine's verified routes (Preferences > Devices > Verify), as the
@@ -62,6 +67,30 @@ int main(int argc, char** argv) {
     const auto qualification =
         cyxwiz::LoadAndInstallRouteQualificationSnapshot(cyxwiz::GetRouteQualificationCachePath());
     if (!qualification.loaded) std::cerr << "route qualification: " << qualification.message << "\n";
+    const auto preference = cyxwiz::ApplyMachineComputePreference();
+    if (!preference.loaded) std::cerr << "compute preference: " << preference.message << "\n";
+    if (!device.empty()) {
+        const auto colon = device.find(':');
+        const std::string backend = device.substr(0, colon);
+        const int device_id = colon == std::string::npos ? 0 : std::atoi(device.c_str() + colon + 1);
+        const std::map<std::string, cyxwiz::DeviceType> backends = {
+            {"cpu", cyxwiz::DeviceType::CPU}, {"cuda", cyxwiz::DeviceType::CUDA},
+            {"opencl", cyxwiz::DeviceType::OPENCL}, {"oneapi", cyxwiz::DeviceType::ONEAPI}};
+        const auto type = backends.find(backend);
+        if (type == backends.end()) {
+            std::cerr << "unknown --device backend '" << backend << "' (cpu, cuda, opencl, oneapi)\n";
+            return 2;
+        }
+        // The route's verified identity, so the device preflight accepts it.
+        std::string fingerprint;
+        if (const auto snapshot = cyxwiz::GetRouteQualificationSnapshot()) {
+            for (const auto& route : snapshot->routes) {
+                if (route.type == type->second && route.device_id == device_id) fingerprint = route.physical_fingerprint;
+            }
+        }
+        if (fingerprint.empty()) std::cerr << "--device " << device << ": no verified route on this machine\n";
+        cyxwiz::CommitExecutionDeviceSelectionState({type->second, device_id, fingerprint});
+    }
 
     std::ifstream in(graph_path, std::ios::binary);
     if (!in) {
