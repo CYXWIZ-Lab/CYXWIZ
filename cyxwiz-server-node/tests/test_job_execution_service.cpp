@@ -398,6 +398,7 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
         const auto updates = RunAsEngine(test, "test_job_stream", remote, status);
 
         int progress_updates = 0;
+        bool batch_position_seen = false;  // P4c: live batch position
         int checkpoint_updates = 0;
         bool got_completion = false;
         bool updates_are_valid = true;
@@ -413,6 +414,9 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
             if (update.has_progress()) {
                 progress_updates++;
                 auto& prog = update.progress();
+                batch_position_seen = batch_position_seen ||
+                                      (prog.total_batches() > 0 && prog.current_batch() > 0 &&
+                                       prog.current_batch() <= prog.total_batches());
 
                 updates_are_valid =
                     updates_are_valid &&
@@ -463,6 +467,7 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
         REQUIRE(fetched_dataset);
         REQUIRE(updates_are_valid);
         REQUIRE(progress_updates > 0);
+        CHECK(batch_position_seen);
         REQUIRE(got_completion);
     }
 
@@ -717,9 +722,16 @@ struct JobOutcome {
 // Runs one job on a fresh executor and waits for its completion callback.
 void RunLocalJob(const JobConfig& config, JobOutcome& outcome) {
     cyxwiz::servernode::JobExecutor executor("test_node");
-    executor.SetProgressCallback([&outcome](const std::string&, double, const cyxwiz::servernode::TrainingMetrics&) {
+    // Progress arrives per batch too (P4c); an epoch counts once, when the
+    // last completed epoch advances.
+    int last_epoch = 0;
+    executor.SetProgressCallback([&outcome, &last_epoch](const std::string&, double,
+                                                         const cyxwiz::servernode::TrainingMetrics& metrics) {
         std::lock_guard<std::mutex> lock(outcome.mutex);
-        ++outcome.epochs_reported;
+        if (metrics.current_epoch > last_epoch) {
+            last_epoch = metrics.current_epoch;
+            ++outcome.epochs_reported;
+        }
     });
     executor.SetCompletionCallback([&outcome, &executor](const std::string& id, bool success, const std::string& error) {
         const auto failure = executor.GetJobFailure(id);

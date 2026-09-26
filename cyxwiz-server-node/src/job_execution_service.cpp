@@ -649,9 +649,18 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
 
                 auto* prog = update.mutable_progress();
-                prog->set_current_epoch(metrics.current_epoch);
+                // The epoch in progress (a batch report comes before its epoch
+                // completes); epochs_completed above stays the last finished one.
+                prog->set_current_epoch(std::max(metrics.running_epoch, metrics.current_epoch));
                 prog->set_total_epochs(metrics.total_epochs);
                 prog->set_progress_percentage(progress);
+                // Live position, rate and ETA (TOFIX118 P4c).
+                prog->set_current_batch(metrics.current_batch);
+                prog->set_total_batches(metrics.total_batches);
+                prog->set_samples_per_second(metrics.samples_per_second);
+                if (metrics.eta_seconds >= 0.0) {
+                    prog->set_estimated_time_remaining(static_cast<int64_t>(metrics.eta_seconds + 0.5));
+                }
                 (*prog->mutable_metrics())["loss"] = metrics.loss;
                 (*prog->mutable_metrics())["accuracy"] = metrics.accuracy;
                 (*prog->mutable_metrics())["learning_rate"] = metrics.learning_rate;

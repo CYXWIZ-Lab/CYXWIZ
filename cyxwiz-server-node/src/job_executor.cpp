@@ -1,6 +1,7 @@
 #include "job_executor.h"
 #include "node_client.h"
 #include "node_job_timing.h"
+#include "core/training_progress_estimate.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <chrono>
@@ -623,9 +624,37 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
     }
 
     cyxwiz::GraphTrainingJobCallbacks callbacks;
-    callbacks.on_start = [state](int epochs, int batch_size) {
+    int run_batch_size = 0;
+    callbacks.on_start = [state, &run_batch_size](int epochs, int batch_size) {
         state->current_metrics.total_epochs = epochs;
+        run_batch_size = batch_size;
         spdlog::info("Beginning training: {} epochs, batch size {}", epochs, batch_size);
+    };
+    // Live progress (TOFIX118 P4c): batch position, rate and ETA from the
+    // shared estimator, reported at most every 2 s (and on each epoch's last
+    // batch) so the stream and the central server are not flooded.
+    cyxwiz::TrainingEtaEstimator eta;
+    const auto run_clock = std::chrono::steady_clock::now();
+    auto last_report = run_clock - std::chrono::hours(1);
+    callbacks.on_batch = [&, state](int epoch, int batch, int total_batches, float, float) {
+        const auto now = std::chrono::steady_clock::now();
+        auto& metrics = state->current_metrics;
+        metrics.running_epoch = epoch;
+        metrics.current_batch = batch;
+        metrics.total_batches = total_batches;
+        metrics.samples_processed += run_batch_size;
+        eta.Observe(std::chrono::duration<double>(now - run_clock).count(), epoch, batch, total_batches,
+                    metrics.total_epochs);
+        metrics.fraction_complete = eta.FractionComplete();
+        metrics.samples_per_second = eta.BatchesPerSecond() * run_batch_size;
+        const auto remaining = eta.RemainingSeconds();
+        metrics.eta_seconds = remaining ? *remaining : -1.0;
+        if (now - last_report >= std::chrono::seconds(2) || batch == total_batches) {
+            last_report = now;
+            metrics.time_elapsed_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - state->start_time).count();
+            ReportProgress(job_id, state);
+        }
     };
     callbacks.on_epoch = [this, &job_id, state](int epoch, float train_loss, float train_acc, float val_loss,
                                                 float val_acc, float) {
@@ -697,8 +726,11 @@ bool JobExecutor::SaveResults(
 }
 
 void JobExecutor::ReportProgress(const std::string& job_id, JobState* state) {
-    double progress = static_cast<double>(state->current_metrics.current_epoch) /
-                     state->current_metrics.total_epochs;
+    // Batch-level fraction once batches are known; the epoch ratio before.
+    const auto& live = state->current_metrics;
+    double progress = live.total_batches > 0 ? live.fraction_complete
+                      : live.total_epochs > 0 ? static_cast<double>(live.current_epoch) / live.total_epochs
+                                              : 0.0;
 
     // Call progress callback
     {
