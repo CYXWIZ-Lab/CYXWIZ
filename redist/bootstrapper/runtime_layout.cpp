@@ -386,6 +386,12 @@ bool ResolveRuntimeState(
     AddDirectoryIfPresent(
         canonical_root, output.base_directory / "python",
         output.dll_directories);
+#ifndef _WIN32
+    // POSIX standalone Python keeps libpython3.12 in python/lib.
+    AddDirectoryIfPresent(
+        canonical_root, output.base_directory / "python" / "lib",
+        output.dll_directories);
+#endif
 
     for (const auto& state_pack : normalized.packs) {
         ActivePack pack;

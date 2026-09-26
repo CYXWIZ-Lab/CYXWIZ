@@ -93,12 +93,18 @@ public:
 
     // ===== Python Settings =====
 
-    // Get system Python interpreter path
+    // Effective Python interpreter: the configured path when it exists,
+    // otherwise the Python runtime bundled with this Engine (release installs
+    // ship one under <engine dir>/python). Empty when neither is available.
     std::string GetSystemPythonPath() const;
     void SetSystemPythonPath(const std::string& path);
 
-    // Check if system Python is configured
+    // Check if a usable Python interpreter (configured or bundled) exists
     bool HasSystemPython() const;
+
+    // Interpreter bundled beside the Engine executable, or empty. Not
+    // persisted: the install folder changes when the base is upgraded.
+    std::string GetBundledPythonPath() const;
 
     // Get Python packages directory (derived from interpreter path)
     std::string GetPythonPackagesDir() const;

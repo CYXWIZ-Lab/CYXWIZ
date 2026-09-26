@@ -104,7 +104,14 @@ std::filesystem::path ResolvePythonHomeFromInterpreter(const std::filesystem::pa
     if (!venv_root.empty()) {
         return venv_root;
     }
-    return interpreter_path.parent_path();
+    auto parent = interpreter_path.parent_path();
+#ifndef _WIN32
+    // POSIX layouts keep the interpreter in <prefix>/bin.
+    if (parent.filename() == "bin") {
+        return parent.parent_path();
+    }
+#endif
+    return parent;
 }
 
 std::filesystem::path FindPosixSitePackages(const std::filesystem::path& base_root) {
@@ -400,6 +407,14 @@ bool HasStdLibInHome(const std::filesystem::path& python_home, std::string* deta
         return true;
     }
 
+    // POSIX layout: <prefix>/lib/pythonX.Y for the linked interpreter
+    const std::string posix_version =
+        "python" + std::to_string(PY_MAJOR_VERSION) + "." + std::to_string(PY_MINOR_VERSION);
+    const auto posix_stdlib = python_home / "lib" / posix_version / "threading.py";
+    if (std::filesystem::exists(posix_stdlib)) {
+        return true;
+    }
+
     // Check stdlib zip (embeddable dist)
     if (std::filesystem::exists(python_home) && std::filesystem::is_directory(python_home)) {
         for (const auto& entry : std::filesystem::directory_iterator(python_home)) {
@@ -418,6 +433,7 @@ bool HasStdLibInHome(const std::filesystem::path& python_home, std::string* deta
 
     if (detail_out) {
         *detail_out = "missing stdlib (expected '" + (python_home / "Lib" / "threading.py").string() +
+                      "', '" + posix_stdlib.string() +
                       "' or threading.py inside python*.zip under " + python_home.string() + ")";
     }
     return false;

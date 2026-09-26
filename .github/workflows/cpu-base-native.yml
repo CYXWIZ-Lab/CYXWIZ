@@ -143,6 +143,22 @@ jobs:
             -OutFile arrayfire-installer.exe
           Start-Process -FilePath .\arrayfire-installer.exe -ArgumentList /S -Wait
 
+      - name: Download pinned Python runtime
+        shell: pwsh
+        run: |
+          # python-build-standalone 3.12.14 (stripped): compiled against and
+          # bundled in the base, so embedded scripting uses the exact tree.
+          $archive = 'cpython-3.12.14%2B20260924-x86_64-pc-windows-msvc-install_only_stripped.tar.gz'
+          Invoke-WebRequest -Uri "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/$archive" -OutFile deps-python.tar.gz
+          if ((Get-FileHash deps-python.tar.gz -Algorithm SHA256).Hash -ne `
+              'C5BF8EDFE858C1DF9891BE498B5BBC8761D383DF5B9790658B088FEA4870433A') {
+            throw 'Python runtime input digest mismatch'
+          }
+          New-Item -ItemType Directory -Force deps/python-runtime | Out-Null
+          tar -xzf deps-python.tar.gz -C deps/python-runtime
+          $root = (Resolve-Path deps/python-runtime/python).Path -replace '\\', '/'
+          "CYXWIZ_PYTHON_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Configure Release CPU build
         shell: pwsh
         run: |
@@ -154,7 +170,11 @@ jobs:
             '-DCYXWIZ_BUILD_SERVER_NODE=OFF',
             '-DCYXWIZ_BUILD_TESTS=OFF',
             '-DCYXWIZ_BUILD_TUI=OFF',
-            '-DCYXWIZ_ENABLE_PYTHON=OFF',
+            '-DCYXWIZ_ENABLE_PYTHON=ON',
+            '-DCYXWIZ_REQUIRE_PYTHON=ON',
+            "-DPython3_EXECUTABLE=$env:CYXWIZ_PYTHON_ROOT/python.exe",
+            "-DPython3_INCLUDE_DIR=$env:CYXWIZ_PYTHON_ROOT/include",
+            "-DPython3_LIBRARY=$env:CYXWIZ_PYTHON_ROOT/libs/python312.lib",
             '-DCYXWIZ_ENABLE_ONNX=OFF',
             '-DCYXWIZ_ENABLE_GGUF=OFF',
             '-DCYXWIZ_ENABLE_PYTORCH=OFF',
@@ -188,16 +208,11 @@ jobs:
           cyxwiz-backend-pack-installer cyxwiz-runtime-bootstrapper
           cyxwiz-product-removal-finalizer
           cyxwiz-route-probe
+          pycyxwiz cyxwiz_plotting
 
       - name: Download pinned redistribution inputs
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force deps/python | Out-Null
-          Invoke-WebRequest `
-            -Uri https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip `
-            -OutFile deps/python-embed.zip
-          Expand-Archive deps/python-embed.zip -DestinationPath deps/python
-
           New-Item -ItemType Directory -Force `
             deps/intel/onemkl-2025.2.0.627 | Out-Null
           Invoke-WebRequest `
@@ -217,8 +232,8 @@ jobs:
             --version "${env:CYXWIZ_RELEASE}" `
             --pack-version "${env:CYXWIZ_PACK_VERSION}" `
             --arrayfire-dir 'C:\Program Files\ArrayFire\v3' `
-            --python-dir deps/python `
-            --python-version 3.12.8 `
+            --python-dir "${env:CYXWIZ_PYTHON_ROOT}" `
+            --python-version 3.12.14 `
             --intel-runtime-license-dir deps/intel `
             --generated-utc 2026-08-20T00:00:00Z
           New-Item -ItemType Directory -Force cpu-base-artifact | Out-Null
@@ -387,6 +402,17 @@ jobs:
           ./bootstrap-vcpkg.sh
           echo "VCPKG_ROOT=$PWD" >> "$GITHUB_ENV"
 
+      - name: Download pinned Python runtime
+        run: |
+          set -euo pipefail
+          archive="cpython-3.12.14%2B20260924-x86_64-apple-darwin-install_only_stripped.tar.gz"
+          curl --fail --location --retry 3 "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/$archive" --output deps-python.tar.gz
+          echo "7ea9761b9069c10b9a20531d568645849d604c59e9c7f11f6659f1e1790c968e  deps-python.tar.gz" \
+            | shasum -a 256 -c -
+          mkdir -p deps/python-runtime
+          tar -xzf deps-python.tar.gz -C deps/python-runtime
+          echo "CYXWIZ_PYTHON_ROOT=$GITHUB_WORKSPACE/deps/python-runtime/python" >> "$GITHUB_ENV"
+
       - name: Configure Release CPU build
         run: |
           arrayfire_config="$(find -H "$(brew --prefix arrayfire)" -name ArrayFireConfig.cmake -print -quit)"
@@ -400,7 +426,11 @@ jobs:
             -DCYXWIZ_BUILD_SERVER_NODE=OFF \
             -DCYXWIZ_BUILD_TESTS=OFF \
             -DCYXWIZ_BUILD_TUI=OFF \
-            -DCYXWIZ_ENABLE_PYTHON=OFF \
+            -DCYXWIZ_ENABLE_PYTHON=ON \
+            -DCYXWIZ_REQUIRE_PYTHON=ON \
+            -DPython3_EXECUTABLE="$CYXWIZ_PYTHON_ROOT/bin/python3.12" \
+            -DPython3_INCLUDE_DIR="$CYXWIZ_PYTHON_ROOT/include/python3.12" \
+            -DPython3_LIBRARY="$CYXWIZ_PYTHON_ROOT/lib/libpython3.12.dylib" \
             -DCYXWIZ_ENABLE_ONNX=OFF \
             -DCYXWIZ_ENABLE_GGUF=OFF \
             -DCYXWIZ_ENABLE_PYTORCH=OFF \
@@ -424,6 +454,7 @@ jobs:
           cyxwiz-backend-pack-installer cyxwiz-runtime-bootstrapper
           cyxwiz-product-removal-finalizer
           cyxwiz-route-probe
+          pycyxwiz cyxwiz_plotting
 
       - name: Normalize ArrayFire redistribution input
         run: |
@@ -442,6 +473,8 @@ jobs:
             --pack-version "$CYXWIZ_PACK_VERSION" \
             --build-dir build/bin \
             --arrayfire-dir deps/arrayfire \
+            --python-dir "$CYXWIZ_PYTHON_ROOT" \
+            --python-version 3.12.14 \
             --generated-utc 2026-08-20T00:00:00Z
           mkdir -p cpu-base-artifact
           cp "redist/output/cyxwiz-base-${CYXWIZ_RELEASE}-${CYXWIZ_PACK_VERSION}-macos-x86_64.zip"* \

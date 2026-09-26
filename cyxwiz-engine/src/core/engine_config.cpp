@@ -629,12 +629,12 @@ void EngineConfig::SetDefaultP2PPort(int port) {
 // ===== Python Settings =====
 
 std::string EngineConfig::GetPythonPackagesDir() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (system_python_path_.empty()) {
-        return "";  // No system Python configured
+    const std::string interpreter = GetSystemPythonPath();
+    if (interpreter.empty()) {
+        return "";  // No Python configured or bundled
     }
 
-    std::filesystem::path interp(system_python_path_);
+    std::filesystem::path interp(interpreter);
     auto site_packages = ResolveSitePackagesFromInterpreter(interp);
 
     if (std::filesystem::exists(site_packages)) {
@@ -645,8 +645,31 @@ std::string EngineConfig::GetPythonPackagesDir() const {
 }
 
 std::string EngineConfig::GetSystemPythonPath() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return system_python_path_;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::error_code ec;
+        if (!system_python_path_.empty() &&
+            std::filesystem::exists(system_python_path_, ec)) {
+            return system_python_path_;
+        }
+    }
+    // A stale path (for example an older base folder after an upgrade) falls
+    // back to the runtime bundled with this Engine.
+    return GetBundledPythonPath();
+}
+
+std::string EngineConfig::GetBundledPythonPath() const {
+    const std::filesystem::path exe_dir = GetExecutableDir();
+    if (exe_dir.empty()) {
+        return "";
+    }
+#ifdef _WIN32
+    const std::filesystem::path candidate = exe_dir / "python" / "python.exe";
+#else
+    const std::filesystem::path candidate = exe_dir / "python" / "bin" / "python3";
+#endif
+    std::error_code ec;
+    return std::filesystem::is_regular_file(candidate, ec) ? candidate.string() : "";
 }
 
 void EngineConfig::SetSystemPythonPath(const std::string& path) {
@@ -658,8 +681,7 @@ void EngineConfig::SetSystemPythonPath(const std::string& path) {
 }
 
 bool EngineConfig::HasSystemPython() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return !system_python_path_.empty() && std::filesystem::exists(system_python_path_);
+    return !GetSystemPythonPath().empty();
 }
 
 bool EngineConfig::GetAutoCreateVenv() const {

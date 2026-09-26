@@ -39,7 +39,10 @@ from macho_runtime_closure import (  # noqa: E402
     MachOClosureError,
     close_macos_runtime,
 )
-from python_runtime_package import copy_python_runtime  # noqa: E402
+from python_runtime_package import (  # noqa: E402
+    copy_python_runtime,
+    copy_standalone_python,
+)
 
 
 SUPPORTED_BACKENDS = ("cpu", "cuda", "oneapi", "opencl")
@@ -251,6 +254,34 @@ def validate_windows_embedded_python(python_root: Path) -> None:
         ("python312._pth", "Python embedded path configuration"),
     ):
         require_file(python_root / name, description)
+
+
+def validate_standalone_python(python_root: Path, system: str) -> Path:
+    """Check a python-build-standalone 3.12 tree; return its license file."""
+    if system == "windows":
+        required = (
+            ("python.exe", "bundled Python executable"),
+            ("python312.dll", "Python 3.12 runtime DLL"),
+            ("Lib/threading.py", "Python standard library"),
+            ("Lib/venv/__init__.py", "Python venv module"),
+            ("Lib/ensurepip/__init__.py", "Python ensurepip module"),
+            ("LICENSE.txt", "Python license"),
+        )
+        license_name = "LICENSE.txt"
+    else:
+        library = "libpython3.12.dylib" if system == "darwin" else "libpython3.12.so.1.0"
+        required = (
+            ("bin/python3.12", "bundled Python executable"),
+            (f"lib/{library}", "Python 3.12 shared runtime"),
+            ("lib/python3.12/threading.py", "Python standard library"),
+            ("lib/python3.12/venv/__init__.py", "Python venv module"),
+            ("lib/python3.12/ensurepip/__init__.py", "Python ensurepip module"),
+            ("lib/python3.12/LICENSE.txt", "Python license"),
+        )
+        license_name = "lib/python3.12/LICENSE.txt"
+    for relative, description in required:
+        require_file(python_root / relative, description)
+    return python_root / license_name
 
 
 def require_file(path: Path, description: str) -> Path:
@@ -1033,34 +1064,31 @@ def build_split_artifact(
         copy_build_payload(paths, stage, "full", system, exe_suffix, lib_suffix)
 
         package_arrayfire_base(arrayfire_root, stage, lib_suffix)
+        # Embedded scripting ships on every platform: the base carries a
+        # relocatable python-build-standalone 3.12 tree under python/ and the
+        # Engine uses it unless another interpreter is configured. The legacy
+        # {"python": version} form is what every installed bootstrapper reads.
+        python_dir = args.python_dir or os.environ.get("PYTHON_RUNTIME_DIR")
+        if python_dir is None:
+            raise PackageError(
+                "Pass --python-dir with a python-build-standalone 3.12 tree for the base"
+            )
+        python_root = Path(python_dir).resolve()
+        require_directory(python_root, "bundled Python runtime")
+        validate_standalone_python(python_root, system)
+        full_python_version = validate_python_version(
+            python_version(python_root, args.python_version)
+        )
+        copy_standalone_python(python_root, stage / "python", system)
         runtime_versions: dict[str, str] = {
             "arrayfire": af_version,
             "cyxwiz": version,
-            "python_scripting": "disabled",
+            "python": full_python_version,
         }
         python_description = (
-            "Python scripting is excluded from this CPU qualification build."
+            f"Bundled Python {full_python_version} runtime for embedded scripting."
         )
         if system == "windows":
-            python_root = (
-                args.python_dir
-                or Path(os.environ.get("PYTHON_EMBED", r"C:\Python312-embed"))
-            ).resolve()
-            require_directory(python_root, "bundled Python runtime")
-            validate_windows_embedded_python(python_root)
-            full_python_version = validate_python_version(
-                python_version(python_root, args.python_version)
-            )
-            python_license = next(
-                (
-                    path
-                    for path in (python_root / "LICENSE.txt", python_root / "LICENSE")
-                    if path.is_file()
-                ),
-                None,
-            )
-            if python_license is None:
-                raise PackageError(f"Missing bundled Python license in {python_root}")
             intel_notices = (
                 args.intel_runtime_license_dir
                 or os.environ.get("INTEL_RUNTIME_LICENSE_DIR")
@@ -1072,10 +1100,7 @@ def build_split_artifact(
             intel_notices_path = validate_intel_runtime_notices(
                 Path(intel_notices).resolve(), ()
             )
-            copy_python_runtime(python_root, stage / "python")
             copy_runtime_notices(stage, intel_notices_path, None)
-            runtime_versions["python"] = full_python_version
-            python_description = f"Bundled Python {full_python_version} runtime."
         elif system == "darwin":
             try:
                 close_macos_runtime(

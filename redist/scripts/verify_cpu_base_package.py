@@ -196,6 +196,7 @@ def package_environment(install_root: Path, base: Path) -> dict[str, str]:
         base / "lib",
         base / "arrayfire" / ("bin" if os.name == "nt" else "lib"),
         base / "python",
+        *(() if os.name == "nt" else (base / "python" / "lib",)),
     )
     if os.name == "nt":
         windows = Path(environment.get("SystemRoot", r"C:\Windows"))
@@ -242,13 +243,27 @@ def run_checked(
     }, result.stdout)
 
 
-def parse_engine_smoke(output: str) -> None:
+def parse_engine_smoke(output: str, python_version: str | None = None) -> None:
     expected = (
         "package_smoke schema=1 status=pass effective_backend=cpu "
         "effective_device=0 runtime_isolation=pass checksum=70"
     )
     if expected not in output:
         raise CpuBaseSmokeError("Engine did not report a passing CPU package smoke")
+    # A base that declares a bundled Python must prove embedded scripting
+    # starts from it (the Engine initializes the interpreter from python/).
+    if python_version is not None and f"{expected} python={python_version}" not in output:
+        raise CpuBaseSmokeError(
+            f"Engine did not start the bundled Python {python_version}"
+        )
+
+
+def declared_python_version(base: Path) -> str | None:
+    path = base / "RUNTIME_VERSIONS.json"
+    if not path.is_file():
+        return None
+    value = json.loads(path.read_text(encoding="utf-8")).get("python")
+    return value if isinstance(value, str) else None
 
 
 def parse_probe(output: str, operation: str) -> None:
@@ -433,7 +448,7 @@ def verify(
         contaminated_environment(install_root),
         60,
     )
-    parse_engine_smoke(engine_output)
+    parse_engine_smoke(engine_output, declared_python_version(base))
 
     probe = base / f"cyxwiz-route-probe{suffix}"
     if not probe.is_file():

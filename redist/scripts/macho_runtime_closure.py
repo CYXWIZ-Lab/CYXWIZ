@@ -152,10 +152,22 @@ def _resolve_dependency(
     )
 
 
+BUNDLED_PYTHON_DIR = "python"
+
+
+def is_bundled_python(path: Path, stage: Path) -> bool:
+    """The bundled standalone Python keeps its own @rpath/@loader_path
+    references and code signatures; its files are not rewritten."""
+    try:
+        return path.relative_to(stage).parts[:1] == (BUNDLED_PYTHON_DIR,)
+    except ValueError:
+        return False
+
+
 def _initial_binaries(stage: Path) -> list[PackagedBinary]:
     binaries: list[PackagedBinary] = []
     for path in sorted(item for item in stage.rglob("*") if item.is_file()):
-        if is_macho(path):
+        if is_macho(path) and not is_bundled_python(path.resolve(), stage):
             binaries.append(PackagedBinary(path.resolve(), path.resolve()))
     return binaries
 
@@ -173,10 +185,19 @@ def close_macos_runtime(
     copied into the signed package boundary.
     """
     stage = stage.resolve()
-    roots = tuple(path.resolve() for path in search_roots if path.is_dir())
+    python_lib = stage / BUNDLED_PYTHON_DIR / "lib"
+    roots = tuple(
+        path.resolve() for path in (*search_roots, python_lib) if path.is_dir()
+    )
     queue = _initial_binaries(stage)
     packaged_by_source = {item.source: item.path for item in queue}
     packaged_by_name: dict[str, Path] = {}
+    # libpython is already packaged inside the bundled tree; references to it
+    # become @loader_path paths into python/lib.
+    if python_lib.is_dir():
+        for item in sorted(python_lib.iterdir()):
+            if item.is_file() and is_macho(item):
+                packaged_by_name.setdefault(item.name, item.resolve())
     for item in queue:
         existing = packaged_by_name.setdefault(item.path.name, item.path)
         if existing != item.path:
