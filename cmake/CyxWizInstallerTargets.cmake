@@ -39,6 +39,14 @@ if(TARGET cyxwiz-backend)
         CXX_STANDARD 20
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # Keep ArrayFire backends inside the packaged runtime (see source).
+        target_sources(cyxwiz-route-probe PRIVATE
+            "${_cyxwiz_installer_engine_dir}/src/core/arrayfire_load_guard_linux.cpp")
+        target_link_options(cyxwiz-route-probe PRIVATE
+            "LINKER:--export-dynamic-symbol=dlopen")
+        target_link_libraries(cyxwiz-route-probe PRIVATE ${CMAKE_DL_LIBS})
+    endif()
 endif()
 
 add_executable(cyxwiz-backend-pack-installer

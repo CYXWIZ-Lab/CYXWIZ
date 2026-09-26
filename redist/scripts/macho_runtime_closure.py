@@ -164,6 +164,27 @@ def is_bundled_python(path: Path, stage: Path) -> bool:
         return False
 
 
+def foreign_rpaths(binary: Path, rpaths: Iterable[str], stage: Path) -> list[str]:
+    """LC_RPATH entries that point outside the package.
+
+    Build machines leave entries such as /usr/local/opt/arrayfire/lib; dyld
+    searches the main executable's rpaths for leaf-name dlopen calls, so a
+    Homebrew ArrayFire backend would load when a pack is not installed.
+    Packaged references are @loader_path-relative and need no rpath.
+    """
+    stage = Path(os.path.normpath(stage))
+    foreign: list[str] = []
+    for value in rpaths:
+        if value.startswith("@loader_path/") or value == "@loader_path":
+            relative = value.removeprefix("@loader_path").lstrip("/")
+            target = Path(os.path.normpath(binary.parent / relative))
+            inside = target == stage or stage in target.parents
+            if inside:
+                continue
+        foreign.append(value)
+    return foreign
+
+
 def _initial_binaries(stage: Path) -> list[PackagedBinary]:
     binaries: list[PackagedBinary] = []
     for path in sorted(item for item in stage.rglob("*") if item.is_file()):
@@ -252,6 +273,14 @@ def close_macos_runtime(
             if result.returncode != 0:
                 raise MachOClosureError(
                     f"Cannot relocate {dependency!r} in {binary.path}: "
+                    f"{result.stdout.strip()}"
+                )
+
+        for rpath in dict.fromkeys(foreign_rpaths(binary.path, rpaths, stage)):
+            result = runner(("install_name_tool", "-delete_rpath", rpath, str(binary.path)))
+            if result.returncode != 0:
+                raise MachOClosureError(
+                    f"Cannot remove build rpath {rpath!r} from {binary.path}: "
                     f"{result.stdout.strip()}"
                 )
 

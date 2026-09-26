@@ -585,6 +585,66 @@ def package_arrayfire(
     return version
 
 
+# ArrayFire's unified loader (src/api/unified/symbol_manager.cpp) falls back to
+# these absolute directories on Linux/macOS when a backend is not found in the
+# runtime's own paths. With no GPU pack installed, a developer ArrayFire there
+# (Homebrew /usr/local/lib, /opt/arrayfire) is loaded into the packaged Engine
+# and aborts it (duplicate spdlog logger "platform"). Packaged copies point
+# the fallbacks at a path that can never resolve.
+ARRAYFIRE_SYSTEM_SEARCH_PATHS = (
+    b"/opt/arrayfire-3/lib/",
+    b"/opt/arrayfire/lib/",
+    b"/usr/local/lib/",
+    b"/usr/local/arrayfire/lib/",
+)
+ARRAYFIRE_UNIFIED_LIBRARY = re.compile(r"libaf\.(?:\d+\.)*(?:dylib|so)(?:\.\d+)*")
+
+
+def isolate_arrayfire_unified_loader(library: Path) -> int:
+    """Disable the unified loader's system fallbacks in one packaged library."""
+    data = library.read_bytes()
+    replaced = 0
+    for value in ARRAYFIRE_SYSTEM_SEARCH_PATHS:
+        needle = value + b"\0"
+        occurrences = data.count(needle)
+        if occurrences:
+            data = data.replace(needle, b"/dev/null/".ljust(len(value), b"\0") + b"\0")
+            replaced += occurrences
+    if replaced == 0:
+        raise PackageError(
+            f"{library.name} has none of ArrayFire's known system search paths; "
+            "review the unified loader before packaging this ArrayFire version"
+        )
+    library.write_bytes(data)
+    return replaced
+
+
+def isolate_packaged_arrayfire(library_dir: Path) -> list[Path]:
+    """Patch every unified-loader copy (version aliases are real files)."""
+    patched = []
+    for path in sorted(library_dir.iterdir()):
+        if path.is_file() and not path.is_symlink() and \
+                ARRAYFIRE_UNIFIED_LIBRARY.fullmatch(path.name):
+            isolate_arrayfire_unified_loader(path)
+            patched.append(path)
+    if not patched:
+        raise PackageError(f"No ArrayFire unified runtime found in {library_dir}")
+    return patched
+
+
+def adhoc_codesign(paths: Sequence[Path]) -> None:
+    """Re-sign patched Mach-O files; arm64 refuses to load invalid signatures."""
+    for path in paths:
+        result = subprocess.run(
+            ["codesign", "--force", "--sign", "-", str(path)],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            raise PackageError(
+                f"Cannot re-sign {path.name}: {(result.stderr or result.stdout).strip()}"
+            )
+
+
 def package_arrayfire_base(
     arrayfire_root: Path,
     stage: Path,
@@ -1102,13 +1162,16 @@ def build_split_artifact(
             )
             copy_runtime_notices(stage, intel_notices_path, None)
         elif system == "darwin":
+            patched_arrayfire = isolate_packaged_arrayfire(stage / "arrayfire" / "lib")
             try:
                 close_macos_runtime(
                     stage, macos_runtime_search_roots(paths, arrayfire_root)
                 )
             except MachOClosureError as error:
                 raise PackageError(str(error)) from error
+            adhoc_codesign(patched_arrayfire)
         else:
+            isolate_packaged_arrayfire(stage / "arrayfire" / "lib")
             try:
                 close_linux_runtime(stage, search_roots=[arrayfire_library_dir(arrayfire_root)])
             except ElfClosureError as error:

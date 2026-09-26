@@ -92,6 +92,35 @@ class MachORuntimeClosureTests(unittest.TestCase):
 
             self.assertEqual(dependency.resolve(), resolved)
 
+    def test_build_machine_rpaths_are_foreign(self) -> None:
+        stage = Path("/package")
+        engine = stage / "cyxwiz-engine"
+        libaf = stage / "arrayfire" / "lib" / "libaf.3.dylib"
+        self.assertEqual(
+            [
+                "/usr/local/opt/arrayfire/lib",
+                "/Users/runner/work/CYXWIZ/CYXWIZ/build/lib",
+                "@executable_path/../Frameworks",
+            ],
+            macho.foreign_rpaths(
+                engine,
+                (
+                    "/usr/local/opt/arrayfire/lib",
+                    "/Users/runner/work/CYXWIZ/CYXWIZ/build/lib",
+                    "@loader_path/lib",
+                    "@executable_path/../Frameworks",
+                ),
+                stage,
+            ),
+        )
+        # Homebrew bottle entries resolve above the package root.
+        self.assertEqual(
+            ["@loader_path/../../../../lib"],
+            macho.foreign_rpaths(
+                libaf, ("@loader_path/../../../../lib", "@loader_path/../../lib"), stage
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

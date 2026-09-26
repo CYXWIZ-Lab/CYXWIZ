@@ -969,6 +969,14 @@ if(CYXWIZ_ENABLE_TRACY AND Tracy_FOUND)
     target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_TRACY)
 endif()
 
+# Linux: keep ArrayFire backends inside the packaged runtime; dlopen is
+# defined by the executable so it takes precedence for ArrayFire's loader.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(cyxwiz-engine PRIVATE src/core/arrayfire_load_guard_linux.cpp)
+    target_link_options(cyxwiz-engine PRIVATE "LINKER:--export-dynamic-symbol=dlopen")
+    target_link_libraries(cyxwiz-engine PRIVATE ${CMAKE_DL_LIBS})
+endif()
+
 # Python scripting support (controlled by CYXWIZ_HAS_PYTHON from root CMakeLists.txt)
 if(CYXWIZ_HAS_PYTHON)
     target_link_libraries(cyxwiz-engine PRIVATE pybind11::embed)
