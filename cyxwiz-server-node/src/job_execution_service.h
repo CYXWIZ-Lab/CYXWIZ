@@ -9,6 +9,7 @@
 
 #include "execution.grpc.pb.h"
 #include "auth/p2p_jwt_validator.h"
+#include "node_admission.h"
 
 // Forward declarations - JobExecutor is in servernode namespace
 namespace cyxwiz {
@@ -198,6 +199,8 @@ private:
     void CleanupJob(const std::string& job_id);
     void CleanupJobsFromEngine(const std::string& engine_address);  // Cleanup all jobs from disconnected engine
     void CleanupStaleJobs();  // Cleanup jobs that were created but never started
+    // What admission judges a job against (TOFIX118 P4b).
+    cyxwiz::servernode::AdmissionFacts GatherAdmissionFacts(const cyxwiz::protocol::JobConfig& config) const;
 
     // Reservation-based job management
     void ResetJobSession(JobSession* session);

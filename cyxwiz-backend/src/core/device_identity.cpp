@@ -325,6 +325,7 @@ void EnrichCudaIdentity(DeviceInfo& info) {
     using CuDeviceGet = int (*)(int*, int);
     using CuDeviceGetUuid = int (*)(CudaUuid*, int);
     using CuDeviceGetAttribute = int (*)(int*, int, int);
+    using CuDeviceTotalMem = int (*)(size_t*, int);
 
     const auto af_get_native_id =
         FindFunction<AfGetNativeId>(arrayfire_cuda, "afcu_get_native_id");
@@ -340,6 +341,8 @@ void EnrichCudaIdentity(DeviceInfo& info) {
     const auto cu_device_get_attribute =
         FindFunction<CuDeviceGetAttribute>(cuda_driver,
                                           "cuDeviceGetAttribute");
+    const auto cu_device_total_mem =
+        FindFunction<CuDeviceTotalMem>(cuda_driver, "cuDeviceTotalMem_v2");
 
     if (!af_get_native_id || !cu_init || !cu_device_get ||
         cu_init(0) != 0) {
@@ -357,6 +360,14 @@ void EnrichCudaIdentity(DeviceInfo& info) {
     info.provider_known = true;
     info.hardware_vendor_id = 0x10de;
     info.hardware_vendor_id_known = true;
+
+    // Total device memory (admission compares job estimates against it).
+    size_t total_memory = 0;
+    if (cu_device_total_mem && cu_device_total_mem(&total_memory, cuda_device) == 0 &&
+        total_memory > 0) {
+        info.memory_total = total_memory;
+        info.memory_total_known = true;
+    }
 
     if (cu_device_get_uuid) {
         CudaUuid uuid{};

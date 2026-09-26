@@ -2,6 +2,7 @@
 // graph through RunGraphTrainingJob, linked against cyxwiz-training-core only
 // (what a Server Node links), and checks the fail-closed refusals.
 #include "../src/core/graph_compiler_dataset_hooks.h"
+#include "../src/core/graph_job_memory_probe.h"
 #include "../src/core/graph_training_job.h"
 #include "causal_lm_token_window_fixture.h"
 #include "route_qualification_test_fixture.h"
@@ -145,6 +146,24 @@ int main() {
         const auto result = cyxwiz::RunGraphTrainingJob(request);
         Check(result.ok, "job with a validation role succeeded" +
                              (result.error.empty() ? "" : " (" + result.error + ")"));
+    }
+
+    std::cout << "measures one step's device memory\n";
+    {
+        nlohmann::json graph = LoadTokenWindowGraph(root);
+        cyxwiz::GraphTrainingJobRequest request;
+        request.graph_json = graph.dump();
+        request.dataset_files["tiny_causal_lm_tokens"] = parquet.string();
+        const auto probe = cyxwiz::ProbeGraphJobMemory(request);
+        Check(probe.ok, "probe measured the job" + (probe.error.empty() ? "" : " (" + probe.error + ")"));
+        Check(probe.training_bytes > 0, "one step allocates device memory (" + std::to_string(probe.training_bytes) +
+                                            " bytes)");
+        Check(!probe.backend.empty(), "probe names the route that measured it");
+
+        request.dataset_files["tiny_causal_lm_tokens"] = (work / "missing.parquet").string();
+        const auto missing = cyxwiz::ProbeGraphJobMemory(request);
+        Check(!missing.ok && missing.failure == cyxwiz::TrainingFailureKind::DataError,
+              "a job that cannot run reports why instead of a size");
     }
 
     std::cout << "failure categories from executor reasons\n";

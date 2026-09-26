@@ -15,6 +15,7 @@
 #include "../../cyxwiz-engine/tests/causal_lm_token_window_fixture.h"
 #include "../../cyxwiz-engine/tests/route_qualification_test_fixture.h"
 #include "../src/node_client.h"
+#include "../src/node_admission.h"
 #include "../src/node_doctor.h"
 #include "../src/node_job_timing.h"
 #include "core/compute_runtime_paths.h"
@@ -78,6 +79,10 @@ std::string GenerateTestJwt(const std::string& job_id,
 class JobExecutionServiceTest {
 public:
     JobExecutionServiceTest() {
+        // A verified node: its devices' route evidence is loaded, as the
+        // daemon does at startup (admission refuses unverified routes).
+        cyxwiz::test::InstallQualifiedRouteSnapshot();
+
         // Create service instance
         service = std::make_unique<JobExecutionServiceImpl>();
         executor = std::make_shared<cyxwiz::servernode::JobExecutor>("test_node");
@@ -312,6 +317,47 @@ TEST_CASE("JobExecutionService - SendJob", "[p2p][job]") {
         REQUIRE(status.ok());
         REQUIRE(response.status() == STATUS_SUCCESS);
         REQUIRE(response.accepted());
+    }
+
+    SECTION("Refused before start when the job does not fit the device") {
+        SendJobRequest request;
+        request.set_job_id("test_job_007");
+        auto* config = request.mutable_config();
+        config->set_job_id("test_job_007");
+        config->set_job_type(JOB_TYPE_TRAINING);
+        config->set_estimated_memory(1ll << 50);  // 1 PB, measured by the Engine
+        request.set_dataset_uri("ipfs://QmTest123");
+
+        SendJobResponse response;
+        grpc::ClientContext context;
+        SetRpcDeadline(context);
+        REQUIRE(test.stub->SendJob(&context, request, &response).ok());
+        INFO(response.rejection_reason());
+        // The device pool knows the device's memory (CUDA and OpenCL report it).
+        CHECK_FALSE(response.accepted());
+        CHECK(response.rejection_reason().rfind("Out of memory: ", 0) == 0);
+    }
+
+    SECTION("Refused before start when the node's route is not verified") {
+        cyxwiz::ClearRouteQualificationSnapshot();
+        SendJobRequest request;
+        request.set_job_id("test_job_006");
+        auto* config = request.mutable_config();
+        config->set_job_id("test_job_006");
+        config->set_job_type(JOB_TYPE_TRAINING);
+        request.set_dataset_uri("ipfs://QmTest123");
+
+        SendJobResponse response;
+        grpc::ClientContext context;
+        SetRpcDeadline(context);
+        grpc::Status status = test.stub->SendJob(&context, request, &response);
+        cyxwiz::test::InstallQualifiedRouteSnapshot();
+
+        REQUIRE(status.ok());
+        CHECK_FALSE(response.accepted());
+        INFO(response.rejection_reason());
+        CHECK(response.rejection_reason().rfind("Device problem: ", 0) == 0);
+        CHECK(response.rejection_reason().find("not verified") != std::string::npos);
     }
 }
 
@@ -1145,6 +1191,39 @@ TEST_CASE("Central server ranks a registered node by measured throughput", "[.][
     client.Disconnect();
     cyxwiz::ClearRouteQualificationSnapshot();
     fs::remove_all(root, ec);
+}
+
+TEST_CASE("Admission refuses jobs the node cannot run", "[admission]") {
+    using cyxwiz::TrainingFailureKind;
+    using cyxwiz::servernode::AdmissionFacts;
+    using cyxwiz::servernode::EvaluateJobAdmission;
+    constexpr std::uint64_t GB = 1024ull * 1024 * 1024;
+
+    AdmissionFacts fits{"arrayfire_cuda:0", true, 4 * GB, 2 * GB};
+    CHECK(EvaluateJobAdmission(fits).accepted);
+
+    AdmissionFacts unverified = fits;
+    unverified.route_verified = false;
+    auto decision = EvaluateJobAdmission(unverified);
+    CHECK_FALSE(decision.accepted);
+    CHECK(decision.failure == TrainingFailureKind::DeviceError);
+
+    // 3.5 GB of training + the runtime reserve exceeds 95% of a 4 GB device.
+    AdmissionFacts too_big{"arrayfire_cuda:0", true, 4 * GB, 3 * GB + GB / 2};
+    decision = EvaluateJobAdmission(too_big);
+    CHECK_FALSE(decision.accepted);
+    CHECK(decision.failure == TrainingFailureKind::OutOfMemory);
+    INFO(decision.reason);
+    CHECK(decision.reason.find("4.0 GB") != std::string::npos);
+    // Berean T0 (564 MB measured) fits the 4 GB GTX 1050 Ti.
+    CHECK(EvaluateJobAdmission({"arrayfire_cuda:0", true, 4 * GB, 564ull * 1024 * 1024}).accepted);
+
+    // Unknown device memory or no measurement: accepted (a real out-of-memory
+    // still reports as such once training starts).
+    AdmissionFacts unknown_device{"arrayfire_cuda:0", true, 0, 64 * GB};
+    CHECK(EvaluateJobAdmission(unknown_device).accepted);
+    AdmissionFacts unmeasured{"arrayfire_cuda:0", true, 4 * GB, 0};
+    CHECK(EvaluateJobAdmission(unmeasured).accepted);
 }
 
 // Main function to run tests

@@ -4,12 +4,13 @@
 // breakdown and the host syncs from the training trace.
 //
 // Usage: cyxwiz-training-profile <graph.cyxgraph> [--batches N] [--warmup N]
-//                                [--out result.json] [--device opencl:0]
+//                                [--out result.json] [--device opencl:0] [--memory 1]
 // --device picks one of this machine's verified routes (cpu, cuda, opencl,
 // oneapi); without it the saved compute preference applies.
 // Set CYXWIZ_PROFILE_STAGE_SYNC=1 to charge device time to the stage that
 // issued it (removes CPU/GPU overlap; compare both runs).
 #include "../src/core/compute_runtime_paths.h"
+#include "../src/core/graph_job_memory_probe.h"
 #include "../src/core/graph_training_job.h"
 #include "../src/core/machine_compute_preference.h"
 #include "../src/core/route_qualification_snapshot.h"
@@ -54,12 +55,14 @@ int main(int argc, char** argv) {
     int warmup = 10;
     fs::path out;
     std::string device;
+    bool memory_only = false;  // --memory 1: print the admission memory probe and exit
     for (int i = 2; i + 1 < argc; i += 2) {
         const std::string flag = argv[i];
         if (flag == "--batches") batches = std::max(1, std::atoi(argv[i + 1]));
         else if (flag == "--warmup") warmup = std::max(0, std::atoi(argv[i + 1]));
         else if (flag == "--out") out = argv[i + 1];
         else if (flag == "--device") device = argv[i + 1];
+        else if (flag == "--memory") memory_only = std::string(argv[i + 1]) == "1";
     }
 
     // This machine's verified routes (Preferences > Devices > Verify), as the
@@ -106,6 +109,20 @@ int main(int argc, char** argv) {
         if (params.contains("max_sequence_length")) {
             tokens_per_sample = std::max(tokens_per_sample, std::atoi(params["max_sequence_length"].get<std::string>().c_str()));
         }
+    }
+
+    if (memory_only) {
+        cyxwiz::GraphTrainingJobRequest probe_request;
+        probe_request.graph_json = buffer.str();
+        const auto probe = cyxwiz::ProbeGraphJobMemory(probe_request);
+        const json report{{"graph", graph_path.string()},
+                          {"ok", probe.ok},
+                          {"error", probe.error},
+                          {"backend", probe.backend},
+                          {"training_bytes", probe.training_bytes},
+                          {"training_mb", static_cast<double>(probe.training_bytes) / (1024.0 * 1024.0)}};
+        std::cout << report.dump(2) << "\n";
+        return probe.ok ? 0 : 1;
     }
 
     const fs::path work = fs::current_path() / "training_profile_checkpoints";

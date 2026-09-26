@@ -1,6 +1,8 @@
 #include "job_execution_service.h"
 #include "node_data_dir.h"
 #include "node_job_timing.h"
+#include "core/execution_device_preferences.h"
+#include "core/route_qualification_snapshot.h"
 #include "job_executor.h"
 #include "node_client.h"
 #include "remote_dataset_fetcher.h"
@@ -214,6 +216,40 @@ grpc::Status JobExecutionServiceImpl::DisconnectFromNode(
     return grpc::Status::OK;
 }
 
+// The route jobs will train on (the machine's saved preference, else the
+// current device), whether it is verified, and its memory as the device
+// pool recorded it at startup (no device enumeration here: that would
+// switch backends under a running job).
+cyxwiz::servernode::AdmissionFacts JobExecutionServiceImpl::GatherAdmissionFacts(
+    const cyxwiz::protocol::JobConfig& config) const {
+    cyxwiz::servernode::AdmissionFacts facts;
+    cyxwiz::DeviceType type = cyxwiz::DeviceType::CPU;
+    int device_id = 0;
+    if (const auto selection = cyxwiz::GetSavedExecutionDeviceSelection()) {
+        type = selection->type;
+        device_id = selection->device_id;
+    } else if (const auto* device = cyxwiz::Device::GetCurrentDevice()) {
+        type = device->GetType();
+        device_id = device->GetDeviceId();
+    }
+    facts.route = cyxwiz::ExecutionDeviceSelectionBackendName(type) + ":" + std::to_string(device_id);
+    if (const auto snapshot = cyxwiz::GetRouteQualificationSnapshot()) {
+        for (const auto& route : snapshot->routes) {
+            facts.route_verified =
+                facts.route_verified || (route.certified && route.type == type && route.device_id == device_id);
+        }
+    }
+    if (job_executor_) {
+        if (const auto* pool = job_executor_->GetDevicePool()) {
+            for (const auto& state : pool->GetAllDeviceStates()) {
+                if (state.type == type && state.device_id == device_id) facts.device_memory = state.total_memory;
+            }
+        }
+    }
+    facts.job_memory = config.estimated_memory() > 0 ? static_cast<std::uint64_t>(config.estimated_memory()) : 0;
+    return facts;
+}
+
 grpc::Status JobExecutionServiceImpl::SendJob(
     grpc::ServerContext* context,
     const cyxwiz::protocol::SendJobRequest* request,
@@ -253,6 +289,24 @@ grpc::Status JobExecutionServiceImpl::SendJob(
             response->set_status(cyxwiz::protocol::STATUS_ERROR);
             response->set_accepted(false);
             response->set_rejection_reason("Node at capacity");
+            return grpc::Status::OK;
+        }
+    }
+
+    // Admission (TOFIX118 P4b): refuse what this node cannot run before
+    // accepting it - an unverified compute route, or a job whose measured
+    // memory clearly exceeds the device.
+    {
+        const auto decision = cyxwiz::servernode::EvaluateJobAdmission(GatherAdmissionFacts(request->config()));
+        if (!decision.accepted) {
+            const std::string reason =
+                std::string(cyxwiz::TrainingFailureLabel(cyxwiz::TrainingFailureCode(decision.failure))) + ": " +
+                decision.reason;
+            spdlog::warn("SendJob refused job {}: {}", request->job_id(), reason);
+            response->set_status(cyxwiz::protocol::STATUS_ERROR);
+            response->set_accepted(false);
+            response->set_rejection_reason(reason);
+            response->mutable_error()->set_message(reason);
             return grpc::Status::OK;
         }
     }

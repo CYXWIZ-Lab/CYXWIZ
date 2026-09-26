@@ -86,6 +86,7 @@ add_library(cyxwiz-training-core STATIC
     ${_cyxwiz_engine_src}/core/compute_runtime_config.cpp
     ${_cyxwiz_engine_src}/core/training_benchmark.cpp
     ${_cyxwiz_engine_src}/core/machine_capability.cpp
+    ${_cyxwiz_engine_src}/core/graph_job_memory_probe.cpp
 )
 target_include_directories(cyxwiz-training-core PUBLIC ${_cyxwiz_engine_src})
 target_link_libraries(cyxwiz-training-core PUBLIC
