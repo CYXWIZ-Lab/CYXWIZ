@@ -81,8 +81,25 @@ def is_linux_system_library(path: Path) -> bool:
     )
 
 
+BUNDLED_PYTHON_DIR = "python"
+
+
+def is_bundled_python(path: Path, stage: Path) -> bool:
+    """The bundled standalone Python is relocatable as shipped: its ELF files
+    keep their own $ORIGIN RUNPATHs and are not rewritten."""
+    try:
+        return path.relative_to(stage).parts[:1] == (BUNDLED_PYTHON_DIR,)
+    except ValueError:
+        return False
+
+
 def packaged_rpath(binary: Path, stage: Path) -> str:
-    directories = (stage, stage / "lib", stage / "arrayfire" / "lib")
+    directories = (
+        stage,
+        stage / "lib",
+        stage / "arrayfire" / "lib",
+        stage / BUNDLED_PYTHON_DIR / "lib",
+    )
     values = ["$ORIGIN"]
     for directory in directories:
         relative = os.path.relpath(directory, binary.parent).replace(os.sep, "/")
@@ -117,7 +134,7 @@ def _initial_binaries(stage: Path) -> list[PackagedBinary]:
     return [
         PackagedBinary(path.resolve(), path.resolve())
         for path in sorted(item for item in stage.rglob("*") if item.is_file())
-        if is_elf(path)
+        if is_elf(path) and not is_bundled_python(path.resolve(), stage)
     ]
 
 
@@ -130,10 +147,18 @@ def close_linux_runtime(
     """Copy non-system ELF dependencies and assign package-relative RUNPATHs."""
     stage = stage.resolve()
     search_roots = tuple(path.resolve() for path in search_roots)
+    python_lib = stage / BUNDLED_PYTHON_DIR / "lib"
     if search_roots:
-        search_roots = (stage, stage / "lib", stage / "arrayfire" / "lib", *search_roots)
+        search_roots = (
+            stage, stage / "lib", stage / "arrayfire" / "lib", python_lib, *search_roots
+        )
     queue = _initial_binaries(stage)
     packaged_by_name: dict[str, Path] = {}
+    # libpython and its siblings are already packaged inside the bundled tree.
+    if python_lib.is_dir():
+        for item in sorted(python_lib.iterdir()):
+            if item.is_file() and is_elf(item):
+                packaged_by_name.setdefault(item.name, item.resolve())
     for binary in queue:
         existing = packaged_by_name.setdefault(binary.path.name, binary.path)
         if existing != binary.path:

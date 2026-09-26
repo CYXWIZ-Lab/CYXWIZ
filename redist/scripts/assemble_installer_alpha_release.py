@@ -194,6 +194,10 @@ def _validate_pack_matrix(repository_root: Path, *, cpu_only: bool = False) -> N
             raise AlphaReleaseError(
                 f"pack {pack['pack_id']} targets an unsupported alpha platform"
             )
+    # Accelerator packs ship only where they were qualified on real hardware,
+    # so a full release may leave some targets CPU-only; it still needs at
+    # least one optional pack, otherwise it is a CPU-only release.
+    optional_total = 0
     for identity, target in TARGET_BY_PACK.items():
         target_packs = [
             pack for pack in packs
@@ -215,11 +219,13 @@ def _validate_pack_matrix(repository_root: Path, *, cpu_only: bool = False) -> N
             if pack["pack_kind"] == "backend_pack"
             and pack["companion_base_id"] in bases
         ]
-        if not bases or (not cpu_only and not optional):
-            requirement = "a base" if cpu_only else "a base and matching optional pack"
-            raise AlphaReleaseError(
-                f"{target.key} requires {requirement}"
-            )
+        if not bases:
+            raise AlphaReleaseError(f"{target.key} requires a base")
+        optional_total += len(optional)
+    if not cpu_only and optional_total == 0:
+        raise AlphaReleaseError(
+            "release without optional packs must be assembled with --cpu-only"
+        )
 
 
 def _copy_asset(source: Path, assets: Path, observed: dict[str, str]) -> Path:

@@ -117,6 +117,7 @@ private:
 
     // Dialogs
     bool show_create_dialog_ = false;
+    std::string create_error_;  // shown in the Create dialog
 
     // Create project dialog state
     char project_name_buf_[256] = {0};

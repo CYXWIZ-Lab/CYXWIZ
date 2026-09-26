@@ -120,8 +120,12 @@ bool ConfigureRuntimeEnvironment(
         return false;
     }
 #ifdef __APPLE__
+    // An unset fallback path means dyld's default ($HOME/lib:/usr/local/lib:
+    // /usr/lib), which finds a Homebrew ArrayFire backend when a pack is not
+    // installed. Keep the fallback to system libraries only.
     return SetEnvironmentValue(
         "DYLD_LIBRARY_PATH", RuntimeLibraryPath(runtime)) &&
+        SetEnvironmentValue("DYLD_FALLBACK_LIBRARY_PATH", "/usr/lib") &&
         ClearEnvironmentValue("LD_LIBRARY_PATH");
 #else
     return SetEnvironmentValue(

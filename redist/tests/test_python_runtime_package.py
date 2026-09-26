@@ -20,6 +20,64 @@ SPEC.loader.exec_module(python_runtime_package)
 
 
 class PythonRuntimePackageTests(unittest.TestCase):
+    def test_standalone_posix_policy_keeps_only_runtime_content(self) -> None:
+        policy = python_runtime_package.excludes_standalone_python_path
+        for relative in (
+            "bin/python3.12",
+            "lib/libpython3.12.so.1.0",
+            "lib/python3.12/venv/__init__.py",
+            "include/python3.12/Python.h",
+        ):
+            self.assertFalse(policy(PurePosixPath(relative), "linux"), relative)
+        for relative in (
+            "bin/pip3",
+            "bin/python3.12-config",
+            "bin/idle3.12",
+            "share/man/man1/python3.12.1",
+            "lib/pkgconfig/python-3.12.pc",
+            "lib/python3.12/test/test_os.py",
+        ):
+            self.assertTrue(policy(PurePosixPath(relative), "darwin"), relative)
+        self.assertTrue(policy(PurePosixPath("python312.pdb"), "windows"))
+        for relative, system in (
+            ("lib/libtcl9.0.dylib", "darwin"),
+            ("lib/thread3.0.6/libtcl9thread3.0.6.dylib", "darwin"),
+            ("lib/itcl4.3.8/libitcl4.3.8.dylib", "darwin"),
+            ("lib/tk9.0/tk.tcl", "linux"),
+            ("lib/python3.12/lib-dynload/_tkinter.cpython-312-x86_64-linux-gnu.so", "linux"),
+            ("lib/python3.12/tkinter/__init__.py", "linux"),
+            ("tcl/tcl8.6/init.tcl", "windows"),
+            ("DLLs/tcl86t.dll", "windows"),
+            ("DLLs/_tkinter.pyd", "windows"),
+            ("Lib/idlelib/idle.py", "windows"),
+        ):
+            self.assertTrue(policy(PurePosixPath(relative), system), relative)
+        for relative, system in (
+            ("lib/python3.12/threading.py", "linux"),
+            ("Lib/threading.py", "windows"),
+            ("DLLs/_ssl.pyd", "windows"),
+            ("lib/python3.12/lib-dynload/_ssl.cpython-312-darwin.so", "darwin"),
+        ):
+            self.assertFalse(policy(PurePosixPath(relative), system), relative)
+        self.assertFalse(policy(PurePosixPath("Scripts/pip.exe"), "windows"))
+
+    @unittest.skipIf(sys.platform == "win32", "Requires POSIX symlinks")
+    def test_standalone_copy_skips_posix_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "python"
+            (root / "bin").mkdir(parents=True)
+            (root / "lib").mkdir()
+            (root / "bin" / "python3.12").write_bytes(b"interpreter")
+            (root / "bin" / "python3").symlink_to("python3.12")
+            (root / "lib" / "libpython3.12.so.1.0").write_bytes(b"runtime")
+            (root / "lib" / "libpython3.12.so").symlink_to("libpython3.12.so.1.0")
+            destination = Path(temporary) / "stage" / "python"
+            python_runtime_package.copy_standalone_python(root, destination, "linux")
+            self.assertTrue((destination / "bin" / "python3.12").is_file())
+            self.assertTrue((destination / "lib" / "libpython3.12.so.1.0").is_file())
+            self.assertFalse((destination / "bin" / "python3").exists())
+            self.assertFalse((destination / "lib" / "libpython3.12.so").exists())
+
     def test_policy_excludes_development_content_without_name_substrings(self) -> None:
         excluded = (
             "Lib/site-packages/demo/__pycache__/runtime.cpython-312.pyc",

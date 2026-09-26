@@ -171,6 +171,27 @@ class PackageReleaseTests(unittest.TestCase):
         (cache / "runtime.cpython-312.pyc").write_bytes(b"cache")
         return root
 
+    def create_standalone_python(self) -> Path:
+        """Windows python-build-standalone layout (the base's bundled runtime)."""
+        root = self.root / "python-standalone"
+        for relative in (
+            "python.exe",
+            "python312.dll",
+            "python312.pdb",
+            "Lib/threading.py",
+            "Lib/venv/__init__.py",
+            "Lib/ensurepip/__init__.py",
+            "Lib/test/test_os.py",
+            "Lib/site-packages/demo/runtime.py",
+            "Lib/site-packages/demo/tests/test_runtime.py",
+            "Lib/site-packages/demo/__pycache__/runtime.cpython-312.pyc",
+        ):
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(relative.encode("ascii"))
+        (root / "LICENSE.txt").write_text("python license", encoding="ascii")
+        return root
+
     def test_macos_arrayfire_staging_preserves_loader_version_aliases(self) -> None:
         root = self.root / "arrayfire-macos"
         library = root / "lib"
@@ -374,6 +395,64 @@ class PackageReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(package_release.PackageError, "standard-library archive"):
             package_release.validate_windows_embedded_python(root)
 
+    def test_base_rejects_embeddable_python(self) -> None:
+        # The embeddable distribution has no venv/ensurepip; projects need both.
+        with self.assertRaisesRegex(package_release.PackageError, "standard library"):
+            package_release.validate_standalone_python(self.create_python(), "windows")
+
+    def test_base_validates_posix_standalone_layout(self) -> None:
+        root = self.root / "posix-python"
+        for relative in (
+            "bin/python3.12",
+            "lib/libpython3.12.so.1.0",
+            "lib/python3.12/threading.py",
+            "lib/python3.12/venv/__init__.py",
+            "lib/python3.12/ensurepip/__init__.py",
+            "lib/python3.12/LICENSE.txt",
+        ):
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"x")
+        self.assertEqual(
+            root / "lib/python3.12/LICENSE.txt",
+            package_release.validate_standalone_python(root, "linux"),
+        )
+        with self.assertRaisesRegex(package_release.PackageError, "shared runtime"):
+            package_release.validate_standalone_python(root, "darwin")
+
+    def test_unified_loader_system_fallbacks_are_disabled(self) -> None:
+        library_dir = self.root / "af-lib"
+        library_dir.mkdir()
+        body = (
+            b"\x00code\x00/opt/arrayfire-3/lib/\x00/opt/arrayfire/lib/\x00"
+            b"/usr/local/lib/\x00/usr/local/arrayfire/lib/\x00libafcpu.3.dylib\x00"
+        )
+        for name in ("libaf.3.10.0.dylib", "libaf.3.dylib"):
+            (library_dir / name).write_bytes(body)
+        (library_dir / "libafcpu.3.dylib").write_bytes(body)
+        # Homebrew bottles are read-only; the staged copy keeps that mode.
+        (library_dir / "libaf.3.dylib").chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+
+        patched = package_release.isolate_packaged_arrayfire(library_dir)
+        self.assertFalse((library_dir / "libaf.3.dylib").stat().st_mode & stat.S_IWUSR)
+        (library_dir / "libaf.3.dylib").chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+        self.assertEqual(["libaf.3.10.0.dylib", "libaf.3.dylib"], [p.name for p in patched])
+        data = (library_dir / "libaf.3.dylib").read_bytes()
+        self.assertEqual(len(body), len(data))
+        self.assertNotIn(b"/usr/local/lib/", data)
+        self.assertNotIn(b"/opt/arrayfire", data)
+        self.assertEqual(4, data.count(b"/dev/null/"))
+        self.assertIn(b"libafcpu.3.dylib", data)
+        # Backend libraries are not the unified loader and stay untouched.
+        self.assertEqual(body, (library_dir / "libafcpu.3.dylib").read_bytes())
+
+    def test_unknown_unified_loader_layout_is_rejected(self) -> None:
+        library = self.root / "libaf.so.3"
+        library.write_bytes(b"no search paths here")
+        with self.assertRaisesRegex(package_release.PackageError, "known system search paths"):
+            package_release.isolate_arrayfire_unified_loader(library)
+
     def test_archive_version_cannot_escape_output_root(self) -> None:
         with self.assertRaisesRegex(package_release.PackageError, "Invalid CyxWiz"):
             package_release.validate_release_version("../release", "CyxWiz")
@@ -400,7 +479,7 @@ class PackageReleaseTests(unittest.TestCase):
             "--arrayfire-dir",
             str(arrayfire),
             "--python-dir",
-            str(self.create_python()),
+            str(self.create_standalone_python()),
             "--python-version",
             "3.12.8",
             "--intel-runtime-license-dir",
@@ -425,6 +504,13 @@ class PackageReleaseTests(unittest.TestCase):
         )
         self.assertFalse(
             (stage / "python" / "Lib" / "site-packages" / "demo" / "__pycache__").exists()
+        )
+        self.assertTrue((stage / "python" / "Lib" / "venv" / "__init__.py").is_file())
+        self.assertFalse((stage / "python" / "Lib" / "test").exists())
+        self.assertFalse((stage / "python" / "python312.pdb").exists())
+        self.assertEqual(
+            {"arrayfire": "3.10.0", "cyxwiz": "1.2.3", "python": "3.12.8"},
+            json.loads((stage / "RUNTIME_VERSIONS.json").read_text(encoding="utf-8")),
         )
         self.assertFalse((stage / "arrayfire" / "bin" / "afopencl.dll").exists())
         self.assertFalse((stage / "start_cyxwiz.bat").exists())

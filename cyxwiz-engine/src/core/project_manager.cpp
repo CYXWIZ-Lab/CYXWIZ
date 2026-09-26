@@ -275,6 +275,11 @@ void QueueProjectVenvCreation(const fs::path& project_dir, const std::string& pr
         task_name += " (" + project_name + ")";
     }
 
+    using SetupState = cyxwiz::ProjectManager::PythonEnvSetupState;
+    cyxwiz::ProjectManager::Instance().SetPythonEnvSetupStatus(
+        SetupState::Pending, project_root,
+        "Setting up the project's Python environment...");
+
     cyxwiz::AsyncTaskManager::Instance().RunAsync(
         task_name,
         [project_root](cyxwiz::LambdaTask& task) {
@@ -287,11 +292,17 @@ void QueueProjectVenvCreation(const fs::path& project_dir, const std::string& pr
         },
         nullptr,
         [project_root](bool success, const std::string& error) {
+            auto& manager = cyxwiz::ProjectManager::Instance();
             if (success) {
                 spdlog::info("Project venv created: {}", project_root);
-                cyxwiz::ProjectManager::Instance().NotifyProjectVenvReady(project_root);
+                manager.SetPythonEnvSetupStatus(SetupState::Ready, project_root,
+                                                "Python environment ready");
+                manager.NotifyProjectVenvReady(project_root);
             } else {
                 spdlog::error("Project venv creation failed for {}: {}", project_root, error);
+                manager.SetPythonEnvSetupStatus(
+                    SetupState::Failed, project_root,
+                    error.empty() ? "Python environment setup failed" : error);
             }
         },
         std::move(session));
@@ -1019,6 +1030,90 @@ void ProjectManager::SaveRecentProjects() {
     } catch (const std::exception& e) {
         spdlog::warn("Failed to save recent projects: {}", e.what());
     }
+}
+
+void ProjectManager::SetPythonEnvSetupStatus(PythonEnvSetupState state,
+                                             const std::string& project_root,
+                                             const std::string& message) {
+    std::lock_guard<std::mutex> lock(python_env_mutex_);
+    python_env_status_.state = state;
+    python_env_status_.project_root = project_root;
+    python_env_status_.message = message;
+    python_env_status_.changed = std::chrono::steady_clock::now();
+}
+
+ProjectManager::PythonEnvSetupStatus ProjectManager::GetPythonEnvSetupStatus() const {
+    std::lock_guard<std::mutex> lock(python_env_mutex_);
+    return python_env_status_;
+}
+
+bool ProjectManager::IsPythonEnvSetupPending(const std::string& project_root) const {
+    std::lock_guard<std::mutex> lock(python_env_mutex_);
+    return python_env_status_.state == PythonEnvSetupState::Pending &&
+           python_env_status_.project_root == project_root;
+}
+
+bool RepairProjectVenvBase(const std::string& venv_interpreter, std::string* message) {
+    const fs::path venv_dir = fs::path(venv_interpreter).parent_path().parent_path();
+    std::ifstream config_file(venv_dir / "pyvenv.cfg");
+    if (!config_file) {
+        return true;  // Not a venv: nothing to repair.
+    }
+    std::string home;
+    std::string version;
+    std::string line;
+    const auto trim = [](std::string value) {
+        const auto first = value.find_first_not_of(" \t\r");
+        const auto last = value.find_last_not_of(" \t\r");
+        return first == std::string::npos ? std::string{} : value.substr(first, last - first + 1);
+    };
+    while (std::getline(config_file, line)) {
+        const auto equals = line.find('=');
+        if (equals == std::string::npos) continue;
+        const std::string key = trim(line.substr(0, equals));
+        const std::string value = trim(line.substr(equals + 1));
+        if (key == "home") home = value;
+        else if (key == "version" || key == "version_info") version = value;
+    }
+    std::error_code ec;
+    if (home.empty() || fs::exists(home, ec)) {
+        return true;
+    }
+
+    const auto fail = [&](const std::string& reason) {
+        if (message) *message = reason;
+        return false;
+    };
+    const std::string base = cyxwiz::core::EngineConfig::Instance().GetSystemPythonPath();
+    if (base.empty()) {
+        return fail("Project environment's base Python is missing (" + home +
+                    ") and no replacement interpreter is available");
+    }
+    const auto python = cyxwiz::core::PythonDetector::ValidatePythonInstallation(base);
+    if (!python || !cyxwiz::core::PythonDetector::MeetsRequirements(*python)) {
+        return fail("Replacement interpreter is not usable: " + base);
+    }
+    // Installed packages are built for one Python minor version.
+    const std::string minor_prefix =
+        std::to_string(python->major) + "." + std::to_string(python->minor) + ".";
+    if (!version.empty() && version.rfind(minor_prefix, 0) != 0 &&
+        version != minor_prefix.substr(0, minor_prefix.size() - 1)) {
+        return fail("Project environment was created with Python " + version +
+                    " but the available interpreter is " + python->version +
+                    "; recreate the environment");
+    }
+
+    spdlog::warn("Project environment's base Python is missing ({}); re-pointing it at {}",
+                 home, base);
+    const std::string command =
+        "\"" + base + "\" -m venv --upgrade \"" + venv_dir.string() + "\"";
+    const int result = RunVenvCommand(command);
+    if (result != 0 || !fs::exists(GetVenvInterpreterPath(venv_dir), ec)) {
+        return fail("Could not repair the project environment (exit code " +
+                    std::to_string(result) + ")");
+    }
+    spdlog::info("Project environment repaired: {}", venv_dir.string());
+    return true;
 }
 
 } // namespace cyxwiz

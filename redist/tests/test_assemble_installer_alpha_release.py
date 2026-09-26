@@ -323,16 +323,25 @@ class AlphaReleaseAssemblerTests(unittest.TestCase):
         ).splitlines()
         self.assertEqual(29, len(checksum_lines))
 
-    def test_rejects_incomplete_pack_matrix_without_output(self) -> None:
+    @unittest.skipIf(sys.platform == "win32", "Requires POSIX executable-mode fixtures")
+    def test_full_release_allows_cpu_only_targets(self) -> None:
+        # Accelerator packs ship only where they were qualified; a target
+        # without one still installs its CPU base.
         filtered = [
             path for path in self.manifests
             if path.name != "opencl-macos-arm64.manifest.json"
         ]
+        assembler.assemble(self.arguments(filtered))
+        manifests = self.root / "release" / "bootstrap" / "catalogs" / "manifests"
+        names = sorted(path.name for path in manifests.glob("*.json"))
+        self.assertFalse(any("macos-arm64" in name and "opencl" in name for name in names))
+
+    def test_full_release_requires_an_optional_pack(self) -> None:
+        bases = [path for path in self.manifests if path.name.startswith("base-")]
         with self.assertRaisesRegex(
-            assembler.AlphaReleaseError,
-            "macos-arm64 requires a base and matching optional pack",
+            assembler.AlphaReleaseError, "must be assembled with --cpu-only"
         ):
-            assembler.assemble(self.arguments(filtered))
+            assembler.assemble(self.arguments(bases))
         self.assertFalse((self.root / "release").exists())
 
     def test_cpu_only_rejects_optional_packs(self) -> None:

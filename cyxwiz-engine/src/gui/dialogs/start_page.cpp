@@ -735,10 +735,29 @@ void StartPage::RenderCreateProjectDialog() {
         ImGui::Separator();
         ImGui::Spacing();
 
+        bool target_exists = false;
         if (strlen(project_name_buf_) > 0 && strlen(project_location_buf_) > 0) {
             std::filesystem::path full_path = std::filesystem::path(project_location_buf_) / project_name_buf_;
             ImGui::TextWrapped("Project will be created at:");
             ImGui::TextWrapped("%s", full_path.string().c_str());
+            std::error_code exists_error;
+            target_exists = std::filesystem::exists(full_path, exists_error);
+            if (target_exists) {
+                // Creating into an existing folder is refused; say so here
+                // instead of leaving Create looking unresponsive.
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.25f, 1.0f),
+                                   "%s A folder with this name already exists here. "
+                                   "Choose another name or location.",
+                                   ICON_FA_TRIANGLE_EXCLAMATION);
+                ImGui::PopTextWrapPos();
+            }
+        }
+        if (!create_error_.empty()) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.4f, 1.0f), "%s %s",
+                               ICON_FA_TRIANGLE_EXCLAMATION, create_error_.c_str());
+            ImGui::PopTextWrapPos();
         }
 
         ImGui::Spacing();
@@ -750,7 +769,8 @@ void StartPage::RenderCreateProjectDialog() {
         float window_width = ImGui::GetWindowWidth();
         ImGui::SetCursorPosX((window_width - total_width) * 0.5f);
 
-        bool can_create = strlen(project_name_buf_) > 0 && strlen(project_location_buf_) > 0;
+        bool can_create = strlen(project_name_buf_) > 0 && strlen(project_location_buf_) > 0 &&
+                          !target_exists;
         ImGui::BeginDisabled(!can_create);
         if (ImGui::Button("Create", ImVec2(button_width, 0))) {
             auto& pm = ProjectManager::Instance();
@@ -760,8 +780,11 @@ void StartPage::RenderCreateProjectDialog() {
                 selected_project_path_ = pm.GetProjectFilePath();
                 result_ = Result::ProjectSelected;
                 show_create_dialog_ = false;
+                create_error_.clear();
                 spdlog::info("Created project from start page: {}", selected_project_path_);
             } else {
+                create_error_ = "The project could not be created. Check that the location "
+                                "is writable; details are in the log.";
                 spdlog::error("Failed to create project from start page");
             }
         }
@@ -771,6 +794,7 @@ void StartPage::RenderCreateProjectDialog() {
 
         if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
             show_create_dialog_ = false;
+            create_error_.clear();
         }
 
         ImGui::EndPopup();

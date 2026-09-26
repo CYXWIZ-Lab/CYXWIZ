@@ -641,6 +641,15 @@ if(CYXWIZ_HAS_DUCKDB)
         message(WARNING "DuckDB found but no valid target available")
     endif()
     target_compile_definitions(cyxwiz-backend PRIVATE CYXWIZ_HAS_DUCKDB)
+    if(UNIX AND NOT APPLE)
+        # Keep this static DuckDB copy private; see the map for the double
+        # free it prevents when the Engine links its own copy.
+        set(_cyxwiz_backend_map "${CMAKE_CURRENT_SOURCE_DIR}/cyxwiz-backend-linux.map")
+        target_link_options(cyxwiz-backend PRIVATE
+            "LINKER:--version-script=${_cyxwiz_backend_map}")
+        set_property(TARGET cyxwiz-backend APPEND PROPERTY
+            LINK_DEPENDS "${_cyxwiz_backend_map}")
+    endif()
 endif()
 
 # Set properties

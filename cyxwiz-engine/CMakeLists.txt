@@ -111,6 +111,7 @@ set(ENGINE_SOURCES
     src/core/project_manager.cpp
     src/core/engine_config.cpp
     src/core/python_detector.cpp
+    src/core/python_package_smoke.cpp
     src/core/window_manager.cpp
     src/core/arrayfire_backend_discovery_isolation.cpp
     src/core/route_qualification_service.cpp
@@ -958,10 +959,19 @@ if(CYXWIZ_ENABLE_TRACY AND Tracy_FOUND)
     target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_TRACY)
 endif()
 
+# Linux: keep ArrayFire backends inside the packaged runtime; dlopen is
+# defined by the executable so it takes precedence for ArrayFire's loader.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(cyxwiz-engine PRIVATE src/core/arrayfire_load_guard_linux.cpp)
+    target_link_options(cyxwiz-engine PRIVATE "LINKER:--export-dynamic-symbol=dlopen")
+    target_link_libraries(cyxwiz-engine PRIVATE ${CMAKE_DL_LIBS})
+endif()
+
 # Python scripting support (controlled by CYXWIZ_HAS_PYTHON from root CMakeLists.txt)
 if(CYXWIZ_HAS_PYTHON)
     target_link_libraries(cyxwiz-engine PRIVATE pybind11::embed)
-    target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_PYTHON)
+    target_compile_definitions(cyxwiz-engine PRIVATE CYXWIZ_HAS_PYTHON
+        CYXWIZ_PYTHON_LINKED_MINOR=${Python3_VERSION_MINOR})
     message(STATUS "Engine: Python scripting support enabled")
 endif()
 
@@ -1049,16 +1059,25 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
 
 # Copy pycyxwiz Python module to engine directory (built by cyxwiz-backend)
 if(TARGET pycyxwiz)
+    # Windows loads pycyxwiz.pyd by that name; POSIX keeps the ABI-tagged .so
+    # name (pycyxwiz.cpython-312-*.so) that the Engine and packaging expect.
+    if(WIN32)
+        set(_cyxwiz_pycyxwiz_name "pycyxwiz.pyd")
+    else()
+        set(_cyxwiz_pycyxwiz_name "$<TARGET_FILE_NAME:pycyxwiz>")
+    endif()
     add_custom_command(TARGET cyxwiz-engine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:pycyxwiz>
-        $<TARGET_FILE_DIR:cyxwiz-engine>/pycyxwiz.pyd
+        $<TARGET_FILE_DIR:cyxwiz-engine>/${_cyxwiz_pycyxwiz_name}
         COMMENT "Copying pycyxwiz Python module..."
     )
 endif()
 
-# Note: Bundled Python has been removed. CyxWiz Engine scripting uses system Python 3.12 or 3.13.
-# Each project creates its own virtual environment in <project>/python/
+# Release installs bundle Python 3.12 under <engine dir>/python and the Engine
+# uses it unless another interpreter is configured; source builds use a system
+# Python 3.12 or 3.13. Each project creates its own virtual environment in
+# <project>/python/.
 
 # ===== Python Bindings Module =====
 
