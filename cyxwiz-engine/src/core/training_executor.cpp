@@ -201,6 +201,24 @@ bool ShouldLogTrainingBatch(const TrainingConfiguration& config, int batch_num) 
     return config.log_interval > 0 && batch_num % config.log_interval == 0;
 }
 
+// Target tokens that count toward the loss (not ignore_index). The batcher
+// builds targets on the host, so this needs no device round trip.
+size_t CountValidTargetTokens(const Tensor& targets, int64_t ignore_index) {
+    size_t valid = 0;
+    const size_t count = targets.NumElements();
+    if (targets.GetDataType() == DataType::Int64) {
+        const int64_t* ids = targets.ReadData<int64_t>();
+        for (size_t i = 0; i < count; ++i) valid += ids[i] != ignore_index ? 1 : 0;
+    } else if (targets.GetDataType() == DataType::Int32) {
+        const int32_t* ids = targets.ReadData<int32_t>();
+        for (size_t i = 0; i < count; ++i) valid += static_cast<int64_t>(ids[i]) != ignore_index ? 1 : 0;
+    } else {
+        const float* ids = targets.ReadData<float>();
+        for (size_t i = 0; i < count; ++i) valid += static_cast<int64_t>(ids[i]) != ignore_index ? 1 : 0;
+    }
+    return valid;
+}
+
 bool ShouldReportTrainingBatch(const TrainingConfiguration& config,
                                int batch_num,
                                int total_batches,
@@ -1283,9 +1301,11 @@ void TrainingExecutor::Train(
                      config_.grad_accum_steps));
     const std::string reporting_cadence = log_interval > 0
         ? fmt::format(
-              "Metrics are sampled on batch 1, every {} batches, and the final batch.",
+              "Metrics are sampled on batch 1, every {} batches, and the final batch "
+              "(language-model training accuracy is measured on those batches).",
               log_interval)
-        : "Metrics are sampled on the first and final batch.";
+        : "Metrics are sampled on the first and final batch "
+          "(language-model training accuracy is measured on those batches).";
     TrainingTraceCollector::Instance().RecordRuntimeEvent(
         "TrainingExecutor.ReportingCadence",
         reporting_cadence);
@@ -2350,18 +2370,25 @@ void TrainingExecutor::RunTrainingEpochSequence(
             "ComputeLoss.loss",
             std::chrono::duration<float, std::milli>(metric_start - loss_start).count());
         if (is_language_modeling) {
-            const auto accuracy_count = CountNextTokenAccuracyFromLogits(
-                predictions, targets, ignore_index);
-            TrainingTraceCollector::Instance().RecordNamedTiming(
-                "ComputeLoss.accuracy",
-                std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - metric_start).count());
-            batch_loss_observations = accuracy_count.valid;
-            aggregate_metrics.total_tokens += accuracy_count.valid;
-            aggregate_metrics.correct_tokens += accuracy_count.correct;
-            aggregate_metrics.token_accuracy =
-                aggregate_metrics.total_tokens == 0 ? 0.0 :
-                    static_cast<double>(aggregate_metrics.correct_tokens) /
-                    static_cast<double>(aggregate_metrics.total_tokens);
+            // Training accuracy is sampled on the reporting cadence (batch 1,
+            // every log_interval batches, the final batch): the argmax over the
+            // vocabulary logits costs ~10% of a step (owner decision
+            // 2026-09-26, TOFIX118 P8). The loss weighting still counts every
+            // batch's valid tokens; validation accuracy stays exact.
+            batch_loss_observations = CountValidTargetTokens(targets, ignore_index);
+            if (ShouldReportTrainingBatch(config_, batch_num, static_cast<int>(total_batches), false)) {
+                const auto accuracy_count = CountNextTokenAccuracyFromLogits(
+                    predictions, targets, ignore_index);
+                TrainingTraceCollector::Instance().RecordNamedTiming(
+                    "ComputeLoss.accuracy",
+                    std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - metric_start).count());
+                aggregate_metrics.total_tokens += accuracy_count.valid;
+                aggregate_metrics.correct_tokens += accuracy_count.correct;
+                aggregate_metrics.token_accuracy =
+                    aggregate_metrics.total_tokens == 0 ? 0.0 :
+                        static_cast<double>(aggregate_metrics.correct_tokens) /
+                        static_cast<double>(aggregate_metrics.total_tokens);
+            }
         } else {
             const auto batch_metrics = ComputeSequenceTagMetricsFromLogits(
                 predictions, targets, sequence_id_to_label_, ignore_index);
