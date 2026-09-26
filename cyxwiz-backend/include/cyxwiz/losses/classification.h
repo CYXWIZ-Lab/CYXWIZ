@@ -2,6 +2,7 @@
 
 #include "cyxwiz/losses/loss_base.h"
 
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -40,6 +41,10 @@ private:
     Tensor cached_class_weights_;
     Tensor cached_mean_denominator_;
     bool has_cached_mean_denominator_ = false;
+    // Forward's class-index log-sum-exp, reused by the next Backward on the
+    // same logits and targets instead of a second pass over the logits.
+    struct ClassIndexForwardCache;
+    std::shared_ptr<ClassIndexForwardCache> class_index_cache_;
 };
 
 class CYXWIZ_API NLLLoss : public Loss {

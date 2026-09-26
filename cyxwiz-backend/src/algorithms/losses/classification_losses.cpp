@@ -1,4 +1,5 @@
 #include "cyxwiz/losses/classification.h"
+#include "../arrayfire_backend_utils.h"
 #include "loss_utils.h"
 
 #include <algorithm>
@@ -11,6 +12,7 @@
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
+#include <af/internal.h>
 #endif
 
 // Undefine Windows macros that conflict with std::max/min and ArrayFire helpers.
@@ -702,6 +704,13 @@ ClassIndexCrossEntropy PrepareClassIndexCrossEntropy(const af::array& logits, co
     return prepared;
 }
 
+// The same device buffer (not just equal values): Backward reuses Forward's
+// log-sum-exp only for the logits and targets it was computed from. The
+// cache holds both arrays, so their buffers cannot be recycled meanwhile.
+bool SameDeviceBuffer(const af::array& a, const af::array& b) {
+    return a.dims() == b.dims() && a.type() == b.type() && af::getRawPtr(a) == af::getRawPtr(b);
+}
+
 af::array ClassIndexCrossEntropyLoss(const af::array& logits, const ClassIndexCrossEntropy& prepared,
                                      bool mean) {
     const af::array target_logit = af::lookup(af::flat(logits), prepared.linear_target);
@@ -760,6 +769,16 @@ af::array ApplyWeightedCrossEntropyReduction(
 // Cross Entropy Loss Implementation
 // ============================================================================
 
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+struct CrossEntropyLoss::ClassIndexForwardCache {
+    af::array logits;
+    af::array target_ids;
+    ClassIndexCrossEntropy prepared;
+};
+#else
+struct CrossEntropyLoss::ClassIndexForwardCache {};
+#endif
+
 Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& targets) {
     has_cached_mean_denominator_ = false;
     const ClassAxisShape shape =
@@ -776,11 +795,19 @@ Tensor CrossEntropyLoss::Forward(const Tensor& predictions, const Tensor& target
         if (class_indices && class_weights_.empty() && label_smoothing_ == 0.0f &&
             (reduction_ == Reduction::Mean || reduction_ == Reduction::Sum)) {
             const af::array logits = TensorToAf(predictions);
-            const auto prepared = PrepareClassIndexCrossEntropy(
-                logits, TensorToAf(targets), predictions.Shape().size(), ignore_index_);
+            const af::array target_ids = TensorToAf(targets);
+            auto prepared = PrepareClassIndexCrossEntropy(
+                logits, target_ids, predictions.Shape().size(), ignore_index_);
             af::array loss = ClassIndexCrossEntropyLoss(logits, prepared, reduction_ == Reduction::Mean);
+            // One eval per array: af::eval of several arrays requires equal
+            // shapes ("Invalid input size" on every backend).
             loss.eval();
+            prepared.log_sum_exp.eval();
+            prepared.linear_target.eval();
+            prepared.valid.eval();
             cached_softmax_ = Tensor();  // the fast path does not store probabilities
+            class_index_cache_ = std::make_shared<ClassIndexForwardCache>(
+                ClassIndexForwardCache{logits, target_ids, prepared});
             if (reduction_ == Reduction::Mean) {
                 af::array denominator = prepared.denominator;
                 denominator.eval();
@@ -855,9 +882,15 @@ Tensor CrossEntropyLoss::Backward(const Tensor& predictions, const Tensor& targe
     try {
         if (class_indices && class_weights_.empty() && label_smoothing_ == 0.0f &&
             (reduction_ == Reduction::Mean || reduction_ == Reduction::Sum)) {
+            ScopedProfileSpan span("CrossEntropy.gradient");
             const af::array logits = TensorToAf(predictions);
-            const auto prepared = PrepareClassIndexCrossEntropy(
-                logits, TensorToAf(targets), predictions.Shape().size(), ignore_index_);
+            const af::array target_ids = TensorToAf(targets);
+            const auto cache = std::move(class_index_cache_);
+            const bool reuse = cache && SameDeviceBuffer(cache->logits, logits) &&
+                               SameDeviceBuffer(cache->target_ids, target_ids);
+            const auto prepared = reuse ? cache->prepared
+                                        : PrepareClassIndexCrossEntropy(logits, target_ids,
+                                                                        predictions.Shape().size(), ignore_index_);
             af::array gradient = ClassIndexCrossEntropyGradient(logits, prepared, reduction_ == Reduction::Mean);
             gradient.eval();
             return Tensor::FromSemanticArray(gradient, predictions.Shape());

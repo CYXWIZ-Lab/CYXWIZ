@@ -563,15 +563,19 @@ Tensor LinearLayer::BackwardSequence(const Tensor& grad_output) {
             const af::array x = af::moddims(input_cache_.GetSemanticArray().as(af::dtype::f32),
                                             static_cast<dim_t>(positions), static_cast<dim_t>(in_features_));
             const af::array w = weight_.GetArrayRowMajor2D().as(af::dtype::f32);
-
-            af::array dw = af::matmul(dy, x, AF_MAT_TRANS, AF_MAT_NONE);
-            dw.eval();
-            weight_grad_ = Tensor::FromArrayRowMajor2D(dw);
+            {
+                ScopedProfileSpan span("Linear.sequence_backward.dw");
+                af::array dw = af::matmul(dy, x, AF_MAT_TRANS, AF_MAT_NONE);
+                dw.eval();
+                weight_grad_ = Tensor::FromArrayRowMajor2D(dw);
+            }
             if (use_bias_) {
+                ScopedProfileSpan span("Linear.sequence_backward.db");
                 af::array db = af::flat(af::sum(dy, 0));
                 db.eval();
                 bias_grad_ = Tensor(db);
             }
+            ScopedProfileSpan span("Linear.sequence_backward.dx");
             af::array dx = af::moddims(af::matmul(dy, w), static_cast<dim_t>(shape[0]),
                                        static_cast<dim_t>(shape[1]), static_cast<dim_t>(in_features_));
             dx.eval();

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cyxwiz/backend_placement_observation.h>
 #include <cyxwiz/device.h>
 #include <cyxwiz/loss.h>
 #include <cyxwiz/tensor.h>
@@ -638,6 +639,75 @@ TEST_CASE("CrossEntropyLoss supports token-level logits and ignored targets", "[
     REQUIRE(grad_data[3] == Catch::Approx(0.0f));
     REQUIRE(grad_data[4] == Catch::Approx(0.0f));
     REQUIRE(grad_data[5] == Catch::Approx(0.0f));
+}
+
+TEST_CASE("CrossEntropy backward recomputes unless given Forward's own tensors",
+          "[loss][language_model][arrayfire][device_switch]") {
+    const cyxwiz::Device* current = cyxwiz::Device::GetCurrentDevice();
+    REQUIRE(current != nullptr);
+    struct RestoreDevice {
+        cyxwiz::DeviceType type;
+        int id;
+        ~RestoreDevice() {
+            cyxwiz::Device(type, id).SetActive();
+        }
+    } restore{current->GetType(), current->GetDeviceId()};
+
+    const float first_values[] = {
+        2.0f, 1.0f, 0.0f,
+        0.0f, 1.0f, 2.0f,
+    };
+    const float second_values[] = {
+        -1.0f, 3.0f, 0.5f,
+        1.5f, -2.0f, 0.0f,
+    };
+    const int64_t first_target_values[] = {0, 2};
+    const int64_t second_target_values[] = {1, -100};
+    const cyxwiz::Tensor first({1, 2, 3}, first_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor second({1, 2, 3}, second_values, cyxwiz::DataType::Float32);
+    const cyxwiz::Tensor first_targets({1, 2}, first_target_values, cyxwiz::DataType::Int64);
+    const cyxwiz::Tensor second_targets({1, 2}, second_target_values, cyxwiz::DataType::Int64);
+
+    const auto require_matches_fresh = [](const cyxwiz::Tensor& actual, const cyxwiz::Tensor& logits,
+                                          const cyxwiz::Tensor& targets) {
+        cyxwiz::CrossEntropyLoss fresh(cyxwiz::Reduction::Mean, -100);
+        const cyxwiz::Tensor expected = fresh.Backward(logits, targets);
+        REQUIRE(actual.Shape() == expected.Shape());
+        const float* actual_values = actual.ReadData<float>();
+        const float* expected_values = expected.ReadData<float>();
+        for (size_t index = 0; index < actual.NumElements(); ++index) {
+            REQUIRE(actual_values[index] == Catch::Approx(expected_values[index]).margin(1.0e-6f));
+        }
+    };
+
+    for (const auto& info : cyxwiz::Device::GetAvailableDevices()) {
+        if (info.type == cyxwiz::DeviceType::ONEAPI &&
+            std::getenv("CYXWIZ_TEST_ONEAPI_LOSS") == nullptr) {
+            continue;
+        }
+        DYNAMIC_SECTION("backend type " << static_cast<int>(info.type) << " device " << info.device_id) {
+            cyxwiz::Device(info.type, info.device_id).SetActive();
+            cyxwiz::ClearBackendPlacementObservationCacheForTesting();
+
+            cyxwiz::CrossEntropyLoss loss(cyxwiz::Reduction::Mean, -100);
+            // Same tensors as Forward: reuses Forward's log-sum-exp.
+            static_cast<void>(loss.Forward(first, first_targets));
+            require_matches_fresh(loss.Backward(first, first_targets), first, first_targets);
+            // Other logits, then other targets: recomputed from what Backward is given.
+            static_cast<void>(loss.Forward(first, first_targets));
+            require_matches_fresh(loss.Backward(second, first_targets), second, first_targets);
+            static_cast<void>(loss.Forward(first, first_targets));
+            require_matches_fresh(loss.Backward(first, second_targets), first, second_targets);
+            // A second Backward after one Forward still recomputes correctly.
+            require_matches_fresh(loss.Backward(second, second_targets), second, second_targets);
+
+            // The device path ran: no CrossEntropy fallback was recorded.
+            for (const auto& observation : cyxwiz::SnapshotBackendPlacementObservations()) {
+                INFO(observation.op_type << ": " << observation.detail);
+                REQUIRE(observation.op_type.find("CrossEntropy") == std::string::npos);
+            }
+        }
+    }
 }
 
 TEST_CASE("CrossEntropyLoss supports label smoothing", "[loss]") {
