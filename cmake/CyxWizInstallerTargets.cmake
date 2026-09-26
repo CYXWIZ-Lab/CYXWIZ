@@ -166,8 +166,10 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_generated_include}"
         "${CMAKE_SOURCE_DIR}/redist/bootstrapper"
     )
+    # Same sources and dependencies as cyxwiz-installer, which installer-only
+    # builds produce without the backend library.
     target_link_libraries(test_compute_device_presentation PRIVATE
-        cyxwiz-backend
+        cyxwiz-backend-pack-service
         cyxwiz-runtime-bootstrap
         nlohmann_json::nlohmann_json
     )
