@@ -672,6 +672,7 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
                      metrics.loss, metrics.accuracy * 100.0);
     };
     callbacks.should_cancel = [state] { return state->should_cancel.load(); };
+    callbacks.should_pause = [state] { return state->is_paused.load(); };
 
     auto result = cyxwiz::RunGraphTrainingJob(request, callbacks);
     {
@@ -680,6 +681,9 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
         state->failure = result.failure;
     }
     if (result.cancelled) {
+        // Keep the partial model so the job's weights so far can be saved.
+        std::lock_guard<std::mutex> lock(state->model_mutex);
+        state->model = std::move(result.model);
         spdlog::info("Training cancelled for job: {}", job_id);
         return false;
     }

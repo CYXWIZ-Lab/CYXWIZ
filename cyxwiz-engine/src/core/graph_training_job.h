@@ -40,6 +40,9 @@ struct GraphTrainingJobCallbacks {
     EpochCallback on_epoch;
     // Polled between batches; true stops the run (reported as cancelled).
     std::function<bool()> should_cancel;
+    // Polled likewise; true holds training between batches until it turns
+    // false again (TOFIX118 P4d).
+    std::function<bool()> should_pause;
 };
 
 struct GraphTrainingJobResult {
@@ -49,7 +52,8 @@ struct GraphTrainingJobResult {
     TrainingFailureKind failure = TrainingFailureKind::None;  // category of `error`
     TrainingMetrics metrics;      // final metrics when it ran
     GraphTrainingJobTiming timing;
-    std::unique_ptr<SequentialModel> model;  // trained model (for export)
+    // Trained model (for export); on cancel, the partially trained model.
+    std::unique_ptr<SequentialModel> model;
 };
 
 // Loads the graph's inputs, compiles, trains to completion on the calling

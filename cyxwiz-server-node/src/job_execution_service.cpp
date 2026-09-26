@@ -474,6 +474,14 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
         while (stream->Read(&command)) {
             if (command.has_pause()) {
                 session->is_paused = command.pause();
+                // The executor holds training between batches (TOFIX118 P4d).
+                if (job_executor_) {
+                    if (command.pause()) {
+                        job_executor_->PauseJob(session->job_config.job_id());
+                    } else {
+                        job_executor_->ResumeJob(session->job_config.job_id());
+                    }
+                }
                 spdlog::info("Job {} {}", job_id, command.pause() ? "paused" : "resumed");
             } else if (command.has_stop()) {
                 session->should_stop = true;

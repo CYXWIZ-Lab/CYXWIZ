@@ -10,6 +10,10 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <algorithm>
+#include <optional>
+#include <mutex>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -125,6 +129,39 @@ int main() {
         const auto result = cyxwiz::RunGraphTrainingJob(request, callbacks);
         Check(result.cancelled && !result.ok, "reported as cancelled");
         Check(result.failure == cyxwiz::TrainingFailureKind::Cancelled, "cancel is its own category");
+        Check(result.model != nullptr, "a cancelled run returns its partially trained model");
+    }
+
+    std::cout << "pauses between batches and resumes\n";
+    {
+        cyxwiz::GraphTrainingJobRequest request;
+        request.graph_json = LoadTokenWindowGraph(root).dump();
+        request.dataset_files["tiny_causal_lm_tokens"] = parquet.string();
+        request.epochs_override = 3;
+        request.checkpoint_dir_override = (work / "checkpoints_pause").string();
+        using Clock = std::chrono::steady_clock;
+        std::mutex mutex;
+        std::vector<Clock::time_point> batch_times;
+        std::optional<Clock::time_point> pause_started;
+        cyxwiz::GraphTrainingJobCallbacks callbacks;
+        callbacks.on_batch = [&](int, int, int, float, float) {
+            std::lock_guard<std::mutex> lock(mutex);
+            batch_times.push_back(Clock::now());
+            if (!pause_started) pause_started = Clock::now();  // pause after the first batch
+        };
+        // Held for 1.5 s after the first batch, then released.
+        callbacks.should_pause = [&] {
+            std::lock_guard<std::mutex> lock(mutex);
+            return pause_started && Clock::now() - *pause_started < std::chrono::milliseconds(1500);
+        };
+        const auto result = cyxwiz::RunGraphTrainingJob(request, callbacks);
+        Check(result.ok, "a paused job completes after resuming" + (result.error.empty() ? "" : " (" + result.error + ")"));
+        double longest_gap = 0.0;
+        for (size_t i = 1; i < batch_times.size(); ++i) {
+            longest_gap = std::max(longest_gap,
+                                   std::chrono::duration<double>(batch_times[i] - batch_times[i - 1]).count());
+        }
+        Check(longest_gap >= 1.0, "no batch ran while paused (longest gap " + std::to_string(longest_gap) + " s)");
     }
 
     std::cout << "trains with a supplied validation input\n";

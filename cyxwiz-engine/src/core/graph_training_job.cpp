@@ -251,13 +251,25 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     };
     std::atomic<bool> finished{false};
     std::thread watcher;
-    if (callbacks.should_cancel) {
+    if (callbacks.should_cancel || callbacks.should_pause) {
+        // Cancel and pause reach the executor from here; it honours both
+        // between batches (Stop, and Pause/Resume via WaitWhilePaused).
         watcher = std::thread([&] {
+            bool paused = false;
             while (!finished.load()) {
-                if (callbacks.should_cancel()) {
+                if (callbacks.should_cancel && callbacks.should_cancel()) {
                     result.cancelled = true;
                     executor->Stop();
                     return;
+                }
+                const bool pause = callbacks.should_pause && callbacks.should_pause();
+                if (pause != paused) {
+                    paused = pause;
+                    if (paused) {
+                        executor->Pause();
+                    } else {
+                        executor->Resume();
+                    }
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }
@@ -292,6 +304,7 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     }
     if (result.cancelled) result.failure = TrainingFailureKind::Cancelled;
     result.ok = !result.cancelled;
+    // A cancelled run keeps what it learned so far (partial weights).
     result.model = executor->ReleaseModel();
     return result;
 }
