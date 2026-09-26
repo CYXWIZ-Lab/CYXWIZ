@@ -16,8 +16,10 @@
 #include <memory>
 #include <thread>
 #include <csignal>
+#include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <grpcpp/grpcpp.h>
 #include <nlohmann/json.hpp>
@@ -36,6 +38,7 @@
 #include "core/compute_runtime_paths.h"
 #include "core/route_qualification_snapshot.h"
 #include "core/machine_compute_preference.h"
+#include "core/training_benchmark.h"
 #include "node_service.h"
 #include "job_execution_service.h"
 #include "core/backend_manager.h"
@@ -71,6 +74,7 @@ void PrintUsage(const char* program) {
               << "  --tls-key=PATH       Path to TLS private key file\n"
               << "  --tls-ca=PATH        Path to CA certificate (enables mutual TLS)\n"
               << "  --tls-auto           Auto-generate self-signed certificate if none exists\n"
+              << "  --benchmark          Measure training throughput on each verified route, save it, exit\n"
               << "  --help               Show this help message\n"
               << "\nThe daemon provides:\n"
               << "  - gRPC IPC service for GUI/TUI client connections\n"
@@ -83,6 +87,9 @@ void PrintUsage(const char* program) {
 
 // DaemonConfig - populated from config file + command-line overrides
 struct DaemonConfig {
+    bool run_benchmark = false;  // one-shot: measure, save, exit
+    std::string benchmark_route;  // child of --benchmark: one route
+    std::string benchmark_out;
     std::string ipc_address;
     std::string p2p_address;
     std::string terminal_address;
@@ -182,6 +189,132 @@ void SaveNodeId(const std::string& central_server_node_id, const std::string& lo
 // Global callback for node_id persistence (called by DaemonServiceImpl)
 std::function<void(const std::string&, const std::string&)> g_save_node_id_callback;
 
+// This executable, to run a route's benchmark in a child process.
+std::filesystem::path CurrentExecutablePath(const char* argv0) {
+#ifdef _WIN32
+    wchar_t path[MAX_PATH] = {};
+    const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    if (length > 0 && length < MAX_PATH) return std::filesystem::path(path);
+#elif defined(__linux__)
+    std::error_code ec;
+    const auto path = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (!ec) return path;
+#endif
+    return std::filesystem::absolute(argv0);
+}
+
+bool LoadVerifiedRoutes(cyxwiz::RouteQualificationSnapshot& snapshot) {
+    const auto qualification =
+        cyxwiz::LoadAndInstallRouteQualificationSnapshot(cyxwiz::GetRouteQualificationCachePath());
+    const auto installed = cyxwiz::GetRouteQualificationSnapshot();
+    if (!qualification.loaded || !installed) {
+        std::cerr << "No verified routes: " << qualification.message
+                  << "\nVerify this machine's devices first (Engine Preferences > Devices, or the installer).\n";
+        return false;
+    }
+    snapshot = *installed;
+    cyxwiz::ApplyMachineComputePreference();
+    return true;
+}
+
+// --benchmark-route=backend:id --benchmark-out=FILE (child): one route's
+// benchmark, written to FILE (FILE.error on failure).
+int RunBenchmarkRouteCommand(const std::string& route, const std::string& out) {
+    cyxwiz::RouteQualificationSnapshot snapshot;
+    if (!LoadVerifiedRoutes(snapshot)) return 2;
+    const auto colon = route.find(':');
+    const std::string backend = route.substr(0, colon);
+    const int device_id = colon == std::string::npos ? 0 : std::atoi(route.c_str() + colon + 1);
+    const cyxwiz::RouteQualificationRecord* record = nullptr;
+    for (const auto& candidate : snapshot.routes) {
+        if (candidate.certified && candidate.device_id == device_id &&
+            cyxwiz::ExecutionDeviceSelectionBackendName(candidate.type) == "arrayfire_" + backend) {
+            record = &candidate;
+        }
+    }
+    const auto fail = [&](const std::string& error) {
+        std::ofstream(out + ".error") << error;
+        std::cerr << error << "\n";
+        return 1;
+    };
+    if (!record) return fail("route " + route + " is not verified on this machine");
+    cyxwiz::CommitExecutionDeviceSelectionState({record->type, record->device_id, record->physical_fingerprint});
+    cyxwiz::TrainingBenchmarkOptions options;
+    options.should_cancel = [] { return g_shutdown.load(); };
+    const auto result = cyxwiz::RunTrainingBenchmark(options);
+    if (!result.ok) return fail(result.error);
+    std::string error;
+    if (!cyxwiz::SaveTrainingBenchmarkResults(out, {result}, error)) return fail(error);
+    return 0;
+}
+
+// --benchmark: the standard training benchmark on each route this machine
+// verified, each in its own process (a route that crashes cannot take the
+// others down), saved where registration reads it (TOFIX118 P3).
+int RunBenchmarkCommand(const char* argv0) {
+    cyxwiz::RouteQualificationSnapshot snapshot;
+    if (!LoadVerifiedRoutes(snapshot)) return 2;
+    const auto executable = CurrentExecutablePath(argv0);
+    std::error_code ec;
+    const auto work = std::filesystem::temp_directory_path(ec) / "cyxwiz-node-benchmark";
+    std::filesystem::remove_all(work, ec);
+    std::filesystem::create_directories(work, ec);
+    std::cout << "Training benchmark " << cyxwiz::kTrainingBenchmarkId << ", each verified route in turn\n";
+
+    std::vector<cyxwiz::TrainingBenchmarkResult> results;
+    int index = 0;
+    for (const auto& route : snapshot.routes) {
+        if (!route.certified) continue;
+        if (g_shutdown.load()) break;
+        std::string backend = cyxwiz::ExecutionDeviceSelectionBackendName(route.type);
+        if (backend.rfind("arrayfire_", 0) == 0) backend = backend.substr(10);
+        const std::string name = backend + ":" + std::to_string(route.device_id);
+        const auto out = work / ("route_" + std::to_string(index++) + ".json");
+        std::cout << "  " << name << " " << route.display_name << " ... " << std::flush;
+        const std::string command = "\"\"" + executable.string() + "\" --benchmark-route=" + name +
+                                    " --benchmark-out=\"" + out.string() + "\" > \"" + out.string() +
+                                    ".log\" 2>&1\"";
+#ifdef _WIN32
+        const int code = std::system(command.c_str());
+#else
+        const int code = std::system(command.substr(1, command.size() - 2).c_str());
+#endif
+        std::vector<cyxwiz::TrainingBenchmarkResult> loaded;
+        std::string error;
+        if (code == 0 && cyxwiz::LoadTrainingBenchmarkResults(out, loaded, error) && loaded.size() == 1) {
+            const auto& r = loaded.front();
+            std::cout << fmt::format("{:.0f} tokens/s, {:.1f} ms/step, {} CPU fallbacks\n", r.tokens_per_second,
+                                     r.step_ms_median, r.native_cpu_fallbacks);
+            results.push_back(r);
+            continue;
+        }
+        cyxwiz::TrainingBenchmarkResult failed;
+        failed.backend = "arrayfire_" + backend;
+        failed.device_id = route.device_id;
+        failed.device_name = route.display_name;
+        failed.physical_fingerprint = route.physical_fingerprint;
+        failed.build = cyxwiz::GetVersionString();
+        std::ifstream reason(out.string() + ".error");
+        std::getline(reason, failed.error);
+        if (failed.error.empty()) {
+            failed.error = fmt::format("benchmark process ended with code {:#x} (log: {}.log)",
+                                       static_cast<unsigned>(code), out.string());
+        }
+        std::cout << "failed: " << failed.error << "\n";
+        results.push_back(failed);
+    }
+
+    std::string error;
+    const auto path = cyxwiz::GetTrainingBenchmarkCachePath();
+    if (!cyxwiz::SaveTrainingBenchmarkResults(path, results, error)) {
+        std::cerr << error << "\n";
+        return 1;
+    }
+    const bool any = std::any_of(results.begin(), results.end(), [](const auto& r) { return r.ok; });
+    std::cout << "Saved to " << path.string() << "\n";
+    return any ? 0 : 1;
+}
+
 DaemonConfig ParseArgs(int argc, char** argv) {
     DaemonConfig config;
 
@@ -208,6 +341,12 @@ DaemonConfig ParseArgs(int argc, char** argv) {
             config.tls_ca_path = argv[i] + 9;
         } else if (std::strcmp(argv[i], "--tls-auto") == 0) {
             config.tls_auto = true;
+        } else if (std::strcmp(argv[i], "--benchmark") == 0) {
+            config.run_benchmark = true;
+        } else if (std::strncmp(argv[i], "--benchmark-route=", 18) == 0) {
+            config.benchmark_route = argv[i] + 18;
+        } else if (std::strncmp(argv[i], "--benchmark-out=", 16) == 0) {
+            config.benchmark_out = argv[i] + 16;
         } else if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
             PrintUsage(argv[0]);
             std::exit(0);
@@ -245,6 +384,9 @@ int main(int argc, char** argv) {
     if (!cli_config.tls_key_path.empty()) daemon_config.tls_key_path = cli_config.tls_key_path;
     if (!cli_config.tls_ca_path.empty()) daemon_config.tls_ca_path = cli_config.tls_ca_path;
     if (cli_config.tls_auto) daemon_config.tls_auto = true;
+    daemon_config.run_benchmark = cli_config.run_benchmark;
+    daemon_config.benchmark_route = cli_config.benchmark_route;
+    daemon_config.benchmark_out = cli_config.benchmark_out;
 
     spdlog::info("Config loaded from: {}", daemon_config.config_path);
 
@@ -256,6 +398,14 @@ int main(int argc, char** argv) {
     if (!cyxwiz::Initialize()) {
         spdlog::error("Failed to initialize backend");
         return 1;
+    }
+
+    if (daemon_config.run_benchmark || !daemon_config.benchmark_route.empty()) {
+        const int code = daemon_config.benchmark_route.empty()
+            ? RunBenchmarkCommand(argv[0])
+            : RunBenchmarkRouteCommand(daemon_config.benchmark_route, daemon_config.benchmark_out);
+        cyxwiz::Shutdown();
+        return code;
     }
 
     // Load or generate node ID
