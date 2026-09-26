@@ -77,3 +77,28 @@ message Version {
   int32 patch = 3;
   string build = 4;
 }
+
+// Same fingerprint = same CyxWiz build, OS and verified devices/drivers.
+message EnvironmentFingerprint {
+  string cyxwiz_build = 1;
+  string os = 2;
+  string route_matrix_id = 3;
+  string compute_contract_id = 4;
+  string fingerprint = 5;           // SHA-256 hex
+}
+
+// Where a training job's time went on the node (TOFIX118 P3). goodput is the
+// share of the job's wall time spent training.
+message JobTiming {
+  double queue_seconds = 1;         // accepted -> started
+  double transfer_seconds = 2;      // dataset files fetched
+  double prepare_seconds = 3;       // load inputs, compile, build the batcher
+  double train_seconds = 4;         // training and validation
+  double save_seconds = 5;          // final weights saved for download
+  double wall_seconds = 6;          // accepted -> result ready
+  double goodput = 7;               // train_seconds / wall_seconds
+  int64 samples_trained = 8;
+  int64 tokens_trained = 9;         // sequence jobs; 0 otherwise
+  double samples_per_second = 10;   // over train_seconds
+  double tokens_per_second = 11;
+}

@@ -1,4 +1,6 @@
 #include "job_execution_service.h"
+#include "node_data_dir.h"
+#include "node_job_timing.h"
 #include "job_executor.h"
 #include "node_client.h"
 #include "remote_dataset_fetcher.h"
@@ -21,15 +23,10 @@ namespace server_node {
 
 namespace {
 
-// Fetched dataset files of a remote job: CYXWIZ_NODE_DATA_DIR if set (put it
-// on a data drive), else the temp folder. Removed when the job finishes.
+// Fetched dataset files of a remote job, under NodeDataRoot(). Removed when
+// the job finishes.
 std::filesystem::path NodeJobDataDir(const std::string& job_id) {
-    std::filesystem::path root;
-    if (const char* configured = std::getenv("CYXWIZ_NODE_DATA_DIR"); configured && *configured) {
-        root = configured;
-    } else {
-        root = std::filesystem::temp_directory_path() / "cyxwiz-node";
-    }
+    const std::filesystem::path root = cyxwiz::servernode::NodeDataRoot();
     std::string folder;
     for (const char c : job_id) folder.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
     return root / "jobs" / (folder.empty() ? std::string("job") : folder);
@@ -38,6 +35,9 @@ std::filesystem::path NodeJobDataDir(const std::string& job_id) {
 }  // namespace
 
 namespace fs = std::filesystem;
+using cyxwiz::servernode::FillEnvironmentFingerprint;
+using cyxwiz::servernode::MakeJobTiming;
+using cyxwiz::servernode::NodeJobPhases;
 
 JobExecutionServiceImpl::JobExecutionServiceImpl() {
     // Initialize node capabilities
@@ -537,6 +537,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     // inputs stay on the Engine.
     cyxwiz::protocol::JobConfig run_config = session->job_config;
     std::string saved_weights_path;
+    NodeJobPhases phases;  // where the job's time goes (TOFIX118 P3)
     std::filesystem::path job_data_dir;
     bool job_ready = true;
     if (run_config.dataset_uri().rfind("remote://", 0) == 0) {
@@ -547,7 +548,10 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             session->dataset_fetcher = fetcher;
         }
         std::string fetch_error;
+        const auto fetch_start = std::chrono::steady_clock::now();
         job_ready = FetchRemoteJobDatasets(*fetcher, run_config, fetch_error);
+        phases.transfer_seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - fetch_start).count();
         {
             std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
             session->dataset_fetcher.reset();
@@ -652,10 +656,18 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
                 // Save the weights now: the executor drops the job's model
                 // right after this callback.
+                const auto run_timing = job_executor_->GetJobRunTiming(current_job_id);
                 if (success || session->should_stop) {
+                    const auto save_start = std::chrono::steady_clock::now();
                     const std::string path = SavePartialModel(current_job_id);
                     std::lock_guard<std::mutex> lock(error_mutex);
                     saved_weights_path = path;
+                    phases.save_seconds =
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - save_start).count();
+                }
+                if (run_timing) {
+                    std::lock_guard<std::mutex> lock(error_mutex);
+                    phases.run = *run_timing;
                 }
 
                 training_success = success;
@@ -733,10 +745,27 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
         complete_update.set_job_id(current_job_id);
         complete_update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
 
+        // Where the time went and what ran it, on every completion.
+        cyxwiz::protocol::JobTiming timing;
+        {
+            std::lock_guard<std::mutex> lock(error_mutex);
+            phases.wall_seconds =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - session->created_at).count();
+            timing = MakeJobTiming(phases);
+        }
+        cyxwiz::protocol::EnvironmentFingerprint environment;
+        FillEnvironmentFingerprint(cyxwiz::DetectMachineCapability().environment, &environment);
+        const auto attach = [&](cyxwiz::protocol::TrainingComplete* complete) {
+            *complete->mutable_timing() = timing;
+            *complete->mutable_environment() = environment;
+            complete->set_total_training_time(static_cast<int64_t>(timing.train_seconds()));
+        };
+
         if (training_success) {
             // Normal completion - training ran to completion
             auto* complete = complete_update.mutable_complete();
             complete->set_success(true);
+            attach(complete);
 
             // Final metrics are the last completed epoch's real values.
             {
@@ -767,6 +796,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             // This allows the Engine to continue with new training within the reservation
             auto* complete = complete_update.mutable_complete();
             complete->set_success(false);  // Indicates incomplete training
+            attach(complete);
 
             // Provide partial metrics if available
             (*complete->mutable_final_metrics())["stopped_by_user"] = 1.0;

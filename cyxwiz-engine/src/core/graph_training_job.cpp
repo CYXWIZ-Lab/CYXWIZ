@@ -122,6 +122,7 @@ bool FindPreparationNode(const GraphDocument& graph, std::string& error) {
 
 GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& request,
                                            const GraphTrainingJobCallbacks& callbacks) {
+    const auto job_start = std::chrono::steady_clock::now();
     GraphDocument graph;
     std::string error;
     if (!ParseGraphDocument(request.graph_json, graph, error)) return Fail(error);
@@ -213,6 +214,7 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     if (!request.checkpoint_dir_override.empty()) config.checkpoint_dir = request.checkpoint_dir_override;
     const int epochs = std::max(1, config.epochs);
     const int batch_size = std::max(1, config.batch_size);
+    const int tokens_per_sample = config.sequence_batch.enabled ? config.sequence_batch.max_sequence_length : 0;
 
     const auto role = [&datasets](const DatasetSourceRef& source) -> std::shared_ptr<ArrowDataset> {
         if (!source.IsSupplied()) return nullptr;
@@ -237,6 +239,15 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
 
     // Cancellation: a watcher asks the executor to stop cooperatively.
     GraphTrainingJobResult result;
+    result.timing.tokens_per_sample = tokens_per_sample;
+    std::atomic<long long> batches{0};
+    const BatchCallback on_batch = [&](int epoch, int batch, int total, float loss, float accuracy) {
+        ++batches;
+        if (callbacks.on_batch) callbacks.on_batch(epoch, batch, total, loss, accuracy);
+    };
+    const auto seconds_since = [](std::chrono::steady_clock::time_point start) {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    };
     std::atomic<bool> finished{false};
     std::thread watcher;
     if (callbacks.should_cancel) {
@@ -251,16 +262,26 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
             }
         });
     }
+    result.timing.prepare_seconds = seconds_since(job_start);
     if (callbacks.on_start) callbacks.on_start(epochs, batch_size);
+    const auto train_start = std::chrono::steady_clock::now();
     try {
-        executor->Train(epochs, batch_size, callbacks.on_batch, callbacks.on_epoch);
+        executor->Train(epochs, batch_size, on_batch, callbacks.on_epoch);
     } catch (const std::exception& e) {
         finished.store(true);
         if (watcher.joinable()) watcher.join();
-        return Fail(std::string("training failed: ") + e.what());
+        auto failed = Fail(std::string("training failed: ") + e.what());
+        failed.timing = result.timing;
+        failed.timing.train_seconds = seconds_since(train_start);
+        failed.timing.batches_trained = batches.load();
+        failed.timing.samples_trained = batches.load() * batch_size;
+        return failed;
     }
     finished.store(true);
     if (watcher.joinable()) watcher.join();
+    result.timing.train_seconds = seconds_since(train_start);
+    result.timing.batches_trained = batches.load();
+    result.timing.samples_trained = batches.load() * batch_size;
 
     result.metrics = executor->GetMetrics();
     if (result.metrics.terminal_status == "failed") {

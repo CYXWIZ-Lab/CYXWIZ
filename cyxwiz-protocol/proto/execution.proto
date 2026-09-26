@@ -335,6 +335,8 @@ message TrainingComplete {
   string weights_location = 6;      // Where to download final weights
   int64 final_weights_size = 7;     // bytes
   string proof_of_compute = 8;      // Cryptographic proof
+  JobTiming timing = 9;                    // where the time went (TOFIX118 P3)
+  EnvironmentFingerprint environment = 10; // what ran it
 }
 
 // Training error

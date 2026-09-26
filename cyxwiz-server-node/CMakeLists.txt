@@ -87,6 +87,7 @@ set(DAEMON_SOURCES
     src/node_server.cpp
     src/job_executor.cpp
     src/remote_dataset_fetcher.cpp
+    src/node_doctor.cpp
     # API layer
     src/api/api_key_manager.cpp
     src/api/rate_limiter.cpp
@@ -389,6 +390,7 @@ if(CYXWIZ_BUILD_TESTS)
         src/job_executor.cpp
         src/remote_dataset_fetcher.cpp
         src/node_client.cpp
+        src/node_doctor.cpp
         src/auth/p2p_jwt_validator.cpp
         ${SHARED_CORE_SOURCES}
     )

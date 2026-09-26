@@ -117,7 +117,9 @@ public:
         const std::string& model_weights_hash = "",
         int64_t model_size = 0,
         int64_t total_compute_time_ms = 0,
-        const std::string& error_message = ""
+        const std::string& error_message = "",
+        const protocol::JobTiming* timing = nullptr,                 // TOFIX118 P3
+        const protocol::EnvironmentFingerprint* environment = nullptr
     );
 
     // ========================================================================

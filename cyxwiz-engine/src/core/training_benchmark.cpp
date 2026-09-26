@@ -148,7 +148,8 @@ json ToJson(const TrainingBenchmarkResult& r) {
 
 TrainingBenchmarkResult FromJson(const json& j) {
     TrainingBenchmarkResult r;
-    r.ok = j.value("ok", false);
+    // Files written before failures were kept hold successes only.
+    r.ok = j.value("ok", true);
     r.error = j.value("error", std::string{});
     r.benchmark_id = j.value("benchmark_id", std::string{});
     r.build = j.value("build", std::string{});

@@ -39,6 +39,7 @@
 #include "core/route_qualification_snapshot.h"
 #include "core/machine_compute_preference.h"
 #include "core/training_benchmark.h"
+#include "node_doctor.h"
 #include "node_service.h"
 #include "job_execution_service.h"
 #include "core/backend_manager.h"
@@ -75,6 +76,7 @@ void PrintUsage(const char* program) {
               << "  --tls-ca=PATH        Path to CA certificate (enables mutual TLS)\n"
               << "  --tls-auto           Auto-generate self-signed certificate if none exists\n"
               << "  --benchmark          Measure training throughput on each verified route, save it, exit\n"
+              << "  --doctor             Check whether this node can take training jobs, then exit\n"
               << "  --help               Show this help message\n"
               << "\nThe daemon provides:\n"
               << "  - gRPC IPC service for GUI/TUI client connections\n"
@@ -88,6 +90,7 @@ void PrintUsage(const char* program) {
 // DaemonConfig - populated from config file + command-line overrides
 struct DaemonConfig {
     bool run_benchmark = false;  // one-shot: measure, save, exit
+    bool run_doctor = false;     // one-shot: readiness report, exit
     std::string benchmark_route;  // child of --benchmark: one route
     std::string benchmark_out;
     std::string ipc_address;
@@ -315,6 +318,28 @@ int RunBenchmarkCommand(const char* argv0) {
     return any ? 0 : 1;
 }
 
+// --doctor: can this node take training jobs (TOFIX118 P3 S3). Exit 0 when
+// ready, 1 when a check fails.
+int RunDoctorCommand(const DaemonConfig& config) {
+    cyxwiz::servernode::DoctorOptions options;
+    options.central_server = config.central_server;
+    options.tls_enabled = config.enable_tls;
+    options.tls_auto = config.tls_auto;
+    options.tls_cert_path = config.tls_cert_path;
+    options.tls_key_path = config.tls_key_path;
+    const auto checks = cyxwiz::servernode::EvaluateNodeReadiness(cyxwiz::servernode::GatherDoctorFacts(options));
+    std::cout << "\nCyxWiz Server Node readiness\n";
+    for (const auto& check : checks) {
+        const char* mark = check.status == cyxwiz::servernode::DoctorStatus::Ok     ? "  OK  "
+                           : check.status == cyxwiz::servernode::DoctorStatus::Warn ? "  WARN"
+                                                                                  : "  FAIL";
+        std::cout << mark << "  " << check.name << ": " << check.detail << "\n";
+    }
+    const bool ready = cyxwiz::servernode::NodeIsReady(checks);
+    std::cout << (ready ? "\nReady to take training jobs.\n" : "\nNot ready: fix the FAIL items above.\n");
+    return ready ? 0 : 1;
+}
+
 DaemonConfig ParseArgs(int argc, char** argv) {
     DaemonConfig config;
 
@@ -343,6 +368,8 @@ DaemonConfig ParseArgs(int argc, char** argv) {
             config.tls_auto = true;
         } else if (std::strcmp(argv[i], "--benchmark") == 0) {
             config.run_benchmark = true;
+        } else if (std::strcmp(argv[i], "--doctor") == 0) {
+            config.run_doctor = true;
         } else if (std::strncmp(argv[i], "--benchmark-route=", 18) == 0) {
             config.benchmark_route = argv[i] + 18;
         } else if (std::strncmp(argv[i], "--benchmark-out=", 16) == 0) {
@@ -385,6 +412,7 @@ int main(int argc, char** argv) {
     if (!cli_config.tls_ca_path.empty()) daemon_config.tls_ca_path = cli_config.tls_ca_path;
     if (cli_config.tls_auto) daemon_config.tls_auto = true;
     daemon_config.run_benchmark = cli_config.run_benchmark;
+    daemon_config.run_doctor = cli_config.run_doctor;
     daemon_config.benchmark_route = cli_config.benchmark_route;
     daemon_config.benchmark_out = cli_config.benchmark_out;
 
@@ -400,6 +428,11 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    if (daemon_config.run_doctor) {
+        const int code = RunDoctorCommand(daemon_config);
+        cyxwiz::Shutdown();
+        return code;
+    }
     if (daemon_config.run_benchmark || !daemon_config.benchmark_route.empty()) {
         const int code = daemon_config.benchmark_route.empty()
             ? RunBenchmarkCommand(argv[0])

@@ -32,6 +32,7 @@
 
 #include "core/execution_device_preferences.h"
 #include "core/machine_capability.h"
+#include "node_job_timing.h"
 
 // Workaround for MSVC protobuf arena allocation issue
 // Force explicit template instantiation to avoid linker errors
@@ -147,12 +148,7 @@ void HardwareDetector::FillMeasuredCapability(protocol::NodeInfo* info) {
             benchmark->set_measured_at(measured.measured_at);
         }
     }
-    auto* environment = info->mutable_environment();
-    environment->set_cyxwiz_build(capability.environment.cyxwiz_build);
-    environment->set_os(capability.environment.os);
-    environment->set_route_matrix_id(capability.environment.route_matrix_id);
-    environment->set_compute_contract_id(capability.environment.compute_contract_id);
-    environment->set_fingerprint(capability.environment.fingerprint);
+    FillEnvironmentFingerprint(capability.environment, info->mutable_environment());
     if (capability.compute_score > 0.0) {
         spdlog::info("Measured capability: {:.0f} tokens/s on {} ({} verified route(s))", capability.compute_score,
                      capability.compute_score_route, capability.routes.size());
@@ -761,7 +757,9 @@ bool NodeClient::ReportJobResult(
     const std::string& model_weights_hash,
     int64_t model_size,
     int64_t total_compute_time_ms,
-    const std::string& error_message)
+    const std::string& error_message,
+    const protocol::JobTiming* timing,
+    const protocol::EnvironmentFingerprint* environment)
 {
     if (!is_registered_) {
         spdlog::error("Cannot report job result: node not registered");
@@ -782,6 +780,8 @@ bool NodeClient::ReportJobResult(
     request.set_model_size(model_size);
     request.set_total_compute_time(total_compute_time_ms);
     request.set_error_message(error_message);
+    if (timing) *request.mutable_timing() = *timing;
+    if (environment) *request.mutable_environment() = *environment;
 
     // Add final metrics
     auto* metrics_map = request.mutable_final_metrics();

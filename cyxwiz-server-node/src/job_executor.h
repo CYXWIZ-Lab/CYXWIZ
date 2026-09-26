@@ -8,6 +8,7 @@
 #include <mutex>
 #include <atomic>
 #include <vector>
+#include <optional>
 #include <queue>
 
 // Protocol includes
@@ -18,6 +19,7 @@
 
 // Core includes
 #include "core/device_pool.h"
+#include "core/graph_training_job_timing.h"
 
 namespace cyxwiz {
 namespace servernode {
@@ -99,6 +101,10 @@ public:
     // Set completion callback
     void SetCompletionCallback(CompletionCallback callback);
 
+    // The job's prepare/train split once training ended; readable from the
+    // completion callback (TOFIX118 P3).
+    std::optional<cyxwiz::GraphTrainingJobTiming> GetJobRunTiming(const std::string& job_id);
+
     // Set node client for progress reporting
     void SetNodeClient(NodeClient* client);
 
@@ -118,6 +124,8 @@ private:
         // Model storage for weights extraction
         std::unique_ptr<cyxwiz::SequentialModel> model;
         std::mutex model_mutex;
+        // The shared runner's time split (guarded by model_mutex).
+        std::optional<cyxwiz::GraphTrainingJobTiming> run_timing;
 
         // Pause/resume synchronization
         std::condition_variable pause_cv;

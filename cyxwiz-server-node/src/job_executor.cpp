@@ -1,5 +1,6 @@
 #include "job_executor.h"
 #include "node_client.h"
+#include "node_job_timing.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <chrono>
@@ -488,6 +489,18 @@ void JobExecutor::ExecuteJob(const std::string& job_id) {
         auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - state->start_time);
 
+        std::optional<cyxwiz::GraphTrainingJobTiming> run_timing;
+        {
+            std::lock_guard<std::mutex> lock(state->model_mutex);
+            run_timing = state->run_timing;
+        }
+        NodeJobPhases phases;
+        phases.wall_seconds = std::chrono::duration<double>(now - state->start_time).count();
+        if (run_timing) phases.run = *run_timing;
+        const auto timing = MakeJobTiming(phases);
+        protocol::EnvironmentFingerprint environment;
+        FillEnvironmentFingerprint(cyxwiz::DetectMachineCapability().environment, &environment);
+
         // Send final result to Central Server
         node_client_->ReportJobResult(
             job_id,
@@ -497,7 +510,9 @@ void JobExecutor::ExecuteJob(const std::string& job_id) {
             "",  // model_weights_hash - TODO: implement model saving
             0,   // model_size - TODO: implement model saving
             total_time.count(),
-            error_msg
+            error_msg,
+            &timing,
+            &environment
         );
     }
 
@@ -623,6 +638,10 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
     callbacks.should_cancel = [state] { return state->should_cancel.load(); };
 
     auto result = cyxwiz::RunGraphTrainingJob(request, callbacks);
+    {
+        std::lock_guard<std::mutex> lock(state->model_mutex);
+        state->run_timing = result.timing;
+    }
     if (result.cancelled) {
         spdlog::info("Training cancelled for job: {}", job_id);
         return false;
@@ -636,6 +655,14 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
     }
     spdlog::info("Training completed successfully for job: {}", job_id);
     return true;
+}
+
+std::optional<cyxwiz::GraphTrainingJobTiming> JobExecutor::GetJobRunTiming(const std::string& job_id) {
+    std::lock_guard<std::mutex> lock(jobs_mutex_);
+    const auto it = active_jobs_.find(job_id);
+    if (it == active_jobs_.end()) return std::nullopt;
+    std::lock_guard<std::mutex> model_lock(it->second->model_mutex);
+    return it->second->run_timing;
 }
 
 bool JobExecutor::SaveResults(

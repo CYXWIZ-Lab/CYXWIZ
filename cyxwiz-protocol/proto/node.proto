@@ -84,14 +84,6 @@ message TrainingBenchmark {
   string measured_at = 10;          // UTC ISO 8601
 }
 
-// Same fingerprint = same CyxWiz build, OS and verified devices/drivers.
-message EnvironmentFingerprint {
-  string cyxwiz_build = 1;
-  string os = 2;
-  string route_matrix_id = 3;
-  string compute_contract_id = 4;
-  string fingerprint = 5;           // SHA-256 hex
-}
 
 // Pricing configuration for compute nodes
 message NodePricing {
@@ -399,6 +391,8 @@ message ReportJobResultRequest {
   // Compute stats
   int64 total_compute_time = 8;    // milliseconds
   string error_message = 9;        // If failed
+  JobTiming timing = 10;                   // where the time went (TOFIX118 P3)
+  EnvironmentFingerprint environment = 11; // what ran it
 }
 
 message ReportJobResultResponse {

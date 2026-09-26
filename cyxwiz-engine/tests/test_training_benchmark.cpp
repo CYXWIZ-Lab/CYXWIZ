@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -75,6 +76,13 @@ int main() {
               "a loaded result matches the saved one");
     }
     Check(!cyxwiz::LoadTrainingBenchmarkResults(root / "missing.json", loaded, error), "a missing cache is reported");
+    {
+        std::ofstream(root / "early.json")
+            << R"({"schema":1,"benchmark_id":"cyxwiz-causal-lm-train-v1","routes":[{"backend":"arrayfire_cuda","tokens_per_second":20000.0}]})";
+        Check(cyxwiz::LoadTrainingBenchmarkResults(root / "early.json", loaded, error) && loaded.size() == 1 &&
+                  loaded[0].ok,
+              "an early cache without ok flags holds successes");
+    }
 
     fs::remove_all(root, ec);
     std::cout << (g_failures == 0 ? "PASS" : "FAILED") << " (" << g_failures << " failures)\n";

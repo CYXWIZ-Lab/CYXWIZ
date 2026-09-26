@@ -15,6 +15,8 @@
 #include "../../cyxwiz-engine/tests/causal_lm_token_window_fixture.h"
 #include "../../cyxwiz-engine/tests/route_qualification_test_fixture.h"
 #include "../src/node_client.h"
+#include "../src/node_doctor.h"
+#include "../src/node_job_timing.h"
 #include "core/compute_runtime_paths.h"
 #include "core/training_benchmark.h"
 #include "execution.grpc.pb.h"
@@ -389,6 +391,21 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
                     complete.success() &&
                     !complete.weights_location().empty() &&
                     complete.total_epochs_completed() == 3;
+                // Where the time went and what ran it (TOFIX118 P3 S4).
+                const auto& timing = complete.timing();
+                INFO("transfer " << timing.transfer_seconds() << " prepare " << timing.prepare_seconds()
+                                 << " train " << timing.train_seconds() << " wall " << timing.wall_seconds());
+                CHECK(timing.transfer_seconds() > 0.0);
+                CHECK(timing.prepare_seconds() > 0.0);
+                CHECK(timing.train_seconds() > 0.0);
+                CHECK(timing.wall_seconds() >= timing.transfer_seconds() + timing.prepare_seconds() +
+                                                   timing.train_seconds() + timing.save_seconds() - 1e-9);
+                CHECK(timing.goodput() > 0.0);
+                CHECK(timing.goodput() <= 1.0);
+                CHECK(timing.samples_trained() > 0);
+                CHECK(timing.tokens_trained() > 0);
+                CHECK(timing.tokens_per_second() > 0.0);
+                CHECK(complete.environment().fingerprint().size() == 64);
             }
         }
 
@@ -889,6 +906,123 @@ TEST_CASE("Registration reports the measured training capability", "[capability]
 
     cyxwiz::ClearRouteQualificationSnapshot();
     fs::remove_all(root, ec);
+}
+
+TEST_CASE("Doctor judges whether the node can take training jobs", "[doctor]") {
+    using cyxwiz::servernode::DoctorStatus;
+    const auto status_of = [](const std::vector<cyxwiz::servernode::DoctorCheck>& checks, const std::string& name) {
+        for (const auto& check : checks) {
+            if (check.name == name) return check.status;
+        }
+        FAIL("no check named " << name);
+        return DoctorStatus::Fail;
+    };
+
+    cyxwiz::RouteQualificationSnapshot snapshot;
+    cyxwiz::RouteQualificationRecord gpu;
+    gpu.type = cyxwiz::DeviceType::OPENCL;
+    gpu.physical_fingerprint = "uuid:gpu";
+    gpu.certified = true;
+    snapshot.routes = {gpu};
+    cyxwiz::TrainingBenchmarkResult measured;
+    measured.ok = true;
+    measured.backend = "arrayfire_opencl";
+    measured.physical_fingerprint = "uuid:gpu";
+    measured.build = "1.0.0";
+    measured.tokens_per_second = 6000.0;
+
+    cyxwiz::servernode::DoctorFacts ready;
+    ready.build = "1.0.0";
+    ready.route_evidence_loaded = true;
+    ready.capability = cyxwiz::BuildMachineCapability(snapshot, {measured}, "1.0.0");
+    ready.preference_file_loaded = true;
+    ready.preferred_route = std::make_pair(std::string("arrayfire_opencl"), 0);
+    ready.data_dir = "D:/data";
+    ready.data_dir_writable = true;
+    ready.data_dir_free_bytes = 100ull << 30;
+    ready.central_server = "localhost:50051";
+    ready.central_server_reachable = true;
+
+    auto checks = cyxwiz::servernode::EvaluateNodeReadiness(ready);
+    CHECK(cyxwiz::servernode::NodeIsReady(checks));
+    for (const auto& check : checks) {
+        INFO(check.name << ": " << check.detail);
+        CHECK(check.status == DoctorStatus::Ok);
+    }
+
+    SECTION("no route evidence refuses jobs") {
+        auto facts = ready;
+        facts.route_evidence_loaded = false;
+        facts.capability = cyxwiz::BuildMachineCapability({}, {}, "1.0.0");
+        const auto result = cyxwiz::servernode::EvaluateNodeReadiness(facts);
+        CHECK(status_of(result, "Verified routes") == DoctorStatus::Fail);
+        CHECK_FALSE(cyxwiz::servernode::NodeIsReady(result));
+    }
+    SECTION("a benchmark from another build is a warning, not a failure") {
+        auto facts = ready;
+        facts.capability = cyxwiz::BuildMachineCapability(snapshot, {measured}, "1.0.1");
+        const auto result = cyxwiz::servernode::EvaluateNodeReadiness(facts);
+        CHECK(status_of(result, "Training benchmark") == DoctorStatus::Warn);
+        CHECK(cyxwiz::servernode::NodeIsReady(result));
+    }
+    SECTION("a preferred route that is not verified fails") {
+        auto facts = ready;
+        facts.preferred_route = std::make_pair(std::string("arrayfire_cuda"), 0);
+        CHECK(status_of(cyxwiz::servernode::EvaluateNodeReadiness(facts), "Compute preference") == DoctorStatus::Fail);
+    }
+    SECTION("an unwritable data folder fails; a nearly full one warns") {
+        auto facts = ready;
+        facts.data_dir_writable = false;
+        CHECK(status_of(cyxwiz::servernode::EvaluateNodeReadiness(facts), "Job data folder") == DoctorStatus::Fail);
+        facts.data_dir_writable = true;
+        facts.data_dir_free_bytes = 1ull << 30;
+        CHECK(status_of(cyxwiz::servernode::EvaluateNodeReadiness(facts), "Job data folder") == DoctorStatus::Warn);
+    }
+    SECTION("an unreachable central server warns (P2P jobs still work)") {
+        auto facts = ready;
+        facts.central_server_reachable = false;
+        const auto result = cyxwiz::servernode::EvaluateNodeReadiness(facts);
+        CHECK(status_of(result, "Central server") == DoctorStatus::Warn);
+        CHECK(cyxwiz::servernode::NodeIsReady(result));
+    }
+    SECTION("TLS without certificate files fails unless auto-generated") {
+        auto facts = ready;
+        facts.tls_enabled = true;
+        CHECK(status_of(cyxwiz::servernode::EvaluateNodeReadiness(facts), "TLS") == DoctorStatus::Fail);
+        facts.tls_auto = true;
+        CHECK(status_of(cyxwiz::servernode::EvaluateNodeReadiness(facts), "TLS") == DoctorStatus::Ok);
+    }
+}
+
+TEST_CASE("Job timing splits a job's wall time", "[timing]") {
+    cyxwiz::servernode::NodeJobPhases phases;
+    phases.wall_seconds = 10.0;
+    phases.transfer_seconds = 1.0;
+    phases.save_seconds = 0.5;
+    phases.run.prepare_seconds = 1.5;
+    phases.run.train_seconds = 5.0;
+    phases.run.samples_trained = 400;
+    phases.run.tokens_per_sample = 256;
+    auto timing = cyxwiz::servernode::MakeJobTiming(phases);
+    CHECK(timing.queue_seconds() == 2.0);  // the unaccounted remainder
+    CHECK(timing.goodput() == 0.5);
+    CHECK(timing.tokens_trained() == 400 * 256);
+    CHECK(timing.samples_per_second() == 80.0);
+    CHECK(timing.tokens_per_second() == 80.0 * 256);
+
+    // Phases measured on different clocks never make the queue negative.
+    phases.wall_seconds = 7.0;
+    timing = cyxwiz::servernode::MakeJobTiming(phases);
+    CHECK(timing.queue_seconds() == 0.0);
+    CHECK(timing.wall_seconds() == 8.0);
+
+    // A tabular job: no tokens; a job that never trained: no rates.
+    phases.run.tokens_per_sample = 0;
+    CHECK(cyxwiz::servernode::MakeJobTiming(phases).tokens_trained() == 0);
+    phases.run = {};
+    timing = cyxwiz::servernode::MakeJobTiming(phases);
+    CHECK(timing.samples_per_second() == 0.0);
+    CHECK(timing.goodput() == 0.0);
 }
 
 // Main function to run tests
