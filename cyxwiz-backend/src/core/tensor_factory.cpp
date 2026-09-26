@@ -3,6 +3,7 @@
 #include "tensor_backend_observation_utils.h"
 #include "tensor_math_utils.h"
 #include "tensor_utils.h"
+#include "../algorithms/arrayfire_backend_utils.h"
 
 #include <cstdint>
 #include <limits>
@@ -30,8 +31,7 @@ enum class FactoryKind {
 };
 
 std::mt19937& CpuRandomEngine() {
-    thread_local std::mt19937 engine{std::random_device{}()};
-    return engine;
+    return NativeRandomEngine();  // seeded with the model seed on the training worker
 }
 
 void FillRandomNative(Tensor& tensor, std::mt19937& engine) {

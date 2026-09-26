@@ -1359,9 +1359,8 @@ void TrainingExecutor::Train(
                    mode_ == DatasetMode::SequenceExternal &&
                    active_sequence_batcher) {
             active_sequence_batcher->SetPhase(BatcherPhase::Val);
-            RunValidationSequence(*active_sequence_batcher);
+            validation_ran_this_epoch = RunValidationSequence(*active_sequence_batcher);
             active_sequence_batcher->SetPhase(BatcherPhase::Train);
-            validation_ran_this_epoch = true;
         } else if (should_validate_this_epoch && active_val_ibatcher) {
             active_val_ibatcher->SetPhase(val_batcher_phase);
             RunValidationArrow(*active_val_ibatcher);
@@ -2440,8 +2439,22 @@ void TrainingExecutor::RunTrainingEpochSequence(
                   epoch, sample_count);
 }
 
-void TrainingExecutor::RunValidationSequence(ISequenceBatcher& batcher) {
-    const auto evaluation = EvaluateSequenceBatcher(batcher);
+bool TrainingExecutor::RunValidationSequence(ISequenceBatcher& batcher) {
+    // An empty validation partition (e.g. a ratio split that rounds to zero
+    // units) is no validation: reporting its loss as 0 would make epoch 1 the
+    // "best" checkpoint and restore it at the end.
+    const bool has_validation = batcher.HasPhase(BatcherPhase::Val) && batcher.GetNumSamples() > 0;
+    const auto evaluation = has_validation ? EvaluateSequenceBatcher(batcher) : SequenceEvaluationMetrics{};
+    if (evaluation.token_count == 0) {
+        if (!empty_validation_reported_) {
+            empty_validation_reported_ = true;
+            spdlog::warn("TrainingExecutor: the validation partition is empty; this run has no validation "
+                         "metrics (check the Data Split ratios against the number of documents)");
+            TrainingTraceCollector::Instance().RecordRuntimeWarning(
+                "TrainingExecutor.Validation", "validation partition is empty");
+        }
+        return false;
+    }
     UpdateMetrics([evaluation](TrainingMetrics& m) {
         m.val_loss = evaluation.loss;
         m.val_accuracy = evaluation.accuracy;
@@ -2450,6 +2463,7 @@ void TrainingExecutor::RunValidationSequence(ISequenceBatcher& batcher) {
         m.val_entity_f1 = evaluation.entity_f1;
         m.val_token_count = evaluation.token_count;
     });
+    return true;
 }
 
 TrainingExecutor::SequenceEvaluationMetrics

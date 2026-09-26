@@ -1,4 +1,5 @@
 #include "cyxwiz/layers/recurrent.h"
+#include "../arrayfire_backend_utils.h"
 #include "lstm_direction_helpers.h"
 #include "cyxwiz/debug_hooks.h"
 #include "cyxwiz/backend_placement_observation.h"
@@ -777,7 +778,7 @@ Tensor LSTMLayer::Forward(const Tensor& input) {
 
             if (layer < num_layers_ - 1 && dropout_ > 0.0f && training_) {
                 std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-                static thread_local std::mt19937 rng{std::random_device{}()};
+                std::mt19937& rng = NativeRandomEngine();
                 float* layer_out_ptr = layer_input.Data<float>();
                 for (size_t i = 0; i < layer_output.NumElements(); ++i) {
                     const float keep = dist(rng) > dropout_ ? 1.0f : 0.0f;

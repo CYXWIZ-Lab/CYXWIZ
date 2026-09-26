@@ -111,7 +111,7 @@ Tensor DropoutLayer::Forward(const Tensor& input) {
 
     const float* input_data = input.ReadData<float>();
     const float scale = 1.0f / (1.0f - p_);
-    static thread_local std::mt19937 rng(std::random_device{}());
+    std::mt19937& rng = NativeRandomEngine();
     std::uniform_real_distribution<float> dist(0.0f, 1.0f);
     for (size_t index = 0; index < input.NumElements(); ++index) {
         mask_data[index] = dist(rng) > p_ ? 1.0f : 0.0f;

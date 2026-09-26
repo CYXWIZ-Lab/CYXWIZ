@@ -278,6 +278,7 @@ set(ENGINE_SOURCES
     src/core/formats/audio_dataset.cpp
     src/core/gym_connector.cpp
     src/gui/graph_training_launcher.cpp
+    src/gui/engine_graph_training_dispatch.cpp
     src/gui/main_window.cpp
     src/gui/node_editor.cpp
     src/gui/node_editor_clipboard.cpp
@@ -5013,6 +5014,78 @@ target_link_libraries(test_training_core_link PRIVATE cyxwiz-training-core)
 # ===== Test: headless graph training job on the core alone (TOFIX118 P2) =====
 add_executable(test_graph_training_job tests/test_graph_training_job.cpp)
 target_link_libraries(test_graph_training_job PRIVATE cyxwiz-training-core)
+
+# ===== Test: Engine vs Server Node training parity (TOFIX118 P2 slice 4) =====
+# The Engine path (launcher preparation + MainWindow's dispatch + TrainingManager)
+# and the node path (RunGraphTrainingJob) train the same graph, data and seed.
+add_executable(test_engine_node_parity
+    tests/test_engine_node_parity.cpp
+    src/gui/engine_graph_training_dispatch.cpp
+    src/core/training_manager.cpp
+    src/gui/graph_training_launcher.cpp
+    src/gui/panels/training_plot_panel.cpp
+    src/core/async_task_manager.cpp
+    src/core/pipeline_materializer.cpp
+    src/core/materialization_cache.cpp
+    src/core/sparse_feature_dataset_cache.cpp
+    src/core/pipeline_table_materializer.cpp
+    src/core/data_registry_sparse.cpp
+    src/core/data_analyzer.cpp
+    src/data/data_table.cpp
+    src/core/node_executors/pipeline_operator_factory.cpp
+    src/core/node_executors/clustering_operators.cpp
+    src/core/node_executors/tree_classification_utils.cpp
+    src/core/node_executors/tree_model_artifact.cpp
+    src/core/node_executors/decision_tree_model.cpp
+    src/core/node_executors/decision_tree_trainer.cpp
+    src/core/node_executors/decision_tree_operator.cpp
+    src/core/node_executors/random_forest_model.cpp
+    src/core/node_executors/random_forest_trainer.cpp
+    src/core/node_executors/random_forest_operator.cpp
+    src/core/node_executors/gradient_boosting_model.cpp
+    src/core/node_executors/gradient_boosting_trainer.cpp
+    src/core/node_executors/gradient_boosting_operator.cpp
+    src/core/node_executors/tree_model_predictor_operator.cpp
+    src/core/node_executors/count_vectorizer_operator.cpp
+    src/core/node_executors/differencing_operator.cpp
+    src/core/node_executors/log_transform_operator.cpp
+    src/core/node_executors/pca_operator.cpp
+    src/core/node_executors/preprocessing_operators.cpp
+    src/core/node_executors/regression_operators.cpp
+    src/core/node_executors/regression_model_artifact.cpp
+    src/core/node_executors/regression_model_predictor_operator.cpp
+    src/core/node_executors/sentiment_analyzer_operator.cpp
+    src/core/node_executors/signal_processing_operators.cpp
+    src/core/node_executors/text_tokenizer_operator.cpp
+    src/core/node_executors/text_token_windows.cpp
+    src/core/node_executors/tfidf_vectorizer_operator.cpp
+    src/core/node_executors/text_feature_matrix.cpp
+    src/core/node_executors/time_series_analysis_operators.cpp
+    src/core/node_executors/time_series_features_operator.cpp
+    src/core/node_executors/time_series_split_operator.cpp
+    src/core/node_executors/time_series_window_operator.cpp
+    src/core/node_executors/time_series_segment_operator.cpp
+    src/core/node_executors/row_count_check_operator.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+)
+target_include_directories(test_engine_node_parity PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${Stb_INCLUDE_DIR}
+)
+target_link_libraries(test_engine_node_parity PRIVATE
+    cyxwiz-training-core
+    imgui::imgui
+    implot::implot
+)
+target_compile_definitions(test_engine_node_parity PRIVATE
+    CYXWIZ_PLOTTING_MODULE
+    CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS
+    CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(test_engine_node_parity PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
 
 # ===== Test: remote jobs ship whole dataset files (TOFIX118 P2) =====
 add_executable(test_dataset_file_server

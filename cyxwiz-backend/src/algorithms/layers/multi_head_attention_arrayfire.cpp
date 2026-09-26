@@ -1,5 +1,6 @@
 #include "cyxwiz/layers/attention.h"
 #include "cyxwiz/neural_provider.h"
+#include "../arrayfire_backend_utils.h"
 #include <spdlog/spdlog.h>
 #include <atomic>
 #include <cstdint>
@@ -137,10 +138,9 @@ bool MultiHeadAttentionLayer::TryFusedAttention(const void* qh_ptr, const void* 
     request.position_strategy = alibi_ ? NeuralPositionStrategy::Alibi : NeuralPositionStrategy::None;
     const bool drop = training_ && dropout_ > 0.0f && !incremental_;
     if (drop) {
-        // Reproducible per run: ArrayFire's training seed plus a process-wide
-        // call counter (the same op sequence gives the same masks).
-        static std::atomic<uint64_t> calls{0};
-        uint64_t z = static_cast<uint64_t>(af::getSeed()) + 0x9E3779B97F4A7C15ull * (calls.fetch_add(1) + 1);
+        // Reproducible per run: ArrayFire's training seed plus a call counter
+        // that the seed resets (the same op sequence gives the same masks).
+        uint64_t z = static_cast<uint64_t>(af::getSeed()) + 0x9E3779B97F4A7C15ull * NextAttentionDropoutStream();
         z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
         z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
         request.attention_dropout = dropout_;

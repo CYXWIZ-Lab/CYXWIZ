@@ -142,8 +142,7 @@ void MultiHeadAttentionLayer::InitializeWeights() {
     const ScopedArrayFireHostSyncAttribution attribution(
         ArrayFireHostSyncCategory::LayerCpuPath,
         "MultiHeadAttentionLayer::InitializeWeights");
-    std::random_device rd;
-    std::mt19937 gen(rd());
+    std::mt19937& gen = NativeRandomEngine();  // model seed on the training worker
     float limit = std::sqrt(6.0f / (embed_dim_ + embed_dim_));
     std::uniform_real_distribution<float> dist(-limit, limit);
 
@@ -430,7 +429,7 @@ Tensor MultiHeadAttentionLayer::Forward(const Tensor& query, const Tensor& key,
     float* attn_data = cached_attn_weights_.MutableData<float>();
     float* dropout_mask_data = cached_attention_dropout_ ? dropout_mask_.MutableData<float>() : nullptr;
     float* context_data = cached_context_.MutableData<float>();
-    static thread_local std::mt19937 dropout_rng(std::random_device{}());
+    std::mt19937& dropout_rng = NativeRandomEngine();
     std::bernoulli_distribution keep_dist(1.0f - dropout_);
     const float dropout_scale = cached_attention_dropout_ ? 1.0f / (1.0f - dropout_) : 1.0f;
 

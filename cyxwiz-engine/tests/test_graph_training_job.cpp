@@ -87,13 +87,19 @@ int main() {
         int epochs = 0;
         cyxwiz::GraphTrainingJobCallbacks callbacks;
         callbacks.on_batch = [&batches](int, int, int, float, float) { ++batches; };
-        callbacks.on_epoch = [&epochs](int, float, float, float, float, float) { ++epochs; };
+        bool fake_validation = false;
+        callbacks.on_epoch = [&epochs, &fake_validation](int, float, float, float val_loss, float, float) {
+            ++epochs;
+            // 80/10/10 of 8 windows leaves no validation window: no metric, not 0.
+            fake_validation = fake_validation || val_loss >= 0.0f;
+        };
         const auto result = cyxwiz::RunGraphTrainingJob(request, callbacks);
         Check(result.ok, "job succeeded" + (result.error.empty() ? "" : " (" + result.error + ")"));
         Check(!result.cancelled, "not cancelled");
         Check(result.model != nullptr, "trained model returned");
         Check(epochs == 2, "two epochs reported (got " + std::to_string(epochs) + ")");
         Check(batches > 0, "batches reported");
+        Check(!fake_validation, "an empty validation partition reports no validation loss");
         Check(result.metrics.terminal_status != "failed", "metrics not failed");
     }
 

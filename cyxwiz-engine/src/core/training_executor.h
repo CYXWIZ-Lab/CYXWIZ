@@ -345,6 +345,7 @@ private:
     // Graph lr_schedule (optimizer node): attached when the first epoch knows
     // its batch count, because the schedule is defined over optimizer updates.
     bool graph_schedule_pending_ = false;
+    bool empty_validation_reported_ = false;  // warned once per run
     int training_epochs_ = 1;
     void AttachGraphScheduleIfPending(size_t batches_per_epoch);
     void ConfigureWeightDecayExclusions();
@@ -387,7 +388,8 @@ private:
     /**
      * Run validation for token-tagging batches.
      */
-    void RunValidationSequence(ISequenceBatcher& batcher);
+    // False when the validation partition is empty (nothing was evaluated).
+    bool RunValidationSequence(ISequenceBatcher& batcher);
     SequenceEvaluationMetrics EvaluateSequenceBatcher(
         ISequenceBatcher& batcher);
 

@@ -5,6 +5,7 @@
 // path (future) and the native provider, both parity-gated against this.
 
 #include "cyxwiz/layers/recurrent.h"
+#include "../arrayfire_backend_utils.h"
 #include "cyxwiz/neural_provider.h"
 #include <spdlog/spdlog.h>
 
@@ -55,7 +56,7 @@ RNNLayer::RNNLayer(int input_size, int hidden_size, int num_layers,
 }
 
 void RNNLayer::InitializeWeights() {
-    std::mt19937 generator(std::random_device{}());
+    std::mt19937& generator = NativeRandomEngine();  // model seed on the training worker
     const float bound = 1.0f / std::sqrt(static_cast<float>(hidden_size_));
     std::uniform_real_distribution<float> distribution(-bound, bound);
 
