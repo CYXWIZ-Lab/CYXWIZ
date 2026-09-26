@@ -20,6 +20,7 @@
 // Core includes
 #include "core/device_pool.h"
 #include "core/graph_training_job_timing.h"
+#include "core/training_failure.h"
 
 namespace cyxwiz {
 namespace servernode {
@@ -104,6 +105,9 @@ public:
     // The job's prepare/train split once training ended; readable from the
     // completion callback (TOFIX118 P3).
     std::optional<cyxwiz::GraphTrainingJobTiming> GetJobRunTiming(const std::string& job_id);
+    // Why the job's training failed (None when it did not); readable from the
+    // completion callback (TOFIX118 P4a).
+    cyxwiz::TrainingFailureKind GetJobFailure(const std::string& job_id);
 
     // Set node client for progress reporting
     void SetNodeClient(NodeClient* client);
@@ -124,8 +128,10 @@ private:
         // Model storage for weights extraction
         std::unique_ptr<cyxwiz::SequentialModel> model;
         std::mutex model_mutex;
-        // The shared runner's time split (guarded by model_mutex).
+        // The shared runner's time split and failure category (guarded by
+        // model_mutex).
         std::optional<cyxwiz::GraphTrainingJobTiming> run_timing;
+        cyxwiz::TrainingFailureKind failure = cyxwiz::TrainingFailureKind::None;
 
         // Pause/resume synchronization
         std::condition_variable pause_cv;

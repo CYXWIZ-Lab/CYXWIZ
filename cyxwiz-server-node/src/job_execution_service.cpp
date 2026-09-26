@@ -538,6 +538,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     cyxwiz::protocol::JobConfig run_config = session->job_config;
     std::string saved_weights_path;
     NodeJobPhases phases;  // where the job's time goes (TOFIX118 P3)
+    cyxwiz::TrainingFailureKind failure = cyxwiz::TrainingFailureKind::None;  // why it failed (P4a)
     std::filesystem::path job_data_dir;
     bool job_ready = true;
     if (run_config.dataset_uri().rfind("remote://", 0) == 0) {
@@ -560,12 +561,14 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             spdlog::error("[P2P WORKFLOW] Job {} not trained: {}", current_job_id, fetch_error);
             std::lock_guard<std::mutex> lock(error_mutex);
             training_error = fetch_error;
+            failure = cyxwiz::TrainingFailureKind::DataError;
         }
     }
     if (job_ready && !job_executor_) {
         job_ready = false;
         std::lock_guard<std::mutex> lock(error_mutex);
         training_error = "this node has no job executor; the job cannot train";
+        failure = cyxwiz::TrainingFailureKind::Internal;
     }
     if (!job_ready) {
         training_success = false;
@@ -665,9 +668,11 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                     phases.save_seconds =
                         std::chrono::duration<double>(std::chrono::steady_clock::now() - save_start).count();
                 }
-                if (run_timing) {
+                const auto run_failure = job_executor_->GetJobFailure(current_job_id);
+                {
                     std::lock_guard<std::mutex> lock(error_mutex);
-                    phases.run = *run_timing;
+                    if (run_timing) phases.run = *run_timing;
+                    failure = run_failure;
                 }
 
                 training_success = success;
@@ -686,6 +691,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
         if (!job_executor_->ExecuteJobAsync(run_config)) {
             std::lock_guard<std::mutex> lock(error_mutex);
             training_error = "the node could not start the job";
+            failure = cyxwiz::TrainingFailureKind::Internal;
             training_complete = true;
         }
     }
@@ -828,9 +834,12 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
         } else {
             // Actual error during training - send ERROR message
             auto* error = complete_update.mutable_error();
-            error->set_error_code("TRAINING_FAILED");
             {
                 std::lock_guard<std::mutex> lock(error_mutex);
+                // The category the shared runner (or this service) found;
+                // an uncategorized failure is an internal one.
+                error->set_error_code(cyxwiz::TrainingFailureCode(
+                    failure == cyxwiz::TrainingFailureKind::None ? cyxwiz::TrainingFailureKind::Internal : failure));
                 error->set_error_message(training_error);
             }
             // Errors are recoverable within the reservation - user can try again

@@ -1,5 +1,6 @@
 #include "p2p_client.h"
 #include "../core/project_manager.h"
+#include "../core/training_failure.h"
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <cctype>
@@ -426,12 +427,16 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
         }
         else if (update.has_error()) {
             const auto& err = update.error();
-            spdlog::error("P2PClient: Training error: {}", err.error_message());
+            // The node's category (TOFIX118 P4a) in front of its message, so
+            // "fix the graph" reads differently from "the device failed".
+            const std::string message =
+                std::string(cyxwiz::TrainingFailureLabel(err.error_code())) + ": " + err.error_message();
+            spdlog::error("P2PClient: Training error ({}): {}", err.error_code(), err.error_message());
 
             bool is_fatal = !err.recoverable();  // If not recoverable, it's fatal
 
             if (error_callback_) {
-                error_callback_(err.error_message(), is_fatal);
+                error_callback_(message, is_fatal);
             }
 
             if (is_fatal) {

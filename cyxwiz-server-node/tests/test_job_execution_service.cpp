@@ -665,6 +665,7 @@ struct JobOutcome {
     bool success = false;
     std::string error;
     int epochs_reported = 0;
+    cyxwiz::TrainingFailureKind failure = cyxwiz::TrainingFailureKind::None;
 };
 
 // Runs one job on a fresh executor and waits for its completion callback.
@@ -674,11 +675,13 @@ void RunLocalJob(const JobConfig& config, JobOutcome& outcome) {
         std::lock_guard<std::mutex> lock(outcome.mutex);
         ++outcome.epochs_reported;
     });
-    executor.SetCompletionCallback([&outcome](const std::string&, bool success, const std::string& error) {
+    executor.SetCompletionCallback([&outcome, &executor](const std::string& id, bool success, const std::string& error) {
+        const auto failure = executor.GetJobFailure(id);
         std::lock_guard<std::mutex> lock(outcome.mutex);
         outcome.finished = true;
         outcome.success = success;
         outcome.error = error;
+        outcome.failure = failure;
         outcome.done.notify_all();
     });
     REQUIRE(executor.ExecuteJobAsync(config));
@@ -736,12 +739,15 @@ TEST_CASE("JobExecutor - refuses jobs the shared core cannot train", "[job_execu
         std::string model_definition;
         std::string dataset_uri;
         const char* reason;
+        cyxwiz::TrainingFailureKind failure;
     };
     const std::vector<Case> cases = {
-        {"no graph", "", "", "no model definition"},
-        {"retired MNIST loader", graph, "file://mnist/./data/mnist", "retired loader"},
-        {"mock data", graph, "mock://random", "mock datasets are not trained"},
-        {"unknown scheme", graph, "ipfs://QmTest123", "unsupported dataset_uri scheme"},
+        {"no graph", "", "", "no model definition", cyxwiz::TrainingFailureKind::Refused},
+        {"retired MNIST loader", graph, "file://mnist/./data/mnist", "retired loader",
+         cyxwiz::TrainingFailureKind::DataError},
+        {"mock data", graph, "mock://random", "mock datasets are not trained", cyxwiz::TrainingFailureKind::DataError},
+        {"unknown scheme", graph, "ipfs://QmTest123", "unsupported dataset_uri scheme",
+         cyxwiz::TrainingFailureKind::DataError},
     };
     for (const auto& c : cases) {
         SECTION(c.name) {
@@ -755,6 +761,7 @@ TEST_CASE("JobExecutor - refuses jobs the shared core cannot train", "[job_execu
             INFO(outcome.error);
             CHECK_FALSE(outcome.success);
             CHECK(outcome.error.find(c.reason) != std::string::npos);
+            CHECK(outcome.failure == c.failure);
             CHECK(outcome.epochs_reported == 0);
         }
     }

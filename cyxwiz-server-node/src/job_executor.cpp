@@ -601,12 +601,19 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
     // the reason instead of training something else.
     cyxwiz::GraphTrainingJobRequest request;
     request.graph_json = config.model_definition();
+    const auto refuse = [state](cyxwiz::TrainingFailureKind kind, const std::string& reason) {
+        {
+            std::lock_guard<std::mutex> lock(state->model_mutex);
+            state->failure = kind;
+        }
+        throw std::runtime_error(reason);
+    };
     if (request.graph_json.empty()) {
-        throw std::runtime_error("the job has no model definition (graph)");
+        refuse(cyxwiz::TrainingFailureKind::Refused, "the job has no model definition (graph)");
     }
     std::string error;
     if (!ResolveJobDatasetFiles(config.dataset_uri(), request.graph_json, request.dataset_files, error)) {
-        throw std::runtime_error(error);
+        refuse(cyxwiz::TrainingFailureKind::DataError, error);
     }
     request.epochs_override = config.epochs();
     request.batch_size_override = config.batch_size();
@@ -641,6 +648,7 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
     {
         std::lock_guard<std::mutex> lock(state->model_mutex);
         state->run_timing = result.timing;
+        state->failure = result.failure;
     }
     if (result.cancelled) {
         spdlog::info("Training cancelled for job: {}", job_id);
@@ -663,6 +671,14 @@ std::optional<cyxwiz::GraphTrainingJobTiming> JobExecutor::GetJobRunTiming(const
     if (it == active_jobs_.end()) return std::nullopt;
     std::lock_guard<std::mutex> model_lock(it->second->model_mutex);
     return it->second->run_timing;
+}
+
+cyxwiz::TrainingFailureKind JobExecutor::GetJobFailure(const std::string& job_id) {
+    std::lock_guard<std::mutex> lock(jobs_mutex_);
+    const auto it = active_jobs_.find(job_id);
+    if (it == active_jobs_.end()) return cyxwiz::TrainingFailureKind::None;
+    std::lock_guard<std::mutex> model_lock(it->second->model_mutex);
+    return it->second->failure;
 }
 
 bool JobExecutor::SaveResults(

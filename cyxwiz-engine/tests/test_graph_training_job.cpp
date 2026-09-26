@@ -95,6 +95,7 @@ int main() {
         };
         const auto result = cyxwiz::RunGraphTrainingJob(request, callbacks);
         Check(result.ok, "job succeeded" + (result.error.empty() ? "" : " (" + result.error + ")"));
+        Check(result.failure == cyxwiz::TrainingFailureKind::None, "a completed job has no failure category");
         Check(!result.cancelled, "not cancelled");
         Check(result.model != nullptr, "trained model returned");
         Check(epochs == 2, "two epochs reported (got " + std::to_string(epochs) + ")");
@@ -122,6 +123,7 @@ int main() {
         callbacks.should_cancel = [&batches] { return batches.load() > 0; };
         const auto result = cyxwiz::RunGraphTrainingJob(request, callbacks);
         Check(result.cancelled && !result.ok, "reported as cancelled");
+        Check(result.failure == cyxwiz::TrainingFailureKind::Cancelled, "cancel is its own category");
     }
 
     std::cout << "trains with a supplied validation input\n";
@@ -145,6 +147,23 @@ int main() {
                              (result.error.empty() ? "" : " (" + result.error + ")"));
     }
 
+    std::cout << "failure categories from executor reasons\n";
+    {
+        using cyxwiz::ClassifyTrainingFailure;
+        using cyxwiz::TrainingFailureKind;
+        Check(ClassifyTrainingFailure("ArrayFire Exception (Device out of memory:101)") == TrainingFailureKind::OutOfMemory,
+              "an ArrayFire allocation failure is out of memory");
+        Check(ClassifyTrainingFailure("device_preflight_failed: This route has no retained qualification evidence") ==
+                  TrainingFailureKind::DeviceError,
+              "a failed device preflight is a device error");
+        Check(ClassifyTrainingFailure("CW-T-0501 Training failed: vector subscript") == TrainingFailureKind::Internal,
+              "anything else is internal");
+        Check(std::string(cyxwiz::TrainingFailureCode(TrainingFailureKind::OutOfMemory)) == "OUT_OF_MEMORY" &&
+                  std::string(cyxwiz::TrainingFailureLabel("OUT_OF_MEMORY")) == "Out of memory" &&
+                  std::string(cyxwiz::TrainingFailureLabel("TRAINING_FAILED")) == "Training failed",
+              "wire codes and labels (older nodes' TRAINING_FAILED still reads)");
+    }
+
     std::cout << "refuses what it cannot run\n";
     {
         cyxwiz::GraphTrainingJobRequest request;
@@ -153,6 +172,7 @@ int main() {
             (root / "examples/cyxgraph/text/causal_lm_tiny_token_sequences.csv").string();
         const auto result = cyxwiz::RunGraphTrainingJob(request);
         Check(!result.ok && Contains(result.error, "not supported"), "CSV input refused: " + result.error);
+        Check(result.failure == cyxwiz::TrainingFailureKind::Refused, "an unsupported input format is a refusal");
     }
     {
         cyxwiz::GraphTrainingJobRequest request;
@@ -160,6 +180,7 @@ int main() {
         request.dataset_files["tiny_causal_lm_tokens"] = (work / "missing.parquet").string();
         const auto result = cyxwiz::RunGraphTrainingJob(request);
         Check(!result.ok && Contains(result.error, "file not found"), "missing file refused: " + result.error);
+        Check(result.failure == cyxwiz::TrainingFailureKind::DataError, "a missing file is a data error");
     }
     {
         nlohmann::json graph = LoadTokenWindowGraph(root);
@@ -198,6 +219,7 @@ int main() {
         request.graph_json = "{ not json";
         const auto result = cyxwiz::RunGraphTrainingJob(request);
         Check(!result.ok && Contains(result.error, "not valid JSON"), "malformed graph refused");
+        Check(result.failure == cyxwiz::TrainingFailureKind::Refused, "a malformed graph is a refusal");
     }
 
     fs::remove_all(work, ec);

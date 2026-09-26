@@ -12,6 +12,7 @@
 
 #include "graph_document.h"
 #include "graph_training_job_timing.h"
+#include "training_failure.h"
 #include "training_executor.h"
 
 #include <functional>
@@ -45,6 +46,7 @@ struct GraphTrainingJobResult {
     bool ok = false;
     bool cancelled = false;
     std::string error;            // why the job did not train (or failed)
+    TrainingFailureKind failure = TrainingFailureKind::None;  // category of `error`
     TrainingMetrics metrics;      // final metrics when it ran
     GraphTrainingJobTiming timing;
     std::unique_ptr<SequentialModel> model;  // trained model (for export)
