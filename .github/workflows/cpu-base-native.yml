@@ -11,6 +11,10 @@ on:
         description: CPU-base package revision (raise it for a same-version update)
         type: string
         default: "1"
+      accelerator_pack_version:
+        description: Windows accelerator (CUDA/OpenCL/oneAPI) pack revision
+        type: string
+        default: "1"
   pull_request:
     paths:
       - ".github/workflows/cpu-base-native.yml"
@@ -24,6 +28,7 @@ on:
       - "redist/scripts/backend_pack_target.py"
       - "redist/scripts/elf_runtime_closure.py"
       - "redist/scripts/package_release.py"
+      - "redist/notices/**"
       - "redist/scripts/macho_runtime_closure.py"
       - "redist/scripts/pe_runtime_closure.py"
       - "redist/scripts/python_runtime_package.py"
@@ -57,6 +62,7 @@ on:
       - "redist/scripts/backend_pack_target.py"
       - "redist/scripts/elf_runtime_closure.py"
       - "redist/scripts/package_release.py"
+      - "redist/notices/**"
       - "redist/scripts/macho_runtime_closure.py"
       - "redist/scripts/pe_runtime_closure.py"
       - "redist/scripts/python_runtime_package.py"
@@ -86,6 +92,7 @@ env:
   # Release identity; ordinary push/PR runs use the defaults.
   CYXWIZ_RELEASE: ${{ inputs.cyxwiz_release || '0.2.0' }}
   CYXWIZ_PACK_VERSION: ${{ inputs.pack_version || '1' }}
+  CYXWIZ_ACCELERATOR_PACK_VERSION: ${{ inputs.accelerator_pack_version || '1' }}
   VCPKG_BINARY_SOURCES: >-
     clear;files,${{ github.workspace }}/vcpkg-binary-cache,readwrite
 
@@ -223,6 +230,88 @@ jobs:
           name: cyxwiz-windows-cpu-base
           path: cpu-base-artifact/
           if-no-files-found: error
+
+      # Accelerator packs redistribute the CUDA, OpenCL and oneAPI runtimes
+      # from the ArrayFire 3.10 install above; nothing is compiled. CI cannot
+      # qualify them (no GPUs): they ship only after route verification on
+      # real hardware, and only for Windows for now.
+      - name: Free build space before accelerator packs
+        shell: pwsh
+        run: Remove-Item -Recurse -Force build, vcpkg-binary-cache -ErrorAction SilentlyContinue
+
+      - name: Download pinned accelerator notice inputs
+        shell: pwsh
+        run: |
+          function Get-Pinned([string]$Uri, [string]$OutFile, [string]$Sha256) {
+            Invoke-WebRequest -Uri $Uri -OutFile $OutFile
+            if ((Get-FileHash $OutFile -Algorithm SHA256).Hash -ne $Sha256) {
+              throw "Redistribution notice input digest mismatch: $Uri"
+            }
+          }
+          function Copy-WheelNotices([string]$Wheel, [string]$Destination) {
+            $unpacked = "$Wheel-unpacked"
+            Expand-Archive $Wheel -DestinationPath $unpacked
+            New-Item -ItemType Directory -Force $Destination | Out-Null
+            Get-ChildItem $unpacked -Recurse -File |
+              Where-Object { $_.Name -match '(?i)^(license|third-party-programs)' } |
+              ForEach-Object {
+                $relative = $_.FullName.Substring((Resolve-Path $unpacked).Path.Length + 1)
+                $target = Join-Path $Destination ($relative -replace '^[^\\]+\\', '')
+                New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
+                Copy-Item $_.FullName $target
+              }
+          }
+
+          New-Item -ItemType Directory -Force deps/nvidia | Out-Null
+          Get-Pinned https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvrtc/LICENSE.txt `
+            deps/nvidia/LICENSE.txt `
+            'E2C71BABFD18A8E69542DD7E9CA018F9CAA438094001A58E6BC4D8C999BF0D07'
+
+          Get-Pinned https://files.pythonhosted.org/packages/2c/7d/c5f09cea4462212e3b6867c45221ddeba5298a2567df2508bd0947eca280/dpcpp_cpp_rt-2025.2.2-py2.py3-none-win_amd64.whl `
+            deps/dpcpp-cpp-rt.zip `
+            'E97AE3F719236A41735256B01E0647A846CA7313EB5A6D85AB169B626870D2ED'
+          Get-Pinned https://files.pythonhosted.org/packages/4e/d2/01e2a93f9c644585088188840bf453f23ed1a2838ec51d5ba1ada1ebca71/tbb-2022.2.0-py3-none-win_amd64.whl `
+            deps/tbb.zip `
+            'ACBCE7632D4D7ACC6BDFE9849A57AB1624490198699EB16EA63243CFB4FD4CFA'
+          Get-Pinned https://files.pythonhosted.org/packages/33/a0/c8d755f08f50ddd99cb4a29a7e950ced7a0903cb72253e57059063609103/umf-0.11.0-py2.py3-none-win_amd64.whl `
+            deps/umf.zip `
+            '24B2EC23B6716F39DDE53D1B29F8DE1EC73C33A1E3B137DAE9CAF0CAEAF50201'
+          Copy-WheelNotices deps/dpcpp-cpp-rt.zip deps/intel/dpcpp-2025.2.2
+          Copy-WheelNotices deps/tbb.zip deps/intel/tbb-2022.2.0
+          Copy-WheelNotices deps/umf.zip deps/intel/umf-0.11.0
+          Copy-Item redist/notices/intel-dpcpp/credist.txt deps/intel/dpcpp-2025.2.2/
+          Get-ChildItem deps/intel, deps/nvidia -Recurse -File | ForEach-Object { $_.FullName }
+
+      - name: Build Windows accelerator packs
+        shell: pwsh
+        run: |
+          $base = "cyxwiz-base-${env:CYXWIZ_RELEASE}-${env:CYXWIZ_PACK_VERSION}-win64-x86_64"
+          $runtimeSet = "arrayfire-3.10.0-win64-x86_64-v${env:CYXWIZ_PACK_VERSION}"
+          New-Item -ItemType Directory -Force accelerator-packs | Out-Null
+          foreach ($backend in 'opencl', 'oneapi', 'cuda') {
+            python redist/scripts/package_release.py pack `
+              --backend $backend `
+              --version "${env:CYXWIZ_RELEASE}" `
+              --pack-version "${env:CYXWIZ_ACCELERATOR_PACK_VERSION}" `
+              --base-pack-id $base `
+              --runtime-set-id $runtimeSet `
+              --arrayfire-dir 'C:\Program Files\ArrayFire\v3' `
+              --intel-runtime-license-dir deps/intel `
+              --nvidia-runtime-license-dir deps/nvidia `
+              --generated-utc 2026-08-20T00:00:00Z
+            if ($LASTEXITCODE -ne 0) { throw "Accelerator pack failed: $backend" }
+          }
+          Copy-Item redist/output/cyxwiz-af-*-win64-x86_64.zip* accelerator-packs/
+          Get-ChildItem accelerator-packs | ForEach-Object {
+            '{0,10:N1} MiB  {1}' -f ($_.Length / 1MB), $_.Name
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cyxwiz-windows-accelerator-packs
+          path: accelerator-packs/
+          if-no-files-found: error
+          compression-level: 0
 
   build-macos-intel:
     name: Build macOS Intel CPU base
