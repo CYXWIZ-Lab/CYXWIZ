@@ -30,6 +30,9 @@
 #include <arpa/inet.h>
 #endif
 
+#include "core/execution_device_preferences.h"
+#include "core/machine_capability.h"
+
 // Workaround for MSVC protobuf arena allocation issue
 // Force explicit template instantiation to avoid linker errors
 namespace google {
@@ -79,8 +82,8 @@ protocol::NodeInfo HardwareDetector::DetectHardwareInfo(const std::string& node_
     info.set_port(p2p_port);
     info.set_region("unknown");  // TODO: Detect geographic region
 
-    // Performance (initialize with defaults)
-    info.set_compute_score(0.0);
+    // Performance: measured training capability (TOFIX118 P3)
+    HardwareDetector::FillMeasuredCapability(&info);
     info.set_reputation_score(0.5);  // Start with neutral reputation
     info.set_total_jobs_completed(0);
     info.set_total_compute_hours(0);
@@ -110,6 +113,52 @@ protocol::NodeInfo HardwareDetector::DetectHardwareInfo(const std::string& node_
     info.add_available_runtimes("pytorch");
 
     return info;
+}
+
+void HardwareDetector::FillMeasuredCapability(protocol::NodeInfo* info) {
+    const auto capability = DetectMachineCapability();
+    info->set_compute_score(capability.compute_score);
+    for (const auto& entry : capability.routes) {
+        const auto& route = entry.route;
+        auto* out = info->add_routes();
+        out->set_backend(ExecutionDeviceSelectionBackendName(route.type));
+        out->set_device_id(route.device_id);
+        out->set_device_name(route.display_name);
+        out->set_device_kind(route.device_kind_known ? DeviceKindName(route.device_kind) : "");
+        out->set_physical_fingerprint(route.physical_fingerprint);
+        out->set_provider(route.provider);
+        out->set_driver_version(route.driver_version);
+        out->set_runtime_version(route.runtime_version);
+        out->set_certified(route.certified);
+        out->set_operations_passed(route.pass_count);
+        out->set_operation_count(route.operation_count);
+        if (entry.benchmark) {
+            const auto& measured = *entry.benchmark;
+            auto* benchmark = out->mutable_benchmark();
+            benchmark->set_benchmark_id(measured.benchmark_id);
+            benchmark->set_ok(measured.ok);
+            benchmark->set_error(measured.error);
+            benchmark->set_current(entry.benchmark_current);
+            benchmark->set_tokens_per_second(measured.tokens_per_second);
+            benchmark->set_step_ms_median(measured.step_ms_median);
+            benchmark->set_step_ms_p90(measured.step_ms_p90);
+            benchmark->set_native_cpu_fallbacks(measured.native_cpu_fallbacks);
+            benchmark->set_build(measured.build);
+            benchmark->set_measured_at(measured.measured_at);
+        }
+    }
+    auto* environment = info->mutable_environment();
+    environment->set_cyxwiz_build(capability.environment.cyxwiz_build);
+    environment->set_os(capability.environment.os);
+    environment->set_route_matrix_id(capability.environment.route_matrix_id);
+    environment->set_compute_contract_id(capability.environment.compute_contract_id);
+    environment->set_fingerprint(capability.environment.fingerprint);
+    if (capability.compute_score > 0.0) {
+        spdlog::info("Measured capability: {:.0f} tokens/s on {} ({} verified route(s))", capability.compute_score,
+                     capability.compute_score_route, capability.routes.size());
+    } else {
+        spdlog::warn("No current training benchmark; compute_score 0 (run cyxwiz-server-daemon --benchmark)");
+    }
 }
 
 int HardwareDetector::GetCPUCores() {

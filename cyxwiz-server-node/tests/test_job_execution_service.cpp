@@ -14,6 +14,9 @@
 #include "core/graph_compiler_dataset_hooks.h"
 #include "../../cyxwiz-engine/tests/causal_lm_token_window_fixture.h"
 #include "../../cyxwiz-engine/tests/route_qualification_test_fixture.h"
+#include "../src/node_client.h"
+#include "core/compute_runtime_paths.h"
+#include "core/training_benchmark.h"
 #include "execution.grpc.pb.h"
 
 using namespace cyxwiz::server_node;
@@ -824,6 +827,68 @@ TEST_CASE("Remote jobs fetch the Engine's dataset files, then train", "[remote_d
     CHECK(outcome.success);
     CHECK(outcome.epochs_reported == 1);
     fs::remove_all(work, ec);
+}
+
+TEST_CASE("Registration reports the measured training capability", "[capability]") {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "cyxwiz_node_capability_test";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    cyxwiz::ScopedComputeRuntimeRootOverrideForTesting runtime_root(root);
+
+    cyxwiz::RouteQualificationSnapshot snapshot;
+    snapshot.matrix_id = "node-capability-test";
+    cyxwiz::RouteQualificationRecord gpu;
+    gpu.type = cyxwiz::DeviceType::OPENCL;
+    gpu.device_id = 0;
+    gpu.physical_fingerprint = "uuid:test-gpu";
+    gpu.display_name = "Test GPU";
+    gpu.driver_version = "32.0";
+    gpu.operation_count = gpu.pass_count = 23;
+    gpu.certified = true;
+    cyxwiz::RouteQualificationRecord cpu = gpu;
+    cpu.type = cyxwiz::DeviceType::CPU;
+    cpu.physical_fingerprint.clear();
+    cpu.display_name = "Test CPU";
+    snapshot.routes = {gpu, cpu};
+    cyxwiz::InstallRouteQualificationSnapshot(snapshot);
+
+    cyxwiz::TrainingBenchmarkResult measured;
+    measured.ok = true;
+    measured.backend = "arrayfire_opencl";
+    measured.device_id = 0;
+    measured.physical_fingerprint = "uuid:test-gpu";
+    measured.build = cyxwiz::GetVersionString();
+    measured.tokens_per_second = 6585.0;
+    measured.step_ms_median = 311.0;
+    std::string error;
+    REQUIRE(cyxwiz::SaveTrainingBenchmarkResults(cyxwiz::GetTrainingBenchmarkCachePath(), {measured}, error));
+
+    const auto info = cyxwiz::servernode::HardwareDetector::DetectHardwareInfo("node-capability-test");
+    // What the central server receives: serialize and parse back.
+    std::string wire;
+    REQUIRE(info.SerializeToString(&wire));
+    cyxwiz::protocol::NodeInfo received;
+    REQUIRE(received.ParseFromString(wire));
+
+    CHECK(received.compute_score() == 6585.0);
+    REQUIRE(received.routes_size() == 2);
+    CHECK(received.routes(0).backend() == "arrayfire_opencl");
+    CHECK(received.routes(0).device_name() == "Test GPU");
+    CHECK(received.routes(0).driver_version() == "32.0");
+    CHECK(received.routes(0).certified());
+    CHECK(received.routes(0).operations_passed() == 23);
+    REQUIRE(received.routes(0).has_benchmark());
+    CHECK(received.routes(0).benchmark().ok());
+    CHECK(received.routes(0).benchmark().current());
+    CHECK(received.routes(0).benchmark().tokens_per_second() == 6585.0);
+    CHECK_FALSE(received.routes(1).has_benchmark());
+    CHECK(received.environment().fingerprint().size() == 64);
+    CHECK(received.environment().route_matrix_id() == "node-capability-test");
+    CHECK(received.environment().cyxwiz_build() == cyxwiz::GetVersionString());
+
+    cyxwiz::ClearRouteQualificationSnapshot();
+    fs::remove_all(root, ec);
 }
 
 // Main function to run tests

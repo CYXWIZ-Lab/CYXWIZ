@@ -34,6 +34,9 @@ struct DeviceAllocation {
 class HardwareDetector {
 public:
     static protocol::NodeInfo DetectHardwareInfo(const std::string& node_id);
+    // Verified routes, their training benchmarks, environment fingerprint and
+    // compute_score (TOFIX118 P3).
+    static void FillMeasuredCapability(protocol::NodeInfo* node_info);
     static int64_t GetAvailableRAM();  // Public - needed for heartbeat updates
 
 private:

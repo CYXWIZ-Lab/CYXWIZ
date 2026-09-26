@@ -46,6 +46,51 @@ message NodeInfo {
 
   // Pricing
   NodePricing pricing = 25;                // Pricing configuration
+
+  // Measured training capability (TOFIX118 P3). compute_score (11) is the
+  // best current training benchmark in tokens/s over these routes.
+  repeated RouteCapability routes = 26;    // each route this machine verified
+  EnvironmentFingerprint environment = 27;
+}
+
+// A device route the node verified (route-qualification evidence) and how
+// fast it trains.
+message RouteCapability {
+  string backend = 1;               // e.g. arrayfire_cuda, arrayfire_opencl
+  int32 device_id = 2;
+  string device_name = 3;
+  string device_kind = 4;           // gpu, cpu, ... ("" when unknown)
+  string physical_fingerprint = 5;  // stable device identity
+  string provider = 6;
+  string driver_version = 7;
+  string runtime_version = 8;
+  bool certified = 9;               // passed every required operation
+  int32 operations_passed = 10;
+  int32 operation_count = 11;
+  TrainingBenchmark benchmark = 12;  // unset: never benchmarked
+}
+
+// The standard training benchmark (cyxwiz-causal-lm-train-v1) on one route.
+message TrainingBenchmark {
+  string benchmark_id = 1;
+  bool ok = 2;
+  string error = 3;                 // why it failed
+  bool current = 4;                 // measured by this build on this device
+  double tokens_per_second = 5;
+  double step_ms_median = 6;
+  double step_ms_p90 = 7;
+  int64 native_cpu_fallbacks = 8;
+  string build = 9;
+  string measured_at = 10;          // UTC ISO 8601
+}
+
+// Same fingerprint = same CyxWiz build, OS and verified devices/drivers.
+message EnvironmentFingerprint {
+  string cyxwiz_build = 1;
+  string os = 2;
+  string route_matrix_id = 3;
+  string compute_contract_id = 4;
+  string fingerprint = 5;           // SHA-256 hex
 }
 
 // Pricing configuration for compute nodes

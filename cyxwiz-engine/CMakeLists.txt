@@ -5033,6 +5033,10 @@ target_link_libraries(test_graph_training_job PRIVATE cyxwiz-training-core)
 add_executable(test_training_benchmark tests/test_training_benchmark.cpp)
 target_link_libraries(test_training_benchmark PRIVATE cyxwiz-training-core)
 
+# ===== Test: measured machine capability (TOFIX118 P3 S2) =====
+add_executable(test_machine_capability tests/test_machine_capability.cpp)
+target_link_libraries(test_machine_capability PRIVATE cyxwiz-training-core)
+
 # ===== Test: Engine vs Server Node training parity (TOFIX118 P2 slice 4) =====
 # The Engine path (launcher preparation + MainWindow's dispatch + TrainingManager)
 # and the node path (RunGraphTrainingJob) train the same graph, data and seed.

@@ -85,6 +85,7 @@ add_library(cyxwiz-training-core STATIC
     ${_cyxwiz_engine_src}/core/sha256_digest.cpp
     ${_cyxwiz_engine_src}/core/compute_runtime_config.cpp
     ${_cyxwiz_engine_src}/core/training_benchmark.cpp
+    ${_cyxwiz_engine_src}/core/machine_capability.cpp
 )
 target_include_directories(cyxwiz-training-core PUBLIC ${_cyxwiz_engine_src})
 target_link_libraries(cyxwiz-training-core PUBLIC
