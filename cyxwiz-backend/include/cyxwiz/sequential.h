@@ -394,6 +394,9 @@ public:
     Tensor ForwardSparseCsr(const LinearSparseCsrBatchView& input);
     void BackwardSparseCsr(const LinearSparseCsrBatchView& input,
                            const Tensor& grad_output);
+    // [batch, seq, in] -> [batch, seq, out] without layout copies (LinearLayer).
+    Tensor ForwardSequence(const Tensor& input);
+    Tensor BackwardSequence(const Tensor& grad_output);
     std::map<std::string, Tensor> GetParameters() override;
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;

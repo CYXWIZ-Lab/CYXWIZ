@@ -28,6 +28,24 @@ CYXWIZ_API std::mt19937& NativeRandomEngine();
 // process (the counter used to run on across runs).
 CYXWIZ_API uint64_t NextAttentionDropoutStream();
 
+// Profiling span (TOFIX118 P8): when a BackendDebugHooks listener is set,
+// times the enclosing scope and reports it as a "ModelSpan" event
+// ("name=<name> duration_ms=<ms>"). With CYXWIZ_PROFILE_STAGE_SYNC=1 it waits
+// for the device first, so the time is the span's device work. Free when
+// nothing listens.
+class CYXWIZ_API ScopedProfileSpan {
+public:
+    explicit ScopedProfileSpan(const char* name);
+    ~ScopedProfileSpan();
+    ScopedProfileSpan(const ScopedProfileSpan&) = delete;
+    ScopedProfileSpan& operator=(const ScopedProfileSpan&) = delete;
+
+private:
+    const char* name_;
+    bool active_;
+    int64_t start_ns_;
+};
+
 enum class ArrayFireFallbackPolicy {
     AllowNativeCpuFallback,
     ForbidNativeCpuFallback,

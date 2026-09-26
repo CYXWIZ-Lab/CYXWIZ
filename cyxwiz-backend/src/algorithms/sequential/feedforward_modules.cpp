@@ -34,6 +34,15 @@ Tensor LinearModule::Backward(const Tensor& grad_output) {
     return layer_->Backward(grad_output);
 }
 
+Tensor LinearModule::ForwardSequence(const Tensor& input) {
+    input_cache_ = input;
+    return layer_->ForwardSequence(input);
+}
+
+Tensor LinearModule::BackwardSequence(const Tensor& grad_output) {
+    return layer_->BackwardSequence(grad_output);
+}
+
 Tensor LinearModule::ForwardSparseCsr(
     const LinearSparseCsrBatchView& input) {
     return layer_->ForwardSparseCsr(input);
@@ -86,11 +95,7 @@ Tensor TimeDistributedDenseModule::Forward(const Tensor& input) {
             std::to_string(input_shape_[2]));
     }
 
-    const size_t batch = input_shape_[0];
-    const size_t seq_len = input_shape_[1];
-    Tensor flat = input.Reshape({batch * seq_len, in_features_});
-    Tensor projected = linear_.Forward(flat);
-    return projected.Reshape({batch, seq_len, out_features_});
+    return linear_.ForwardSequence(input);
 }
 
 Tensor TimeDistributedDenseModule::Backward(const Tensor& grad_output) {
@@ -107,11 +112,7 @@ Tensor TimeDistributedDenseModule::Backward(const Tensor& grad_output) {
             "TimeDistributedDenseModule: grad_output must be [batch, seq_len, out_features]");
     }
 
-    const size_t batch = input_shape_[0];
-    const size_t seq_len = input_shape_[1];
-    Tensor flat_grad = grad_output.Reshape({batch * seq_len, out_features_});
-    Tensor flat_input_grad = linear_.Backward(flat_grad);
-    return flat_input_grad.Reshape(input_shape_);
+    return linear_.BackwardSequence(grad_output);
 }
 
 std::map<std::string, Tensor> TimeDistributedDenseModule::GetParameters() {

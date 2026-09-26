@@ -101,7 +101,8 @@ int main(int argc, char** argv) {
         batch_ms.push_back(std::chrono::duration<double, std::milli>(now - last).count());
         last = now;
         losses.push_back(loss);
-        ++seen;
+        // Stage/layer totals cover steady state only (warm-up compiles kernels).
+        if (++seen == warmup) cyxwiz::TrainingTraceCollector::Instance().ResetTimings();
     };
     callbacks.should_cancel = [&] { return seen.load() >= batches; };
 

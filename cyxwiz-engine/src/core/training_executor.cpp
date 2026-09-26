@@ -1237,6 +1237,14 @@ void TrainingExecutor::Train(
             TrainingTraceCollector::Instance().RecordNamedTiming(
                 source + " " + index + " " + field("name"),
                 static_cast<float>(std::atof(field("duration_ms").c_str())));
+        } else if (source == "ModelSpan") {
+            const auto name_at = message.find("name=");
+            const auto duration_at = message.find(" duration_ms=");
+            if (name_at != std::string::npos && duration_at != std::string::npos) {
+                TrainingTraceCollector::Instance().RecordNamedTiming(
+                    "ModelSpan " + message.substr(name_at + 5, duration_at - name_at - 5),
+                    static_cast<float>(std::atof(message.c_str() + duration_at + 13)));
+            }
         } else if (source.rfind("Model", 0) == 0) {
             TrainingTraceCollector::Instance().RecordRuntimeEvent(source, message);
         } else {

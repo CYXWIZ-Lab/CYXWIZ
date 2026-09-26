@@ -503,7 +503,11 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& input) {
     if (shape[1] > static_cast<size_t>(std::numeric_limits<int>::max())) {
         throw std::invalid_argument("TransformerDecoderLayer sequence exceeds causal-mask size limit");
     }
-    Tensor causal_mask = GenerateCausalMask(static_cast<int>(shape[1]), options_.sliding_window);
+    Tensor causal_mask;
+    {
+        ScopedProfileSpan span("Decoder.causal_mask");
+        causal_mask = GenerateCausalMask(static_cast<int>(shape[1]), options_.sliding_window);
+    }
     self_attn_->DeclareStandardMask(true, options_.sliding_window);
 
     if (UsesModernPreNormPath()) {
@@ -511,14 +515,23 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& input) {
     }
 
     if (norm_first_) {
-        Tensor normed = norm1_->Forward(input);
-        Tensor self_attn_out = self_attn_->Forward(normed, normed, normed, &causal_mask);
+        Tensor normed;
+        {
+            ScopedProfileSpan span("Decoder.norm1");
+            normed = norm1_->Forward(input);
+        }
+        Tensor self_attn_out;
+        {
+            ScopedProfileSpan span("Decoder.attention");
+            self_attn_out = self_attn_->Forward(normed, normed, normed, &causal_mask);
+        }
         self_attn_out = dropout1_->Forward(self_attn_out);
 
         Tensor x = AddSameShape(input, self_attn_out);
         cached_self_attn_output_ = x;
         cached_cross_attn_output_ = x;
 
+        ScopedProfileSpan ffn_span("Decoder.norm2_ffn");
         Tensor normed2 = norm2_->Forward(x);
         Tensor ffn_out = FeedForward(FlattenTransformerSequenceForDense(normed2));
 

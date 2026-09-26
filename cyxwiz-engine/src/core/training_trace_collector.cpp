@@ -739,6 +739,11 @@ void TrainingTraceCollector::StartRun(const std::string& run_id) {
     MaybePersistLocked(true);
 }
 
+void TrainingTraceCollector::ResetTimings() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stage_timings_.clear();
+}
+
 void TrainingTraceCollector::RecordNamedTiming(const std::string& name, float duration_ms) {
     if (!(duration_ms >= 0.0f)) return;
     std::lock_guard<std::mutex> lock(mutex_);

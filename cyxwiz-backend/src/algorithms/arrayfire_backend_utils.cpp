@@ -1,6 +1,8 @@
 #include "arrayfire_backend_utils.h"
 
 #include <algorithm>
+#include <chrono>
+#include "cyxwiz/debug_hooks.h"
 #include <atomic>
 #include <cctype>
 #include <cstdlib>
@@ -19,6 +21,45 @@ namespace cyxwiz {
 namespace {
 std::atomic<uint64_t> g_attention_dropout_streams{0};
 }  // namespace
+
+namespace {
+bool ProfileStageSyncEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CYXWIZ_PROFILE_STAGE_SYNC");
+        return value && *value && std::string(value) != "0";
+    }();
+    return enabled;
+}
+
+int64_t SteadyNowNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+}  // namespace
+
+ScopedProfileSpan::ScopedProfileSpan(const char* name)
+    : name_(name), active_(BackendDebugHooks::HasDebugEventCallback()), start_ns_(0) {
+    if (!active_) return;
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (ProfileStageSyncEnabled()) af::sync();
+#endif
+    start_ns_ = SteadyNowNs();
+}
+
+ScopedProfileSpan::~ScopedProfileSpan() {
+    if (!active_) return;
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (ProfileStageSyncEnabled()) {
+        try {
+            af::sync();
+        } catch (...) {
+        }
+    }
+#endif
+    const double ms = static_cast<double>(SteadyNowNs() - start_ns_) / 1.0e6;
+    BackendDebugHooks::EmitDebugEvent("ModelSpan", std::string("name=") + name_ + " duration_ms=" + std::to_string(ms));
+}
 
 uint64_t NextAttentionDropoutStream() {
     return g_attention_dropout_streams.fetch_add(1) + 1;

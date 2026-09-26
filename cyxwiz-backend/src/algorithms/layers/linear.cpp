@@ -514,6 +514,81 @@ Tensor LinearLayer::ForwardSparseCsr(
     return output;
 }
 
+Tensor LinearLayer::ForwardSequence(const Tensor& input) {
+    const auto& shape = input.Shape();
+    if (shape.size() != 3 || shape[2] != in_features_) {
+        throw std::runtime_error("LinearLayer::ForwardSequence: input must be [batch, seq, in_features]");
+    }
+    const size_t positions = shape[0] * shape[1];
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsCurrentArrayFireBackendAvailable() && !ShouldForceArrayFireBackendFallbackForTesting("LinearLayer::Forward")) {
+        try {
+            const af::array x = af::moddims(input.GetSemanticArray().as(af::dtype::f32),
+                                            static_cast<dim_t>(positions), static_cast<dim_t>(in_features_));
+            const af::array w = weight_.GetArrayRowMajor2D().as(af::dtype::f32);
+            af::array y = af::matmul(x, w, AF_MAT_NONE, AF_MAT_TRANS);
+            if (use_bias_) {
+                const af::array b = af::moddims(bias_.GetArray(), 1, static_cast<dim_t>(out_features_)).as(af::dtype::f32);
+                y = y + af::tile(b, static_cast<unsigned int>(positions), 1);
+            }
+            y = af::moddims(y, static_cast<dim_t>(shape[0]), static_cast<dim_t>(shape[1]),
+                            static_cast<dim_t>(out_features_));
+            y.eval();
+            input_cache_ = input;
+            return Tensor::FromSemanticArray(y, {shape[0], shape[1], out_features_});
+        } catch (const af::exception& e) {
+            RecordLinearRuntimeFallback(
+                "LinearLayer::ForwardSequence", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
+                BuildLinearRuntimeFallbackContext(in_features_, out_features_, positions, use_bias_), shape,
+                {shape[0], shape[1], out_features_}, in_features_, out_features_, use_bias_);
+        }
+    }
+#endif
+    Tensor flat = Forward(input.Reshape({positions, in_features_}));
+    return flat.Reshape({shape[0], shape[1], out_features_});
+}
+
+Tensor LinearLayer::BackwardSequence(const Tensor& grad_output) {
+    const auto& shape = grad_output.Shape();
+    if (shape.size() != 3 || shape[2] != out_features_) {
+        throw std::runtime_error("LinearLayer::BackwardSequence: grad must be [batch, seq, out_features]");
+    }
+    const size_t positions = shape[0] * shape[1];
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (IsCurrentArrayFireBackendAvailable() && input_cache_.Shape().size() == 3 &&
+        !ShouldForceArrayFireBackendFallbackForTesting("LinearLayer::Backward")) {
+        try {
+            const af::array dy = af::moddims(grad_output.GetSemanticArray().as(af::dtype::f32),
+                                             static_cast<dim_t>(positions), static_cast<dim_t>(out_features_));
+            const af::array x = af::moddims(input_cache_.GetSemanticArray().as(af::dtype::f32),
+                                            static_cast<dim_t>(positions), static_cast<dim_t>(in_features_));
+            const af::array w = weight_.GetArrayRowMajor2D().as(af::dtype::f32);
+
+            af::array dw = af::matmul(dy, x, AF_MAT_TRANS, AF_MAT_NONE);
+            dw.eval();
+            weight_grad_ = Tensor::FromArrayRowMajor2D(dw);
+            if (use_bias_) {
+                af::array db = af::flat(af::sum(dy, 0));
+                db.eval();
+                bias_grad_ = Tensor(db);
+            }
+            af::array dx = af::moddims(af::matmul(dy, w), static_cast<dim_t>(shape[0]),
+                                       static_cast<dim_t>(shape[1]), static_cast<dim_t>(in_features_));
+            dx.eval();
+            return Tensor::FromSemanticArray(dx, {shape[0], shape[1], in_features_});
+        } catch (const af::exception& e) {
+            RecordLinearRuntimeFallback(
+                "LinearLayer::BackwardSequence", ClassifyArrayFireBackendFallbackReason(e.what()), e.what(),
+                BuildLinearRuntimeFallbackContext(in_features_, out_features_, positions, use_bias_), shape,
+                input_cache_.Shape(), in_features_, out_features_, false);
+        }
+    }
+#endif
+    if (input_cache_.Shape().size() == 3) input_cache_ = input_cache_.Reshape({positions, in_features_});
+    Tensor flat = Backward(grad_output.Reshape({positions, out_features_}));
+    return flat.Reshape({shape[0], shape[1], in_features_});
+}
+
 Tensor LinearLayer::Backward(const Tensor& grad_output) {
     const auto& grad_shape = grad_output.Shape();
     const auto& input_shape = input_cache_.Shape();

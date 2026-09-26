@@ -250,6 +250,9 @@ public:
     void RecordStageTiming(TrainingTraceStage stage, float duration_ms);
     // Same totals for a named span, e.g. "ModelForward 03 TransformerDecoder".
     void RecordNamedTiming(const std::string& name, float duration_ms);
+    // Clears the stage/layer totals (e.g. after warm-up, which includes
+    // one-time kernel compilation).
+    void ResetTimings();
     void RecordRuntimeWarning(const std::string& source,
                               const std::string& message);
     void RecordRuntimeEvent(const std::string& stage,

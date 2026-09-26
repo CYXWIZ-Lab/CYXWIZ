@@ -56,6 +56,16 @@ public:
     Tensor Backward(const Tensor& grad_output) override;
 
     /**
+     * @brief Token-wise projection of [batch, seq, in] -> [batch, seq, out]
+     * without layout copies (TOFIX118 P8): the semantic 3D array is already a
+     * [batch*seq, in] matrix in memory, so the multiplies run in place.
+     * Same parameters and gradients as Forward/Backward on the flattened
+     * input; falls back to that path when ArrayFire is unavailable.
+     */
+    Tensor ForwardSequence(const Tensor& input);
+    Tensor BackwardSequence(const Tensor& grad_output);
+
+    /**
      * Compute weight/bias gradients from the CSR input used for the matching
      * forward pass. No dense input gradient is produced because this method is
      * valid only at the first model layer.
