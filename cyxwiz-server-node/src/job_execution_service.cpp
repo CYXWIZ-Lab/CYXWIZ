@@ -755,6 +755,8 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
         }
         cyxwiz::protocol::EnvironmentFingerprint environment;
         FillEnvironmentFingerprint(cyxwiz::DetectMachineCapability().environment, &environment);
+        session->last_job_timing = timing;
+        session->last_job_environment = environment;
         const auto attach = [&](cyxwiz::protocol::TrainingComplete* complete) {
             *complete->mutable_timing() = timing;
             *complete->mutable_environment() = environment;
@@ -1363,6 +1365,8 @@ void JobExecutionServiceImpl::ReportJobComplete(const std::string& job_id, bool 
     std::map<std::string, double> final_metrics;
     int64_t training_time_seconds = 0;
     int32_t epochs_completed = 0;
+    cyxwiz::protocol::JobTiming timing;
+    cyxwiz::protocol::EnvironmentFingerprint environment;
 
     {
         std::lock_guard<std::mutex> lock(jobs_mutex_);
@@ -1370,6 +1374,8 @@ void JobExecutionServiceImpl::ReportJobComplete(const std::string& job_id, bool 
         if (it != active_jobs_.end()) {
             auto* session = it->second.get();
             reservation_id = session->reservation_id;
+            timing = session->last_job_timing;
+            environment = session->last_job_environment;
             epochs_completed = session->completed_epochs.load();
             // Calculate training time
             auto now = std::chrono::steady_clock::now();
@@ -1388,7 +1394,9 @@ void JobExecutionServiceImpl::ReportJobComplete(const std::string& job_id, bool 
             "",  // model_hash - TODO: compute hash of trained model
             final_metrics,
             training_time_seconds,
-            epochs_completed
+            epochs_completed,
+            &timing,
+            &environment
         );
 
         if (reported) {

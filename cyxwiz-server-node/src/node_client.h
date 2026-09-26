@@ -135,7 +135,9 @@ public:
         const std::string& model_hash = "",
         const std::map<std::string, double>& final_metrics = {},
         int64_t training_time_seconds = 0,
-        int32_t epochs_completed = 0
+        int32_t epochs_completed = 0,
+        const protocol::JobTiming* timing = nullptr,                 // TOFIX118 P3
+        const protocol::EnvironmentFingerprint* environment = nullptr
     );
 
     // Report reservation timer expired (triggers payment release)

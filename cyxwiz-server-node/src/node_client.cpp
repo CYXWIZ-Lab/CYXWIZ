@@ -826,7 +826,9 @@ bool NodeClient::ReportJobCompleteFromNode(
     const std::string& model_hash,
     const std::map<std::string, double>& final_metrics,
     int64_t training_time_seconds,
-    int32_t epochs_completed)
+    int32_t epochs_completed,
+    const protocol::JobTiming* timing,
+    const protocol::EnvironmentFingerprint* environment)
 {
     if (!is_registered_) {
         spdlog::error("Cannot report job complete: node not registered");
@@ -863,6 +865,8 @@ bool NodeClient::ReportJobCompleteFromNode(
     context.set_deadline(deadline);
     AddAuthMetadata(context);
 
+    if (timing) *request.mutable_timing() = *timing;
+    if (environment) *request.mutable_environment() = *environment;
     grpc::Status grpc_status = reservation_stub_->ReportJobCompleteFromNode(&context, request, &response);
 
     if (grpc_status.ok()) {

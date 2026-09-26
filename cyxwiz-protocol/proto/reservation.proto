@@ -234,6 +234,8 @@ message ReportJobCompleteFromNodeRequest {
   map<string, double> final_metrics = 6;
   int64 training_time_seconds = 7;
   int32 epochs_completed = 8;
+  JobTiming timing = 9;                    // where the time went (TOFIX118 P3)
+  EnvironmentFingerprint environment = 10; // what ran it
 }
 
 message ReportJobCompleteFromNodeResponse {

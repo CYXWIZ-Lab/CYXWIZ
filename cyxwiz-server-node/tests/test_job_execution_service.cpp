@@ -20,6 +20,10 @@
 #include "core/compute_runtime_paths.h"
 #include "core/training_benchmark.h"
 #include "execution.grpc.pb.h"
+#include "job.grpc.pb.h"
+#include "reservation.grpc.pb.h"
+#include "node.grpc.pb.h"
+#include <catch2/catch_approx.hpp>
 
 using namespace cyxwiz::server_node;
 using namespace cyxwiz::protocol;
@@ -1023,6 +1027,117 @@ TEST_CASE("Job timing splits a job's wall time", "[timing]") {
     timing = cyxwiz::servernode::MakeJobTiming(phases);
     CHECK(timing.samples_per_second() == 0.0);
     CHECK(timing.goodput() == 0.0);
+}
+
+// Against a running central server (CYXWIZ_TEST_CENTRAL_SERVER=host:port,
+// CYXWIZ_TEST_CENTRAL_JWT_SECRET = its [jwt] secret):
+// registration stores the measured capability, discovery reports useful
+// throughput, and a reported job's time split moves it (TOFIX118 P3 S5).
+TEST_CASE("Central server ranks a registered node by measured throughput", "[.][central_live]") {
+    namespace fs = std::filesystem;
+    const char* address = std::getenv("CYXWIZ_TEST_CENTRAL_SERVER");
+    if (address == nullptr || *address == '\0') SKIP("set CYXWIZ_TEST_CENTRAL_SERVER");
+
+    const fs::path root = fs::temp_directory_path() / "cyxwiz_central_live_test";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    cyxwiz::ScopedComputeRuntimeRootOverrideForTesting runtime_root(root);
+    cyxwiz::RouteQualificationSnapshot snapshot;
+    snapshot.matrix_id = "central-live-test";
+    cyxwiz::RouteQualificationRecord gpu;
+    gpu.type = cyxwiz::DeviceType::OPENCL;
+    gpu.physical_fingerprint = "uuid:live-gpu";
+    gpu.display_name = "Live Test GPU";
+    gpu.operation_count = gpu.pass_count = 23;
+    gpu.certified = true;
+    snapshot.routes = {gpu};
+    cyxwiz::InstallRouteQualificationSnapshot(snapshot);
+    cyxwiz::TrainingBenchmarkResult measured;
+    measured.ok = true;
+    measured.backend = "arrayfire_opencl";
+    measured.physical_fingerprint = "uuid:live-gpu";
+    measured.build = cyxwiz::GetVersionString();
+    measured.tokens_per_second = 6000.0;
+    std::string error;
+    REQUIRE(cyxwiz::SaveTrainingBenchmarkResults(cyxwiz::GetTrainingBenchmarkCachePath(), {measured}, error));
+
+    using jwt_traits = jwt::traits::nlohmann_json;
+    const char* secret = std::getenv("CYXWIZ_TEST_CENTRAL_JWT_SECRET");
+    REQUIRE(secret != nullptr);
+    const auto now = std::chrono::system_clock::now();
+    const std::string token = jwt::create<jwt_traits>()
+                                  .set_subject("central-live-test-user")
+                                  .set_issued_at(now)
+                                  .set_expires_at(now + std::chrono::hours(1))
+                                  .sign(jwt::algorithm::hs256{secret});
+    const auto authorize = [&](grpc::ClientContext& context) {
+        context.AddMetadata("authorization", "Bearer " + token);
+    };
+
+    cyxwiz::servernode::NodeClient client(address, "central-live-test-node");
+    client.SetAuthToken(token);
+    REQUIRE(client.Register());
+    const std::string node_id = client.GetNodeId();
+    REQUIRE_FALSE(node_id.empty());
+
+    auto channel = grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+    auto discovery = cyxwiz::protocol::NodeDiscoveryService::NewStub(channel);
+    const auto read_node = [&] {
+        cyxwiz::protocol::GetNodeInfoRequest request;
+        request.set_node_id(node_id);
+        cyxwiz::protocol::GetNodeInfoResponse response;
+        grpc::ClientContext context;
+        authorize(context);
+        const auto status = discovery->GetNodeInfo(&context, request, &response);
+        INFO(status.error_message());
+        REQUIRE(status.ok());
+        return response.info();
+    };
+
+    // No job history yet: the benchmark times the goodput prior (0.5).
+    auto info = read_node();
+    CHECK(info.compute_score() == Catch::Approx(3000.0));
+    REQUIRE(info.routes_size() == 1);
+    CHECK(info.routes(0).device_name() == "Live Test GPU");
+    CHECK(info.routes(0).benchmark().tokens_per_second() == Catch::Approx(6000.0));
+    CHECK(info.environment().fingerprint().size() == 64);
+
+    // Reserve the node (the P2P flow), then report a job whose training ran
+    // at 5000 tokens/s for 80% of its wall time, as the node does at the end
+    // of a job.
+    auto reservations = cyxwiz::protocol::JobReservationService::NewStub(channel);
+    cyxwiz::protocol::ReserveNodeRequest reserve;
+    reserve.set_node_id(node_id);
+    reserve.set_user_wallet("central-live-test-wallet");
+    reserve.set_duration_minutes(10);
+    cyxwiz::protocol::ReserveNodeResponse reserved;
+    {
+        grpc::ClientContext context;
+        authorize(context);
+        const auto status = reservations->ReserveNode(&context, reserve, &reserved);
+        INFO(status.error_message() << " / " << reserved.error().message());
+        REQUIRE(status.ok());
+    }
+    REQUIRE_FALSE(reserved.reservation_id().empty());
+    cyxwiz::protocol::JobTiming timing;
+    timing.set_train_seconds(8.0);
+    timing.set_wall_seconds(10.0);
+    timing.set_goodput(0.8);
+    timing.set_tokens_trained(40000);
+    timing.set_tokens_per_second(5000.0);
+    cyxwiz::protocol::EnvironmentFingerprint environment;
+    environment.set_cyxwiz_build(cyxwiz::GetVersionString());
+    environment.set_fingerprint(std::string(64, 'e'));
+    REQUIRE(client.ReportJobCompleteFromNode(reserved.reservation_id(), reserved.job_id(), true, "", {{"loss", 2.9}},
+                                             10, 1, &timing, &environment));
+
+    // Job history replaces the benchmark: 5000 x 0.8.
+    info = read_node();
+    CHECK(info.compute_score() == Catch::Approx(4000.0));
+
+    client.Disconnect();
+    cyxwiz::ClearRouteQualificationSnapshot();
+    fs::remove_all(root, ec);
 }
 
 // Main function to run tests

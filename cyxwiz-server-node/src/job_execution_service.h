@@ -161,6 +161,10 @@ private:
 
         // Timestamp for stale job detection
         std::chrono::steady_clock::time_point created_at{std::chrono::steady_clock::now()};
+        // The last job's time split and environment, reported to the central
+        // server with its completion (TOFIX118 P3).
+        cyxwiz::protocol::JobTiming last_job_timing;
+        cyxwiz::protocol::EnvironmentFingerprint last_job_environment;
 
         // Dataset download of a remote:// job (runs before training)
         std::shared_ptr<RemoteDatasetFetcher> dataset_fetcher;
