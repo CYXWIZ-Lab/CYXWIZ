@@ -12,6 +12,8 @@
 
 namespace cyxwiz {
 
+class IExecutableModel;
+
 bool VerifyCheckpointPayloadFile(
     const std::filesystem::path& checkpoint_directory,
     const CheckpointPayloadDescriptor& descriptor,
@@ -28,6 +30,21 @@ bool LoadModelPayloadV2(
     const std::filesystem::path& checkpoint_directory,
     const CheckpointPayloadDescriptor& descriptor,
     SequentialModel& model,
+    std::string& error);
+
+// Any executable model (SequentialModel-backed or graph): the payload is its
+// parameter map (TOFIX118 P4e - graph jobs checkpoint too).
+bool SaveModelPayloadV2(
+    const std::filesystem::path& checkpoint_directory,
+    const std::string& relative_path,
+    IExecutableModel& model,
+    CheckpointPayloadDescriptor& descriptor,
+    std::string& error);
+
+bool LoadModelPayloadV2(
+    const std::filesystem::path& checkpoint_directory,
+    const CheckpointPayloadDescriptor& descriptor,
+    IExecutableModel& model,
     std::string& error);
 
 bool SaveOptimizerPayloadV2(

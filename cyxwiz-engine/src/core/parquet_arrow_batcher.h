@@ -6,6 +6,7 @@
 #include <cyxwiz/tensor.h>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
@@ -65,6 +66,10 @@ public:
     // IBatcher interface
     Batch GetNextBatch() override;
     void Reset() override;
+    bool SetEpochShuffleSeed(uint64_t seed) override {
+        pending_epoch_seed_ = seed;
+        return true;
+    }
     bool IsEpochComplete() const override;
     size_t GetNumBatches() const override;
     size_t GetNumSamples() const override { return num_samples_; }
@@ -132,6 +137,7 @@ private:
     bool class_index_label_mode_ = false;
 
     std::mt19937 rng_;
+    std::optional<uint64_t> pending_epoch_seed_;  // see SetEpochShuffleSeed
 
     // Helpers
     void InitializeColumns();

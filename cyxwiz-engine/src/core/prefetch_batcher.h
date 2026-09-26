@@ -62,6 +62,8 @@ public:
         return batch;
     }
 
+    bool SetEpochShuffleSeed(uint64_t seed) override { return source_->SetEpochShuffleSeed(seed); }
+
     void Reset() override {
         StopWorker();
         source_->Reset();

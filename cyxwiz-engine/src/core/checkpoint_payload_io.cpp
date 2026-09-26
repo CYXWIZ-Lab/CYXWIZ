@@ -1,4 +1,5 @@
 #include "checkpoint_payload_io.h"
+#include "executable_model.h"
 #include "sha256_digest.h"
 
 #include <nlohmann/json.hpp>
@@ -344,26 +345,22 @@ bool VerifyCheckpointPayloadFile(
     return true;
 }
 
-bool SaveModelPayloadV2(
-    const fs::path& checkpoint_directory,
-    const std::string& relative_path,
-    const SequentialModel& model,
-    CheckpointPayloadDescriptor& descriptor,
-    std::string& error)
-{
-    auto& mutable_model = const_cast<SequentialModel&>(model);
-    const auto parameters = mutable_model.GetParameters();
+namespace {
+
+// The model payload is a parameter map; SequentialModel and executable
+// models share the same archive.
+template <typename Model>
+bool SaveModelParameters(const fs::path& checkpoint_directory, const std::string& relative_path, Model& model,
+                         CheckpointPayloadDescriptor& descriptor, std::string& error) {
+    const auto parameters = model.GetParameters();
     return WriteArchiveAtomic(
         checkpoint_directory, relative_path, "model_parameters", json::object(),
         parameters, CheckpointPayloadKind::ModelParameters, descriptor, error);
 }
 
-bool LoadModelPayloadV2(
-    const fs::path& checkpoint_directory,
-    const CheckpointPayloadDescriptor& descriptor,
-    SequentialModel& model,
-    std::string& error)
-{
+template <typename Model>
+bool LoadModelParameters(const fs::path& checkpoint_directory, const CheckpointPayloadDescriptor& descriptor,
+                         Model& model, std::string& error) {
     if (descriptor.kind != CheckpointPayloadKind::ModelParameters) {
         error = "checkpoint descriptor is not a model-parameters payload";
         return false;
@@ -389,6 +386,47 @@ bool LoadModelPayloadV2(
     }
     model.SetParameters(archive.tensors);
     return true;
+}
+
+}  // namespace
+
+bool SaveModelPayloadV2(
+    const fs::path& checkpoint_directory,
+    const std::string& relative_path,
+    const SequentialModel& model,
+    CheckpointPayloadDescriptor& descriptor,
+    std::string& error)
+{
+    return SaveModelParameters(checkpoint_directory, relative_path, const_cast<SequentialModel&>(model),
+                               descriptor, error);
+}
+
+bool LoadModelPayloadV2(
+    const fs::path& checkpoint_directory,
+    const CheckpointPayloadDescriptor& descriptor,
+    SequentialModel& model,
+    std::string& error)
+{
+    return LoadModelParameters(checkpoint_directory, descriptor, model, error);
+}
+
+bool SaveModelPayloadV2(
+    const fs::path& checkpoint_directory,
+    const std::string& relative_path,
+    IExecutableModel& model,
+    CheckpointPayloadDescriptor& descriptor,
+    std::string& error)
+{
+    return SaveModelParameters(checkpoint_directory, relative_path, model, descriptor, error);
+}
+
+bool LoadModelPayloadV2(
+    const fs::path& checkpoint_directory,
+    const CheckpointPayloadDescriptor& descriptor,
+    IExecutableModel& model,
+    std::string& error)
+{
+    return LoadModelParameters(checkpoint_directory, descriptor, model, error);
 }
 
 bool SaveOptimizerPayloadV2(

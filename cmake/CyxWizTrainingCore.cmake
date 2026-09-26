@@ -87,6 +87,9 @@ add_library(cyxwiz-training-core STATIC
     ${_cyxwiz_engine_src}/core/training_benchmark.cpp
     ${_cyxwiz_engine_src}/core/machine_capability.cpp
     ${_cyxwiz_engine_src}/core/graph_job_memory_probe.cpp
+    ${_cyxwiz_engine_src}/core/training_resume_checkpoint.cpp
+    ${_cyxwiz_engine_src}/core/checkpoint_manifest.cpp
+    ${_cyxwiz_engine_src}/core/checkpoint_payload_io.cpp
 )
 target_include_directories(cyxwiz-training-core PUBLIC ${_cyxwiz_engine_src})
 target_link_libraries(cyxwiz-training-core PUBLIC

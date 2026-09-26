@@ -9,6 +9,7 @@
 #include "arrow_dataset.h"
 #include "training_scheduler_controller.h"
 #include "training_randomness.h"
+#include "training_resume_checkpoint.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/optimizer.h>
 #include <cyxwiz/sequential.h>
@@ -112,6 +113,11 @@ struct TrainingMetrics {
     // Post-step learning rates, one entry per scheduler advance. The initial
     // rate is reported separately by learning_rate before the first advance.
     std::vector<double> learning_rate_history;
+
+    // Resume checkpoints (TOFIX118 P4e).
+    std::string last_resume_checkpoint;  // newest complete one written by this run
+    int resumed_after_epoch = 0;         // > 0: this run continued a checkpoint
+    bool resume_exact = false;           // seeds and data order replay exactly
 };
 
 struct ObjectiveEvaluationMetrics {
@@ -221,6 +227,13 @@ public:
      * Stop training (thread-safe, cooperative cancellation)
      */
     void Stop();
+
+    // Resume checkpoints (TOFIX118 P4e). Enable before Train: a checkpoint is
+    // written under `root` at every epoch end (the newest `keep` are kept).
+    void EnableResumeCheckpoints(std::filesystem::path root, TrainingResumeIdentity identity, int keep = 2);
+    // Continue from a checkpoint: Train restores it after building the model
+    // and starts at the epoch after it (refused for a different graph).
+    void SetResumeFrom(std::filesystem::path checkpoint);
 
     /**
      * Pause training (thread-safe)
@@ -345,6 +358,13 @@ private:
     // Graph lr_schedule (optimizer node): attached when the first epoch knows
     // its batch count, because the schedule is defined over optimizer updates.
     bool graph_schedule_pending_ = false;
+    // Resume checkpoints (TOFIX118 P4e).
+    std::filesystem::path resume_root_;
+    TrainingResumeIdentity resume_identity_;
+    int resume_keep_ = 2;
+    std::filesystem::path resume_from_;
+    std::optional<TrainingSchedulerResumeState> graph_schedule_resume_;
+    bool data_order_exact_ = true;
     bool empty_validation_reported_ = false;  // warned once per run
     int training_epochs_ = 1;
     void AttachGraphScheduleIfPending(size_t batches_per_epoch);

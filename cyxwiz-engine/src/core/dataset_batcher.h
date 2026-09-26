@@ -173,6 +173,11 @@ public:
 
     virtual SequenceBatch GetNextSequenceBatch() = 0;
     virtual void Reset() = 0;
+    // The next Reset() orders the epoch from `seed` alone (canonical order,
+    // then a shuffle seeded with it), so an epoch's order depends only on
+    // (run seed, epoch) and a resumed run replays it (TOFIX118 P4e). False:
+    // this batcher cannot, and its order after a resume may differ.
+    virtual bool SetEpochShuffleSeed(uint64_t /*seed*/) { return false; }
     virtual bool IsEpochComplete() const = 0;
     virtual size_t GetNumBatches() const = 0;
     virtual size_t GetNumSamples() const = 0;
@@ -188,6 +193,11 @@ public:
 
     virtual Batch GetNextBatch() = 0;
     virtual void Reset() = 0;
+    // The next Reset() orders the epoch from `seed` alone (canonical order,
+    // then a shuffle seeded with it), so an epoch's order depends only on
+    // (run seed, epoch) and a resumed run replays it (TOFIX118 P4e). False:
+    // this batcher cannot, and its order after a resume may differ.
+    virtual bool SetEpochShuffleSeed(uint64_t /*seed*/) { return false; }
     virtual bool IsEpochComplete() const = 0;
     virtual size_t GetNumBatches() const = 0;
     virtual size_t GetNumSamples() const = 0;
@@ -471,6 +481,10 @@ public:
     // IBatcher interface
     Batch GetNextBatch() override;
     void Reset() override;
+    bool SetEpochShuffleSeed(uint64_t seed) override {
+        pending_epoch_seed_ = seed;
+        return true;
+    }
     bool IsEpochComplete() const override;
     size_t GetNumBatches() const override;
     size_t GetNumSamples() const override { return indices_.size(); }
@@ -522,6 +536,7 @@ private:
     size_t current_index_ = 0;
     std::mt19937 rng_;
     std::mt19937 balance_rng_;
+    std::optional<uint64_t> pending_epoch_seed_;  // see SetEpochShuffleSeed
     uint32_t balance_seed_ = 42;
     uint32_t balance_epoch_ = 0;
     bool balance_classes_ = false;

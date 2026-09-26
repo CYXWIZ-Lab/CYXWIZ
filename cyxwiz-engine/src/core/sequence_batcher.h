@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <utility>
 #include <vector>
@@ -135,9 +136,20 @@ public:
         return batch;
     }
 
+    bool SetEpochShuffleSeed(uint64_t seed) override {
+        pending_epoch_seed_ = seed;
+        return true;
+    }
+
     void Reset() override {
         current_index_ = 0;
         auto& active_indices = ActiveIndices();
+        if (pending_epoch_seed_) {
+            // Shuffles permute in place, so start from the canonical order.
+            std::sort(active_indices.begin(), active_indices.end());
+            rng_.seed(static_cast<std::mt19937::result_type>(*pending_epoch_seed_));
+            pending_epoch_seed_.reset();
+        }
         if (split_mode_) {
             if (current_phase_ == BatcherPhase::Train && config_.shuffle) {
                 std::shuffle(active_indices.begin(), active_indices.end(), rng_);
@@ -293,6 +305,7 @@ private:
     BatcherPhase current_phase_ = BatcherPhase::Train;
     size_t current_index_ = 0;
     std::mt19937 rng_;
+    std::optional<uint64_t> pending_epoch_seed_;  // see SetEpochShuffleSeed
 };
 
 } // namespace cyxwiz

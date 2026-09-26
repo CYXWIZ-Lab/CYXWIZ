@@ -10,6 +10,7 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <thread>
 #include <algorithm>
 #include <optional>
 #include <mutex>
@@ -183,6 +184,96 @@ int main() {
         const auto result = cyxwiz::RunGraphTrainingJob(request);
         Check(result.ok, "job with a validation role succeeded" +
                              (result.error.empty() ? "" : " (" + result.error + ")"));
+    }
+
+    std::cout << "resumes exactly from an epoch checkpoint\n";
+    {
+        // Seeded, shuffled and with dropout, so randomness and data order
+        // both have to replay for the losses to match.
+        nlohmann::json graph = LoadTokenWindowGraph(root);
+        for (auto& node : graph["nodes"]) {
+            auto& params = node["parameters"];
+            if (params.contains("dropout")) params["dropout"] = "0.1";
+            if (params.contains("batch_size")) {
+                params["model_seed"] = "7";
+                params["seed"] = "11";
+                params["shuffle"] = "true";
+                params["batch_size"] = "2";
+            }
+        }
+        struct Step {
+            int epoch;
+            int batch;
+            float loss;
+        };
+        const auto run = [&](const std::string& root_name, const std::string& resume_from, int stop_at_epoch,
+                             std::vector<Step>& steps) {
+            cyxwiz::GraphTrainingJobRequest request;
+            request.graph_json = graph.dump();
+            request.dataset_files["tiny_causal_lm_tokens"] = parquet.string();
+            request.epochs_override = 3;
+            request.checkpoint_dir_override = (work / (root_name + "_best")).string();
+            request.resume_checkpoint_root = (work / root_name).string();
+            request.resume_from = resume_from;
+            std::atomic<bool> stop{false};
+            cyxwiz::GraphTrainingJobCallbacks callbacks;
+            callbacks.on_batch = [&](int epoch, int batch, int, float loss, float) {
+                if (stop_at_epoch > 0 && epoch >= stop_at_epoch) {
+                    // Hold this batch until the runner's watcher (200 ms poll)
+                    // has stopped the executor, so the run cannot finish the
+                    // epoch and checkpoint it first.
+                    stop = true;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+                    return;
+                }
+                steps.push_back({epoch, batch, loss});
+            };
+            callbacks.should_cancel = [&] { return stop.load(); };
+            return cyxwiz::RunGraphTrainingJob(request, callbacks);
+        };
+
+        std::vector<Step> uninterrupted;
+        const auto full = run("resume_full", "", 0, uninterrupted);
+        Check(full.ok, "uninterrupted seeded run" + (full.error.empty() ? "" : " (" + full.error + ")"));
+        Check(!full.metrics.last_resume_checkpoint.empty(), "checkpoints are written at epoch ends");
+
+        std::vector<Step> first_part;
+        const auto interrupted = run("resume_split", "", 2, first_part);
+        Check(interrupted.cancelled, "the second run stops during epoch 2");
+        std::vector<Step> resumed_steps;
+        const auto resumed = run("resume_split", "latest", 0, resumed_steps);
+        Check(resumed.ok, "resumed from the newest checkpoint" + (resumed.error.empty() ? "" : " (" + resumed.error + ")"));
+        Check(resumed.metrics.resumed_after_epoch == 1, "resume continues after epoch 1");
+        Check(resumed.metrics.resume_exact, "the resume is declared exact (seeded run and data order)");
+
+        std::vector<Step> expected;
+        for (const auto& step : uninterrupted) {
+            if (step.epoch >= 2) expected.push_back(step);
+        }
+        bool identical = !expected.empty() && expected.size() == resumed_steps.size();
+        for (size_t i = 0; identical && i < expected.size(); ++i) {
+            identical = expected[i].epoch == resumed_steps[i].epoch && expected[i].batch == resumed_steps[i].batch &&
+                        expected[i].loss == resumed_steps[i].loss;
+        }
+        Check(identical, "epochs 2-3 after resuming match the uninterrupted run bit for bit (" +
+                             std::to_string(resumed_steps.size()) + " batches)");
+        Check(resumed.metrics.loss_history.size() == 3, "the loss history spans all three epochs");
+
+        // A checkpoint does not resume into a different graph.
+        nlohmann::json other = graph;
+        for (auto& node : other["nodes"]) {
+            if (node["parameters"].contains("dropout")) node["parameters"]["dropout"] = "0.2";
+        }
+        cyxwiz::GraphTrainingJobRequest wrong;
+        wrong.graph_json = other.dump();
+        wrong.dataset_files["tiny_causal_lm_tokens"] = parquet.string();
+        wrong.epochs_override = 3;
+        wrong.checkpoint_dir_override = (work / "resume_wrong_best").string();
+        wrong.resume_checkpoint_root = (work / "resume_split").string();
+        wrong.resume_from = "latest";
+        const auto refused = cyxwiz::RunGraphTrainingJob(wrong);
+        Check(!refused.ok && Contains(refused.error, "different graph"),
+              "a different graph refuses the checkpoint: " + refused.error);
     }
 
     std::cout << "measures one step's device memory\n";

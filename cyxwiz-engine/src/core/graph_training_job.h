@@ -31,6 +31,12 @@ struct GraphTrainingJobRequest {
     int epochs_override = 0;       // 0 = the graph's Data Loader
     int batch_size_override = 0;   // 0 = the graph's Data Loader
     std::string checkpoint_dir_override;
+    // Resume checkpoints (TOFIX118 P4e): written at every epoch end under
+    // this folder when set; resume_from continues a run from a checkpoint
+    // folder, or from the newest one under resume_checkpoint_root when it is
+    // "latest".
+    std::string resume_checkpoint_root;
+    std::string resume_from;
 };
 
 struct GraphTrainingJobCallbacks {

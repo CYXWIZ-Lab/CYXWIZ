@@ -263,8 +263,6 @@ set(ENGINE_SOURCES
     src/utils/labeling_utils.cpp
     src/core/test_manager.cpp
     src/core/graph_compile_task.cpp
-    src/core/checkpoint_manifest.cpp
-    src/core/checkpoint_payload_io.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
     src/core/model_analyzer.cpp
@@ -3836,6 +3834,10 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/parquet_arrow_batcher.cpp
     src/core/dataset_base.cpp
     src/core/checkpoint_manager.cpp
+    src/core/training_resume_checkpoint.cpp
+    src/core/checkpoint_manifest.cpp
+    src/core/checkpoint_payload_io.cpp
+    src/core/sha256_digest.cpp
     src/core/crash_run_recorder.cpp
     src/core/training_trace_collector.cpp
     src/core/route_qualification_snapshot.cpp
@@ -3850,6 +3852,7 @@ target_include_directories(test_saved_ner_sequence_smoke PRIVATE
 )
 
 target_link_libraries(test_saved_ner_sequence_smoke PRIVATE
+    OpenSSL::Crypto
     Arrow::arrow_shared
     Parquet::parquet_shared
     imgui::imgui
@@ -3908,6 +3911,10 @@ add_executable(cyxwiz-graph-compile-check
     src/core/parquet_arrow_batcher.cpp
     src/core/dataset_base.cpp
     src/core/checkpoint_manager.cpp
+    src/core/training_resume_checkpoint.cpp
+    src/core/checkpoint_manifest.cpp
+    src/core/checkpoint_payload_io.cpp
+    src/core/sha256_digest.cpp
     src/core/crash_run_recorder.cpp
     src/core/training_trace_collector.cpp
     src/core/route_qualification_snapshot.cpp
@@ -3922,6 +3929,7 @@ target_include_directories(cyxwiz-graph-compile-check PRIVATE
 )
 
 target_link_libraries(cyxwiz-graph-compile-check PRIVATE
+    OpenSSL::Crypto
     Arrow::arrow_shared
     Parquet::parquet_shared
     imgui::imgui

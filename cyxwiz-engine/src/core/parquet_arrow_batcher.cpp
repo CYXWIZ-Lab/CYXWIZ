@@ -380,6 +380,12 @@ size_t ParquetArrowBatcher::CountPartitionRowsInGroup(int row_group_idx) const {
 // -----------------------------------------------------------------------------
 
 void ParquetArrowBatcher::Reset() {
+    if (pending_epoch_seed_) {
+        // The group order restarts from assigned_row_groups_ (canonical); the
+        // generator is the only history.
+        rng_.seed(static_cast<std::mt19937::result_type>(*pending_epoch_seed_));
+        pending_epoch_seed_.reset();
+    }
     ShuffleEpochGroupOrder();
     current_group_position_ = 0;
     current_table_.reset();
