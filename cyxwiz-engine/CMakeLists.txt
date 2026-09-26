@@ -34,20 +34,11 @@ endif()
 # Cross-platform native file dialogs
 find_package(nfd CONFIG REQUIRED)
 
-# Apache Arrow for Data Studio columnar data support
-find_package(Arrow CONFIG REQUIRED)
-find_package(Parquet CONFIG REQUIRED)
+# Plugin training hooks and the training core (TOFIX118 P2): shared with the
+# Server Node. This also owns Arrow/Parquet discovery and portable target
+# normalization for the training core and the Engine's Data Studio.
+include(${CMAKE_SOURCE_DIR}/cmake/CyxWizTrainingCore.cmake)
 message(STATUS "Apache Arrow ${Arrow_VERSION} found - Columnar data support enabled")
-
-# The macOS vcpkg triplet builds Arrow and Parquet statically.  Keep the
-# existing link declarations portable by providing their shared-target names
-# as aliases when only static targets are available.
-if(NOT TARGET Arrow::arrow_shared AND TARGET Arrow::arrow_static)
-    add_library(Arrow::arrow_shared ALIAS Arrow::arrow_static)
-endif()
-if(NOT TARGET Parquet::parquet_shared AND TARGET Parquet::parquet_static)
-    add_library(Parquet::parquet_shared ALIAS Parquet::parquet_static)
-endif()
 
 # DuckDB for zero-copy SQL queries on Arrow tables
 find_package(DuckDB CONFIG REQUIRED)
@@ -74,10 +65,6 @@ set(CYXWIZ_HAS_OPENCV ON)
 
 # ImNodes for visual node editor - integrated manually
 # Source: https://github.com/Nelarius/imnodes
-
-# Plugin training hooks and the training core (TOFIX118 P2): shared with the
-# Server Node, defined in cmake/CyxWizTrainingCore.cmake.
-include(${CMAKE_SOURCE_DIR}/cmake/CyxWizTrainingCore.cmake)
 
 # Plugin SDK static library (shared between engine and plugins)
 add_library(cyxwiz-plugin-sdk STATIC
