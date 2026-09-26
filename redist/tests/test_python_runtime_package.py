@@ -39,6 +39,26 @@ class PythonRuntimePackageTests(unittest.TestCase):
         ):
             self.assertTrue(policy(PurePosixPath(relative), "darwin"), relative)
         self.assertTrue(policy(PurePosixPath("python312.pdb"), "windows"))
+        for relative, system in (
+            ("lib/libtcl9.0.dylib", "darwin"),
+            ("lib/thread3.0.6/libtcl9thread3.0.6.dylib", "darwin"),
+            ("lib/itcl4.3.8/libitcl4.3.8.dylib", "darwin"),
+            ("lib/tk9.0/tk.tcl", "linux"),
+            ("lib/python3.12/lib-dynload/_tkinter.cpython-312-x86_64-linux-gnu.so", "linux"),
+            ("lib/python3.12/tkinter/__init__.py", "linux"),
+            ("tcl/tcl8.6/init.tcl", "windows"),
+            ("DLLs/tcl86t.dll", "windows"),
+            ("DLLs/_tkinter.pyd", "windows"),
+            ("Lib/idlelib/idle.py", "windows"),
+        ):
+            self.assertTrue(policy(PurePosixPath(relative), system), relative)
+        for relative, system in (
+            ("lib/python3.12/threading.py", "linux"),
+            ("Lib/threading.py", "windows"),
+            ("DLLs/_ssl.pyd", "windows"),
+            ("lib/python3.12/lib-dynload/_ssl.cpython-312-darwin.so", "darwin"),
+        ):
+            self.assertFalse(policy(PurePosixPath(relative), system), relative)
         self.assertFalse(policy(PurePosixPath("Scripts/pip.exe"), "windows"))
 
     @unittest.skipIf(sys.platform == "win32", "Requires POSIX symlinks")

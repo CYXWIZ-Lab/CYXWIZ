@@ -50,6 +50,27 @@ def copy_python_runtime(source: Path, destination: Path) -> None:
     shutil.copytree(source, destination, ignore=ignored_names)
 
 
+_TK_PACKAGES = {"tkinter", "idlelib", "turtledemo"}
+_TK_LIBRARY_NAME = re.compile(r"(lib)?(tcl|tk|itcl|thread|tdbc)[0-9]", re.IGNORECASE)
+
+
+def _is_tk_content(lowered: tuple[str, ...]) -> bool:
+    """Tcl/Tk only serves tkinter, a desktop GUI toolkit that embedded
+    scripting inside the Engine does not use (and its macOS libraries carry
+    non-relocatable install names)."""
+    if any(part in _TK_PACKAGES for part in lowered):
+        return True
+    if lowered[-1].startswith("_tkinter"):
+        return True
+    if lowered[0] == "tcl":
+        return True
+    return (
+        lowered[0] in ("lib", "dlls")
+        and len(lowered) >= 2
+        and _TK_LIBRARY_NAME.match(lowered[1]) is not None
+    )
+
+
 def excludes_standalone_python_path(relative_path: PurePath, system: str) -> bool:
     """Return whether a python-build-standalone path stays out of packages.
 
@@ -61,11 +82,13 @@ def excludes_standalone_python_path(relative_path: PurePath, system: str) -> boo
         return True
     if relative_path.suffix.casefold() == ".pdb":
         return True
-    if system == "windows":
-        return False
     parts = relative_path.parts
     lowered = tuple(part.casefold() for part in parts)
     if not lowered:
+        return False
+    if _is_tk_content(lowered):
+        return True
+    if system == "windows":
         return False
     if lowered[0] == "share" or lowered[:2] == ("lib", "pkgconfig"):
         return True
