@@ -825,6 +825,13 @@ PythonEngine::PythonSelection PythonEngine::ResolvePythonConfig() const {
 
     // Priority 1: Check for project venv
     std::string project_venv = ReadProjectInterpreterOverride();
+    if (!project_venv.empty() && std::filesystem::exists(project_venv)) {
+        std::string repair_message;
+        if (!cyxwiz::RepairProjectVenvBase(project_venv, &repair_message)) {
+            spdlog::warn("{}; using the Engine's Python for this session", repair_message);
+            project_venv.clear();
+        }
+    }
     if (!project_venv.empty()) {
         if (std::filesystem::exists(project_venv)) {
             selection.interpreter_path = project_venv;

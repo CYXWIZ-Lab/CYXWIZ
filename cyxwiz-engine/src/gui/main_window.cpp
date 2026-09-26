@@ -6340,6 +6340,38 @@ void MainWindow::OnProjectVenvReady(const std::string& project_root) {
     }
 }
 
+void MainWindow::RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm) {
+    using SetupState = cyxwiz::ProjectManager::PythonEnvSetupState;
+    const auto status = pm.GetPythonEnvSetupStatus();
+    if (status.state == SetupState::None || status.project_root != pm.GetProjectRoot()) {
+        return;
+    }
+    const auto age = std::chrono::steady_clock::now() - status.changed;
+    ImGui::SameLine(0.0f, 16.0f);
+    switch (status.state) {
+        case SetupState::Pending:
+            ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "%s %s", ICON_FA_SPINNER,
+                               status.message.c_str());
+            break;
+        case SetupState::Ready:
+            // Confirm briefly, then get out of the way.
+            if (age < std::chrono::seconds(8)) {
+                ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "%s %s",
+                                   ICON_FA_CIRCLE_CHECK, status.message.c_str());
+            }
+            break;
+        case SetupState::Failed:
+            ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.25f, 1.0f), "%s Python environment setup failed",
+                               ICON_FA_TRIANGLE_EXCLAMATION);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", status.message.c_str());
+            }
+            break;
+        case SetupState::None:
+            break;
+    }
+}
+
 void MainWindow::RenderStatusBar() {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float status_bar_height = 24.0f;
@@ -6361,6 +6393,7 @@ void MainWindow::RenderStatusBar() {
         auto& pm = cyxwiz::ProjectManager::Instance();
         if (pm.HasActiveProject()) {
             ImGui::Text("%s %s", ICON_FA_FOLDER_OPEN, pm.GetProjectName().c_str());
+            RenderPythonEnvSetupStatus(pm);
         } else {
             ImGui::TextDisabled("%s No Project", ICON_FA_FOLDER);
         }
