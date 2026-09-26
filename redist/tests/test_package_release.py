@@ -430,8 +430,12 @@ class PackageReleaseTests(unittest.TestCase):
         for name in ("libaf.3.10.0.dylib", "libaf.3.dylib"):
             (library_dir / name).write_bytes(body)
         (library_dir / "libafcpu.3.dylib").write_bytes(body)
+        # Homebrew bottles are read-only; the staged copy keeps that mode.
+        (library_dir / "libaf.3.dylib").chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
 
         patched = package_release.isolate_packaged_arrayfire(library_dir)
+        self.assertFalse((library_dir / "libaf.3.dylib").stat().st_mode & stat.S_IWUSR)
+        (library_dir / "libaf.3.dylib").chmod(stat.S_IRUSR | stat.S_IWUSR)
 
         self.assertEqual(["libaf.3.10.0.dylib", "libaf.3.dylib"], [p.name for p in patched])
         data = (library_dir / "libaf.3.dylib").read_bytes()

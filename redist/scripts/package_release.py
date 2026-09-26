@@ -615,7 +615,13 @@ def isolate_arrayfire_unified_loader(library: Path) -> int:
             f"{library.name} has none of ArrayFire's known system search paths; "
             "review the unified loader before packaging this ArrayFire version"
         )
-    library.write_bytes(data)
+    # Homebrew installs its libraries read-only and staging keeps the mode.
+    mode = library.stat().st_mode
+    library.chmod(mode | stat.S_IWUSR)
+    try:
+        library.write_bytes(data)
+    finally:
+        library.chmod(mode)
     return replaced
 
 
@@ -635,10 +641,15 @@ def isolate_packaged_arrayfire(library_dir: Path) -> list[Path]:
 def adhoc_codesign(paths: Sequence[Path]) -> None:
     """Re-sign patched Mach-O files; arm64 refuses to load invalid signatures."""
     for path in paths:
-        result = subprocess.run(
-            ["codesign", "--force", "--sign", "-", str(path)],
-            capture_output=True, text=True,
-        )
+        mode = path.stat().st_mode
+        path.chmod(mode | stat.S_IWUSR)
+        try:
+            result = subprocess.run(
+                ["codesign", "--force", "--sign", "-", str(path)],
+                capture_output=True, text=True,
+            )
+        finally:
+            path.chmod(mode)
         if result.returncode != 0:
             raise PackageError(
                 f"Cannot re-sign {path.name}: {(result.stderr or result.stdout).strip()}"
