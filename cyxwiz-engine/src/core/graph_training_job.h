@@ -17,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -51,5 +52,23 @@ struct GraphTrainingJobResult {
 // thread and returns the outcome.
 GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& request,
                                            const GraphTrainingJobCallbacks& callbacks = {});
+
+// Remote jobs ship whole dataset files to the node (owner decision
+// 2026-09-26): the Data Input datasets a graph trains from, and the supplied
+// Test inputs (Data Split's Test role) that never leave the host.
+struct GraphJobDatasetPlan {
+    std::vector<std::string> ship;          // dataset_name of each training/validation input
+    std::vector<std::string> kept_private;  // dataset_name of each supplied Test input
+};
+
+// False with a reason for a graph RunGraphTrainingJob would refuse
+// (preparation steps, subgraphs, unreadable) - checked before anything is sent.
+bool PlanGraphJobDatasets(const std::string& graph_json, GraphJobDatasetPlan& plan, std::string& error);
+
+// The job's graph with each shipped Data Input reading its local file and the
+// `drop` inputs (with their links) removed. Every remaining Data Input needs
+// a file. The rest of the document is unchanged.
+bool BindGraphJobDatasets(const std::string& graph_json, const std::map<std::string, std::string>& files,
+                          const std::vector<std::string>& drop, std::string& bound_json, std::string& error);
 
 }  // namespace cyxwiz

@@ -10,7 +10,7 @@
 #include <grpcpp/grpcpp.h>
 #include "execution.grpc.pb.h"
 #include "job.pb.h"
-#include "dataset_provider.h"
+#include "dataset_file_server.h"
 
 namespace network {
 
@@ -143,13 +143,12 @@ public:
     void ClearAuthToken() { auth_token_.clear(); }
     bool HasAuthToken() const { return !auth_token_.empty(); }
 
-    // Dataset provider for lazy-loading streaming
-    DatasetProvider& GetDatasetProvider() { return dataset_provider_; }
-    const DatasetProvider& GetDatasetProvider() const { return dataset_provider_; }
-
-    // Register a dataset for streaming to Server Node
-    void RegisterDatasetForJob(const std::string& job_id, cyxwiz::DatasetHandle dataset);
-    void UnregisterDatasetForJob(const std::string& job_id);
+    // Remote jobs ship whole dataset files (TOFIX118 P2): registers the job's
+    // graph datasets, served when the node asks; false with the reason when
+    // the node could not train the graph or a dataset is not loaded. Exports
+    // go inside the open project (the system drive may be full), else temp.
+    bool RegisterJobDatasets(const std::string& job_id, const std::string& graph_json, std::string& error);
+    void UnregisterJobDatasets(const std::string& job_id);
 
 private:
     // Add authorization header to gRPC context
@@ -160,8 +159,8 @@ private:
     // Send control command during streaming
     bool SendTrainingCommand(const cyxwiz::protocol::TrainingCommand& command);
 
-    // Handle dataset requests from Server Node
-    void HandleDatasetRequest(const cyxwiz::protocol::TrainingUpdate& update);
+    // Handle dataset file requests from Server Node
+    void HandleDatasetFileRequest(const cyxwiz::protocol::DatasetFileRequest& request);
 
     // Connection state
     bool connected_;
@@ -193,8 +192,8 @@ private:
     ErrorCallback error_callback_;
     LogCallback log_callback_;
 
-    // Dataset provider for lazy-loading streaming
-    DatasetProvider dataset_provider_;
+    // Whole dataset files for remote jobs
+    DatasetFileServer dataset_files_;
 };
 
 } // namespace network

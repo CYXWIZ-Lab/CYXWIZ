@@ -102,9 +102,6 @@ public:
     // Set node client for progress reporting
     void SetNodeClient(NodeClient* client);
 
-    // Build model from JSON definition (public access for remote training)
-    // input_size: If > 0, use this as the input size for the first layer (overrides DatasetInput node)
-    std::unique_ptr<cyxwiz::SequentialModel> BuildModelFromDefinition(const std::string& model_definition, size_t input_size = 0);
 
 private:
     // Job execution state
@@ -130,9 +127,6 @@ private:
     // Execute job in worker thread (synchronous)
     void ExecuteJob(const std::string& job_id);
 
-    // Model building from definition (returns SequentialModel for training)
-    // input_size: If > 0, use this as the input size for the first layer
-    std::unique_ptr<cyxwiz::SequentialModel> BuildModel(const std::string& model_definition, size_t input_size = 0);
 
     // Training loop
     bool RunTraining(const std::string& job_id, JobState* state);

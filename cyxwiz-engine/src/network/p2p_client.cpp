@@ -1,6 +1,8 @@
 #include "p2p_client.h"
+#include "../core/project_manager.h"
 #include <spdlog/spdlog.h>
 #include <fstream>
+#include <cctype>
 #include <filesystem>
 #include <limits>
 
@@ -406,6 +408,8 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
             if (completion_callback_) {
                 completion_callback_(complete);
             }
+            // The node has trained; its dataset files are no longer needed.
+            dataset_files_.UnregisterJob(update.job_id());
 
             // Job complete, but reservation may still be active
             // Set waiting flag - UI can submit new job or wait for timer
@@ -431,6 +435,7 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
             }
 
             if (is_fatal) {
+                dataset_files_.UnregisterJob(update.job_id());
                 streaming_ = false;
                 break;
             }
@@ -444,8 +449,13 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
             }
         }
         // Handle dataset streaming requests from Server Node
+        else if (update.has_dataset_file_request()) {
+            HandleDatasetFileRequest(update.dataset_file_request());
+        }
         else if (update.has_dataset_info_request() || update.has_batch_request()) {
-            HandleDatasetRequest(update);
+            // Per-batch streaming was retired (TOFIX118 P2): nodes fetch files.
+            spdlog::warn("P2PClient: node asked for per-batch data; this Engine only ships dataset files "
+                         "(update the Server Node)");
         }
     }
 
@@ -562,55 +572,32 @@ bool P2PClient::SendReservationEnd() {
     return success;
 }
 
-void P2PClient::RegisterDatasetForJob(const std::string& job_id, cyxwiz::DatasetHandle dataset) {
-    dataset_provider_.RegisterDataset(job_id, dataset);
-    spdlog::debug("P2PClient: Registered dataset for job {}", job_id);
+bool P2PClient::RegisterJobDatasets(const std::string& job_id, const std::string& graph_json, std::string& error) {
+    auto& projects = cyxwiz::ProjectManager::Instance();
+    const std::filesystem::path root = projects.HasActiveProject()
+        ? std::filesystem::path(projects.GetProjectRoot()) / ".cyxwiz" / "remote-datasets"
+        : std::filesystem::temp_directory_path() / "cyxwiz-remote-datasets";
+    std::string folder;
+    for (const char c : job_id) folder.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+    return dataset_files_.RegisterJob(job_id, graph_json, root / (folder.empty() ? std::string("job") : folder),
+                                      error);
 }
 
-void P2PClient::UnregisterDatasetForJob(const std::string& job_id) {
-    dataset_provider_.UnregisterDataset(job_id);
-    spdlog::debug("P2PClient: Unregistered dataset for job {}", job_id);
+void P2PClient::UnregisterJobDatasets(const std::string& job_id) {
+    dataset_files_.UnregisterJob(job_id);
 }
 
-void P2PClient::HandleDatasetRequest(const cyxwiz::protocol::TrainingUpdate& update) {
-    // Lock mutex to ensure stream is valid during write operations
-    std::lock_guard<std::mutex> lock(stream_mutex_);
-
-    if (!stream_) {
-        spdlog::error("P2PClient: Cannot handle dataset request - stream not active");
-        return;
-    }
-
-    cyxwiz::protocol::TrainingCommand response_cmd;
-
-    if (update.has_dataset_info_request()) {
-        const auto& request = update.dataset_info_request();
-        spdlog::info("P2PClient: Received DatasetInfoRequest for job {}", request.job_id());
-
-        auto info_response = dataset_provider_.HandleDatasetInfoRequest(request);
-        *response_cmd.mutable_dataset_info_response() = info_response;
-
-        if (!stream_->Write(response_cmd)) {
-            spdlog::error("P2PClient: Failed to send DatasetInfoResponse");
-        } else {
-            spdlog::debug("P2PClient: Sent DatasetInfoResponse");
-        }
-    }
-    else if (update.has_batch_request()) {
-        const auto& request = update.batch_request();
-        spdlog::debug("P2PClient: Received BatchRequest for job {}, {} indices",
-                      request.job_id(), request.sample_indices_size());
-
-        auto batch_response = dataset_provider_.HandleBatchRequest(request);
-        *response_cmd.mutable_batch_response() = batch_response;
-
-        if (!stream_->Write(response_cmd)) {
-            spdlog::error("P2PClient: Failed to send BatchResponse");
-        } else {
-            spdlog::debug("P2PClient: Sent BatchResponse ({} bytes)",
-                          batch_response.images().size());
-        }
-    }
+void P2PClient::HandleDatasetFileRequest(const cyxwiz::protocol::DatasetFileRequest& request) {
+    spdlog::info("P2PClient: node requested dataset '{}' for job {} (offset {})", request.dataset_name(),
+                 request.job_id(), request.offset());
+    const bool sent = dataset_files_.HandleRequest(request, [this](const cyxwiz::protocol::DatasetFileChunk& chunk) {
+        std::lock_guard<std::mutex> lock(stream_mutex_);
+        if (!stream_) return false;
+        cyxwiz::protocol::TrainingCommand command;
+        *command.mutable_dataset_file_chunk() = chunk;
+        return stream_->Write(command);
+    });
+    if (!sent) spdlog::error("P2PClient: sending dataset '{}' to the node failed", request.dataset_name());
 }
 
 bool P2PClient::DownloadWeights(const std::string& job_id,

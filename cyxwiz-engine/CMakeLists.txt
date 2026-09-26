@@ -531,7 +531,7 @@ set(ENGINE_SOURCES
     src/network/grpc_client.cpp
     src/network/job_manager.cpp
     src/network/p2p_client.cpp
-    src/network/dataset_provider.cpp
+    src/network/dataset_file_server.cpp
     src/network/reservation_client.cpp
     src/network/datastream_client.cpp
     src/core/cloud_data_registry.cpp
@@ -837,7 +837,6 @@ set(ENGINE_HEADERS
     src/network/grpc_client.h
     src/network/job_manager.h
     src/network/p2p_client.h
-    src/network/dataset_provider.h
     src/network/reservation_client.h
     src/network/datastream_client.h
     src/core/cloud_data_registry.h
@@ -1495,6 +1494,7 @@ add_executable(test_debug_executor
     src/core/model_builder.cpp
     src/core/checkpoint_manifest.cpp
     src/core/checkpoint_payload_io.cpp
+    src/core/sha256_digest.cpp
     src/core/checkpoint_manager.cpp
     src/core/training_batcher_setup.cpp
     src/core/sparse_training_batcher_setup.cpp
@@ -5013,5 +5013,14 @@ target_link_libraries(test_training_core_link PRIVATE cyxwiz-training-core)
 # ===== Test: headless graph training job on the core alone (TOFIX118 P2) =====
 add_executable(test_graph_training_job tests/test_graph_training_job.cpp)
 target_link_libraries(test_graph_training_job PRIVATE cyxwiz-training-core)
+
+# ===== Test: remote jobs ship whole dataset files (TOFIX118 P2) =====
+add_executable(test_dataset_file_server
+    tests/test_dataset_file_server.cpp
+    src/network/dataset_file_server.cpp
+)
+target_link_libraries(test_dataset_file_server PRIVATE cyxwiz-training-core cyxwiz-protocol)
+target_compile_definitions(test_dataset_file_server PRIVATE
+    CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 target_compile_definitions(test_graph_training_job PRIVATE
     CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")

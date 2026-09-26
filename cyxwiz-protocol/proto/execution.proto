@@ -211,6 +211,34 @@ message BatchResponse {
 }
 
 // ============================================================================
+// Whole dataset files for a remote job (TOFIX118 P2): the node fetches each
+// training/validation input of the job's graph once, then trains locally.
+// ============================================================================
+
+// Server Node → Engine: send one dataset file of the job's graph
+message DatasetFileRequest {
+  string job_id = 1;
+  string auth_token = 2;
+  string dataset_name = 3;   // Data Input dataset_name in the job's graph
+  int64 offset = 4;          // resume from this byte (0 = whole file)
+  int32 request_id = 5;
+}
+
+// Engine → Server Node: one chunk of the requested file (in order)
+message DatasetFileChunk {
+  StatusCode status = 1;
+  int32 request_id = 2;
+  string dataset_name = 3;
+  string format = 4;         // "arrow_ipc" or "parquet"
+  int64 offset = 5;
+  bytes data = 6;
+  int64 total_size = 7;
+  string sha256 = 8;         // lowercase hex of the whole file
+  bool last = 9;
+  Error error = 10;
+}
+
+// ============================================================================
 // Engine → Server Node commands during training
 // ============================================================================
 
@@ -226,6 +254,7 @@ message TrainingCommand {
     // Dataset streaming responses (Engine sends batch data to Server Node)
     BatchResponse batch_response = 10;
     DatasetInfoResponse dataset_info_response = 11;
+    DatasetFileChunk dataset_file_chunk = 12;
 
     // Reservation-based job management
     JobConfig new_job_config = 20;    // Start new job within same reservation
@@ -258,6 +287,7 @@ message TrainingUpdate {
     // Dataset requests (Server Node requests data from Engine)
     DatasetInfoRequest dataset_info_request = 10;
     BatchRequest batch_request = 11;
+    DatasetFileRequest dataset_file_request = 12;
   }
 }
 

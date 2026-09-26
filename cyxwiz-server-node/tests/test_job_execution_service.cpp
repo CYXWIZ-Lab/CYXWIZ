@@ -8,6 +8,10 @@
 
 #include "../src/job_execution_service.h"
 #include "../src/job_executor.h"
+#include "../src/remote_dataset_fetcher.h"
+#include "network/dataset_file_server.h"
+#include "core/arrow_dataset.h"
+#include "core/graph_compiler_dataset_hooks.h"
 #include "../../cyxwiz-engine/tests/causal_lm_token_window_fixture.h"
 #include "../../cyxwiz-engine/tests/route_qualification_test_fixture.h"
 #include "execution.grpc.pb.h"
@@ -67,9 +71,10 @@ public:
     JobExecutionServiceTest() {
         // Create service instance
         service = std::make_unique<JobExecutionServiceImpl>();
+        executor = std::make_shared<cyxwiz::servernode::JobExecutor>("test_node");
 
-        // Initialize with mock dependencies
-        service->Initialize(nullptr, "localhost:50051", "test_node", "test_p2p_secret");
+        // Jobs train with the shared core; Central Server is not running.
+        service->Initialize(executor, "localhost:50051", "test_node", "test_p2p_secret");
 
         // Start server
         REQUIRE(service->StartServer("127.0.0.1:50053"));  // Use different port for tests
@@ -87,30 +92,76 @@ public:
         service->StopServer();
     }
 
+    std::shared_ptr<cyxwiz::servernode::JobExecutor> executor;
     std::unique_ptr<JobExecutionServiceImpl> service;
     std::shared_ptr<grpc::Channel> channel;
     std::unique_ptr<JobExecutionService::Stub> stub;
 };
 
-bool CompleteTrainingReservation(JobExecutionServiceTest& test,
-                                 const std::string& job_id) {
-    grpc::ClientContext stream_ctx;
-    SetRpcDeadline(stream_ctx);
-    SetStreamJobId(stream_ctx, job_id);
-    auto stream = test.stub->StreamTrainingMetrics(&stream_ctx);
+// A remote:// job whose graph and dataset live on the "Engine" (this test):
+// the causal-LM token-window graph, its Parquet registered in the Engine's
+// dataset catalog and file server.
+struct RemoteGraphJob {
+    std::filesystem::path work;
+    std::shared_ptr<cyxwiz::ArrowDataset> dataset;
+    network::DatasetFileServer files;
+};
 
-    const bool reservation_end_written = SendReservationEnd(stream.get());
-    bool got_completion = false;
+void PrepareRemoteGraphJob(RemoteGraphJob& job, JobConfig& config, int epochs) {
+    namespace fs = std::filesystem;
+    const fs::path root = CYXWIZ_SOURCE_ROOT;
+    job.work = fs::temp_directory_path() / ("cyxwiz_p2p_" + config.job_id());
+    std::error_code ec;
+    fs::remove_all(job.work, ec);
+    fs::create_directories(job.work);
+    const fs::path parquet = job.work / "tokens.parquet";
+    REQUIRE(cyxwiz::test::WriteTokenWindows(root, parquet, 0, 8));
+    cyxwiz::test::InstallQualifiedRouteSnapshot();
+    job.dataset = cyxwiz::ArrowDataset::FromParquet(parquet.string(), "tiny_causal_lm_tokens");
+    cyxwiz::GraphDatasetCatalog catalog;
+    catalog.arrow_dataset = [dataset = job.dataset](const std::string& name) -> std::shared_ptr<cyxwiz::ArrowDataset> {
+        return name == "tiny_causal_lm_tokens" ? dataset : nullptr;
+    };
+    cyxwiz::SetGraphDatasetCatalog(catalog);
 
-    TrainingUpdate update;
-    while (stream->Read(&update)) {
-        if (update.has_complete()) {
-            got_completion = update.complete().success();
+    auto graph = cyxwiz::test::LoadTokenWindowGraph(root);
+    for (auto& node : graph["nodes"]) {
+        if (node.value("type", -1) == static_cast<int>(gui::NodeType::DataLoader)) {
+            node["parameters"]["checkpoint_dir"] = (job.work / "checkpoints").string();
         }
     }
+    config.set_model_definition(graph.dump());
+    config.set_dataset_uri("remote://engine");
+    config.set_epochs(epochs);
+    std::string error;
+    REQUIRE(job.files.RegisterJob(config.job_id(), config.model_definition(), job.work / "engine_cache", error));
+}
 
-    grpc::Status status = stream->Finish();
-    return reservation_end_written && got_completion && status.ok();
+// Plays the Engine on the training stream: serves the node's dataset file
+// requests, ends the reservation once the job has finished, and returns every
+// update the node sent.
+std::vector<TrainingUpdate> RunAsEngine(JobExecutionServiceTest& test, const std::string& job_id,
+                                        RemoteGraphJob& job, grpc::Status& status) {
+    grpc::ClientContext stream_ctx;
+    SetRpcDeadline(stream_ctx, 60);
+    SetStreamJobId(stream_ctx, job_id);
+    auto stream = test.stub->StreamTrainingMetrics(&stream_ctx);
+    std::vector<TrainingUpdate> updates;
+    bool ended = false;
+    TrainingUpdate update;
+    while (stream->Read(&update)) {
+        updates.push_back(update);
+        if (update.has_dataset_file_request()) {
+            job.files.HandleRequest(update.dataset_file_request(), [&stream](const DatasetFileChunk& chunk) {
+                TrainingCommand command;
+                *command.mutable_dataset_file_chunk() = chunk;
+                return stream->Write(command);
+            });
+        }
+        if (!ended && (update.has_complete() || update.has_error())) ended = SendReservationEnd(stream.get());
+    }
+    status = stream->Finish();
+    return updates;
 }
 
 // ========== Test Cases ==========
@@ -275,8 +326,9 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
     auto* config = job_req.mutable_config();
     config->set_job_id("test_job_stream");
     config->set_job_type(JOB_TYPE_TRAINING);
-    config->set_epochs(3);  // Short test
     config->set_batch_size(32);
+    RemoteGraphJob remote;
+    PrepareRemoteGraphJob(remote, *config, 3);  // short run
 
     SendJobResponse job_resp;
     grpc::ClientContext job_ctx;
@@ -287,20 +339,17 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
     REQUIRE(job_resp.accepted());
 
     SECTION("Receive training progress updates") {
-        grpc::ClientContext stream_ctx;
-        SetRpcDeadline(stream_ctx);
-        SetStreamJobId(stream_ctx, "test_job_stream");
-        auto stream = test.stub->StreamTrainingMetrics(&stream_ctx);
+        grpc::Status status;
+        const auto updates = RunAsEngine(test, "test_job_stream", remote, status);
 
         int progress_updates = 0;
         int checkpoint_updates = 0;
         bool got_completion = false;
         bool updates_are_valid = true;
-        bool reservation_end_written = SendReservationEnd(stream.get());
+        bool fetched_dataset = false;
 
-        // Read updates
-        TrainingUpdate update;
-        while (stream->Read(&update)) {
+        for (const auto& update : updates) {
+            fetched_dataset = fetched_dataset || update.has_dataset_file_request();
             updates_are_valid =
                 updates_are_valid &&
                 update.job_id() == "test_job_stream" &&
@@ -340,10 +389,8 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
             }
         }
 
-        grpc::Status status = stream->Finish();
-
-        REQUIRE(reservation_end_written);
         REQUIRE(status.ok());
+        REQUIRE(fetched_dataset);
         REQUIRE(updates_are_valid);
         REQUIRE(progress_updates > 0);
         REQUIRE(got_completion);
@@ -436,7 +483,8 @@ TEST_CASE("JobExecutionService - DownloadWeights", "[p2p][download]") {
     auto* config = job_req.mutable_config();
     config->set_job_id("test_job_weights");
     config->set_job_type(JOB_TYPE_TRAINING);
-    config->set_epochs(1);
+    RemoteGraphJob remote;
+    PrepareRemoteGraphJob(remote, *config, 1);
 
     SendJobResponse job_resp;
     grpc::ClientContext job_ctx;
@@ -445,7 +493,15 @@ TEST_CASE("JobExecutionService - DownloadWeights", "[p2p][download]") {
 
     REQUIRE(job_status.ok());
     REQUIRE(job_resp.accepted());
-    REQUIRE(CompleteTrainingReservation(test, "test_job_weights"));
+    grpc::Status stream_status;
+    const auto updates = RunAsEngine(test, "test_job_weights", remote, stream_status);
+    REQUIRE(stream_status.ok());
+    bool trained = false;
+    for (const auto& update : updates) {
+        trained = trained || (update.has_complete() && update.complete().success() &&
+                              !update.complete().weights_location().empty());
+    }
+    REQUIRE(trained);
 
     SECTION("Download weights in chunks") {
         DownloadRequest request;
@@ -490,7 +546,7 @@ TEST_CASE("JobExecutionService - DownloadWeights", "[p2p][download]") {
         DownloadRequest request1;
         request1.set_job_id("test_job_weights");
         request1.set_offset(0);
-        request1.set_chunk_size(1024 * 1024);
+        request1.set_chunk_size(1024);  // small: the test model is a few KB
 
         grpc::ClientContext context1;
         SetRpcDeadline(context1);
@@ -509,7 +565,7 @@ TEST_CASE("JobExecutionService - DownloadWeights", "[p2p][download]") {
         DownloadRequest request2;
         request2.set_job_id("test_job_weights");
         request2.set_offset(first_chunk_size);
-        request2.set_chunk_size(1024 * 1024);
+        request2.set_chunk_size(1024);  // small: the test model is a few KB
 
         grpc::ClientContext context2;
         SetRpcDeadline(context2);
@@ -678,6 +734,96 @@ TEST_CASE("JobExecutor - refuses jobs the shared core cannot train", "[job_execu
             CHECK(outcome.epochs_reported == 0);
         }
     }
+}
+
+TEST_CASE("Remote jobs fetch the Engine's dataset files, then train", "[remote_dataset]") {
+    namespace fs = std::filesystem;
+    const fs::path root = CYXWIZ_SOURCE_ROOT;
+    const fs::path work = fs::temp_directory_path() / "cyxwiz_node_remote_dataset_test";
+    std::error_code ec;
+    fs::remove_all(work, ec);
+    fs::create_directories(work);
+    const fs::path parquet = work / "tokens.parquet";
+    REQUIRE(cyxwiz::test::WriteTokenWindows(root, parquet, 0, 8));
+    cyxwiz::test::InstallQualifiedRouteSnapshot();
+
+    // The Engine: its registry (as the graph dataset catalog) and file server.
+    const std::string dataset = "tiny_causal_lm_tokens";
+    auto engine_dataset = cyxwiz::ArrowDataset::FromParquet(parquet.string(), dataset);
+    cyxwiz::GraphDatasetCatalog catalog;
+    catalog.arrow_dataset = [&](const std::string& name) -> std::shared_ptr<cyxwiz::ArrowDataset> {
+        return name == dataset ? engine_dataset : nullptr;
+    };
+    cyxwiz::SetGraphDatasetCatalog(catalog);
+    auto graph = cyxwiz::test::LoadTokenWindowGraph(root);
+    for (auto& node : graph["nodes"]) {
+        if (node.value("type", -1) == static_cast<int>(gui::NodeType::DataLoader)) {
+            node["parameters"]["checkpoint_dir"] = (work / "checkpoints").string();
+        }
+    }
+    network::DatasetFileServer engine;
+    std::string error;
+    REQUIRE(engine.RegisterJob("remote_job", graph.dump(), work / "engine_cache", error));
+
+    // The stream: node requests reach the Engine, its chunks come back. The
+    // first request stalls after one chunk, so the fetcher must resume.
+    std::shared_ptr<RemoteDatasetFetcher> fetcher;
+    std::vector<std::thread> engine_replies;
+    std::atomic<int> requests{0};
+    std::atomic<int64_t> resumed_from{-1};
+    auto write = [&](const TrainingUpdate& update) {
+        if (!update.has_dataset_file_request()) return true;
+        const auto request = update.dataset_file_request();
+        const int number = ++requests;
+        if (number > 1 && resumed_from < 0) resumed_from = request.offset();
+        engine_replies.emplace_back([&, request, number] {
+            int sent = 0;
+            engine.HandleRequest(
+                request,
+                [&](const DatasetFileChunk& chunk) {
+                    if (number == 1 && sent++ > 0) return true;  // stalled connection
+                    fetcher->OnChunk(chunk);
+                    return true;
+                },
+                256);
+        });
+        return true;
+    };
+    fetcher = std::make_shared<RemoteDatasetFetcher>(write, "remote_job", work / "node_cache",
+                                                     /*chunk_timeout_ms=*/300, /*max_resumes=*/3);
+
+    JobConfig config;
+    config.set_job_id("remote_job");
+    config.set_job_type(JOB_TYPE_TRAINING);
+    config.set_model_definition(graph.dump());
+    config.set_dataset_uri("remote://engine");
+    config.set_epochs(1);
+    const bool fetched = FetchRemoteJobDatasets(*fetcher, config, error);
+    INFO(error);
+    REQUIRE(fetched);
+    CHECK(requests >= 2);
+    CHECK(resumed_from == 256);
+    CHECK(config.dataset_uri().empty());
+    CHECK(config.model_definition().find("node_cache") != std::string::npos);
+
+    // An Engine refusal reaches the node with its reason.
+    {
+        fs::path unused;
+        std::string refusal;
+        CHECK_FALSE(fetcher->Fetch("not_in_the_graph", unused, refusal));
+        CHECK(refusal.find("not an input") != std::string::npos);
+    }
+
+    for (auto& reply : engine_replies) reply.join();
+    engine_replies.clear();
+    cyxwiz::SetGraphDatasetCatalog({});  // the node has no Engine registry
+
+    JobOutcome outcome;
+    RunLocalJob(config, outcome);
+    INFO(outcome.error);
+    CHECK(outcome.success);
+    CHECK(outcome.epochs_reported == 1);
+    fs::remove_all(work, ec);
 }
 
 // Main function to run tests

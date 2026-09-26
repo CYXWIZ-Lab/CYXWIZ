@@ -1194,6 +1194,18 @@ void ConnectionDialog::StartP2PTraining() {
     config.set_epochs(reservation_epochs_);          // From user input
     config.set_required_device(cyxwiz::protocol::DEVICE_CUDA);
 
+    // remote://: the node fetches the graph's dataset files from the Engine
+    // (TOFIX118 P2). Registered before the job is sent so the node's first
+    // request is answered; refused graphs never reach the node.
+    if (std::string(dataset_uri_).find("remote://") == 0) {
+        std::string dataset_error;
+        if (!p2p_client_->RegisterJobDatasets(active_reservation_.job_id, graph_json, dataset_error)) {
+            reservation_error_ = "Cannot train this graph remotely: " + dataset_error;
+            spdlog::error("{}", reservation_error_);
+            return;
+        }
+    }
+
     // Send job config directly to Server Node via P2P
     std::string uri_str(dataset_uri_);
     bool send_success = false;
@@ -1211,19 +1223,6 @@ void ConnectionDialog::StartP2PTraining() {
     }
 
     spdlog::info("Job config sent to Server Node successfully via P2P");
-
-    // Register dataset for lazy streaming if using remote://
-    if (uri_str.find("remote://") == 0) {
-        auto& registry = cyxwiz::DataRegistry::Instance();
-        auto dataset_names = registry.GetDatasetNames();
-        if (!dataset_names.empty()) {
-            auto dataset = registry.GetDataset(dataset_names[0]);
-            if (dataset.IsValid()) {
-                p2p_client_->RegisterDatasetForJob(active_reservation_.job_id, dataset);
-                spdlog::info("Registered dataset '{}' for lazy streaming", dataset_names[0]);
-            }
-        }
-    }
 
     // Start monitoring on the P2P training panel
     if (p2p_training_panel_) {
@@ -1335,6 +1334,18 @@ void ConnectionDialog::StartNewP2PTraining() {
     config.set_epochs(reservation_epochs_);
     config.set_required_device(cyxwiz::protocol::DEVICE_CUDA);
 
+    // remote://: the node fetches the graph's dataset files from the Engine
+    // (TOFIX118 P2). Registered before the job is sent so the node's first
+    // request is answered; refused graphs never reach the node.
+    if (std::string(dataset_uri_).find("remote://") == 0) {
+        std::string dataset_error;
+        if (!p2p_client_->RegisterJobDatasets(new_job_id, graph_json, dataset_error)) {
+            reservation_error_ = "Cannot train this graph remotely: " + dataset_error;
+            spdlog::error("{}", reservation_error_);
+            return;
+        }
+    }
+
     // Check if streaming is active - if not, we need to reconnect and use SendJob + StartTrainingStream
     // This happens when user stopped previous training and wants to start a new one
     bool send_success = false;
@@ -1414,20 +1425,6 @@ void ConnectionDialog::StartNewP2PTraining() {
 
     // Reset waiting state
     p2p_client_->SetWaitingForNewJob(false);
-
-    // Register dataset for lazy streaming if using remote://
-    std::string uri_str(dataset_uri_);
-    if (uri_str.find("remote://") == 0) {
-        auto& registry = cyxwiz::DataRegistry::Instance();
-        auto dataset_names = registry.GetDatasetNames();
-        if (!dataset_names.empty()) {
-            auto dataset = registry.GetDataset(dataset_names[0]);
-            if (dataset.IsValid()) {
-                p2p_client_->RegisterDatasetForJob(new_job_id, dataset);
-                spdlog::info("Registered dataset '{}' for lazy streaming", dataset_names[0]);
-            }
-        }
-    }
 
     // Update P2P training panel with new job ID
     if (p2p_training_panel_) {

@@ -17,7 +17,7 @@ class JobExecutor;
 class NodeClient;  // For communicating with Central Server
 }
 namespace server_node {
-class RemoteDataLoader;
+class RemoteDatasetFetcher;
 }
 }
 
@@ -162,9 +162,9 @@ private:
         // Timestamp for stale job detection
         std::chrono::steady_clock::time_point created_at{std::chrono::steady_clock::now()};
 
-        // Remote data loaders for lazy-loading datasets
-        std::shared_ptr<RemoteDataLoader> train_loader;
-        std::shared_ptr<RemoteDataLoader> val_loader;
+        // Dataset download of a remote:// job (runs before training)
+        std::shared_ptr<RemoteDatasetFetcher> dataset_fetcher;
+        std::mutex dataset_fetcher_mutex;
 
         // Checkpoint state for pause/resume
         std::string checkpoint_path;

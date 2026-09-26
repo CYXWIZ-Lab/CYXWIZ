@@ -50,6 +50,7 @@ find_package(fmt CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 find_package(Parquet CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 # Definitions only: node_metadata_registry lists data-convert formats by the
 # same flags as the Engine (the adapters stay in their own targets).
 find_package(OpenXLSX CONFIG QUIET)
@@ -81,6 +82,7 @@ add_library(cyxwiz-training-core STATIC
     ${_cyxwiz_engine_src}/core/node_metadata_registry.cpp
     ${_cyxwiz_engine_src}/core/pipeline_runtime_capabilities.cpp
     ${_cyxwiz_engine_src}/core/sequence_arrow_batcher.cpp
+    ${_cyxwiz_engine_src}/core/sha256_digest.cpp
 )
 target_include_directories(cyxwiz-training-core PUBLIC ${_cyxwiz_engine_src})
 target_link_libraries(cyxwiz-training-core PUBLIC
@@ -91,6 +93,7 @@ target_link_libraries(cyxwiz-training-core PUBLIC
     nlohmann_json::nlohmann_json
     cyxwiz-backend
     cyxwiz-training-hooks
+    OpenSSL::Crypto
 )
 set_target_properties(cyxwiz-training-core PROPERTIES CXX_STANDARD 20)
 if(WIN32)

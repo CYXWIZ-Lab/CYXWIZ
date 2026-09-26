@@ -1,7 +1,7 @@
 #include "checkpoint_payload_io.h"
+#include "sha256_digest.h"
 
 #include <nlohmann/json.hpp>
-#include <openssl/evp.h>
 
 #include <algorithm>
 #include <array>
@@ -25,7 +25,6 @@ constexpr std::array<char, 8> kArchiveMagic = {
     'C', 'Y', 'X', 'V', '2', 'A', 'R', '1'};
 constexpr std::uint32_t kArchiveSchemaVersion = 1;
 constexpr std::uint64_t kMaxArchiveHeaderBytes = 16ULL * 1024ULL * 1024ULL;
-constexpr std::size_t kHashBlockBytes = 64 * 1024;
 
 using TensorMap = std::map<std::string, Tensor>;
 
@@ -51,49 +50,9 @@ bool ComputeFileSha256(
     std::string& digest,
     std::string& error)
 {
-    std::ifstream input(path, std::ios::binary);
-    if (!input.is_open()) {
-        error = "checkpoint payload is unreadable: " + path.string();
-        return false;
-    }
-
-    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> context(
-        EVP_MD_CTX_new(), EVP_MD_CTX_free);
-    if (!context || EVP_DigestInit_ex(context.get(), EVP_sha256(), nullptr) != 1) {
-        error = "could not initialize SHA-256 for checkpoint payload";
-        return false;
-    }
-
-    std::array<char, kHashBlockBytes> buffer{};
-    while (input.good()) {
-        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        const auto count = input.gcount();
-        if (count > 0 &&
-            EVP_DigestUpdate(context.get(), buffer.data(),
-                             static_cast<std::size_t>(count)) != 1) {
-            error = "could not update checkpoint payload SHA-256";
-            return false;
-        }
-    }
-    if (!input.eof()) {
-        error = "could not read checkpoint payload for SHA-256";
-        return false;
-    }
-
-    std::array<unsigned char, EVP_MAX_MD_SIZE> bytes{};
-    unsigned int length = 0;
-    if (EVP_DigestFinal_ex(context.get(), bytes.data(), &length) != 1 ||
-        length != 32) {
-        error = "could not finalize checkpoint payload SHA-256";
-        return false;
-    }
-    std::ostringstream output;
-    output << std::hex << std::setfill('0');
-    for (unsigned int index = 0; index < length; ++index) {
-        output << std::setw(2) << static_cast<unsigned int>(bytes[index]);
-    }
-    digest = output.str();
-    return true;
+    if (Sha256File(path, digest, error)) return true;
+    error = "checkpoint payload SHA-256 failed: " + error;
+    return false;
 }
 
 bool ResolvePayloadPath(

@@ -1,7 +1,7 @@
 #include "job_execution_service.h"
 #include "job_executor.h"
 #include "node_client.h"
-#include "remote_data_loader.h"
+#include "remote_dataset_fetcher.h"
 #include "core/backend_manager.h"
 #include "core/state_manager.h"
 #include "core/device_pool.h"
@@ -18,6 +18,24 @@
 
 namespace cyxwiz {
 namespace server_node {
+
+namespace {
+
+// Fetched dataset files of a remote job: CYXWIZ_NODE_DATA_DIR if set (put it
+// on a data drive), else the temp folder. Removed when the job finishes.
+std::filesystem::path NodeJobDataDir(const std::string& job_id) {
+    std::filesystem::path root;
+    if (const char* configured = std::getenv("CYXWIZ_NODE_DATA_DIR"); configured && *configured) {
+        root = configured;
+    } else {
+        root = std::filesystem::temp_directory_path() / "cyxwiz-node";
+    }
+    std::string folder;
+    for (const char c : job_id) folder.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+    return root / "jobs" / (folder.empty() ? std::string("job") : folder);
+}
+
+}  // namespace
 
 namespace fs = std::filesystem;
 
@@ -377,36 +395,16 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     spdlog::info("    - Request data batches from Engine (if remote dataset)");
     spdlog::info("========================================");
 
-    // Check if this is a remote dataset (lazy loading from Engine)
-    std::string dataset_uri = session->job_config.dataset_uri();
-    bool is_remote_dataset = dataset_uri.find("remote://") == 0;
-
     // Mutex to protect stream writes (gRPC streams are not thread-safe)
     auto stream_mutex = std::make_shared<std::mutex>();
-
-    if (is_remote_dataset) {
-        spdlog::info("[P2P WORKFLOW] STEP 4a: Setting up RemoteDataLoader for lazy data streaming...");
-
-        // Create thread-safe stream write function for RemoteDataLoader
-        auto write_func = [stream, stream_mutex](const cyxwiz::protocol::TrainingUpdate& update) -> bool {
-            std::lock_guard<std::mutex> lock(*stream_mutex);
-            return stream->Write(update);
-        };
-
-        // Create train and validation loaders
-        int batch_size = session->job_config.batch_size();
-        if (batch_size <= 0) batch_size = 32;  // Default
-
-        session->train_loader = std::make_shared<RemoteDataLoader>(
-            write_func, job_id, cyxwiz::protocol::SPLIT_TRAIN,
-            batch_size, /*shuffle=*/true);
-
-        session->val_loader = std::make_shared<RemoteDataLoader>(
-            write_func, job_id, cyxwiz::protocol::SPLIT_VALIDATION,
-            batch_size, /*shuffle=*/false);
-
-        spdlog::info("Remote data loaders created (batch_size={})", batch_size);
-    }
+    auto write_update = [stream, stream_mutex](const cyxwiz::protocol::TrainingUpdate& update) -> bool {
+        std::lock_guard<std::mutex> lock(*stream_mutex);
+        return stream->Write(update);
+    };
+    const auto cancel_fetch = [session] {
+        std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
+        if (session->dataset_fetcher) session->dataset_fetcher->Cancel();
+    };
 
     // Flags for reservation-based multi-job flow
     std::atomic<bool> reservation_ended{false};
@@ -425,38 +423,25 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 spdlog::info("Job {} {}", job_id, command.pause() ? "paused" : "resumed");
             } else if (command.has_stop()) {
                 session->should_stop = true;
+                cancel_fetch();
                 if (job_executor_) {
-                    job_executor_->CancelJob(job_id);
+                    job_executor_->CancelJob(session->job_config.job_id());
                 }
-                spdlog::info("Job {} stop requested", job_id);
+                spdlog::info("Job {} stop requested", session->job_config.job_id());
                 // Don't break - keep reading for new_job_config or reservation_end
             } else if (command.has_request_checkpoint()) {
                 spdlog::info("Job {} checkpoint requested", job_id);
             } else if (command.has_update_params()) {
                 spdlog::info("Job {} hyperparameter update requested", job_id);
             }
-            // Handle dataset streaming responses from Engine
-            else if (command.has_batch_response()) {
-                const auto& response = command.batch_response();
-                spdlog::debug("Job {} received BatchResponse, request_id={}",
-                              job_id, response.request_id());
-                if (session->train_loader) {
-                    session->train_loader->OnBatchResponse(response);
+            // Dataset files of a remote:// job (fetched before training)
+            else if (command.has_dataset_file_chunk()) {
+                std::shared_ptr<RemoteDatasetFetcher> fetcher;
+                {
+                    std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
+                    fetcher = session->dataset_fetcher;
                 }
-                if (session->val_loader) {
-                    session->val_loader->OnBatchResponse(response);
-                }
-            }
-            else if (command.has_dataset_info_response()) {
-                const auto& response = command.dataset_info_response();
-                spdlog::debug("Job {} received DatasetInfoResponse, status={}",
-                             job_id, static_cast<int>(response.status()));
-                if (session->train_loader) {
-                    session->train_loader->OnDatasetInfoResponse(response);
-                }
-                if (session->val_loader) {
-                    session->val_loader->OnDatasetInfoResponse(response);
-                }
+                if (fetcher) fetcher->OnChunk(command.dataset_file_chunk());
             }
             // Handle reservation-based commands
             else if (command.has_new_job_config()) {
@@ -475,6 +460,9 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 break;
             }
         }
+        // No more chunks can arrive: a dataset download in progress ends now.
+        cancel_fetch();
+
         // Stream closed - HOTEL ROOM MODEL
         if (!reservation_ended) {
             spdlog::warn("========================================");
@@ -544,18 +532,59 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
         std::mutex queue_mutex;
         std::condition_variable queue_cv;
 
-    // Check if JobExecutor is available for real training (only for LOCAL datasets)
-    // Remote datasets use the built-in training with RemoteDataLoader
-    if (job_executor_ && !is_remote_dataset) {
-        spdlog::info("Using JobExecutor for local dataset training of job {}", job_id);
+    // remote://: fetch the graph's dataset files from the Engine, then train
+    // like a local job (TOFIX118 P2, whole-file shipping). Supplied Test
+    // inputs stay on the Engine.
+    cyxwiz::protocol::JobConfig run_config = session->job_config;
+    std::string saved_weights_path;
+    std::filesystem::path job_data_dir;
+    bool job_ready = true;
+    if (run_config.dataset_uri().rfind("remote://", 0) == 0) {
+        job_data_dir = NodeJobDataDir(current_job_id);
+        auto fetcher = std::make_shared<RemoteDatasetFetcher>(write_update, current_job_id, job_data_dir);
+        {
+            std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
+            session->dataset_fetcher = fetcher;
+        }
+        std::string fetch_error;
+        job_ready = FetchRemoteJobDatasets(*fetcher, run_config, fetch_error);
+        {
+            std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
+            session->dataset_fetcher.reset();
+        }
+        if (!job_ready) {
+            spdlog::error("[P2P WORKFLOW] Job {} not trained: {}", current_job_id, fetch_error);
+            std::lock_guard<std::mutex> lock(error_mutex);
+            training_error = fetch_error;
+        }
+    }
+    if (job_ready && !job_executor_) {
+        job_ready = false;
+        std::lock_guard<std::mutex> lock(error_mutex);
+        training_error = "this node has no job executor; the job cannot train";
+    }
+    if (!job_ready) {
+        training_success = false;
+        training_complete = true;
+    }
+
+    if (job_ready) {
+        spdlog::info("Training job {} with the shared training core", current_job_id);
 
         // Set up progress callback to queue updates for streaming
         job_executor_->SetProgressCallback(
-            [&, job_id](const std::string& id, double progress, const cyxwiz::servernode::TrainingMetrics& metrics) {
-                if (id != job_id) return;
+            [&, current_job_id](const std::string& id, double progress, const cyxwiz::servernode::TrainingMetrics& metrics) {
+                if (id != current_job_id) return;
+                {
+                    // Reported on completion: the last completed epoch's real values.
+                    std::lock_guard<std::mutex> lock(error_mutex);
+                    final_loss = metrics.loss;
+                    final_accuracy = metrics.accuracy;
+                    epochs_completed = metrics.current_epoch;
+                }
 
                 cyxwiz::protocol::TrainingUpdate update;
-                update.set_job_id(job_id);
+                update.set_job_id(current_job_id);
                 update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
 
                 auto* prog = update.mutable_progress();
@@ -594,7 +623,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 auto* sm = cyxwiz::servernode::core::BackendManager::Instance().GetStateManager();
                 if (sm) {
                     cyxwiz::servernode::core::JobState job_state;
-                    job_state.id = job_id;
+                    job_state.id = current_job_id;
                     job_state.type = "Training";
                     job_state.progress = static_cast<float>(progress);
                     job_state.current_epoch = metrics.current_epoch;
@@ -618,8 +647,16 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
         // Set up completion callback
         job_executor_->SetCompletionCallback(
-            [&, job_id](const std::string& id, bool success, const std::string& error_msg) {
-                if (id != job_id) return;
+            [&, current_job_id](const std::string& id, bool success, const std::string& error_msg) {
+                if (id != current_job_id) return;
+
+                // Save the weights now: the executor drops the job's model
+                // right after this callback.
+                if (success || session->should_stop) {
+                    const std::string path = SavePartialModel(current_job_id);
+                    std::lock_guard<std::mutex> lock(error_mutex);
+                    saved_weights_path = path;
+                }
 
                 training_success = success;
                 {
@@ -629,456 +666,16 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 training_complete = true;
                 queue_cv.notify_one();
 
-                spdlog::info("Job {} training completed: success={}", job_id, success);
+                spdlog::info("Job {} training completed: success={}", current_job_id, success);
             });
 
         // Start real training
         session->is_running = true;
-        if (!job_executor_->ExecuteJobAsync(session->job_config)) {
-            spdlog::error("Failed to start training for job {}", job_id);
-            return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to start training");
-        }
-
-        spdlog::info("Real training started for job {}", job_id);
-    } else {
-        // Use built-in training for remote datasets OR when no JobExecutor available
-        if (is_remote_dataset) {
-            spdlog::info("[P2P WORKFLOW] STEP 5: Starting training with RemoteDataLoader");
-            spdlog::info("  Data batches will be fetched from Engine on-demand");
-        } else {
-            spdlog::error("[P2P WORKFLOW] No JobExecutor and no remote dataset - the job cannot train");
-        }
-
-        session->is_running = true;
-
-        // Capture remote dataset flag for thread
-        bool use_remote = is_remote_dataset;
-        auto train_loader = session->train_loader;
-        auto val_loader = session->val_loader;
-
-        // Get learning rate from hyperparameters
-        float learning_rate = 0.001f;  // Adam default lr for better convergence
-        auto& hyperparams = session->job_config.hyperparameters();
-        auto lr_it = hyperparams.find("learning_rate");
-        if (lr_it != hyperparams.end()) {
-            learning_rate = std::stof(lr_it->second);
-        }
-
-        // Capture job_executor for model building inside thread
-        auto job_exec = job_executor_;
-        std::string model_def = session->job_config.model_definition();
-
-        // Use current_job_id (captured by value) for all training operations
-        std::thread training_thread([&, current_job_id, session, use_remote, train_loader, val_loader, learning_rate, job_exec, model_def]() {
-            // Set up GPU device context for this thread (required for ArrayFire thread-safety)
-            // ArrayFire operations must be performed in a thread with proper device context
-            cyxwiz::servernode::core::ScopedDeviceContext device_ctx(0);
-            if (!device_ctx.IsValid()) {
-                spdlog::warn("GPU device context not available, training may use CPU fallback");
-            } else {
-                spdlog::info("GPU device context set for training thread (device {})", device_ctx.GetDeviceId());
-            }
-
-            const int total_epochs = session->job_config.epochs();
-
-            // If remote dataset, request dataset info first
-            size_t input_size = 0;
-            int num_classes = 10;  // Default for MNIST
-            if (use_remote && train_loader) {
-                spdlog::info("Requesting dataset info from Engine for job {}", current_job_id);
-                if (train_loader->RequestDatasetInfo()) {
-                    // Initialize loaders with received metadata
-                    const auto& metadata = train_loader->GetMetadata();
-                    train_loader->Initialize(metadata);
-                    if (val_loader) {
-                        val_loader->Initialize(metadata);
-                    }
-
-                    // Start async prefetching for faster training
-                    train_loader->StartPrefetching();
-                    spdlog::info("Started async data prefetching for training");
-
-                    // Calculate input size from sample shape (e.g., [1, 28, 28] -> 784)
-                    input_size = 1;
-                    for (int32_t dim : metadata.sample_shape) {
-                        input_size *= dim;
-                    }
-                    num_classes = metadata.num_classes > 0 ? metadata.num_classes : 10;
-
-                    spdlog::info("Dataset info received: {} train samples, {} val samples, input_size={}, num_classes={}",
-                                 train_loader->NumSamples(),
-                                 val_loader ? val_loader->NumSamples() : 0,
-                                 input_size, num_classes);
-                } else {
-                    spdlog::error("Failed to get dataset info for job {}", current_job_id);
-                }
-            }
-
-            // Build model AFTER we have dataset info (so we know input_size)
-            std::shared_ptr<cyxwiz::SequentialModel> model_ptr;
-            std::shared_ptr<cyxwiz::Optimizer> optimizer_ptr;
-            std::shared_ptr<cyxwiz::Loss> loss_ptr;
-
-            if (job_exec && input_size > 0) {
-                auto model = job_exec->BuildModelFromDefinition(model_def, input_size);
-                if (model && model->Size() > 0) {
-                    spdlog::info("[P2P WORKFLOW] Built real model with {} layers (input_size={})", model->Size(), input_size);
-                    model_ptr = std::shared_ptr<cyxwiz::SequentialModel>(model.release());
-                    optimizer_ptr = std::shared_ptr<cyxwiz::Optimizer>(cyxwiz::CreateOptimizer(cyxwiz::OptimizerType::Adam, learning_rate).release());
-                    loss_ptr = std::shared_ptr<cyxwiz::Loss>(cyxwiz::CreateLoss(cyxwiz::LossType::CrossEntropy).release());
-                    spdlog::info("Created Adam optimizer with lr={} and CrossEntropy loss", learning_rate);
-                } else {
-                    spdlog::error("[P2P WORKFLOW] Failed to build the model from the job definition");
-                }
-            }
-
-            // Fail closed (tofix118 P1): without a built model, optimizer, loss and
-            // a remote dataset the job fails with the reason; the node never
-            // streams synthetic loss/accuracy as if it had trained.
-            const bool use_real_training = (model_ptr && model_ptr->Size() > 0 && optimizer_ptr && loss_ptr &&
-                                            use_remote && train_loader);
-            if (!use_real_training) {
-                std::string reason = !use_remote ? "the job has no remote dataset for the built-in trainer"
-                                   : input_size == 0 ? "dataset information could not be obtained from the Engine"
-                                   : "the model could not be built from the job definition";
-                {
-                    std::lock_guard<std::mutex> err_lock(error_mutex);
-                    training_error = "Job not trained: " + reason + " (the node does not simulate training)";
-                }
-                spdlog::error("[P2P WORKFLOW] {}", training_error);
-                training_success = false;
-                training_complete = true;
-                queue_cv.notify_one();
-                return;
-            }
-            spdlog::info("[P2P WORKFLOW] Using real model training");
-            bool batch_failed = false;
-
-            for (int epoch = 1; epoch <= total_epochs && !session->should_stop; ++epoch) {
-                // Check if paused at epoch boundary
-                if (session->is_paused) {
-                    spdlog::info("[TRAINING] Paused before epoch {}", epoch);
-                    while (session->is_paused && !session->should_stop) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                    }
-                    if (!session->should_stop) {
-                        spdlog::info("[TRAINING] Resumed training");
-                    }
-                }
-
-                double loss = 0.0;
-                double accuracy = 0.0;
-                int batches_processed = 0;
-
-                // If remote dataset, actually fetch batches from Engine
-                if (use_remote && train_loader && train_loader->IsInitialized()) {
-                    train_loader->Reset();
-                    double epoch_loss_sum = 0.0;
-                    int correct_predictions = 0;
-                    int total_samples = 0;
-                    int consecutive_failures = 0;
-                    constexpr int MAX_CONSECUTIVE_FAILURES = 3;
-
-                    while (train_loader->HasNextBatch() && !session->should_stop) {
-                        // Check if paused - wait while paused
-                        if (session->is_paused) {
-                            spdlog::info("[TRAINING] Paused at batch {}", batches_processed);
-                            while (session->is_paused && !session->should_stop) {
-                                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                            }
-                            if (!session->should_stop) {
-                                spdlog::info("[TRAINING] Resumed training");
-                            }
-                        }
-
-                        // Check if loader was cancelled (Engine disconnected)
-                        if (train_loader->IsCancelled()) {
-                            spdlog::warn("RemoteDataLoader cancelled - Engine may have disconnected");
-                            session->should_stop = true;
-                            break;
-                        }
-
-                        Batch batch = train_loader->GetNextBatch();
-                        if (batch.batch_size <= 0) {
-                            // Failed to get batch - Engine may have disconnected
-                            consecutive_failures++;
-                            spdlog::warn("Failed to get batch (consecutive failures: {}/{})",
-                                        consecutive_failures, MAX_CONSECUTIVE_FAILURES);
-
-                            if (consecutive_failures >= MAX_CONSECUTIVE_FAILURES) {
-                                spdlog::error("Max consecutive failures reached - Engine disconnected");
-                                spdlog::info("Stopping training and resetting state...");
-                                session->should_stop = true;
-                                training_success = false;
-                                {
-                                    std::lock_guard<std::mutex> lock(error_mutex);
-                                    training_error = "Engine disconnected - batch fetch failed 3 consecutive times";
-                                }
-                                break;
-                            }
-
-                            // Wait briefly before retrying
-                            std::this_thread::sleep_for(std::chrono::seconds(1));
-                            continue;
-                        }
-
-                        // Reset failure counter on successful batch
-                        consecutive_failures = 0;
-                        batches_processed++;
-
-                        if (use_real_training) {
-                            // Real training: Convert batch to Tensors and train
-                            try {
-                                // Validate batch data consistency
-                                if (batch.batch_size <= 0) {
-                                    spdlog::error("Batch {} has invalid batch_size: {}", batches_processed, batch.batch_size);
-                                    continue;
-                                }
-                                if (batch.images.empty()) {
-                                    spdlog::error("Batch {} has empty images", batches_processed);
-                                    continue;
-                                }
-                                if (batch.labels.size() != static_cast<size_t>(batch.batch_size)) {
-                                    spdlog::error("Batch {} label count mismatch: {} labels vs batch_size {}",
-                                                 batches_processed, batch.labels.size(), batch.batch_size);
-                                    continue;
-                                }
-
-                                // Create input tensor from batch images (flattened)
-                                size_t input_size = batch.images.size() / batch.batch_size;
-                                if (batch.images.size() % batch.batch_size != 0) {
-                                    spdlog::error("Batch {} image size {} not divisible by batch_size {}",
-                                                 batches_processed, batch.images.size(), batch.batch_size);
-                                    continue;
-                                }
-
-                                // Normalize input data: (x - mean) / std
-                                // Using MNIST normalization values as default
-                                float norm_mean = 0.1307f;
-                                float norm_std = 0.3081f;
-                                std::vector<float> normalized_images(batch.images.size());
-                                for (size_t i = 0; i < batch.images.size(); ++i) {
-                                    normalized_images[i] = (batch.images[i] - norm_mean) / norm_std;
-                                }
-
-                                cyxwiz::Tensor input({static_cast<size_t>(batch.batch_size), input_size},
-                                                    normalized_images.data());
-
-                                // Convert int32 labels to one-hot encoded floats
-                                // batch.labels is std::vector<int32_t> with class indices
-                                int num_classes = train_loader ? train_loader->GetMetadata().num_classes : 10;
-                                if (num_classes <= 0) num_classes = 10;  // Default for MNIST
-
-                                std::vector<float> one_hot_labels(batch.batch_size * num_classes, 0.0f);
-                                for (size_t s = 0; s < static_cast<size_t>(batch.batch_size); ++s) {
-                                    int label_idx = batch.labels[s];
-                                    if (label_idx >= 0 && label_idx < num_classes) {
-                                        one_hot_labels[s * num_classes + label_idx] = 1.0f;
-                                    }
-                                }
-
-                                cyxwiz::Tensor target({static_cast<size_t>(batch.batch_size),
-                                                      static_cast<size_t>(num_classes)},
-                                                     one_hot_labels.data());
-
-                                size_t label_size = num_classes;
-
-                                // Forward pass
-                                cyxwiz::Tensor output = model_ptr->Forward(input);
-
-                                // Log shapes on first batch for debugging
-                                if (batches_processed == 1) {
-                                    auto in_shape = input.Shape();
-                                    auto out_shape = output.Shape();
-                                    auto tgt_shape = target.Shape();
-                                    spdlog::info("[TRAINING] First batch shapes:");
-                                    spdlog::info("  Input:  [{}, {}]",
-                                                in_shape.size() > 0 ? in_shape[0] : 0,
-                                                in_shape.size() > 1 ? in_shape[1] : 0);
-                                    spdlog::info("  Output: [{}, {}]",
-                                                out_shape.size() > 0 ? out_shape[0] : 0,
-                                                out_shape.size() > 1 ? out_shape[1] : 0);
-                                    spdlog::info("  Target: [{}, {}]",
-                                                tgt_shape.size() > 0 ? tgt_shape[0] : 0,
-                                                tgt_shape.size() > 1 ? tgt_shape[1] : 0);
-                                }
-
-                                // Validate output shape matches target shape
-                                auto output_shape = output.Shape();
-                                auto target_shape = target.Shape();
-                                if (output_shape.size() != target_shape.size()) {
-                                    spdlog::error("Shape mismatch: output dims={} vs target dims={}",
-                                                 output_shape.size(), target_shape.size());
-                                    throw std::runtime_error("Output/target dimension mismatch");
-                                }
-                                for (size_t d = 0; d < output_shape.size(); ++d) {
-                                    if (output_shape[d] != target_shape[d]) {
-                                        spdlog::error("Shape mismatch at dim {}: output[{}]={} vs target[{}]={}",
-                                                     d, d, output_shape[d], d, target_shape[d]);
-                                        spdlog::error("Batch {} - input shape: [{}, {}], output shape: [{}, {}], target shape: [{}, {}]",
-                                                     batches_processed,
-                                                     batch.batch_size, input_size,
-                                                     output_shape.size() > 0 ? output_shape[0] : 0,
-                                                     output_shape.size() > 1 ? output_shape[1] : 0,
-                                                     target_shape.size() > 0 ? target_shape[0] : 0,
-                                                     target_shape.size() > 1 ? target_shape[1] : 0);
-                                        throw std::runtime_error("Output/target shape mismatch");
-                                    }
-                                }
-
-                                // Compute loss (using shared loss function)
-                                cyxwiz::Tensor loss_tensor = loss_ptr->Forward(output, target);
-
-                                // Get loss value
-                                float batch_loss = 0.0f;
-                                const float* loss_data = loss_tensor.Data<float>();
-                                if (loss_data) {
-                                    batch_loss = loss_data[0];
-                                }
-                                epoch_loss_sum += batch_loss;
-
-                                // Backward pass (using same loss function instance)
-                                cyxwiz::Tensor grad = loss_ptr->Backward(output, target);
-                                model_ptr->Backward(grad);
-
-                                // Update parameters
-                                model_ptr->UpdateParameters(optimizer_ptr.get());
-
-                                // Calculate accuracy (argmax comparison)
-                                const float* out_data = output.Data<float>();
-                                const float* tgt_data = target.Data<float>();
-                                if (out_data && tgt_data) {
-                                    for (size_t s = 0; s < batch.batch_size; ++s) {
-                                        int pred_class = 0, true_class = 0;
-                                        float max_pred = out_data[s * label_size];
-                                        float max_true = tgt_data[s * label_size];
-                                        for (size_t c = 1; c < label_size; ++c) {
-                                            if (out_data[s * label_size + c] > max_pred) {
-                                                max_pred = out_data[s * label_size + c];
-                                                pred_class = static_cast<int>(c);
-                                            }
-                                            if (tgt_data[s * label_size + c] > max_true) {
-                                                max_true = tgt_data[s * label_size + c];
-                                                true_class = static_cast<int>(c);
-                                            }
-                                        }
-                                        if (pred_class == true_class) correct_predictions++;
-                                    }
-                                }
-                                total_samples += batch.batch_size;
-
-                                loss = epoch_loss_sum / batches_processed;
-                                accuracy = total_samples > 0 ? static_cast<double>(correct_predictions) / total_samples : 0.0;
-
-                            } catch (const std::exception& e) {
-                                spdlog::error("Training error on batch {}: {}", batches_processed, e.what());
-                                std::lock_guard<std::mutex> err_lock(error_mutex);
-                                training_error = "Training failed on batch " + std::to_string(batches_processed) +
-                                                 ": " + e.what();
-                                batch_failed = true;
-                            }
-                        }
-                        if (batch_failed) {
-                            break;
-                        }
-
-                        // Report batch progress
-                        cyxwiz::protocol::TrainingUpdate batch_update;
-                        batch_update.set_job_id(current_job_id);
-                        batch_update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
-
-                        auto* log = batch_update.mutable_log();
-                        log->set_level(cyxwiz::protocol::LogMessage::DEBUG);
-                        log->set_source("RealTraining");
-                        log->set_message("Batch " + std::to_string(batches_processed) +
-                                       ": loss=" + std::to_string(loss).substr(0, 6) +
-                                       ", acc=" + std::to_string(accuracy * 100).substr(0, 5) + "%");
-
-                        {
-                            std::lock_guard<std::mutex> lock(queue_mutex);
-                            update_queue.push(std::move(batch_update));
-                        }
-                        queue_cv.notify_one();
-                    }
-                    spdlog::info("Epoch {} completed: {} batches, loss={:.4f}, acc={:.2f}%",
-                                epoch, batches_processed, loss, accuracy * 100);
-                }
-                if (batch_failed) {
-                    break;
-                }
-                {
-                    std::lock_guard<std::mutex> err_lock(error_mutex);
-                    final_loss = loss;
-                    final_accuracy = accuracy;
-                    epochs_completed = epoch;
-                }
-
-                // Send epoch progress update
-                cyxwiz::protocol::TrainingUpdate update;
-                update.set_job_id(current_job_id);
-                update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
-
-                auto* progress = update.mutable_progress();
-                progress->set_current_epoch(epoch);
-                progress->set_total_epochs(total_epochs);
-                progress->set_current_batch(batches_processed);
-                progress->set_total_batches(batches_processed);  // At epoch end, all batches done
-                progress->set_progress_percentage(static_cast<double>(epoch) / total_epochs);
-                (*progress->mutable_metrics())["loss"] = loss;
-                (*progress->mutable_metrics())["accuracy"] = accuracy;
-                (*progress->mutable_metrics())["batches"] = static_cast<double>(batches_processed);
-
-                // Add GPU and memory usage
-                auto* metrics_collector = cyxwiz::servernode::core::BackendManager::Instance().GetMetricsCollector();
-                if (metrics_collector) {
-                    auto sys_metrics = metrics_collector->GetCurrentMetrics();
-                    // gpu_usage is already in 0-1 range from MetricsCollector
-                    float gpu_pct = sys_metrics.gpu_usage;
-                    float mem_pct = sys_metrics.vram_total_bytes > 0 ?
-                        static_cast<float>(sys_metrics.vram_used_bytes) / sys_metrics.vram_total_bytes : 0.0f;
-
-                    spdlog::debug("JobExecution: GPU metrics - gpu_usage={:.4f}, vram_used={}, vram_total={}, mem_pct={:.4f}",
-                                  gpu_pct, sys_metrics.vram_used_bytes, sys_metrics.vram_total_bytes, mem_pct);
-
-                    progress->set_gpu_usage(gpu_pct);
-                    progress->set_memory_usage(mem_pct);
-                } else {
-                    spdlog::warn("JobExecution: MetricsCollector is null!");
-                }
-
-                // Update StateManager for GUI
-                auto* sm = cyxwiz::servernode::core::BackendManager::Instance().GetStateManager();
-                if (sm) {
-                    cyxwiz::servernode::core::JobState job_state;
-                    job_state.id = current_job_id;
-                    job_state.type = "Training";
-                    job_state.progress = static_cast<float>(epoch) / total_epochs;
-                    job_state.current_epoch = epoch;
-                    job_state.total_epochs = total_epochs;
-                    job_state.loss = loss;
-                    job_state.accuracy = accuracy;
-                    job_state.is_running = true;
-                    job_state.is_paused = session->is_paused;
-                    sm->UpdateJob(job_state);
-                }
-
-                {
-                    std::lock_guard<std::mutex> lock(queue_mutex);
-                    update_queue.push(std::move(update));
-                }
-                queue_cv.notify_one();
-
-                // Small delay between epochs
-                if (!use_remote) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                }
-            }
-
-            training_success = !session->should_stop && !batch_failed;
+        if (!job_executor_->ExecuteJobAsync(run_config)) {
+            std::lock_guard<std::mutex> lock(error_mutex);
+            training_error = "the node could not start the job";
             training_complete = true;
-            queue_cv.notify_one();
-        });
-        training_thread.detach();
+        }
     }
 
     // Stream updates to Engine
@@ -1105,16 +702,9 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 spdlog::warn("Failed to write training update, Engine disconnected");
                 session->should_stop = true;
 
-                // Cancel data loaders to unblock any waiting threads
-                if (session->train_loader) {
-                    session->train_loader->Cancel();
-                }
-                if (session->val_loader) {
-                    session->val_loader->Cancel();
-                }
-
+                cancel_fetch();
                 if (job_executor_) {
-                    job_executor_->CancelJob(job_id);
+                    job_executor_->CancelJob(current_job_id);
                 }
 
                 training_success = false;
@@ -1158,7 +748,11 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
             // Only advertise weights that were actually written (tofix118 P4
             // owns saving weights of streamed jobs).
-            const std::string weights_path = SavePartialModel(current_job_id);
+            std::string weights_path;
+            {
+                std::lock_guard<std::mutex> lock(error_mutex);
+                weights_path = saved_weights_path;
+            }
             if (!weights_path.empty()) {
                 session->final_weights_path = weights_path;
                 complete->set_weights_location(weights_path);
@@ -1182,7 +776,11 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             }
 
             // Save partial model and provide download location
-            std::string partial_model_path = SavePartialModel(current_job_id);
+            std::string partial_model_path;
+            {
+                std::lock_guard<std::mutex> lock(error_mutex);
+                partial_model_path = saved_weights_path;
+            }
             if (!partial_model_path.empty()) {
                 session->final_weights_path = partial_model_path;
                 complete->set_weights_location(partial_model_path);
@@ -1218,6 +816,11 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
     // Report job completion for reputation (NOT payment)
     ReportJobComplete(current_job_id, training_success);
+
+    if (!job_data_dir.empty()) {
+        std::error_code remove_error;
+        std::filesystem::remove_all(job_data_dir, remove_error);
+    }
 
     // Reset session state for potential new job
     ResetJobSession(session);
@@ -1304,32 +907,6 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             stream->Write(ack_update);
         }
 
-        // Recreate data loaders for new job if remote dataset
-        std::string new_dataset_uri = session->job_config.dataset_uri();
-        if (new_dataset_uri.find("remote://") == 0) {
-            auto write_func = [stream, stream_mutex](const cyxwiz::protocol::TrainingUpdate& update) -> bool {
-                std::lock_guard<std::mutex> lock(*stream_mutex);
-                return stream->Write(update);
-            };
-
-            int batch_size = session->job_config.batch_size();
-            if (batch_size <= 0) batch_size = 32;
-
-            // Use the NEW job's job_id from the config, not the original captured job_id
-            std::string new_job_id = session->job_config.job_id();
-            spdlog::info("Creating new data loaders with job_id: {}", new_job_id);
-
-            session->train_loader = std::make_shared<RemoteDataLoader>(
-                write_func, new_job_id, cyxwiz::protocol::SPLIT_TRAIN,
-                batch_size, /*shuffle=*/true);
-
-            session->val_loader = std::make_shared<RemoteDataLoader>(
-                write_func, new_job_id, cyxwiz::protocol::SPLIT_VALIDATION,
-                batch_size, /*shuffle=*/false);
-
-            is_remote_dataset = true;
-            spdlog::info("Recreated remote data loaders for new job {}", new_job_id);
-        }
     }
 
     // Continue loop if we received a new job, exit if reservation ended or disconnected
@@ -1584,12 +1161,10 @@ void JobExecutionServiceImpl::CleanupJob(const std::string& job_id) {
     }
 
     if (session) {
-        // Cancel any data loaders
-        if (session->train_loader) {
-            session->train_loader->Cancel();
-        }
-        if (session->val_loader) {
-            session->val_loader->Cancel();
+        // Stop a dataset download in progress
+        {
+            std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
+            if (session->dataset_fetcher) session->dataset_fetcher->Cancel();
         }
 
         // Mark job as stopped
@@ -1714,14 +1289,11 @@ void JobExecutionServiceImpl::ResetJobSession(JobSession* session) {
     session->paused_at_epoch = 0;
     session->paused_at_batch = 0;
 
-    // Clear data loaders (will be recreated for new job)
-    if (session->train_loader) {
-        session->train_loader->Cancel();
-        session->train_loader.reset();
-    }
-    if (session->val_loader) {
-        session->val_loader->Cancel();
-        session->val_loader.reset();
+    // A dataset download belongs to one job
+    {
+        std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
+        if (session->dataset_fetcher) session->dataset_fetcher->Cancel();
+        session->dataset_fetcher.reset();
     }
 
     // Clear paths

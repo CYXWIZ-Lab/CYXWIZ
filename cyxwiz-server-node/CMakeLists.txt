@@ -86,7 +86,7 @@ set(DAEMON_SOURCES
     src/job_execution_service.cpp
     src/node_server.cpp
     src/job_executor.cpp
-    src/remote_data_loader.cpp
+    src/remote_dataset_fetcher.cpp
     # API layer
     src/api/api_key_manager.cpp
     src/api/rate_limiter.cpp
@@ -384,9 +384,10 @@ if(CYXWIZ_BUILD_TESTS)
     # P2P Service Tests
     add_executable(test_job_execution_service
         tests/test_job_execution_service.cpp
+        ${CMAKE_SOURCE_DIR}/cyxwiz-engine/src/network/dataset_file_server.cpp
         src/job_execution_service.cpp
         src/job_executor.cpp
-        src/remote_data_loader.cpp
+        src/remote_dataset_fetcher.cpp
         src/node_client.cpp
         src/auth/p2p_jwt_validator.cpp
         ${SHARED_CORE_SOURCES}
@@ -479,7 +480,7 @@ if(CYXWIZ_BUILD_TESTS)
         tests/standalone_p2p_server.cpp
         src/job_execution_service.cpp
         src/job_executor.cpp
-        src/remote_data_loader.cpp
+        src/remote_dataset_fetcher.cpp
         src/node_client.cpp
         src/auth/p2p_jwt_validator.cpp
         ${SHARED_CORE_SOURCES}

@@ -8,6 +8,7 @@
 #include "pipeline_runtime_capabilities.h"
 #include "sequence_arrow_batcher.h"
 
+#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -105,6 +106,18 @@ private:
     GraphDatasetCatalog previous_;
 };
 
+// The first node RunGraphTrainingJob cannot run, with the reason.
+bool FindPreparationNode(const GraphDocument& graph, std::string& error) {
+    for (const auto& node : graph.nodes) {
+        if (NeedsPreparation(node)) {
+            error = "node '" + node.name + "' is a data preparation step; this host trains graphs whose "
+                    "Data Inputs feed the Data Loader directly (prepare the data in the Engine first)";
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& request,
@@ -114,12 +127,7 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     if (!ParseGraphDocument(request.graph_json, graph, error)) return Fail(error);
 
     // Refuse data-path steps this runner cannot perform.
-    for (const auto& node : graph.nodes) {
-        if (NeedsPreparation(node)) {
-            return Fail("node '" + node.name + "' is a data preparation step; this host trains graphs whose "
-                        "Data Inputs feed the Data Loader directly (prepare the data in the Engine first)");
-        }
-    }
+    if (FindPreparationNode(graph, error)) return Fail(error);
 
     // Load every Data Input file.
     std::map<std::string, std::shared_ptr<ArrowDataset>> datasets;
@@ -262,6 +270,89 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     result.ok = !result.cancelled;
     result.model = executor->ReleaseModel();
     return result;
+}
+
+
+bool PlanGraphJobDatasets(const std::string& graph_json, GraphJobDatasetPlan& plan, std::string& error) {
+    plan = {};
+    GraphDocument graph;
+    if (!ParseGraphDocument(graph_json, graph, error)) return false;
+    if (FindPreparationNode(graph, error)) return false;
+
+    // Data Split's third input (dataset.v2) is the supplied Test role.
+    std::set<int> test_pins;
+    for (const auto& node : graph.nodes) {
+        if (node.type == gui::NodeType::DataSplit && node.inputs.size() >= 3) test_pins.insert(node.inputs[2].id);
+    }
+    std::set<int> test_inputs;
+    for (const auto& link : graph.links) {
+        if (test_pins.count(link.to_pin) > 0) test_inputs.insert(link.from_node);
+    }
+    std::set<std::string> seen;
+    for (const auto& node : graph.nodes) {
+        if (node.type != gui::NodeType::DataInput) continue;
+        const std::string name = Parameter(node, "dataset_name");
+        if (name.empty()) {
+            error = "Data Input '" + node.name + "' has no dataset_name";
+            return false;
+        }
+        if (!seen.insert(name).second) continue;
+        (test_inputs.count(node.id) > 0 ? plan.kept_private : plan.ship).push_back(name);
+    }
+    if (plan.ship.empty()) {
+        error = "the graph has no training Data Input";
+        return false;
+    }
+    return true;
+}
+
+bool BindGraphJobDatasets(const std::string& graph_json, const std::map<std::string, std::string>& files,
+                          const std::vector<std::string>& drop, std::string& bound_json, std::string& error) {
+    nlohmann::json graph;
+    try {
+        graph = nlohmann::json::parse(graph_json);
+    } catch (const std::exception& e) {
+        error = std::string("the graph is not valid JSON: ") + e.what();
+        return false;
+    }
+    if (!graph.contains("nodes") || !graph["nodes"].is_array() || !graph.contains("links") ||
+        !graph["links"].is_array()) {
+        error = "the graph has no nodes and links arrays";
+        return false;
+    }
+    const std::set<std::string> dropped(drop.begin(), drop.end());
+    std::set<int> removed_nodes;
+    nlohmann::json nodes = nlohmann::json::array();
+    for (auto node : graph["nodes"]) {
+        if (node.value("type", -1) == static_cast<int>(gui::NodeType::DataInput)) {
+            auto& params = node["parameters"];
+            const std::string name = params.is_object() ? params.value("dataset_name", std::string()) : std::string();
+            if (dropped.count(name) > 0) {
+                removed_nodes.insert(node.value("id", 0));
+                continue;
+            }
+            const auto file = files.find(name);
+            if (file == files.end()) {
+                error = "no local file for dataset '" + name + "'";
+                return false;
+            }
+            params["file_path"] = file->second;
+            const std::string extension = Lower(std::filesystem::path(file->second).extension().string());
+            params["file_type"] = extension == ".parquet" ? "parquet" : "arrow";
+        }
+        nodes.push_back(std::move(node));
+    }
+    nlohmann::json links = nlohmann::json::array();
+    for (const auto& link : graph["links"]) {
+        if (removed_nodes.count(link.value("from_node", 0)) > 0 || removed_nodes.count(link.value("to_node", 0)) > 0) {
+            continue;
+        }
+        links.push_back(link);
+    }
+    graph["nodes"] = std::move(nodes);
+    graph["links"] = std::move(links);
+    bound_json = graph.dump();
+    return true;
 }
 
 }  // namespace cyxwiz
