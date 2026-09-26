@@ -663,13 +663,22 @@ std::string EngineConfig::GetBundledPythonPath() const {
     if (exe_dir.empty()) {
         return "";
     }
+    std::error_code ec;
 #ifdef _WIN32
     const std::filesystem::path candidate = exe_dir / "python" / "python.exe";
-#else
-    const std::filesystem::path candidate = exe_dir / "python" / "bin" / "python3";
-#endif
-    std::error_code ec;
     return std::filesystem::is_regular_file(candidate, ec) ? candidate.string() : "";
+#else
+    // Packages store regular files only, so the python3 alias of a
+    // standalone tree is not shipped; the versioned interpreter is.
+    const std::filesystem::path bin = exe_dir / "python" / "bin";
+    for (const char* name : {"python3.12", "python3.13", "python3"}) {
+        const std::filesystem::path candidate = bin / name;
+        if (std::filesystem::is_regular_file(candidate, ec)) {
+            return candidate.string();
+        }
+    }
+    return "";
+#endif
 }
 
 void EngineConfig::SetSystemPythonPath(const std::string& path) {
