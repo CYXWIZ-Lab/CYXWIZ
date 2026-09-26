@@ -1,6 +1,6 @@
 # Installing CyxWiz from source
 
-CyxWiz is pre-release software. The supported installation path in this repository is a source build; published binary availability is not guaranteed.
+CyxWiz is pre-release software. Signed alpha installers are published on the [Releases page](https://github.com/CYXWIZ-Lab/CYXWIZ/releases); see [Pre-release installers](README.md#pre-release-installers) for platforms and GPU compute packs. This guide covers building from source.
 
 ## Requirements
 

@@ -85,6 +85,25 @@ This separation is deliberate: the Engine owns interaction and orchestration, th
 
 The repository is therefore best understood as a working pre-release ML engineering platform, not yet as a finished distributed training product. The current development priority is making execution contracts, computation placement, recovery, observability, and real-dataset workflows production-reliable.
 
+## Pre-release installers
+
+Signed alpha installers are published on the [Releases page](https://github.com/CYXWIZ-Lab/CYXWIZ/releases) as pre-releases. Download the small setup program for your platform; it verifies and fetches the installer, which then installs the Engine and any compute packs you choose. The installer only downloads what you select.
+
+| Platform | CPU base (Engine) | Optional GPU compute packs |
+| --- | --- | --- |
+| Windows x64 | Yes | CUDA (NVIDIA), OpenCL (NVIDIA, Intel; AMD untested), oneAPI (Intel) |
+| Linux x86_64 | Yes | Not yet |
+| macOS Intel | Yes | Not yet (an OpenCL pack is planned) |
+| macOS Apple Silicon | Yes | Not yet |
+
+- **CPU base:** the Engine with its ArrayFire CPU runtime and bundled Python. It runs on any supported machine without a GPU.
+- **GPU compute packs** add ArrayFire's official GPU runtimes beside the base; nothing needs to be installed system-wide. They need a current GPU driver. Approximate download sizes: OpenCL 7 MB, oneAPI 280 MB, CUDA 1.7 GB.
+- **Per-machine verification:** installing a pack is not enough to use it. Open **Preferences > Devices** in the Engine and verify the device; every compute route runs a short qualification in an isolated process on your hardware before training can use it. Failures are shown with the reason.
+- **Where packs ship:** a GPU pack is published only after its routes are verified on real hardware. Windows packs are verified on NVIDIA GeForce (CUDA, OpenCL) and Intel UHD / Iris Xe (OpenCL, oneAPI) machines. On Intel GPUs the Engine recommends OpenCL; oneAPI remains available.
+- **Install location (Windows):** per-user installs go to `%LOCALAPPDATA%\Programs\CyxWiz`; uninstalling keeps your Engine settings and data in `%LOCALAPPDATA%\CyxWiz`.
+
+Alpha releases are for evaluation. Use a release newer than 1.0.4: 1.0.3 and 1.0.4 carry a Windows uninstall defect described in their release notes.
+
 ## Repository components
 
 | Path | Purpose |
@@ -317,7 +336,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for coding, testing, commit, and review 
 - distributed training is not yet a verified production workflow;
 - checkpoint restoration and exact continuation need further lifecycle work;
 - several GUI and plugin surfaces expose capabilities whose runtime support varies;
-- cross-platform release validation is incomplete.
+- GPU compute packs are published for Windows only; Linux and macOS installs are CPU-only until their packs can be verified on real hardware.
 
 These limitations are tracked internally and are stated here so public documentation does not over-promise.
 
