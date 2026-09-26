@@ -106,6 +106,11 @@ public:
     // persisted: the install folder changes when the base is upgraded.
     std::string GetBundledPythonPath() const;
 
+    // Interpreter found by the startup scan, used for this session only when
+    // nothing is configured and no runtime is bundled (never saved, so it
+    // cannot override a bundled runtime later).
+    void SetDetectedPythonPath(const std::string& path);
+
     // Get Python packages directory (derived from interpreter path)
     std::string GetPythonPackagesDir() const;
 
@@ -176,6 +181,7 @@ private:
 
     // Python settings
     std::string system_python_path_;  // System Python interpreter path (auto-detected or user-configured)
+    std::string detected_python_path_;  // session only, not serialized
     bool auto_create_venv_ = true;    // Auto-create venv for new projects
     std::vector<std::string> default_venv_packages_;  // Default packages to install in new venvs
 

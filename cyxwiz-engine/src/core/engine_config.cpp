@@ -15,6 +15,9 @@
 #include <unistd.h>
 #include <limits.h>  // PATH_MAX
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 namespace cyxwiz::core {
 
@@ -95,6 +98,17 @@ std::filesystem::path GetExecutableDir() {
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     std::filesystem::path exe_path(path);
     return exe_path.parent_path();
+#elif defined(__APPLE__)
+    // macOS has no /proc: without this the bundled Python and the
+    // executable-directory config file were never found.
+    char path[PATH_MAX];
+    uint32_t size = sizeof(path);
+    if (_NSGetExecutablePath(path, &size) != 0) {
+        return {};
+    }
+    std::error_code ec;
+    const auto canonical = std::filesystem::weakly_canonical(path, ec);
+    return (ec ? std::filesystem::path(path) : canonical).parent_path();
 #else
     char path[PATH_MAX];
     ssize_t count = readlink("/proc/self/exe", path, PATH_MAX);
@@ -654,8 +668,23 @@ std::string EngineConfig::GetSystemPythonPath() const {
         }
     }
     // A stale path (for example an older base folder after an upgrade) falls
-    // back to the runtime bundled with this Engine.
-    return GetBundledPythonPath();
+    // back to the runtime bundled with this Engine, then to the interpreter
+    // the startup scan found.
+    const std::string bundled = GetBundledPythonPath();
+    if (!bundled.empty()) {
+        return bundled;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::error_code ec;
+    if (!detected_python_path_.empty() && std::filesystem::exists(detected_python_path_, ec)) {
+        return detected_python_path_;
+    }
+    return "";
+}
+
+void EngineConfig::SetDetectedPythonPath(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    detected_python_path_ = path;
 }
 
 std::string EngineConfig::GetBundledPythonPath() const {
