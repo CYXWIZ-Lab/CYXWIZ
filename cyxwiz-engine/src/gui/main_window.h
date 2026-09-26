@@ -7,6 +7,7 @@
 #include "../core/graph_compiler.h"  // for cyxwiz::ValidationIssue
 
 namespace cyxwiz {
+class ProjectManager;
 class TaskProgressPanel;
 class AsyncTask;
 struct DebugArtifactConsistencyInput;
@@ -221,6 +222,7 @@ private:
     void SetDefaultPanelVisibility();  // Hide tool panels, show only core panels
     void RenderSidebar();
     void RenderStatusBar();
+    void RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm);
     void DetectKeyboardContext();
     void HandleGlobalShortcuts();
 

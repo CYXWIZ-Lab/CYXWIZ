@@ -45,9 +45,18 @@ class ElfRuntimeClosureTests(unittest.TestCase):
             stage / "arrayfire" / "lib" / "libafcpu.so.3", stage
         )
         self.assertEqual(
-            "$ORIGIN:$ORIGIN/../..:$ORIGIN/../../lib",
+            "$ORIGIN:$ORIGIN/../..:$ORIGIN/../../lib:$ORIGIN/../../python/lib",
             value,
         )
+
+    def test_engine_rpath_reaches_bundled_libpython(self) -> None:
+        stage = Path("/package")
+        self.assertEqual(
+            "$ORIGIN:$ORIGIN/lib:$ORIGIN/arrayfire/lib:$ORIGIN/python/lib",
+            elf.packaged_rpath(stage / "cyxwiz-engine", stage),
+        )
+        self.assertTrue(elf.is_bundled_python(stage / "python" / "bin" / "python3.12", stage))
+        self.assertFalse(elf.is_bundled_python(stage / "lib" / "libpython3.12.so.1.0", stage))
 
     def test_closure_copies_non_system_dependency_and_patches_each_binary(
         self,

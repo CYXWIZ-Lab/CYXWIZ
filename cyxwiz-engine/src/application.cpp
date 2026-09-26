@@ -267,6 +267,8 @@ void CyxWizApp::ScanForPython() {
         python_scan_.minor = best_python->minor;
         python_scan_.path = best_python->executable_path;
         python_scan_.compatible = true;
+        // Use it for this session (project venvs, scripting) without saving.
+        config.SetDetectedPythonPath(best_python->executable_path);
 
         spdlog::info("Python {} detected at: {}", python_scan_.version, python_scan_.path);
     } else {

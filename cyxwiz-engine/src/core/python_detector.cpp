@@ -247,6 +247,13 @@ bool PythonDetector::MeetsRequirements(const PythonInstallation& python) {
     if (python.major != 3 || python.minor < 12 || python.minor > 13) {
         return false;
     }
+#ifdef CYXWIZ_PYTHON_LINKED_MINOR
+    // The Engine embeds one libpython; a different minor version is not
+    // ABI-compatible with it.
+    if (python.minor != CYXWIZ_PYTHON_LINKED_MINOR) {
+        return false;
+    }
+#endif
 
     // Require venv module
     if (!python.has_venv_module) {
@@ -264,6 +271,13 @@ std::string PythonDetector::GetRequirementError(const PythonInstallation& python
     if (python.major > 3 || (python.major == 3 && python.minor > 13)) {
         return "Python version unsupported (supported versions: 3.12-3.13; found " + python.version + ")";
     }
+
+#ifdef CYXWIZ_PYTHON_LINKED_MINOR
+    if (python.major == 3 && python.minor != CYXWIZ_PYTHON_LINKED_MINOR) {
+        return "This Engine embeds Python 3." + std::to_string(CYXWIZ_PYTHON_LINKED_MINOR) +
+               "; found " + python.version;
+    }
+#endif
 
     if (!python.has_venv_module) {
         return "Python missing venv module (required for creating virtual environments)";

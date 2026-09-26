@@ -12,6 +12,7 @@
 #include "core/compute_runtime_paths.h"
 #include "core/execution_device_preferences.h"
 #include "core/route_qualification_snapshot.h"
+#include "core/python_package_smoke.h"
 #ifdef _WIN32
 #include "windows_dll_search.h"
 #endif
@@ -152,10 +153,19 @@ int RunPackageSmoke() {
             return 1;
         }
 
+        std::string python_error;
+        const std::string python_version =
+            cyxwiz::core::RunBundledPythonSmoke(GetExecutableDir(), &python_error);
+        if (python_version.empty()) {
+            std::cerr << "package_smoke schema=1 status=fail reason="
+                      << python_error << '\n';
+            return 1;
+        }
+
         std::cout << "package_smoke schema=1 status=pass "
                      "effective_backend=cpu effective_device=0 "
                      "runtime_isolation=pass checksum="
-                  << value << '\n';
+                  << value << " python=" << python_version << '\n';
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "package_smoke schema=1 status=fail "

@@ -111,6 +111,18 @@ bool ScriptingEngine::EnsurePythonInitialized(std::string* error_out) {
         return false;
     }
 
+    // Starting now would use the base interpreter and need a restart to move
+    // to the project environment once it exists.
+    if (!python_engine_->IsInitialized() &&
+        pm.IsPythonEnvSetupPending(pm.GetProjectRoot())) {
+        if (error_out) {
+            *error_out = "The project's Python environment is still being set up. "
+                         "Python will be available in a few seconds.";
+        }
+        spdlog::info("Python initialization deferred: project environment setup in progress");
+        return false;
+    }
+
     if (python_engine_->IsInitialized()) {
         std::string mismatch;
         if (python_engine_->HasInterpreterMismatch(&mismatch)) {

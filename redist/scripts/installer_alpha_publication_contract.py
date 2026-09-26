@@ -302,6 +302,8 @@ def _verify_repository_assets(
     cpu_only = body["kind"] == "cyxwiz-alpha-cpu-release-assets"
     if cpu_only and any(pack["pack_kind"] != "base" for pack in packs):
         raise AlphaPublicationError("CPU-only release must not contain optional packs")
+    # Optional packs may cover only some targets (see the assembler).
+    optional_total = 0
     for target in PACK_TARGETS:
         target_packs = [
             pack for pack in packs
@@ -322,10 +324,15 @@ def _verify_repository_assets(
             if pack["pack_kind"] == "backend_pack"
             and pack["companion_base_id"] in bases
         ]
-        if not bases or (not cpu_only and not optional):
+        if not bases:
             raise AlphaPublicationError(
-                f"release repository lacks a complete pack matrix for {target}"
+                f"release repository lacks a CPU base for {target}"
             )
+        optional_total += len(optional)
+    if not cpu_only and optional_total == 0:
+        raise AlphaPublicationError(
+            "full release repository contains no optional packs"
+        )
     return consumed
 
 

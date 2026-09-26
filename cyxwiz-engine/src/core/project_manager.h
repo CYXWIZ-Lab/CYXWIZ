@@ -1,7 +1,9 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <map>
@@ -117,6 +119,22 @@ public:
     void SetOnProjectVenvReady(ProjectCallback callback) { on_venv_ready_ = std::move(callback); }
     void NotifyProjectVenvReady(const std::string& project_root);
 
+    // Creating a project's Python environment takes a few seconds; the UI
+    // shows this state and Python waits for it instead of starting from the
+    // base interpreter (which would need a restart to switch).
+    enum class PythonEnvSetupState { None, Pending, Ready, Failed };
+    struct PythonEnvSetupStatus {
+        PythonEnvSetupState state = PythonEnvSetupState::None;
+        std::string project_root;
+        std::string message;
+        std::chrono::steady_clock::time_point changed{};
+    };
+    void SetPythonEnvSetupStatus(PythonEnvSetupState state,
+                                 const std::string& project_root,
+                                 const std::string& message);
+    PythonEnvSetupStatus GetPythonEnvSetupStatus() const;
+    bool IsPythonEnvSetupPending(const std::string& project_root) const;
+
     // Lifetime token of the open project. Background work that belongs to
     // the project binds to it (AsyncTaskManager RunAsync/BindOwner);
     // CloseProject, or opening another project, cancels that work and
@@ -170,6 +188,17 @@ private:
     ProjectCallback on_opened_;
     ProjectCallback on_closed_;
     ProjectCallback on_venv_ready_;
+
+    mutable std::mutex python_env_mutex_;
+    PythonEnvSetupStatus python_env_status_;
 };
+
+// Re-points a project virtual environment whose base interpreter no longer
+// exists - for example the bundled Python of a base folder replaced by an
+// upgrade - at the current interpreter (python -m venv --upgrade), keeping
+// installed packages. Returns true when the environment is usable; false
+// with the reason in *message when it cannot be repaired safely.
+bool RepairProjectVenvBase(const std::string& venv_interpreter,
+                           std::string* message = nullptr);
 
 } // namespace cyxwiz

@@ -26,8 +26,10 @@ bool HasExactKeys(
 }
 
 bool HasSupportedRuntimeSchema(const Json& document) {
-    // Legacy bundles require Python. CPU qualification bundles explicitly
-    // disable scripting and only Windows currently bundles a Python runtime.
+    // {"python": version} marks a base with a bundled Python and embedded
+    // scripting (legacy bundles, and CPU bases from 1.0.6 on every platform).
+    // Earlier CPU qualification bases declared python_scripting "disabled";
+    // they stay readable so installed products can still be removed.
     if (HasExactKeys(document, {"arrayfire", "cyxwiz", "python"})) {
         return document["python"].is_string();
     }

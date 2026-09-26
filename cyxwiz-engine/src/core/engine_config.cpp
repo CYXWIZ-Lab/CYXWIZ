@@ -15,6 +15,9 @@
 #include <unistd.h>
 #include <limits.h>  // PATH_MAX
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 namespace cyxwiz::core {
 
@@ -95,6 +98,17 @@ std::filesystem::path GetExecutableDir() {
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     std::filesystem::path exe_path(path);
     return exe_path.parent_path();
+#elif defined(__APPLE__)
+    // macOS has no /proc: without this the bundled Python and the
+    // executable-directory config file were never found.
+    char path[PATH_MAX];
+    uint32_t size = sizeof(path);
+    if (_NSGetExecutablePath(path, &size) != 0) {
+        return {};
+    }
+    std::error_code ec;
+    const auto canonical = std::filesystem::weakly_canonical(path, ec);
+    return (ec ? std::filesystem::path(path) : canonical).parent_path();
 #else
     char path[PATH_MAX];
     ssize_t count = readlink("/proc/self/exe", path, PATH_MAX);
@@ -629,12 +643,12 @@ void EngineConfig::SetDefaultP2PPort(int port) {
 // ===== Python Settings =====
 
 std::string EngineConfig::GetPythonPackagesDir() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (system_python_path_.empty()) {
-        return "";  // No system Python configured
+    const std::string interpreter = GetSystemPythonPath();
+    if (interpreter.empty()) {
+        return "";  // No Python configured or bundled
     }
 
-    std::filesystem::path interp(system_python_path_);
+    std::filesystem::path interp(interpreter);
     auto site_packages = ResolveSitePackagesFromInterpreter(interp);
 
     if (std::filesystem::exists(site_packages)) {
@@ -645,8 +659,55 @@ std::string EngineConfig::GetPythonPackagesDir() const {
 }
 
 std::string EngineConfig::GetSystemPythonPath() const {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::error_code ec;
+        if (!system_python_path_.empty() &&
+            std::filesystem::exists(system_python_path_, ec)) {
+            return system_python_path_;
+        }
+    }
+    // A stale path (for example an older base folder after an upgrade) falls
+    // back to the runtime bundled with this Engine, then to the interpreter
+    // the startup scan found.
+    const std::string bundled = GetBundledPythonPath();
+    if (!bundled.empty()) {
+        return bundled;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
-    return system_python_path_;
+    std::error_code ec;
+    if (!detected_python_path_.empty() && std::filesystem::exists(detected_python_path_, ec)) {
+        return detected_python_path_;
+    }
+    return "";
+}
+
+void EngineConfig::SetDetectedPythonPath(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    detected_python_path_ = path;
+}
+
+std::string EngineConfig::GetBundledPythonPath() const {
+    const std::filesystem::path exe_dir = GetExecutableDir();
+    if (exe_dir.empty()) {
+        return "";
+    }
+    std::error_code ec;
+#ifdef _WIN32
+    const std::filesystem::path candidate = exe_dir / "python" / "python.exe";
+    return std::filesystem::is_regular_file(candidate, ec) ? candidate.string() : "";
+#else
+    // Packages store regular files only, so the python3 alias of a
+    // standalone tree is not shipped; the versioned interpreter is.
+    const std::filesystem::path bin = exe_dir / "python" / "bin";
+    for (const char* name : {"python3.12", "python3.13", "python3"}) {
+        const std::filesystem::path candidate = bin / name;
+        if (std::filesystem::is_regular_file(candidate, ec)) {
+            return candidate.string();
+        }
+    }
+    return "";
+#endif
 }
 
 void EngineConfig::SetSystemPythonPath(const std::string& path) {
@@ -658,8 +719,7 @@ void EngineConfig::SetSystemPythonPath(const std::string& path) {
 }
 
 bool EngineConfig::HasSystemPython() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return !system_python_path_.empty() && std::filesystem::exists(system_python_path_);
+    return !GetSystemPythonPath().empty();
 }
 
 bool EngineConfig::GetAutoCreateVenv() const {

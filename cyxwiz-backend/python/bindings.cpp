@@ -134,7 +134,7 @@ std::vector<double> matrix_single_column_to_vector(
 
 py::array_t<double> matrix_to_numpy(const std::vector<std::vector<double>>& mat) {
     if (mat.empty()) {
-        return py::array_t<double>({0, 0});
+        return py::array_t<double>(std::vector<py::ssize_t>{0, 0});
     }
 
     const py::ssize_t rows = static_cast<py::ssize_t>(mat.size());
@@ -181,7 +181,7 @@ py::array_t<std::complex<double>> complex_vector_to_numpy(const std::vector<std:
 py::array_t<std::complex<double>> complex_matrix_to_numpy(
     const std::vector<std::vector<std::complex<double>>>& mat) {
     if (mat.empty()) {
-        return py::array_t<std::complex<double>>({0, 0});
+        return py::array_t<std::complex<double>>(std::vector<py::ssize_t>{0, 0});
     }
 
     const py::ssize_t rows = static_cast<py::ssize_t>(mat.size());

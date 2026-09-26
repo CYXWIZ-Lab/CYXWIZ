@@ -39,6 +39,14 @@ if(TARGET cyxwiz-backend)
         CXX_STANDARD 20
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # Keep ArrayFire backends inside the packaged runtime (see source).
+        target_sources(cyxwiz-route-probe PRIVATE
+            "${_cyxwiz_installer_engine_dir}/src/core/arrayfire_load_guard_linux.cpp")
+        target_link_options(cyxwiz-route-probe PRIVATE
+            "LINKER:--export-dynamic-symbol=dlopen")
+        target_link_libraries(cyxwiz-route-probe PRIVATE ${CMAKE_DL_LIBS})
+    endif()
 endif()
 
 add_executable(cyxwiz-backend-pack-installer
@@ -166,8 +174,10 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_generated_include}"
         "${CMAKE_SOURCE_DIR}/redist/bootstrapper"
     )
+    # Same sources and dependencies as cyxwiz-installer, which installer-only
+    # builds produce without the backend library.
     target_link_libraries(test_compute_device_presentation PRIVATE
-        cyxwiz-backend
+        cyxwiz-backend-pack-service
         cyxwiz-runtime-bootstrap
         nlohmann_json::nlohmann_json
     )
