@@ -347,6 +347,10 @@ public:
 
     // Load graph from JSON string (for import from .cyxmodel)
     bool LoadGraphFromString(const std::string& json_string);
+    // The generated code for a framework, synchronously and without the
+    // script editor (headless export: cyxwiz-engine --export-code; TOFIX112
+    // export harness). Empty with a log line when the graph cannot be sorted.
+    std::string GenerateCodeText(CodeFramework framework);
 
     // Load pattern template format as graph (converts string IDs to int, resolves parameters)
     bool LoadPatternAsGraph(const nlohmann::json& j);
@@ -668,6 +672,10 @@ private:
 
     // Framework-specific layer conversion
     std::string NodeTypeToPythonLayer(const MLNode& node);
+    // Output width of the layer feeding `node` (embedding dim, recurrent
+    // hidden size - doubled when bidirectional - or dense units); empty when
+    // it cannot be read from the graph (TOFIX112 export harness).
+    std::string InferredInputWidth(const MLNode& node) const;
     std::string NodeTypeToTensorFlowLayer(const MLNode& node, int layer_idx);
     std::string NodeTypeToKerasLayer(const MLNode& node);
     std::string NodeTypeToPyCyxWizLayer(const MLNode& node);

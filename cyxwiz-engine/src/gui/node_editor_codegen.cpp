@@ -121,6 +121,22 @@ void NodeEditor::GeneratePythonCode() {
     GenerateCodeForFramework(selected_framework_);
 }
 
+std::string NodeEditor::GenerateCodeText(CodeFramework framework) {
+    if (nodes_.empty()) return {};
+    const std::vector<int> sorted_ids = TopologicalSort();
+    if (sorted_ids.empty()) {
+        spdlog::error("Failed to perform topological sort - graph may have cycles");
+        return {};
+    }
+    switch (framework) {
+        case CodeFramework::PyTorch: return GeneratePyTorchCode(sorted_ids);
+        case CodeFramework::TensorFlow: return GenerateTensorFlowCode(sorted_ids);
+        case CodeFramework::Keras: return GenerateKerasCode(sorted_ids);
+        case CodeFramework::PyCyxWiz: return GeneratePyCyxWizCode(sorted_ids);
+        default: return {};
+    }
+}
+
 void NodeEditor::GenerateCodeForFramework(CodeFramework framework) {
     spdlog::info("Generating code from node graph (async)...");
 
@@ -1889,6 +1905,42 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
     return code;
 }
 
+std::string NodeEditor::InferredInputWidth(const MLNode& node) const {
+    if (node.inputs.empty()) return {};
+    const int input_pin = node.inputs.front().id;
+    const MLNode* source = nullptr;
+    for (const auto& link : links_) {
+        if (link.to_node != node.id || link.to_pin != input_pin) continue;
+        for (const auto& other : nodes_) {
+            if (other.id == link.from_node) source = &other;
+        }
+    }
+    if (!source) return {};
+    const auto param = [source](const char* key) {
+        const auto it = source->parameters.find(key);
+        return it == source->parameters.end() ? std::string{} : it->second;
+    };
+    switch (source->type) {
+        case NodeType::Embedding:
+            return param("embedding_dim");
+        case NodeType::LSTM:
+        case NodeType::GRU:
+        case NodeType::RNN: {
+            const std::string hidden = param("hidden_size");
+            const std::string bidirectional = param("bidirectional");
+            if (hidden.empty()) return {};
+            return (bidirectional == "true" || bidirectional == "True" || bidirectional == "1")
+                       ? std::to_string(2 * std::atoi(hidden.c_str()))
+                       : hidden;
+        }
+        case NodeType::Dense:
+        case NodeType::TimeDistributed:
+            return param("units");
+        default:
+            return {};
+    }
+}
+
 std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
     std::string code;
 
@@ -1924,8 +1976,9 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             if (it != node.parameters.end()) {
                 units = it->second;
             }
-            // Note: input size needs to be determined from graph connections
-            code = "nn.Linear(in_features=AUTO, out_features=" + units + ")";
+            // The input width is read on the first forward pass (as the
+            // TimeDistributed head does); a fixed guess broke every export.
+            code = "nn.LazyLinear(out_features=" + units + ")";
             break;
         }
 
@@ -2119,6 +2172,10 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             };
             auto it = node.parameters.find("input_size");
             if (it != node.parameters.end()) input_size = it->second;
+            if (input_size.empty() || input_size == "0") {
+                const std::string inferred = InferredInputWidth(node);
+                if (!inferred.empty()) input_size = inferred;
+            }
             it = node.parameters.find("hidden_size");
             if (it != node.parameters.end()) hidden_size = it->second;
             it = node.parameters.find("num_layers");
@@ -2150,6 +2207,10 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             };
             auto it = node.parameters.find("input_size");
             if (it != node.parameters.end()) input_size = it->second;
+            if (input_size.empty() || input_size == "0") {
+                const std::string inferred = InferredInputWidth(node);
+                if (!inferred.empty()) input_size = inferred;
+            }
             it = node.parameters.find("hidden_size");
             if (it != node.parameters.end()) hidden_size = it->second;
             it = node.parameters.find("num_layers");
@@ -2171,6 +2232,10 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             std::string nonlinearity = "tanh";
             auto it = node.parameters.find("input_size");
             if (it != node.parameters.end()) input_size = it->second;
+            if (input_size.empty() || input_size == "0") {
+                const std::string inferred = InferredInputWidth(node);
+                if (!inferred.empty()) input_size = inferred;
+            }
             it = node.parameters.find("hidden_size");
             if (it != node.parameters.end()) hidden_size = it->second;
             it = node.parameters.find("num_layers");

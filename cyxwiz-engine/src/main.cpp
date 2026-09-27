@@ -14,6 +14,10 @@
 #include "core/machine_compute_preference.h"
 #include "core/route_qualification_snapshot.h"
 #include "core/python_package_smoke.h"
+#include "gui/node_editor.h"
+#include <imgui.h>
+#include <imnodes.h>
+#include <fstream>
 #ifdef _WIN32
 #include "windows_dll_search.h"
 #endif
@@ -70,6 +74,46 @@ void SetLaunchCwdEnv(const std::filesystem::path& cwd) {
 #else
     setenv("CYXWIZ_LAUNCH_CWD", cwd.string().c_str(), 1);
 #endif
+}
+
+// cyxwiz-engine --export-code <pytorch|tensorflow|keras|pycyxwiz> <graph> <out>:
+// the code the Node Editor generates for a saved graph, written headless (no
+// window) - the TOFIX112 export harness runs it against CyxWiz's model.
+bool IsExportCodeRequested(int argc, char** argv) {
+    return argc == 5 && std::string_view(argv[1]) == "--export-code";
+}
+
+int RunExportCode(const std::string& framework_name, const std::filesystem::path& graph,
+                  const std::filesystem::path& out) {
+    gui::CodeFramework framework;
+    if (framework_name == "pytorch") framework = gui::CodeFramework::PyTorch;
+    else if (framework_name == "tensorflow") framework = gui::CodeFramework::TensorFlow;
+    else if (framework_name == "keras") framework = gui::CodeFramework::Keras;
+    else if (framework_name == "pycyxwiz") framework = gui::CodeFramework::PyCyxWiz;
+    else {
+        std::cerr << "unknown framework '" << framework_name << "' (pytorch, tensorflow, keras, pycyxwiz)\n";
+        return 2;
+    }
+    ImGui::CreateContext();
+    ImNodes::CreateContext();
+    int result = 0;
+    {
+        gui::NodeEditor editor;
+        if (!editor.LoadGraph(graph.string())) {
+            std::cerr << "cannot load " << graph.string() << "\n";
+            result = 2;
+        } else {
+            const std::string code = editor.GenerateCodeText(framework);
+            std::ofstream file(out, std::ios::binary | std::ios::trunc);
+            if (code.empty() || !file || !(file << code)) {
+                std::cerr << "no code generated for " << graph.string() << "\n";
+                result = 1;
+            }
+        }
+    }
+    ImNodes::DestroyContext();
+    ImGui::DestroyContext();
+    return result;
 }
 
 bool IsPackageSmokeRequested(int argc, char** argv) {
@@ -305,6 +349,11 @@ int main(int argc, char** argv) {
 
     if (IsPackageSmokeRequested(argc, argv)) {
         const int result = RunPackageSmoke();
+        cyxwiz::Shutdown();
+        return result;
+    }
+    if (IsExportCodeRequested(argc, argv)) {
+        const int result = RunExportCode(argv[2], argv[3], argv[4]);
         cyxwiz::Shutdown();
         return result;
     }
