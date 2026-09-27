@@ -52,6 +52,9 @@ struct GraphTrainingJobCallbacks {
     // Polled likewise; true holds training between batches until it turns
     // false again (TOFIX118 P4d).
     std::function<bool()> should_pause;
+    // A resume checkpoint was written (TOFIX118 P4e-3): its folder, epoch and
+    // the batches of that epoch it covers (0 at an epoch end).
+    std::function<void(const std::string& checkpoint, int epoch, int next_batch)> on_checkpoint;
 };
 
 struct GraphTrainingJobResult {

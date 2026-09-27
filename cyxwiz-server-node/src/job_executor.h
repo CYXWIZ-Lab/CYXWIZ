@@ -107,6 +107,11 @@ public:
     // Set progress callback
     void SetProgressCallback(ProgressCallback callback);
 
+    // A resume checkpoint of a running job was written (TOFIX118 P4e-3).
+    using CheckpointCallback = std::function<void(const std::string& job_id, const std::string& checkpoint,
+                                                  int epoch, int next_batch)>;
+    void SetCheckpointCallback(CheckpointCallback callback);
+
     // Set completion callback
     void SetCompletionCallback(CompletionCallback callback);
 
@@ -180,6 +185,7 @@ private:
 
     // Callbacks
     ProgressCallback progress_callback_;
+    CheckpointCallback checkpoint_callback_;
     CompletionCallback completion_callback_;
     std::mutex callback_mutex_;
 

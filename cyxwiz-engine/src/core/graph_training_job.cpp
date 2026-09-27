@@ -262,6 +262,12 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
         if (!request.resume_checkpoint_root.empty()) {
             executor->EnableResumeCheckpoints(request.resume_checkpoint_root, identity, 2,
                                               request.resume_checkpoint_every_steps);
+            if (callbacks.on_checkpoint) {
+                executor->SetResumeCheckpointCallback(
+                    [&callbacks](const std::filesystem::path& checkpoint, int epoch, int next_batch) {
+                        callbacks.on_checkpoint(checkpoint.string(), epoch, next_batch);
+                    });
+            }
         }
         if (!request.resume_from.empty()) {
             std::filesystem::path from = request.resume_from;

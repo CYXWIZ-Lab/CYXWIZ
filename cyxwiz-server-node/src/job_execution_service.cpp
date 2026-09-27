@@ -1,6 +1,7 @@
 #include "job_execution_service.h"
 #include "node_data_dir.h"
 #include "node_job_timing.h"
+#include "core/sha256_digest.h"
 #include "core/execution_device_preferences.h"
 #include "core/route_qualification_snapshot.h"
 #include "job_executor.h"
@@ -720,6 +721,31 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                     std::lock_guard<std::mutex> lock(queue_mutex);
                     update_queue.push(std::move(update));
                 }
+                queue_cv.notify_one();
+            });
+
+        // Resume checkpoints (TOFIX118 P4e-3): tell the Engine each one the
+        // node wrote. The weights stay on the node (resume, and the final
+        // download); the update names the checkpoint and its model hash.
+        job_executor_->SetCheckpointCallback(
+            [&, current_job_id](const std::string& id, const std::string& checkpoint, int epoch, int next_batch) {
+                if (id != current_job_id) return;
+                cyxwiz::protocol::TrainingUpdate update;
+                update.set_job_id(current_job_id);
+                update.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
+                auto* ckpt = update.mutable_checkpoint();
+                ckpt->set_epoch(epoch);
+                ckpt->set_compression_type("none");
+                ckpt->set_weights_size(0);
+                std::string digest;
+                std::string hash_error;
+                if (cyxwiz::Sha256File(std::filesystem::path(checkpoint) / "model" / "parameters.bin", digest,
+                                       hash_error)) {
+                    ckpt->set_checkpoint_hash(digest);
+                }
+                (*ckpt->mutable_metrics_at_checkpoint())["next_batch"] = next_batch;
+                std::lock_guard<std::mutex> lock(queue_mutex);
+                update_queue.push(std::move(update));
                 queue_cv.notify_one();
             });
 

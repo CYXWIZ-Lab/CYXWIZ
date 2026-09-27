@@ -2316,6 +2316,10 @@ bool TrainingExecutor::SaveResumeCheckpoint(int completed_epoch,
     PruneTrainingResumeCheckpoints(resume_root_, resume_keep_);
     UpdateMetrics([&](TrainingMetrics& m) { m.last_resume_checkpoint = directory.string(); });
     TrainingTraceCollector::Instance().RecordRuntimeEvent("ResumeCheckpoint.Saved", directory.string());
+    if (resume_checkpoint_callback_) {
+        resume_checkpoint_callback_(directory, in_epoch ? in_epoch->epoch : completed_epoch,
+                                    in_epoch ? in_epoch->next_batch : 0);
+    }
     return true;
 }
 
