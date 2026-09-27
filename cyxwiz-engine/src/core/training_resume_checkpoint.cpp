@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdio>
 #include <chrono>
 #include <ctime>
 #include <fstream>
@@ -112,6 +113,23 @@ json RuntimeToJson(const TrainingResumeRuntime& r) {
            {"val_mae_history", r.val_mae_history},
            {"val_rmse_history", r.val_rmse_history},
            {"learning_rate_history", r.learning_rate_history}};
+    if (r.in_epoch) {
+        const auto& e = *r.in_epoch;
+        j["in_epoch"] = {{"epoch", e.epoch},
+                         {"next_batch", e.next_batch},
+                         {"epoch_loss", e.epoch_loss},
+                         {"loss_weight_sum", e.loss_weight_sum},
+                         {"sample_count", e.sample_count},
+                         {"correct_tokens", e.metrics.correct_tokens},
+                         {"total_tokens", e.metrics.total_tokens},
+                         {"token_accuracy", e.metrics.token_accuracy},
+                         {"predicted_entities", e.metrics.predicted_entities},
+                         {"gold_entities", e.metrics.gold_entities},
+                         {"matched_entities", e.metrics.matched_entities},
+                         {"entity_precision", e.metrics.entity_precision},
+                         {"entity_recall", e.metrics.entity_recall},
+                         {"entity_f1", e.metrics.entity_f1}};
+    }
     if (r.scheduler) {
         j["scheduler"] = {{"state", SchedulerStateToJson(r.scheduler->scheduler_state)},
                           {"completed_epochs", r.scheduler->completed_epochs},
@@ -142,6 +160,25 @@ TrainingResumeRuntime RuntimeFromJson(const json& j) {
     r.val_mae_history = floats("val_mae_history");
     r.val_rmse_history = floats("val_rmse_history");
     r.learning_rate_history = j.value("learning_rate_history", std::vector<double>{});
+    if (j.contains("in_epoch") && j["in_epoch"].is_object()) {
+        const auto& e = j["in_epoch"];
+        TrainingEpochProgress p;
+        p.epoch = e.value("epoch", 0);
+        p.next_batch = e.value("next_batch", 0);
+        p.epoch_loss = e.value("epoch_loss", 0.0f);
+        p.loss_weight_sum = e.value("loss_weight_sum", 0.0f);
+        p.sample_count = e.value("sample_count", std::uint64_t{0});
+        p.metrics.correct_tokens = e.value("correct_tokens", size_t{0});
+        p.metrics.total_tokens = e.value("total_tokens", size_t{0});
+        p.metrics.token_accuracy = e.value("token_accuracy", 0.0);
+        p.metrics.predicted_entities = e.value("predicted_entities", size_t{0});
+        p.metrics.gold_entities = e.value("gold_entities", size_t{0});
+        p.metrics.matched_entities = e.value("matched_entities", size_t{0});
+        p.metrics.entity_precision = e.value("entity_precision", 0.0);
+        p.metrics.entity_recall = e.value("entity_recall", 0.0);
+        p.metrics.entity_f1 = e.value("entity_f1", 0.0);
+        r.in_epoch = p;
+    }
     if (j.contains("scheduler") && j["scheduler"].is_object()) {
         TrainingSchedulerResumeState s;
         s.scheduler_state = SchedulerStateFromJson(j["scheduler"].value("state", json::object()));
@@ -183,7 +220,7 @@ bool SaveTrainingResumeCheckpoint(const fs::path& directory, const TrainingResum
     }
 
     CheckpointManifestV2 manifest;
-    manifest.checkpoint_id = identity.run_id + "-epoch-" + std::to_string(runtime.completed_epoch);
+    manifest.checkpoint_id = identity.run_id + "-" + directory.filename().string();
     manifest.run_id = identity.run_id;
     manifest.created_at = UtcNow();
     manifest.engine_version = GetVersionString();
@@ -198,7 +235,7 @@ bool SaveTrainingResumeCheckpoint(const fs::path& directory, const TrainingResum
     manifest.loss_type = identity.loss_type.empty() ? "unrecorded" : identity.loss_type;
     manifest.precision = "float32";
     manifest.completed_epoch = runtime.completed_epoch;
-    manifest.next_batch = 0;  // epoch boundary
+    manifest.next_batch = runtime.in_epoch ? runtime.in_epoch->next_batch : 0;
     manifest.optimizer_step = runtime.optimizer_step_count;
     manifest.rng_state_present = runtime.model_seed >= 0;       // reseeded per epoch
     manifest.sampler_state_present = runtime.data_order_exact;  // per-epoch shuffle seed
@@ -276,12 +313,22 @@ bool LoadTrainingResumeCheckpoint(const fs::path& directory, IExecutableModel& m
     return true;
 }
 
+std::string TrainingResumeCheckpointName(int epoch, int next_batch) {
+    char name[40];
+    std::snprintf(name, sizeof(name), "resume-%04d-%07d", epoch, next_batch);
+    return name;
+}
+
+std::uint64_t TrainingStepSeed(std::uint64_t run_seed, int epoch, int batch) {
+    return TrainingEpochSeed(TrainingEpochSeed(run_seed, epoch), batch);
+}
+
 std::optional<fs::path> FindLatestTrainingResumeCheckpoint(const fs::path& root) {
     std::error_code ec;
     std::optional<fs::path> latest;
     for (const auto& entry : fs::directory_iterator(root, ec)) {
         const std::string name = entry.path().filename().string();
-        if (!entry.is_directory() || name.rfind("epoch-", 0) != 0) continue;
+        if (!entry.is_directory() || name.rfind("resume-", 0) != 0) continue;
         if (!fs::exists(entry.path() / "manifest.json", ec)) continue;  // incomplete
         if (!latest || name > latest->filename().string()) latest = entry.path();
     }
@@ -292,7 +339,8 @@ void PruneTrainingResumeCheckpoints(const fs::path& root, int keep) {
     std::error_code ec;
     std::vector<fs::path> checkpoints;
     for (const auto& entry : fs::directory_iterator(root, ec)) {
-        if (entry.is_directory() && entry.path().filename().string().rfind("epoch-", 0) == 0) {
+        if (entry.is_directory() && entry.path().filename().string().rfind("resume-", 0) == 0 &&
+            fs::exists(entry.path() / "manifest.json", ec)) {
             checkpoints.push_back(entry.path());
         }
     }

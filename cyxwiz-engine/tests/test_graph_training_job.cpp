@@ -207,7 +207,7 @@ int main() {
             float loss;
         };
         const auto run = [&](const std::string& root_name, const std::string& resume_from, int stop_at_epoch,
-                             std::vector<Step>& steps) {
+                             std::vector<Step>& steps, int stop_at_batch = 1, int every_steps = 0) {
             cyxwiz::GraphTrainingJobRequest request;
             request.graph_json = graph.dump();
             request.dataset_files["tiny_causal_lm_tokens"] = parquet.string();
@@ -215,10 +215,11 @@ int main() {
             request.checkpoint_dir_override = (work / (root_name + "_best")).string();
             request.resume_checkpoint_root = (work / root_name).string();
             request.resume_from = resume_from;
+            request.resume_checkpoint_every_steps = every_steps;
             std::atomic<bool> stop{false};
             cyxwiz::GraphTrainingJobCallbacks callbacks;
             callbacks.on_batch = [&](int epoch, int batch, int, float loss, float) {
-                if (stop_at_epoch > 0 && epoch >= stop_at_epoch) {
+                if (stop_at_epoch > 0 && (epoch > stop_at_epoch || (epoch == stop_at_epoch && batch >= stop_at_batch))) {
                     // Hold this batch until the runner's watcher (200 ms poll)
                     // has stopped the executor, so the run cannot finish the
                     // epoch and checkpoint it first.
@@ -258,6 +259,34 @@ int main() {
         Check(identical, "epochs 2-3 after resuming match the uninterrupted run bit for bit (" +
                              std::to_string(resumed_steps.size()) + " batches)");
         Check(resumed.metrics.loss_history.size() == 3, "the loss history spans all three epochs");
+
+        std::cout << "resumes exactly from inside an epoch\n";
+        {
+            std::vector<Step> every_step;
+            const auto baseline = run("resume_steps_full", "", 0, every_step, 1, 1);
+            Check(baseline.ok, "uninterrupted run with a checkpoint every step");
+            std::vector<Step> before;
+            const auto stopped = run("resume_steps_split", "", 2, before, 2, 1);
+            Check(stopped.cancelled, "the run stops at epoch 2, batch 2");
+            std::vector<Step> after;
+            const auto continued = run("resume_steps_split", "latest", 0, after, 1, 1);
+            Check(continued.ok, "resumed inside epoch 2" + (continued.error.empty() ? "" : " (" + continued.error + ")"));
+            Check(Contains(continued.metrics.last_resume_checkpoint, "resume-") && continued.metrics.resumed_after_epoch == 1,
+                  "the newest checkpoint was taken inside epoch 2");
+            std::vector<Step> expected_rest;
+            for (const auto& step : every_step) {
+                if (step.epoch > 2 || (step.epoch == 2 && step.batch >= 2)) expected_rest.push_back(step);
+            }
+            bool same = !expected_rest.empty() && expected_rest.size() == after.size();
+            for (size_t i = 0; same && i < after.size(); ++i) {
+                same = expected_rest[i].epoch == after[i].epoch && expected_rest[i].batch == after[i].batch &&
+                       expected_rest[i].loss == after[i].loss;
+            }
+            Check(same, "the rest of epoch 2 and epoch 3 match the uninterrupted run bit for bit (" +
+                            std::to_string(after.size()) + " batches)");
+            Check(continued.metrics.loss_history == baseline.metrics.loss_history,
+                  "epoch losses, including the resumed epoch's total, are identical");
+        }
 
         // A checkpoint does not resume into a different graph.
         nlohmann::json other = graph;

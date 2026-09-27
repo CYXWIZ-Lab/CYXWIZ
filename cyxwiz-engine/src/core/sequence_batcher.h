@@ -136,6 +136,10 @@ public:
         return batch;
     }
 
+    void SkipBatches(size_t batches) override {
+        current_index_ = std::min(ActiveIndices().size(), current_index_ + batches * config_.batch_size);
+    }
+
     bool SetEpochShuffleSeed(uint64_t seed) override {
         pending_epoch_seed_ = seed;
         return true;

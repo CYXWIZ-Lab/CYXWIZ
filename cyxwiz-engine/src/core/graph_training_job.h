@@ -37,6 +37,9 @@ struct GraphTrainingJobRequest {
     // "latest".
     std::string resume_checkpoint_root;
     std::string resume_from;
+    // > 0: language-model epochs are also checkpointed every that many
+    // optimizer steps (P4e-2); 0: epoch ends only.
+    int resume_checkpoint_every_steps = 0;
 };
 
 struct GraphTrainingJobCallbacks {

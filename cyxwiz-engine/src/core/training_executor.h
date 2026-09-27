@@ -230,7 +230,10 @@ public:
 
     // Resume checkpoints (TOFIX118 P4e). Enable before Train: a checkpoint is
     // written under `root` at every epoch end (the newest `keep` are kept).
-    void EnableResumeCheckpoints(std::filesystem::path root, TrainingResumeIdentity identity, int keep = 2);
+    // With `every_optimizer_steps` > 0, sequence (language-model) epochs are
+    // also checkpointed every that many optimizer steps (P4e-2).
+    void EnableResumeCheckpoints(std::filesystem::path root, TrainingResumeIdentity identity, int keep = 2,
+                                 int every_optimizer_steps = 0);
     // Continue from a checkpoint: Train restores it after building the model
     // and starts at the epoch after it (refused for a different graph).
     void SetResumeFrom(std::filesystem::path checkpoint);
@@ -365,6 +368,16 @@ private:
     std::filesystem::path resume_from_;
     std::optional<TrainingSchedulerResumeState> graph_schedule_resume_;
     bool data_order_exact_ = true;
+    int resume_every_steps_ = 0;
+    int last_mid_epoch_checkpoint_step_ = -1;
+    std::optional<TrainingEpochProgress> pending_epoch_resume_;
+    // Run state a checkpoint records, kept current by Train.
+    int resume_total_epochs_ = 0;
+    int resume_model_seed_ = -1;
+    float resume_best_val_loss_ = 0.0f;
+    int resume_epochs_without_improvement_ = 0;
+    // Writes resume-<epoch>-<batch> under resume_root_; false = not saved.
+    bool SaveResumeCheckpoint(int completed_epoch, const std::optional<TrainingEpochProgress>& in_epoch);
     bool empty_validation_reported_ = false;  // warned once per run
     int training_epochs_ = 1;
     void AttachGraphScheduleIfPending(size_t batches_per_epoch);

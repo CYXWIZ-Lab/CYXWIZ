@@ -173,6 +173,11 @@ public:
 
     virtual SequenceBatch GetNextSequenceBatch() = 0;
     virtual void Reset() = 0;
+    // Pass over the next `batches` batches of this epoch without producing
+    // them (a resumed epoch continues where its checkpoint was taken).
+    virtual void SkipBatches(size_t batches) {
+        for (size_t i = 0; i < batches && !IsEpochComplete(); ++i) (void)GetNextSequenceBatch();
+    }
     // The next Reset() orders the epoch from `seed` alone (canonical order,
     // then a shuffle seeded with it), so an epoch's order depends only on
     // (run seed, epoch) and a resumed run replays it (TOFIX118 P4e). False:

@@ -260,7 +260,8 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
             if (!hasher.Update(*text, hash_error) || !hasher.Finish(*digest, hash_error)) digest->clear();
         }
         if (!request.resume_checkpoint_root.empty()) {
-            executor->EnableResumeCheckpoints(request.resume_checkpoint_root, identity);
+            executor->EnableResumeCheckpoints(request.resume_checkpoint_root, identity, 2,
+                                              request.resume_checkpoint_every_steps);
         }
         if (!request.resume_from.empty()) {
             std::filesystem::path from = request.resume_from;
