@@ -936,12 +936,46 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
 
     code += "\n";
 
+    // Word + POS fusion (the compiler's SequenceFeatureFusion route): a
+    // Concatenate whose Input 1 and Input 2 are Embedding nodes. The model
+    // input is the packed [batch, seq, 2] word/POS ids CyxWiz trains on.
+    const auto fusion_input_embedding = [this](const MLNode& concat, size_t input_index) -> const MLNode* {
+        if (concat.type != NodeType::Concatenate || concat.inputs.size() <= input_index) return nullptr;
+        for (const auto& link : links_) {
+            if (link.to_node != concat.id || link.to_pin != concat.inputs[input_index].id) continue;
+            const MLNode* source = FindNodeById(link.from_node);
+            return source && source->type == NodeType::Embedding ? source : nullptr;
+        }
+        return nullptr;
+    };
+    std::map<int, int> fusion_embedding_layer;  // Embedding node id -> layer index
+    for (const auto& candidate : nodes_) {
+        if (fusion_input_embedding(candidate, 0) && fusion_input_embedding(candidate, 1)) {
+            fusion_embedding_layer[fusion_input_embedding(candidate, 0)->id] = -1;
+            fusion_embedding_layer[fusion_input_embedding(candidate, 1)->id] = -1;
+        }
+    }
+
     // Forward pass
     code += "    def forward(self, x):\n";
     layer_idx = 0;
     for (int node_id : sorted_ids) {
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
+
+        if (node->type == NodeType::Embedding && fusion_embedding_layer.count(node->id)) {
+            fusion_embedding_layer[node->id] = layer_idx++;  // applied at the Concatenate
+            continue;
+        }
+        if (const MLNode* word = fusion_input_embedding(*node, 0)) {
+            if (const MLNode* pos = fusion_input_embedding(*node, 1)) {
+                code += "        # Word + POS ids packed as [batch, seq, 2]\n";
+                code += "        x = torch.cat([self.layer" + std::to_string(fusion_embedding_layer[word->id]) +
+                        "(x[..., 0].long()), self.layer" + std::to_string(fusion_embedding_layer[pos->id]) +
+                        "(x[..., 1].long())], dim=-1)\n";
+                continue;
+            }
+        }
 
         const auto activation = BuildActivationCodegen(
             ActivationCodegenTarget::PyTorch,

@@ -179,15 +179,16 @@ void CheckSavedNERGraphUsesFirstClassSequenceNodes() {
     CheckNoLocalAbsolutePaths(graph, "NER graph");
 
     const std::unordered_map<int, gui::NodeType> expected_types = {
+        // The sequence Data Input carries the tagging contract; word + POS
+        // Embeddings join on the Concatenate (TOFIX112 word + POS fusion).
         {1, gui::NodeType::DataInput},
-        {2, gui::NodeType::NERSequenceBuilder},
-        {3, gui::NodeType::TokenVocabulary},
-        {4, gui::NodeType::POSVocabulary},
-        {5, gui::NodeType::NERTagVocabulary},
-        {6, gui::NodeType::TextPadding},
         {7, gui::NodeType::DataSplit},
         {8, gui::NodeType::DataLoader},
+        {9, gui::NodeType::Embedding},
+        {10, gui::NodeType::Embedding},
         {11, gui::NodeType::Concatenate},
+        {12, gui::NodeType::LSTM},
+        {13, gui::NodeType::Dropout},
         {14, gui::NodeType::TimeDistributed},
         {15, gui::NodeType::CrossEntropyLoss},
         {16, gui::NodeType::Adam},
@@ -227,18 +228,10 @@ void CheckSavedNERGraphUsesFirstClassSequenceNodes() {
             Check(node.parameters["raw_source_path"] ==
                       "examples/cyxgraph/NER/sample_ner.csv",
                   "NER graph DataInput should use repo-relative sample CSV");
-        } else if (id == 3) {
-            Check(node.parameters["vocab_file"] ==
-                      "examples/cyxgraph/NER/generated/ner_word_vocab.txt",
-                  "NER graph TokenVocabulary should use repo-relative word vocab path");
-        } else if (id == 4) {
-            Check(node.parameters["vocab_file"] ==
-                      "examples/cyxgraph/NER/generated/ner_pos_vocab.txt",
-                  "NER graph POSVocabulary should use repo-relative POS vocab path");
-        } else if (id == 5) {
-            Check(node.parameters["vocab_file"] ==
-                      "examples/cyxgraph/NER/generated/ner_tag_vocab.txt",
-                  "NER graph NERTagVocabulary should use repo-relative tag vocab path");
+            Check(node.parameters["token_column"] == "tokens" &&
+                      node.parameters["pos_column"] == "pos_tags" &&
+                      node.parameters["tag_column"] == "ner_tags",
+                  "NER graph DataInput should declare the token, POS and tag columns");
         } else if (id == 18) {
             Check(node.parameters["tag_vocab_file"] ==
                       "examples/cyxgraph/NER/generated/ner_tag_vocab.txt",

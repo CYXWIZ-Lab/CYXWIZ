@@ -26,10 +26,31 @@ from pathlib import Path
 import torch
 
 
+# gui::NodeType values (cyxwiz-engine/src/core/graph_model.h).
+EMBEDDING = 21
+CONCATENATE = 46
+
+
 def cyxwiz_parameter_count(compile_check: Path, graph: Path):
     out = subprocess.run([str(compile_check), "--parameters", str(graph)], capture_output=True, text=True)
     match = re.search(r"parameters=(\d+)", out.stdout)
     return int(match.group(1)) if match else None
+
+
+def word_pos_embeddings(graph_json: dict):
+    """(word, POS) Embedding nodes when a Concatenate joins two Embeddings on
+    Input 1 / Input 2 (the compiler's word + POS fusion), else None. Links
+    address inputs by to_pin_index."""
+    nodes = {n["id"]: n for n in graph_json.get("nodes", [])}
+    for concat in nodes.values():
+        if concat.get("type") != CONCATENATE:
+            continue
+        sources = {l.get("to_pin_index", 0): nodes.get(l["from_node"])
+                   for l in graph_json.get("links", []) if l["to_node"] == concat["id"]}
+        pair = (sources.get(0), sources.get(1))
+        if all(n is not None and n.get("type") == EMBEDDING for n in pair):
+            return pair
+    return None
 
 
 def synthetic_input(graph_json: dict, batch: int = 2):
@@ -44,6 +65,13 @@ def synthetic_input(graph_json: dict, batch: int = 2):
             value = node.get("parameters", {}).get(key, "")
             if str(value).isdigit() and int(value) > 1:
                 limits.append(int(value))
+    fused = word_pos_embeddings(graph_json)
+    if fused:  # word + POS fusion: packed [batch, seq, 2] ids, as CyxWiz feeds it
+        word, pos = (int(n["parameters"]["num_embeddings"]) for n in fused)
+        length = min(limits)
+        ids = torch.stack([torch.randint(1, word, (batch, length)),
+                           torch.randint(1, pos, (batch, length))], dim=-1)
+        return ids.float(), None
     for node in nodes:
         params = node.get("parameters", {})
         if "embedding_dim" in params and ("num_embeddings" in params or "vocab_size" in params):

@@ -105,80 +105,45 @@ B-geo, B-gpe, B-per, I-geo, B-org, I-org, B-tim,
 B-art, I-art, I-per, I-gpe, I-tim, B-nat, B-eve, I-eve, I-nat
 ```
 
-## Intended Model
+## The Graph
 
-The graph is designed for a BiLSTM token classifier:
+`ner_bilstm_sequence_tagger.cyxgraph` trains a BiLSTM token classifier on
+word and POS features:
 
 ```text
-NER CSV
-  -> NERSequenceBuilder
-  -> TokenVocabulary
-  -> POSVocabulary
-  -> NERTagVocabulary
-  -> SequencePadding
-  -> DataSplit
-  -> DataLoader
-  -> Word Embedding
-  -> optional POS Embedding
-  -> FeatureConcat
-  -> BiLSTM return_sequences=true
+NER Sentence CSV (Data Input, sequence_text:
+                  token_column=tokens, pos_column=pos_tags,
+                  tag_column=ner_tags, sentence_id_column=sentence_id,
+                  max_sequence_length=96)
+  -> Split 80/10/10
+  -> Sequence DataLoader --Data--> Word Embedding -> Concatenate Input 1
+                         --Data--> POS Embedding  -> Concatenate Input 2
+                         --Labels-> Token CrossEntropy (ignore_index=0)
+  Concatenate (dim=-1)
+  -> BiLSTM (return_sequences=true)
   -> Dropout
-  -> TimeDistributed Dense
-  -> Token CrossEntropy
-  -> Adam
-  -> SequenceTagOutput
+  -> TimeDistributed Dense (19 tags)
+  -> Token CrossEntropy -> Adam
+  TimeDistributed Dense -> Sequence Tag Output (BIO decode)
 ```
 
-The model output shape should be:
+How it compiles: the sequence Data Input carries the token-tagging contract
+and the batcher builds the word, POS and tag vocabularies from the data. The
+two Embeddings joined by the Concatenate compile to one word + POS fusion
+layer that reads the packed `[batch, seq, 2]` word/POS ids (Input 1 = word,
+Input 2 = POS, both fed by the same DataLoader output, `dim=-1`). Other
+Concatenate shapes over Embeddings are rejected with the reason.
+`NER Sequence Builder` is a Data Studio (Preparation Recipe) stage, not part
+of this training graph.
+
+Shapes:
 
 ```text
-[batch_size, max_sequence_length, num_tags]
+model output: [batch_size, max_sequence_length, num_tags]
+labels:       [batch_size, max_sequence_length]
 ```
 
-The label tensor shape should be:
-
-```text
-[batch_size, max_sequence_length]
-```
-
-Padding tokens should be ignored by the loss.
-
-## Engine Gap
-
-The current CyxWiz text examples support whole-sequence classification:
-
-```text
-TextTokenizer -> TextVocabulary -> TextPadding
-  -> Embedding -> GRU/LSTM -> Dense -> CrossEntropy
-```
-
-NER needs sequence tagging support:
-
-```text
-Embedding -> BiLSTM(return_sequences=true)
-  -> TimeDistributedDense -> TokenCrossEntropy(ignore_pad)
-```
-
-Needed backend/graph nodes:
-
-- `NERSequenceBuilder`
-- `TokenVocabulary`
-- `NERTagVocabulary`
-- `SequencePadding` for both token IDs and tag IDs
-- `FeatureConcat` for optional word + POS embeddings
-- `TimeDistributedDense`
-- `TokenCrossEntropyLoss`
-- `SequenceTagOutput`
-- token-level metrics:
-  - token accuracy
-  - entity precision
-  - entity recall
-  - entity F1
-
-The `.cyxgraph` file in this folder is therefore the target design for
-the NER engine path. It should be used to guide implementation and then
-become directly trainable once the missing sequence-tagging nodes are
-added.
+Padding positions are ignored by the loss (`ignore_index`).
 
 ## Why Not Use The Sentiment Graph Directly?
 

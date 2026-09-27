@@ -1,6 +1,7 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/debug_run_paths.h"
 #include "../src/core/formats/cyxmodel_format.h"
+#include "../src/core/graph_document.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/model_builder.h"
 #include "../src/core/sequence_arrow_batcher.h"
@@ -78,72 +79,18 @@ std::string ReadFile(const std::filesystem::path& path) {
     return out.str();
 }
 
-std::string JsonToString(const json& value) {
-    if (value.is_string()) {
-        return value.get<std::string>();
-    }
-    if (value.is_number_integer()) {
-        return std::to_string(value.get<long long>());
-    }
-    if (value.is_number_float()) {
-        std::ostringstream out;
-        out << value.get<double>();
-        return out.str();
-    }
-    if (value.is_boolean()) {
-        return value.get<bool>() ? "true" : "false";
-    }
-    return value.dump();
-}
-
-std::map<std::string, std::string> ReadParametersFromJson(
-    const json& params_json) {
-    std::map<std::string, std::string> params;
-    if (!params_json.is_object()) {
-        return params;
-    }
-    for (auto it = params_json.begin(); it != params_json.end(); ++it) {
-        params[it.key()] = JsonToString(it.value());
-    }
-    return params;
-}
-
+// The Engine's own loader (factory pins, current contracts, links resolved by
+// pin index); strict, so a link that no longer resolves fails the smoke.
 std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>
 LoadCyxGraphForTest(const std::filesystem::path& path) {
     const auto root = json::parse(ReadFile(path));
-    Check(root.contains("nodes") && root["nodes"].is_array(),
-          "saved graph should include nodes");
-    Check(root.contains("links") && root["links"].is_array(),
-          "saved graph should include links");
-
-    std::vector<gui::MLNode> nodes;
-    nodes.reserve(root["nodes"].size());
-    for (const auto& node_json : root["nodes"]) {
-        gui::MLNode node;
-        node.id = node_json.value("id", 0);
-        node.type = static_cast<gui::NodeType>(node_json.value("type", 0));
-        node.name = node_json.value("name", std::string("node"));
-        node.category = static_cast<gui::NodeCategory>(
-            node_json.value("category", static_cast<int>(node.category)));
-        if (node_json.contains("parameters")) {
-            node.parameters = ReadParametersFromJson(node_json["parameters"]);
-        }
-        nodes.push_back(std::move(node));
-    }
-
-    std::vector<gui::NodeLink> links;
-    links.reserve(root["links"].size());
-    for (const auto& link_json : root["links"]) {
-        gui::NodeLink link;
-        link.id = link_json.value("id", 0);
-        link.from_node = link_json.value("from_node", 0);
-        link.to_node = link_json.value("to_node", 0);
-        link.from_pin = link_json.value("from_pin", 0);
-        link.to_pin = link_json.value("to_pin", 0);
-        links.push_back(std::move(link));
-    }
-
-    return {nodes, links};
+    cyxwiz::GraphDocumentLoadOptions options;
+    options.strict_links = true;
+    cyxwiz::GraphDocument document;
+    std::string error;
+    Check(cyxwiz::BuildGraphDocument(root, root, options, document, error),
+          "saved NER graph should load: " + error);
+    return {document.nodes, document.links};
 }
 
 std::vector<std::string> SplitSimpleCsvRow(const std::string& line) {
@@ -267,7 +214,6 @@ cyxwiz::TrainingConfiguration MakePosFusedSequenceTrainingConfig(
     cyxwiz::TrainingConfiguration compiled,
     const cyxwiz::SequenceArrowBatcherBuildResult& build,
     const std::filesystem::path& checkpoint_dir) {
-    compiled.layers.clear();
     compiled.is_valid = true;
     compiled.issues.clear();
     compiled.batch_size = 2;
@@ -291,33 +237,64 @@ cyxwiz::TrainingConfiguration MakePosFusedSequenceTrainingConfig(
     compiled.optimizer_type = gui::NodeType::SGD;
     compiled.learning_rate = 0.01f;
 
-    cyxwiz::CompiledLayer fusion;
-    fusion.type = gui::NodeType::Concatenate;
-    fusion.parameters["sequence_feature_fusion"] = "true";
-    fusion.parameters["word_num_embeddings"] = "1";
-    fusion.parameters["word_embedding_dim"] = "8";
-    fusion.parameters["word_padding_idx"] = "0";
-    fusion.parameters["pos_num_embeddings"] = "1";
-    fusion.parameters["pos_embedding_dim"] = "4";
-    fusion.parameters["pos_padding_idx"] = "0";
-    compiled.layers.push_back(std::move(fusion));
-
-    cyxwiz::CompiledLayer encoder;
-    encoder.type = gui::NodeType::LSTM;
-    encoder.parameters["hidden_size"] = "6";
-    encoder.parameters["num_layers"] = "1";
-    encoder.parameters["bidirectional"] = "true";
-    encoder.parameters["return_sequences"] = "true";
-    compiled.layers.push_back(std::move(encoder));
-
-    cyxwiz::CompiledLayer head;
-    head.type = gui::NodeType::TimeDistributed;
-    head.units = 1;
-    head.parameters["units"] = "1";
-    compiled.layers.push_back(std::move(head));
-
     cyxwiz::ApplySequenceBatcherBuildResultToTrainingConfig(build, compiled);
     return compiled;
+}
+
+int NodeIdNamed(const std::vector<gui::MLNode>& nodes, const std::string& name) {
+    for (const auto& node : nodes) {
+        if (node.name == name) return node.id;
+    }
+    Check(false, "saved NER graph should contain node '" + name + "'");
+    return -1;
+}
+
+gui::MLNode& NodeWithId(std::vector<gui::MLNode>& nodes, int id) {
+    for (auto& node : nodes) {
+        if (node.id == id) return node;
+    }
+    Check(false, "missing node id " + std::to_string(id));
+    return nodes.front();
+}
+
+void CheckWordPosFusionRejections(const std::vector<gui::MLNode>& nodes,
+                                  const std::vector<gui::NodeLink>& links) {
+    cyxwiz::GraphCompiler compiler;
+    const int data = NodeIdNamed(nodes, "NER Sentence CSV");
+    const int word = NodeIdNamed(nodes, "Word Embedding");
+    const int concat = NodeIdNamed(nodes, "Concat Word + POS");
+    const int dropout = NodeIdNamed(nodes, "Dropout");
+    const auto rejected = [&](std::vector<gui::MLNode> n, std::vector<gui::NodeLink> l,
+                              const std::string& reason, const std::string& what) {
+        const auto config = compiler.Compile(n, l, true);
+        Check(!config.is_valid && HasIssueText(config, "Word + POS fusion: " + reason),
+              "word + POS fusion should reject " + what);
+    };
+
+    auto n = nodes;
+    NodeWithId(n, concat).parameters["dim"] = "1";
+    rejected(n, links, "Concatenate dim is 1", "a sequence-axis concat");
+
+    n = nodes;
+    NodeWithId(n, data).parameters["pos_column"] = "";
+    rejected(n, links, "the sequence data declares no POS column", "a missing POS column");
+
+    auto l = links;
+    const auto& input2 = NodeWithId(n, concat).inputs.at(1);
+    l.erase(std::remove_if(l.begin(), l.end(), [&](const gui::NodeLink& link) {
+        return link.to_node == concat && link.to_pin == input2.id;
+    }), l.end());
+    rejected(nodes, l, "", "a Concatenate with one Embedding input");
+
+    l = links;
+    gui::NodeLink extra;
+    extra.id = 9000;
+    extra.from_node = word;
+    extra.from_pin = NodeWithId(n, word).outputs.at(0).id;
+    extra.to_node = dropout;
+    extra.to_pin = NodeWithId(n, dropout).inputs.at(0).id;
+    l.push_back(extra);
+    rejected(nodes, l, "'Word Embedding' may feed only the Concatenate", "a shared embedding output");
 }
 
 void CheckDecodedGoldLogits(const cyxwiz::SequenceBatch& batch,
@@ -578,6 +555,21 @@ int main() {
     auto [nodes, links] = LoadCyxGraphForTest(graph_path);
     cyxwiz::GraphCompiler compiler;
     auto compiled = compiler.Compile(nodes, links, true);
+    for (const auto& issue : compiled.issues) {
+        if (issue.level == cyxwiz::IssueLevel::Error) {
+            std::cerr << "compile error: " << issue.node_name << ": " << issue.message << '\n';
+        }
+    }
+    Check(compiled.is_valid, "saved NER graph should compile without errors");
+    Check(!compiled.layers.empty() &&
+              cyxwiz::IsSequenceFeatureFusionLayer(compiled.layers.front()),
+          "Word + POS Embeddings joined by Concatenate should compile to one fused first layer");
+    Check(compiled.layers.front().parameters.at("word_embedding_dim") == "100" &&
+              compiled.layers.front().parameters.at("pos_embedding_dim") == "16",
+          "fused layer should take each Embedding node's width");
+    Check(compiled.graph_op_node_ids.empty(),
+          "the fused Concatenate should not also run as a graph op");
+    CheckWordPosFusionRejections(nodes, links);
     Check(compiled.sequence_batch.enabled,
           "saved NER graph should compile a sequence batch contract");
     Check(compiled.sequence_batch.token_column == "tokens",
@@ -587,7 +579,7 @@ int main() {
     Check(compiled.sequence_batch.tag_column == "ner_tags",
           "saved NER graph should preserve tag column");
     Check(compiled.sequence_batch.max_sequence_length == 96,
-          "saved NER graph should preserve SequencePadding max length");
+          "saved NER graph should take max length from the sequence Data Input");
     Check(compiled.sequence_batch.ignore_index == 0,
           "saved NER graph should preserve token loss ignore index");
     Check(!HasIssueText(compiled, "Dense-encoded NER"),
