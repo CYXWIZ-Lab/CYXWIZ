@@ -95,7 +95,7 @@ def check(graph: Path, bin_dir: Path, work: Path):
         loss.backward()
         params = list(model.parameters())
         missing = sum(1 for p in params if p.requires_grad and p.grad is None)
-        result.update(output=list(y.shape), loss=float(loss), pytorch_parameters=sum(p.numel() for p in params),
+        result.update(output=list(y.shape), loss=float(loss.detach()), pytorch_parameters=sum(p.numel() for p in params),
                       parameters_without_grad=missing)
     except LookupError as reason:  # nothing to feed it offline: not a verdict on the export
         return {**result, "ok": None, "stage": "skipped", "detail": str(reason)}

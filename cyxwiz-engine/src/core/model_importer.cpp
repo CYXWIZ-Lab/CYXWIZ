@@ -106,6 +106,17 @@ static bool IsTrainingOnlyParameter(const std::string& name) {
            name.find(".grad") != std::string::npos;
 }
 
+// Models saved before TOFIX112 carry an untrained cross-attention and norm3 in
+// every decoder-only block. Those blocks no longer have them; their weights
+// are skipped when the model being loaded lacks the name.
+static bool IsLegacyDecoderCrossAttentionParameter(const std::string& name) {
+    for (const char* component : {"cross_attn.", "norm3."}) {
+        const size_t at = name.find(component);
+        if (at != std::string::npos && (at == 0 || name[at - 1] == '.')) return true;
+    }
+    return false;
+}
+
 // Helper: Build model architecture from graph JSON
 static bool BuildModelFromGraph(
     const std::string& graph_json,
@@ -1166,6 +1177,7 @@ bool ModelImporter::PopulateModelWeights(
 
     // Build weight tensors
     std::map<std::string, Tensor> new_params;
+    size_t legacy_skipped = 0;
 
     for (const auto& [name, data] : weights) {
         if (IsTrainingOnlyParameter(name)) {
@@ -1179,6 +1191,10 @@ bool ModelImporter::PopulateModelWeights(
 
         // Check if model has this parameter
         auto model_param_it = model_params.find(name);
+        if (model_param_it == model_params.end() && IsLegacyDecoderCrossAttentionParameter(name)) {
+            ++legacy_skipped;
+            continue;
+        }
         if (model_param_it == model_params.end()) {
             if (options.strict_mode) {
                 last_error_ = "Model does not have parameter: " + name;
@@ -1230,6 +1246,11 @@ bool ModelImporter::PopulateModelWeights(
         new_params[name] = std::move(tensor);
     }
 
+    if (legacy_skipped > 0) {
+        warnings.push_back("Skipped " + std::to_string(legacy_skipped) +
+                           " unused decoder cross-attention weights saved by an older version");
+    }
+
     // Apply weights to model
     model.SetParameters(new_params);
 
@@ -1248,7 +1269,8 @@ bool ModelImporter::ValidateModelArchitecture(
         if (IsTrainingOnlyParameter(name)) {
             continue;
         }
-        if (model_params.find(name) == model_params.end()) {
+        if (model_params.find(name) == model_params.end() &&
+            !IsLegacyDecoderCrossAttentionParameter(name)) {
             error_message = "Model missing parameter: " + name;
             return false;
         }
