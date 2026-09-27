@@ -51,6 +51,18 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 find_package(Parquet CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
+
+# The macOS vcpkg triplet builds Arrow and Parquet statically. Keep the
+# training-core link contract portable by providing the shared-target names
+# when only static targets are available. This module is the canonical owner
+# of Arrow/Parquet discovery because both the Engine and Server Node include it.
+if(NOT TARGET Arrow::arrow_shared AND TARGET Arrow::arrow_static)
+    add_library(Arrow::arrow_shared ALIAS Arrow::arrow_static)
+endif()
+if(NOT TARGET Parquet::parquet_shared AND TARGET Parquet::parquet_static)
+    add_library(Parquet::parquet_shared ALIAS Parquet::parquet_static)
+endif()
+
 # Definitions only: node_metadata_registry lists data-convert formats by the
 # same flags as the Engine (the adapters stay in their own targets).
 find_package(OpenXLSX CONFIG QUIET)
