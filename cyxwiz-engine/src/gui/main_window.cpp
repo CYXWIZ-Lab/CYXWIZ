@@ -3205,8 +3205,15 @@ void MainWindow::RenderDockSpace() {
 
     // Always get viewport to fill the available space, minus status bar
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, viewport->WorkSize.y - status_bar_height));
+    // A pinned panel-toggle sidebar gets its own strip instead of being
+    // drawn over the docked panels on that side.
+    const DockStyle& dock_style = GetDockStyle();
+    const float sidebar_reserve = dock_style.PinnedSidebarReserve();
+    const bool sidebar_left = dock_style.GetSidebarPosition() == SidebarPosition::Left;
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (sidebar_left ? sidebar_reserve : 0.0f),
+                                   viewport->WorkPos.y));
+    ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x - sidebar_reserve,
+                                    viewport->WorkSize.y - status_bar_height));
     ImGui::SetNextWindowViewport(viewport->ID);
 
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;

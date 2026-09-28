@@ -14,6 +14,7 @@
 #include "node_import_guardrails.h"
 #include "../core/file_dialogs.h"
 #include "../core/project_manager.h"
+#include "../core/project_data_path.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <fstream>
@@ -509,6 +510,7 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
 
         file << j.dump(4);  // Pretty print with 4-space indent
         current_file_path_ = filepath;
+        cyxwiz::SetGraphDataSearchDirectoryFromGraphFile(filepath);
         spdlog::info("Graph saved to: {}", filepath);
         return true;
 
@@ -721,6 +723,9 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
             return LoadPatternAsGraph(graph_json);
         }
 
+        // Before the nodes load: their data inputs resolve relative paths
+        // against this graph's folder when no project holds them.
+        cyxwiz::SetGraphDataSearchDirectoryFromGraphFile(filepath);
         if (!LoadGraphJson(graph_json, filepath)) {
             return false;
         }

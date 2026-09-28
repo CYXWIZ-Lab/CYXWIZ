@@ -1053,6 +1053,27 @@ void CheckProjectRelativeDataInput() {
               (root / "datasets" / "raw" / "web.zip").lexically_normal().string(),
           "store-then-resolve round-trips to the same file");
 
+    // A repo-relative example path that is not under the project (or with no
+    // project) resolves by walking up from the open graph's folder.
+    const fs::path repo = fs::temp_directory_path() / "cyxwiz_graph_relative_repo";
+    fs::create_directories(repo / "examples" / "ner" / "generated");
+    { std::ofstream(repo / "examples" / "ner" / "generated" / "s.csv") << "a\n1\n"; }
+    cyxwiz::SetGraphDataSearchDirectoryFromGraphFile((repo / "examples" / "ner" / "g.cyxgraph").string());
+    const std::string expected =
+        (repo / "examples" / "ner" / "generated" / "s.csv").lexically_normal().string();
+    Check(cyxwiz::ResolveProjectDataPath("examples/ner/generated/s.csv", "") == expected,
+          "with no project, a repo-relative path is found above the graph's folder");
+    Check(cyxwiz::ResolveProjectDataPath("examples/ner/generated/s.csv", root.string()) == expected,
+          "a path missing under the project also falls back to the graph's folders");
+    Check(cyxwiz::ResolveProjectDataPath("examples/ner/generated/missing.csv", "") ==
+              "examples/ner/generated/missing.csv",
+          "a path found nowhere keeps the project rule's result");
+    cyxwiz::SetGraphDataSearchDirectoryFromGraphFile("");
+    Check(cyxwiz::ResolveProjectDataPath("examples/ner/generated/s.csv", "") ==
+              "examples/ner/generated/s.csv",
+          "with no graph open the fallback is off");
+    fs::remove_all(repo);
+
     fs::create_directories(root / "datasets");
     {
         std::ofstream file(root / "datasets" / "verses.csv");
