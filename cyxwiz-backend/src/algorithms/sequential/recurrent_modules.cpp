@@ -56,7 +56,7 @@ LSTMModule::LSTMModule(size_t input_size, size_t hidden_size,
                 /*num_layers=*/1, /*batch_first=*/true,
                 /*bidirectional=*/false, /*dropout=*/0.0f));
         }
-        spdlog::info("[LSTMModule] Using split bidirectional LSTM path "
+        spdlog::debug("[LSTMModule] Using split bidirectional LSTM path "
                      "({} layer pairs); each branch is placed independently.",
                      num_layers_);
     } else {

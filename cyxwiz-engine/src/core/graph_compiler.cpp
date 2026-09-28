@@ -5530,7 +5530,10 @@ TrainingConfiguration GraphCompiler::Compile(
                  config.CountIssues(IssueLevel::Warning),
                  config.CountIssues(IssueLevel::Info),
                  config.is_valid);
+    // The background compile of the canvas shows its issues on the nodes,
+    // links and Properties card instead of repeating them after every edit.
     for (const auto& issue : config.issues) {
+        if (g_quiet_build_log) break;
         const std::string prefix =
             std::string("  [") + IssueLevelLabel(issue.level) + "] " +
             (issue.node_name.empty() ? "" : ("[" + issue.node_name + "] ")) +

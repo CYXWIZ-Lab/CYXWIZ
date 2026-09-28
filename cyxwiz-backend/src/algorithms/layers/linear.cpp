@@ -222,7 +222,7 @@ void LinearLayer::InitializeWeights() {
                 bias_ = Tensor::Zeros({out_features_}, DataType::Float32);
             }
 
-            spdlog::info("LinearLayer({}, {}) initialized with Xavier (ArrayFire)", in_features_, out_features_);
+            spdlog::debug("LinearLayer({}, {}) initialized with Xavier (ArrayFire)", in_features_, out_features_);
             return;
         } catch (const af::exception& e) {
             LogLinearInitializationFallbackOnce(
