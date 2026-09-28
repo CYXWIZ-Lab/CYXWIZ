@@ -1,4 +1,5 @@
 #include "graph_compiler.h"
+#include "sequence_fusion_presentation.h"
 #include "training_randomness.h"
 #include "error_codes.h"
 #include "backend_placement_capabilities.h"
@@ -3829,94 +3830,20 @@ std::optional<SequenceFeatureFusionPlan> DetectSequenceFeatureFusion(
     const std::vector<gui::NodeLink>& links,
     const std::unordered_set<int>& training_path_ids,
     TrainingConfiguration& config) {
-    const auto node_by_id = [&nodes](int id) -> const gui::MLNode* {
-        for (const auto& node : nodes) {
-            if (node.id == id) return &node;
-        }
-        return nullptr;
-    };
-    const auto link_into = [&links](int node_id, int pin_id) -> const gui::NodeLink* {
-        for (const auto& link : links) {
-            if (link.to_node == node_id && link.to_pin == pin_id) return &link;
-        }
-        return nullptr;
-    };
-
+    const bool pos_declared =
+        config.sequence_batch.enabled && !config.sequence_batch.pos_column.empty();
     std::optional<SequenceFeatureFusionPlan> plan;
-    for (const auto& concat : nodes) {
-        if (concat.type != gui::NodeType::Concatenate ||
-            !ContainsWhenFiltered(training_path_ids, concat.id)) {
+    for (const auto& verdict :
+         AnalyzeSequenceFusion(nodes, links, training_path_ids, pos_declared)) {
+        if (verdict.Compiles()) {
+            plan = SequenceFeatureFusionPlan{
+                verdict.concat_node_id, verdict.word_node_id, verdict.pos_node_id};
             continue;
         }
-        std::vector<const gui::NodeLink*> inputs;
-        for (const auto& pin : concat.inputs) {
-            if (const auto* link = link_into(concat.id, pin.id)) inputs.push_back(link);
-        }
-        bool fed_by_embedding = false;
-        for (const auto* link : inputs) {
-            const auto* source = node_by_id(link->from_node);
-            fed_by_embedding |= source && source->type == gui::NodeType::Embedding;
-        }
-        if (!fed_by_embedding) continue;
-
-        const auto reject = [&](const std::string& why) {
-            AddIssue(config, IssueLevel::Error,
-                     "Word + POS fusion: " + why +
-                         " Supported shape: Word Embedding -> Concatenate Input 1, "
-                         "POS Embedding -> Concatenate Input 2, both fed by the same "
-                         "DataLoader output, Concatenate dim=-1.",
-                     concat.id, concat.name, errors::Compiler::UnsupportedTrainingNode);
-        };
-        if (plan) {
-            reject("only one Concatenate may join Embedding outputs.");
-            continue;
-        }
-        if (concat.inputs.size() < 2 || inputs.size() != 2 ||
-            !link_into(concat.id, concat.inputs[0].id) ||
-            !link_into(concat.id, concat.inputs[1].id)) {
-            reject("connect exactly Input 1 and Input 2.");
-            continue;
-        }
-        const auto* word = node_by_id(link_into(concat.id, concat.inputs[0].id)->from_node);
-        const auto* pos = node_by_id(link_into(concat.id, concat.inputs[1].id)->from_node);
-        if (!word || !pos || word->type != gui::NodeType::Embedding ||
-            pos->type != gui::NodeType::Embedding || word->id == pos->id) {
-            reject("both inputs must come from their own Embedding node.");
-            continue;
-        }
-        const auto* word_source =
-            word->inputs.empty() ? nullptr : link_into(word->id, word->inputs[0].id);
-        const auto* pos_source =
-            pos->inputs.empty() ? nullptr : link_into(pos->id, pos->inputs[0].id);
-        if (!word_source || !pos_source || word_source->from_node != pos_source->from_node ||
-            word_source->from_pin != pos_source->from_pin) {
-            reject("both Embeddings must read the same batch output.");
-            continue;
-        }
-        bool single_consumer = true;
-        for (const auto* embedding : {word, pos}) {
-            for (const auto& link : links) {
-                if (link.from_node == embedding->id && link.to_node != concat.id) {
-                    reject("'" + embedding->name + "' may feed only the Concatenate.");
-                    single_consumer = false;
-                    break;
-                }
-            }
-        }
-        if (!single_consumer) continue;
-        const auto dim_it = concat.parameters.find("dim");
-        const std::string dim = dim_it == concat.parameters.end() ? "1" : dim_it->second;
-        if (dim != "-1" && dim != "2") {
-            reject("Concatenate dim is " + dim +
-                   "; word and POS features join on the feature axis (dim=-1).");
-            continue;
-        }
-        if (!config.sequence_batch.enabled || config.sequence_batch.pos_column.empty()) {
-            reject("the sequence data declares no POS column; set pos_column on the "
-                   "NER Sequence Builder.");
-            continue;
-        }
-        plan = SequenceFeatureFusionPlan{concat.id, word->id, pos->id};
+        const gui::MLNode* concat = FindNodeById(nodes, verdict.concat_node_id);
+        AddIssue(config, IssueLevel::Error, SequenceFusionIssueMessage(verdict),
+                 verdict.concat_node_id, concat ? concat->name : std::string{},
+                 errors::Compiler::UnsupportedTrainingNode);
     }
     return plan;
 }

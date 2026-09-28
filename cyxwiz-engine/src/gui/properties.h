@@ -6,6 +6,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <set>
 #include "../core/node_metadata.h"
 #include "node_config_dialog.h"
 #include "properties_node_editors.h"
@@ -59,6 +60,8 @@ private:
     void RenderTruthSummarySection(MLNode& node);
     void RenderParametersSection(MLNode& node, const cyxwiz::NodeMetadata* metadata);
     void RenderPresetsSection(MLNode& node);
+    // Word + POS fusion card on a Concatenate (properties_sequence_fusion.cpp).
+    void RenderSequenceFusionSection(MLNode& node);
 
     // Node executor integration (Phase: Node Executor Architecture)
     void RenderExecutorSection(MLNode& node);
@@ -84,6 +87,7 @@ private:
     bool section_advanced_open_ = false;
     bool section_presets_open_ = false;
     char preset_name_buffer_[64] = {};
+    std::set<int> fusion_details_open_;  // Concatenate ids with Details shown
 
     // KNIME-style configuration dialogs
     std::unique_ptr<NodeConfigDialog> active_dialog_;

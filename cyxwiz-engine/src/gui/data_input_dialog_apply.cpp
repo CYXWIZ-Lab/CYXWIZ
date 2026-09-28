@@ -187,6 +187,7 @@ void DataInputDialog::Apply() {
             }
         }
         node_->parameters["label_column"] = effective_label_column;
+        ApplySequenceSettings();
 
         // Auto-generate description
         if (strlen(file_path_) > 0) {

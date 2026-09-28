@@ -291,6 +291,7 @@ void Properties::Render() {
 
             // Phase 3: Section-based rendering
             RenderGeneralSection(*selected_node_);
+            RenderSequenceFusionSection(*selected_node_);
 
             ImGui::Spacing();
             RenderTruthSummarySection(*selected_node_);

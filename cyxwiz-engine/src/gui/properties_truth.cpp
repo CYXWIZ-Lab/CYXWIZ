@@ -4,6 +4,7 @@
 #include "../core/dense_activation_configuration_policy.h"
 #include "../core/normalization_regularization_configuration_policy.h"
 #include "../core/transformer_configuration_policy.h"
+#include "../core/sequence_fusion_presentation.h"
 
 #include <algorithm>
 #include <cctype>
@@ -2864,11 +2865,64 @@ bool HasSpecializedTruthCoverage(NodeType type) {
            node_types.end();
 }
 
+// A sequence (token tagging) Data Input: the tagging contract replaces the
+// table label column (TOFIX112). Edited in the Data Input dialog.
+static void AddSequenceDataInputTruth(NodeTruthReport& report, const MLNode& node,
+                                      const DatasetTruthFact* fact) {
+    PropertyTruth category;
+    category.label = "Category";
+    category.canonical_key = "file_category";
+    category.source_key = "file_category";
+    category.effective_value = "Sequence (token tagging)";
+    category.owner = TruthOwner::Loader;
+    category.requires_dialog = true;
+    report.properties.push_back(std::move(category));
+
+    const auto column = [&](const char* label, const char* key, std::vector<std::string> aliases,
+                            bool required, const char* message) {
+        auto truth = ResolveAliasedStringPropertyWithDefault(
+            node, label, key, std::move(aliases), "", TruthOwner::Compiler,
+            false, true, required, message);
+        if (truth.effective_value.empty()) {
+            if (required) {
+                AddStatus(truth, TruthStatus::Missing);
+                truth.message = "Required: choose it in the Data Input dialog.";
+            } else {
+                AddStatus(truth, TruthStatus::Defaulted);
+            }
+        } else if (fact && fact->found && !fact->columns.empty() &&
+                   !ContainsColumn(fact->columns, truth.effective_value)) {
+            AddStatus(truth, TruthStatus::Missing);
+            truth.message = "Not a column of the loaded dataset.";
+        }
+        report.properties.push_back(std::move(truth));
+    };
+    column("Token column", "token_column", {"tokens_column", "token_sequence_column"}, true,
+           "Word ids come from this column.");
+    column("POS column", "pos_column", {"pos_sequence_column"}, false,
+           "Optional. POS ids feed word + POS fusion; empty disables POS ids.");
+    column("Tag column (labels)", "tag_column", {"tags_column", "tag_sequence_column"}, true,
+           "Per-token labels.");
+    column("Sentence id column", "sentence_id_column", {"sequence_id_column"}, false,
+           "Optional. Groups rows into sentences.");
+    report.properties.push_back(ResolveAliasedStringPropertyWithDefault(
+        node, "Max sequence length", "max_sequence_length", {}, "0", TruthOwner::Compiler,
+        false, true, false, "0 = the longest in the data."));
+    report.properties.push_back(ResolveAliasedStringPropertyWithDefault(
+        node, "Attention mask", "create_attention_mask", {}, "false", TruthOwner::Compiler,
+        false, true, false));
+}
+
 NodeTruthReport ResolveNodeTruth(const MLNode& node,
                                  const NodeTruthContext& context) {
     NodeTruthReport report;
 
-    if (node.type == NodeType::DataInput) {
+    if (node.type == NodeType::DataInput &&
+        cyxwiz::ReadSequenceTaggingContract(node).is_sequence) {
+        const DatasetTruthFact* fact = FindDatasetFact(node, context);
+        if (fact) report.properties.push_back(BuildDatasetClassesTruth(*fact));
+        AddSequenceDataInputTruth(report, node, fact);
+    } else if (node.type == NodeType::DataInput) {
         const bool text_input = LooksLikeTextDataInput(node);
         const std::string canonical = text_input ? "text_label_column"
                                                  : "label_column";
@@ -2984,6 +3038,16 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
 
     if (node.type == NodeType::Embedding) {
         AddEmbeddingTruth(report, node);
+        if (context.nodes && context.links) {
+            if (const auto role = cyxwiz::SequenceFusionEmbeddingRole(
+                    *context.nodes, *context.links, node.id)) {
+                PropertyTruth truth;
+                truth.label = "Role";
+                truth.effective_value = *role;
+                truth.owner = TruthOwner::Compiler;
+                report.properties.push_back(std::move(truth));
+            }
+        }
         if (const auto* placement_fact =
                 FindBackendPlacementFact(node, context)) {
             report.properties.push_back(

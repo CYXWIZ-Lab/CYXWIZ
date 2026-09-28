@@ -277,6 +277,12 @@ private:
 
     // File source sub-renderers
     void RenderTabularOptions();
+    // Sequence (token tagging): a tabular file carrying the tagging contract
+    // (data_input_dialog_sequence.cpp, TOFIX112).
+    void LoadSequenceSettings();
+    void RenderSequenceColumns();
+    void RenderSequenceSummary();
+    void ApplySequenceSettings();
     void RenderImageOptions();
     void RenderAudioOptions();
     void RenderVideoOptions();
@@ -425,6 +431,14 @@ private:
     std::vector<std::string> available_columns_;
     std::vector<bool> selected_columns_;
     int label_column_idx_ = -1;  // Index of label/target column (-1 = none selected)
+    bool sequence_tagging_ = false;  // "Sequence (token tagging)" category chosen
+    bool sequence_loaded_ = false;   // the node carried the sequence contract
+    std::string sequence_token_column_;
+    std::string sequence_pos_column_;
+    std::string sequence_tag_column_;
+    std::string sequence_sentence_column_;
+    int sequence_max_length_ = 0;
+    bool sequence_attention_mask_ = true;
 
     // STATE: Row filter
     int skip_rows_ = 0;

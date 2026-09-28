@@ -84,6 +84,7 @@ endif()
 add_library(cyxwiz-training-core STATIC
     ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
     ${_cyxwiz_engine_src}/core/graph_compiler.cpp
+    ${_cyxwiz_engine_src}/core/sequence_fusion_presentation.cpp
     ${_cyxwiz_engine_src}/core/graph_compiler_dataset_hooks.cpp
     ${_cyxwiz_engine_src}/core/graph_node_factory.cpp
     ${_cyxwiz_engine_src}/core/graph_document.cpp

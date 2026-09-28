@@ -292,6 +292,7 @@ set(ENGINE_SOURCES
     src/gui/panels/terminal_buffer.cpp
     src/gui/viewport.cpp
     src/gui/properties.cpp
+    src/gui/properties_sequence_fusion.cpp
     src/gui/properties_advanced.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_executor.cpp
@@ -315,6 +316,7 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_ml_dataset.cpp
     src/gui/data_input_dialog_external_sources.cpp
     src/gui/data_input_dialog_summary.cpp
+    src/gui/data_input_dialog_sequence.cpp
     src/gui/data_input_dialog_source_options.cpp
     src/gui/data_input_dialog_apply.cpp
     src/gui/data_io_dialogs.cpp
@@ -2373,6 +2375,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/pipeline_runtime_capabilities.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_truth.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/gui/data_studio/node_registry.cpp
     src/gui/data_studio/node_registry_builtin.cpp
     src/core/node_executors/clustering_operators.cpp
@@ -2868,6 +2871,7 @@ set_target_properties(test_pattern_template_guard PROPERTIES
 add_executable(test_graph_compiler_deferred_nodes
     tests/test_graph_compiler_deferred_nodes.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -2904,6 +2908,40 @@ set_target_properties(test_graph_compiler_deferred_nodes PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Word + POS fusion presentation (TOFIX112) =====
+add_executable(test_sequence_fusion_presentation
+    tests/test_sequence_fusion_presentation.cpp
+    src/core/sequence_fusion_presentation.cpp
+    src/core/graph_document.cpp
+    src/core/graph_node_factory.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/plugin/registries/plugin_node_registry.cpp
+)
+
+target_include_directories(test_sequence_fusion_presentation PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_sequence_fusion_presentation PRIVATE
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_sequence_fusion_presentation PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_sequence_fusion_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Graph Compiler Causal LM Shape Contract =====
 add_executable(test_graph_compiler_causal_lm_shape
     tests/test_graph_compiler_causal_lm_shape.cpp
@@ -2915,6 +2953,7 @@ add_executable(test_graph_compiler_causal_lm_shape
     src/core/runtime_log_store.cpp
     src/core/route_qualification_snapshot.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -2955,6 +2994,7 @@ set_target_properties(test_graph_compiler_causal_lm_shape PROPERTIES
 add_executable(test_bert_encoder_contracts
     tests/test_bert_encoder_contracts.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -2994,6 +3034,7 @@ set_target_properties(test_bert_encoder_contracts PROPERTIES
 add_executable(test_recurrent_backend_placement
     tests/test_recurrent_backend_placement.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -3540,6 +3581,7 @@ add_executable(test_cyxmodel_layernorm_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -3592,6 +3634,7 @@ add_executable(test_cyxmodel_mha_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -3644,6 +3687,7 @@ add_executable(test_cyxmodel_transformer_encoder_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -3695,6 +3739,7 @@ add_executable(test_cyxmodel_transformer_decoder_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -3747,6 +3792,7 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -3791,6 +3837,7 @@ set_target_properties(test_cyxmodel_causal_lm_generation_roundtrip PROPERTIES
 add_executable(test_saved_ner_sequence_smoke
     tests/test_saved_ner_sequence_smoke.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_document.cpp
     src/core/graph_node_factory.cpp
     src/plugin/registries/plugin_node_registry.cpp
@@ -3868,6 +3915,7 @@ endif()
 add_executable(cyxwiz-graph-compile-check
     tests/tool_graph_compile_check.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_document.cpp
     src/core/graph_node_factory.cpp
     src/plugin/registries/plugin_node_registry.cpp
@@ -4768,6 +4816,7 @@ add_executable(test_properties_truth
     tests/test_properties_truth.cpp
     src/gui/properties_parameter_rules.cpp
     src/gui/properties_truth.cpp
+    src/core/sequence_fusion_presentation.cpp
 )
 
 target_include_directories(test_properties_truth PRIVATE

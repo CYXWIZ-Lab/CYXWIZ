@@ -273,18 +273,18 @@ void CheckWordPosFusionRejections(const std::vector<gui::MLNode>& nodes,
 
     auto n = nodes;
     NodeWithId(n, concat).parameters["dim"] = "1";
-    rejected(n, links, "Concatenate dim is 1", "a sequence-axis concat");
+    rejected(n, links, "Concatenate dim is 1, the sequence axis.", "a sequence-axis concat");
 
     n = nodes;
     NodeWithId(n, data).parameters["pos_column"] = "";
-    rejected(n, links, "the sequence data declares no POS column", "a missing POS column");
+    rejected(n, links, "The sequence data declares no POS column.", "a missing POS column");
 
     auto l = links;
     const auto& input2 = NodeWithId(n, concat).inputs.at(1);
     l.erase(std::remove_if(l.begin(), l.end(), [&](const gui::NodeLink& link) {
         return link.to_node == concat && link.to_pin == input2.id;
     }), l.end());
-    rejected(nodes, l, "", "a Concatenate with one Embedding input");
+    rejected(nodes, l, "Connect exactly Input 1 and Input 2.", "a Concatenate with one Embedding input");
 
     l = links;
     gui::NodeLink extra;
@@ -294,7 +294,7 @@ void CheckWordPosFusionRejections(const std::vector<gui::MLNode>& nodes,
     extra.to_node = dropout;
     extra.to_pin = NodeWithId(n, dropout).inputs.at(0).id;
     l.push_back(extra);
-    rejected(nodes, l, "'Word Embedding' may feed only the Concatenate", "a shared embedding output");
+    rejected(nodes, l, "Word Embedding may feed only the Concatenate.", "a shared embedding output");
 }
 
 void CheckDecodedGoldLogits(const cyxwiz::SequenceBatch& batch,
