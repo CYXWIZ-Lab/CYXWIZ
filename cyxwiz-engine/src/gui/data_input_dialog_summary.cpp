@@ -116,6 +116,8 @@ void DataInputDialog::RenderDatasetSummaryPanel() {
         ImGui::TextUnformatted(FormatBytes(file_size_).c_str());
     }
 
+    RenderSequenceSummary();
+
     if (IsApplySupported()) {
         ImGui::TextWrapped("Apply path: %s", CurrentApplySummary().c_str());
     } else {

@@ -86,36 +86,30 @@ void DataInputDialog::RenderFileSource() {
                        "Pick the data contract this node should expose to the training graph.");
     ImGui::Spacing();
 
-    int cat_idx = static_cast<int>(file_category_);
-    if (ImGui::RadioButton("Tabular", &cat_idx, 0)) {
-        file_category_ = FileCategory::Tabular;
+    // Sequence (token tagging) loads as a tabular file and adds the tagging
+    // contract, so it is its own radio index rather than a loader category.
+    constexpr int kSequenceIndex = 6;
+    int cat_idx = sequence_tagging_ ? kSequenceIndex : static_cast<int>(file_category_);
+    const auto pick = [this](FileCategory category, bool sequence) {
+        file_category_ = category;
+        sequence_tagging_ = sequence;
         has_changes_ = true;
+    };
+    if (ImGui::RadioButton("Tabular", &cat_idx, 0)) pick(FileCategory::Tabular, false);
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Image", &cat_idx, 1)) pick(FileCategory::Image, false);
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Audio", &cat_idx, 2)) pick(FileCategory::Audio, false);
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Video (planned)", &cat_idx, 3)) pick(FileCategory::Video, false);
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Text", &cat_idx, 4)) pick(FileCategory::Text, false);
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Sequence (token tagging)", &cat_idx, kSequenceIndex)) {
+        pick(FileCategory::Tabular, true);
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton("Image", &cat_idx, 1)) {
-        file_category_ = FileCategory::Image;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Audio", &cat_idx, 2)) {
-        file_category_ = FileCategory::Audio;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Video (planned)", &cat_idx, 3)) {
-        file_category_ = FileCategory::Video;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Text", &cat_idx, 4)) {
-        file_category_ = FileCategory::Text;
-        has_changes_ = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Time Series", &cat_idx, 5)) {
-        file_category_ = FileCategory::TimeSeries;
-        has_changes_ = true;
-    }
+    if (ImGui::RadioButton("Time Series", &cat_idx, 5)) pick(FileCategory::TimeSeries, false);
 
     ImGui::Spacing();
 
@@ -333,8 +327,11 @@ void DataInputDialog::RenderTabularOptions() {
     }
 
 
-    // Column Mapping - Label/Target column selection
-    if (ImGui::CollapsingHeader("Column Mapping", ImGuiTreeNodeFlags_DefaultOpen)) {
+    // Column Mapping - Label/Target column selection. A token-tagging file
+    // maps its token / POS / tag columns instead.
+    if (sequence_tagging_) {
+        RenderSequenceColumns();
+    } else if (ImGui::CollapsingHeader("Column Mapping", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled],
             "For ML training, specify which column contains labels/targets");
         ImGui::Spacing();

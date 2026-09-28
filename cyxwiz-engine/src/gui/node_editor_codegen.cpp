@@ -121,6 +121,22 @@ void NodeEditor::GeneratePythonCode() {
     GenerateCodeForFramework(selected_framework_);
 }
 
+std::string NodeEditor::GenerateCodeText(CodeFramework framework) {
+    if (nodes_.empty()) return {};
+    const std::vector<int> sorted_ids = TopologicalSort();
+    if (sorted_ids.empty()) {
+        spdlog::error("Failed to perform topological sort - graph may have cycles");
+        return {};
+    }
+    switch (framework) {
+        case CodeFramework::PyTorch: return GeneratePyTorchCode(sorted_ids);
+        case CodeFramework::TensorFlow: return GenerateTensorFlowCode(sorted_ids);
+        case CodeFramework::Keras: return GenerateKerasCode(sorted_ids);
+        case CodeFramework::PyCyxWiz: return GeneratePyCyxWizCode(sorted_ids);
+        default: return {};
+    }
+}
+
 void NodeEditor::GenerateCodeForFramework(CodeFramework framework) {
     spdlog::info("Generating code from node graph (async)...");
 
@@ -920,12 +936,46 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
 
     code += "\n";
 
+    // Word + POS fusion (the compiler's SequenceFeatureFusion route): a
+    // Concatenate whose Input 1 and Input 2 are Embedding nodes. The model
+    // input is the packed [batch, seq, 2] word/POS ids CyxWiz trains on.
+    const auto fusion_input_embedding = [this](const MLNode& concat, size_t input_index) -> const MLNode* {
+        if (concat.type != NodeType::Concatenate || concat.inputs.size() <= input_index) return nullptr;
+        for (const auto& link : links_) {
+            if (link.to_node != concat.id || link.to_pin != concat.inputs[input_index].id) continue;
+            const MLNode* source = FindNodeById(link.from_node);
+            return source && source->type == NodeType::Embedding ? source : nullptr;
+        }
+        return nullptr;
+    };
+    std::map<int, int> fusion_embedding_layer;  // Embedding node id -> layer index
+    for (const auto& candidate : nodes_) {
+        if (fusion_input_embedding(candidate, 0) && fusion_input_embedding(candidate, 1)) {
+            fusion_embedding_layer[fusion_input_embedding(candidate, 0)->id] = -1;
+            fusion_embedding_layer[fusion_input_embedding(candidate, 1)->id] = -1;
+        }
+    }
+
     // Forward pass
     code += "    def forward(self, x):\n";
     layer_idx = 0;
     for (int node_id : sorted_ids) {
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
+
+        if (node->type == NodeType::Embedding && fusion_embedding_layer.count(node->id)) {
+            fusion_embedding_layer[node->id] = layer_idx++;  // applied at the Concatenate
+            continue;
+        }
+        if (const MLNode* word = fusion_input_embedding(*node, 0)) {
+            if (const MLNode* pos = fusion_input_embedding(*node, 1)) {
+                code += "        # Word + POS ids packed as [batch, seq, 2]\n";
+                code += "        x = torch.cat([self.layer" + std::to_string(fusion_embedding_layer[word->id]) +
+                        "(x[..., 0].long()), self.layer" + std::to_string(fusion_embedding_layer[pos->id]) +
+                        "(x[..., 1].long())], dim=-1)\n";
+                continue;
+            }
+        }
 
         const auto activation = BuildActivationCodegen(
             ActivationCodegenTarget::PyTorch,
@@ -1889,6 +1939,42 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
     return code;
 }
 
+std::string NodeEditor::InferredInputWidth(const MLNode& node) const {
+    if (node.inputs.empty()) return {};
+    const int input_pin = node.inputs.front().id;
+    const MLNode* source = nullptr;
+    for (const auto& link : links_) {
+        if (link.to_node != node.id || link.to_pin != input_pin) continue;
+        for (const auto& other : nodes_) {
+            if (other.id == link.from_node) source = &other;
+        }
+    }
+    if (!source) return {};
+    const auto param = [source](const char* key) {
+        const auto it = source->parameters.find(key);
+        return it == source->parameters.end() ? std::string{} : it->second;
+    };
+    switch (source->type) {
+        case NodeType::Embedding:
+            return param("embedding_dim");
+        case NodeType::LSTM:
+        case NodeType::GRU:
+        case NodeType::RNN: {
+            const std::string hidden = param("hidden_size");
+            const std::string bidirectional = param("bidirectional");
+            if (hidden.empty()) return {};
+            return (bidirectional == "true" || bidirectional == "True" || bidirectional == "1")
+                       ? std::to_string(2 * std::atoi(hidden.c_str()))
+                       : hidden;
+        }
+        case NodeType::Dense:
+        case NodeType::TimeDistributed:
+            return param("units");
+        default:
+            return {};
+    }
+}
+
 std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
     std::string code;
 
@@ -1924,8 +2010,9 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             if (it != node.parameters.end()) {
                 units = it->second;
             }
-            // Note: input size needs to be determined from graph connections
-            code = "nn.Linear(in_features=AUTO, out_features=" + units + ")";
+            // The input width is read on the first forward pass (as the
+            // TimeDistributed head does); a fixed guess broke every export.
+            code = "nn.LazyLinear(out_features=" + units + ")";
             break;
         }
 
@@ -2119,6 +2206,10 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             };
             auto it = node.parameters.find("input_size");
             if (it != node.parameters.end()) input_size = it->second;
+            if (input_size.empty() || input_size == "0") {
+                const std::string inferred = InferredInputWidth(node);
+                if (!inferred.empty()) input_size = inferred;
+            }
             it = node.parameters.find("hidden_size");
             if (it != node.parameters.end()) hidden_size = it->second;
             it = node.parameters.find("num_layers");
@@ -2150,6 +2241,10 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             };
             auto it = node.parameters.find("input_size");
             if (it != node.parameters.end()) input_size = it->second;
+            if (input_size.empty() || input_size == "0") {
+                const std::string inferred = InferredInputWidth(node);
+                if (!inferred.empty()) input_size = inferred;
+            }
             it = node.parameters.find("hidden_size");
             if (it != node.parameters.end()) hidden_size = it->second;
             it = node.parameters.find("num_layers");
@@ -2171,6 +2266,10 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
             std::string nonlinearity = "tanh";
             auto it = node.parameters.find("input_size");
             if (it != node.parameters.end()) input_size = it->second;
+            if (input_size.empty() || input_size == "0") {
+                const std::string inferred = InferredInputWidth(node);
+                if (!inferred.empty()) input_size = inferred;
+            }
             it = node.parameters.find("hidden_size");
             if (it != node.parameters.end()) hidden_size = it->second;
             it = node.parameters.find("num_layers");

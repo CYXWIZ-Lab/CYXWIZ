@@ -7,6 +7,8 @@
 #include "node_metadata_registry.h"
 #include "pipeline_runtime_capabilities.h"
 #include "sequence_arrow_batcher.h"
+#include "sha256_digest.h"
+#include "training_resume_checkpoint.h"
 
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -238,6 +240,49 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
         executor = std::make_unique<TrainingExecutor>(std::move(config), train_it->second, label);
     }
 
+    // Resume checkpoints (TOFIX118 P4e): the graph and data files identify the
+    // run, so a checkpoint cannot be resumed into a different job.
+    if (!request.resume_checkpoint_root.empty() || !request.resume_from.empty()) {
+        TrainingResumeIdentity identity;
+        identity.run_id = "graph-job";
+        identity.graph_json = request.graph_json;
+        nlohmann::json files = nlohmann::json::object();
+        for (const auto& [name, path] : source_paths) {
+            std::error_code size_error;
+            files[name] = {{"path", path}, {"bytes", std::filesystem::file_size(path, size_error)}};
+        }
+        identity.dataset_manifest_json = files.dump(2);
+        std::string hash_error;
+        for (const auto& [text, digest] :
+             {std::pair{&identity.graph_json, &identity.graph_fingerprint},
+              std::pair{&identity.dataset_manifest_json, &identity.dataset_fingerprint}}) {
+            Sha256Hasher hasher;
+            if (!hasher.Update(*text, hash_error) || !hasher.Finish(*digest, hash_error)) digest->clear();
+        }
+        if (!request.resume_checkpoint_root.empty()) {
+            executor->EnableResumeCheckpoints(request.resume_checkpoint_root, identity, 2,
+                                              request.resume_checkpoint_every_steps);
+            if (callbacks.on_checkpoint) {
+                executor->SetResumeCheckpointCallback(
+                    [&callbacks](const std::filesystem::path& checkpoint, int epoch, int next_batch) {
+                        callbacks.on_checkpoint(checkpoint.string(), epoch, next_batch);
+                    });
+            }
+        }
+        if (!request.resume_from.empty()) {
+            std::filesystem::path from = request.resume_from;
+            if (request.resume_from == "latest") {
+                const auto latest = FindLatestTrainingResumeCheckpoint(request.resume_checkpoint_root);
+                if (!latest) {
+                    return Fail(TrainingFailureKind::DataError,
+                                "no resume checkpoint under " + request.resume_checkpoint_root);
+                }
+                from = *latest;
+            }
+            executor->SetResumeFrom(from);
+        }
+    }
+
     // Cancellation: a watcher asks the executor to stop cooperatively.
     GraphTrainingJobResult result;
     result.timing.tokens_per_sample = tokens_per_sample;
@@ -251,13 +296,25 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     };
     std::atomic<bool> finished{false};
     std::thread watcher;
-    if (callbacks.should_cancel) {
+    if (callbacks.should_cancel || callbacks.should_pause) {
+        // Cancel and pause reach the executor from here; it honours both
+        // between batches (Stop, and Pause/Resume via WaitWhilePaused).
         watcher = std::thread([&] {
+            bool paused = false;
             while (!finished.load()) {
-                if (callbacks.should_cancel()) {
+                if (callbacks.should_cancel && callbacks.should_cancel()) {
                     result.cancelled = true;
                     executor->Stop();
                     return;
+                }
+                const bool pause = callbacks.should_pause && callbacks.should_pause();
+                if (pause != paused) {
+                    paused = pause;
+                    if (paused) {
+                        executor->Pause();
+                    } else {
+                        executor->Resume();
+                    }
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }
@@ -292,6 +349,7 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     }
     if (result.cancelled) result.failure = TrainingFailureKind::Cancelled;
     result.ok = !result.cancelled;
+    // A cancelled run keeps what it learned so far (partial weights).
     result.model = executor->ReleaseModel();
     return result;
 }

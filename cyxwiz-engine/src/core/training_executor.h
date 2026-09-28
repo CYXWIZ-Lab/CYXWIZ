@@ -9,6 +9,7 @@
 #include "arrow_dataset.h"
 #include "training_scheduler_controller.h"
 #include "training_randomness.h"
+#include "training_resume_checkpoint.h"
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/optimizer.h>
 #include <cyxwiz/sequential.h>
@@ -112,6 +113,11 @@ struct TrainingMetrics {
     // Post-step learning rates, one entry per scheduler advance. The initial
     // rate is reported separately by learning_rate before the first advance.
     std::vector<double> learning_rate_history;
+
+    // Resume checkpoints (TOFIX118 P4e).
+    std::string last_resume_checkpoint;  // newest complete one written by this run
+    int resumed_after_epoch = 0;         // > 0: this run continued a checkpoint
+    bool resume_exact = false;           // seeds and data order replay exactly
 };
 
 struct ObjectiveEvaluationMetrics {
@@ -221,6 +227,24 @@ public:
      * Stop training (thread-safe, cooperative cancellation)
      */
     void Stop();
+
+    // Resume checkpoints (TOFIX118 P4e). Enable before Train: a checkpoint is
+    // written under `root` at every epoch end (the newest `keep` are kept).
+    // With `every_optimizer_steps` > 0, sequence (language-model) epochs are
+    // also checkpointed every that many optimizer steps (P4e-2).
+    void EnableResumeCheckpoints(std::filesystem::path root, TrainingResumeIdentity identity, int keep = 2,
+                                 int every_optimizer_steps = 0);
+    // Continue from a checkpoint: Train restores it after building the model
+    // and starts at the epoch after it (refused for a different graph).
+    void SetResumeFrom(std::filesystem::path checkpoint);
+    // Called after each resume checkpoint is written: its folder, the epoch it
+    // belongs to (the completed epoch at an epoch end, the epoch in progress
+    // inside one) and the batches of that epoch it covers (0 at an epoch end).
+    using ResumeCheckpointCallback =
+        std::function<void(const std::filesystem::path& checkpoint, int epoch, int next_batch)>;
+    void SetResumeCheckpointCallback(ResumeCheckpointCallback callback) {
+        resume_checkpoint_callback_ = std::move(callback);
+    }
 
     /**
      * Pause training (thread-safe)
@@ -345,6 +369,24 @@ private:
     // Graph lr_schedule (optimizer node): attached when the first epoch knows
     // its batch count, because the schedule is defined over optimizer updates.
     bool graph_schedule_pending_ = false;
+    // Resume checkpoints (TOFIX118 P4e).
+    std::filesystem::path resume_root_;
+    TrainingResumeIdentity resume_identity_;
+    int resume_keep_ = 2;
+    std::filesystem::path resume_from_;
+    std::optional<TrainingSchedulerResumeState> graph_schedule_resume_;
+    bool data_order_exact_ = true;
+    int resume_every_steps_ = 0;
+    ResumeCheckpointCallback resume_checkpoint_callback_;
+    int last_mid_epoch_checkpoint_step_ = -1;
+    std::optional<TrainingEpochProgress> pending_epoch_resume_;
+    // Run state a checkpoint records, kept current by Train.
+    int resume_total_epochs_ = 0;
+    int resume_model_seed_ = -1;
+    float resume_best_val_loss_ = 0.0f;
+    int resume_epochs_without_improvement_ = 0;
+    // Writes resume-<epoch>-<batch> under resume_root_; false = not saved.
+    bool SaveResumeCheckpoint(int completed_epoch, const std::optional<TrainingEpochProgress>& in_epoch);
     bool empty_validation_reported_ = false;  // warned once per run
     int training_epochs_ = 1;
     void AttachGraphScheduleIfPending(size_t batches_per_epoch);

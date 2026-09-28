@@ -125,6 +125,14 @@ public:
     SidebarPosition GetSidebarPosition() const { return sidebar_position_; }
     void SetSidebarAutoHide(bool auto_hide) { sidebar_auto_hide_ = auto_hide; }
     bool GetSidebarAutoHide() const { return sidebar_auto_hide_; }
+    // Width of the panel-toggle sidebar.
+    static constexpr float kSidebarWidth = 40.0f;
+    // Horizontal space the dock space leaves for a pinned (not auto-hiding)
+    // sidebar, so it never covers a docked panel; 0 when it hides or is off.
+    float PinnedSidebarReserve() const {
+        return (sidebar_auto_hide_ || sidebar_position_ == SidebarPosition::Hidden || panels_.empty())
+            ? 0.0f : kSidebarWidth;
+    }
 
     // Render sidebar panel toggles (call this in your main render loop)
     // Returns true if any panel visibility changed

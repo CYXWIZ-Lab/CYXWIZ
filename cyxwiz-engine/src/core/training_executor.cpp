@@ -36,6 +36,7 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <cstdio>
 #include <utility>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
@@ -1326,9 +1327,77 @@ void TrainingExecutor::Train(
             config_.generation_preview, config_.output_size);
     }
 
+    // Resume (TOFIX118 P4e): restore the checkpoint into the model and
+    // optimizer just built, and continue at the epoch after it.
+    int start_epoch = 1;
+    const int run_model_seed = GetMetrics().randomness.model_seed;
+    resume_total_epochs_ = epochs;
+    resume_model_seed_ = run_model_seed;
+    resume_best_val_loss_ = best_val_loss;
+    resume_epochs_without_improvement_ = epochs_without_improvement;
+    pending_epoch_resume_.reset();
+    last_mid_epoch_checkpoint_step_ = -1;
+    if (!resume_from_.empty()) {
+        TrainingResumeRuntime restored;
+        TrainingResumeIdentity checkpoint_identity;
+        std::string resume_error;
+        if (!LoadTrainingResumeCheckpoint(resume_from_, *model_, *optimizer_, restored, checkpoint_identity,
+                                          resume_error)) {
+            fail_run("resume_failed: " + resume_error);
+            return;
+        }
+        if (!resume_identity_.graph_fingerprint.empty() && checkpoint_identity.graph_fingerprint != "unrecorded" &&
+            checkpoint_identity.graph_fingerprint != resume_identity_.graph_fingerprint) {
+            fail_run("resume_failed: the checkpoint belongs to a different graph");
+            return;
+        }
+        if (scheduler_controller_ && restored.scheduler) {
+            fail_run("resume_failed: resuming a configured (non-graph) scheduler is not supported yet");
+            return;
+        }
+        graph_schedule_resume_ = restored.scheduler;
+        start_epoch = restored.completed_epoch + 1;
+        if (restored.in_epoch) {
+            if (mode_ != DatasetMode::SequenceExternal) {
+                fail_run("resume_failed: a checkpoint taken inside an epoch needs the sequence data path");
+                return;
+            }
+            start_epoch = restored.in_epoch->epoch;
+            pending_epoch_resume_ = restored.in_epoch;
+        }
+        best_val_loss = restored.best_val_loss_set ? restored.best_val_loss : std::numeric_limits<float>::infinity();
+        epochs_without_improvement = restored.epochs_without_improvement;
+        resume_best_val_loss_ = best_val_loss;
+        resume_epochs_without_improvement_ = epochs_without_improvement;
+        const bool exact = restored.model_seed >= 0 && restored.model_seed == run_model_seed &&
+                           restored.data_order_exact;
+        UpdateMetrics([&](TrainingMetrics& m) {
+            m.loss_history = restored.loss_history;
+            m.accuracy_history = restored.accuracy_history;
+            m.mae_history = restored.mae_history;
+            m.rmse_history = restored.rmse_history;
+            m.val_loss_history = restored.val_loss_history;
+            m.val_accuracy_history = restored.val_accuracy_history;
+            m.val_mae_history = restored.val_mae_history;
+            m.val_rmse_history = restored.val_rmse_history;
+            m.learning_rate_history = restored.learning_rate_history;
+            m.optimizer_step_count = restored.optimizer_step_count;
+            m.scheduler_step_count = restored.scheduler_step_count;
+            m.last_executed_epoch = restored.completed_epoch;
+            m.current_epoch = restored.completed_epoch;
+            m.resumed_after_epoch = restored.completed_epoch;
+            m.resume_exact = exact;
+            m.last_resume_checkpoint = resume_from_.string();
+        });
+        spdlog::info("TrainingExecutor: resumed from {} after epoch {} ({})", resume_from_.string(),
+                     restored.completed_epoch, exact ? "exact" : "not exact: unseeded run or unseeded data order");
+        TrainingTraceCollector::Instance().RecordRuntimeEvent(
+            "Resume", resume_from_.string() + "; completed_epoch=" + std::to_string(restored.completed_epoch));
+    }
+
     // Training loop
     const bool regression_metrics = UsesRegressionMetrics(config_);
-    for (int epoch = 1; epoch <= epochs; ++epoch) {
+    for (int epoch = start_epoch; epoch <= epochs; ++epoch) {
         spdlog::debug("TrainingExecutor: Epoch {} starting", epoch);
         if (ShouldStop()) break;
         // Check plugin early stopping
@@ -1352,6 +1421,24 @@ void TrainingExecutor::Train(
             }
         }
         if (!WaitWhilePaused()) break;
+
+        // Each epoch's randomness and data order come from (run seed, epoch)
+        // alone, so a run resumed at this epoch replays it (TOFIX118 P4e).
+        if (run_model_seed >= 0) {
+            SeedCurrentArrayFireRandomEngine(TrainingEpochSeed(static_cast<std::uint64_t>(run_model_seed), epoch));
+        }
+        {
+            bool seeded = config_.dataloader_seed >= 0;
+            if (seeded) {
+                const auto shuffle_seed = TrainingEpochSeed(static_cast<std::uint64_t>(config_.dataloader_seed), epoch);
+                if (mode_ == DatasetMode::SequenceExternal && active_sequence_batcher) {
+                    seeded = active_sequence_batcher->SetEpochShuffleSeed(shuffle_seed);
+                } else if (active_train_ibatcher) {
+                    seeded = active_train_ibatcher->SetEpochShuffleSeed(shuffle_seed);
+                }
+            }
+            data_order_exact_ = data_order_exact_ && seeded;
+        }
 
         auto epoch_start = std::chrono::steady_clock::now();
 
@@ -1617,6 +1704,14 @@ void TrainingExecutor::Train(
             break;
         }
 
+        // Resume checkpoint at the epoch boundary (TOFIX118 P4e). A failed
+        // save is reported, not fatal: training continues.
+        resume_best_val_loss_ = best_val_loss;
+        resume_epochs_without_improvement_ = epochs_without_improvement;
+        if (!resume_root_.empty() && !ShouldStop()) {
+            SaveResumeCheckpoint(epoch, std::nullopt);
+        }
+
         // Reset batchers for next epoch
         {
             if (mode_ == DatasetMode::SequenceExternal &&
@@ -1760,11 +1855,13 @@ void TrainingExecutor::Train(
                 final_metrics.checkpoint_used);
             spdlog::info(
                 "TrainingExecutor: Held-out Sequence test metrics "
-                "test_loss={:.4f}, token_acc={:.2f}%, entity_f1={:.2f}% "
+                "test_loss={:.4f}, token_acc={:.2f}%{} "
                 "({} samples, {} tokens)",
                 test_evaluation.loss,
                 test_evaluation.accuracy * 100.0f,
-                test_evaluation.entity_f1 * 100.0f,
+                config_.sequence_batch.create_causal_lm_targets
+                    ? std::string()
+                    : fmt::format(", entity_f1={:.2f}%", test_evaluation.entity_f1 * 100.0f),
                 active_sequence_batcher->GetNumSamples(),
                 test_evaluation.token_count);
         } else if (active_sequence_batcher->HasPhase(BatcherPhase::Test)) {
@@ -2167,6 +2264,71 @@ void TrainingExecutor::ConfigureWeightDecayExclusions() {
     adam->SetNoDecayParameters(std::move(excluded));
 }
 
+void TrainingExecutor::EnableResumeCheckpoints(std::filesystem::path root, TrainingResumeIdentity identity,
+                                               int keep, int every_optimizer_steps) {
+    resume_root_ = std::move(root);
+    resume_identity_ = std::move(identity);
+    resume_keep_ = std::max(1, keep);
+    resume_every_steps_ = std::max(0, every_optimizer_steps);
+}
+
+bool TrainingExecutor::SaveResumeCheckpoint(int completed_epoch,
+                                            const std::optional<TrainingEpochProgress>& in_epoch) {
+    const TrainingMetrics snapshot = GetMetrics();
+    TrainingResumeRuntime runtime;
+    runtime.completed_epoch = completed_epoch;
+    runtime.total_epochs = resume_total_epochs_;
+    runtime.optimizer_step_count = snapshot.optimizer_step_count;
+    runtime.scheduler_step_count = snapshot.scheduler_step_count;
+    runtime.best_val_loss_set = std::isfinite(resume_best_val_loss_);
+    runtime.best_val_loss = resume_best_val_loss_;
+    runtime.epochs_without_improvement = resume_epochs_without_improvement_;
+    runtime.model_seed = resume_model_seed_;
+    runtime.dataloader_seed = config_.dataloader_seed;
+    runtime.data_order_exact = data_order_exact_;
+    runtime.loss_history = snapshot.loss_history;
+    runtime.accuracy_history = snapshot.accuracy_history;
+    runtime.mae_history = snapshot.mae_history;
+    runtime.rmse_history = snapshot.rmse_history;
+    runtime.val_loss_history = snapshot.val_loss_history;
+    runtime.val_accuracy_history = snapshot.val_accuracy_history;
+    runtime.val_mae_history = snapshot.val_mae_history;
+    runtime.val_rmse_history = snapshot.val_rmse_history;
+    runtime.learning_rate_history = snapshot.learning_rate_history;
+    runtime.in_epoch = in_epoch;
+    std::string save_error;
+    if (scheduler_controller_) {
+        TrainingSchedulerResumeState scheduler_state;
+        if (scheduler_controller_->ExportResumeState(scheduler_state, save_error)) {
+            runtime.scheduler = std::move(scheduler_state);
+        }
+    }
+    TrainingResumeIdentity identity = resume_identity_;
+    if (identity.loss_type.empty() && loss_) identity.loss_type = loss_->GetName();
+    if (identity.optimizer_type.empty()) {
+        identity.optimizer_type = "node_type_" + std::to_string(static_cast<int>(config_.optimizer_type));
+    }
+    const auto directory = resume_root_ / (in_epoch ? TrainingResumeCheckpointName(in_epoch->epoch, in_epoch->next_batch)
+                                                    : TrainingResumeCheckpointName(completed_epoch + 1, 0));
+    if (!SaveTrainingResumeCheckpoint(directory, identity, *model_, *optimizer_, runtime, save_error)) {
+        spdlog::warn("TrainingExecutor: resume checkpoint {} not saved: {}", directory.string(), save_error);
+        TrainingTraceCollector::Instance().RecordRuntimeEvent("ResumeCheckpoint.Failed", save_error);
+        return false;
+    }
+    PruneTrainingResumeCheckpoints(resume_root_, resume_keep_);
+    UpdateMetrics([&](TrainingMetrics& m) { m.last_resume_checkpoint = directory.string(); });
+    TrainingTraceCollector::Instance().RecordRuntimeEvent("ResumeCheckpoint.Saved", directory.string());
+    if (resume_checkpoint_callback_) {
+        resume_checkpoint_callback_(directory, in_epoch ? in_epoch->epoch : completed_epoch,
+                                    in_epoch ? in_epoch->next_batch : 0);
+    }
+    return true;
+}
+
+void TrainingExecutor::SetResumeFrom(std::filesystem::path checkpoint) {
+    resume_from_ = std::move(checkpoint);
+}
+
 void TrainingExecutor::AttachGraphScheduleIfPending(size_t batches_per_epoch) {
     if (!graph_schedule_pending_) return;
     graph_schedule_pending_ = false;
@@ -2185,7 +2347,8 @@ void TrainingExecutor::AttachGraphScheduleIfPending(size_t batches_per_epoch) {
     spec.min_lr_ratio = config_.min_lr_ratio;
     scheduler_controller_ = std::make_unique<TrainingSchedulerController>(spec);
     std::string error;
-    if (!scheduler_controller_->Attach(*optimizer_, std::nullopt, error)) {
+    const auto resume_state = std::exchange(graph_schedule_resume_, std::nullopt);
+    if (!scheduler_controller_->Attach(*optimizer_, resume_state, error)) {
         scheduler_controller_.reset();
         throw std::runtime_error("TrainingExecutor: lr_schedule could not be attached: " + error);
     }
@@ -2302,10 +2465,30 @@ void TrainingExecutor::RunTrainingEpochSequence(
 
     const auto epoch_start_time = std::chrono::steady_clock::now();
     batcher.Reset();
+    // Resumed inside this epoch (TOFIX118 P4e-2): same order, so skip what
+    // the checkpoint already trained and continue its running sums.
+    if (pending_epoch_resume_ && pending_epoch_resume_->epoch == epoch) {
+        const auto resume_point = *pending_epoch_resume_;
+        pending_epoch_resume_.reset();
+        batcher.SkipBatches(static_cast<size_t>(resume_point.next_batch));
+        batch_num = resume_point.next_batch;
+        epoch_loss = resume_point.epoch_loss;
+        loss_weight_sum = resume_point.loss_weight_sum;
+        sample_count = static_cast<size_t>(resume_point.sample_count);
+        aggregate_metrics = resume_point.metrics;
+    }
+    const int run_model_seed = GetMetrics().randomness.model_seed;
 
     while (!batcher.IsEpochComplete()) {
         if (ShouldStop()) break;
         if (!WaitWhilePaused()) break;
+
+        // Each batch draws from (seed, epoch, batch): a batch replayed after
+        // a mid-epoch resume draws the same numbers.
+        if (run_model_seed >= 0) {
+            SeedCurrentArrayFireRandomEngine(
+                TrainingStepSeed(static_cast<std::uint64_t>(run_model_seed), epoch, batch_num + 1));
+        }
 
         CrashRunRecorder::Instance().MarkStage(
             TrainingTraceStage::GetNextBatch, epoch, batch_num + 1,
@@ -2453,11 +2636,15 @@ void TrainingExecutor::RunTrainingEpochSequence(
                 ? (batch_num * 1000.0f / static_cast<float>(elapsed_ms))
                 : 0.0f;
             const auto snapshot = GetMetrics();
+            // Entity F1 is a token-tagging metric; a language model has no entities.
+            const std::string entity_f1 = config_.sequence_batch.create_causal_lm_targets
+                ? std::string()
+                : fmt::format(" entity_f1={:.2f}%", current_f1 * 100.0f);
             spdlog::info("Epoch {} [{}/{}] seq_loss={:.4f} "
-                         "token_acc={:.2f}% entity_f1={:.2f}% "
+                         "token_acc={:.2f}%{} "
                          "({:.1f}s, {:.1f} batches/s) lr={:.3g}{}",
                          epoch, batch_num, total_batches, current_loss,
-                         current_acc * 100.0f, current_f1 * 100.0f,
+                         current_acc * 100.0f, entity_f1,
                          elapsed_s, rate,
                          snapshot.learning_rate > 0.0 ? snapshot.learning_rate
                                                       : static_cast<double>(config_.learning_rate),
@@ -2474,6 +2661,25 @@ void TrainingExecutor::RunTrainingEpochSequence(
                 static_cast<int>(total_batches), batch_loss, current_acc);
             batch_cb(epoch, batch_num, static_cast<int>(total_batches),
                      batch_loss, current_acc);
+        }
+
+        // Mid-epoch resume checkpoint (TOFIX118 P4e-2): every N optimizer
+        // steps, only on a completed step (no accumulated gradients pending)
+        // and not on the epoch's last batch (the epoch-end checkpoint covers it).
+        if (resume_every_steps_ > 0 && !resume_root_.empty() && gradient_accumulated_batches_ == 0 &&
+            !batcher.IsEpochComplete() && !ShouldStop()) {
+            const int steps = GetMetrics().optimizer_step_count;
+            if (steps > 0 && steps % resume_every_steps_ == 0 && steps != last_mid_epoch_checkpoint_step_) {
+                last_mid_epoch_checkpoint_step_ = steps;
+                TrainingEpochProgress progress;
+                progress.epoch = epoch;
+                progress.next_batch = batch_num;
+                progress.epoch_loss = epoch_loss;
+                progress.loss_weight_sum = loss_weight_sum;
+                progress.sample_count = sample_count;
+                progress.metrics = aggregate_metrics;
+                SaveResumeCheckpoint(epoch - 1, progress);
+            }
         }
     }
 

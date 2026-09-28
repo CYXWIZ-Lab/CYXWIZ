@@ -31,6 +31,15 @@ struct GraphTrainingJobRequest {
     int epochs_override = 0;       // 0 = the graph's Data Loader
     int batch_size_override = 0;   // 0 = the graph's Data Loader
     std::string checkpoint_dir_override;
+    // Resume checkpoints (TOFIX118 P4e): written at every epoch end under
+    // this folder when set; resume_from continues a run from a checkpoint
+    // folder, or from the newest one under resume_checkpoint_root when it is
+    // "latest".
+    std::string resume_checkpoint_root;
+    std::string resume_from;
+    // > 0: language-model epochs are also checkpointed every that many
+    // optimizer steps (P4e-2); 0: epoch ends only.
+    int resume_checkpoint_every_steps = 0;
 };
 
 struct GraphTrainingJobCallbacks {
@@ -40,6 +49,12 @@ struct GraphTrainingJobCallbacks {
     EpochCallback on_epoch;
     // Polled between batches; true stops the run (reported as cancelled).
     std::function<bool()> should_cancel;
+    // Polled likewise; true holds training between batches until it turns
+    // false again (TOFIX118 P4d).
+    std::function<bool()> should_pause;
+    // A resume checkpoint was written (TOFIX118 P4e-3): its folder, epoch and
+    // the batches of that epoch it covers (0 at an epoch end).
+    std::function<void(const std::string& checkpoint, int epoch, int next_batch)> on_checkpoint;
 };
 
 struct GraphTrainingJobResult {
@@ -49,7 +64,8 @@ struct GraphTrainingJobResult {
     TrainingFailureKind failure = TrainingFailureKind::None;  // category of `error`
     TrainingMetrics metrics;      // final metrics when it ran
     GraphTrainingJobTiming timing;
-    std::unique_ptr<SequentialModel> model;  // trained model (for export)
+    // Trained model (for export); on cancel, the partially trained model.
+    std::unique_ptr<SequentialModel> model;
 };
 
 // Loads the graph's inputs, compiles, trains to completion on the calling

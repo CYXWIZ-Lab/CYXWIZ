@@ -13,10 +13,12 @@
 // renamed node does not count as a new issue).
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_document.h"
+#include "../src/core/model_builder.h"
 #include "../src/gui/loaders/data_loader.h"
 
 #include <nlohmann/json.hpp>
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -98,16 +100,22 @@ const char* LevelName(cyxwiz::IssueLevel level) {
 int main(int argc, char** argv) {
     std::vector<std::filesystem::path> graphs;
     std::filesystem::path reference_path;
+    bool print_parameters = false;  // --parameters: build the model and count its parameters
+    bool print_layers = false;      // --layers: each compiled layer's node and shapes (TOFIX123)
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--reference" && i + 1 < argc) {
             reference_path = argv[++i];
+        } else if (arg == "--parameters") {
+            print_parameters = true;
+        } else if (arg == "--layers") {
+            print_layers = true;
         } else {
             graphs.emplace_back(arg);
         }
     }
     if (graphs.empty()) {
-        std::cerr << "usage: cyxwiz-graph-compile-check [--reference known_good.cyxgraph] <graph.cyxgraph> [more ...]\n";
+        std::cerr << "usage: cyxwiz-graph-compile-check [--reference known_good.cyxgraph] [--parameters] [--layers] <graph.cyxgraph> [more ...]\n";
         return 2;
     }
     std::multiset<std::string> reference_keys;
@@ -159,6 +167,42 @@ int main(int argc, char** argv) {
                   << " clip=" << config.grad_clip_norm << " weight_decay=" << config.weight_decay
                   << " decay_exclude=" << config.weight_decay_exclude
                   << " checkpoint_dir=" << config.checkpoint_dir << "\n";
+        if (print_layers) {
+            const auto shape = [](const std::vector<size_t>& dims) {
+                std::string text = "[";
+                for (size_t d = 0; d < dims.size(); ++d) text += (d ? "," : "") + std::to_string(dims[d]);
+                return text + "]";
+            };
+            std::cout << "   input_shape=" << shape(config.input_shape) << "\n";
+            for (size_t i = 0; i < config.layers.size(); ++i) {
+                const auto& layer = config.layers[i];
+                std::cout << "   layer " << i << " node=" << layer.node_id << " '" << layer.name
+                          << "' type=" << static_cast<int>(layer.type) << " in=" << shape(layer.input_shape)
+                          << " out=" << shape(layer.output_shape) << "\n";
+            }
+        }
+        if (print_parameters) {
+            // The model CyxWiz trains for this graph (TOFIX112: the PyTorch
+            // export must declare the same parameters).
+            auto built = cyxwiz::BuildExecutableFromConfig(config);
+            if (!built.ok()) {
+                std::cout << "   parameters=unavailable (" << built.error_message << ")\n";
+                all_ok = false;
+            } else {
+                long long count = 0;
+                for (const auto& [name, tensor] : built.model->GetParameters()) {
+                    count += static_cast<long long>(tensor.NumElements());
+                }
+                std::cout << "   parameters=" << count << "\n";
+                if (std::getenv("CYXWIZ_PRINT_PARAMETER_SHAPES")) {
+                    for (const auto& [name, tensor] : built.model->GetParameters()) {
+                        std::cout << "   param " << name << " [";
+                        for (size_t d = 0; d < tensor.Shape().size(); ++d) std::cout << (d ? "," : "") << tensor.Shape()[d];
+                        std::cout << "]\n";
+                    }
+                }
+            }
+        }
         const bool ok = reference_path.empty() ? config.is_valid : new_errors == 0;
         if (!ok) all_ok = false;
     }

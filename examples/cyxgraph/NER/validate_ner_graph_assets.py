@@ -142,8 +142,9 @@ def validate_graph_nodes(graph: dict, issues: list[str]) -> None:
     names = [node.get("name", "") for node in nodes if isinstance(node, dict)]
     for expected in [
         "NER Sentence CSV",
-        "NER Tag Vocabulary",
-        "NER Metrics",
+        "Word Embedding",
+        "POS Embedding",
+        "Concat Word + POS",
         "NER Output",
     ]:
         if expected not in names:

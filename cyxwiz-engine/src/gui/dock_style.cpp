@@ -289,7 +289,7 @@ bool DockStyle::RenderSidebarToggles() {
     ImGuiIO& io = ImGui::GetIO();
 
     // Sidebar dimensions
-    const float sidebar_width = 40.0f;
+    const float sidebar_width = kSidebarWidth;
     const float icon_size = 24.0f;
     const float icon_padding = 8.0f;
     const float top_offset = 32.0f;  // Space for toolbar

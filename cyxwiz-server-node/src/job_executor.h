@@ -40,6 +40,14 @@ struct TrainingMetrics {
     int64_t samples_processed = 0;
     int64_t time_elapsed_ms = 0;
     std::unordered_map<std::string, double> custom_metrics;
+    // Live position within the run (TOFIX118 P4c), from the batch callback;
+    // current_epoch above stays the last completed epoch.
+    int running_epoch = 0;          // 1-based epoch in progress
+    int current_batch = 0;          // 1-based batch within it
+    int total_batches = 0;          // batches per epoch
+    double fraction_complete = 0.0; // 0..1 over all epochs
+    double samples_per_second = 0.0;
+    double eta_seconds = -1.0;      // < 0 while still estimating
 };
 
 /**
@@ -98,6 +106,11 @@ public:
 
     // Set progress callback
     void SetProgressCallback(ProgressCallback callback);
+
+    // A resume checkpoint of a running job was written (TOFIX118 P4e-3).
+    using CheckpointCallback = std::function<void(const std::string& job_id, const std::string& checkpoint,
+                                                  int epoch, int next_batch)>;
+    void SetCheckpointCallback(CheckpointCallback callback);
 
     // Set completion callback
     void SetCompletionCallback(CompletionCallback callback);
@@ -172,6 +185,7 @@ private:
 
     // Callbacks
     ProgressCallback progress_callback_;
+    CheckpointCallback checkpoint_callback_;
     CompletionCallback completion_callback_;
     std::mutex callback_mutex_;
 

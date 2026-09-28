@@ -1,4 +1,5 @@
 #include "graph_compiler.h"
+#include "sequence_fusion_presentation.h"
 #include "training_randomness.h"
 #include "error_codes.h"
 #include "backend_placement_capabilities.h"
@@ -26,6 +27,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <queue>
 #include <set>
 #include <sstream>
@@ -1292,6 +1294,24 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
         copy_param("decoder_target_column", sequence.target_column);
         copy_param("sentence_id_column", sequence.sentence_id_column);
         copy_param("sequence_id_column", sequence.sentence_id_column);
+
+        // A sequence Data Input carries the whole token-tagging contract
+        // (TOFIX112): the training graph is Data Input -> Split -> DataLoader.
+        auto max_sequence_it = params.find("max_sequence_length");
+        if (max_sequence_it != params.end() && !max_sequence_it->second.empty()) {
+            try {
+                sequence.max_sequence_length =
+                    std::max(0, std::stoi(max_sequence_it->second));
+            } catch (...) {
+                sequence.max_sequence_length = 0;
+            }
+        }
+        auto mask_it = params.find("create_attention_mask");
+        if (mask_it != params.end()) {
+            const std::string value = LowerParamValue(mask_it->second);
+            sequence.create_attention_mask =
+                value != "false" && value != "0" && value != "off";
+        }
 
         std::string generative_key;
         if (LooksLikeGenerativeTrainingSketch(node, generative_key)) {
@@ -3784,6 +3804,7 @@ void CollectGraphRuntimeOpNodeIds(
     const std::vector<gui::NodeLink>& links,
     const std::vector<int>& sorted_node_ids,
     const std::unordered_set<int>& training_path_ids,
+    int fused_concat_node_id,
     TrainingConfiguration& config) {
     if (training_path_ids.empty()) {
         return;
@@ -3805,7 +3826,7 @@ void CollectGraphRuntimeOpNodeIds(
             continue;
         }
         const gui::MLNode& node = *it->second;
-        if (!IsGraphRuntimeFanInOp(node.type)) {
+        if (!IsGraphRuntimeFanInOp(node.type) || node.id == fused_concat_node_id) {
             continue;
         }
 
@@ -3854,6 +3875,62 @@ void CollectGraphRuntimeOpNodeIds(
         // compiler only records deliberately-enabled graph ops here.
         config.graph_op_node_ids.push_back(node.id);
     }
+}
+
+// Word + POS sequence tagging (TOFIX112 / TOFIX58 phase 2): the supported
+// route is two Embedding nodes fed by the same batch output and joined by a
+// Concatenate on the feature axis (Input 1 = word ids, Input 2 = POS ids).
+// It compiles to one SequenceFeatureFusionModule, which reads the packed
+// [batch, seq, 2] word/POS ids; any other Concatenate fed by an Embedding is
+// rejected here rather than silently linearized.
+struct SequenceFeatureFusionPlan {
+    int concat_node_id = -1;
+    int word_node_id = -1;
+    int pos_node_id = -1;
+};
+
+std::optional<SequenceFeatureFusionPlan> DetectSequenceFeatureFusion(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    const std::unordered_set<int>& training_path_ids,
+    TrainingConfiguration& config) {
+    const bool pos_declared =
+        config.sequence_batch.enabled && !config.sequence_batch.pos_column.empty();
+    std::optional<SequenceFeatureFusionPlan> plan;
+    for (const auto& verdict :
+         AnalyzeSequenceFusion(nodes, links, training_path_ids, pos_declared)) {
+        if (verdict.Compiles()) {
+            plan = SequenceFeatureFusionPlan{
+                verdict.concat_node_id, verdict.word_node_id, verdict.pos_node_id};
+            continue;
+        }
+        const gui::MLNode* concat = FindNodeById(nodes, verdict.concat_node_id);
+        AddIssue(config, IssueLevel::Error, SequenceFusionIssueMessage(verdict),
+                 verdict.concat_node_id, concat ? concat->name : std::string{},
+                 errors::Compiler::UnsupportedTrainingNode);
+    }
+    return plan;
+}
+
+// The fused layer's word_* / pos_* parameters, from the two Embedding nodes.
+CompiledLayer MakeSequenceFeatureFusionLayer(const gui::MLNode& word,
+                                             const gui::MLNode& pos,
+                                             const gui::MLNode& concat) {
+    CompiledLayer layer;
+    layer.type = gui::NodeType::Concatenate;
+    layer.node_id = concat.id;
+    layer.name = concat.name;
+    layer.parameters["sequence_feature_fusion"] = "true";
+    const std::pair<const char*, const gui::MLNode*> sources[] = {{"word_", &word}, {"pos_", &pos}};
+    for (const auto& [prefix, node] : sources) {
+        for (const char* key : {"num_embeddings", "embedding_dim", "padding_idx"}) {
+            const auto it = node->parameters.find(key);
+            if (it != node->parameters.end() && !it->second.empty()) {
+                layer.parameters[std::string(prefix) + key] = it->second;
+            }
+        }
+    }
+    return layer;
 }
 } // anonymous namespace
 
@@ -4509,6 +4586,16 @@ TrainingConfiguration GraphCompiler::Compile(
             }
         }
     }
+    // A token-tagging batch feeds [seq_len] ids per sample. When its contract
+    // fixes the length, compiled layer shapes are per token from the start
+    // (TOFIX123: the Properties panel shows these); the batcher still sets
+    // the real length at launch.
+    if (config.sequence_batch.enabled && config.input_shape.empty() &&
+        config.sequence_batch.max_sequence_length > 0) {
+        const auto length = static_cast<size_t>(config.sequence_batch.max_sequence_length);
+        config.input_shape = {length};
+        config.input_size = length;
+    }
     ValidateTrainingPathImplementationStatus(nodes, links, training_path_ids, config);
 
     if (dataset_node) {
@@ -4606,11 +4693,14 @@ TrainingConfiguration GraphCompiler::Compile(
     SuggestSparseFeatureOutput(config, nodes, links, training_path_ids, sorted_ids);
     ValidateSparseFeatureTrainingContract(
         config, nodes, links, training_path_ids, sorted_ids);
+    const auto sequence_fusion =
+        DetectSequenceFeatureFusion(nodes, links, training_path_ids, config);
     CollectGraphRuntimeOpNodeIds(
         nodes,
         links,
         sorted_ids,
         training_path_ids,
+        sequence_fusion ? sequence_fusion->concat_node_id : -1,
         config);
     config.graph_plan = BuildCompiledGraphPlan(
         nodes,
@@ -4650,6 +4740,7 @@ TrainingConfiguration GraphCompiler::Compile(
 
     // Extract model layers and preprocessing in execution order
     std::vector<size_t> current_shape = config.input_shape;
+    bool sequence_fusion_emitted = false;
 
     for (int node_id : sorted_ids) {
         const gui::MLNode* node = FindNodeById(node_id, nodes);
@@ -4689,6 +4780,34 @@ TrainingConfiguration GraphCompiler::Compile(
 
         if (IsGraphRuntimeFanInOp(node->type) &&
             HasConnectedInputAfterFirst(*node, links)) {
+            continue;
+        }
+
+        if (sequence_fusion &&
+            (node->id == sequence_fusion->word_node_id ||
+             node->id == sequence_fusion->pos_node_id)) {
+            if (sequence_fusion_emitted) continue;
+            sequence_fusion_emitted = true;
+            const gui::MLNode* word = FindNodeById(sequence_fusion->word_node_id, nodes);
+            const gui::MLNode* pos = FindNodeById(sequence_fusion->pos_node_id, nodes);
+            const gui::MLNode* concat = FindNodeById(sequence_fusion->concat_node_id, nodes);
+            if (!config.layers.empty()) {
+                AddIssue(config, IssueLevel::Error,
+                         "Word + POS fusion must be the first model layer: the "
+                         "Embeddings read token ids straight from the DataLoader.",
+                         concat->id, concat->name,
+                         errors::Compiler::UnsupportedTrainingNode);
+            }
+            CompiledLayer layer = MakeSequenceFeatureFusionLayer(*word, *pos, *concat);
+            layer.input_shape = current_shape;
+            const size_t width =
+                ParseSizeParam(layer.parameters, "word_embedding_dim", 256) +
+                ParseSizeParam(layer.parameters, "pos_embedding_dim", 32);
+            layer.output_shape = current_shape.empty()
+                ? std::vector<size_t>{width}
+                : std::vector<size_t>{current_shape[0], width};
+            current_shape = layer.output_shape;
+            config.layers.push_back(layer);
             continue;
         }
 

@@ -934,6 +934,12 @@ Batch ArrowDatasetBatcher::GetNextBatch() {
 
 void ArrowDatasetBatcher::Reset() {
     current_index_ = 0;
+    if (pending_epoch_seed_) {
+        // base_indices_ is the canonical order; only the generators carry history.
+        rng_.seed(static_cast<std::mt19937::result_type>(*pending_epoch_seed_));
+        balance_rng_.seed(static_cast<std::mt19937::result_type>(*pending_epoch_seed_ ^ 0x9E3779B97F4A7C15ull));
+        pending_epoch_seed_.reset();
+    }
     indices_ = base_indices_;
     RebuildBalancedIndices();
     if (shuffle_) {

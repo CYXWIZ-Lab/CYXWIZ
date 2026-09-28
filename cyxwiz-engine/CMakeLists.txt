@@ -254,8 +254,6 @@ set(ENGINE_SOURCES
     src/utils/labeling_utils.cpp
     src/core/test_manager.cpp
     src/core/graph_compile_task.cpp
-    src/core/checkpoint_manifest.cpp
-    src/core/checkpoint_payload_io.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
     src/core/model_analyzer.cpp
@@ -300,6 +298,7 @@ set(ENGINE_SOURCES
     src/gui/panels/terminal_buffer.cpp
     src/gui/viewport.cpp
     src/gui/properties.cpp
+    src/gui/properties_sequence_fusion.cpp
     src/gui/properties_advanced.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_executor.cpp
@@ -311,6 +310,9 @@ set(ENGINE_SOURCES
     src/gui/properties_presets.cpp
     src/gui/properties_shape_info.cpp
     src/gui/properties_truth.cpp
+    src/gui/properties_compiled_card.cpp
+    src/core/compiled_node_presentation.cpp
+    src/core/live_graph_compile.cpp
     src/gui/node_config_dialog.cpp
     src/gui/data_input_capabilities.cpp
     src/gui/data_input_preview.cpp
@@ -323,6 +325,7 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_ml_dataset.cpp
     src/gui/data_input_dialog_external_sources.cpp
     src/gui/data_input_dialog_summary.cpp
+    src/gui/data_input_dialog_sequence.cpp
     src/gui/data_input_dialog_source_options.cpp
     src/gui/data_input_dialog_apply.cpp
     src/gui/data_io_dialogs.cpp
@@ -2384,6 +2387,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/pipeline_runtime_capabilities.cpp
     src/gui/properties_contract.cpp
     src/gui/properties_truth.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/gui/data_studio/node_registry.cpp
     src/gui/data_studio/node_registry_builtin.cpp
     src/core/node_executors/clustering_operators.cpp
@@ -2879,6 +2883,7 @@ set_target_properties(test_pattern_template_guard PROPERTIES
 add_executable(test_graph_compiler_deferred_nodes
     tests/test_graph_compiler_deferred_nodes.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -2915,6 +2920,40 @@ set_target_properties(test_graph_compiler_deferred_nodes PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Word + POS fusion presentation (TOFIX112) =====
+add_executable(test_sequence_fusion_presentation
+    tests/test_sequence_fusion_presentation.cpp
+    src/core/sequence_fusion_presentation.cpp
+    src/core/graph_document.cpp
+    src/core/graph_node_factory.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/plugin/registries/plugin_node_registry.cpp
+)
+
+target_include_directories(test_sequence_fusion_presentation PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_sequence_fusion_presentation PRIVATE
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_sequence_fusion_presentation PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_sequence_fusion_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Graph Compiler Causal LM Shape Contract =====
 add_executable(test_graph_compiler_causal_lm_shape
     tests/test_graph_compiler_causal_lm_shape.cpp
@@ -2926,6 +2965,7 @@ add_executable(test_graph_compiler_causal_lm_shape
     src/core/runtime_log_store.cpp
     src/core/route_qualification_snapshot.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -2966,6 +3006,7 @@ set_target_properties(test_graph_compiler_causal_lm_shape PROPERTIES
 add_executable(test_bert_encoder_contracts
     tests/test_bert_encoder_contracts.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -3005,6 +3046,7 @@ set_target_properties(test_bert_encoder_contracts PROPERTIES
 add_executable(test_recurrent_backend_placement
     tests/test_recurrent_backend_placement.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -3551,6 +3593,7 @@ add_executable(test_cyxmodel_layernorm_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -3603,6 +3646,7 @@ add_executable(test_cyxmodel_mha_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -3655,6 +3699,7 @@ add_executable(test_cyxmodel_transformer_encoder_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -3706,6 +3751,7 @@ add_executable(test_cyxmodel_transformer_decoder_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -3758,6 +3804,7 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
     src/core/graph_topology_utils.cpp
@@ -3802,75 +3849,7 @@ set_target_properties(test_cyxmodel_causal_lm_generation_roundtrip PROPERTIES
 add_executable(test_saved_ner_sequence_smoke
     tests/test_saved_ner_sequence_smoke.cpp
     src/core/graph_compiler.cpp
-    src/core/graph_compiler_dataset_hooks.cpp
-    src/core/training_scheduler_controller.cpp
-    src/core/compiled_graph_plan.cpp
-    src/core/graph_topology_utils.cpp
-    src/core/node_metadata_registry.cpp
-    src/core/pipeline_runtime_capabilities.cpp
-    src/core/data_registry_core.cpp
-    src/core/data_registry_utils.cpp
-    src/core/sequence_arrow_batcher.cpp
-    src/core/classification_decision.cpp
-    src/core/training_executor.cpp
-    src/core/training_generation_preview.cpp
-    src/core/language_model_generation.cpp
-    src/core/regression_target_transform.cpp
-    src/core/preprocessing_state.cpp
-    src/core/training_batcher_setup.cpp
-    src/core/sparse_training_batcher_setup.cpp
-    src/core/sparse_feature_dataset.cpp
-    src/core/sparse_feature_dataset_batcher.cpp
-    src/core/sparse_feature_dataset_batcher_balancing.cpp
-    src/core/arrow_dataset.cpp
-    src/core/arrow_dataset_batcher.cpp
-    src/core/model_builder.cpp
-    src/core/spatial_batch_layout.cpp
-    src/core/executable_model.cpp
-    src/core/graph_executable_model.cpp
-    src/core/parquet_backed_dataset.cpp
-    src/core/parquet_arrow_batcher.cpp
-    src/core/dataset_base.cpp
-    src/core/checkpoint_manager.cpp
-    src/core/crash_run_recorder.cpp
-    src/core/training_trace_collector.cpp
-    src/core/route_qualification_snapshot.cpp
-    src/core/runtime_log_store.cpp
-    src/core/formats/cyxmodel_format.cpp
-    src/core/formats/cyxmodel_archive.cpp
-    src/plugin/registries/plugin_training_hook_manager.cpp
-)
-
-target_include_directories(test_saved_ner_sequence_smoke PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-target_link_libraries(test_saved_ner_sequence_smoke PRIVATE
-    Arrow::arrow_shared
-    Parquet::parquet_shared
-    imgui::imgui
-    spdlog::spdlog
-    fmt::fmt
-    nlohmann_json::nlohmann_json
-    cyxwiz-backend
-)
-
-if(WIN32)
-    target_compile_definitions(test_saved_ner_sequence_smoke PRIVATE
-        _CRT_SECURE_NO_WARNINGS
-        NOMINMAX
-        CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
-    )
-else()
-    target_compile_definitions(test_saved_ner_sequence_smoke PRIVATE
-        CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
-    )
-endif()
-
-# ===== Tool: compile saved .cyxgraph files headlessly (issues + training recipe) =====
-add_executable(cyxwiz-graph-compile-check
-    tests/tool_graph_compile_check.cpp
-    src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
     src/core/graph_document.cpp
     src/core/graph_node_factory.cpp
     src/plugin/registries/plugin_node_registry.cpp
@@ -3904,6 +3883,88 @@ add_executable(cyxwiz-graph-compile-check
     src/core/parquet_arrow_batcher.cpp
     src/core/dataset_base.cpp
     src/core/checkpoint_manager.cpp
+    src/core/training_resume_checkpoint.cpp
+    src/core/checkpoint_manifest.cpp
+    src/core/checkpoint_payload_io.cpp
+    src/core/sha256_digest.cpp
+    src/core/crash_run_recorder.cpp
+    src/core/training_trace_collector.cpp
+    src/core/route_qualification_snapshot.cpp
+    src/core/runtime_log_store.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+    src/plugin/registries/plugin_training_hook_manager.cpp
+)
+
+target_include_directories(test_saved_ner_sequence_smoke PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_saved_ner_sequence_smoke PRIVATE
+    OpenSSL::Crypto
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_saved_ner_sequence_smoke PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+        CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
+    )
+else()
+    target_compile_definitions(test_saved_ner_sequence_smoke PRIVATE
+        CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
+    )
+endif()
+
+# ===== Tool: compile saved .cyxgraph files headlessly (issues + training recipe) =====
+add_executable(cyxwiz-graph-compile-check
+    tests/tool_graph_compile_check.cpp
+    src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
+    src/core/graph_document.cpp
+    src/core/graph_node_factory.cpp
+    src/plugin/registries/plugin_node_registry.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
+    src/core/training_scheduler_controller.cpp
+    src/core/compiled_graph_plan.cpp
+    src/core/graph_topology_utils.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/sequence_arrow_batcher.cpp
+    src/core/classification_decision.cpp
+    src/core/training_executor.cpp
+    src/core/training_generation_preview.cpp
+    src/core/language_model_generation.cpp
+    src/core/regression_target_transform.cpp
+    src/core/preprocessing_state.cpp
+    src/core/training_batcher_setup.cpp
+    src/core/sparse_training_batcher_setup.cpp
+    src/core/sparse_feature_dataset.cpp
+    src/core/sparse_feature_dataset_batcher.cpp
+    src/core/sparse_feature_dataset_batcher_balancing.cpp
+    src/core/arrow_dataset.cpp
+    src/core/arrow_dataset_batcher.cpp
+    src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
+    src/core/parquet_backed_dataset.cpp
+    src/core/parquet_arrow_batcher.cpp
+    src/core/dataset_base.cpp
+    src/core/checkpoint_manager.cpp
+    src/core/training_resume_checkpoint.cpp
+    src/core/checkpoint_manifest.cpp
+    src/core/checkpoint_payload_io.cpp
+    src/core/sha256_digest.cpp
     src/core/crash_run_recorder.cpp
     src/core/training_trace_collector.cpp
     src/core/route_qualification_snapshot.cpp
@@ -3918,6 +3979,7 @@ target_include_directories(cyxwiz-graph-compile-check PRIVATE
 )
 
 target_link_libraries(cyxwiz-graph-compile-check PRIVATE
+    OpenSSL::Crypto
     Arrow::arrow_shared
     Parquet::parquet_shared
     imgui::imgui
@@ -3938,6 +4000,89 @@ else()
         CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
     )
 endif()
+
+# ===== Test: Properties AS COMPILED card (TOFIX123) =====
+add_executable(test_compiled_node_presentation
+    tests/test_compiled_node_presentation.cpp
+    src/core/compiled_node_presentation.cpp
+    src/core/graph_compiler.cpp
+    src/core/sequence_fusion_presentation.cpp
+    src/core/graph_document.cpp
+    src/core/graph_node_factory.cpp
+    src/plugin/registries/plugin_node_registry.cpp
+    src/core/graph_compiler_dataset_hooks.cpp
+    src/core/training_scheduler_controller.cpp
+    src/core/compiled_graph_plan.cpp
+    src/core/graph_topology_utils.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/sequence_arrow_batcher.cpp
+    src/core/classification_decision.cpp
+    src/core/training_executor.cpp
+    src/core/training_generation_preview.cpp
+    src/core/language_model_generation.cpp
+    src/core/regression_target_transform.cpp
+    src/core/preprocessing_state.cpp
+    src/core/training_batcher_setup.cpp
+    src/core/sparse_training_batcher_setup.cpp
+    src/core/sparse_feature_dataset.cpp
+    src/core/sparse_feature_dataset_batcher.cpp
+    src/core/sparse_feature_dataset_batcher_balancing.cpp
+    src/core/arrow_dataset.cpp
+    src/core/arrow_dataset_batcher.cpp
+    src/core/model_builder.cpp
+    src/core/spatial_batch_layout.cpp
+    src/core/executable_model.cpp
+    src/core/graph_executable_model.cpp
+    src/core/parquet_backed_dataset.cpp
+    src/core/parquet_arrow_batcher.cpp
+    src/core/dataset_base.cpp
+    src/core/checkpoint_manager.cpp
+    src/core/training_resume_checkpoint.cpp
+    src/core/checkpoint_manifest.cpp
+    src/core/checkpoint_payload_io.cpp
+    src/core/sha256_digest.cpp
+    src/core/crash_run_recorder.cpp
+    src/core/training_trace_collector.cpp
+    src/core/route_qualification_snapshot.cpp
+    src/core/runtime_log_store.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+    src/plugin/registries/plugin_training_hook_manager.cpp
+)
+
+target_include_directories(test_compiled_node_presentation PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_compiled_node_presentation PRIVATE
+    OpenSSL::Crypto
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_compiled_node_presentation PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+        CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
+    )
+else()
+    target_compile_definitions(test_compiled_node_presentation PRIVATE
+        CYXWIZ_TRAINING_EXECUTOR_MODERN_ONLY
+    )
+endif()
+
+set_target_properties(test_compiled_node_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
 
 set_target_properties(test_saved_ner_sequence_smoke PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
@@ -4766,6 +4911,7 @@ add_executable(test_properties_truth
     tests/test_properties_truth.cpp
     src/gui/properties_parameter_rules.cpp
     src/gui/properties_truth.cpp
+    src/core/sequence_fusion_presentation.cpp
 )
 
 target_include_directories(test_properties_truth PRIVATE

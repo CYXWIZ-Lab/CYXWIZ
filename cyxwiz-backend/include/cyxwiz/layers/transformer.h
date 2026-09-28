@@ -120,6 +120,13 @@ CYXWIZ_API bool TransformerFfnActivationFromName(const std::string& name, Activa
 
 class CYXWIZ_API TransformerDecoderLayer : public Layer {
 public:
+    // Decoder-only use (no encoder memory): drop the cross-attention and its
+    // norm (TOFIX112). Called after construction, so seeded initialization of
+    // the other weights is unchanged. Afterwards they are not parameters, not
+    // trained and not saved; loading ignores their keys from older models;
+    // Forward with memory throws.
+    void DisableCrossAttention();
+    bool HasCrossAttention() const { return cross_attn_ != nullptr; }
     TransformerDecoderLayer(int d_model, int nhead, int dim_feedforward = 2048,
                             float dropout = 0.1f, bool norm_first = false);
     // Explicit FFN hidden dropout; legacy construction keeps this at zero.

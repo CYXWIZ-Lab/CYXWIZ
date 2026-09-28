@@ -16,7 +16,9 @@
 #include "../../cyxwiz-engine/tests/route_qualification_test_fixture.h"
 #include "../src/node_client.h"
 #include "../src/node_admission.h"
+#include "../src/node_data_dir.h"
 #include "../src/node_doctor.h"
+#include "core/training_resume_checkpoint.h"
 #include "../src/node_job_timing.h"
 #include "core/compute_runtime_paths.h"
 #include "core/training_benchmark.h"
@@ -398,6 +400,7 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
         const auto updates = RunAsEngine(test, "test_job_stream", remote, status);
 
         int progress_updates = 0;
+        bool batch_position_seen = false;  // P4c: live batch position
         int checkpoint_updates = 0;
         bool got_completion = false;
         bool updates_are_valid = true;
@@ -413,6 +416,9 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
             if (update.has_progress()) {
                 progress_updates++;
                 auto& prog = update.progress();
+                batch_position_seen = batch_position_seen ||
+                                      (prog.total_batches() > 0 && prog.current_batch() > 0 &&
+                                       prog.current_batch() <= prog.total_batches());
 
                 updates_are_valid =
                     updates_are_valid &&
@@ -463,6 +469,8 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
         REQUIRE(fetched_dataset);
         REQUIRE(updates_are_valid);
         REQUIRE(progress_updates > 0);
+        CHECK(batch_position_seen);
+        CHECK(checkpoint_updates > 0);  // P4e-3: epoch-end resume checkpoints reach the Engine
         REQUIRE(got_completion);
     }
 
@@ -717,9 +725,16 @@ struct JobOutcome {
 // Runs one job on a fresh executor and waits for its completion callback.
 void RunLocalJob(const JobConfig& config, JobOutcome& outcome) {
     cyxwiz::servernode::JobExecutor executor("test_node");
-    executor.SetProgressCallback([&outcome](const std::string&, double, const cyxwiz::servernode::TrainingMetrics&) {
+    // Progress arrives per batch too (P4c); an epoch counts once, when the
+    // last completed epoch advances.
+    int last_epoch = 0;
+    executor.SetProgressCallback([&outcome, &last_epoch](const std::string&, double,
+                                                         const cyxwiz::servernode::TrainingMetrics& metrics) {
         std::lock_guard<std::mutex> lock(outcome.mutex);
-        ++outcome.epochs_reported;
+        if (metrics.current_epoch > last_epoch) {
+            last_epoch = metrics.current_epoch;
+            ++outcome.epochs_reported;
+        }
     });
     executor.SetCompletionCallback([&outcome, &executor](const std::string& id, bool success, const std::string& error) {
         const auto failure = executor.GetJobFailure(id);
@@ -774,6 +789,98 @@ TEST_CASE("JobExecutor - trains a graph job through the shared core", "[job_exec
     INFO(outcome.error);
     CHECK(outcome.success);
     CHECK(outcome.epochs_reported == 2);
+    fs::remove_all(work, ec);
+}
+
+TEST_CASE("A job re-sent after an interruption resumes from its checkpoints", "[job_executor][resume]") {
+    namespace fs = std::filesystem;
+    const fs::path root = CYXWIZ_SOURCE_ROOT;
+    const fs::path work = fs::temp_directory_path() / "cyxwiz_node_resume_test";
+    std::error_code ec;
+    fs::remove_all(work, ec);
+    fs::create_directories(work);
+    // The node's data root (and so its checkpoints) for this test only.
+#ifdef _WIN32
+    _putenv_s("CYXWIZ_NODE_DATA_DIR", (work / "node").string().c_str());
+#else
+    setenv("CYXWIZ_NODE_DATA_DIR", (work / "node").string().c_str(), 1);
+#endif
+    const fs::path parquet = work / "tokens.parquet";
+    REQUIRE(cyxwiz::test::WriteTokenWindows(root, parquet, 0, 8));
+    cyxwiz::test::InstallQualifiedRouteSnapshot();
+
+    JobConfig config;
+    config.set_job_id("node_resume_job");
+    config.set_job_type(JOB_TYPE_TRAINING);
+    auto graph = cyxwiz::test::LoadTokenWindowGraph(root);
+    for (auto& node : graph["nodes"]) {
+        if (node.value("type", -1) == static_cast<int>(gui::NodeType::DataLoader)) {
+            node["parameters"]["checkpoint_dir"] = (work / "best").string();
+        }
+    }
+    config.set_model_definition(graph.dump());
+    config.set_dataset_uri("file://" + parquet.generic_string());
+    config.set_epochs(3);
+    const fs::path checkpoints = cyxwiz::servernode::NodeJobCheckpointDir(config.job_id());
+
+    struct Run {
+        std::mutex mutex;
+        std::condition_variable done;
+        bool finished = false;
+        bool success = false;
+        int first_running_epoch = 0;
+        int checkpoints_reported = 0;
+    };
+    const auto run_job = [&](Run& run, bool cancel_in_epoch_2) {
+        cyxwiz::servernode::JobExecutor executor("test_node");
+        executor.SetProgressCallback([&](const std::string& id, double, const cyxwiz::servernode::TrainingMetrics& m) {
+            {
+                std::lock_guard<std::mutex> lock(run.mutex);
+                if (run.first_running_epoch == 0 && m.running_epoch > 0) run.first_running_epoch = m.running_epoch;
+            }
+            if (cancel_in_epoch_2 && m.running_epoch >= 2) {
+                executor.CancelJob(id);
+                // Hold the batch until the cancel lands (200 ms poll), so the
+                // run cannot finish epoch 2 and checkpoint it first.
+                std::this_thread::sleep_for(std::chrono::milliseconds(600));
+            }
+        });
+        executor.SetCheckpointCallback([&](const std::string&, const std::string&, int, int) {
+            std::lock_guard<std::mutex> lock(run.mutex);
+            ++run.checkpoints_reported;
+        });
+        executor.SetCompletionCallback([&](const std::string&, bool success, const std::string&) {
+            std::lock_guard<std::mutex> lock(run.mutex);
+            run.finished = true;
+            run.success = success;
+            run.done.notify_all();
+        });
+        REQUIRE(executor.ExecuteJobAsync(config));
+        std::unique_lock<std::mutex> lock(run.mutex);
+        REQUIRE(run.done.wait_for(lock, std::chrono::minutes(3), [&run] { return run.finished; }));
+        lock.unlock();
+        for (int i = 0; i < 500 && executor.GetActiveJobCount() > 0; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    };
+
+    Run interrupted;
+    run_job(interrupted, true);
+    CHECK_FALSE(interrupted.success);
+    CHECK(interrupted.checkpoints_reported >= 1);
+    CHECK(cyxwiz::FindLatestTrainingResumeCheckpoint(checkpoints).has_value());
+
+    Run resent;
+    run_job(resent, false);
+    CHECK(resent.success);
+    CHECK(resent.first_running_epoch == 2);  // continued after epoch 1, not from the start
+    CHECK_FALSE(fs::exists(checkpoints));     // finished: nothing left to resume
+
+#ifdef _WIN32
+    _putenv_s("CYXWIZ_NODE_DATA_DIR", "");
+#else
+    unsetenv("CYXWIZ_NODE_DATA_DIR");
+#endif
     fs::remove_all(work, ec);
 }
 

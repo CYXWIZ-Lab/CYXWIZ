@@ -11,6 +11,8 @@
 
 #include "main_window.h"
 #include "appearance_settings.h"
+#include "../core/live_graph_compile.h"
+#include "ui_buttons.h"
 #include "loaders/data_loader.h"
 #include "graph_training_launcher.h"
 #include "engine_graph_training_dispatch.h"
@@ -839,6 +841,10 @@ MainWindow::MainWindow()
 
     // Connect Properties panel to Node Editor for shape inference
     properties_->SetNodeEditor(node_editor_.get());
+
+    live_compile_ = std::make_unique<cyxwiz::LiveGraphCompile>();
+    properties_->SetLiveCompile(live_compile_.get());
+    node_editor_->SetLiveCompile(live_compile_.get());
 
     // Connect Pattern Browser to Node Editor for proper node creation
     pattern_browser_->SetNodeEditor(node_editor_.get());
@@ -3006,6 +3012,7 @@ void MainWindow::Render() {
     HandleGlobalShortcuts();
 
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
+    UpdateLiveCompile();
 
     auto& plugin_manager = cyxwiz::plugin::PluginManager::Instance();
     if (plugin_manager.GetPluginCount() > 0) {
@@ -3240,6 +3247,23 @@ static void DrawDockNodeActiveTabIndicator(ImGuiDockNode* node) {
     draw_list->AddRectFilled(tab_min, tab_max, indicator_color);
 }
 
+void MainWindow::UpdateLiveCompile() {
+    if (!live_compile_ || !node_editor_) return;
+    // Counting parameters builds the model once; not while training uses
+    // the device.
+    const bool training = cyxwiz::TrainingManager::Instance().IsTrainingActive();
+    live_compile_->Update(node_editor_->GetNodes(), node_editor_->GetLinks(), !training);
+    if (live_compile_->ResultSerial() == live_compile_serial_seen_ || !live_compile_->Config()) return;
+    live_compile_serial_seen_ = live_compile_->ResultSerial();
+    // Pins and links show this compile, as the Compile button does.
+    node_editor_->SetAllNodesPinState(NodeEditor::NodePinState::CompilePassed);
+    for (const auto& issue : live_compile_->Config()->issues) {
+        if (issue.level == cyxwiz::IssueLevel::Error && issue.node_id >= 0) {
+            node_editor_->SetNodePinState(issue.node_id, NodeEditor::NodePinState::CompileFailed);
+        }
+    }
+}
+
 void MainWindow::RenderDockSpace() {
     static bool opt_fullscreen = false;  // Set to false to show native title bar with window controls
     static bool opt_padding = false;
@@ -3250,8 +3274,15 @@ void MainWindow::RenderDockSpace() {
 
     // Always get viewport to fill the available space, minus status bar
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, viewport->WorkSize.y - status_bar_height));
+    // A pinned panel-toggle sidebar gets its own strip instead of being
+    // drawn over the docked panels on that side.
+    const DockStyle& dock_style = GetDockStyle();
+    const float sidebar_reserve = dock_style.PinnedSidebarReserve();
+    const bool sidebar_left = dock_style.GetSidebarPosition() == SidebarPosition::Left;
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (sidebar_left ? sidebar_reserve : 0.0f),
+                                   viewport->WorkPos.y));
+    ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x - sidebar_reserve,
+                                    viewport->WorkSize.y - status_bar_height));
     ImGui::SetNextWindowViewport(viewport->ID);
 
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
@@ -5556,6 +5587,15 @@ void MainWindow::RenderCompileResultPopup() {
                         if (!issue.error_code.empty()) {
                             ImGui::SameLine();
                             ImGui::TextDisabled("%s", issue.error_code.c_str());
+                        }
+                        // Jump to the node the finding is about (TOFIX123).
+                        if (issue.node_id >= 0 && node_editor_) {
+                            ImGui::SameLine();
+                            ImGui::PushID(&issue);
+                            if (cyxwiz::ui::LinkButton("Select node")) {
+                                node_editor_->FocusNode(issue.node_id);
+                            }
+                            ImGui::PopID();
                         }
                         ImGui::TextWrapped("%s", issue.message.c_str());
                         ImGui::Spacing();

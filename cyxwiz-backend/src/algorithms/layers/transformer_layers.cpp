@@ -564,6 +564,10 @@ Tensor TransformerDecoderLayer::Forward(const Tensor& tgt, const Tensor& memory,
                                          const Tensor* tgt_mask, const Tensor* memory_mask) {
     ValidateTransformerSequence(tgt, d_model_);
     ValidateTransformerSequence(memory, d_model_);
+    if (!cross_attn_) {
+        throw std::logic_error(
+            "TransformerDecoderLayer cross-attention was disabled (decoder-only block)");
+    }
     if (UsesModernPreNormPath()) {
         throw std::invalid_argument(
             "TransformerDecoderLayer block_layout=parallel and sandwich_norm support the decoder-only path only");
@@ -714,6 +718,12 @@ Tensor TransformerDecoderLayer::GetLastMemoryGradient() const {
 
     return AddSameShape(grad_key, grad_value);
 }
+
+void TransformerDecoderLayer::DisableCrossAttention() {
+    cross_attn_.reset();
+    norm3_.reset();
+}
+
 std::map<std::string, Tensor> TransformerDecoderLayer::GetParameters() {
     std::map<std::string, Tensor> params;
 
@@ -722,9 +732,8 @@ std::map<std::string, Tensor> TransformerDecoderLayer::GetParameters() {
         params["self_attn." + key] = val;
     }
 
-    auto cross_attn_params = cross_attn_->GetParameters();
-    for (const auto& [key, val] : cross_attn_params) {
-        params["cross_attn." + key] = val;
+    if (cross_attn_) {
+        for (const auto& [key, val] : cross_attn_->GetParameters()) params["cross_attn." + key] = val;
     }
 
     auto norm1_params = norm1_->GetParameters();
@@ -739,9 +748,8 @@ std::map<std::string, Tensor> TransformerDecoderLayer::GetParameters() {
         }
     }
 
-    auto norm3_params = norm3_->GetParameters();
-    for (const auto& [key, val] : norm3_params) {
-        params["norm3." + key] = val;
+    if (norm3_) {
+        for (const auto& [key, val] : norm3_->GetParameters()) params["norm3." + key] = val;
     }
 
     auto linear1_params = linear1_->GetParameters();
@@ -798,10 +806,11 @@ void TransformerDecoderLayer::SetParameters(const std::map<std::string, Tensor>&
     }
 
     self_attn_->SetParameters(self_attn_params);
-    cross_attn_->SetParameters(cross_attn_params);
+    // Without cross-attention, older models' cross_attn./norm3. keys are ignored.
+    if (cross_attn_) cross_attn_->SetParameters(cross_attn_params);
     norm1_->SetParameters(norm1_params);
     norm2_->SetParameters(norm2_params);
-    norm3_->SetParameters(norm3_params);
+    if (norm3_) norm3_->SetParameters(norm3_params);
     linear1_->SetParameters(linear1_params);
     linear2_->SetParameters(linear2_params);
     if (ffn_gate_) ffn_gate_->SetParameters(gate_params);
@@ -814,10 +823,10 @@ void TransformerDecoderLayer::SetParameters(const std::map<std::string, Tensor>&
 void TransformerDecoderLayer::SetTraining(bool training) {
     training_ = training;
     self_attn_->SetTraining(training);
-    cross_attn_->SetTraining(training);
+    if (cross_attn_) cross_attn_->SetTraining(training);
     norm1_->SetTraining(training);
     norm2_->SetTraining(training);
-    norm3_->SetTraining(training);
+    if (norm3_) norm3_->SetTraining(training);
     linear1_->SetTraining(training);
     linear2_->SetTraining(training);
     if (ffn_gate_) ffn_gate_->SetTraining(training);

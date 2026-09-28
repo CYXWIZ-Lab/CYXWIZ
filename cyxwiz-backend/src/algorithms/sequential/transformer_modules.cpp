@@ -131,6 +131,9 @@ TransformerDecoderModule::TransformerDecoderModule(size_t d_model, size_t num_he
         attention_configuration_detail::CheckedAttentionDimension(dim_feedforward_, "dim_feedforward"),
         dropout_,
         norm_first_, ffn_dropout, options);
+    // The module only ever runs decoder-only (Forward without memory), so the
+    // cross-attention would be dead weight: untrained, yet counted and saved.
+    layer_->DisableCrossAttention();
 }
 
 Tensor TransformerDecoderModule::Forward(const Tensor& input) {

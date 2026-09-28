@@ -32,6 +32,10 @@ class PipelineExecutor;
 class PipelineExecutionTracker;
 }
 
+namespace cyxwiz {
+class LiveGraphCompile;
+}  // namespace cyxwiz
+
 namespace gui {
 class Properties;
 class ShapeInferenceEngine;
@@ -242,6 +246,9 @@ public:
 
     // Set properties panel for node selection display
     void SetPropertiesPanel(Properties* properties) { properties_panel_ = properties; }
+    // The background compile of this graph (TOFIX123): link tooltips show
+    // the compiler's reason for a failed node. Owned by MainWindow.
+    void SetLiveCompile(const cyxwiz::LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
 
     // Visibility control for sidebar integration
     bool* GetVisiblePtr() { return &show_window_; }
@@ -259,6 +266,9 @@ public:
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
     int GetSelectedNodeId() const { return selected_node_id_; }
+    // A node to configure by id (e.g. the Properties panel opening another
+    // node's dialog); nullptr when it no longer exists.
+    MLNode* GetNodeForConfiguration(int node_id) { return FindNodeById(node_id); }
     const std::string& GetCurrentFilePath() const { return current_file_path_; }
     std::string GetNodeTypeDisplayName(NodeType type) const { return GetNodeTypeName(type); }
 
@@ -347,6 +357,10 @@ public:
 
     // Load graph from JSON string (for import from .cyxmodel)
     bool LoadGraphFromString(const std::string& json_string);
+    // The generated code for a framework, synchronously and without the
+    // script editor (headless export: cyxwiz-engine --export-code; TOFIX112
+    // export harness). Empty with a log line when the graph cannot be sorted.
+    std::string GenerateCodeText(CodeFramework framework);
 
     // Load pattern template format as graph (converts string IDs to int, resolves parameters)
     bool LoadPatternAsGraph(const nlohmann::json& j);
@@ -668,6 +682,10 @@ private:
 
     // Framework-specific layer conversion
     std::string NodeTypeToPythonLayer(const MLNode& node);
+    // Output width of the layer feeding `node` (embedding dim, recurrent
+    // hidden size - doubled when bidirectional - or dense units); empty when
+    // it cannot be read from the graph (TOFIX112 export harness).
+    std::string InferredInputWidth(const MLNode& node) const;
     std::string NodeTypeToTensorFlowLayer(const MLNode& node, int layer_idx);
     std::string NodeTypeToKerasLayer(const MLNode& node);
     std::string NodeTypeToPyCyxWizLayer(const MLNode& node);
@@ -714,6 +732,7 @@ private:
 
     // Current file path for save/load
     std::string current_file_path_;
+    const cyxwiz::LiveGraphCompile* live_compile_ = nullptr;
 
     // Deferred node addition (to avoid modifying nodes_ while ImNodes is rendering)
     struct PendingNode {

@@ -1,6 +1,9 @@
 #include "job_executor.h"
 #include "node_client.h"
 #include "node_job_timing.h"
+#include "node_data_dir.h"
+#include "core/training_resume_checkpoint.h"
+#include "core/training_progress_estimate.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <chrono>
@@ -617,15 +620,59 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
     }
     request.epochs_override = config.epochs();
     request.batch_size_override = config.batch_size();
-    if (!config.hyperparameters().empty()) {
-        spdlog::warn("Job {}: hyperparameters are not applied; the graph's optimizer and Data Loader "
-                     "settings are used", job_id);
+
+    // Resume checkpoints (TOFIX118 P4e-3): every epoch end, and inside
+    // language-model epochs every N optimizer steps (the job's
+    // "resume_checkpoint_every_steps", default 500). A job that already has
+    // checkpoints (re-sent after a node restart or reconnect) resumes.
+    const auto checkpoint_dir = NodeJobCheckpointDir(job_id);
+    request.resume_checkpoint_root = checkpoint_dir.string();
+    request.resume_checkpoint_every_steps = 500;
+    for (const auto& [key, value] : config.hyperparameters()) {
+        if (key == "resume_checkpoint_every_steps") {
+            request.resume_checkpoint_every_steps = std::max(0, std::atoi(value.c_str()));
+        } else {
+            spdlog::warn("Job {}: hyperparameter '{}' is not applied; the graph's optimizer and Data Loader "
+                         "settings are used", job_id, key);
+        }
+    }
+    if (const auto latest = cyxwiz::FindLatestTrainingResumeCheckpoint(checkpoint_dir)) {
+        request.resume_from = "latest";
+        spdlog::info("Job {}: resuming from {}", job_id, latest->string());
     }
 
     cyxwiz::GraphTrainingJobCallbacks callbacks;
-    callbacks.on_start = [state](int epochs, int batch_size) {
+    int run_batch_size = 0;
+    callbacks.on_start = [state, &run_batch_size](int epochs, int batch_size) {
         state->current_metrics.total_epochs = epochs;
+        run_batch_size = batch_size;
         spdlog::info("Beginning training: {} epochs, batch size {}", epochs, batch_size);
+    };
+    // Live progress (TOFIX118 P4c): batch position, rate and ETA from the
+    // shared estimator, reported at most every 2 s (and on each epoch's last
+    // batch) so the stream and the central server are not flooded.
+    cyxwiz::TrainingEtaEstimator eta;
+    const auto run_clock = std::chrono::steady_clock::now();
+    auto last_report = run_clock - std::chrono::hours(1);
+    callbacks.on_batch = [&, state](int epoch, int batch, int total_batches, float, float) {
+        const auto now = std::chrono::steady_clock::now();
+        auto& metrics = state->current_metrics;
+        metrics.running_epoch = epoch;
+        metrics.current_batch = batch;
+        metrics.total_batches = total_batches;
+        metrics.samples_processed += run_batch_size;
+        eta.Observe(std::chrono::duration<double>(now - run_clock).count(), epoch, batch, total_batches,
+                    metrics.total_epochs);
+        metrics.fraction_complete = eta.FractionComplete();
+        metrics.samples_per_second = eta.BatchesPerSecond() * run_batch_size;
+        const auto remaining = eta.RemainingSeconds();
+        metrics.eta_seconds = remaining ? *remaining : -1.0;
+        if (now - last_report >= std::chrono::seconds(2) || batch == total_batches) {
+            last_report = now;
+            metrics.time_elapsed_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - state->start_time).count();
+            ReportProgress(job_id, state);
+        }
     };
     callbacks.on_epoch = [this, &job_id, state](int epoch, float train_loss, float train_acc, float val_loss,
                                                 float val_acc, float) {
@@ -643,6 +690,11 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
                      metrics.loss, metrics.accuracy * 100.0);
     };
     callbacks.should_cancel = [state] { return state->should_cancel.load(); };
+    callbacks.on_checkpoint = [this, &job_id](const std::string& checkpoint, int epoch, int next_batch) {
+        std::lock_guard<std::mutex> lock(callback_mutex_);
+        if (checkpoint_callback_) checkpoint_callback_(job_id, checkpoint, epoch, next_batch);
+    };
+    callbacks.should_pause = [state] { return state->is_paused.load(); };
 
     auto result = cyxwiz::RunGraphTrainingJob(request, callbacks);
     {
@@ -651,6 +703,9 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
         state->failure = result.failure;
     }
     if (result.cancelled) {
+        // Keep the partial model so the job's weights so far can be saved.
+        std::lock_guard<std::mutex> lock(state->model_mutex);
+        state->model = std::move(result.model);
         spdlog::info("Training cancelled for job: {}", job_id);
         return false;
     }
@@ -661,8 +716,16 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
         std::lock_guard<std::mutex> lock(state->model_mutex);
         state->model = std::move(result.model);
     }
+    // Finished: nothing left to resume.
+    std::error_code ec;
+    std::filesystem::remove_all(checkpoint_dir, ec);
     spdlog::info("Training completed successfully for job: {}", job_id);
     return true;
+}
+
+void JobExecutor::SetCheckpointCallback(CheckpointCallback callback) {
+    std::lock_guard<std::mutex> lock(callback_mutex_);
+    checkpoint_callback_ = std::move(callback);
 }
 
 std::optional<cyxwiz::GraphTrainingJobTiming> JobExecutor::GetJobRunTiming(const std::string& job_id) {
@@ -697,8 +760,11 @@ bool JobExecutor::SaveResults(
 }
 
 void JobExecutor::ReportProgress(const std::string& job_id, JobState* state) {
-    double progress = static_cast<double>(state->current_metrics.current_epoch) /
-                     state->current_metrics.total_epochs;
+    // Batch-level fraction once batches are known; the epoch ratio before.
+    const auto& live = state->current_metrics;
+    double progress = live.total_batches > 0 ? live.fraction_complete
+                      : live.total_epochs > 0 ? static_cast<double>(live.current_epoch) / live.total_epochs
+                                              : 0.0;
 
     // Call progress callback
     {

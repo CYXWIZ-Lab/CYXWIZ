@@ -168,6 +168,7 @@ DataInputDialog::DataInputDialog(MLNode* node)
                 node_->parameters["file_category"],
                 file_category_);
         }
+        LoadSequenceSettings();
         if (strlen(file_path_) > 0) {
             RefreshColumnList();
         }
