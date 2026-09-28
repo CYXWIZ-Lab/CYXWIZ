@@ -2460,7 +2460,7 @@ add_executable(test_node_contract_gates
     src/gui/node_editor_nodes.cpp
     src/core/graph_node_factory.cpp
     src/gui/properties_contract.cpp
-    src/plugin/registries/plugin_node_registry.cpp
+    src/core/extension_node_registry.cpp
 )
 
 target_include_directories(test_node_contract_gates PRIVATE
@@ -2518,6 +2518,32 @@ if(WIN32)
 endif()
 
 set_target_properties(test_graph_executor_simulation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Extension node registry (TOFIX125) =====
+add_executable(test_extension_node_registry
+    tests/test_extension_node_registry.cpp
+    src/core/extension_node_registry.cpp
+)
+
+target_include_directories(test_extension_node_registry PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_extension_node_registry PRIVATE
+    spdlog::spdlog
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_extension_node_registry PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_extension_node_registry PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
@@ -2928,7 +2954,7 @@ add_executable(test_sequence_fusion_presentation
     src/core/graph_node_factory.cpp
     src/core/node_metadata_registry.cpp
     src/core/pipeline_runtime_capabilities.cpp
-    src/plugin/registries/plugin_node_registry.cpp
+    src/core/extension_node_registry.cpp
 )
 
 target_include_directories(test_sequence_fusion_presentation PRIVATE
@@ -3587,7 +3613,7 @@ add_executable(test_cyxmodel_layernorm_roundtrip
     src/core/model_importer.cpp
     src/core/graph_document.cpp
     src/core/graph_node_factory.cpp
-    src/plugin/registries/plugin_node_registry.cpp
+    src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
@@ -3640,7 +3666,7 @@ add_executable(test_cyxmodel_mha_roundtrip
     src/core/model_importer.cpp
     src/core/graph_document.cpp
     src/core/graph_node_factory.cpp
-    src/plugin/registries/plugin_node_registry.cpp
+    src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
@@ -3693,7 +3719,7 @@ add_executable(test_cyxmodel_transformer_encoder_roundtrip
     src/core/model_importer.cpp
     src/core/graph_document.cpp
     src/core/graph_node_factory.cpp
-    src/plugin/registries/plugin_node_registry.cpp
+    src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
@@ -3745,7 +3771,7 @@ add_executable(test_cyxmodel_transformer_decoder_roundtrip
     src/core/model_importer.cpp
     src/core/graph_document.cpp
     src/core/graph_node_factory.cpp
-    src/plugin/registries/plugin_node_registry.cpp
+    src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
@@ -3797,7 +3823,7 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     src/core/model_importer.cpp
     src/core/graph_document.cpp
     src/core/graph_node_factory.cpp
-    src/plugin/registries/plugin_node_registry.cpp
+    src/core/extension_node_registry.cpp
     src/core/language_model_generation.cpp
     src/core/model_builder.cpp
     src/core/spatial_batch_layout.cpp
@@ -3852,7 +3878,7 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_document.cpp
     src/core/graph_node_factory.cpp
-    src/plugin/registries/plugin_node_registry.cpp
+    src/core/extension_node_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/training_scheduler_controller.cpp
     src/core/compiled_graph_plan.cpp
@@ -3930,7 +3956,7 @@ add_executable(cyxwiz-graph-compile-check
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_document.cpp
     src/core/graph_node_factory.cpp
-    src/plugin/registries/plugin_node_registry.cpp
+    src/core/extension_node_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/training_scheduler_controller.cpp
     src/core/compiled_graph_plan.cpp
@@ -4009,7 +4035,7 @@ add_executable(test_compiled_node_presentation
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_document.cpp
     src/core/graph_node_factory.cpp
-    src/plugin/registries/plugin_node_registry.cpp
+    src/core/extension_node_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/training_scheduler_controller.cpp
     src/core/compiled_graph_plan.cpp
@@ -5137,7 +5163,7 @@ set_target_properties(test_html_document_text_unavailable PROPERTIES RUNTIME_OUT
 add_executable(test_subgraph_document tests/test_subgraph_document.cpp
     src/gui/subgraph_document.cpp src/gui/node_editor_nodes.cpp src/core/graph_node_factory.cpp
     src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp
-    src/plugin/registries/plugin_node_registry.cpp)
+    src/core/extension_node_registry.cpp)
 target_include_directories(test_subgraph_document PRIVATE src external/imnodes)
 target_compile_definitions(test_subgraph_document PRIVATE CYXWIZ_NODE_FACTORY_ONLY NOMINMAX)
 target_link_libraries(test_subgraph_document PRIVATE imgui::imgui nlohmann_json::nlohmann_json

@@ -4,7 +4,7 @@
 #include "panels/script_editor.h"
 #include "../core/async_task_manager.h"
 #include "../core/pipeline_runtime_capabilities.h"
-#include "../plugin/registries/plugin_node_registry.h"
+#include "../core/extension_node_registry.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cctype>
@@ -2285,7 +2285,7 @@ std::string NodeEditor::NodeTypeToPythonLayer(const MLNode& node) {
         case NodeType::PluginCustom: {
             auto it = node.parameters.find("plugin_qualified_name");
             if (it != node.parameters.end())
-                code = cyxwiz::plugin::PluginNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "pytorch");
+                code = cyxwiz::ExtensionNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "pytorch");
             break;
         }
 
@@ -2378,7 +2378,7 @@ std::string NodeEditor::NodeTypeToTensorFlowLayer(const MLNode& node, int /*laye
         case NodeType::PluginCustom: {
             auto it = node.parameters.find("plugin_qualified_name");
             if (it != node.parameters.end())
-                code = cyxwiz::plugin::PluginNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "tensorflow");
+                code = cyxwiz::ExtensionNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "tensorflow");
             break;
         }
 
@@ -2489,7 +2489,7 @@ std::string NodeEditor::NodeTypeToKerasLayer(const MLNode& node) {
         case NodeType::PluginCustom: {
             auto it = node.parameters.find("plugin_qualified_name");
             if (it != node.parameters.end())
-                code = cyxwiz::plugin::PluginNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "keras");
+                code = cyxwiz::ExtensionNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "keras");
             break;
         }
 
@@ -2814,7 +2814,7 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
         case NodeType::PluginCustom: {
             auto it = node.parameters.find("plugin_qualified_name");
             if (it != node.parameters.end())
-                code = cyxwiz::plugin::PluginNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "pycyxwiz");
+                code = cyxwiz::ExtensionNodeRegistry::Instance().GenerateCode(it->second, node.parameters, "pycyxwiz");
             break;
         }
 

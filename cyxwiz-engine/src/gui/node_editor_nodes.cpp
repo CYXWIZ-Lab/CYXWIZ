@@ -2,7 +2,7 @@
 #include "../core/graph_node_factory.h"
 #include "properties.h"
 #include "../core/node_metadata_registry.h"
-#include "../plugin/registries/plugin_node_registry.h"
+#include "../core/extension_node_registry.h"
 #include "../core/data_registry.h"
 #include <imgui.h>
 #include <imnodes.h>

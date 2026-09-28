@@ -9,7 +9,7 @@
 #include "../core/node_metadata.h"
 #include "../core/node_metadata_registry.h"
 #include "../core/project_manager.h"
-#include "../plugin/registries/plugin_node_registry.h"
+#include "../core/extension_node_registry.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cstring>

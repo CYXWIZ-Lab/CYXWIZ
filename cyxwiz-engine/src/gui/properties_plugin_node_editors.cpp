@@ -3,7 +3,7 @@
 #include "properties_node_editors.h"
 #include "node_editor.h"
 #include "../core/file_dialogs.h"
-#include "../plugin/registries/plugin_node_registry.h"
+#include "../core/extension_node_registry.h"
 
 #include <imgui.h>
 
@@ -16,16 +16,17 @@ void RenderPluginCustomNodeProperties(MLNode& node, RenderNodePropertiesContext 
     switch (node.type) {
         case NodeType::PluginCustom: {
             // Get plugin info for display
-            auto info_opt = cyxwiz::plugin::PluginNodeRegistry::Instance().GetNodeTypeInfoCopy(
-                node.plugin_qualified_name);
+            const auto descriptor =
+                cyxwiz::ExtensionNodeRegistry::Instance().Find(node.plugin_qualified_name);
 
             std::string node_type_name;
-            if (info_opt.has_value()) {
-                const auto& info = info_opt.value();
-                node_type_name = info.type_name;
-                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.8f, 1.0f), "%s", info.display_name.c_str());
-                if (!info.description.empty()) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", info.description.c_str());
+            if (descriptor.has_value()) {
+                node_type_name = descriptor->type_name;
+                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.8f, 1.0f), "%s",
+                                   descriptor->metadata.name.c_str());
+                if (!descriptor->metadata.brief_description.empty()) {
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s",
+                                       descriptor->metadata.brief_description.c_str());
                 }
                 ImGui::Separator();
             }

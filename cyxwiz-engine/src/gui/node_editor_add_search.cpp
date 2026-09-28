@@ -5,7 +5,7 @@
 #include "icons.h"
 #include "../core/node_metadata.h"
 #include "../core/node_metadata_registry.h"
-#include "../plugin/registries/plugin_node_registry.h"
+#include "../core/extension_node_registry.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <imnodes.h>
@@ -125,9 +125,8 @@ int NodeEditor::FuzzyMatch(const std::string& pattern, const std::string& str) {
 // in the Nodes panel) and was the direct cause of the "registered in
 // two of three places" bug class.
 //
-// Plugin-provided nodes stay on their existing runtime-registration
-// path — PluginNodeRegistry is a separate concern that doesn't flow
-// through NodeMetadataRegistry.
+// Extension nodes (plugins) are registered at run time in
+// ExtensionNodeRegistry, which doesn't flow through NodeMetadataRegistry.
 void NodeEditor::InitializeSearchableNodes() {
     if (searchable_nodes_initialized_) return;
 
@@ -193,14 +192,14 @@ void NodeEditor::InitializeSearchableNodes() {
 
     // Plugin-provided nodes
     try {
-        auto plugin_nodes = cyxwiz::plugin::PluginNodeRegistry::Instance().GetAllNodeTypesWithNames();
-        for (const auto& [qname, info] : plugin_nodes) {
+        for (const auto& descriptor : cyxwiz::ExtensionNodeRegistry::Instance().All()) {
             SearchableNode sn;
             sn.type = NodeType::PluginCustom;
-            sn.name = info.display_name;
-            sn.category = "Plugin/" + info.category;
-            sn.keywords = info.type_name + " " + info.display_name + " " + info.description + " plugin";
-            sn.plugin_qualified_name = qname;
+            sn.name = descriptor.metadata.name;
+            sn.category = "Plugin/" + descriptor.menu_category;
+            sn.keywords = descriptor.type_name + " " + descriptor.metadata.name + " " +
+                          descriptor.metadata.brief_description + " plugin";
+            sn.plugin_qualified_name = descriptor.type_id;
             all_searchable_nodes_.push_back(std::move(sn));
         }
     } catch (const std::exception& e) {

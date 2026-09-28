@@ -1,6 +1,6 @@
 # The GUI-free compile-and-train path shared by every host (TOFIX118 P2).
 #
-# cyxwiz-training-hooks: the plugin training-hook manager and plugin node
+# cyxwiz-training-hooks: the plugin training-hook manager and extension node
 # registry, shared by the plugin SDK and the core (linked once per exe).
 # cyxwiz-training-core: graph loader and compiler, launch preparation, model
 # builder, training/test executors, Arrow/Parquet/sequence/sparse batchers,
@@ -70,7 +70,7 @@ find_package(HighFive CONFIG QUIET)
 
 add_library(cyxwiz-training-hooks STATIC
     ${_cyxwiz_engine_src}/plugin/registries/plugin_training_hook_manager.cpp
-    ${_cyxwiz_engine_src}/plugin/registries/plugin_node_registry.cpp
+    ${_cyxwiz_engine_src}/core/extension_node_registry.cpp
 )
 target_include_directories(cyxwiz-training-hooks PUBLIC ${_cyxwiz_engine_src})
 target_link_libraries(cyxwiz-training-hooks PUBLIC spdlog::spdlog)

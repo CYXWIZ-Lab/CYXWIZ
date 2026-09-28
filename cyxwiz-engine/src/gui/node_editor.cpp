@@ -29,7 +29,7 @@
 #include "panels/training_dashboard.h"
 #include "../core/rl_script_generator.h"
 #include "../scripting/scripting_engine.h"
-#include "../plugin/registries/plugin_node_registry.h"
+#include "../core/extension_node_registry.h"
 #include "../core/node_metadata_registry.h"
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -4426,7 +4426,7 @@ void NodeEditor::OnRunSimulation() {
     // Create and build executor
     graph_executor_ = std::make_unique<cyxwiz::GraphExecutor>();
 
-    // Set plugin eval callback: routes to PluginNodeRegistry → plugin DLL
+    // Set plugin eval callback: routes to ExtensionNodeRegistry → plugin DLL
     graph_executor_->SetPluginEvalCallback(
         [](const std::string& plugin_qualified_name,
            const cyxwiz::NodeEvalContext& ctx) -> cyxwiz::NodeEvalResult {
@@ -4448,8 +4448,8 @@ void NodeEditor::OnRunSimulation() {
             }
 
             // Route to plugin via registry
-            auto provider = cyxwiz::plugin::PluginNodeRegistry::Instance()
-                                .GetNodeProvider(plugin_qualified_name);
+            auto provider = cyxwiz::ExtensionNodeRegistry::Instance()
+                                .SignalProvider(plugin_qualified_name);
             if (!provider) {
                 cyxwiz::NodeEvalResult r;
                 r.success = false;
@@ -4671,7 +4671,7 @@ void NodeEditor::ExportPolicyONNX(const std::string& output_path) {
         return;
     }
 
-    auto* provider = cyxwiz::plugin::PluginNodeRegistry::Instance().GetNodeProvider(plugin_qname);
+    auto* provider = cyxwiz::ExtensionNodeRegistry::Instance().SignalProvider(plugin_qname);
     if (!provider) {
         spdlog::error("NodeEditor: Plugin provider not found");
         return;

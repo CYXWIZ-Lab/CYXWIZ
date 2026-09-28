@@ -7,7 +7,7 @@
 #include "node_editor.h"
 #include "node_editor_shape_inference.h"
 #include "../core/pipeline_runtime_capabilities.h"
-#include "../plugin/registries/plugin_node_registry.h"
+#include "../core/extension_node_registry.h"
 #include <spdlog/spdlog.h>
 #include <set>
 #include <queue>
@@ -201,7 +201,7 @@ void NodeEditor::ResolveDynamicPins(int node_id) {
     SaveUndoState();
 
     // Call plugin to resolve new pins
-    auto result = cyxwiz::plugin::PluginNodeRegistry::Instance().ResolveDynamicPins(
+    auto result = cyxwiz::ExtensionNodeRegistry::Instance().ResolveDynamicPins(
         node->plugin_qualified_name, node->parameters);
 
     if (result.pins.empty()) {
