@@ -313,6 +313,7 @@ set(ENGINE_SOURCES
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
     src/core/live_graph_compile.cpp
+    src/core/remote_job_presentation.cpp
     src/gui/node_config_dialog.cpp
     src/gui/data_input_capabilities.cpp
     src/gui/data_input_preview.cpp
@@ -390,6 +391,7 @@ set(ENGINE_SOURCES
     src/gui/panels/data_explorer_panel.cpp
     src/gui/panels/visualization_panel.cpp
     src/gui/panels/connection_dialog.cpp
+    src/gui/panels/connection_dialog_job_fit.cpp
     src/gui/dialogs/python_setup_wizard.cpp
     src/gui/dialogs/project_selection_dialog.cpp
     src/gui/dialogs/start_page.cpp
@@ -540,6 +542,7 @@ set(ENGINE_SOURCES
     src/gui/panels/cloud_upload_dialog.cpp
     src/gui/panels/trust_badge.cpp
     src/gui/panels/p2p_training_panel.cpp
+    src/gui/panels/p2p_training_panel_recovery.cpp
     src/gui/panels/job_status_panel.cpp
     src/gui/panels/wallet_panel.cpp
     src/gui/panels/plugin_manager_panel.cpp
@@ -2917,6 +2920,22 @@ if(WIN32)
 endif()
 
 set_target_properties(test_graph_compiler_deferred_nodes PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Remote job presentation (TOFIX118 P4 GUI) =====
+add_executable(test_remote_job_presentation
+    tests/test_remote_job_presentation.cpp
+    src/core/remote_job_presentation.cpp
+)
+target_include_directories(test_remote_job_presentation PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(test_remote_job_presentation PRIVATE
+    spdlog::spdlog
+    fmt::fmt
+)
+set_target_properties(test_remote_job_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

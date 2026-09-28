@@ -221,9 +221,9 @@ grpc::Status JobExecutionServiceImpl::DisconnectFromNode(
 // current device), whether it is verified, and its memory as the device
 // pool recorded it at startup (no device enumeration here: that would
 // switch backends under a running job).
-cyxwiz::servernode::AdmissionFacts JobExecutionServiceImpl::GatherAdmissionFacts(
+cyxwiz::AdmissionFacts JobExecutionServiceImpl::GatherAdmissionFacts(
     const cyxwiz::protocol::JobConfig& config) const {
-    cyxwiz::servernode::AdmissionFacts facts;
+    cyxwiz::AdmissionFacts facts;
     cyxwiz::DeviceType type = cyxwiz::DeviceType::CPU;
     int device_id = 0;
     if (const auto selection = cyxwiz::GetSavedExecutionDeviceSelection()) {
@@ -298,7 +298,7 @@ grpc::Status JobExecutionServiceImpl::SendJob(
     // accepting it - an unverified compute route, or a job whose measured
     // memory clearly exceeds the device.
     {
-        const auto decision = cyxwiz::servernode::EvaluateJobAdmission(GatherAdmissionFacts(request->config()));
+        const auto decision = cyxwiz::EvaluateJobAdmission(GatherAdmissionFacts(request->config()));
         if (!decision.accepted) {
             const std::string reason =
                 std::string(cyxwiz::TrainingFailureLabel(cyxwiz::TrainingFailureCode(decision.failure))) + ": " +

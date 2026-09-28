@@ -1,5 +1,8 @@
 #pragma once
 
+#include "../../core/remote_job_presentation.h"
+#include <functional>
+#include <set>
 #include "../panel.h"
 #include "../../network/p2p_client.h"
 #include "../../plotting/plot_manager.h"
@@ -60,10 +63,24 @@ public:
     // Public methods to receive progress updates from external sources
     void OnProgressUpdate(const network::TrainingProgress& progress) { OnProgress(progress); }
     void OnTrainingComplete(const network::TrainingComplete& complete) { OnComplete(complete); }
+    void OnErrorUpdate(const std::string& error_message, bool is_fatal) { OnError(error_message, is_fatal); }
+
+    // Recovery actions (TOFIX118 P4 GUI), wired by the Server Connection
+    // window: resume sends this job again (the node continues from its
+    // checkpoint); start over sends it as a new job.
+    void SetRecoveryActions(std::function<void(const std::string& job_id)> resume,
+                            std::function<void()> start_over) {
+        resume_action_ = std::move(resume);
+        start_over_action_ = std::move(start_over);
+    }
 
 private:
     // Rendering sub-components
     void RenderConnectionStatus();
+    // Failure category and Resume from checkpoint cards
+    // (p2p_training_panel_recovery.cpp, TOFIX118 P4 GUI).
+    void RenderRecoveryCards();
+    void OnFailure(const network::TrainingFailureReport& report);
     void RenderTrainingControls();
     void RenderProgressBar();
     void RenderMetricsPlots();
@@ -140,8 +157,20 @@ private:
         std::string storage_uri;
         uint64_t size_bytes;
         std::chrono::system_clock::time_point timestamp;
+        int64_t next_batch = -1;       // resume point inside the epoch; -1 = epoch end
+        uint32_t total_batches = 0;    // of that epoch, from the latest progress
+        double loss = -1.0;            // loss when it arrived
     };
     std::vector<CheckpointEntry> checkpoint_history_;
+    std::string checkpoints_job_id_;   // checkpoints stay listed when this job is sent again
+
+    // The node's failure category for the current job (TOFIX118 P4a).
+    bool has_failure_ = false;
+    cyxwiz::RemoteFailureCard failure_card_;
+    bool stopped_by_user_ = false;
+    std::set<size_t> open_checkpoint_rows_;
+    std::function<void(const std::string&)> resume_action_;
+    std::function<void()> start_over_action_;
     static constexpr size_t kMaxCheckpointHistory = 100;
 
     // Logs
