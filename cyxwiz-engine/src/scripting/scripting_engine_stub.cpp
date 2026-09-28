@@ -93,6 +93,21 @@ std::string ScriptingEngine::GetPythonRuntimeDiagnostics() {
 
 bool ScriptingEngine::ReloadPythonForProject() { return false; }
 
+ScriptingEngine::InterpreterInfo ScriptingEngine::GetInterpreterInfo() { return {}; }
+
+std::vector<std::string> ScriptingEngine::CompleteSync(const std::string&, size_t) {
+    return {};
+}
+
+bool ScriptingEngine::ResetSession(std::string* error_out) {
+    if (error_out) *error_out = "Python scripting is disabled in this Engine build.";
+    return false;
+}
+
+std::string ScriptingEngine::GetLastInitError() const {
+    return "Python scripting is disabled in this Engine build.";
+}
+
 void ScriptingEngine::RegisterTrainingDashboard(
     cyxwiz::TrainingPlotPanel* panel) {
     training_plot_panel_ = panel;

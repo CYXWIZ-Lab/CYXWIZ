@@ -23,7 +23,24 @@ void Theme::ApplyDockStyle() {
             dock_style.ApplyPreset(DockStylePreset::VSCode);
             break;
 
-        case ThemePreset::CyxWizDark:
+        case ThemePreset::CyxWizDark: {
+            // Console design palette: navy tabs, purple active line.
+            dock_style.ApplyPreset(DockStylePreset::UnrealEngine);
+            DockTabStyle style = dock_style.GetStyle();
+            style.active_indicator_color = ImVec4(0.357f, 0.239f, 0.961f, 1.0f);
+            style.tab_bg = ImVec4(0.043f, 0.055f, 0.075f, 1.0f);
+            style.tab_bg_hovered = ImVec4(0.102f, 0.133f, 0.200f, 1.0f);
+            style.tab_bg_active = ImVec4(0.059f, 0.075f, 0.098f, 1.0f);
+            style.tab_bg_unfocused = ImVec4(0.043f, 0.055f, 0.075f, 1.0f);
+            style.tab_text = ImVec4(0.545f, 0.580f, 0.655f, 1.0f);
+            style.tab_text_active = ImVec4(0.949f, 0.957f, 0.973f, 1.0f);
+            style.tab_separator_color = ImVec4(0.118f, 0.145f, 0.200f, 1.0f);
+            style.dock_bg = ImVec4(0.043f, 0.055f, 0.075f, 1.0f);
+            style.dock_border = ImVec4(0.118f, 0.145f, 0.200f, 1.0f);
+            dock_style.SetStyle(style);
+            break;
+        }
+
         case ThemePreset::CyxWizLaunch:
         case ThemePreset::ModernDark: {
             // Use Unreal-style but with CyxWiz blue accent

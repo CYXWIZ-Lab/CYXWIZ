@@ -68,8 +68,10 @@ void ScriptEditorPanel::DoRunScript() {
     }
 
     // Route the running indicator through the Console's script-output sink.
+    running_script_name_ = tab->filename;
+    running_script_started_ = std::chrono::steady_clock::now();
     if (script_output_sink_) {
-        script_output_sink_->AppendScriptOutput(tab->filename, "Script started...", false);
+        script_output_sink_->AppendScriptOutput(running_script_name_, "", false);
     }
 
     // Execute asynchronously
@@ -205,8 +207,10 @@ void ScriptEditorPanel::RunSelection() {
     }
 
     spdlog::info("Running selection asynchronously");
+    running_script_name_ = tab->filename + " (selection)";
+    running_script_started_ = std::chrono::steady_clock::now();
     if (script_output_sink_) {
-        script_output_sink_->AppendScriptOutput(tab->filename + " (selection)", "Running...", false);
+        script_output_sink_->AppendScriptOutput(running_script_name_, "", false);
     }
 
     // Dedent and execute asynchronously for plot capture support
@@ -241,8 +245,10 @@ void ScriptEditorPanel::RunCurrentSection() {
                               std::to_string(section.end_line) + ")";
 
     spdlog::info("Running section {} asynchronously", section_name);
+    running_script_name_ = section_name;
+    running_script_started_ = std::chrono::steady_clock::now();
     if (script_output_sink_) {
-        script_output_sink_->AppendScriptOutput(section_name, "Running...", false);
+        script_output_sink_->AppendScriptOutput(running_script_name_, "", false);
     }
 
     // Dedent and execute asynchronously for plot capture support

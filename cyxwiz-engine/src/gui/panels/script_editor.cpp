@@ -1,3 +1,4 @@
+#include "../appearance_settings.h"
 #include "script_editor.h"
 #include "output_renderer.h"
 #include "../icons.h"
@@ -36,8 +37,18 @@ void ScriptEditorPanel::SetScriptOutputSink(
     script_output_sink_ = output_sink;
 }
 
+float ScriptEditorPanel::GetFontScale() const { return gui::CodeFontScale(); }
+
+void ScriptEditorPanel::SetFontScale(float scale) {
+    ::gui::SetCodeTextScale(scale);
+    font_scale_ = gui::CodeFontScale();
+}
+
 void ScriptEditorPanel::Render() {
     if (!visible_) return;
+
+    // Code text size is Engine-wide; follow it when Preferences changes it.
+    font_scale_ = gui::CodeFontScale();
 
     // Poll for pending output from async script execution
     if (scripting_engine_ && scripting_engine_->IsScriptRunning()) {
@@ -47,7 +58,7 @@ void ScriptEditorPanel::Render() {
         // Get any pending output and display it
         std::string pending = scripting_engine_->GetPendingOutput();
         if (!pending.empty() && script_output_sink_) {
-            script_output_sink_->AppendScriptOutput("Running...", pending, false);
+            script_output_sink_->AppendScriptOutput(running_script_name_, pending, false);
         }
     } else if (script_running_) {
         // Script just finished - check for result
@@ -57,23 +68,21 @@ void ScriptEditorPanel::Render() {
         // First, drain any remaining output from the queue (for fast-finishing scripts)
         std::string remaining_output = scripting_engine_->GetPendingOutput();
         if (!remaining_output.empty() && script_output_sink_) {
-            script_output_sink_->AppendScriptOutput("Output", remaining_output, false);
+            script_output_sink_->AppendScriptOutput(running_script_name_, remaining_output, false);
         }
 
         auto result = scripting_engine_->GetAsyncResult();
         if (result.has_value()) {
             auto& r = result.value();
             if (script_output_sink_) {
-                if (r.was_cancelled) {
-                    script_output_sink_->AppendScriptOutput("Script", "Script cancelled by user", true);
-                } else if (!r.success) {
-                    script_output_sink_->AppendScriptOutput("Script", "Error: " + r.error_message, true);
-                } else {
-                    // Script completed successfully
-                    if (remaining_output.empty()) {
-                        // No output was produced, show completion message
-                        script_output_sink_->AppendScriptOutput("Script", "Completed successfully", false);
-                    }
+                const double seconds = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - running_script_started_).count();
+                if (!r.was_cancelled && !r.success && !r.error_message.empty()) {
+                    script_output_sink_->AppendScriptOutput(running_script_name_, r.error_message, true);
+                }
+                script_output_sink_->EndScriptOutput(running_script_name_, r.success,
+                                                     r.was_cancelled, seconds);
+                if (r.success) {
                     spdlog::info("Script completed successfully");
                 }
             }
@@ -326,19 +335,19 @@ void ScriptEditorPanel::RenderMenuBar() {
             // Font Size submenu
             if (ImGui::BeginMenu("Font Size")) {
                 if (ImGui::MenuItem("Small (14 px)", nullptr, font_scale_ == 1.0f)) {
-                    font_scale_ = 1.0f;
+                    SetFontScale(1.0f);
                     if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 if (ImGui::MenuItem("Medium (16 px)", nullptr, font_scale_ == 1.3f)) {
-                    font_scale_ = 1.3f;
+                    SetFontScale(1.3f);
                     if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 if (ImGui::MenuItem("Large (20 px)", nullptr, font_scale_ == 1.6f)) {
-                    font_scale_ = 1.6f;
+                    SetFontScale(1.6f);
                     if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 if (ImGui::MenuItem("Extra Large (24 px)", nullptr, font_scale_ == 2.0f)) {
-                    font_scale_ = 2.0f;
+                    SetFontScale(2.0f);
                     if (on_settings_changed_callback_) on_settings_changed_callback_();
                 }
                 ImGui::EndMenu();

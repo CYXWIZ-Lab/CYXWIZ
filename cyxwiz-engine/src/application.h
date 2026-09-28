@@ -43,6 +43,7 @@ private:
     void LoadFonts(ImGuiIO& io);
     float DetectFontRasterizerDensity(bool log_metrics) const;
     void RefreshFontRasterizerDensity();
+    void RebuildFontAtlas();
 
     GLFWwindow* window_;
     std::unique_ptr<gui::MainWindow> main_window_;
@@ -51,6 +52,7 @@ private:
 
     bool running_;
     double last_frame_time_;
+    std::string resolved_font_base_path_;  // absolute, found on first load
     std::string imgui_ini_path_;  // Store ini file path
 
     // Python setup wizard (shown on first launch if no Python configured)

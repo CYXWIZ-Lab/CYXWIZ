@@ -1,4 +1,5 @@
 #include "application.h"
+#include "gui/appearance_settings.h"
 #include "gui/main_window.h"
 #include "gui/console.h"
 #include "gui/display_density.h"
@@ -382,7 +383,13 @@ bool CyxWizApp::Initialize() {
     ImGuiIO& io = ImGui::GetIO();
 
     // Set persistent ini file path (same directory as executable)
-    imgui_ini_path_ = "imgui.ini";
+    // Absolute: Python script runs change the working directory to the
+    // project root, and a relative path then wrote imgui.ini there.
+    {
+        std::error_code ec;
+        const auto ini = std::filesystem::absolute("imgui.ini", ec);
+        imgui_ini_path_ = ec ? std::string("imgui.ini") : ini.string();
+    }
     io.IniFilename = imgui_ini_path_.c_str();
 
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -390,8 +397,9 @@ bool CyxWizApp::Initialize() {
     // TODO: ViewportsEnable causes crash on Windows - needs investigation
     // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
-    // Setup Dear ImGui style - Apply CyxWiz professional theme
-    gui::GetTheme().ApplyPreset(gui::ThemePreset::CyxWizDark);
+    // Engine-wide appearance (theme, code text size, sidebar) from the
+    // Engine settings; the interface text size is used by LoadFonts.
+    gui::ApplyStartupAppearance();
 
     // When viewports are enabled we tweak WindowRounding/WindowBg
     ImGuiStyle& style = ImGui::GetStyle();
@@ -754,6 +762,12 @@ void CyxWizApp::Update(float delta_time) {
 
 void CyxWizApp::Render() {
     RefreshFontRasterizerDensity();
+    // Interface text size changed in Preferences > Appearance: new fonts
+    // are built between frames.
+    if (gui::ConsumeFontRebuildRequest()) {
+        spdlog::info("Interface text size changed; rebuilding font atlas");
+        RebuildFontAtlas();
+    }
 
     // Start ImGui frame
     ImGui_ImplOpenGL3_NewFrame();
@@ -998,6 +1012,17 @@ void CyxWizApp::RefreshFontRasterizerDensity() {
 
     spdlog::info("Display density changed from {:.2f}x to {:.2f}x; rebuilding font atlas",
                  font_rasterizer_density_, detected_density);
+    font_rasterizer_density_ = detected_density;
+    RebuildFontAtlas();
+#endif
+}
+
+void CyxWizApp::RebuildFontAtlas() {
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.Fonts->Locked) {
+        spdlog::warn("Deferring font atlas rebuild while the atlas is locked");
+        return;
+    }
     ImGui_ImplOpenGL3_DestroyFontsTexture();
     io.FontDefault = nullptr;
     cyxwiz::gui::ClearEditorMonoFonts();
@@ -1007,13 +1032,10 @@ void CyxWizApp::RefreshFontRasterizerDensity() {
     font_mono_ = nullptr;
     font_mono_bold_ = nullptr;
     io.Fonts->Clear();
-
-    font_rasterizer_density_ = detected_density;
     LoadFonts(io);
     if (!ImGui_ImplOpenGL3_CreateFontsTexture()) {
         spdlog::error("Failed to upload rebuilt font atlas texture");
     }
-#endif
 }
 
 void CyxWizApp::LoadFonts(ImGuiIO& io) {
@@ -1061,12 +1083,24 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
 #endif
 
     std::string font_base_path;
+    if (!resolved_font_base_path_.empty() &&
+        std::filesystem::exists(resolved_font_base_path_ + "Inter-Regular.ttf")) {
+        font_base_path = resolved_font_base_path_;
+    }
     for (const auto& path : font_paths) {
+        if (!font_base_path.empty()) break;
         std::string test_path = path + "Inter-Regular.ttf";
         spdlog::debug("Checking font path: {}", test_path);
         if (std::filesystem::exists(test_path)) {
-            font_base_path = path;
-            spdlog::info("Found fonts at: {}", path);
+            std::error_code ec;
+            const auto absolute = std::filesystem::absolute(path, ec);
+            font_base_path = ec ? path : absolute.string();
+            if (!font_base_path.empty() && font_base_path.back() != '/' &&
+                font_base_path.back() != '\\') {
+                font_base_path += '/';
+            }
+            resolved_font_base_path_ = font_base_path;
+            spdlog::info("Found fonts at: {}", font_base_path);
             break;
         }
     }
@@ -1081,7 +1115,8 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     spdlog::info("Loading fonts from: {}", font_base_path);
 
     // Define font sizes (scaled for high DPI)
-    const float base_font_size = 15.0f;
+    // Interface text size (Preferences > Appearance): 13, 15, 17 or 20 px.
+    const float base_font_size = static_cast<float>(gui::UiTextPixels());
     const float mono_font_size = 14.0f;
 
     // Load Inter font family (UI font)

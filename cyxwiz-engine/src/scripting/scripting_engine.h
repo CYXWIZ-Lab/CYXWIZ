@@ -48,6 +48,12 @@ struct ExecutionResult {
     // Async execution info
     bool was_cancelled{false};
 
+    // Interactive (REPL) detail: stderr on success (warnings), the exception
+    // type and the formatted traceback with the user's own frames.
+    std::string stderr_output;
+    std::string exception_type;
+    std::string traceback;
+
     // Captured matplotlib/plotting figures
     std::vector<CapturedPlot> plots;
 };
@@ -138,12 +144,35 @@ public:
     // Reload interpreter config for active project (picks up python_env.json)
     bool ReloadPythonForProject();
 
+    // ---- Python REPL support (tofix121) ----
+    struct InterpreterInfo {
+        bool initialized = false;
+        std::string version;           // "3.12.14" once started
+        std::string interpreter_path;  // running, else the one the next start uses
+        std::string source;            // "project" / "system" when running
+        std::string mismatch;          // non-empty: restart needed
+    };
+    // Cheap enough for UI refreshes; the preview path is resolved without logging.
+    InterpreterInfo GetInterpreterInfo();
+    // Names completing `text` (identifiers, dotted attributes) from the REPL
+    // namespace, using rlcompleter directly (no code built from user text).
+    // Empty while a command or script runs or before Python starts.
+    std::vector<std::string> CompleteSync(const std::string& text, size_t max_results = 50);
+    // Clears the REPL's variables and imports (the embedded interpreter keeps
+    // running; it cannot be restarted inside the Engine process).
+    bool ResetSession(std::string* error_out = nullptr);
+    // Last message from a failed Python start, empty when none.
+    std::string GetLastInitError() const;
+
     // Register Training Dashboard with Python module (deferred - stores panel pointer)
     void RegisterTrainingDashboard(cyxwiz::TrainingPlotPanel* panel);
     // Actually register with Python (called lazily when scripts run)
     void EnsureTrainingDashboardRegistered();
 
 private:
+    mutable std::mutex init_error_mutex_;
+    std::string last_init_error_;
+    std::string cached_python_version_;
     cyxwiz::TrainingPlotPanel* training_plot_panel_{nullptr};
     bool training_dashboard_registered_{false};
     std::unique_ptr<PythonEngine> python_engine_;

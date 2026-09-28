@@ -33,6 +33,9 @@ struct ConsoleSessionEntry {
   std::string title;
   std::string project_root;
   bool unread = false;
+  // Errors received while the session was in the background (Logs tab
+  // badge); cleared when the session is activated.
+  std::uint32_t problem_badge = 0;
 };
 
 enum class ConsoleSessionCreateError : std::uint8_t {
@@ -66,6 +69,7 @@ public:
   bool Close(std::uint64_t session_id);
   std::size_t CloseProjectScopedSessions(std::string_view project_root = {});
   bool SetUnread(std::uint64_t session_id, bool unread = true);
+  bool SetProblemBadge(std::uint64_t session_id, std::uint32_t count);
 
   const std::vector<ConsoleSessionEntry> &Sessions() const { return sessions_; }
   std::optional<std::uint64_t> ActiveSessionId() const {

@@ -392,6 +392,17 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
+        if (config.contains("appearance") && config["appearance"].is_object()) {
+            const auto& look = config["appearance"];
+            AppearanceConfig loaded;
+            loaded.theme_preset = look.value("theme_preset", loaded.theme_preset);
+            loaded.ui_text_px = look.value("ui_text_px", loaded.ui_text_px);
+            loaded.code_font_scale = look.value("code_font_scale", loaded.code_font_scale);
+            loaded.sidebar_left = look.value("sidebar_left", loaded.sidebar_left);
+            loaded.custom_theme_file = look.value("custom_theme_file", std::string());
+            appearance_ = loaded;
+        }
+
         runtime_log_saved_filters_.clear();
         if (config.contains("observability") &&
             config["observability"].is_object()) {
@@ -499,6 +510,14 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
         config["observability"] = {
             {"saved_filters_version", 1},
             {"saved_filters", std::move(saved_runtime_filters)}
+        };
+
+        config["appearance"] = {
+            {"theme_preset", appearance_.theme_preset},
+            {"ui_text_px", appearance_.ui_text_px},
+            {"code_font_scale", appearance_.code_font_scale},
+            {"sidebar_left", appearance_.sidebar_left},
+            {"custom_theme_file", appearance_.custom_theme_file}
         };
 
         // Recent projects
@@ -757,6 +776,19 @@ void EngineConfig::SetRequireDebugBeforeTrain(bool require) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (require_debug_before_train_ != require) {
         require_debug_before_train_ = require;
+        modified_ = true;
+    }
+}
+
+AppearanceConfig EngineConfig::GetAppearance() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return appearance_;
+}
+
+void EngineConfig::SetAppearance(const AppearanceConfig& appearance) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(appearance_ == appearance)) {
+        appearance_ = appearance;
         modified_ = true;
     }
 }

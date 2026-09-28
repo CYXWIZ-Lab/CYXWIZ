@@ -8,6 +8,7 @@
 #include "panels/agent_llm_session.h"
 #include "panels/python_repl_session.h"
 #include "panels/local_shell_session.h"
+#include "ui_buttons.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -117,30 +118,6 @@ std::string FormatRuntimeLogDetails(const cyxwiz::RuntimeLogEvent &event) {
   return output.str();
 }
 
-template <size_t Size>
-void CopyToBuffer(char (&buffer)[Size], const std::string &value) {
-  static_assert(Size > 0);
-  std::strncpy(buffer, value.c_str(), Size - 1);
-  buffer[Size - 1] = '\0';
-}
-
-bool IsValidSavedViewName(const std::string &name) {
-  return !name.empty() && name.size() <= 63 &&
-         std::all_of(name.begin(), name.end(), [](unsigned char value) {
-           return std::isalnum(value) != 0 || value == '_' || value == '-';
-         });
-}
-
-std::string
-BuildSavedViewExpression(const cyxwiz::RuntimeLogInspectorCriteria &criteria) {
-  auto controls_only = criteria;
-  controls_only.structured_filter.clear();
-  if (cyxwiz::BuildRuntimeLogInspectorFilter(controls_only).empty()) {
-    return criteria.structured_filter;
-  }
-  return cyxwiz::BuildRuntimeLogInspectorFilter(criteria);
-}
-
 #ifdef _WIN32
 std::string QuoteWindowsArgument(const std::string &argument) {
   if (!argument.empty() &&
@@ -178,6 +155,7 @@ struct Console::RuntimeLogExportTaskState {
   bool running = false;
   bool success = false;
   std::string message;
+  std::filesystem::path destination;  // written file, for Show in folder
 };
 
 Console::Console()
@@ -191,6 +169,12 @@ Console::Console()
           cyxwiz::RuntimeLogStore::Instance(), truth_provider_.get())),
       show_copy_notification_(false), copy_notification_time_(0.0f) {
   memset(input_buf_, 0, sizeof(input_buf_));
+  {
+    // main.cpp writes engine_log.txt into the working directory it sets to
+    // the Engine folder before the UI starts.
+    std::error_code ec;
+    log_file_path_ = std::filesystem::absolute("engine_log.txt", ec);
+  }
   LoadSavedInspectorFilters();
   StartInspectorWorker();
 }
@@ -237,6 +221,11 @@ bool Console::ActivatePythonRepl() {
       workbench_.ActivateSession(ConsoleSessionKind::PythonRepl));
 }
 
+void Console::EndScriptOutput(const std::string &source, bool success,
+                              bool cancelled, double seconds) {
+  python_repl_->EndScriptOutput(source, success, cancelled, seconds);
+}
+
 void Console::AppendScriptOutput(const std::string &source,
                                  const std::string &text, bool is_error) {
   python_repl_->AppendScriptOutput(source, text, is_error);
@@ -247,6 +236,7 @@ void Console::AppendScriptOutput(const std::string &source,
 }
 
 void Console::Render() {
+  UpdateLogsProblemBadge();
   if (!show_window_)
     return;
 
@@ -277,10 +267,6 @@ void Console::RenderActiveSession(bool request_focus) {
     RenderCommandsSession(request_focus);
     return;
   case ConsoleSessionKind::PythonRepl:
-    ImGui::TextDisabled("Project: %.*s",
-                        static_cast<int>(workbench_.ActiveProjectRoot().size()),
-                        workbench_.ActiveProjectRoot().data());
-    ImGui::Separator();
     if (request_focus)
       python_repl_->RequestInputFocus();
     python_repl_->RenderContent();
@@ -340,179 +326,47 @@ void Console::PruneLocalShellSessions() {
   }
 }
 
-void Console::RenderLogsSession(bool request_focus) {
-  const double now = ImGui::GetTime();
-  if (now >= inspector_next_refresh_time_) {
-    RequestInspectorQuery(false);
-    inspector_next_refresh_time_ = now + 0.1;
-  }
-  RenderLogsToolbar();
-  ImGui::Separator();
-  RenderInspectorTab(request_focus);
-}
-
-void Console::RenderCommandsSession(bool request_focus) {
-  RenderCommandsToolbar();
-  ImGui::Separator();
-  RenderAllTab();
-  ImGui::Separator();
-  RenderCommandInput(request_focus);
-}
-
-void Console::RenderLogsToolbar() {
-  if (ImGui::Button("Clear Log View")) {
-    ClearLogView();
-  }
-  ShowHelpTooltip("Hide retained events through the current high-water mark. "
-                  "Canonical runtime evidence is not deleted.");
-  ImGui::SameLine();
-  ImGui::BeginDisabled(inspector_selected_sequence_ == 0);
-  if (ImGui::Button("Copy Selected")) {
-    CopySelectedRuntimeLog();
-  }
-  ShowHelpTooltip("Copy the selected runtime row. You can also press Ctrl+C.",
-                  ImGuiHoveredFlags_DelayNormal |
-                      ImGuiHoveredFlags_AllowWhenDisabled);
-  ImGui::EndDisabled();
-  ImGui::SameLine();
-  if (ImGui::Button("Copy Filtered Logs")) {
-    CopyFilteredRuntimeLogs();
-    ShowCopyNotification();
-  }
-  ShowHelpTooltip(
-      "Copy the currently displayed filtered runtime rows to the clipboard "
-      "(up to the 1,000-row display limit).");
-  ImGui::SameLine();
-  bool export_running = false;
-  {
-    std::lock_guard<std::mutex> lock(inspector_export_task_state_->mutex);
-    export_running = inspector_export_task_state_->running;
-  }
-  ImGui::BeginDisabled(export_running);
-  if (ImGui::Button("Export...")) {
-    OpenRuntimeLogExportDialog();
-  }
-  ShowHelpTooltip(
-      "Export the current frozen filtered rows or selected row as JSON "
-      "Lines or readable text, with an explicit redaction preview.",
-      ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled);
-  ImGui::EndDisabled();
-  ImGui::SameLine();
-  ImGui::Checkbox("Auto-scroll", &auto_scroll_);
-  ShowHelpTooltip("Follow newly received runtime events.");
-  ImGui::SameLine();
-  RenderCopyStatus();
-
-  if (inspector_selected_sequence_ != 0 &&
-      ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-      ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) &&
-      !ImGui::GetIO().WantTextInput) {
-    CopySelectedRuntimeLog();
-  }
-}
-
-void Console::RenderCommandsToolbar() {
-  if (ImGui::Button("Clear Commands")) {
-    ClearCommandTranscript();
-  }
-  ShowHelpTooltip(
-      "Clear only the command transcript. Runtime logs are unchanged.");
-  ImGui::SameLine();
-  ImGui::BeginDisabled(selected_command_sequence_ == 0);
-  if (ImGui::Button("Copy Selected")) {
-    CopySelectedCommand();
-  }
-  ShowHelpTooltip(
-      "Copy the selected command line or response. You can also press Ctrl+C.",
-      ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled);
-  ImGui::EndDisabled();
-  ImGui::SameLine();
-  if (ImGui::Button("Copy All Commands")) {
-    CopyCommandTranscript();
-    ShowCopyNotification();
-  }
-  ShowHelpTooltip(
-      "Copy entered commands and their retained responses to the clipboard.");
-  ImGui::SameLine();
-  ImGui::Checkbox("Auto-scroll", &auto_scroll_);
-  ShowHelpTooltip("Follow new command responses.");
-  ImGui::SameLine();
-  RenderCopyStatus();
-
-  if (selected_command_sequence_ != 0 &&
-      ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-      ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) &&
-      !ImGui::GetIO().WantTextInput) {
-    CopySelectedCommand();
-  }
-}
-
-void Console::RenderCommandInput(bool request_focus) {
-  if (request_focus)
-    command_input_focus_pending_ = true;
-  bool reclaim_focus = false;
-  const ImGuiInputTextFlags input_text_flags =
-      ImGuiInputTextFlags_EnterReturnsTrue |
-      ImGuiInputTextFlags_CallbackHistory;
-  ImGui::PushItemWidth(-1.0f);
-  if (command_input_focus_pending_)
-    ImGui::SetKeyboardFocusHere();
-  const bool submitted = ImGui::InputTextWithHint(
-      "##input", "Enter command...", input_buf_, IM_ARRAYSIZE(input_buf_),
-      input_text_flags, &Console::InputTextCallback, this);
-  if (command_input_focus_pending_ && ImGui::IsItemActive())
-    command_input_focus_pending_ = false;
-  if (submitted) {
-    if (input_buf_[0]) {
-      ExecCommand(input_buf_);
-    }
-    input_buf_[0] = '\0';
-    reclaim_focus = true;
-  }
-  ImGui::PopItemWidth();
-  ShowHelpTooltip(
-      "Execute an interactive Console command. Use Up and Down to navigate "
-      "command history.");
-
-  ImGui::SetItemDefaultFocus();
-  if (reclaim_focus) {
-    ImGui::SetKeyboardFocusHere(-1);
-  }
-}
-
-void Console::RenderCopyStatus() {
-  if (show_copy_notification_) {
-    const float elapsed =
-        static_cast<float>(ImGui::GetTime()) - copy_notification_time_;
-    if (elapsed < 2.0f) {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 1.0f, 0.3f, 1.0f));
-      ImGui::Text("Copied!");
-      ImGui::PopStyleColor();
-      return;
-    }
-    show_copy_notification_ = false;
-  }
-  ImGui::TextDisabled("Ready");
+bool Console::IsRuntimeLogExportRunning() const {
+  std::lock_guard<std::mutex> lock(inspector_export_task_state_->mutex);
+  return inspector_export_task_state_->running;
 }
 
 void Console::RenderRuntimeLogExportStatus() {
   bool running = false;
   bool success = false;
   std::string message;
+  std::filesystem::path destination;
   {
     std::lock_guard<std::mutex> lock(inspector_export_task_state_->mutex);
     running = inspector_export_task_state_->running;
     success = inspector_export_task_state_->success;
     message = inspector_export_task_state_->message;
+    destination = inspector_export_task_state_->destination;
   }
   if (running) {
     ImGui::TextDisabled("Exporting frozen runtime-log slice...");
   } else if (!message.empty()) {
     ImGui::PushStyleColor(ImGuiCol_Text, success
-                                             ? ImVec4(0.3f, 0.85f, 0.4f, 1.0f)
-                                             : ImVec4(1.0f, 0.4f, 0.35f, 1.0f));
-    ImGui::TextWrapped("%s", message.c_str());
+                                             ? ImVec4(0.24f, 0.84f, 0.55f, 1.0f)
+                                             : ImVec4(1.0f, 0.48f, 0.45f, 1.0f));
+    ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x * 0.75f +
+                           ImGui::GetCursorPosX());
+    ImGui::TextUnformatted(message.c_str());
+    ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
+    if (success && !destination.empty()) {
+      ImGui::SameLine();
+      if (cyxwiz::ui::LinkButton("Show in folder##export") &&
+          !OpenPathWithSystem(destination, true)) {
+        SetLogsNotice("Could not open the export folder");
+      }
+    }
+    ImGui::SameLine();
+    if (cyxwiz::ui::LinkButton("Dismiss##export")) {
+      std::lock_guard<std::mutex> lock(inspector_export_task_state_->mutex);
+      inspector_export_task_state_->message.clear();
+      inspector_export_task_state_->destination.clear();
+    }
   }
 }
 
@@ -531,7 +385,7 @@ void Console::RenderRuntimeLogExportDialog() {
   const auto frozen_result = inspector_export_result_;
   if (!frozen_result) {
     ImGui::TextDisabled("No frozen runtime-log result is available.");
-    if (ImGui::Button("Close"))
+    if (cyxwiz::ui::SecondaryButton("Close"))
       ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
     return;
@@ -585,12 +439,12 @@ void Console::RenderRuntimeLogExportDialog() {
   }
 
   ImGui::SeparatorText("Redaction");
-  if (ImGui::Button("Shareable preset")) {
+  if (cyxwiz::ui::SecondaryButton("Shareable preset")) {
     inspector_export_redaction_ = {};
   }
   ShowHelpTooltip("Enable every supported sensitive-data redaction.");
   ImGui::SameLine();
-  if (ImGui::Button("Raw preset")) {
+  if (cyxwiz::ui::SecondaryButton("Raw preset")) {
     inspector_export_redaction_ = {false, false, false, false, false};
   }
   ShowHelpTooltip("Disable all redaction. Review the preview before export.");
@@ -654,8 +508,10 @@ void Console::RenderRuntimeLogExportDialog() {
     std::lock_guard<std::mutex> lock(inspector_export_task_state_->mutex);
     export_running = inspector_export_task_state_->running;
   }
-  ImGui::BeginDisabled(export_running || preview_event == nullptr);
-  if (ImGui::Button("Save export...")) {
+  if (cyxwiz::ui::PrimaryButton(
+          "Save export...", !export_running && preview_event != nullptr,
+          export_running ? "An export is already running."
+                         : "The frozen filtered slice contains no rows.")) {
     const bool json_lines =
         inspector_export_format_ == cyxwiz::RuntimeLogExportFormat::JsonLines;
     const auto filters =
@@ -680,631 +536,10 @@ void Console::RenderRuntimeLogExportDialog() {
       ImGui::CloseCurrentPopup();
     }
   }
-  ImGui::EndDisabled();
   ImGui::SameLine();
-  if (ImGui::Button("Cancel"))
+  if (cyxwiz::ui::SecondaryButton("Cancel"))
     ImGui::CloseCurrentPopup();
   ImGui::EndPopup();
-}
-
-void Console::RenderInspectorTab(bool request_focus) {
-  const auto result = SnapshotInspectorResult();
-  RenderInspectorFilters(result.get(), request_focus);
-  RenderRuntimeLogExportStatus();
-  RenderRuntimeLogExportDialog();
-
-  if (!result) {
-    ImGui::TextDisabled("Loading runtime events...");
-    return;
-  }
-  if (result->filter_error) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.35f, 1.0f));
-    ImGui::TextWrapped("Filter error at %zu: %s",
-                       result->filter_error->position,
-                       result->filter_error->message.c_str());
-    ImGui::PopStyleColor();
-  }
-  if (!result->effective_filter.empty()) {
-    constexpr size_t max_visible_filter = 140;
-    const std::string visible_filter =
-        result->effective_filter.size() <= max_visible_filter
-            ? result->effective_filter
-            : result->effective_filter.substr(0, max_visible_filter - 3) +
-                  "...";
-    ImGui::TextDisabled("Active: %s", visible_filter.c_str());
-    ShowHelpTooltip(result->effective_filter.c_str());
-  }
-
-  const auto &query = result->query;
-  ImGui::TextDisabled(
-      "Showing %zu / matched %zu | retained %zu / %zu | evicted %llu | "
-      "high-water %llu%s",
-      query.events.size(), query.matched_count, query.store_stats.size,
-      query.store_stats.capacity,
-      static_cast<unsigned long long>(query.store_stats.evicted_count),
-      static_cast<unsigned long long>(query.high_water_sequence),
-      inspector_paused_ ? " | paused" : "");
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-    ImGui::SetTooltip(
-        "Query worker: requested %llu, executed %llu, coalesced %llu, "
-        "stale results discarded %llu. The queue holds at most one "
-        "pending request.",
-        static_cast<unsigned long long>(
-            inspector_query_requests_.load(std::memory_order_relaxed)),
-        static_cast<unsigned long long>(
-            inspector_query_executions_.load(std::memory_order_relaxed)),
-        static_cast<unsigned long long>(
-            inspector_query_coalesced_.load(std::memory_order_relaxed)),
-        static_cast<unsigned long long>(
-            inspector_query_stale_.load(std::memory_order_relaxed)));
-  }
-
-  ImGui::BeginChild("RuntimeLogInspectorBody", ImVec2(0, 0), false);
-  const bool has_selection = std::any_of(
-      query.events.begin(), query.events.end(), [this](const auto &event) {
-        return event.sequence == inspector_selected_sequence_;
-      });
-  if (has_selection) {
-    const float available_width = ImGui::GetContentRegionAvail().x;
-    const float details_width =
-        std::clamp(available_width * 0.32f, 220.0f, 320.0f);
-    if (ImGui::BeginTable("RuntimeLogInspectorSplit", 2,
-                          ImGuiTableFlags_Resizable |
-                              ImGuiTableFlags_BordersInnerV)) {
-      ImGui::TableSetupColumn("Rows", ImGuiTableColumnFlags_WidthStretch);
-      ImGui::TableSetupColumn("Details", ImGuiTableColumnFlags_WidthFixed,
-                              details_width);
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      RenderInspectorTable(result.get());
-      ImGui::TableSetColumnIndex(1);
-      RenderInspectorDetails(result.get());
-      ImGui::EndTable();
-    }
-  } else {
-    RenderInspectorTable(result.get());
-  }
-  ImGui::EndChild();
-}
-
-void Console::RenderInspectorFilters(
-    const cyxwiz::RuntimeLogInspectorResult *result, bool request_focus) {
-  if (request_focus)
-    log_search_focus_pending_ = true;
-  bool changed = false;
-  static constexpr std::array<const char *, 6> level_labels = {
-      "Trace", "Debug", "Info", "Warn", "Error", "Critical"};
-  static constexpr std::array<const char *, 6> level_help = {
-      "Most detailed severity. Supported by the engine, but normally "
-      "filtered because Release starts at Info and Debug starts at Debug.",
-      "Developer diagnostic severity. Enabled by the default Debug build.",
-      "Normal runtime progress and lifecycle information.",
-      "A recoverable problem or condition requiring attention.",
-      "An operation failed but the process may continue.",
-      "Highest severity for fatal or process-ending failures."};
-  for (size_t index = 0; index < inspector_criteria_.levels.size(); ++index) {
-    if (index != 0)
-      ImGui::SameLine();
-    changed |= ImGui::Checkbox(level_labels[index],
-                               &inspector_criteria_.levels[index]);
-    ShowHelpTooltip(level_help[index]);
-  }
-  ImGui::SameLine();
-  if (ImGui::Button(inspector_paused_ ? "Resume" : "Pause")) {
-    inspector_paused_ = !inspector_paused_;
-    if (inspector_paused_) {
-      inspector_frozen_sequence_ =
-          cyxwiz::RuntimeLogStore::Instance().GetStats().newest_sequence;
-    }
-    changed = true;
-  }
-  ShowHelpTooltip(
-      inspector_paused_
-          ? "Resume the live log tail from the current runtime high-water mark."
-          : "Freeze this view at its current high-water mark while ingestion "
-            "continues.");
-  ImGui::SameLine();
-  if (ImGui::Button("Reset")) {
-    inspector_criteria_ = {};
-    inspector_text_[0] = '\0';
-    inspector_filter_[0] = '\0';
-    inspector_filter_name_[0] = '\0';
-    inspector_selected_saved_filter_ = -1;
-    inspector_selected_sequence_ = 0;
-    inspector_filter_status_.clear();
-    changed = true;
-  }
-  ShowHelpTooltip("Reset all runtime-log filters and row selection.");
-  ImGui::SameLine();
-  if (ImGui::Button("Show retained")) {
-    inspector_after_sequence_ = 0;
-    changed = true;
-  }
-  ShowHelpTooltip("Show retained events hidden by Clear Log View. Store "
-                  "eviction still applies.");
-
-  ImGui::SetNextItemWidth(220.0f);
-  if (log_search_focus_pending_)
-    ImGui::SetKeyboardFocusHere();
-  const bool search_changed = ImGui::InputTextWithHint(
-      "##runtime_text", "Search messages (case-insensitive)...",
-      inspector_text_, IM_ARRAYSIZE(inspector_text_));
-  if (log_search_focus_pending_ && ImGui::IsItemActive())
-    log_search_focus_pending_ = false;
-  if (search_changed) {
-    inspector_criteria_.text = inspector_text_;
-    changed = true;
-  }
-  ImGui::SameLine();
-  const size_t field_filter_count =
-      static_cast<size_t>(!inspector_criteria_.category.empty()) +
-      static_cast<size_t>(!inspector_criteria_.source.empty()) +
-      static_cast<size_t>(!inspector_criteria_.code.empty()) +
-      static_cast<size_t>(!inspector_criteria_.run_id.empty()) +
-      static_cast<size_t>(!inspector_criteria_.backend.empty()) +
-      static_cast<size_t>(inspector_criteria_.task_id.has_value()) +
-      static_cast<size_t>(inspector_criteria_.device_id.has_value());
-  const std::string filters_label =
-      field_filter_count == 0
-          ? "Filters"
-          : "Filters (" + std::to_string(field_filter_count) + ')';
-  const float trailing_buttons_width =
-      ImGui::CalcTextSize("?").x +
-      ImGui::CalcTextSize(filters_label.c_str()).x +
-      ImGui::GetStyle().FramePadding.x * 4.0f +
-      ImGui::GetStyle().ItemSpacing.x * 2.0f;
-  ImGui::SetNextItemWidth(std::max(120.0f, ImGui::GetContentRegionAvail().x -
-                                               trailing_buttons_width));
-  if (ImGui::InputTextWithHint("##runtime_filter", "Structured filter...",
-                               inspector_filter_,
-                               IM_ARRAYSIZE(inspector_filter_))) {
-    inspector_criteria_.structured_filter = inspector_filter_;
-    changed = true;
-  }
-  ImGui::SameLine();
-  if (ImGui::SmallButton("?##StructuredFilterHelp")) {
-    ImGui::OpenPopup("StructuredFilterHelp");
-  }
-  ShowHelpTooltip("Structured filter syntax and examples.");
-  ImGui::SameLine();
-  if (ImGui::Button(filters_label.c_str())) {
-    ImGui::OpenPopup("RuntimeLogAdvancedFilters");
-  }
-  ShowHelpTooltip("Open category, source, code, run, backend, task, device, "
-                  "and saved-filter controls.");
-
-  ImGui::SetNextWindowSize(ImVec2(680.0f, 560.0f), ImGuiCond_Appearing);
-  if (ImGui::BeginPopup("StructuredFilterHelp")) {
-    ImGui::TextUnformatted("Structured filter help");
-    ImGui::Separator();
-    ImGui::BeginChild("StructuredFilterHelpContent", ImVec2(0, 0), false);
-    const auto help = cyxwiz::RuntimeLogFilterHelpText();
-    ImGui::TextUnformatted(help.data(), help.data() + help.size());
-    ImGui::EndChild();
-    ImGui::EndPopup();
-  }
-
-  ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_Appearing);
-  if (ImGui::BeginPopup("RuntimeLogAdvancedFilters")) {
-    ImGui::TextUnformatted("Field filters");
-    ImGui::TextDisabled("Each selection is combined with AND.");
-    if (result && ImGui::BeginTable("RuntimeLogFieldFilters", 2,
-                                    ImGuiTableFlags_SizingStretchSame)) {
-      const auto string_combo =
-          [&changed](const char *label, const char *id, std::string &selected,
-                     const std::vector<std::string> &values) {
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", label);
-            ImGui::SetNextItemWidth(-1.0f);
-            if (!ImGui::BeginCombo(id, selected.empty() ? "Any"
-                                                        : selected.c_str())) {
-              return;
-            }
-            if (ImGui::Selectable("Any", selected.empty())) {
-              selected.clear();
-              changed = true;
-            }
-            for (const auto &value : values) {
-              if (ImGui::Selectable(value.c_str(), selected == value)) {
-                selected = value;
-                changed = true;
-              }
-            }
-            ImGui::EndCombo();
-          };
-
-      const auto &facets = result->query.facets;
-      string_combo("Category", "##FilterCategory", inspector_criteria_.category,
-                   facets.categories);
-      string_combo("Source", "##FilterSource", inspector_criteria_.source,
-                   facets.sources);
-      string_combo("Code", "##FilterCode", inspector_criteria_.code,
-                   facets.codes);
-      string_combo("Run", "##FilterRun", inspector_criteria_.run_id,
-                   facets.run_ids);
-      string_combo("Backend", "##FilterBackend", inspector_criteria_.backend,
-                   facets.backends);
-
-      ImGui::TableNextColumn();
-      ImGui::TextDisabled("Task");
-      ImGui::SetNextItemWidth(-1.0f);
-      const std::string task_preview =
-          inspector_criteria_.task_id
-              ? std::to_string(*inspector_criteria_.task_id)
-              : "Any";
-      if (ImGui::BeginCombo("##FilterTask", task_preview.c_str())) {
-        if (ImGui::Selectable("Any", !inspector_criteria_.task_id)) {
-          inspector_criteria_.task_id.reset();
-          changed = true;
-        }
-        for (const auto value : facets.task_ids) {
-          const auto label = std::to_string(value);
-          if (ImGui::Selectable(label.c_str(),
-                                inspector_criteria_.task_id == value)) {
-            inspector_criteria_.task_id = value;
-            changed = true;
-          }
-        }
-        ImGui::EndCombo();
-      }
-
-      ImGui::TableNextColumn();
-      ImGui::TextDisabled("Device");
-      ImGui::SetNextItemWidth(-1.0f);
-      const std::string device_preview =
-          inspector_criteria_.device_id
-              ? std::to_string(*inspector_criteria_.device_id)
-              : "Any";
-      if (ImGui::BeginCombo("##FilterDevice", device_preview.c_str())) {
-        if (ImGui::Selectable("Any", !inspector_criteria_.device_id)) {
-          inspector_criteria_.device_id.reset();
-          changed = true;
-        }
-        for (const auto value : facets.device_ids) {
-          const auto label = std::to_string(value);
-          if (ImGui::Selectable(label.c_str(),
-                                inspector_criteria_.device_id == value)) {
-            inspector_criteria_.device_id = value;
-            changed = true;
-          }
-        }
-        ImGui::EndCombo();
-      }
-      ImGui::EndTable();
-    } else if (!result) {
-      ImGui::TextDisabled("Log fields are still loading.");
-    }
-
-    ImGui::Spacing();
-    ImGui::SeparatorText("Saved views");
-    ImGui::TextDisabled("A saved view captures search, severity, fields, and "
-                        "structured filter.");
-    const bool has_saved_selection =
-        inspector_selected_saved_filter_ >= 0 &&
-        inspector_selected_saved_filter_ <
-            static_cast<int>(inspector_saved_filters_.size());
-    std::string saved_preview = "Custom";
-    if (has_saved_selection) {
-      const auto &saved =
-          inspector_saved_filters_[inspector_selected_saved_filter_];
-      saved_preview = saved.name;
-      if (BuildSavedViewExpression(inspector_criteria_) != saved.expression) {
-        saved_preview += " (modified)";
-      }
-    }
-    ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::BeginCombo("##SavedRuntimeLogView", saved_preview.c_str())) {
-      if (ImGui::Selectable("Custom", !has_saved_selection)) {
-        inspector_selected_saved_filter_ = -1;
-        inspector_filter_name_[0] = '\0';
-        inspector_filter_status_.clear();
-      }
-      for (size_t index = 0; index < inspector_saved_filters_.size(); ++index) {
-        const auto &saved = inspector_saved_filters_[index];
-        const std::string label = saved.validation_error.empty()
-                                      ? saved.name
-                                      : saved.name + " (invalid)";
-        if (ImGui::Selectable(label.c_str(), inspector_selected_saved_filter_ ==
-                                                 static_cast<int>(index))) {
-          inspector_selected_saved_filter_ = static_cast<int>(index);
-          inspector_criteria_ = {};
-          inspector_text_[0] = '\0';
-          inspector_criteria_.structured_filter = saved.expression;
-          CopyToBuffer(inspector_filter_, saved.expression);
-          inspector_filter_name_[0] = '\0';
-          inspector_filter_status_ = "Applied saved view '" + saved.name + "'";
-          inspector_filter_status_error_ = false;
-          changed = true;
-        }
-      }
-      ImGui::EndCombo();
-    }
-    ShowHelpTooltip(
-        "Select a saved view to apply its complete filter immediately.");
-
-    ImGui::TextDisabled("New view name");
-    ImGui::SetNextItemWidth(-1.0f);
-    ImGui::InputTextWithHint(
-        "##SavedRuntimeLogViewName", "View name (letters, digits, _ or -)",
-        inspector_filter_name_, IM_ARRAYSIZE(inspector_filter_name_));
-
-    const auto set_status = [this](std::string message, bool error) {
-      inspector_filter_status_ = std::move(message);
-      inspector_filter_status_error_ = error;
-    };
-    const auto validate_current = [this, &set_status](std::string &expression) {
-      expression = BuildSavedViewExpression(inspector_criteria_);
-      if (expression.empty()) {
-        set_status("Set at least one filter before saving a view.", true);
-        return false;
-      }
-      const auto parsed = cyxwiz::ParseRuntimeLogFilter(expression);
-      if (!parsed.Ok()) {
-        set_status("Fix the active filter before saving this view.", true);
-        return false;
-      }
-      return true;
-    };
-
-    if (ImGui::Button("Save As")) {
-      const std::string name = inspector_filter_name_;
-      std::string expression;
-      const auto existing = std::find_if(
-          inspector_saved_filters_.begin(), inspector_saved_filters_.end(),
-          [&name](const auto &saved) { return saved.name == name; });
-      if (!IsValidSavedViewName(name)) {
-        set_status("View name must use letters, digits, '_' or '-' (max 63).",
-                   true);
-      } else if (existing != inspector_saved_filters_.end()) {
-        set_status("That view already exists. Select it and use Update.", true);
-      } else if (inspector_saved_filters_.size() >= 32) {
-        set_status("At most 32 saved views are allowed.", true);
-      } else if (validate_current(expression)) {
-        inspector_saved_filters_.push_back({name, expression, {}});
-        inspector_selected_saved_filter_ =
-            static_cast<int>(inspector_saved_filters_.size() - 1);
-        if (PersistSavedInspectorFilters()) {
-          set_status("Saved view '" + name + "'", false);
-        }
-      }
-    }
-    ShowHelpTooltip("Create a new view from every currently active filter.");
-    ImGui::SameLine();
-
-    ImGui::BeginDisabled(!has_saved_selection);
-    if (ImGui::Button("Update") && has_saved_selection) {
-      std::string expression;
-      if (validate_current(expression)) {
-        auto &saved =
-            inspector_saved_filters_[inspector_selected_saved_filter_];
-        saved.expression = std::move(expression);
-        saved.validation_error.clear();
-        if (PersistSavedInspectorFilters()) {
-          set_status("Updated view '" + saved.name + "'", false);
-        }
-      }
-    }
-    ShowHelpTooltip(
-        "Replace the selected view with every currently active filter.",
-        ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled);
-    ImGui::SameLine();
-    if (ImGui::Button("Delete") && has_saved_selection) {
-      const std::string name =
-          inspector_saved_filters_[inspector_selected_saved_filter_].name;
-      inspector_saved_filters_.erase(inspector_saved_filters_.begin() +
-                                     inspector_selected_saved_filter_);
-      inspector_selected_saved_filter_ = -1;
-      inspector_filter_name_[0] = '\0';
-      if (PersistSavedInspectorFilters()) {
-        set_status("Deleted view '" + name + "'", false);
-      }
-    }
-    ShowHelpTooltip(
-        "Delete the selected saved view. The active filter remains applied.",
-        ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled);
-    ImGui::EndDisabled();
-
-    if (!inspector_filter_status_.empty()) {
-      const ImVec4 color = inspector_filter_status_error_
-                               ? ImVec4(1.0f, 0.4f, 0.35f, 1.0f)
-                               : ImVec4(0.35f, 0.85f, 0.45f, 1.0f);
-      ImGui::PushStyleColor(ImGuiCol_Text, color);
-      ImGui::TextWrapped("%s", inspector_filter_status_.c_str());
-      ImGui::PopStyleColor();
-    }
-    const bool still_has_saved_selection =
-        inspector_selected_saved_filter_ >= 0 &&
-        inspector_selected_saved_filter_ <
-            static_cast<int>(inspector_saved_filters_.size());
-    if (still_has_saved_selection &&
-        !inspector_saved_filters_[inspector_selected_saved_filter_]
-             .validation_error.empty()) {
-      ImGui::TextWrapped(
-          "Saved view error: %s",
-          inspector_saved_filters_[inspector_selected_saved_filter_]
-              .validation_error.c_str());
-    }
-    ImGui::EndPopup();
-  }
-
-  if (changed)
-    RequestInspectorQuery(true);
-}
-
-void Console::RenderInspectorTable(
-    const cyxwiz::RuntimeLogInspectorResult *result) {
-  ImGui::BeginChild("RuntimeLogRows", ImVec2(0, 0), false);
-  const ImGuiTableFlags flags =
-      ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
-      ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY |
-      ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings;
-  if (ImGui::BeginTable("RuntimeLogTable", 8, flags)) {
-    ImGui::TableSetupScrollFreeze(0, 1);
-    ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 92.0f);
-    ImGui::TableSetupColumn("Level", ImGuiTableColumnFlags_WidthFixed, 58.0f);
-    ImGui::TableSetupColumn("Category", ImGuiTableColumnFlags_WidthFixed,
-                            82.0f);
-    ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-    ImGui::TableSetupColumn("Code", ImGuiTableColumnFlags_WidthFixed, 82.0f);
-    ImGui::TableSetupColumn("Run", ImGuiTableColumnFlags_WidthFixed, 126.0f);
-    ImGui::TableSetupColumn("Device", ImGuiTableColumnFlags_WidthFixed, 92.0f);
-    ImGui::TableSetupColumn("Message", ImGuiTableColumnFlags_WidthStretch);
-    ImGui::TableHeadersRow();
-
-    ImGuiListClipper clipper;
-    clipper.Begin(static_cast<int>(result->query.events.size()));
-    while (clipper.Step()) {
-      for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
-        const auto &event = result->query.events[row];
-        ImGui::TableNextRow();
-        ImGui::TableSetColumnIndex(0);
-        const auto timestamp = FormatLogTimestamp(event.timestamp_utc);
-        const bool selected = inspector_selected_sequence_ == event.sequence;
-        ImGui::PushID(static_cast<int>(event.sequence));
-        if (ImGui::Selectable(timestamp.c_str(), selected,
-                              ImGuiSelectableFlags_SpanAllColumns |
-                                  ImGuiSelectableFlags_AllowDoubleClick)) {
-          if (ImGui::IsMouseDoubleClicked(0)) {
-            inspector_selected_sequence_ = event.sequence;
-            const auto line = FormatRuntimeLogRow(event);
-            ImGui::SetClipboardText(line.c_str());
-            ShowCopyNotification();
-          } else {
-            inspector_selected_sequence_ =
-                inspector_selected_sequence_ == event.sequence ? 0 : event.sequence;
-          }
-        }
-        if (ImGui::BeginPopupContextItem("RuntimeLogContext")) {
-          inspector_selected_sequence_ = event.sequence;
-          if (ImGui::MenuItem("Copy message")) {
-            ImGui::SetClipboardText(event.message.c_str());
-            ShowCopyNotification();
-          }
-          if (ImGui::MenuItem("Copy row")) {
-            const auto line = FormatRuntimeLogRow(event);
-            ImGui::SetClipboardText(line.c_str());
-            ShowCopyNotification();
-          }
-          ImGui::EndPopup();
-        }
-        ImGui::PopID();
-
-        ImGui::TableSetColumnIndex(1);
-        const auto level_name = cyxwiz::RuntimeLogLevelName(event.level);
-        ImGui::TextUnformatted(level_name.data(),
-                               level_name.data() + level_name.size());
-        ImGui::TableSetColumnIndex(2);
-        ImGui::TextUnformatted(event.category.c_str());
-        ImGui::TableSetColumnIndex(3);
-        ImGui::TextUnformatted(event.source.c_str());
-        ImGui::TableSetColumnIndex(4);
-        ImGui::TextUnformatted(event.primary_error_code.c_str());
-        ImGui::TableSetColumnIndex(5);
-        ImGui::TextUnformatted(event.run_id.c_str());
-        ImGui::TableSetColumnIndex(6);
-        if (!event.backend.empty() || event.device_id >= 0) {
-          ImGui::Text("%s:%d", event.backend.c_str(), event.device_id);
-        }
-        ImGui::TableSetColumnIndex(7);
-        ImGui::TextUnformatted(event.message.c_str());
-      }
-    }
-    if (auto_scroll_ && !inspector_paused_ &&
-        inspector_last_rendered_high_water_ !=
-            result->query.high_water_sequence) {
-      ImGui::SetScrollHereY(1.0f);
-    }
-    inspector_last_rendered_high_water_ = result->query.high_water_sequence;
-    ImGui::EndTable();
-  }
-  ImGui::EndChild();
-}
-
-void Console::RenderInspectorDetails(
-    const cyxwiz::RuntimeLogInspectorResult *result) {
-  const auto selected =
-      std::find_if(result->query.events.begin(), result->query.events.end(),
-                   [this](const auto &event) {
-                     return event.sequence == inspector_selected_sequence_;
-                   });
-  ImGui::BeginChild("RuntimeLogDetails", ImVec2(0, 0), false);
-  if (ImGui::Button("Close details") ||
-      (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-       ImGui::IsKeyPressed(ImGuiKey_Escape))) {
-    inspector_selected_sequence_ = 0;
-    ImGui::EndChild();
-    return;
-  }
-  if (selected == result->query.events.end()) {
-    ImGui::TextDisabled("Select a row to inspect structured fields");
-    ImGui::EndChild();
-    return;
-  }
-  const auto &event = *selected;
-  auto details = FormatRuntimeLogDetails(event);
-  ImGui::InputTextMultiline("##RuntimeLogSelectedDetails", details.data(),
-                            details.size() + 1, ImVec2(-1.0f, -1.0f),
-                            ImGuiInputTextFlags_ReadOnly |
-                                ImGuiInputTextFlags_NoHorizontalScroll);
-  ShowHelpTooltip(
-      "Select any text to copy it, or use Copy Selected for the complete row.");
-  ImGui::EndChild();
-}
-
-void Console::RenderAllTab() {
-  const float footer_height =
-      ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
-  ImGui::BeginChild("AllLogsRegion", ImVec2(0, -footer_height), false,
-                    ImGuiWindowFlags_HorizontalScrollbar);
-
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 1));
-
-  const auto entries = SnapshotEntries();
-  for (const auto &entry : entries) {
-    ImVec4 color = GetLevelColor(entry.level);
-    ImGui::PushStyleColor(ImGuiCol_Text, color);
-
-    // Use Selectable for right-click support
-    char buf[1024];
-    const auto timestamp = FormatLogTimestamp(entry.timestamp);
-    snprintf(buf, sizeof(buf), "[%s] %s %s", timestamp.c_str(),
-             GetLevelPrefix(entry.level), entry.message.c_str());
-
-    ImGui::PushID(static_cast<int>(entry.sequence));
-    const bool selected = selected_command_sequence_ == entry.sequence;
-    if (ImGui::Selectable(buf, selected,
-                          ImGuiSelectableFlags_AllowDoubleClick)) {
-      selected_command_sequence_ = entry.sequence;
-      if (ImGui::IsMouseDoubleClicked(0)) {
-        ImGui::SetClipboardText(buf);
-        ShowCopyNotification();
-      }
-    }
-
-    if (ImGui::BeginPopupContextItem("LogContextMenu")) {
-      selected_command_sequence_ = entry.sequence;
-      if (ImGui::MenuItem("Copy Message")) {
-        ImGui::SetClipboardText(entry.message.c_str());
-        ShowCopyNotification();
-      }
-      if (ImGui::MenuItem("Copy Full Line")) {
-        ImGui::SetClipboardText(buf);
-        ShowCopyNotification();
-      }
-      ImGui::EndPopup();
-    }
-    ImGui::PopID();
-
-    ImGui::PopStyleColor();
-  }
-
-  if (auto_scroll_ && (scroll_to_bottom_.load(std::memory_order_relaxed) ||
-                       ImGui::GetScrollY() >= ImGui::GetScrollMaxY())) {
-    ImGui::SetScrollHereY(1.0f);
-  }
-
-  ImGui::PopStyleVar();
-  ImGui::EndChild();
 }
 
 void Console::AddLog(const std::string &message, LogLevel level) {
@@ -1314,6 +549,7 @@ void Console::AddLog(const std::string &message, LogLevel level) {
   entry.level = level;
   entry.timestamp = std::chrono::system_clock::now();
   entry.sequence = ++next_command_sequence_;
+  entry.block = current_command_block_;
   items_.push_back(entry);
   scroll_to_bottom_.store(true, std::memory_order_relaxed);
 
@@ -1358,6 +594,14 @@ void Console::ClearCommandTranscript() {
     items_.clear();
   }
   selected_command_sequence_ = 0;
+  selected_command_block_ = 0;
+  // Keep only running blocks (pip): their later output shows as plain lines.
+  for (auto it = command_blocks_.begin(); it != command_blocks_.end();) {
+    if (it->second.running)
+      ++it;
+    else
+      it = command_blocks_.erase(it);
+  }
 }
 
 std::vector<Console::LogEntry> Console::SnapshotEntries() const {
@@ -1525,8 +769,9 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
     return;
   }
 
-  AddInfo("Executing project pip command");
-  AddInfo("Running in background (UI remains responsive)...");
+  AddInfo("Project environment " + project_root.filename().string() +
+          "/python; runs in the background, the Engine stays responsive");
+  const uint64_t block = current_command_block_;
   spdlog::info("Console executing a project pip command asynchronously");
 
   // Run command asynchronously using AsyncTaskManager
@@ -1537,17 +782,16 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
   Console *console_ptr = this;
   const std::weak_ptr<const void> owner = task_owner_token_;
 
-  task_mgr.RunAsync(
+  const uint64_t task_id = task_mgr.RunAsync(
       "pip command",
-      [console_ptr, owner, venv_pip, pip_arguments](cyxwiz::LambdaTask &task) {
+      [console_ptr, owner, venv_pip, pip_arguments, block](cyxwiz::LambdaTask &task) {
         // Output is marshalled to the UI thread and dropped once the
         // console is gone; the worker never dereferences it.
-        const auto emit = [&owner, console_ptr](
-                              void (Console::*add)(const std::string &),
-                              std::string text) {
+        const auto emit = [&owner, console_ptr, block](LogLevel level,
+                                                       std::string text) {
           cyxwiz::AsyncTaskManager::Instance().PostToMainThread(
-              owner, [console_ptr, add, text = std::move(text)] {
-                (console_ptr->*add)(text);
+              owner, [console_ptr, level, block, text = std::move(text)] {
+                console_ptr->AddBlockLine(block, text, level);
               });
         };
         task.ReportProgress(0.1f, "Starting pip command...");
@@ -1566,7 +810,7 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
 
         HANDLE hStdoutRead, hStdoutWrite;
         if (!CreatePipe(&hStdoutRead, &hStdoutWrite, &sa, 0)) {
-          emit(&Console::AddError, "Failed to create pipe for command output");
+          emit(LogLevel::Error, "Failed to create pipe for command output");
           task.MarkFailed("Failed to create pipe");
           return;
         }
@@ -1587,7 +831,7 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
         if (!CreateProcessA(NULL, const_cast<char *>(cmd_copy.c_str()), NULL,
                             NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si,
                             &pi)) {
-          emit(&Console::AddError, "Failed to execute pip command");
+          emit(LogLevel::Error, "Failed to execute pip command");
           CloseHandle(hStdoutRead);
           CloseHandle(hStdoutWrite);
           task.MarkFailed("Failed to create process");
@@ -1617,7 +861,7 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
               line.pop_back();
             }
             if (!line.empty()) {
-              emit(&Console::AddInfo, line);
+              emit(LogLevel::Info, line);
             }
             line_buffer = line_buffer.substr(pos + 1);
           }
@@ -1625,14 +869,14 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
           // Check for cancellation
           if (task.IsCancelRequested()) {
             TerminateProcess(pi.hProcess, 1);
-            emit(&Console::AddWarning, "Command cancelled by user");
+            emit(LogLevel::Warning, "Command cancelled by user");
             break;
           }
         }
 
         // Print remaining buffer
         if (!line_buffer.empty()) {
-          emit(&Console::AddInfo, line_buffer);
+          emit(LogLevel::Info, line_buffer);
         }
 
         WaitForSingleObject(pi.hProcess, INFINITE);
@@ -1647,16 +891,16 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
         task.ReportProgress(1.0f, "Command finished");
 
         if (exit_code == 0) {
-          emit(&Console::AddSuccess, "Command completed successfully");
+          emit(LogLevel::Success, "Command completed successfully");
         } else {
-          emit(&Console::AddError, "Command failed with exit code: " +
+          emit(LogLevel::Error, "Command failed with exit code: " +
                                 std::to_string(exit_code));
           task.MarkFailed("Exit code: " + std::to_string(exit_code));
         }
 #else
         int output_pipe[2];
         if (pipe(output_pipe) != 0) {
-          emit(&Console::AddError, "Failed to create pipe for command output");
+          emit(LogLevel::Error, "Failed to create pipe for command output");
           task.MarkFailed("Failed to create pipe");
           return;
         }
@@ -1665,7 +909,7 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
         if (child < 0) {
           close(output_pipe[0]);
           close(output_pipe[1]);
-          emit(&Console::AddError, "Failed to execute pip command");
+          emit(LogLevel::Error, "Failed to execute pip command");
           task.MarkFailed("Failed to fork process");
           return;
         }
@@ -1693,7 +937,7 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
           close(output_pipe[0]);
           kill(child, SIGTERM);
           waitpid(child, nullptr, 0);
-          emit(&Console::AddError, "Failed to read pip command output");
+          emit(LogLevel::Error, "Failed to read pip command output");
           task.MarkFailed("Failed to open command output");
           return;
         }
@@ -1709,13 +953,13 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
             line.pop_back();
           }
           if (!line.empty()) {
-            emit(&Console::AddInfo, line);
+            emit(LogLevel::Info, line);
           }
 
           // Check for cancellation
           if (task.IsCancelRequested()) {
             kill(child, SIGTERM);
-            emit(&Console::AddWarning, "Command cancelled by user");
+            emit(LogLevel::Warning, "Command cancelled by user");
             cancelled = true;
             break;
           }
@@ -1731,37 +975,29 @@ void Console::ExecutePipCommand(const std::vector<std::string> &pip_arguments) {
 
         const int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
         if (exit_code == 0) {
-          emit(&Console::AddSuccess, "Command completed successfully");
+          emit(LogLevel::Success, "Command completed successfully");
         } else {
-          emit(&Console::AddError, "Command failed with exit code: " +
+          emit(LogLevel::Error, "Command failed with exit code: " +
                                 std::to_string(exit_code));
           task.MarkFailed("Exit code: " + std::to_string(exit_code));
         }
 #endif
       },
       nullptr, // progress callback
-      [](bool success, const std::string &error) {
+      [console_ptr, owner, block](bool success, const std::string &error) {
         if (!success && !error.empty()) {
           spdlog::error("Pip command task failed: {}", error);
         }
+        // Completion callbacks run on the UI thread.
+        if (owner.lock())
+          console_ptr->FinishPipBlock(block, success);
       },
       owner);
-}
-
-void Console::ExecCommand(const char *command) {
-  AddLog(std::string("> ") + command, LogLevel::Info);
-  const auto result = command_service_->Execute(command);
-  switch (result.action) {
-  case cyxwiz::RuntimeConsoleAction::Clear:
-    ClearCommandTranscript();
-    break;
-  case cyxwiz::RuntimeConsoleAction::ExecutePip:
-    ExecutePipCommand(result.action_arguments);
-    break;
-  case cyxwiz::RuntimeConsoleAction::None:
-    break;
+  if (block != 0) {
+    auto &state = command_blocks_[block];
+    state.running = true;
+    state.task_id = task_id;
   }
-  AppendCommandResult(result);
 }
 
 void Console::AppendCommandResult(
@@ -1785,23 +1021,6 @@ void Console::AppendCommandResult(
       break;
     }
   }
-}
-
-int Console::InputTextCallback(ImGuiInputTextCallbackData *data) {
-  return static_cast<Console *>(data->UserData)->HandleInputTextCallback(data);
-}
-
-int Console::HandleInputTextCallback(ImGuiInputTextCallbackData *data) {
-  if (data->EventFlag != ImGuiInputTextFlags_CallbackHistory)
-    return 0;
-  const auto command = data->EventKey == ImGuiKey_UpArrow
-                           ? command_service_->PreviousCommand()
-                           : command_service_->NextCommand();
-  if (!command)
-    return 0;
-  data->DeleteChars(0, data->BufTextLen);
-  data->InsertChars(0, command->c_str());
-  return 0;
 }
 
 const char *Console::GetLevelPrefix(LogLevel level) const {
@@ -1836,61 +1055,6 @@ ImVec4 Console::GetLevelColor(LogLevel level) const {
   default:
     return ImVec4(1.0f, 1.0f, 1.0f, 1.0f); // White
   }
-}
-
-void Console::CopyCommandTranscript() {
-  std::ostringstream ss;
-  for (const auto &entry : SnapshotEntries()) {
-    ss << "[" << FormatLogTimestamp(entry.timestamp) << "] "
-       << GetLevelPrefix(entry.level) << " " << entry.message << "\n";
-  }
-  ImGui::SetClipboardText(ss.str().c_str());
-}
-
-void Console::CopySelectedCommand() {
-  const auto entries = SnapshotEntries();
-  const auto selected =
-      std::find_if(entries.begin(), entries.end(), [this](const auto &entry) {
-        return entry.sequence == selected_command_sequence_;
-      });
-  if (selected == entries.end()) {
-    selected_command_sequence_ = 0;
-    return;
-  }
-  std::ostringstream output;
-  output << '[' << FormatLogTimestamp(selected->timestamp) << "] "
-         << GetLevelPrefix(selected->level) << ' ' << selected->message;
-  ImGui::SetClipboardText(output.str().c_str());
-  ShowCopyNotification();
-}
-
-void Console::CopyFilteredRuntimeLogs() {
-  const auto result = SnapshotInspectorResult();
-  if (!result)
-    return;
-  std::ostringstream output;
-  for (const auto &event : result->query.events) {
-    output << FormatRuntimeLogRow(event) << '\n';
-  }
-  ImGui::SetClipboardText(output.str().c_str());
-}
-
-void Console::CopySelectedRuntimeLog() {
-  const auto result = SnapshotInspectorResult();
-  if (!result)
-    return;
-  const auto selected =
-      std::find_if(result->query.events.begin(), result->query.events.end(),
-                   [this](const auto &event) {
-                     return event.sequence == inspector_selected_sequence_;
-                   });
-  if (selected == result->query.events.end()) {
-    inspector_selected_sequence_ = 0;
-    return;
-  }
-  const auto output = FormatRuntimeLogRow(*selected);
-  ImGui::SetClipboardText(output.c_str());
-  ShowCopyNotification();
 }
 
 void Console::OpenRuntimeLogExportDialog() {
@@ -1967,6 +1131,7 @@ void Console::QueueRuntimeLogExport(const std::filesystem::path &destination) {
             task_state->message =
                 "Exported " + std::to_string(result.events_written) +
                 " runtime-log event(s) to " + result.destination.string();
+            task_state->destination = result.destination;
           }
           task.ReportProgress(1.0f, "Runtime-log export complete");
         } catch (const std::exception &error) {

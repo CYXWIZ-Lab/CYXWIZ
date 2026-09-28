@@ -46,7 +46,27 @@ void Theme::ApplyImNodesStyle() {
 
     // Theme-specific colors
     switch (current_preset_) {
-        case ThemePreset::CyxWizDark:
+        case ThemePreset::CyxWizDark: {
+            // Console design palette (navy nodes, purple accent).
+            style.Colors[ImNodesCol_NodeBackground] = ColorToU32(ImVec4(0.078f, 0.102f, 0.145f, 1.0f));
+            style.Colors[ImNodesCol_NodeBackgroundHovered] = ColorToU32(ImVec4(0.102f, 0.133f, 0.200f, 1.0f));
+            style.Colors[ImNodesCol_NodeBackgroundSelected] = ColorToU32(ImVec4(0.122f, 0.157f, 0.251f, 1.0f));
+            style.Colors[ImNodesCol_NodeOutline] = ColorToU32(ImVec4(0.141f, 0.196f, 0.322f, 1.0f));
+            style.Colors[ImNodesCol_TitleBar] = ColorToU32(ImVec4(0.357f, 0.239f, 0.961f, 1.0f));
+            style.Colors[ImNodesCol_TitleBarHovered] = ColorToU32(ImVec4(0.439f, 0.333f, 0.980f, 1.0f));
+            style.Colors[ImNodesCol_TitleBarSelected] = ColorToU32(ImVec4(0.525f, 0.431f, 1.000f, 1.0f));
+            style.Colors[ImNodesCol_Link] = ColorToU32(ImVec4(0.702f, 0.651f, 1.000f, 1.0f));
+            style.Colors[ImNodesCol_LinkHovered] = ColorToU32(ImVec4(0.812f, 0.776f, 1.000f, 1.0f));
+            style.Colors[ImNodesCol_LinkSelected] = ColorToU32(ImVec4(0.900f, 0.880f, 1.000f, 1.0f));
+            style.Colors[ImNodesCol_Pin] = ColorToU32(ImVec4(0.702f, 0.651f, 1.000f, 1.0f));
+            style.Colors[ImNodesCol_PinHovered] = ColorToU32(ImVec4(0.900f, 0.880f, 1.000f, 1.0f));
+            style.Colors[ImNodesCol_BoxSelector] = ColorToU32(ImVec4(0.357f, 0.239f, 0.961f, 0.25f));
+            style.Colors[ImNodesCol_BoxSelectorOutline] = ColorToU32(ImVec4(0.357f, 0.239f, 0.961f, 1.0f));
+            style.Colors[ImNodesCol_GridBackground] = ColorToU32(ImVec4(0.043f, 0.055f, 0.075f, 1.0f));
+            style.Colors[ImNodesCol_GridLine] = ColorToU32(ImVec4(0.082f, 0.106f, 0.149f, 1.0f));
+            style.Colors[ImNodesCol_GridLinePrimary] = ColorToU32(ImVec4(0.118f, 0.145f, 0.200f, 1.0f));
+            break;
+        }
         case ThemePreset::CyxWizLaunch:
         case ThemePreset::ModernDark: {
             // Dark blue-accented theme

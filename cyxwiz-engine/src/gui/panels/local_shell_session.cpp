@@ -155,7 +155,7 @@ void LocalShellSession::DrainProcessOutput() {
 
 void LocalShellSession::RenderTerminal() {
   ImFont *terminal_font =
-      gui::GetEditorMonoFont(ImGui::GetIO().FontGlobalScale);
+      gui::GetCodeFont();
   if (terminal_font)
     ImGui::PushFont(terminal_font);
   ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.063f, 0.078f, 0.094f, 1.0f));

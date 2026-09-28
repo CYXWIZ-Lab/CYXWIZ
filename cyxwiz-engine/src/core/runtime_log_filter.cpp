@@ -714,6 +714,10 @@ RuntimeLogQueryResult RuntimeLogQueryService::Query(
 
     for (const auto& event : snapshot.events) {
         if (request.collect_facets) {
+            const auto level_index = static_cast<size_t>(event.level);
+            if (level_index < result.facets.level_counts.size()) {
+                ++result.facets.level_counts[level_index];
+            }
             if (!event.category.empty()) categories.insert(event.category);
             if (!event.source.empty()) sources.insert(event.source);
             if (!event.primary_error_code.empty()) {

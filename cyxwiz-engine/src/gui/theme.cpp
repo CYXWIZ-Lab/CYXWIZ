@@ -72,8 +72,59 @@ std::vector<ThemePreset> Theme::GetAvailablePresets() {
     };
 }
 
+const char* Theme::GetPresetGroup(ThemePreset preset) {
+    switch (preset) {
+        case ThemePreset::CyxWizDark:
+        case ThemePreset::CyxWizLight:
+        case ThemePreset::CyxWizLaunch:    return "CyxWiz";
+        case ThemePreset::VSCodeDark:
+        case ThemePreset::UnrealEngine:
+        case ThemePreset::ModernDark:
+        case ThemePreset::HighContrast:    return "IDE";
+        case ThemePreset::Dracula:
+        case ThemePreset::OneDarkPro:
+        case ThemePreset::Nord:
+        case ThemePreset::CatppuccinMocha: return "Vibrant";
+        case ThemePreset::CyxOSAqua:
+        case ThemePreset::CyxOSFluent:
+        case ThemePreset::CyxOSCoder:
+        case ThemePreset::CyxOSOffice:     return "CyxOS";
+        case ThemePreset::CyxOSTuiClassic:
+        case ThemePreset::CyxOSTuiMatrix:
+        case ThemePreset::CyxOSTuiAmber:   return "Retro terminal";
+        default:                           return "Other";
+    }
+}
+
+Theme::PresetSwatch Theme::GetPresetSwatch(ThemePreset preset) {
+    // Colours taken from each preset's definition (theme_presets.cpp).
+    const auto c = [](float r, float g, float b) { return ImVec4(r, g, b, 1.0f); };
+    switch (preset) {
+        case ThemePreset::CyxWizDark:      return {c(0.059f, 0.075f, 0.098f), c(0.067f, 0.086f, 0.118f), c(0.357f, 0.239f, 0.961f)};
+        case ThemePreset::CyxWizLight:     return {c(0.96f, 0.96f, 0.97f), c(0.88f, 0.88f, 0.90f), c(0.20f, 0.50f, 0.80f)};
+        case ThemePreset::CyxWizLaunch:    return {c(0.04f, 0.07f, 0.13f), c(0.06f, 0.10f, 0.17f), c(0.02f, 0.36f, 0.92f)};
+        case ThemePreset::VSCodeDark:      return {c(0.118f, 0.118f, 0.118f), c(0.153f, 0.153f, 0.153f), c(0.075f, 0.463f, 0.788f)};
+        case ThemePreset::UnrealEngine:    return {c(0.12f, 0.12f, 0.12f), c(0.16f, 0.16f, 0.16f), c(0.13f, 0.59f, 0.95f)};
+        case ThemePreset::ModernDark:      return {c(0.10f, 0.10f, 0.12f), c(0.14f, 0.14f, 0.16f), c(0.40f, 0.55f, 0.80f)};
+        case ThemePreset::HighContrast:    return {c(0.00f, 0.00f, 0.00f), c(0.10f, 0.10f, 0.10f), c(0.00f, 0.80f, 1.00f)};
+        case ThemePreset::Dracula:         return {c(0.16f, 0.16f, 0.21f), c(0.22f, 0.22f, 0.28f), c(0.74f, 0.58f, 0.98f)};
+        case ThemePreset::OneDarkPro:      return {c(0.16f, 0.17f, 0.20f), c(0.21f, 0.22f, 0.26f), c(0.38f, 0.69f, 0.94f)};
+        case ThemePreset::Nord:            return {c(0.18f, 0.20f, 0.25f), c(0.26f, 0.30f, 0.37f), c(0.53f, 0.75f, 0.82f)};
+        case ThemePreset::CatppuccinMocha: return {c(0.12f, 0.12f, 0.18f), c(0.19f, 0.20f, 0.27f), c(0.80f, 0.65f, 0.97f)};
+        case ThemePreset::CyxOSAqua:       return {c(0.11f, 0.11f, 0.12f), c(0.18f, 0.18f, 0.18f), c(0.00f, 0.48f, 1.00f)};
+        case ThemePreset::CyxOSFluent:     return {c(0.13f, 0.13f, 0.13f), c(0.18f, 0.18f, 0.18f), c(0.00f, 0.47f, 0.83f)};
+        case ThemePreset::CyxOSCoder:      return {c(0.12f, 0.12f, 0.18f), c(0.20f, 0.20f, 0.26f), c(0.54f, 0.71f, 0.98f)};
+        case ThemePreset::CyxOSOffice:     return {c(0.12f, 0.16f, 0.22f), c(0.22f, 0.25f, 0.32f), c(0.15f, 0.39f, 0.92f)};
+        case ThemePreset::CyxOSTuiClassic: return {c(0.04f, 0.04f, 0.04f), c(0.05f, 0.05f, 0.05f), c(0.20f, 1.00f, 0.20f)};
+        case ThemePreset::CyxOSTuiMatrix:  return {c(0.00f, 0.00f, 0.00f), c(0.00f, 0.07f, 0.00f), c(0.00f, 1.00f, 0.25f)};
+        case ThemePreset::CyxOSTuiAmber:   return {c(0.05f, 0.04f, 0.02f), c(0.10f, 0.07f, 0.04f), c(1.00f, 0.69f, 0.00f)};
+        default:                           return {c(0.059f, 0.075f, 0.098f), c(0.067f, 0.086f, 0.118f), c(0.357f, 0.239f, 0.961f)};
+    }
+}
+
 void Theme::ApplyPreset(ThemePreset preset) {
     current_preset_ = preset;
+    config_.child_border_size = 1.0f;
 
     switch (preset) {
         // CyxWiz branded
@@ -127,6 +178,7 @@ void Theme::ApplyStyleConfig() {
     style.WindowBorderSize = config_.window_border_size;
     style.FrameBorderSize = config_.frame_border_size;
     style.PopupBorderSize = config_.popup_border_size;
+    style.ChildBorderSize = config_.child_border_size;
 
     // Padding and spacing
     style.WindowPadding = config_.window_padding;

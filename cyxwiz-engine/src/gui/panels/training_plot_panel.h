@@ -272,9 +272,11 @@ private:
 
     // Helper methods
     void RenderTrainingStatus();
-    void RenderLossPlot();
-    void RenderAccuracyPlot();
-    void RenderCustomMetricsPlot();
+    void RenderLossPlot(float plot_height);
+    void RenderAccuracyPlot(float plot_height);
+    void RenderCustomMetricsPlot(float plot_height);
+    void RenderKpiCards();
+    void RenderEmptyState();
     void RenderControls();
     void RenderCurveSummary();
     void RenderSequenceMetricsSummary();

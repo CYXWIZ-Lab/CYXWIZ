@@ -104,6 +104,10 @@ set(ENGINE_SOURCES
     src/core/route_qualification_service.cpp
     src/core/route_recommendation.cpp
     src/core/compute_device_presentation.cpp
+    src/core/python_repl_presentation.cpp
+    src/core/runtime_log_presentation.cpp
+    src/core/console_commands_presentation.cpp
+    src/core/appearance_options.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_sparse.cpp
     src/core/data_registry.cpp
@@ -286,6 +290,8 @@ set(ENGINE_SOURCES
     src/gui/node_editor_icons.cpp
     src/gui/node_documentation.cpp
     src/gui/console.cpp
+    src/gui/console_logs.cpp
+    src/gui/console_commands.cpp
     src/gui/console_session_model.cpp
     src/gui/console_workbench.cpp
     src/gui/panels/agent_llm_session.cpp
@@ -335,6 +341,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_file_menu.cpp
     src/gui/panels/toolbar_edit_menu.cpp
     src/gui/panels/toolbar_view_menu.cpp
+    src/gui/panels/toolbar_appearance.cpp
     src/gui/panels/toolbar_profile_menu.cpp
     src/gui/panels/toolbar_other_menus.cpp
     src/gui/panels/toolbar_tools_menu.cpp
@@ -538,6 +545,8 @@ set(ENGINE_SOURCES
     src/gui/theme_dock.cpp
     src/gui/theme_presets.cpp
     src/gui/dock_style.cpp
+    src/gui/appearance_settings.cpp
+    src/gui/console_palette.cpp
     # Data Studio (Phase 1 Week 1)
     # src/gui/data_studio/pipeline_canvas.cpp  # Unified Canvas Phase 5: Replaced by Node Editor
     src/gui/data_studio/query_editor.cpp

@@ -62,6 +62,7 @@ struct ThemeConfig {
     float window_border_size = 1.0f;
     float frame_border_size = 0.0f;
     float popup_border_size = 1.0f;
+    float child_border_size = 1.0f;   // bordered child regions (canvas, cards)
 
     // Padding and spacing
     ImVec2 window_padding = ImVec2(8.0f, 8.0f);
@@ -92,6 +93,11 @@ public:
 
     // Get preset name for display
     static const char* GetPresetName(ThemePreset preset);
+    // Group heading for the Appearance theme cards ("CyxWiz", "IDE", ...).
+    static const char* GetPresetGroup(ThemePreset preset);
+    // Card swatch: window background, panel, accent.
+    struct PresetSwatch { ImVec4 background; ImVec4 panel; ImVec4 accent; };
+    static PresetSwatch GetPresetSwatch(ThemePreset preset);
 
     // Get all available presets
     static std::vector<ThemePreset> GetAvailablePresets();

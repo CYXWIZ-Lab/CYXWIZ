@@ -42,6 +42,13 @@ public:
     }
 
     /**
+     * Set callback for a node card click (pins it in the Info Panel)
+     */
+    void SetNodeSelectCallback(std::function<void(cyxwiz::NodeType)> callback) {
+        on_node_select_ = callback;
+    }
+
+    /**
      * Render the panel
      */
     void Render();
@@ -138,6 +145,8 @@ private:
 
     // Callback for node hover
     std::function<void(cyxwiz::NodeType)> on_node_hover_;
+    std::function<void(cyxwiz::NodeType)> on_node_select_;
+    cyxwiz::NodeType pinned_node_type_ = cyxwiz::NodeType::Unknown;
 
     // Layout constants
     static constexpr float PANEL_MIN_WIDTH = 280.0f;

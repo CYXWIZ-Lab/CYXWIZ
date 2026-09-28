@@ -4,6 +4,7 @@
 #include "../core/runtime_log_inspector.h"
 #include "../plugin/interfaces/i_assistant_provider.h"
 #include "../scripting/script_output_sink.h"
+#include "../core/console_commands_presentation.h"
 #include "console_workbench.h"
 
 #include <atomic>
@@ -39,6 +40,10 @@ class RuntimeTruthQueryProvider;
 
 namespace gui {
 
+// Opens `path` with the system handler, or shows it in the file manager when
+// `reveal` is set. Returns false when the launch failed.
+bool OpenPathWithSystem(const std::filesystem::path &path, bool reveal);
+
 class Console : public scripting::IScriptOutputSink {
   // Lifetime token for background work this console owns (pip commands);
   // its output reaches the console only through the UI thread while alive.
@@ -52,6 +57,11 @@ public:
     LogLevel level;
     std::chrono::system_clock::time_point timestamp;
     uint64_t sequence = 0;
+    // Commands session (tofix121): an entered command opens a block; its
+    // output lines (including pip output that arrives later) carry the
+    // block id. Lines with block 0 come from elsewhere in the Engine.
+    bool is_command = false;
+    uint64_t block = 0;
   };
 
   Console();
@@ -67,6 +77,8 @@ public:
   void SetProjectRoot(std::string project_root);
   void CloseProject(std::string_view project_root);
   bool ActivatePythonRepl();
+  void EndScriptOutput(const std::string &source, bool success, bool cancelled,
+                       double seconds) override;
   void AppendScriptOutput(const std::string &source, const std::string &text,
                           bool is_error = false) override;
   void AddLog(const std::string &message, LogLevel level = LogLevel::Info);
@@ -98,13 +110,25 @@ private:
                               bool request_focus);
   void RenderInspectorTable(const cyxwiz::RuntimeLogInspectorResult *result);
   void RenderInspectorDetails(const cyxwiz::RuntimeLogInspectorResult *result);
-  void RenderLogsToolbar();
-  void RenderCommandsToolbar();
+  void RenderLogsStatus(const cyxwiz::RuntimeLogInspectorResult *result);
+  void UpdateLogsProblemBadge();
+  void SetLogsNotice(std::string message);
+  void RenderCommandsHeader();
+  void RenderCommandQuickRow();
+  void RenderCommandTranscript();
+  void RenderCommandBlock(const LogEntry &command,
+                          const std::vector<const LogEntry *> &lines);
+  void RenderCommandLine(const LogEntry &entry, bool in_block);
   void RenderCommandInput(bool request_focus);
-  void RenderCopyStatus();
+  void RenderCommandSuggestions();
+  void EnsureCommandForms();
+  void AddBlockLine(uint64_t block, const std::string &message, LogLevel level);
+  void FinishPipBlock(uint64_t block, bool success);
+  void SetCommandsNotice(std::string message);
+  std::string CommandBlockText(uint64_t block) const;
   void RenderRuntimeLogExportDialog();
   void RenderRuntimeLogExportStatus();
-  void RenderAllTab();
+  bool IsRuntimeLogExportRunning() const;
   void ExecCommand(const char *command);
   void AppendCommandResult(const cyxwiz::RuntimeConsoleCommandResult &result);
   static int InputTextCallback(ImGuiInputTextCallbackData *data);
@@ -139,10 +163,51 @@ private:
   uint64_t selected_command_sequence_ = 0;
   bool command_input_focus_pending_ = false;
   bool log_search_focus_pending_ = false;
-  char input_buf_[256];
+  char input_buf_[1024];
   std::atomic<bool> scroll_to_bottom_;
   bool show_window_;
   bool auto_scroll_;
+  // Logs session (tofix121): own auto-scroll, short notices ("Copied row"),
+  // the Error/Critical count shown on the Logs tab while it is in the
+  // background, and the engine_log.txt location for Open log file.
+  bool logs_auto_scroll_ = true;
+  std::string logs_notice_;
+  double logs_notice_until_ = 0.0;
+  uint64_t logs_badge_checked_sequence_ = 0;
+  std::uint32_t logs_problem_badge_ = 0;
+  double logs_badge_next_check_ = 0.0;
+  std::filesystem::path log_file_path_;
+
+  // Commands session state (tofix121).
+  struct CommandBlockState {
+    std::string command;
+    std::chrono::steady_clock::time_point started{};
+    bool running = false;
+    bool success = true;
+    bool cancelled = false;
+    uint64_t task_id = 0;  // pip task, for Cancel
+  };
+  std::unordered_map<uint64_t, CommandBlockState> command_blocks_;
+  uint64_t next_command_block_ = 0;
+  uint64_t current_command_block_ = 0;  // set while a command executes
+  uint64_t selected_command_block_ = 0;
+  std::vector<cyxwiz::commands::CommandForm> command_forms_;
+  std::vector<std::pair<std::string, std::string>> command_usages_;  // name, usage
+  std::vector<size_t> command_matches_;
+  int command_match_selected_ = 0;
+  bool command_suggest_open_ = false;
+  bool command_accept_pending_ = false;  // Enter/Tab inserts the suggestion
+  bool command_accepted_ = false;        // this frame's Enter was an insert
+  int command_cursor_to_end_ = 0;        // frames left to force the caret
+  bool command_scroll_selected_ = false;
+  std::string command_notice_;
+  double command_notice_until_ = 0.0;
+  size_t command_last_entry_count_ = 0;
+  std::string command_last_input_;
+  // Row to bring into view once the details drawer has resized the table
+  // (set on click, applied on the next frame).
+  uint64_t pending_scroll_selection_ = 0;
+  uint64_t inspector_scroll_to_selected_ = 0;
   cyxwiz::RuntimeLogInspectorCriteria inspector_criteria_;
   char inspector_text_[128]{};
   char inspector_filter_[1024]{};

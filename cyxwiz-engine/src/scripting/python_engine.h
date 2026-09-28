@@ -19,6 +19,13 @@ public:
     bool IsInitialized() const { return initialized_; }
     bool HasInterpreterMismatch(std::string* reason_out = nullptr) const;
 
+    // Interpreter the running session was started with ("project"/"system").
+    const std::string& ActiveInterpreterPath() const { return active_interpreter_path_; }
+    const std::string& ActiveSource() const { return active_source_; }
+    // Interpreter the next start would use (project venv, configured,
+    // bundled or detected). Does not log.
+    std::string PreviewInterpreterPath() const;
+
     bool ExecuteScript(const std::string& script);
     bool ExecuteFile(const std::string& filepath);
 
@@ -69,6 +76,9 @@ public:
     bool ReloadForProject(std::string* = nullptr) { return false; }
     bool IsInitialized() const { return false; }
     bool HasInterpreterMismatch(std::string* = nullptr) const { return false; }
+    const std::string& ActiveInterpreterPath() const { static const std::string e; return e; }
+    const std::string& ActiveSource() const { static const std::string e; return e; }
+    std::string PreviewInterpreterPath() const { return {}; }
 
     bool ExecuteScript(const std::string&) { return false; }
     bool ExecuteFile(const std::string&) { return false; }

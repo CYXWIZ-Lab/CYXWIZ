@@ -37,6 +37,12 @@ public:
     void SetSelectedNode(NodeType type);
 
     /**
+     * Hover preview: shown only while the pointer stays on a node (call it
+     * every frame while hovering). Without it the pinned node is shown.
+     */
+    void PreviewNode(NodeType type);
+
+    /**
      * Clear the current selection (show placeholder)
      */
     void ClearSelection();
@@ -65,9 +71,14 @@ private:
     ImU32 GetPinTypeColor(PinType type) const;
     const char* GetPinTypeName(PinType type) const;
 
-    // Current selection
+    // Pinned node (clicked) and the node being displayed this frame.
     NodeType selected_type_ = NodeType::Unknown;
+    const NodeMetadata* pinned_metadata_ = nullptr;
     const NodeMetadata* metadata_ = nullptr;
+    // Hover preview, valid while PreviewNode is called each frame.
+    NodeType preview_type_ = NodeType::Unknown;
+    const NodeMetadata* preview_metadata_ = nullptr;
+    int preview_frame_ = -10;
 };
 
 } // namespace cyxwiz

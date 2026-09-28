@@ -2,6 +2,7 @@
 
 #include "runtime_log_store.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -122,6 +123,9 @@ struct RuntimeLogQueryFacets {
     std::vector<uint64_t> task_ids;
     std::vector<int> device_ids;
     std::vector<std::string> backends;
+    // Events per severity (Trace..Critical) in the queried range, before
+    // filters, for the severity chips.
+    std::array<size_t, 6> level_counts{};
 };
 
 struct RuntimeLogQueryResult {

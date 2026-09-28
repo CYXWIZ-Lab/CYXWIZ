@@ -1,6 +1,7 @@
 #include "console_workbench.h"
 #include "icons.h"
 
+#include <algorithm>
 #include <imgui.h>
 
 #include <optional>
@@ -86,6 +87,11 @@ ConsoleWorkbench::EnsureSession(ConsoleSessionKind kind) {
 
 bool ConsoleWorkbench::MarkUnread(std::uint64_t session_id) {
   return sessions_.SetUnread(session_id);
+}
+
+bool ConsoleWorkbench::SetProblemBadge(std::uint64_t session_id,
+                                       std::uint32_t count) {
+  return sessions_.SetProblemBadge(session_id, count);
 }
 
 bool ConsoleWorkbench::ConsumeFocusRequest() {
@@ -182,13 +188,46 @@ void ConsoleWorkbench::RenderSessionNavigation() {
   std::optional<std::uint64_t> session_to_close;
   for (const auto &session : sessions_.Sessions()) {
     const bool active = authoritative_session_id == session.id;
-    const ImGuiTabItemFlags flags = applying_pending_selection && active
-                                        ? ImGuiTabItemFlags_SetSelected
-                                        : ImGuiTabItemFlags_None;
-    const std::string label =
-        session.title + "##ConsoleSession" + std::to_string(session.id);
+    ImGuiTabItemFlags flags = applying_pending_selection && active
+                                  ? ImGuiTabItemFlags_SetSelected
+                                  : ImGuiTabItemFlags_None;
+    // New output in a background session shows as a dot on its tab.
+    if (session.unread && !active)
+      flags |= ImGuiTabItemFlags_UnsavedDocument;
+    // A problem badge (red count) is drawn in space reserved after the title.
+    const std::string badge_text =
+        session.problem_badge > 0 && !active
+            ? (session.problem_badge > 99 ? std::string("99+")
+                                          : std::to_string(session.problem_badge))
+            : std::string();
+    std::string reserve;
+    if (!badge_text.empty()) {
+      const float needed = ImGui::CalcTextSize(badge_text.c_str()).x + 14.0f;
+      const float space = std::max(1.0f, ImGui::CalcTextSize(" ").x);
+      reserve.assign(static_cast<size_t>(needed / space) + 1, ' ');
+    }
+    const std::string label = session.title + reserve + "###ConsoleSession" +
+                              std::to_string(session.id);
     bool keep_open = true;
-    if (ImGui::BeginTabItem(label.c_str(), &keep_open, flags)) {
+    const bool tab_open = ImGui::BeginTabItem(label.c_str(), &keep_open, flags);
+    if (!badge_text.empty()) {
+      const ImVec2 tab_min = ImGui::GetItemRectMin();
+      const ImVec2 tab_max = ImGui::GetItemRectMax();
+      const ImVec2 text_size = ImGui::CalcTextSize(badge_text.c_str());
+      const float x = tab_min.x + ImGui::GetStyle().FramePadding.x +
+                      ImGui::CalcTextSize(session.title.c_str()).x + 6.0f;
+      const float h = text_size.y + 2.0f;
+      const float y = (tab_min.y + tab_max.y - h) * 0.5f;
+      ImDrawList *draw = ImGui::GetWindowDrawList();
+      draw->AddRectFilled(ImVec2(x, y), ImVec2(x + text_size.x + 10.0f, y + h),
+                          IM_COL32(217, 83, 79, 255), h * 0.5f);
+      draw->AddText(ImVec2(x + 5.0f, y + 1.0f), IM_COL32(255, 255, 255, 255),
+                    badge_text.c_str());
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%u new error%s", session.problem_badge,
+                          session.problem_badge == 1 ? "" : "s");
+    }
+    if (tab_open) {
       // BeginTabItem can still expose the previously selected tab before
       // ImGui reaches a later SetSelected item. During programmatic
       // navigation the model is authoritative for this synchronization frame.

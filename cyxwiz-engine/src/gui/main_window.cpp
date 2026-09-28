@@ -10,6 +10,7 @@
 #endif
 
 #include "main_window.h"
+#include "appearance_settings.h"
 #include "loaders/data_loader.h"
 #include "graph_training_launcher.h"
 #include "engine_graph_training_dispatch.h"
@@ -719,7 +720,11 @@ MainWindow::MainWindow()
     node_info_panel_ = std::make_unique<cyxwiz::NodeInfoPanel>();
     // Connect Node Browser hover to Info Panel
     if (node_browser_panel_ && node_info_panel_) {
+        // Hover previews a node; a click keeps it in the Info panel.
         node_browser_panel_->SetNodeHoverCallback([this](cyxwiz::NodeType type) {
+            node_info_panel_->PreviewNode(type);
+        });
+        node_browser_panel_->SetNodeSelectCallback([this](cyxwiz::NodeType type) {
             node_info_panel_->SetSelectedNode(type);
         });
     }
@@ -880,14 +885,9 @@ MainWindow::MainWindow()
         this->SaveProjectSettings();
     });
 
-    // When app theme changes from View menu, save settings immediately
+    // View > Theme saves through gui::SetThemePreset (Engine-wide).
     toolbar_->SetAppThemeChangedCallback([](int theme_index) {
-        auto& pm = cyxwiz::ProjectManager::Instance();
-        if (pm.HasActiveProject()) {
-            pm.GetConfig().editor_settings.app_theme = theme_index;
-            pm.SaveProject();
-            spdlog::info("App theme saved to project: {}", theme_index);
-        }
+        spdlog::info("App theme changed: {}", theme_index);
     });
 
     toolbar_->SetLoadCheckpointCallback([this]() {
@@ -2393,11 +2393,9 @@ MainWindow::MainWindow()
         }
     });
 
-    toolbar_->SetEditorFontScaleCallback([this](float scale) {
-        if (script_editor_) {
-            script_editor_->SetFontScale(scale);
-            spdlog::info("Editor font scale changed to {}", scale);
-        }
+    toolbar_->SetEditorFontScaleCallback([](float scale) {
+        gui::SetCodeTextScale(scale);
+        spdlog::info("Code text scale changed to {}", scale);
     });
 
     toolbar_->SetEditorShowWhitespaceCallback([this](bool show) {
@@ -2486,7 +2484,8 @@ MainWindow::MainWindow()
     // Install custom dock node handler for Unreal-style tabs
     DockStyle::InstallCustomHandler();
     auto& dock_style = GetDockStyle();
-    dock_style.SetSidebarPosition(gui::SidebarPosition::Right);
+    dock_style.SetSidebarPosition(gui::SidebarOnLeft() ? gui::SidebarPosition::Left
+                                                        : gui::SidebarPosition::Right);
     dock_style.SetSidebarAutoHide(false);
 
     // Initialize Tutorial System
@@ -6080,7 +6079,10 @@ void MainWindow::HandleGlobalShortcuts() {
 void MainWindow::SaveLayout() {
     // Save to the default imgui.ini in the executable directory
     // This ensures consistent layout across all projects
-    ImGui::SaveIniSettingsToDisk("imgui.ini");
+    // IniFilename is absolute (Application): a relative path would follow
+    // the working directory, which script runs move to the project root.
+    if (const char* ini = ImGui::GetIO().IniFilename)
+        ImGui::SaveIniSettingsToDisk(ini);
     spdlog::info("Saved layout to imgui.ini");
 }
 
@@ -6144,7 +6146,6 @@ void MainWindow::LoadProjectSettings() {
     // Apply editor settings to script editor
     if (script_editor_) {
         script_editor_->SetTheme(settings.theme);
-        script_editor_->SetFontScale(settings.font_scale);
         script_editor_->SetTabSize(settings.tab_size);
         script_editor_->SetShowWhitespace(settings.show_whitespace);
         script_editor_->SetWordWrap(settings.word_wrap);
@@ -6156,7 +6157,7 @@ void MainWindow::LoadProjectSettings() {
     if (toolbar_) {
         toolbar_->SetEditorTheme(settings.theme);
         toolbar_->SetEditorTabSize(settings.tab_size);
-        toolbar_->SetEditorFontScale(settings.font_scale);
+        toolbar_->SetEditorFontScale(gui::CodeTextScale());
         toolbar_->SetEditorShowWhitespace(settings.show_whitespace);
         toolbar_->SetEditorWordWrap(settings.word_wrap);
         toolbar_->SetEditorAutoIndent(settings.auto_indent);
@@ -6164,14 +6165,9 @@ void MainWindow::LoadProjectSettings() {
             settings.materialization_memory_limit_bytes);
     }
 
-    // Apply application theme
-    if (settings.app_theme >= 0 && settings.app_theme < static_cast<int>(ThemePreset::COUNT)) {
-        GetTheme().ApplyPreset(static_cast<ThemePreset>(settings.app_theme));
-        spdlog::info("Loaded app theme from project: {}", settings.app_theme);
-    }
-
-    // Apply UI scale
-    ImGui::GetIO().FontGlobalScale = settings.ui_scale;
+    // Theme and text sizes are Engine-wide (Preferences > Appearance); the
+    // project's older app_theme / ui_scale fields are no longer applied.
+    ImGui::GetIO().FontGlobalScale = 1.0f;
 
     // Load layout file
     LoadLayout();

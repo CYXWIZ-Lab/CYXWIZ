@@ -1,3 +1,5 @@
+#include "ui_buttons.h"
+#include "console_palette.h"
 #include "node_editor.h"
 #include "../core/graph_node_factory.h"
 #include "subgraph_presentation.h"
@@ -1063,21 +1065,19 @@ void NodeEditor::ShowToolbar() {
     // Enhanced toolbar styling
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.28f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.32f, 0.38f, 1.0f));
+    const auto& palette = ::gui::CurrentConsolePalette();
+    const auto separator = [&palette]() {
+        ImGui::TextColored(palette.faint, "|");
+        ImGui::SameLine();
+    };
 
     // Compile Graph - always at the very start so it's never clipped by narrow
     // toolbars. Blue button, always enabled when the callback is wired.
     if (compile_callback_) {
-        ImGui::PopStyleColor(2);  // temporarily drop base button colors
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.45f, 0.75f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.55f, 0.85f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.35f, 0.65f, 1.0f));
         if (ImGui::Button(ICON_FA_CHECK_DOUBLE " Compile")) {
             spdlog::info("NodeEditor: Compile Graph invoked from toolbar");
             compile_callback_();
         }
-        ImGui::PopStyleColor(3);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Compile the graph (F7) - validates structure and reports config without training");
         }
@@ -1089,17 +1089,10 @@ void NodeEditor::ShowToolbar() {
         // button. Only rendered when the debug callback has been wired
         // (MainWindow sets this up alongside SetCompileCallback).
         if (debug_callback_) {
-            ImGui::PushStyleColor(ImGuiCol_Button,
-                                  ImVec4(0.55f, 0.70f, 0.20f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                                  ImVec4(0.65f, 0.80f, 0.28f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-                                  ImVec4(0.45f, 0.60f, 0.15f, 1.0f));
             if (ImGui::Button(ICON_FA_BUG " Local Debug")) {
                 spdlog::info("NodeEditor: Local Debug invoked from toolbar");
                 debug_callback_();
             }
-            ImGui::PopStyleColor(3);
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Local Debug (F6) - run one forward + "
                                   "one backward pass on synthetic data. "
@@ -1109,12 +1102,7 @@ void NodeEditor::ShowToolbar() {
             ImGui::SameLine();
         }
 
-        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-        ImGui::SameLine();
-
-        // Restore base button colors
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.28f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.32f, 0.38f, 1.0f));
+        separator();
     }
 
     // File operations with icons
@@ -1128,8 +1116,7 @@ void NodeEditor::ShowToolbar() {
     }
     ImGui::SameLine();
 
-    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-    ImGui::SameLine();
+    separator();
 
     // Zoom controls
     if (ImGui::Button(ICON_FA_MINUS)) {
@@ -1147,8 +1134,7 @@ void NodeEditor::ShowToolbar() {
     }
     ImGui::SameLine();
 
-    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-    ImGui::SameLine();
+    separator();
 
     // Selection tools
     if (ImGui::Button(ICON_FA_OBJECT_GROUP " Select All")) {
@@ -1168,8 +1154,7 @@ void NodeEditor::ShowToolbar() {
     }
     ImGui::SameLine();
 
-    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-    ImGui::SameLine();
+    separator();
 
     // Custom Node Editor - opens the panel where users define their own node types
     if (open_custom_node_editor_callback_) {
@@ -1181,40 +1166,50 @@ void NodeEditor::ShowToolbar() {
         }
         ImGui::SameLine();
 
-        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-        ImGui::SameLine();
+        separator();
     }
 
-    // Minimap toggle
-    if (ImGui::Button(show_minimap_ ? ICON_FA_SITEMAP " Minimap" : ICON_FA_SITEMAP)) {
-        show_minimap_ = !show_minimap_;
+    // Minimap toggle: one label, highlighted while the minimap is shown.
+    {
+        const bool on = show_minimap_;
+        if (on) {
+            const ImVec4 accent(0.357f, 0.239f, 0.961f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(accent.x, accent.y, accent.z, 0.55f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(accent.x, accent.y, accent.z, 0.75f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
+        }
+        if (ImGui::Button(ICON_FA_SITEMAP " Minimap")) {
+            show_minimap_ = !show_minimap_;
+        }
+        if (on) ImGui::PopStyleColor(3);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(on ? "Hide the minimap" : "Show the minimap (overview of the canvas)");
+        }
     }
     ImGui::SameLine();
 
-    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-    ImGui::SameLine();
+    separator();
 
     // Stats display
-    ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f), ICON_FA_CIRCLE_NODES " %zu", nodes_.size());
+    ImGui::TextColored(palette.muted, ICON_FA_CIRCLE_NODES " %zu", nodes_.size());
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nodes on the canvas");
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f), ICON_FA_LINK " %zu", links_.size());
-    
+    ImGui::TextColored(palette.muted, ICON_FA_LINK " %zu", links_.size());
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Links on the canvas");
+
     int num_selected = ImNodes::NumSelectedNodes();
     if (num_selected > 0) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), ICON_FA_SQUARE_CHECK " %d", num_selected);
+        ImGui::TextColored(palette.accent_text, ICON_FA_SQUARE_CHECK " %d", num_selected);
     }
 
-    ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(2);
 
     // Code generation controls - second toolbar row
     ImGui::Separator();
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.28f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.32f, 0.38f, 1.0f));
-    ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f), ICON_FA_CODE " Code:");
+    ImGui::TextColored(palette.muted, ICON_FA_CODE " Code:");
     ImGui::SameLine();
 
     // Framework selection
@@ -1254,12 +1249,9 @@ void NodeEditor::ShowToolbar() {
             ? nullptr
             : cyxwiz::AsyncTaskManager::Instance().GetTask(pipeline_task_id_);
         if (pipeline_execution_active_ && pipeline_task) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.2f, 0.2f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.78f, 0.28f, 0.28f, 1.0f));
-            if (ImGui::Button(ICON_FA_STOP " Cancel Pipeline")) {
+            if (cyxwiz::ui::DangerButton(ICON_FA_STOP " Cancel Pipeline")) {
                 cyxwiz::AsyncTaskManager::Instance().Cancel(pipeline_task_id_);
             }
-            ImGui::PopStyleColor(2);
 
             const auto task_info = pipeline_task->GetInfo();
             ImGui::SameLine();
@@ -1274,12 +1266,9 @@ void NodeEditor::ShowToolbar() {
             }
         } else {
             // Execute data pipeline button
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.9f, 1.0f));
             if (ImGui::Button(ICON_FA_PLAY " Execute Pipeline")) {
                 ExecuteDataPipeline();
             }
-            ImGui::PopStyleColor(2);
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Execute data transformation pipeline using DuckDB");
             }
@@ -1293,8 +1282,7 @@ void NodeEditor::ShowToolbar() {
 
     // Training controls
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-    ImGui::SameLine();
+    separator();
 
     // Check training state from TrainingManager
     auto& training_mgr = cyxwiz::TrainingManager::Instance();
@@ -1303,67 +1291,42 @@ void NodeEditor::ShowToolbar() {
     if (training_active) {
         // Show training progress and stop button
         auto metrics = training_mgr.GetCurrentMetrics();
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), ICON_FA_SPINNER " Epoch %d/%d",
+        ImGui::TextColored(palette.success, ICON_FA_SPINNER " Epoch %d/%d",
             metrics.current_epoch, metrics.total_epochs);
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
-        if (ImGui::Button(ICON_FA_STOP " Stop")) {
+        if (cyxwiz::ui::DangerButton(ICON_FA_STOP " Stop")) {
             training_mgr.StopTraining();
         }
-        ImGui::PopStyleColor(2);
     } else {
         // Train button - green when valid, disabled when invalid
         // (Compile button is at the top of the toolbar — always visible regardless of window width)
-        bool can_train = IsGraphValid() && train_callback_;
-        if (!can_train) {
-            ImGui::BeginDisabled();
-        }
-
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.5f, 0.1f, 1.0f));
-        if (ImGui::Button(ICON_FA_PLAY " Train")) {
-            if (train_callback_) {
-                spdlog::info("NodeEditor: Starting training from graph");
-                train_callback_(nodes_, links_);
-            }
-        }
-        ImGui::PopStyleColor(3);
-
-        if (!can_train) {
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                if (!train_callback_) {
-                    ImGui::SetTooltip("Training callback not set (no dataset loaded?)");
-                } else {
-                    ImGui::SetTooltip("Graph is not valid for training. Need: DatasetInput -> Model layers -> Loss");
-                }
-            }
+        const bool can_train = IsGraphValid() && train_callback_;
+        const char* train_blocked =
+            !train_callback_ ? "Training is not available yet (no dataset loaded?)"
+                             : "The graph is not ready to train. It needs a dataset input, "
+                               "model layers and a loss.";
+        if (cyxwiz::ui::PrimaryButton(ICON_FA_PLAY " Train", can_train, train_blocked,
+                                      cyxwiz::ui::ButtonSize::Small)) {
+            spdlog::info("NodeEditor: Starting training from graph");
+            train_callback_(nodes_, links_);
         }
     }
 
     // Simulation controls (for signal/MuJoCo Plant graphs)
     if (HasSimulationNodes()) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-        ImGui::SameLine();
+        separator();
 
         if (is_simulating_) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
-            if (ImGui::Button(ICON_FA_STOP " Stop Sim")) {
+            if (cyxwiz::ui::DangerButton(ICON_FA_STOP " Stop Sim")) {
                 OnStopSimulation();
             }
-            ImGui::PopStyleColor(2);
             ImGui::SameLine();
             if (graph_executor_) {
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "t=%.2fs",
+                ImGui::TextColored(palette.success, "t=%.2fs",
                     graph_executor_->GetSimTime());
             }
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.45f, 0.6f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.55f, 0.7f, 1.0f));
             bool rl_running = rl_executor_ && rl_executor_->IsTraining();
             if (rl_running) {
                 ImGui::BeginDisabled();
@@ -1375,34 +1338,27 @@ void NodeEditor::ShowToolbar() {
             } else if (ImGui::Button(ICON_FA_PLAY " Run Sim")) {
                 OnRunSimulation();
             }
-            ImGui::PopStyleColor(2);
         }
     }
 
     // RL Training controls (for graphs with RL nodes)
     if (HasRLNodes()) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-        ImGui::SameLine();
+        separator();
 
         if (rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining())) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
-            if (ImGui::Button(ICON_FA_STOP " Stop RL")) {
+            if (cyxwiz::ui::DangerButton(ICON_FA_STOP " Stop RL")) {
                 OnStopRLTraining();
             }
-            ImGui::PopStyleColor(2);
             ImGui::SameLine();
             if (rl_script_running_) {
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Training via Python...");
+                ImGui::TextColored(palette.success, "Training via Python...");
             } else if (rl_executor_) {
                 auto metrics = rl_executor_->GetMetrics();
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Ep %d | R:%.1f",
+                ImGui::TextColored(palette.success, "Ep %d | R:%.1f",
                     metrics.episode_count, metrics.mean_episode_reward);
             }
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.5f, 0.3f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.6f, 0.4f, 1.0f));
             if (is_simulating_) {
                 ImGui::BeginDisabled();
                 ImGui::Button(ICON_FA_PLAY " Train RL");
@@ -1413,7 +1369,6 @@ void NodeEditor::ShowToolbar() {
             } else if (ImGui::Button(ICON_FA_PLAY " Train RL")) {
                 OnStartRLTraining();
             }
-            ImGui::PopStyleColor(2);
         }
     }
 
@@ -1429,26 +1384,21 @@ void NodeEditor::ShowToolbar() {
             }
             ImGui::EndDisabled();
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.3f, 0.1f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.4f, 0.2f, 1.0f));
             if (ImGui::Button(ICON_FA_FILE_EXPORT " Export ONNX")) {
                 export_onnx_dialog_open_ = true;
             }
-            ImGui::PopStyleColor(2);
         }
     }
 
     // Sim performance metrics (Phase 4.7)
     if (is_simulating_ && last_eval_time_ms_ > 0.0f) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "|");
-        ImGui::SameLine();
+        separator();
         float fps = (last_eval_time_ms_ > 0.001f) ? 1000.0f / last_eval_time_ms_ : 0.0f;
-        ImVec4 color = (last_eval_time_ms_ < 16.0f) ? ImVec4(0.4f, 1.0f, 0.4f, 1.0f) : ImVec4(1.0f, 0.6f, 0.2f, 1.0f);
+        ImVec4 color = (last_eval_time_ms_ < 16.0f) ? palette.success : palette.warning;
         ImGui::TextColored(color, "%.1fms (%.0f FPS)", last_eval_time_ms_, fps);
     }
 
-    ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(2);
 
     // ONNX Export dialog
@@ -1478,7 +1428,9 @@ void NodeEditor::ShowToolbar() {
 }
 
 void NodeEditor::RenderMinimap() {
-    if (nodes_.empty()) return;
+    // Drawn whenever it is switched on; an empty canvas (new graph, Clear All)
+    // shows an empty overview instead of hiding the minimap.
+    const auto& palette = ::gui::CurrentConsolePalette();
 
     // Get parent window position and size for calculating minimap position
     ImVec2 parent_window_pos = ImGui::GetWindowPos();
@@ -1517,12 +1469,15 @@ void NodeEditor::RenderMinimap() {
     ImGui::SetNextWindowSize(minimap_size_, ImGuiCond_Always);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.10f, 0.12f, 0.92f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(0.18f, 0.18f, 0.22f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.22f, 0.22f, 0.28f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.35f, 0.40f, 0.50f, 0.8f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,
+                          ImVec4(palette.panel.x, palette.panel.y, palette.panel.z, 0.94f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, palette.bar);
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, palette.bar);
+    ImGui::PushStyleColor(ImGuiCol_Border, palette.border);
 
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                    ImGuiWindowFlags_NoScrollbar |
                                     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                                     ImGuiWindowFlags_NoMove;  // We handle movement manually
@@ -1534,37 +1489,58 @@ void NodeEditor::RenderMinimap() {
         ImVec2 win_pos = ImGui::GetWindowPos();
         ImVec2 win_size = ImGui::GetWindowSize();
         const float grid_step = 20.0f;
-        ImU32 grid_color = IM_COL32(60, 65, 75, 40);
+        ImU32 grid_color = ImGui::GetColorU32(ImVec4(palette.border.x, palette.border.y,
+                                                    palette.border.z, 0.35f));
         for (float x = win_pos.x; x < win_pos.x + win_size.x; x += grid_step) {
             bg_draw_list->AddLine(ImVec2(x, win_pos.y), ImVec2(x, win_pos.y + win_size.y), grid_color);
         }
         for (float y = win_pos.y; y < win_pos.y + win_size.y; y += grid_step) {
             bg_draw_list->AddLine(ImVec2(win_pos.x, y), ImVec2(win_pos.x + win_size.x, y), grid_color);
         }
-        
+
         // Draw stats header bar at top
         const float header_height = 16.0f;
         bg_draw_list->AddRectFilled(
-            win_pos, 
+            win_pos,
             ImVec2(win_pos.x + win_size.x, win_pos.y + header_height),
-            IM_COL32(30, 35, 45, 220)
+            ImGui::GetColorU32(palette.bar), 6.0f, ImDrawFlags_RoundCornersTop
         );
         bg_draw_list->AddLine(
             ImVec2(win_pos.x, win_pos.y + header_height),
             ImVec2(win_pos.x + win_size.x, win_pos.y + header_height),
-            IM_COL32(60, 70, 90, 200)
+            ImGui::GetColorU32(palette.inner_border)
         );
-        
-        // Draw stats text
+
+        // Stats (or an empty-canvas note) and a close button in the header.
         char stats_text[64];
-        snprintf(stats_text, sizeof(stats_text), "%zu nodes | %zu links", nodes_.size(), links_.size());
+        if (nodes_.empty()) {
+            snprintf(stats_text, sizeof(stats_text), "Empty canvas");
+        } else {
+            snprintf(stats_text, sizeof(stats_text), "%zu nodes | %zu links", nodes_.size(), links_.size());
+        }
         ImVec2 text_size = ImGui::CalcTextSize(stats_text);
         bg_draw_list->AddText(
-            ImVec2(win_pos.x + (win_size.x - text_size.x) * 0.5f, win_pos.y + 2.0f),
-            IM_COL32(160, 170, 190, 220),
+            ImVec2(win_pos.x + (win_size.x - text_size.x) * 0.5f,
+                   win_pos.y + (header_height - text_size.y) * 0.5f),
+            ImGui::GetColorU32(palette.muted),
             stats_text
         );
-        
+        {
+            const char* close_icon = ICON_FA_XMARK;
+            const ImVec2 close_size = ImGui::CalcTextSize(close_icon);
+            const ImVec2 close_pos(win_pos.x + win_size.x - close_size.x - 6.0f,
+                                   win_pos.y + (header_height - close_size.y) * 0.5f);
+            const bool close_hovered = ImGui::IsMouseHoveringRect(
+                ImVec2(close_pos.x - 3.0f, win_pos.y),
+                ImVec2(win_pos.x + win_size.x, win_pos.y + header_height));
+            bg_draw_list->AddText(close_pos,
+                                  ImGui::GetColorU32(close_hovered ? palette.text : palette.faint),
+                                  close_icon);
+            if (close_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                show_minimap_ = false;
+            }
+        }
+
         // Get the draw list for this window
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
         ImVec2 window_pos = ImGui::GetWindowPos();
@@ -1596,6 +1572,15 @@ void NodeEditor::RenderMinimap() {
         min_y = std::min(min_y, node_pos.y);
         max_x = std::max(max_x, node_pos.x + node_dims.x);
         max_y = std::max(max_y, node_pos.y + node_dims.y);
+    }
+
+    if (min_x == FLT_MAX) {
+        const ImVec2 view_pan = ImNodes::EditorContextGetPanning();
+        const ImVec2 view_size = ImGui::GetContentRegionAvail();
+        min_x = -view_pan.x;
+        min_y = -view_pan.y;
+        max_x = -view_pan.x + std::max(view_size.x, 200.0f);
+        max_y = -view_pan.y + std::max(view_size.y, 120.0f);
     }
 
     // Add padding to bounds
@@ -1666,7 +1651,7 @@ void NodeEditor::RenderMinimap() {
             ImVec2 mm_from = gridToMinimap(from_pos);
             ImVec2 mm_to = gridToMinimap(to_pos);
             // Use a gradient-like effect: brighter in middle
-            ImU32 link_color = is_training_ ? 
+            ImU32 link_color = is_training_ ?
                 IM_COL32(200, 220, 100, 180) :  // Amber-ish during training
                 IM_COL32(130, 160, 200, 160);   // Blue-gray normally
             draw_list->AddLine(mm_from, mm_to, link_color, 1.5f);
@@ -1699,9 +1684,9 @@ void NodeEditor::RenderMinimap() {
 
         // Draw node with rounded corners
         draw_list->AddRectFilled(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), fill_color, 3.0f);
-        
+
         // Draw subtle border for all nodes
-        draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), 
+        draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y),
             IM_COL32(255, 255, 255, 40), 3.0f, 0, 1.0f);
 
         if (is_selected) {
@@ -1716,7 +1701,7 @@ void NodeEditor::RenderMinimap() {
                 );
             }
             // Bright selection border
-            draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y), 
+            draw_list->AddRect(mm_pos, ImVec2(mm_pos.x + mm_size.x, mm_pos.y + mm_size.y),
                 IM_COL32(100, 180, 255, 255), 3.0f, 0, 2.0f);
         }
     }
@@ -1740,14 +1725,14 @@ void NodeEditor::RenderMinimap() {
 
     // Draw semi-transparent viewport indicator with enhanced styling
     draw_list->AddRectFilled(viewport_mm_min, viewport_mm_max, IM_COL32(80, 140, 255, 35));
-    
+
     // Draw viewport border with rounded corners
     draw_list->AddRect(viewport_mm_min, viewport_mm_max, IM_COL32(100, 160, 255, 220), 2.0f, 0, 2.0f);
-    
+
     // Draw corner handles for visual emphasis
     const float handle_size = 4.0f;
     ImU32 handle_color = IM_COL32(130, 180, 255, 255);
-    
+
     // Top-left corner
     draw_list->AddRectFilled(
         ImVec2(viewport_mm_min.x - 1, viewport_mm_min.y - 1),
@@ -1918,7 +1903,7 @@ void NodeEditor::RenderMinimap() {
     }  // End ImGui::Begin("##MinimapWindow")
     ImGui::End();
     ImGui::PopStyleColor(4);
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(3);
 }
 
 // Unified Canvas Phase 6: Helper function to get pin type name as string

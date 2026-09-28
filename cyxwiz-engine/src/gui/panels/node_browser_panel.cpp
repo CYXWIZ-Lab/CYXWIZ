@@ -776,6 +776,12 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     const bool support_blocked = IsSupportBlocked(metadata);
     const bool can_add_to_graph = !metadata->IsTemplate() && !support_blocked;
 
+    // Single click pins the node in the Info Panel.
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+        pinned_node_type_ = metadata->type;
+        if (on_node_select_) on_node_select_(metadata->type);
+    }
+
     // Handle double-click to create node
     if (hovered && ImGui::IsMouseDoubleClicked(0) && can_add_to_graph) {
         CreateNodeAtMouse(metadata);
@@ -820,9 +826,10 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
         ImGui::Separator();
 
         if (ImGui::MenuItem(ICON_FA_CIRCLE_INFO " View Documentation")) {
-            // Trigger info panel to show this node
-            if (on_node_hover_) {
-                on_node_hover_(metadata->type);
+            // Pin this node in the Info Panel
+            pinned_node_type_ = metadata->type;
+            if (on_node_select_) {
+                on_node_select_(metadata->type);
             }
         }
 
@@ -923,12 +930,17 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
         );
     }
 
-    // Highlight on hover
+    // Pinned card: accent outline. Hover: light outline and a preview in the
+    // Info Panel (it returns to the pinned node when the hover ends).
+    if (metadata->type == pinned_node_type_) {
+        draw_list->AddRect(cursor_start,
+                          ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
+                          IM_COL32(91, 61, 245, 255), 4.0f, 0, 2.0f);
+    }
     if (hovered) {
         draw_list->AddRect(cursor_start,
                           ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
-                          IM_COL32(100, 150, 255, 100), 4.0f);
-        // Notify info panel of hover
+                          IM_COL32(179, 166, 255, 110), 4.0f);
         if (on_node_hover_) {
             on_node_hover_(metadata->type);
         }

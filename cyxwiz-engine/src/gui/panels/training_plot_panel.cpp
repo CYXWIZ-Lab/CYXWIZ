@@ -7,11 +7,15 @@
 #endif
 #include "../../core/training_run_comparison.h"
 #include "../../core/route_qualification_snapshot.h"
+#include "../icons.h"
 #include <imgui.h>
 #include <implot.h>
 #include <algorithm>
 #include <cctype>
+#include <cfloat>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <numeric>
@@ -55,8 +59,246 @@ bool IsValidationMetricName(const std::string& name) {
            name.rfind("Validation ", 0) == 0;
 }
 
-constexpr float kTrainingPlotMinHeight = 390.0f;
-constexpr float kTrainingPlotMaxHeight = 520.0f;
+constexpr float kTrainingPlotMinHeight = 320.0f;
+constexpr float kTrainingPlotMaxHeight = 480.0f;
+// Loss and accuracy go side by side from this content width.
+constexpr float kTrainingPlotSideBySideWidth = 860.0f;
+// ---- Dashboard look ----------------------------------------------------
+// This file is also compiled into test targets and the Python plotting
+// module, so the dashboard styles itself from the active ImGui theme here
+// instead of depending on the engine's shared button and palette helpers.
+
+struct DashColors {
+    ImVec4 text;
+    ImVec4 muted;
+    ImVec4 faint;
+    ImVec4 window;
+    ImVec4 card;
+    ImVec4 track;
+    ImVec4 border;
+    ImVec4 accent;
+    ImVec4 accent_text;
+    ImVec4 success;
+    ImVec4 warning;
+    ImVec4 caution;
+    ImVec4 error;
+    ImVec4 info;
+    bool light = false;
+};
+
+ImVec4 MixColor(const ImVec4& a, const ImVec4& b, float t) {
+    return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
+                  a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
+}
+
+ImVec4 WithAlpha(ImVec4 color, float alpha) {
+    color.w = alpha;
+    return color;
+}
+
+DashColors CurrentDashColors() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    DashColors c;
+    c.window = WithAlpha(style.Colors[ImGuiCol_WindowBg], 1.0f);
+    const float luminance =
+        0.299f * c.window.x + 0.587f * c.window.y + 0.114f * c.window.z;
+    c.light = luminance > 0.5f;
+    const ImVec4 lift = c.light ? ImVec4(0, 0, 0, 1) : ImVec4(1, 1, 1, 1);
+    c.text = style.Colors[ImGuiCol_Text];
+    c.muted = style.Colors[ImGuiCol_TextDisabled];
+    c.faint = MixColor(c.muted, c.window, 0.35f);
+    c.card = WithAlpha(MixColor(c.window, lift, c.light ? 0.035f : 0.03f), 1.0f);
+    c.track = WithAlpha(MixColor(c.window, lift, c.light ? 0.09f : 0.08f), 1.0f);
+    c.border = WithAlpha(style.Colors[ImGuiCol_Border], 1.0f);
+    c.accent = WithAlpha(style.Colors[ImGuiCol_SliderGrab], 1.0f);
+    c.accent_text = WithAlpha(style.Colors[ImGuiCol_CheckMark], 1.0f);
+    if (c.light) {
+        c.success = ImVec4(0.10f, 0.55f, 0.32f, 1.0f);
+        c.warning = ImVec4(0.70f, 0.47f, 0.02f, 1.0f);
+        c.caution = ImVec4(0.80f, 0.38f, 0.10f, 1.0f);
+        c.error = ImVec4(0.80f, 0.22f, 0.20f, 1.0f);
+        c.info = ImVec4(0.15f, 0.45f, 0.80f, 1.0f);
+    } else {
+        c.success = ImVec4(0.24f, 0.84f, 0.55f, 1.0f);
+        c.warning = ImVec4(0.89f, 0.70f, 0.25f, 1.0f);
+        c.caution = ImVec4(0.96f, 0.60f, 0.35f, 1.0f);
+        c.error = ImVec4(1.0f, 0.48f, 0.45f, 1.0f);
+        c.info = ImVec4(0.45f, 0.72f, 1.0f, 1.0f);
+    }
+    return c;
+}
+
+// Card: a filled, rounded, borderless group sized to its content.
+bool BeginDashCard(const char* id, const DashColors& c, float width = 0.0f) {
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, c.card);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 10.0f));
+    const bool open = ImGui::BeginChild(
+        id, ImVec2(width, 0.0f),
+        ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor();
+    return open;
+}
+
+void EndDashCard() {
+    ImGui::EndChild();
+}
+
+void DashCardTitle(const char* title, const char* subtitle, const DashColors& c) {
+    ImGui::TextColored(c.text, "%s", title);
+    if (subtitle && *subtitle) {
+        ImGui::SameLine(0.0f, 8.0f);
+        ImGui::TextColored(c.muted, "%s", subtitle);
+    }
+}
+
+// Status pill: tinted background, a dot and the label in the status colour.
+void DashPill(const char* label, const ImVec4& color, bool dot = true) {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 text = ImGui::CalcTextSize(label);
+    const float pad_x = 9.0f;
+    const float pad_y = 3.0f;
+    const float dot_space = dot ? 12.0f : 0.0f;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const ImVec2 size(text.x + pad_x * 2.0f + dot_space, text.y + pad_y * 2.0f);
+    draw->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
+                        ImGui::GetColorU32(WithAlpha(color, 0.16f)), size.y * 0.5f);
+    if (dot) {
+        draw->AddCircleFilled(ImVec2(pos.x + pad_x + 3.5f, pos.y + size.y * 0.5f), 3.5f,
+                              ImGui::GetColorU32(color));
+    }
+    draw->AddText(ImVec2(pos.x + pad_x + dot_space, pos.y + pad_y),
+                  ImGui::GetColorU32(color), label);
+    ImGui::Dummy(size);
+}
+
+// Thin rounded progress bar.
+void DashProgress(float fraction, const ImVec4& color, const DashColors& c,
+                  float width = -1.0f, float height = 6.0f) {
+    fraction = std::clamp(fraction, 0.0f, 1.0f);
+    if (width <= 0.0f) {
+        width = ImGui::GetContentRegionAvail().x;
+    }
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const float line_h = ImGui::GetTextLineHeight();
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float y = pos.y + (line_h - height) * 0.5f;
+    draw->AddRectFilled(ImVec2(pos.x, y), ImVec2(pos.x + width, y + height),
+                        ImGui::GetColorU32(c.track), height * 0.5f);
+    if (fraction > 0.0f) {
+        draw->AddRectFilled(ImVec2(pos.x, y),
+                            ImVec2(pos.x + std::max(height, width * fraction), y + height),
+                            ImGui::GetColorU32(color), height * 0.5f);
+    }
+    ImGui::Dummy(ImVec2(width, line_h));
+}
+
+enum class DashButtonKind { Secondary, Danger };
+
+bool DashButton(const char* label, DashButtonKind kind, const DashColors& c) {
+    const ImVec4 fg = kind == DashButtonKind::Danger ? c.error : c.text;
+    const ImVec4 hover = kind == DashButtonKind::Danger
+        ? WithAlpha(c.error, 0.14f)
+        : WithAlpha(c.text, 0.07f);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, WithAlpha(hover, hover.w * 1.8f));
+    ImGui::PushStyleColor(ImGuiCol_Border,
+                          kind == DashButtonKind::Danger ? WithAlpha(c.error, 0.45f) : c.border);
+    ImGui::PushStyleColor(ImGuiCol_Text, fg);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 4.0f));
+    const bool pressed = ImGui::Button(label);
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(5);
+    return pressed;
+}
+
+float DashButtonWidth(const char* label) {
+    return ImGui::CalcTextSize(label, nullptr, true).x + 20.0f;
+}
+
+// Toggle chip: filled with the accent tint while on.
+bool DashChip(const char* label, bool* value, const DashColors& c) {
+    const bool on = *value;
+    ImGui::PushStyleColor(ImGuiCol_Button, on ? WithAlpha(c.accent, 0.24f) : ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                          on ? WithAlpha(c.accent, 0.34f) : WithAlpha(c.text, 0.07f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, WithAlpha(c.accent, 0.45f));
+    ImGui::PushStyleColor(ImGuiCol_Border, on ? WithAlpha(c.accent, 0.55f) : c.border);
+    ImGui::PushStyleColor(ImGuiCol_Text, on ? c.accent_text : c.muted);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 11.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 3.0f));
+    const bool pressed = ImGui::Button(label);
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(5);
+    if (pressed) {
+        *value = !*value;
+    }
+    return pressed;
+}
+
+// Bold UI font for metric values (falls back to the current font).
+ImFont* DashValueFont() {
+    ImGuiIO& io = ImGui::GetIO();
+    for (ImFont* font : io.Fonts->Fonts) {
+        if (!font || !font->Sources || font->SourcesCount <= 0) {
+            continue;
+        }
+        const char* name = font->Sources[0].Name;
+        if (std::strstr(name, "Bold") && !std::strstr(name, "Mono")) {
+            return font;
+        }
+    }
+    return ImGui::GetFont();
+}
+
+void DashBigValue(const char* text, const ImVec4& color) {
+    ImFont* font = DashValueFont();
+    const float size = ImGui::GetFontSize() * 1.45f;
+    const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+    ImGui::GetWindowDrawList()->AddText(font, size, ImGui::GetCursorScreenPos(),
+                                        ImGui::GetColorU32(color), text);
+    ImGui::Dummy(extent);
+}
+
+std::string FormatEpochValue(double epoch) {
+    char buffer[32];
+    if (std::abs(epoch - std::round(epoch)) < 1e-6) {
+        std::snprintf(buffer, sizeof(buffer), "%d", static_cast<int>(std::round(epoch)));
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "%.2f", epoch);
+    }
+    return buffer;
+}
+
+// Plot styling: transparent frame and plot area (the card is the frame),
+// soft grid, muted axes, a translucent legend inside the plot.
+void PushDashPlotStyle(const DashColors& c) {
+    ImPlot::PushStyleColor(ImPlotCol_FrameBg, ImVec4(0, 0, 0, 0));
+    ImPlot::PushStyleColor(ImPlotCol_PlotBg, ImVec4(0, 0, 0, 0));
+    ImPlot::PushStyleColor(ImPlotCol_PlotBorder, ImVec4(0, 0, 0, 0));
+    ImPlot::PushStyleColor(ImPlotCol_LegendBg, WithAlpha(c.window, 0.82f));
+    ImPlot::PushStyleColor(ImPlotCol_LegendBorder, WithAlpha(c.border, 0.8f));
+    ImPlot::PushStyleColor(ImPlotCol_LegendText, c.text);
+    ImPlot::PushStyleColor(ImPlotCol_AxisText, c.muted);
+    ImPlot::PushStyleColor(ImPlotCol_AxisGrid, WithAlpha(c.muted, c.light ? 0.18f : 0.13f));
+    ImPlot::PushStyleColor(ImPlotCol_AxisTick, WithAlpha(c.muted, 0.35f));
+    ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding, ImVec2(2.0f, 6.0f));
+    ImPlot::PushStyleVar(ImPlotStyleVar_LegendPadding, ImVec2(10.0f, 10.0f));
+    ImPlot::PushStyleVar(ImPlotStyleVar_LegendInnerPadding, ImVec2(8.0f, 5.0f));
+    ImPlot::PushStyleVar(ImPlotStyleVar_LegendSpacing, ImVec2(6.0f, 3.0f));
+}
+
+void PopDashPlotStyle() {
+    ImPlot::PopStyleVar(4);
+    ImPlot::PopStyleColor(9);
+}
 
 std::string FormatTraceBytes(uint64_t bytes) {
     std::ostringstream out;
@@ -285,16 +527,16 @@ TrainingPlotPanel::TrainingPlotPanel()
 
     // Initialize metric series
     train_loss_.name = "Training Loss";
-    train_loss_.color = ImVec4(1.0f, 0.3f, 0.3f, 1.0f);  // Red
+    train_loss_.color = ImVec4(1.0f, 0.48f, 0.45f, 1.0f);  // Coral
 
     val_loss_.name = "Validation Loss";
-    val_loss_.color = ImVec4(0.3f, 0.5f, 1.0f, 1.0f);  // Blue
+    val_loss_.color = ImVec4(0.42f, 0.66f, 1.0f, 1.0f);  // Blue
 
     train_accuracy_.name = "Training Accuracy";
-    train_accuracy_.color = ImVec4(0.3f, 1.0f, 0.3f, 1.0f);  // Green
+    train_accuracy_.color = ImVec4(0.24f, 0.84f, 0.55f, 1.0f);  // Green
 
     val_accuracy_.name = "Validation Accuracy";
-    val_accuracy_.color = ImVec4(1.0f, 0.8f, 0.2f, 1.0f);  // Yellow
+    val_accuracy_.color = ImVec4(0.95f, 0.76f, 0.30f, 1.0f);  // Amber
 
     visible_ = true;
     RecordPanelEvent("TrainingPlotPanel.Created");
@@ -328,91 +570,344 @@ void TrainingPlotPanel::Render() {
     // Lock data for reading
     std::lock_guard<std::mutex> lock(data_mutex_);
 
-    // Render controls at the top
-    RenderControls();
-
-    ImGui::Separator();
-
-    // Render training status (always visible)
+    // Header: run status, progress and run actions (always visible).
     RenderTrainingStatus();
     RenderActiveTaskSummary();
     RenderMaterializationSummary();
     RenderTrainingWarningSummary();
 
-    ImGui::Separator();
+    // Metric cards: latest values, change and timing.
+    RenderKpiCards();
 
     // Check if we have any training data
     bool has_data = !train_loss_.values.empty() || !train_accuracy_.values.empty() || !custom_metrics_.empty();
 
     if (has_data) {
-        // Render plots
-        if (show_loss_plot_ && !train_loss_.values.empty()) {
-            RenderLossPlot();
-        }
+        RenderControls();
 
-        if (show_accuracy_plot_ && !train_accuracy_.values.empty()) {
-            RenderAccuracyPlot();
+        const bool loss_on = show_loss_plot_ && !train_loss_.values.empty();
+        const bool accuracy_on = show_accuracy_plot_ && !train_accuracy_.values.empty();
+        const float available_width = ImGui::GetContentRegionAvail().x;
+        const float available_height = ImGui::GetContentRegionAvail().y;
+
+        // Loss and accuracy side by side when there is room, so both curves
+        // stay visible together; stacked (each shrinking) otherwise.
+        if (loss_on && accuracy_on && available_width >= kTrainingPlotSideBySideWidth) {
+            const float plot_height = std::clamp(
+                available_height - 70.0f, kTrainingPlotMinHeight, kTrainingPlotMaxHeight);
+            if (ImGui::BeginTable("##dash_charts", 2,
+                                  ImGuiTableFlags_SizingStretchSame |
+                                      ImGuiTableFlags_NoPadOuterX)) {
+                ImGui::TableNextColumn();
+                RenderLossPlot(plot_height);
+                ImGui::TableNextColumn();
+                RenderAccuracyPlot(plot_height);
+                ImGui::EndTable();
+            }
+        } else {
+            if (loss_on) {
+                const float plot_height = accuracy_on
+                    ? std::clamp((available_height - 36.0f) * 0.50f,
+                                 kTrainingPlotMinHeight, kTrainingPlotMaxHeight)
+                    : std::max(kTrainingPlotMinHeight, available_height - 90.0f);
+                RenderLossPlot(plot_height);
+            }
+            if (accuracy_on) {
+                const float plot_height = loss_on
+                    ? std::clamp(ImGui::GetContentRegionAvail().y - 40.0f,
+                                 kTrainingPlotMinHeight, kTrainingPlotMaxHeight)
+                    : std::max(kTrainingPlotMinHeight, available_height - 90.0f);
+                RenderAccuracyPlot(plot_height);
+            }
         }
 
         if (show_custom_metrics_ && !custom_metrics_.empty()) {
-            RenderCustomMetricsPlot();
+            RenderCustomMetricsPlot(kTrainingPlotMinHeight);
         }
 
-        RenderCurveSummary();
-        RenderSequenceMetricsSummary();
-
-        // Render statistics
-        if (!train_loss_.values.empty()) {
-            RenderStatistics();
+        // Insights next to statistics when wide, stacked otherwise.
+        if (ImGui::GetContentRegionAvail().x >= kTrainingPlotSideBySideWidth &&
+            ImGui::BeginTable("##dash_insights_row", 2,
+                              ImGuiTableFlags_SizingStretchProp |
+                                  ImGuiTableFlags_NoPadOuterX)) {
+            ImGui::TableSetupColumn("insights", ImGuiTableColumnFlags_WidthStretch, 1.25f);
+            ImGui::TableSetupColumn("stats", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableNextColumn();
+            RenderCurveSummary();
+            ImGui::TableNextColumn();
+            if (!train_loss_.values.empty()) {
+                RenderStatistics();
+            }
+            RenderSequenceMetricsSummary();
+            ImGui::EndTable();
+        } else {
+            RenderCurveSummary();
+            RenderSequenceMetricsSummary();
+            if (!train_loss_.values.empty()) {
+                RenderStatistics();
+            }
         }
     } else {
-        // Show placeholder when no data
-        ImGui::Spacing();
-        ImGui::Spacing();
-
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
-
-        float window_width = ImGui::GetContentRegionAvail().x;
-        const char* msg1 = "No training data yet";
-        const char* msg2 = "Run a training script to see real-time metrics";
-        const char* msg3 = "Try: scripts/train_xor_simple.py";
-
-        float text_width1 = ImGui::CalcTextSize(msg1).x;
-        float text_width2 = ImGui::CalcTextSize(msg2).x;
-        float text_width3 = ImGui::CalcTextSize(msg3).x;
-
-        ImGui::SetCursorPosX((window_width - text_width1) * 0.5f);
-        ImGui::Text("%s", msg1);
-
-        ImGui::Spacing();
-
-        ImGui::SetCursorPosX((window_width - text_width2) * 0.5f);
-        ImGui::Text("%s", msg2);
-
-        ImGui::Spacing();
-
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
-        ImGui::SetCursorPosX((window_width - text_width3) * 0.5f);
-        ImGui::Text("%s", msg3);
-        ImGui::PopStyleColor();
-
-        ImGui::PopStyleColor();
-
-        ImGui::Spacing();
-        ImGui::Spacing();
-
-        // Show example plot area
-        ImGui::BeginChild("PlaceholderPlot", ImVec2(0, 300), true);
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-        ImGui::SetCursorPos(ImVec2(ImGui::GetContentRegionAvail().x * 0.5f - 100, ImGui::GetContentRegionAvail().y * 0.5f - 10));
-        ImGui::Text("Loss/Accuracy plots will appear here");
-        ImGui::PopStyleColor();
-        ImGui::EndChild();
+        RenderEmptyState();
     }
 
     RenderRunComparisonTable();
 
     ImGui::End();
+}
+
+void TrainingPlotPanel::RenderEmptyState() {
+    const DashColors c = CurrentDashColors();
+    ImGui::Spacing();
+    if (BeginDashCard("##dash_empty", c)) {
+        const auto centered = [](const char* text, const ImVec4& color) {
+            const float width = ImGui::GetContentRegionAvail().x;
+            const float text_width = ImGui::CalcTextSize(text).x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                                 std::max(0.0f, (width - text_width) * 0.5f));
+            ImGui::TextColored(color, "%s", text);
+        };
+        ImGui::Dummy(ImVec2(0.0f, 48.0f));
+        {
+            const char* icon = ICON_FA_CHART_LINE;
+            ImFont* font = ImGui::GetFont();
+            const float size = ImGui::GetFontSize() * 2.0f;
+            const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, icon);
+            const float width = ImGui::GetContentRegionAvail().x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                                 std::max(0.0f, (width - extent.x) * 0.5f));
+            ImGui::GetWindowDrawList()->AddText(font, size, ImGui::GetCursorScreenPos(),
+                                                ImGui::GetColorU32(c.faint), icon);
+            ImGui::Dummy(extent);
+        }
+        ImGui::Spacing();
+        centered("No training data yet", c.text);
+        centered("Press Train on the canvas, or run a training script, to see real-time metrics", c.muted);
+        ImGui::Spacing();
+        centered("Try: scripts/train_xor_simple.py", c.accent_text);
+        ImGui::Spacing();
+        centered("Loss and accuracy charts will appear here", c.faint);
+        ImGui::Dummy(ImVec2(0.0f, 48.0f));
+    }
+    EndDashCard();
+}
+
+void TrainingPlotPanel::RenderKpiCards() {
+    const DashColors c = CurrentDashColors();
+
+    struct Card {
+        std::string id;
+        std::string label;
+        ImVec4 dot;
+        std::string value;
+        std::string tooltip;
+        std::string sub1;
+        ImVec4 sub1_color;
+        std::string sub2;
+        ImVec4 sub2_color;
+    };
+    std::vector<Card> cards;
+
+    const auto count_of = [](const MetricSeries& s) {
+        return std::min(s.epochs.size(), s.values.size());
+    };
+    // Change of the latest value against the point about one epoch earlier
+    // (the first point while still in the first epoch).
+    const auto change_text = [&](const MetricSeries& s, bool lower_is_better,
+                                 const char* value_format, std::string& text,
+                                 ImVec4& color) {
+        const size_t n = count_of(s);
+        if (n < 2) {
+            text = "first value";
+            color = c.faint;
+            return;
+        }
+        const double target = s.epochs[n - 1] - 1.0;
+        size_t reference = 0;
+        for (size_t i = n - 1; i-- > 0;) {
+            if (s.epochs[i] <= target + 1e-9) {
+                reference = i;
+                break;
+            }
+        }
+        const double delta = s.values[n - 1] - s.values[reference];
+        if (std::abs(delta) < 1e-12) {
+            text = "no change since epoch " + FormatEpochValue(s.epochs[reference]);
+            color = c.muted;
+            return;
+        }
+        char amount[48];
+        std::snprintf(amount, sizeof(amount), value_format, std::abs(delta));
+        text = std::string(delta < 0.0 ? ICON_FA_CARET_DOWN : ICON_FA_CARET_UP) + " " +
+               amount + " since epoch " + FormatEpochValue(s.epochs[reference]);
+        const bool better = lower_is_better ? delta < 0.0 : delta > 0.0;
+        color = better ? c.success : c.caution;
+    };
+    const auto best_text = [&](const MetricSeries& s, bool lower_is_better,
+                               const char* value_format) {
+        const size_t n = count_of(s);
+        size_t best = 0;
+        for (size_t i = 1; i < n; ++i) {
+            if ((lower_is_better && s.values[i] < s.values[best]) ||
+                (!lower_is_better && s.values[i] > s.values[best])) {
+                best = i;
+            }
+        }
+        char value[48];
+        std::snprintf(value, sizeof(value), value_format, s.values[best]);
+        return std::string("best ") + value + " at epoch " + FormatEpochValue(s.epochs[best]);
+    };
+    const auto add_metric = [&](const char* id, const char* label, const MetricSeries& s,
+                                bool lower_is_better, const char* value_format,
+                                const char* delta_format, const char* tooltip_format) {
+        if (count_of(s) == 0) {
+            return;
+        }
+        Card card;
+        card.id = id;
+        card.label = label;
+        card.dot = s.color;
+        char value[48];
+        std::snprintf(value, sizeof(value), value_format, s.values.back());
+        card.value = value;
+        char tooltip[96];
+        std::snprintf(tooltip, sizeof(tooltip), tooltip_format, s.values.back());
+        card.tooltip = tooltip;
+        change_text(s, lower_is_better, delta_format, card.sub1, card.sub1_color);
+        card.sub2 = best_text(s, lower_is_better, value_format);
+        card.sub2_color = c.muted;
+        cards.push_back(std::move(card));
+    };
+
+    add_metric("##kpi_loss", "Loss", train_loss_, true, "%.4f", "%.4f", "Training loss: %.6f");
+    add_metric("##kpi_acc", "Accuracy", train_accuracy_, false, "%.2f%%", "%.2f%%",
+               "Training accuracy: %.2f%%");
+    add_metric("##kpi_val_loss", "Val loss", val_loss_, true, "%.4f", "%.4f",
+               "Validation loss: %.6f");
+    if (!val_loss_.values.empty() && !cards.empty() && cards.back().id == "##kpi_val_loss") {
+        // Validation signal: how far validation loss sits above training loss.
+        const double recent_val_loss = val_loss_.values.back();
+        const double recent_train_loss =
+            train_loss_.values.empty() ? recent_val_loss : train_loss_.values.back();
+        const double gap = recent_val_loss - recent_train_loss;
+        char text[96];
+        if (gap > 0.25) {
+            std::snprintf(text, sizeof(text), "above train loss by %.4f", gap);
+            cards.back().sub2_color = c.caution;
+        } else {
+            std::snprintf(text, sizeof(text), "gap to train loss controlled (%+.4f)", gap);
+            cards.back().sub2_color = c.success;
+        }
+        cards.back().sub2 = text;
+    }
+    add_metric("##kpi_val_acc", "Val accuracy", val_accuracy_, false, "%.2f%%", "%.2f%%",
+               "Validation accuracy: %.2f%%");
+
+    // Timing card.
+    if (is_training_ && (total_batches_ > 0 || avg_epoch_time_ > 0)) {
+        Card card;
+        card.id = "##kpi_time";
+        card.label = "Time remaining";
+        card.dot = c.warning;
+        // Dynamic estimate: remaining batches over all epochs at the rate of the
+        // last two minutes, plus measured epoch-boundary overhead. It follows
+        // speed changes and appears after ~10 s, also in single-epoch runs.
+        const auto remaining = eta_estimator_.RemainingSeconds();
+        if (remaining) {
+            card.value = FormatTrainingDuration(*remaining);
+            card.tooltip =
+                "Remaining batches across all epochs at the recent rate (last 2 minutes),\n"
+                "plus " +
+                (eta_estimator_.HasMeasuredEpochOverhead()
+                     ? FormatTrainingDuration(eta_estimator_.MeanEpochOverheadSeconds())
+                     : std::string("not yet measured")) +
+                " per remaining epoch boundary (validation, previews, checkpoint).\n"
+                "Updates as the training speed changes.";
+        } else {
+            card.value = "Estimating...";
+        }
+        char text[96] = "";
+        std::string speed;
+        if (const double rate = eta_estimator_.BatchesPerSecond(); rate > 0.0) {
+            std::snprintf(text, sizeof(text), "%.2f batches/s", rate);
+            speed = text;
+        }
+        if (samples_per_second_ > 0) {
+            std::snprintf(text, sizeof(text), "%.0f samples/s", samples_per_second_);
+            speed += (speed.empty() ? "" : " \xC2\xB7 ") + std::string(text);
+        }
+        card.sub1 = speed.empty() ? "measuring speed" : speed;
+        card.sub1_color = speed.empty() ? c.faint : c.muted;
+        if (avg_epoch_time_ > 0) {
+            std::snprintf(text, sizeof(text), "last epoch %.1fs \xC2\xB7 avg %.1fs/epoch",
+                          last_epoch_time_, avg_epoch_time_);
+            card.sub2 = text;
+            card.sub2_color = c.muted;
+        } else {
+            card.sub2 = "epoch time after the first epoch";
+            card.sub2_color = c.faint;
+        }
+        cards.push_back(std::move(card));
+    } else if (!is_training_ && total_training_time_ > 0) {
+        Card card;
+        card.id = "##kpi_time";
+        card.label = "Total time";
+        card.dot = c.info;
+        card.value = FormatTrainingDuration(total_training_time_);
+        char text[96];
+        if (total_epochs_ > 0) {
+            std::snprintf(text, sizeof(text), "%d / %d epochs run",
+                          last_executed_epoch_, total_epochs_);
+            card.sub1 = text;
+        } else {
+            card.sub1 = "run finished";
+        }
+        card.sub1_color = c.muted;
+        if (avg_epoch_time_ > 0) {
+            std::snprintf(text, sizeof(text), "avg %.1fs/epoch", avg_epoch_time_);
+            card.sub2 = text;
+        } else {
+            card.sub2 = " ";
+        }
+        card.sub2_color = c.muted;
+        cards.push_back(std::move(card));
+    }
+
+    if (cards.empty()) {
+        return;
+    }
+
+    const float min_card_width = 190.0f;
+    const float available = ImGui::GetContentRegionAvail().x;
+    const int columns = std::clamp(static_cast<int>(available / min_card_width), 1,
+                                   static_cast<int>(cards.size()));
+    ImGui::Spacing();
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4.0f, 4.0f));
+    if (ImGui::BeginTable("##dash_kpis", columns,
+                          ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadOuterX)) {
+        for (const auto& card : cards) {
+            ImGui::TableNextColumn();
+            if (BeginDashCard(card.id.c_str(), c)) {
+                const float line = ImGui::GetTextLineHeight();
+                const ImVec2 pos = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddCircleFilled(
+                    ImVec2(pos.x + 4.0f, pos.y + line * 0.5f), 4.0f,
+                    ImGui::GetColorU32(card.dot));
+                ImGui::Dummy(ImVec2(8.0f, line));
+                ImGui::SameLine(0.0f, 6.0f);
+                ImGui::TextColored(c.muted, "%s", card.label.c_str());
+                DashBigValue(card.value.c_str(), c.text);
+                if (!card.tooltip.empty() && ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", card.tooltip.c_str());
+                }
+                ImGui::TextColored(card.sub1_color, "%s", card.sub1.c_str());
+                ImGui::TextColored(card.sub2_color, "%s", card.sub2.c_str());
+            }
+            EndDashCard();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PopStyleVar();
 }
 
 void TrainingPlotPanel::AddLossPoint(double epoch, double train_loss, double val_loss) {
@@ -922,20 +1417,19 @@ void TrainingPlotPanel::SetMaterializationComplete(
     }
 }
 
-void TrainingPlotPanel::RenderLossPlot() {
-    // Keep loss and accuracy visible together during active training. If both
-    // plots are enabled, each plot shrinks instead of pushing the other below
-    // the fold; the user needs both curves to judge overfitting.
-    float available_height = ImGui::GetContentRegionAvail().y;
-    const bool show_pair =
-        show_accuracy_plot_ && !train_accuracy_.values.empty();
-    float plot_height = show_pair
-        ? std::clamp((available_height - 36.0f) * 0.50f,
-                     kTrainingPlotMinHeight, kTrainingPlotMaxHeight)
-        : std::max(kTrainingPlotMinHeight, available_height - 90.0f);
-
-    if (ImPlot::BeginPlot("Loss", ImVec2(-1, plot_height))) {
+void TrainingPlotPanel::RenderLossPlot(float plot_height) {
+    const DashColors c = CurrentDashColors();
+    ImGui::Spacing();
+    if (!BeginDashCard("##dash_loss_card", c)) {
+        EndDashCard();
+        return;
+    }
+    DashCardTitle("Loss", log_loss_scale_ ? "training and validation, log axis"
+                                          : "training and validation", c);
+    PushDashPlotStyle(c);
+    if (ImPlot::BeginPlot("Loss", ImVec2(-1, plot_height), ImPlotFlags_NoTitle)) {
         ImPlot::SetupAxes("Epoch", "Loss", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
+        ImPlot::SetupLegend(ImPlotLocation_NorthEast);
         if (log_loss_scale_) {
             ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
         }
@@ -992,7 +1486,7 @@ void TrainingPlotPanel::RenderLossPlot() {
                 static_cast<int>(train_loss_.values.size()) >= smoothing_window_) {
                 auto smoothed =
                     CalculateMovingAverage(train_loss_.values, smoothing_window_);
-                ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.65f, 0.65f, 1.0f), 3.0f);
+                ImPlot::SetNextLineStyle(MixColor(train_loss_.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
                 ImPlot::PlotLine("Training Loss (smoothed)",
                                  train_loss_.epochs.data(),
                                  smoothed.data(),
@@ -1018,7 +1512,7 @@ void TrainingPlotPanel::RenderLossPlot() {
                 static_cast<int>(val_loss_.values.size()) >= smoothing_window_) {
                 auto smoothed =
                     CalculateMovingAverage(val_loss_.values, smoothing_window_);
-                ImPlot::SetNextLineStyle(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), 3.0f);
+                ImPlot::SetNextLineStyle(MixColor(val_loss_.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
                 ImPlot::PlotLine("Validation Loss (smoothed)",
                                  val_loss_.epochs.data(),
                                  smoothed.data(),
@@ -1028,21 +1522,22 @@ void TrainingPlotPanel::RenderLossPlot() {
 
         ImPlot::EndPlot();
     }
+    PopDashPlotStyle();
+    EndDashCard();
 }
 
-void TrainingPlotPanel::RenderAccuracyPlot() {
-    // Share the dashboard area with the loss plot instead of requiring a tall
-    // window before accuracy becomes visible.
-    float available_height = ImGui::GetContentRegionAvail().y;
-    const bool show_pair =
-        show_loss_plot_ && !train_loss_.values.empty();
-    float plot_height = show_pair
-        ? std::clamp(available_height - 40.0f,
-                     kTrainingPlotMinHeight, kTrainingPlotMaxHeight)
-        : std::max(kTrainingPlotMinHeight, available_height - 90.0f);
-
-    if (ImPlot::BeginPlot("Accuracy", ImVec2(-1, plot_height))) {
+void TrainingPlotPanel::RenderAccuracyPlot(float plot_height) {
+    const DashColors c = CurrentDashColors();
+    ImGui::Spacing();
+    if (!BeginDashCard("##dash_accuracy_card", c)) {
+        EndDashCard();
+        return;
+    }
+    DashCardTitle("Accuracy", "training and validation, percent", c);
+    PushDashPlotStyle(c);
+    if (ImPlot::BeginPlot("Accuracy", ImVec2(-1, plot_height), ImPlotFlags_NoTitle)) {
         ImPlot::SetupAxes("Epoch", "Accuracy (%)", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
+        ImPlot::SetupLegend(ImPlotLocation_SouthEast);
 
         if (auto_scale_ && follow_current_epoch_ && !train_accuracy_.epochs.empty()) {
             const auto [min_epoch, max_epoch] = CalculateEpochWindow(train_accuracy_);
@@ -1072,7 +1567,7 @@ void TrainingPlotPanel::RenderAccuracyPlot() {
                 static_cast<int>(train_accuracy_.values.size()) >= smoothing_window_) {
                 auto smoothed = CalculateMovingAverage(
                     train_accuracy_.values, smoothing_window_);
-                ImPlot::SetNextLineStyle(ImVec4(0.65f, 1.0f, 0.65f, 1.0f), 3.0f);
+                ImPlot::SetNextLineStyle(MixColor(train_accuracy_.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
                 ImPlot::PlotLine("Training Accuracy (smoothed)",
                                  train_accuracy_.epochs.data(),
                                  smoothed.data(),
@@ -1091,7 +1586,7 @@ void TrainingPlotPanel::RenderAccuracyPlot() {
                 static_cast<int>(val_accuracy_.values.size()) >= smoothing_window_) {
                 auto smoothed =
                     CalculateMovingAverage(val_accuracy_.values, smoothing_window_);
-                ImPlot::SetNextLineStyle(ImVec4(1.0f, 0.9f, 0.45f, 1.0f), 3.0f);
+                ImPlot::SetNextLineStyle(MixColor(val_accuracy_.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
                 ImPlot::PlotLine("Validation Accuracy (smoothed)",
                                  val_accuracy_.epochs.data(),
                                  smoothed.data(),
@@ -1101,9 +1596,11 @@ void TrainingPlotPanel::RenderAccuracyPlot() {
 
         ImPlot::EndPlot();
     }
+    PopDashPlotStyle();
+    EndDashCard();
 }
 
-void TrainingPlotPanel::RenderCustomMetricsPlot() {
+void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
     bool has_sequence_metrics = false;
     bool has_regression_metrics = false;
     bool has_non_sequence_metrics = false;
@@ -1130,10 +1627,18 @@ void TrainingPlotPanel::RenderCustomMetricsPlot() {
             ? "Score (%)"
             : (has_regression_metrics ? "Error" : "Value");
 
-    if (ImPlot::BeginPlot(
-            plot_title, ImVec2(-1, kTrainingPlotMinHeight))) {
+    const DashColors c = CurrentDashColors();
+    ImGui::Spacing();
+    if (!BeginDashCard("##dash_custom_card", c)) {
+        EndDashCard();
+        return;
+    }
+    DashCardTitle(plot_title, "per epoch", c);
+    PushDashPlotStyle(c);
+    if (ImPlot::BeginPlot(plot_title, ImVec2(-1, plot_height), ImPlotFlags_NoTitle)) {
         // Enable zoom and pan on both axes
         ImPlot::SetupAxes("Epoch", y_label, ImPlotAxisFlags_None, ImPlotAxisFlags_None);
+        ImPlot::SetupLegend(ImPlotLocation_NorthEast);
 
         for (const auto& metric : custom_metrics_) {
             if (!metric.values.empty()) {
@@ -1158,89 +1663,18 @@ void TrainingPlotPanel::RenderCustomMetricsPlot() {
 
         ImPlot::EndPlot();
     }
+    PopDashPlotStyle();
+    EndDashCard();
 }
 
 void TrainingPlotPanel::RenderControls() {
-#ifndef CYXWIZ_PLOTTING_MODULE
-    auto& tm = TrainingManager::Instance();
-    const bool training_active = tm.IsTrainingActive();
-    const bool training_paused = tm.IsPaused();
-#endif
+    const DashColors c = CurrentDashColors();
+    ImGui::Spacing();
 
-    if (ImGui::Button("Clear All")) {
-        ClearLocked();
-    }
+    // Which charts to show.
+    DashChip("Loss", &show_loss_plot_, c);
     ImGui::SameLine();
-
-    if (ImGui::Button("Export CSV")) {
-        ExportToCSVLocked("training_metrics.csv");
-    }
-    ImGui::SameLine();
-
-    ImGui::Checkbox("Auto Scale", &auto_scale_);
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("When enabled, axes adapt to the live training data.\nDisable to manually zoom/pan.");
-    }
-    ImGui::SameLine();
-    ImGui::Checkbox("Follow Current", &follow_current_epoch_);
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Keep the epoch axis scrolled to the latest batch/epoch.");
-    }
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(120.0f);
-    ImGui::SliderInt("Epoch Window", &visible_epoch_window_, 3, 50);
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Number of epochs visible while following live training.");
-    }
-    ImGui::SameLine();
-    ImGui::Checkbox("Show Loss", &show_loss_plot_);
-    ImGui::SameLine();
-    ImGui::Checkbox("Log Loss", &log_loss_scale_);
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
-            "Use a logarithmic loss axis to compare large early losses with "
-            "smaller later losses. Metric values are unchanged.");
-    }
-    ImGui::SameLine();
-    ImGui::Checkbox("Show Accuracy", &show_accuracy_plot_);
-    ImGui::SameLine();
-    ImGui::Checkbox("Smooth", &show_smoothed_curves_);
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Display-only moving average overlay. Raw curves are unchanged.");
-    }
-    if (show_smoothed_curves_) {
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderInt("Smooth Window", &smoothing_window_, 2, 50);
-    }
-
-#ifndef CYXWIZ_PLOTTING_MODULE
-    ImGui::SameLine();
-    ImGui::TextUnformatted("Training");
-    ImGui::SameLine();
-
-    if (training_active) {
-        if (training_paused) {
-            if (ImGui::Button("Continue")) {
-                tm.ResumeTraining();
-            }
-        } else {
-            if (ImGui::Button("Pause")) {
-                tm.PauseTraining();
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Early Stop")) {
-            tm.StopTraining();
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Stops training at the next batch boundary and keeps the current model state.");
-        }
-    } else {
-        ImGui::TextDisabled("Idle");
-    }
-#endif
-
+    DashChip("Accuracy", &show_accuracy_plot_, c);
     if (!custom_metrics_.empty()) {
         bool has_sequence_metrics = false;
         bool has_non_sequence_metrics = false;
@@ -1257,14 +1691,46 @@ void TrainingPlotPanel::RenderControls() {
 
         ImGui::SameLine();
         const char* label = has_sequence_metrics && !has_non_sequence_metrics
-            ? "Show Sequence"
-            : "Show Custom";
-        ImGui::Checkbox(label, &show_custom_metrics_);
+            ? "Sequence metrics"
+            : "Custom metrics";
+        DashChip(label, &show_custom_metrics_, c);
     }
 
-    // Show zoom/pan help
+    // Active view options, so a changed view is never a surprise.
+    std::string view_state;
+    if (log_loss_scale_) {
+        view_state = "log loss axis";
+    }
+    if (show_smoothed_curves_) {
+        view_state += (view_state.empty() ? "" : " \xC2\xB7 ") +
+                      std::string("smoothed (") + std::to_string(smoothing_window_) + ")";
+    }
+    if (!auto_scale_) {
+        view_state += (view_state.empty() ? "" : " \xC2\xB7 ") + std::string("manual zoom");
+    } else if (follow_current_epoch_) {
+        view_state += (view_state.empty() ? "" : " \xC2\xB7 ") +
+                      std::string("following last ") + std::to_string(visible_epoch_window_) +
+                      " epochs";
+    }
+    if (!view_state.empty()) {
+        ImGui::SameLine(0.0f, 12.0f);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(c.faint, "%s", view_state.c_str());
+    }
+
+    // View menu and plot help on the right.
+    const char* view_label = ICON_FA_SLIDERS " View";
+    const float help_width = ImGui::CalcTextSize(ICON_FA_CIRCLE_INFO).x;
+    const float needed = DashButtonWidth(view_label) + ImGui::GetStyle().ItemSpacing.x + help_width;
     ImGui::SameLine();
-    ImGui::TextDisabled("(?)");
+    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
+                                  ImGui::GetWindowContentRegionMax().x - needed));
+    if (DashButton(view_label, DashButtonKind::Secondary, c)) {
+        ImGui::OpenPopup("##dash_view");
+    }
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(c.muted, ICON_FA_CIRCLE_INFO);
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         ImGui::Text("Plot Controls:");
@@ -1275,11 +1741,45 @@ void TrainingPlotPanel::RenderControls() {
         ImGui::BulletText("Disable Auto Scale or Follow Current for manual control");
         ImGui::EndTooltip();
     }
+
+    if (ImGui::BeginPopup("##dash_view")) {
+        ImGui::TextColored(c.muted, "Axes");
+        ImGui::Checkbox("Auto scale", &auto_scale_);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("When enabled, axes adapt to the live training data.\nDisable to manually zoom/pan.");
+        }
+        ImGui::Checkbox("Follow current epoch", &follow_current_epoch_);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Keep the epoch axis scrolled to the latest batch/epoch.");
+        }
+        ImGui::SetNextItemWidth(160.0f);
+        ImGui::SliderInt("Epoch window", &visible_epoch_window_, 3, 50);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Number of epochs visible while following live training.");
+        }
+        ImGui::Checkbox("Log loss axis", &log_loss_scale_);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Use a logarithmic loss axis to compare large early losses with "
+                "smaller later losses. Metric values are unchanged.");
+        }
+        ImGui::Spacing();
+        ImGui::TextColored(c.muted, "Curves");
+        ImGui::Checkbox("Smooth curves", &show_smoothed_curves_);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Display-only moving average overlay. Raw curves are unchanged.");
+        }
+        if (show_smoothed_curves_) {
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::SliderInt("Smooth window", &smoothing_window_, 2, 50);
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::Spacing();
 }
 
 void TrainingPlotPanel::RenderCurveSummary() {
-    ImGui::Separator();
-    ImGui::Text("Curve Summary");
+    const DashColors c = CurrentDashColors();
 
     auto slope_last = [](const MetricSeries& series, size_t window) -> double {
         const size_t count = std::min(series.epochs.size(), series.values.size());
@@ -1376,98 +1876,115 @@ void TrainingPlotPanel::RenderCurveSummary() {
         (val_loss_.values.back() - closest_value(train_loss_, val_loss_.epochs.back())) > 0.25;
 
     const char* recommendation = "continue";
-    ImVec4 recommendation_color = ImVec4(0.45f, 0.85f, 0.55f, 1.0f);
+    ImVec4 recommendation_color = c.success;
     if (has_validation && (gap_large || val_loss_worsening || val_acc_worsening || rough_epoch >= 0.0)) {
         recommendation = "inspect validation";
-        recommendation_color = ImVec4(1.0f, 0.75f, 0.25f, 1.0f);
+        recommendation_color = c.warning;
     }
     if (has_validation && rough_epoch >= 0.0 && val_loss_volatility > 0.02) {
         recommendation = "consider early stop";
-        recommendation_color = ImVec4(1.0f, 0.55f, 0.35f, 1.0f);
+        recommendation_color = c.caution;
     }
 
-    ImGui::Columns(2, "curve_summary", false);
-
-    ImGui::Text("Train Curve:");
-    ImGui::NextColumn();
-    ImGui::Text("loss %s, accuracy %s",
-        trend_label(train_loss_slope, true),
-        trend_label(train_acc_slope, false));
-    ImGui::NextColumn();
-
-    ImGui::Text("Validation Curve:");
-    ImGui::NextColumn();
-    if (!val_loss_.values.empty() || !val_accuracy_.values.empty()) {
-        ImGui::Text("loss %s, accuracy %s",
-            trend_label(val_loss_slope, true),
-            trend_label(val_acc_slope, false));
-    } else {
-        ImGui::TextDisabled("waiting for validation points");
+    ImGui::Spacing();
+    if (!BeginDashCard("##dash_insights", c)) {
+        EndDashCard();
+        return;
     }
-    ImGui::NextColumn();
-
-    ImGui::Text("Best Validation:");
-    ImGui::NextColumn();
-    if (best_val_loss_idx >= 0) {
-        ImGui::Text("loss %.4f at epoch %.2f",
-            val_loss_.values[best_val_loss_idx],
-            val_loss_.epochs[best_val_loss_idx]);
-        if (best_val_acc_idx >= 0) {
-            ImGui::SameLine();
-            ImGui::Text("| acc %.2f%% at epoch %.2f",
-                val_accuracy_.values[best_val_acc_idx],
-                val_accuracy_.epochs[best_val_acc_idx]);
-        }
-    } else {
-        ImGui::TextDisabled("no validation data yet");
-    }
-    ImGui::NextColumn();
-
-    ImGui::Text("Rough Point:");
-    ImGui::NextColumn();
-    if (rough_epoch >= 0.0) {
-        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.25f, 1.0f),
-            "validation loss starts rising around epoch %.2f", rough_epoch);
-    } else if (val_loss_.values.size() >= 3) {
-        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f),
-            "no sustained validation rise detected");
-    } else {
-        ImGui::TextDisabled("need more validation points");
-    }
-    ImGui::NextColumn();
-
-    ImGui::Text("Generalization Gap:");
-    ImGui::NextColumn();
-    if (!val_loss_.values.empty() && !train_loss_.values.empty()) {
-        const double epoch = val_loss_.epochs.back();
-        const double train_near_val = closest_value(train_loss_, epoch);
-        const double gap = val_loss_.values.back() - train_near_val;
-        ImGui::Text("val_loss - train_loss = %.4f", gap);
+    DashCardTitle("Insights", "how the curves are behaving", c);
+    {
+        const std::string pill = std::string("Suggested: ") + recommendation;
+        const float pill_width = ImGui::CalcTextSize(pill.c_str()).x + 30.0f;
         ImGui::SameLine();
-        if (gap > 0.25) {
-            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "possible overfit");
+        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
+                                      ImGui::GetWindowContentRegionMax().x - pill_width));
+        DashPill(pill.c_str(), recommendation_color);
+    }
+    ImGui::Spacing();
+
+    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
+    if (ImGui::BeginTable("##curve_summary", 2,
+                          ImGuiTableFlags_SizingStretchProp |
+                              ImGuiTableFlags_BordersInnerH)) {
+        ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+        const auto row = [&](const char* label) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(c.muted, "%s", label);
+            ImGui::TableNextColumn();
+        };
+
+        row("Train curve");
+        ImGui::Text("loss %s, accuracy %s",
+            trend_label(train_loss_slope, true),
+            trend_label(train_acc_slope, false));
+
+        row("Validation curve");
+        if (!val_loss_.values.empty() || !val_accuracy_.values.empty()) {
+            ImGui::Text("loss %s, accuracy %s",
+                trend_label(val_loss_slope, true),
+                trend_label(val_acc_slope, false));
         } else {
-            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f), "controlled");
+            ImGui::TextColored(c.faint, "waiting for validation points");
         }
-    } else {
-        ImGui::TextDisabled("waiting for train/validation loss");
+
+        row("Best validation");
+        if (best_val_loss_idx >= 0) {
+            ImGui::Text("loss %.4f at epoch %.2f",
+                val_loss_.values[best_val_loss_idx],
+                val_loss_.epochs[best_val_loss_idx]);
+            if (best_val_acc_idx >= 0) {
+                ImGui::Text("accuracy %.2f%% at epoch %.2f",
+                    val_accuracy_.values[best_val_acc_idx],
+                    val_accuracy_.epochs[best_val_acc_idx]);
+            }
+        } else {
+            ImGui::TextColored(c.faint, "no validation data yet");
+        }
+
+        row("Rough point");
+        ImGui::PushTextWrapPos(0.0f);
+        if (rough_epoch >= 0.0) {
+            ImGui::TextColored(c.caution,
+                "validation loss starts rising around epoch %.2f", rough_epoch);
+        } else if (val_loss_.values.size() >= 3) {
+            ImGui::TextColored(c.success, "no sustained validation rise detected");
+        } else {
+            ImGui::TextColored(c.faint, "need more validation points");
+        }
+        ImGui::PopTextWrapPos();
+
+        row("Generalization gap");
+        if (!val_loss_.values.empty() && !train_loss_.values.empty()) {
+            const double epoch = val_loss_.epochs.back();
+            const double train_near_val = closest_value(train_loss_, epoch);
+            const double gap = val_loss_.values.back() - train_near_val;
+            ImGui::Text("val_loss - train_loss = %.4f", gap);
+            ImGui::SameLine(0.0f, 10.0f);
+            if (gap > 0.25) {
+                ImGui::TextColored(c.caution, "possible overfit");
+            } else {
+                ImGui::TextColored(c.success, "controlled");
+            }
+        } else {
+            ImGui::TextColored(c.faint, "waiting for train/validation loss");
+        }
+
+        row("Validation roughness");
+        if (val_loss_.values.size() >= 3) {
+            ImGui::Text("recent avg delta %.4f", val_loss_volatility);
+        } else {
+            ImGui::TextColored(c.faint, "need more validation points");
+        }
+
+        row("Suggested action");
+        ImGui::TextColored(recommendation_color, "%s", recommendation);
+
+        ImGui::EndTable();
     }
-    ImGui::NextColumn();
-
-    ImGui::Text("Validation Roughness:");
-    ImGui::NextColumn();
-    if (val_loss_.values.size() >= 3) {
-        ImGui::Text("recent avg delta %.4f", val_loss_volatility);
-    } else {
-        ImGui::TextDisabled("need more validation points");
-    }
-    ImGui::NextColumn();
-
-    ImGui::Text("Suggested Action:");
-    ImGui::NextColumn();
-    ImGui::TextColored(recommendation_color, "%s", recommendation);
-
-    ImGui::Columns(1);
+    ImGui::PopStyleColor();
+    EndDashCard();
 }
 
 void TrainingPlotPanel::RenderSequenceMetricsSummary() {
@@ -1501,39 +2018,53 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
         return;
     }
 
-    ImGui::Separator();
-    ImGui::Text("Sequence Metrics");
-    ImGui::Columns(2, "sequence_metrics", false);
-
-    ImGui::Text("Token Accuracy");
-    ImGui::NextColumn();
-    if (has_train_token_accuracy || has_val_token_accuracy) {
-        if (has_train_token_accuracy) {
-            ImGui::Text("train %.2f%%", train_token_accuracy);
-            ImGui::SameLine();
-        }
-        if (has_val_token_accuracy) {
-            ImGui::Text("val %.2f%%", val_token_accuracy);
-        }
-    } else {
-        ImGui::TextDisabled("no data");
+    const DashColors c = CurrentDashColors();
+    ImGui::Spacing();
+    if (!BeginDashCard("##dash_sequence", c)) {
+        EndDashCard();
+        return;
     }
-    ImGui::NextColumn();
+    DashCardTitle("Sequence Metrics", "latest values", c);
+    ImGui::Spacing();
 
-    if (has_train_entity_f1 || has_val_entity_f1) {
-        ImGui::Text("Entity F1");
-        ImGui::NextColumn();
-        if (has_train_entity_f1) {
-            ImGui::Text("train %.2f%%", train_entity_f1);
-            ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
+    ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, ImVec4(0, 0, 0, 0));
+    if (ImGui::BeginTable("##sequence_metrics", 3,
+                          ImGuiTableFlags_SizingStretchProp |
+                              ImGuiTableFlags_BordersInnerH)) {
+        ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch, 1.3f);
+        ImGui::TableSetupColumn("Train", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Val", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, c.muted);
+        ImGui::TableHeadersRow();
+        ImGui::PopStyleColor();
+
+        const auto value_cell = [&](bool has_value, double value) {
+            ImGui::TableNextColumn();
+            if (has_value) {
+                ImGui::Text("%.2f%%", value);
+            } else {
+                ImGui::TextColored(c.faint, "no data");
+            }
+        };
+
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted("Token Accuracy");
+        value_cell(has_train_token_accuracy, train_token_accuracy);
+        value_cell(has_val_token_accuracy, val_token_accuracy);
+
+        if (has_train_entity_f1 || has_val_entity_f1) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted("Entity F1");
+            value_cell(has_train_entity_f1, train_entity_f1);
+            value_cell(has_val_entity_f1, val_entity_f1);
         }
-        if (has_val_entity_f1) {
-            ImGui::Text("val %.2f%%", val_entity_f1);
-        }
-        ImGui::NextColumn();
+        ImGui::EndTable();
     }
-
-    ImGui::Columns(1);
+    ImGui::PopStyleColor(2);
+    EndDashCard();
 }
 
 void TrainingPlotPanel::RenderActiveTaskSummary() {
@@ -2247,66 +2778,154 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
 }
 
 void TrainingPlotPanel::RenderTrainingStatus() {
-    // Training status header with colored indicator
-    ImGui::BeginGroup();
+    const DashColors c = CurrentDashColors();
+#ifndef CYXWIZ_PLOTTING_MODULE
+    auto& tm = TrainingManager::Instance();
+    const bool training_active = tm.IsTrainingActive();
+    const bool training_paused = tm.IsPaused();
+#else
+    const bool training_active = false;
+    const bool training_paused = false;
+#endif
+    const bool finished = !is_training_ && total_training_time_ > 0;
+    const bool early_stopped = terminal_status_ == "early_stopped";
+    const bool cancelled = terminal_status_ == "cancelled" ||
+                           terminal_status_ == "stopped";
+    const bool failed = terminal_status_ == "failed";
 
-    // Status indicator
+    const char* status = "Idle";
+    ImVec4 status_color = c.muted;
     if (is_training_) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 1.0f, 0.3f, 1.0f));
-        ImGui::Text("TRAINING");
-        ImGui::PopStyleColor();
+        status = training_paused ? "Paused" : "Training";
+        status_color = training_paused ? c.warning : c.success;
     } else if (preparation_failed_) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.30f, 1.0f));
-        ImGui::Text("PREPARATION FAILED");
-        ImGui::PopStyleColor();
+        status = "Preparation failed";
+        status_color = c.error;
     } else if (is_preparing_) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.75f, 1.0f, 1.0f));
-        ImGui::Text("PREPARING");
-        ImGui::PopStyleColor();
+        status = "Preparing";
+        status_color = c.info;
     } else if (total_training_time_ > 0) {
-        const bool early_stopped = terminal_status_ == "early_stopped";
-        const bool cancelled = terminal_status_ == "cancelled" ||
-                               terminal_status_ == "stopped";
-        const bool failed = terminal_status_ == "failed";
         if (early_stopped) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.25f, 1.0f));
-            ImGui::Text("EARLY STOPPED");
+            status = "Early stopped";
+            status_color = c.warning;
         } else if (cancelled) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.35f, 1.0f));
-            ImGui::Text("CANCELLED");
+            status = "Cancelled";
+            status_color = c.caution;
         } else if (failed) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
-            ImGui::Text("FAILED");
+            status = "Failed";
+            status_color = c.error;
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
-            ImGui::Text("COMPLETED");
+            status = "Completed";
+            status_color = c.info;
         }
-        ImGui::PopStyleColor();
     } else if (active_checkpoint_loaded_) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.85f, 0.55f, 1.0f));
-        ImGui::Text("MODEL LOADED");
-        ImGui::PopStyleColor();
-    } else {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
-        ImGui::Text("IDLE");
-        ImGui::PopStyleColor();
+        status = "Model loaded";
+        status_color = c.success;
     }
 
-    ImGui::SameLine();
+    if (!BeginDashCard("##dash_header", c)) {
+        EndDashCard();
+        return;
+    }
 
-    // Progress info. Keep terminal-state explanations as explicit rows instead
-    // of hiding them on one compressed line.
+    // Row 1: status, epoch and the run actions on the right.
+    const float row_top = ImGui::GetCursorPosY();
+    ImGui::SetCursorPosY(row_top + 1.0f);
+    DashPill(status, status_color);
+    ImGui::SameLine(0.0f, 12.0f);
+    ImGui::SetCursorPosY(row_top + 4.0f);
+    if (preparation_failed_ || is_preparing_) {
+        ImGui::TextColored(c.muted, "Getting the data and model ready");
+    } else if (total_epochs_ > 0) {
+        if (finished) {
+            ImGui::Text("Executed epochs %d / %d", last_executed_epoch_, total_epochs_);
+            if (current_epoch_ > last_executed_epoch_) {
+                ImGui::SameLine(0.0f, 8.0f);
+                ImGui::TextColored(c.muted, "stopped during epoch %d", current_epoch_);
+            }
+        } else {
+            const int display_epoch = std::max(1, current_epoch_);
+            const int remaining_epochs = std::max(0, total_epochs_ - display_epoch);
+            ImGui::Text("Epoch %d / %d", display_epoch, total_epochs_);
+            ImGui::SameLine(0.0f, 8.0f);
+            ImGui::TextColored(c.muted, "%d remaining", remaining_epochs);
+        }
+    } else if (is_training_) {
+        ImGui::Text("Epoch %d / ?", std::max(1, current_epoch_));
+    } else if (!active_checkpoint_loaded_) {
+        ImGui::TextColored(c.muted, "No training run yet");
+    }
+
+    const char* pause_label = training_paused ? ICON_FA_PLAY " Continue" : ICON_FA_PAUSE " Pause";
+    const char* stop_label = ICON_FA_STOP " Early stop";
+    const char* actions_label = "Actions " ICON_FA_CHEVRON_DOWN;
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float actions_width = DashButtonWidth(actions_label);
+    if (training_active) {
+        actions_width += DashButtonWidth(pause_label) + DashButtonWidth(stop_label) + spacing * 2.0f;
+    }
+    ImGui::SameLine();
+    const float right_edge = ImGui::GetWindowContentRegionMax().x;
+    ImGui::SetCursorPos(ImVec2(std::max(ImGui::GetCursorPosX(), right_edge - actions_width),
+                               row_top));
+#ifndef CYXWIZ_PLOTTING_MODULE
+    if (training_active) {
+        if (DashButton(pause_label, DashButtonKind::Secondary, c)) {
+            if (training_paused) {
+                tm.ResumeTraining();
+            } else {
+                tm.PauseTraining();
+            }
+        }
+        ImGui::SameLine();
+        if (DashButton(stop_label, DashButtonKind::Danger, c)) {
+            tm.StopTraining();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Stops training at the next batch boundary and keeps the current model state.");
+        }
+        ImGui::SameLine();
+    }
+#endif
+    if (DashButton(actions_label, DashButtonKind::Secondary, c)) {
+        ImGui::OpenPopup("##dash_actions");
+    }
+    if (ImGui::BeginPopup("##dash_actions")) {
+        if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Export metrics (CSV)")) {
+            ExportToCSVLocked("training_metrics.csv");
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Writes training_metrics.csv in the working folder.");
+        }
+        ImGui::Separator();
+        ImGui::PushStyleColor(ImGuiCol_Text, c.error);
+        const bool clear = ImGui::MenuItem(ICON_FA_TRASH " Clear all");
+        ImGui::PopStyleColor();
+        if (clear) {
+            ClearLocked();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Clears the charts and metrics of this run from the dashboard.");
+        }
+        ImGui::EndPopup();
+    }
+
+    // Row 2: progress.
     if (preparation_failed_) {
-        ImGui::TextWrapped("%s",
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(c.error, "%s",
                            preparation_error_message_.empty()
                                ? "Training preparation failed."
                                : preparation_error_message_.c_str());
+        ImGui::PopTextWrapPos();
     } else if (is_preparing_) {
-        ImGui::TextWrapped("%s",
+        DashProgress(preparation_progress_, c.info, c);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(c.muted, "%s",
                            preparation_status_message_.empty()
                                ? "Preparing training..."
                                : preparation_status_message_.c_str());
-        ImGui::ProgressBar(preparation_progress_, ImVec2(-1.0f, 0.0f));
+        ImGui::PopTextWrapPos();
     } else if (total_epochs_ > 0) {
         // During training, count the finished part of the epoch in progress
         // (epoch counter moves to the new epoch at its first batch).
@@ -2314,241 +2933,174 @@ void TrainingPlotPanel::RenderTrainingStatus() {
             ? static_cast<float>(TrainingFractionComplete(
                   current_epoch_, current_batch_, total_batches_, total_epochs_))
             : static_cast<float>(current_epoch_) / std::max(1, total_epochs_);
-        if (!is_training_ && total_training_time_ > 0) {
-            ImGui::Text("Executed epochs: %d / %d",
-                        last_executed_epoch_, total_epochs_);
-            if (current_epoch_ > last_executed_epoch_) {
-                ImGui::TextDisabled("Stopped during epoch %d", current_epoch_);
-            }
-        } else {
-            const int display_epoch = std::max(1, current_epoch_);
-            const int remaining_epochs =
-                std::max(0, total_epochs_ - display_epoch);
-            ImGui::Text("Epoch %d / %d (%d remaining)",
-                        display_epoch, total_epochs_, remaining_epochs);
+        DashProgress(progress, finished ? status_color : c.accent, c);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%.0f%% of all epochs", progress * 100.0f);
         }
-        ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f));
-    } else if (is_training_) {
-        ImGui::Text("Epoch %d / ?", std::max(1, current_epoch_));
     }
 
-    if (!is_training_ && total_training_time_ > 0) {
-        const bool early_stopped = terminal_status_ == "early_stopped";
-        const bool cancelled = terminal_status_ == "cancelled" ||
-                               terminal_status_ == "stopped";
-        const bool failed = terminal_status_ == "failed";
-
-        ImGui::Spacing();
+    // Why the run ended.
+    if (finished) {
+        ImGui::PushTextWrapPos(0.0f);
         if (early_stopped) {
-            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f),
-                               "Stop reason: early stopping triggered.");
+            ImGui::TextColored(c.warning, "Stop reason: early stopping triggered.");
         } else if (cancelled) {
-            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
-                               "Stop reason: training was cancelled.");
+            ImGui::TextColored(c.caution, "Stop reason: training was cancelled.");
         } else if (failed) {
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
-                               "Stop reason: training failed.");
+            ImGui::TextColored(c.error, "Stop reason: training failed.");
         } else {
-            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f),
-                               "Stop reason: training reached its terminal epoch.");
+            ImGui::TextColored(c.success, "Stop reason: training reached its terminal epoch.");
         }
-
         if (!terminal_reason_.empty()) {
-            ImGui::TextWrapped("%s", terminal_reason_.c_str());
+            ImGui::TextColored(c.muted, "%s", terminal_reason_.c_str());
         }
-    }
-
-    if (!is_training_ &&
-        (!active_model_provenance_.empty() || !checkpoint_used_.empty())) {
-        ImGui::Spacing();
-        ImGui::SeparatorText("Active model state");
-        const bool restored_checkpoint = checkpoint_epoch_ > 0 &&
-            !checkpoint_used_.empty();
-        ImGui::TextColored(
-            ImVec4(0.45f, 0.85f, 0.55f, 1.0f),
-            active_checkpoint_loaded_
-                ? "Checkpoint loaded for testing"
-                : (restored_checkpoint
-                    ? "Best validation checkpoint restored"
-                    : "Final state from executed run"));
-        if (!active_model_provenance_.empty()) {
-            ImGui::Text("Provenance: %s",
-                        active_model_provenance_.c_str());
-        }
-        if (checkpoint_epoch_ > 0 && has_checkpoint_validation_metrics_) {
-            ImGui::Text("Checkpoint epoch: %d", checkpoint_epoch_);
-            ImGui::Text("Checkpoint validation: loss %.4f, accuracy %.2f%%",
-                        checkpoint_val_loss_,
-                        checkpoint_val_accuracy_ * 100.0f);
-        } else if (checkpoint_epoch_ > 0) {
-            ImGui::Text("Checkpoint epoch: %d", checkpoint_epoch_);
-        }
-        if (checkpoint_step_ > 0) {
-            ImGui::Text("Checkpoint step: %d", checkpoint_step_);
-        }
-        if (!checkpoint_used_.empty()) {
-            ImGui::TextWrapped("Path: %s", checkpoint_used_.c_str());
-        }
+        ImGui::PopTextWrapPos();
     }
 
     // Batch-level progress within the current epoch (live feedback during training)
     if (is_training_ && total_batches_ > 0) {
-        float batch_progress = static_cast<float>(current_batch_) /
-                                std::max(1, total_batches_);
-        ImGui::Text("Batch %d / %d", current_batch_, total_batches_);
-        if (samples_per_batch_ > 0) {
-            ImGui::SameLine();
-            if (batches_per_update_ > 1) {
-                ImGui::TextDisabled("(%d sample%s each, update every %d batches)", samples_per_batch_,
-                                    samples_per_batch_ == 1 ? "" : "s", batches_per_update_);
-            } else {
-                ImGui::TextDisabled("(%d sample%s each)", samples_per_batch_,
-                                    samples_per_batch_ == 1 ? "" : "s");
-            }
-        }
-        ImGui::SameLine();
-        ImGui::ProgressBar(batch_progress, ImVec2(200, 0));
-        ImGui::SameLine();
-        ImGui::Text("running loss: %.4f", current_batch_loss_);
-        ImGui::SameLine();
-        if (metric_reporting_interval_ > 0) {
-            ImGui::TextDisabled("metrics every %d batches",
-                                metric_reporting_interval_);
-        } else {
-            ImGui::TextDisabled("metrics at first/final batch");
-        }
-    }
-
-    // Second row: timing info
-    ImGui::Spacing();
-
-    if (is_training_ && (total_batches_ > 0 || avg_epoch_time_ > 0)) {
-        // Dynamic estimate: remaining batches over all epochs at the rate of the
-        // last two minutes, plus measured epoch-boundary overhead. It follows
-        // speed changes and appears after ~10 s, also in single-epoch runs.
-        const auto remaining = eta_estimator_.RemainingSeconds();
-        const ImVec4 eta_colour(1.0f, 0.8f, 0.2f, 1.0f);
-        if (remaining) {
-            ImGui::TextColored(eta_colour, "ETA: %s", FormatTrainingDuration(*remaining).c_str());
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip(
-                    "Remaining batches across all epochs at the recent rate (last 2 minutes),\n"
-                    "plus %s per remaining epoch boundary (validation, previews, checkpoint).\n"
-                    "Updates as the training speed changes.",
-                    eta_estimator_.HasMeasuredEpochOverhead()
-                        ? FormatTrainingDuration(eta_estimator_.MeanEpochOverheadSeconds()).c_str()
-                        : "not yet measured");
-            }
-        } else {
-            ImGui::TextColored(eta_colour, "ETA: estimating...");
-        }
-        ImGui::SameLine(200);
-        if (const double rate = eta_estimator_.BatchesPerSecond(); rate > 0.0) {
-            ImGui::Text("%.2f batches/s", rate);
-            ImGui::SameLine(360);
-        }
-        if (avg_epoch_time_ > 0) {
-            ImGui::Text("Last Epoch: %.1fs  Avg: %.1fs/epoch", last_epoch_time_, avg_epoch_time_);
-            ImGui::SameLine(640);
-        }
-        if (samples_per_second_ > 0) {
-            ImGui::Text("%.0f samples/sec", samples_per_second_);
-        }
-    } else if (total_training_time_ > 0) {
-        // Training completed
-        int total_hours = static_cast<int>(total_training_time_ / 3600);
-        int total_mins = static_cast<int>((total_training_time_ - total_hours * 3600) / 60);
-        int total_secs = static_cast<int>(total_training_time_) % 60;
-
-        if (total_hours > 0) {
-            ImGui::Text("Total Time: %dh %dm %ds", total_hours, total_mins, total_secs);
-        } else if (total_mins > 0) {
-            ImGui::Text("Total Time: %dm %ds", total_mins, total_secs);
-        } else {
-            ImGui::Text("Total Time: %ds", total_secs);
-        }
-    }
-
-    // Third row: current metrics
-    if (!train_loss_.values.empty() || !train_accuracy_.values.empty()) {
+        const float batch_progress = static_cast<float>(current_batch_) /
+                                     std::max(1, total_batches_);
         ImGui::Spacing();
+        ImGui::TextColored(c.muted, "Batch");
+        ImGui::SameLine();
+        ImGui::Text("%d / %d", current_batch_, total_batches_);
+        ImGui::SameLine(0.0f, 12.0f);
+        DashProgress(batch_progress, c.accent, c, 160.0f, 5.0f);
+        ImGui::SameLine(0.0f, 16.0f);
+        ImGui::TextColored(c.muted, "Running loss");
+        ImGui::SameLine();
+        ImGui::Text("%.4f", current_batch_loss_);
 
-        if (!train_loss_.values.empty()) {
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
-                "Loss: %.6f", train_loss_.values.back());
-        }
-
-        if (!train_accuracy_.values.empty()) {
-            ImGui::SameLine(180);
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f),
-                "Accuracy: %.2f%%", train_accuracy_.values.back());
-        }
-
-        if (!val_loss_.values.empty()) {
-            ImGui::SameLine(360);
-            ImGui::TextColored(ImVec4(0.3f, 0.5f, 1.0f, 1.0f),
-                    "Val Loss: %.6f", val_loss_.values.back());
-        }
-
-        if (!val_accuracy_.values.empty()) {
-            ImGui::SameLine(540);
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
-                    "Val Acc: %.2f%%", val_accuracy_.values.back());
-        }
-
-        if (!val_loss_.values.empty() || !val_accuracy_.values.empty()) {
-            ImGui::Spacing();
-            ImGui::Text("Validation Signal:");
-            ImGui::SameLine(150);
-            if (!val_loss_.values.empty()) {
-                const double recent_val_loss = val_loss_.values.back();
-                const double recent_train_loss = train_loss_.values.empty() ? recent_val_loss : train_loss_.values.back();
-                const double gap = recent_val_loss - recent_train_loss;
-                if (gap > 0.25) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
-                        "val_loss is above train_loss by %.4f", gap);
-                } else {
-                    ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f),
-                        "validation gap is controlled");
-                }
-            } else {
-                ImGui::TextDisabled("validation metrics not available yet");
+        std::string detail;
+        char part[96];
+        if (samples_per_batch_ > 0) {
+            std::snprintf(part, sizeof(part), "%d sample%s each", samples_per_batch_,
+                          samples_per_batch_ == 1 ? "" : "s");
+            detail = part;
+            if (batches_per_update_ > 1) {
+                std::snprintf(part, sizeof(part), "update every %d batches", batches_per_update_);
+                detail += std::string(" \xC2\xB7 ") + part;
             }
         }
+        if (metric_reporting_interval_ > 0) {
+            std::snprintf(part, sizeof(part), "metrics every %d batches", metric_reporting_interval_);
+        } else {
+            std::snprintf(part, sizeof(part), "metrics at first/final batch");
+        }
+        detail += (detail.empty() ? "" : " \xC2\xB7 ") + std::string(part);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(c.faint, "%s", detail.c_str());
+        ImGui::PopTextWrapPos();
     }
 
-    ImGui::EndGroup();
+    // The model the Engine holds now (after a run or a loaded checkpoint).
+    if (!is_training_ &&
+        (!active_model_provenance_.empty() || !checkpoint_used_.empty())) {
+        ImGui::Spacing();
+        ImGui::TextColored(c.muted, "Active model");
+        ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
+        if (ImGui::BeginTable("##dash_active_model", 2,
+                              ImGuiTableFlags_SizingStretchProp |
+                                  ImGuiTableFlags_BordersInnerH)) {
+            ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            const auto row = [&](const char* label) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(c.muted, "%s", label);
+                ImGui::TableNextColumn();
+            };
+            const bool restored_checkpoint = checkpoint_epoch_ > 0 &&
+                !checkpoint_used_.empty();
+            row("State");
+            ImGui::TextColored(
+                c.success, "%s",
+                active_checkpoint_loaded_
+                    ? "Checkpoint loaded for testing"
+                    : (restored_checkpoint
+                        ? "Best validation checkpoint restored"
+                        : "Final state from executed run"));
+            if (!active_model_provenance_.empty()) {
+                row("Provenance");
+                ImGui::TextWrapped("%s", active_model_provenance_.c_str());
+            }
+            if (checkpoint_epoch_ > 0) {
+                row("Checkpoint epoch");
+                ImGui::Text("%d", checkpoint_epoch_);
+            }
+            if (checkpoint_epoch_ > 0 && has_checkpoint_validation_metrics_) {
+                row("Checkpoint validation");
+                ImGui::Text("loss %.4f, accuracy %.2f%%",
+                            checkpoint_val_loss_,
+                            checkpoint_val_accuracy_ * 100.0f);
+            }
+            if (checkpoint_step_ > 0) {
+                row("Checkpoint step");
+                ImGui::Text("%d", checkpoint_step_);
+            }
+            if (!checkpoint_used_.empty()) {
+                row("Path");
+                ImGui::TextWrapped("%s", checkpoint_used_.c_str());
+            }
+            ImGui::EndTable();
+        }
+        ImGui::PopStyleColor();
+    }
+
+    EndDashCard();
 }
 
 void TrainingPlotPanel::RenderStatistics() {
-    ImGui::Separator();
-    ImGui::Text("Statistics (last 10 epochs):");
-
-    ImGui::Columns(2, "stats", false);
-
-    if (!train_loss_.values.empty()) {
-        double mean_loss = CalculateMean(train_loss_.values);
-        double min_loss = CalculateMin(train_loss_.values);
-        double max_loss = CalculateMax(train_loss_.values);
-
-        ImGui::Text("Train Loss:");
-        ImGui::NextColumn();
-        ImGui::Text("Mean: %.6f | Min: %.6f | Max: %.6f", mean_loss, min_loss, max_loss);
-        ImGui::NextColumn();
+    const DashColors c = CurrentDashColors();
+    ImGui::Spacing();
+    if (!BeginDashCard("##dash_stats", c)) {
+        EndDashCard();
+        return;
     }
+    DashCardTitle("Statistics", "mean of the last 10 points; min and max of the run", c);
+    ImGui::Spacing();
 
-    if (!val_loss_.values.empty()) {
-        double mean_loss = CalculateMean(val_loss_.values);
-        double min_loss = CalculateMin(val_loss_.values);
-        double max_loss = CalculateMax(val_loss_.values);
+    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
+    ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, ImVec4(0, 0, 0, 0));
+    if (ImGui::BeginTable("##dash_stats_table", 4,
+                          ImGuiTableFlags_SizingStretchProp |
+                              ImGuiTableFlags_BordersInnerH)) {
+        ImGui::TableSetupColumn("Series", ImGuiTableColumnFlags_WidthStretch, 1.3f);
+        ImGui::TableSetupColumn("Mean", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Min", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Max", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, c.muted);
+        ImGui::TableHeadersRow();
+        ImGui::PopStyleColor();
 
-        ImGui::Text("Val Loss:");
-        ImGui::NextColumn();
-        ImGui::Text("Mean: %.6f | Min: %.6f | Max: %.6f", mean_loss, min_loss, max_loss);
-        ImGui::NextColumn();
+        const auto series_row = [&](const char* label, const MetricSeries& series) {
+            if (series.values.empty()) {
+                return;
+            }
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            const float line = ImGui::GetTextLineHeight();
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            ImGui::GetWindowDrawList()->AddCircleFilled(
+                ImVec2(pos.x + 4.0f, pos.y + line * 0.5f), 3.5f,
+                ImGui::GetColorU32(series.color));
+            ImGui::Dummy(ImVec2(8.0f, line));
+            ImGui::SameLine(0.0f, 6.0f);
+            ImGui::TextUnformatted(label);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.6f", CalculateMean(series.values));
+            ImGui::TableNextColumn();
+            ImGui::Text("%.6f", CalculateMin(series.values));
+            ImGui::TableNextColumn();
+            ImGui::Text("%.6f", CalculateMax(series.values));
+        };
+        series_row("Train loss", train_loss_);
+        series_row("Val loss", val_loss_);
+        ImGui::EndTable();
     }
-
-    ImGui::Columns(1);
+    ImGui::PopStyleColor(2);
+    EndDashCard();
 }
 
 void TrainingPlotPanel::TrimDataIfNeeded(MetricSeries& series) {
