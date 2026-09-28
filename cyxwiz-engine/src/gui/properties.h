@@ -13,6 +13,10 @@
 #include "properties_shape_info.h"
 #include "properties_truth.h"
 
+namespace cyxwiz {
+class LiveGraphCompile;
+}  // namespace cyxwiz
+
 namespace gui {
 
 // Forward declarations
@@ -48,6 +52,10 @@ public:
     // Force recomputation of shapes (call when graph changes)
     void InvalidateShapes() { shapes_valid_ = false; }
 
+    // The background compile of the canvas (TOFIX123); the AS COMPILED card
+    // reads it. Owned by MainWindow.
+    void SetLiveCompile(const cyxwiz::LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
+
     void SetBackendPlacementFacts(
         std::vector<properties_truth::BackendPlacementTruthFact> facts);
     void ClearBackendPlacementFacts();
@@ -62,6 +70,10 @@ private:
     void RenderPresetsSection(MLNode& node);
     // Word + POS fusion card on a Concatenate (properties_sequence_fusion.cpp).
     void RenderSequenceFusionSection(MLNode& node);
+    // AS COMPILED card: the selected node as the compiler built it
+    // (properties_compiled_card.cpp, TOFIX123).
+    void RenderCompiledSection(MLNode& node);
+    bool AnyDataInputLoaded() const;
 
     // Node executor integration (Phase: Node Executor Architecture)
     void RenderExecutorSection(MLNode& node);
@@ -88,6 +100,8 @@ private:
     bool section_presets_open_ = false;
     char preset_name_buffer_[64] = {};
     std::set<int> fusion_details_open_;  // Concatenate ids with Details shown
+    std::set<int> compiled_details_open_;  // node ids with AS COMPILED Details shown
+    const cyxwiz::LiveGraphCompile* live_compile_ = nullptr;
 
     // KNIME-style configuration dialogs
     std::unique_ptr<NodeConfigDialog> active_dialog_;

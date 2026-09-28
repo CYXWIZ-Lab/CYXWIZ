@@ -32,6 +32,10 @@ class PipelineExecutor;
 class PipelineExecutionTracker;
 }
 
+namespace cyxwiz {
+class LiveGraphCompile;
+}  // namespace cyxwiz
+
 namespace gui {
 class Properties;
 class ShapeInferenceEngine;
@@ -242,6 +246,9 @@ public:
 
     // Set properties panel for node selection display
     void SetPropertiesPanel(Properties* properties) { properties_panel_ = properties; }
+    // The background compile of this graph (TOFIX123): link tooltips show
+    // the compiler's reason for a failed node. Owned by MainWindow.
+    void SetLiveCompile(const cyxwiz::LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
 
     // Visibility control for sidebar integration
     bool* GetVisiblePtr() { return &show_window_; }
@@ -725,6 +732,7 @@ private:
 
     // Current file path for save/load
     std::string current_file_path_;
+    const cyxwiz::LiveGraphCompile* live_compile_ = nullptr;
 
     // Deferred node addition (to avoid modifying nodes_ while ImNodes is rendering)
     struct PendingNode {

@@ -13,6 +13,10 @@ class AsyncTask;
 struct DebugArtifactConsistencyInput;
 } // namespace cyxwiz
 
+namespace cyxwiz {
+class LiveGraphCompile;
+}  // namespace cyxwiz
+
 namespace gui {
 
 class NodeEditor;
@@ -331,6 +335,11 @@ private:
     std::unique_ptr<Console> console_;
     std::unique_ptr<Viewport> viewport_;
     std::unique_ptr<Properties> properties_;
+    // Background compile of the canvas graph (TOFIX123): Properties AS
+    // COMPILED card, link colours and tooltips follow it.
+    std::unique_ptr<cyxwiz::LiveGraphCompile> live_compile_;
+    uint64_t live_compile_serial_seen_ = 0;
+    void UpdateLiveCompile();
     // std::unique_ptr<TrainingEvaluationPanel> training_eval_panel_;  // Phase 5: Removed
 
     // New panel system

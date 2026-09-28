@@ -304,7 +304,9 @@ set(ENGINE_SOURCES
     src/gui/properties_presets.cpp
     src/gui/properties_shape_info.cpp
     src/gui/properties_truth.cpp
+    src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
+    src/core/live_graph_compile.cpp
     src/gui/node_config_dialog.cpp
     src/gui/data_input_capabilities.cpp
     src/gui/data_input_preview.cpp

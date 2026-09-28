@@ -94,13 +94,13 @@ cyxwiz::CompiledNodeCard Card(const Compiled& compiled, const std::string& name,
 }
 
 void CheckFormatting() {
-    Check(cyxwiz::FormatCount(3002048) == "3,002,048" && cyxwiz::FormatCount(0) == "0" &&
-              cyxwiz::FormatCount(256) == "256",
+    Check(cyxwiz::FormatCompiledCount(3002048) == "3,002,048" && cyxwiz::FormatCompiledCount(0) == "0" &&
+              cyxwiz::FormatCompiledCount(256) == "256",
           "counts are grouped by thousands");
-    Check(cyxwiz::FormatBytes(1425408) == "1.36 MB" && cyxwiz::FormatBytes(791808) == "773.2 KB" &&
-              cyxwiz::FormatBytes(0) == "0 bytes",
+    Check(cyxwiz::FormatCompiledBytes(1425408) == "1.36 MB" && cyxwiz::FormatCompiledBytes(791808) == "773.2 KB" &&
+              cyxwiz::FormatCompiledBytes(0) == "0 bytes",
           "memory uses 1024-based units");
-    Check(cyxwiz::FormatShape({96, 116}) == "[96, 116]", "shapes print as [a, b]");
+    Check(cyxwiz::FormatCompiledShape({96, 116}) == "[96, 116]", "shapes print as [a, b]");
     const auto per_layer = cyxwiz::CountParametersPerLayer(
         {{"layer0.weight", 10}, {"layer2.layer0.forward.W_ih", 3}, {"layer2.layer1.forward.W_ih", 4}, {"other", 9}});
     Check(per_layer.at(0) == 10 && per_layer.at(2) == 7 && per_layer.size() == 2,

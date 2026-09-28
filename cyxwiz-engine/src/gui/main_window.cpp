@@ -10,6 +10,8 @@
 #endif
 
 #include "main_window.h"
+#include "../core/live_graph_compile.h"
+#include "ui_buttons.h"
 #include "loaders/data_loader.h"
 #include "graph_training_launcher.h"
 #include "engine_graph_training_dispatch.h"
@@ -788,6 +790,10 @@ MainWindow::MainWindow()
 
     // Connect Properties panel to Node Editor for shape inference
     properties_->SetNodeEditor(node_editor_.get());
+
+    live_compile_ = std::make_unique<cyxwiz::LiveGraphCompile>();
+    properties_->SetLiveCompile(live_compile_.get());
+    node_editor_->SetLiveCompile(live_compile_.get());
 
     // Connect Pattern Browser to Node Editor for proper node creation
     pattern_browser_->SetNodeEditor(node_editor_.get());
@@ -2961,6 +2967,7 @@ void MainWindow::Render() {
     HandleGlobalShortcuts();
 
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
+    UpdateLiveCompile();
 
     auto& plugin_manager = cyxwiz::plugin::PluginManager::Instance();
     if (plugin_manager.GetPluginCount() > 0) {
@@ -3193,6 +3200,23 @@ static void DrawDockNodeActiveTabIndicator(ImGuiDockNode* node) {
     // Draw the indicator line at the TOP of the active tab
     ImU32 indicator_color = ImGui::ColorConvertFloat4ToU32(style.active_indicator_color);
     draw_list->AddRectFilled(tab_min, tab_max, indicator_color);
+}
+
+void MainWindow::UpdateLiveCompile() {
+    if (!live_compile_ || !node_editor_) return;
+    // Counting parameters builds the model once; not while training uses
+    // the device.
+    const bool training = cyxwiz::TrainingManager::Instance().IsTrainingActive();
+    live_compile_->Update(node_editor_->GetNodes(), node_editor_->GetLinks(), !training);
+    if (live_compile_->ResultSerial() == live_compile_serial_seen_ || !live_compile_->Config()) return;
+    live_compile_serial_seen_ = live_compile_->ResultSerial();
+    // Pins and links show this compile, as the Compile button does.
+    node_editor_->SetAllNodesPinState(NodeEditor::NodePinState::CompilePassed);
+    for (const auto& issue : live_compile_->Config()->issues) {
+        if (issue.level == cyxwiz::IssueLevel::Error && issue.node_id >= 0) {
+            node_editor_->SetNodePinState(issue.node_id, NodeEditor::NodePinState::CompileFailed);
+        }
+    }
 }
 
 void MainWindow::RenderDockSpace() {
@@ -5513,6 +5537,15 @@ void MainWindow::RenderCompileResultPopup() {
                         if (!issue.error_code.empty()) {
                             ImGui::SameLine();
                             ImGui::TextDisabled("%s", issue.error_code.c_str());
+                        }
+                        // Jump to the node the finding is about (TOFIX123).
+                        if (issue.node_id >= 0 && node_editor_) {
+                            ImGui::SameLine();
+                            ImGui::PushID(&issue);
+                            if (cyxwiz::ui::LinkButton("Select node")) {
+                                node_editor_->FocusNode(issue.node_id);
+                            }
+                            ImGui::PopID();
                         }
                         ImGui::TextWrapped("%s", issue.message.c_str());
                         ImGui::Spacing();

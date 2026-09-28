@@ -53,11 +53,11 @@ void SetShapes(CompiledNodeCard& card, size_t batch, const std::vector<size_t>& 
                const std::vector<size_t>& out) {
     card.has_shapes = true;
     card.batch = batch;
-    card.input_sample = FormatShape(in);
-    card.output_sample = FormatShape(out);
-    card.input_batch = FormatShape(WithBatch(batch, in));
-    card.output_batch = FormatShape(WithBatch(batch, out));
-    card.output_memory = FormatBytes(Elements(WithBatch(batch, out)) * kBytesPerElement);
+    card.input_sample = FormatCompiledShape(in);
+    card.output_sample = FormatCompiledShape(out);
+    card.input_batch = FormatCompiledShape(WithBatch(batch, in));
+    card.output_batch = FormatCompiledShape(WithBatch(batch, out));
+    card.output_memory = FormatCompiledBytes(Elements(WithBatch(batch, out)) * kBytesPerElement);
 }
 
 void SetParameters(CompiledNodeCard& card, const CompiledNodeInputs& inputs, bool known, long long count) {
@@ -66,13 +66,13 @@ void SetParameters(CompiledNodeCard& card, const CompiledNodeInputs& inputs, boo
         card.parameter_memory = "-";
         return;
     }
-    card.parameters = FormatCount(count);
-    card.parameter_memory = FormatBytes(static_cast<unsigned long long>(count) * kBytesPerElement);
+    card.parameters = FormatCompiledCount(count);
+    card.parameter_memory = FormatCompiledBytes(static_cast<unsigned long long>(count) * kBytesPerElement);
 }
 
 }  // namespace
 
-std::string FormatCount(long long value) {
+std::string FormatCompiledCount(long long value) {
     const bool negative = value < 0;
     std::string digits = std::to_string(negative ? -value : value);
     std::string out;
@@ -84,7 +84,7 @@ std::string FormatCount(long long value) {
     return negative ? "-" + out : out;
 }
 
-std::string FormatBytes(unsigned long long bytes) {
+std::string FormatCompiledBytes(unsigned long long bytes) {
     char buffer[32];
     if (bytes < 1024ULL) {
         std::snprintf(buffer, sizeof(buffer), "%llu bytes", bytes);
@@ -99,7 +99,7 @@ std::string FormatBytes(unsigned long long bytes) {
     return buffer;
 }
 
-std::string FormatShape(const std::vector<size_t>& shape) {
+std::string FormatCompiledShape(const std::vector<size_t>& shape) {
     std::string text = "[";
     for (size_t i = 0; i < shape.size(); ++i) {
         if (i) text += ", ";
@@ -222,10 +222,10 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
                                    ParseCount(Param(layer.parameters, "word_embedding_dim"));
             const long long pos = ParseCount(Param(layer.parameters, "pos_num_embeddings")) *
                                   ParseCount(Param(layer.parameters, "pos_embedding_dim"));
-            card.parameter_note = "Word " + FormatCount(ParseCount(Param(layer.parameters, "word_num_embeddings"))) +
-                                  " x " + Param(layer.parameters, "word_embedding_dim") + " (" + FormatCount(word) +
-                                  ") + POS " + FormatCount(ParseCount(Param(layer.parameters, "pos_num_embeddings"))) +
-                                  " x " + Param(layer.parameters, "pos_embedding_dim") + " (" + FormatCount(pos) +
+            card.parameter_note = "Word " + FormatCompiledCount(ParseCount(Param(layer.parameters, "word_num_embeddings"))) +
+                                  " x " + Param(layer.parameters, "word_embedding_dim") + " (" + FormatCompiledCount(word) +
+                                  ") + POS " + FormatCompiledCount(ParseCount(Param(layer.parameters, "pos_num_embeddings"))) +
+                                  " x " + Param(layer.parameters, "pos_embedding_dim") + " (" + FormatCompiledCount(pos) +
                                   "). Sizes follow the data at launch.";
             card.details.emplace_back("Compiled layer", "SequenceFeatureFusion");
         } else {
@@ -257,7 +257,7 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
             ? "Input: word ids (Concatenate Input 1)."
             : "Input: POS ids (Concatenate Input 2).";
         SetParameters(card, inputs, true, vocab * dim);
-        card.parameter_note = "Vocabulary " + FormatCount(vocab) + " x " + std::to_string(dim) +
+        card.parameter_note = "Vocabulary " + FormatCompiledCount(vocab) + " x " + std::to_string(dim) +
                               " (set from the data at launch).";
         card.details.emplace_back("Compiled into", "layer " + std::to_string(fused_index) + " SequenceFeatureFusion");
         card.details.emplace_back("Role", fused_role == "word" ? "word ids (Input 1)" : "POS ids (Input 2)");
@@ -266,9 +266,9 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
         if (!config->input_shape.empty()) {
             card.has_shapes = true;
             card.batch = batch;
-            card.output_sample = FormatShape(config->input_shape);
-            card.output_batch = FormatShape(WithBatch(batch, config->input_shape));
-            card.output_memory = FormatBytes(Elements(WithBatch(batch, config->input_shape)) * kBytesPerElement);
+            card.output_sample = FormatCompiledShape(config->input_shape);
+            card.output_batch = FormatCompiledShape(WithBatch(batch, config->input_shape));
+            card.output_memory = FormatCompiledBytes(Elements(WithBatch(batch, config->input_shape)) * kBytesPerElement);
             card.input_sample = card.input_batch = "-";
             card.input_note = "Output: one model input per sample.";
             SetParameters(card, inputs, true, 0);

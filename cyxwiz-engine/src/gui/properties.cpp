@@ -75,12 +75,6 @@ ImVec4 ImplementationStatusColor(cyxwiz::NodeImplementationStatus status) {
     return ImVec4(0.55f, 0.75f, 1.0f, 1.0f);
 }
 
-ImVec4 SupportAxisColor(const cyxwiz::SupportAxisDefinition& axis) {
-    return axis.supported
-        ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
-        : ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
-}
-
 void RenderMetadataSupportTruth(const cyxwiz::NodeMetadata& metadata) {
     ImGui::Text("Implementation:");
     ImGui::SameLine();
@@ -94,23 +88,9 @@ void RenderMetadataSupportTruth(const cyxwiz::NodeMetadata& metadata) {
         ImGui::TextDisabled("[%s]", metadata.badge.c_str());
     }
 
-    if (metadata.support_axes.empty()) {
-        return;
-    }
-
-    if (!ImGui::TreeNodeEx("Support Truth", ImGuiTreeNodeFlags_DefaultOpen)) {
-        return;
-    }
-
-    for (const auto& axis : metadata.support_axes) {
-        ImGui::Text("%s:", axis.name.c_str());
-        ImGui::SameLine();
-        ImGui::TextColored(SupportAxisColor(axis), "%s", axis.value.c_str());
-        if (!axis.reason.empty()) {
-            ImGui::TextDisabled("  %s", axis.reason.c_str());
-        }
-    }
-    ImGui::TreePop();
+    // The node type's support axes are listed under the AS COMPILED card's
+    // Details (properties_compiled_card.cpp): they describe the type, not
+    // this node.
 }
 
 std::string ParamOrEmpty(const MLNode& node, const char* key) {
@@ -291,6 +271,7 @@ void Properties::Render() {
 
             // Phase 3: Section-based rendering
             RenderGeneralSection(*selected_node_);
+            RenderCompiledSection(*selected_node_);
             RenderSequenceFusionSection(*selected_node_);
 
             ImGui::Spacing();
@@ -303,13 +284,9 @@ void Properties::Render() {
                 // Parameters section - use metadata-driven rendering if available
                 RenderParametersSection(*selected_node_, metadata);
 
-                ImGui::Spacing();
-
-                // Shape information section
-                if (ImGui::CollapsingHeader("Shape Info", ImGuiTreeNodeFlags_DefaultOpen)) {
-                    NodeShapeInfo shape_info = ComputeNodeShape(selected_node_->id);
-                    properties_shape::RenderShapeInfo(node_editor_, shape_info);
-                }
+                // Shapes, memory and parameters are in the AS COMPILED card
+                // above, from the compiler (the editor-side Shape Info guess
+                // is retired, TOFIX123).
 
                 ImGui::Spacing();
 
@@ -339,6 +316,14 @@ void Properties::Render() {
             active_dialog_.reset();
         }
     }
+}
+
+bool Properties::AnyDataInputLoaded() const {
+    if (!node_editor_) return false;
+    for (const auto& graph_node : node_editor_->GetNodes()) {
+        if (graph_node.type == NodeType::DataInput && BuildDatasetTruthFact(graph_node).found) return true;
+    }
+    return false;
 }
 
 void Properties::RenderNodeProperties(MLNode& node) {
