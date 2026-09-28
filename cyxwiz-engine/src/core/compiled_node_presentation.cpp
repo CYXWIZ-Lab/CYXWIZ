@@ -277,6 +277,11 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
         card.role = "Loss: " + (inputs.type_label.empty() ? node->name : inputs.type_label);
     } else if (node_id == config->optimizer_node_id) {
         card.role = "Optimizer: " + (inputs.type_label.empty() ? node->name : inputs.type_label);
+    } else if (node->type == gui::NodeType::Concatenate &&
+               std::any_of(config->issues.begin(), config->issues.end(), [&](const ValidationIssue& issue) {
+                   return issue.node_id == node_id && issue.message.rfind("Word + POS fusion:", 0) == 0;
+               })) {
+        card.role = "Word + POS fusion, rejected by the compiler (see below)";
     } else {
         const bool on_path = std::any_of(config->graph_plan.nodes.begin(), config->graph_plan.nodes.end(),
                                          [&](const CompiledGraphNode& n) { return n.node_id == node_id; });

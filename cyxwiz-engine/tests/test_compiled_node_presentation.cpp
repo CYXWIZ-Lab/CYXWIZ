@@ -164,6 +164,8 @@ void CheckNer() {
           "the node's own compiler error is listed");
     Check(failed.status_note == "1 error on this node. Shapes appear once the graph compiles.",
           "status names the node's error count: " + failed.status_note);
+    Check(failed.role == "Word + POS fusion, rejected by the compiler (see below)",
+          "a rejected fusion Concatenate says what it would have been: " + failed.role);
 
     cyxwiz::CompiledNodeInputs counting;
     counting.state = cyxwiz::LiveCompileState::Compiled;

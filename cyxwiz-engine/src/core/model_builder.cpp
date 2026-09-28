@@ -1394,8 +1394,9 @@ bool BuildSequential(
         return false;
     }
 
-    // Print model summary
-    model.Summary();
+    // Print model summary (the backend logs it; skipped inside a
+    // QuietModelBuildScope like the rest of the build log).
+    if (!g_quiet_build_log) model.Summary();
 
     return true;
 }
