@@ -105,6 +105,7 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
             result->revision = revision;
             // allow_unloaded_data: the canvas view compiles from the saved
             // data contract; data readiness is reported as issues.
+            const QuietModelBuildScope quiet;  // no Console lines per edit
             result->config = GraphCompiler{}.Compile(nodes, links, true);
             if (!count_parameters || result->config.layers.empty()) return result;
             try {

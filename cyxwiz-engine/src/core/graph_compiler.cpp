@@ -1,5 +1,6 @@
 #include "graph_compiler.h"
 #include "sequence_fusion_presentation.h"
+#include "quiet_build_log.h"
 #include "training_randomness.h"
 #include "error_codes.h"
 #include "backend_placement_capabilities.h"
@@ -3981,7 +3982,7 @@ TrainingConfiguration GraphCompiler::Compile(
         nodes, training_path_ids, loss_node);
     timing("target_contract");
     if (config.target.IsGeneratedByGraph()) {
-        spdlog::info(
+        CYXWIZ_BUILDER_INFO(
             "GraphCompiler: target contract resolved from graph node '{}' "
             "(column='{}', width={}); a raw Data Input label is not required",
             config.target.producer_node_name,
@@ -4185,13 +4186,13 @@ TrainingConfiguration GraphCompiler::Compile(
             // Data IS loaded, regardless of the hint. Log when we had to
             // override a stale hint so it's traceable at training time.
             if (loaded_param != "true") {
-                spdlog::info("GraphCompiler: dataset '{}' found in registry "
+                CYXWIZ_BUILDER_INFO("GraphCompiler: dataset '{}' found in registry "
                              "despite data_loaded='{}' hint (stale from "
                              "async Apply after dialog close) - proceeding",
                              config.dataset_name, loaded_param);
             }
         } else if (allow_unloaded_data) {
-            spdlog::info("GraphCompiler: dataset '{}' not in registry, but "
+            CYXWIZ_BUILDER_INFO("GraphCompiler: dataset '{}' not in registry, but "
                          "compile is running in deployment mode - skipping "
                          "data_loaded validation",
                          config.dataset_name);
@@ -4387,7 +4388,7 @@ TrainingConfiguration GraphCompiler::Compile(
             } else {
                 config.input_shape = {feature_count};
                 config.input_size = feature_count;
-                spdlog::info(
+                CYXWIZ_BUILDER_INFO(
                     "GraphCompiler: derived tabular input width {} from "
                     "dataset '{}' (label='{}')",
                     feature_count, config.dataset_name, resolved_label_col);
@@ -4432,7 +4433,7 @@ TrainingConfiguration GraphCompiler::Compile(
         }
         config.train_ratio =
             std::max(0.0f, 1.0f - config.val_ratio - config.test_ratio);
-        spdlog::info(
+        CYXWIZ_BUILDER_INFO(
             "GraphCompiler: resolved supplied dataset roles - "
             "derived train={:.2f}, val={:.2f}, test={:.2f}; "
             "external dev={}, external test={}",
@@ -4441,11 +4442,11 @@ TrainingConfiguration GraphCompiler::Compile(
             config.dataset_roles.test.IsSupplied());
     }
     if (config.has_data_split) {
-        spdlog::info("GraphCompiler: DataSplit node found - train={:.2f}, val={:.2f}, test={:.2f}, seed={}, stratified={}",
+        CYXWIZ_BUILDER_INFO("GraphCompiler: DataSplit node found - train={:.2f}, val={:.2f}, test={:.2f}, seed={}, stratified={}",
                      config.train_ratio, config.val_ratio, config.test_ratio,
                      config.split_seed, config.stratified);
     } else {
-        spdlog::info("GraphCompiler: No DataSplit node - using defaults (train=0.80, val=0.10, test=0.10)");
+        CYXWIZ_BUILDER_INFO("GraphCompiler: No DataSplit node - using defaults (train=0.80, val=0.10, test=0.10)");
     }
 
     // Extract training-loop config from DataLoader node if present.
@@ -4462,7 +4463,7 @@ TrainingConfiguration GraphCompiler::Compile(
                 AddIssue(config, IssueLevel::Error, error.what(), loader_node->id, loader_node->name);
             }
         }
-        spdlog::info("GraphCompiler: Model RNG seed={} (-1 means unset)", config.model_seed);
+        CYXWIZ_BUILDER_INFO("GraphCompiler: Model RNG seed={} (-1 means unset)", config.model_seed);
         try {
             if (loader_node->parameters.count("batch_size"))
                 config.batch_size = std::stoi(loader_node->parameters.at("batch_size"));
@@ -4482,7 +4483,7 @@ TrainingConfiguration GraphCompiler::Compile(
             }
             if (loader_node->parameters.count("prefetch_factor")) {
                 config.prefetch_factor = std::max(0, std::stoi(loader_node->parameters.at("prefetch_factor")));
-                spdlog::info("GraphCompiler: DataLoader prefetch_factor={} will enable a bounded "
+                CYXWIZ_BUILDER_INFO("GraphCompiler: DataLoader prefetch_factor={} will enable a bounded "
                              "async batch queue on supported Arrow/Parquet batchers; num_workers={} "
                              "still controls synchronous per-batch conversion inside each fetch",
                              config.prefetch_factor, config.num_workers);
@@ -4553,7 +4554,7 @@ TrainingConfiguration GraphCompiler::Compile(
         }
     }
     if (config.has_data_loader) {
-        spdlog::info("GraphCompiler: DataLoader node found - batch_size={}, epochs={}, shuffle={}, drop_last={}, num_workers={}, prefetch_factor={}, log_interval={}, validation_freq={}, seed={}, grad_accum_steps={}, balance_classes={}, balance_mode='{}', balance_target='{}', balance_seed={}, save_best_checkpoint={}, early_stopping_patience={}, checkpoint_dir='{}'",
+        CYXWIZ_BUILDER_INFO("GraphCompiler: DataLoader node found - batch_size={}, epochs={}, shuffle={}, drop_last={}, num_workers={}, prefetch_factor={}, log_interval={}, validation_freq={}, seed={}, grad_accum_steps={}, balance_classes={}, balance_mode='{}', balance_target='{}', balance_seed={}, save_best_checkpoint={}, early_stopping_patience={}, checkpoint_dir='{}'",
                      config.batch_size, config.epochs, config.shuffle, config.drop_last, config.num_workers, config.prefetch_factor,
                      config.log_interval, config.validation_freq, config.dataloader_seed,
                      config.grad_accum_steps, config.balance_classes,
@@ -4561,11 +4562,11 @@ TrainingConfiguration GraphCompiler::Compile(
                      config.balance_seed, config.save_best_checkpoint, config.early_stopping_patience,
                      config.checkpoint_dir);
         if (config.num_workers > 0) {
-            spdlog::info("GraphCompiler: num_workers={} will be forwarded to supported batchers",
+            CYXWIZ_BUILDER_INFO("GraphCompiler: num_workers={} will be forwarded to supported batchers",
                          config.num_workers);
         }
     } else {
-        spdlog::info("GraphCompiler: No DataLoader node - using defaults (batch_size=32, epochs=10, shuffle=true, drop_last=false, log_interval=10, validation_freq=1, seed=42, grad_accum_steps=1)");
+        CYXWIZ_BUILDER_INFO("GraphCompiler: No DataLoader node - using defaults (batch_size=32, epochs=10, shuffle=true, drop_last=false, log_interval=10, validation_freq=1, seed=42, grad_accum_steps=1)");
     }
 
     if (loss_node) {
@@ -4663,7 +4664,7 @@ TrainingConfiguration GraphCompiler::Compile(
                 config.input_size = static_cast<size_t>(total_input);
                 config.input_shape = {static_cast<size_t>(total_input)};
             }
-            spdlog::info("GraphCompiler: TimeSeriesWindow found - regression mode, "
+            CYXWIZ_BUILDER_INFO("GraphCompiler: TimeSeriesWindow found - regression mode, "
                          "input_size={} (input_width={} x num_features={}), "
                          "target_width={}",
                          config.input_size, input_width, num_features,
@@ -4730,7 +4731,7 @@ TrainingConfiguration GraphCompiler::Compile(
          loss_node->type == gui::NodeType::FocalLoss);
 
     // Log all nodes in the graph for debugging
-    spdlog::info("GraphCompiler: Processing {} nodes (using_cross_entropy={})", sorted_ids.size(), using_cross_entropy);
+    CYXWIZ_BUILDER_INFO("GraphCompiler: Processing {} nodes (using_cross_entropy={})", sorted_ids.size(), using_cross_entropy);
     for (int node_id : sorted_ids) {
         const gui::MLNode* n = FindNodeById(node_id, nodes);
         if (n) {
@@ -4758,12 +4759,12 @@ TrainingConfiguration GraphCompiler::Compile(
 
         // Handle preprocessing nodes
         if (IsPreprocessing(node->type)) {
-            spdlog::info("GraphCompiler: Found preprocessing node '{}' (type={})", node->name, static_cast<int>(node->type));
+            CYXWIZ_BUILDER_INFO("GraphCompiler: Found preprocessing node '{}' (type={})", node->name, static_cast<int>(node->type));
             ExtractPreprocessing(*node, config);
             ApplyTextInputShape(config);
             current_shape = config.input_shape;
             if (node->type == gui::NodeType::Normalize) {
-                spdlog::info("GraphCompiler: Normalization enabled - mean={}, std={}",
+                CYXWIZ_BUILDER_INFO("GraphCompiler: Normalization enabled - mean={}, std={}",
                              config.preprocessing.norm_mean, config.preprocessing.norm_std);
             }
             continue;
@@ -5105,7 +5106,7 @@ TrainingConfiguration GraphCompiler::Compile(
             if (it != output_node->parameters.end() && !it->second.empty()) {
                 try {
                     config.preprocessing.num_classes = std::stoul(it->second);
-                    spdlog::info("GraphCompiler: num_classes={} from output node",
+                    CYXWIZ_BUILDER_INFO("GraphCompiler: num_classes={} from output node",
                                  config.preprocessing.num_classes);
                 } catch (...) {
                     config.preprocessing.num_classes = 0;  // Will fall back below
@@ -5455,11 +5456,11 @@ TrainingConfiguration GraphCompiler::Compile(
     // individual extractor calls.
     if (config.preprocessing_domain == PreprocessingDomain::Audio) {
         if (config.audio_preprocessing.has_feature_node) {
-            spdlog::info("GraphCompiler: audio feature extraction driven by graph "
+            CYXWIZ_BUILDER_INFO("GraphCompiler: audio feature extraction driven by graph "
                          "node (type={})",
                          static_cast<int>(config.audio_preprocessing.feature_type));
         } else {
-            spdlog::info("GraphCompiler: audio feature extraction uses dialog defaults "
+            CYXWIZ_BUILDER_INFO("GraphCompiler: audio feature extraction uses dialog defaults "
                          "(no Spectrogram/MelSpectrogram/MFCC node in graph)");
         }
     }
@@ -5470,7 +5471,7 @@ TrainingConfiguration GraphCompiler::Compile(
     // table is selected, TextDatasetBatcher uses the dialog-baked defaults
     // from DataRegistry::TextDatasetEntry.
     if (config.preprocessing_domain == PreprocessingDomain::Text) {
-        spdlog::info("GraphCompiler: text preprocessing nodes are materialized "
+        CYXWIZ_BUILDER_INFO("GraphCompiler: text preprocessing nodes are materialized "
                      "through Arrow operators; legacy text fallback uses dialog "
                      "defaults from the registered dataset");
     }
@@ -5522,7 +5523,7 @@ TrainingConfiguration GraphCompiler::Compile(
     config.is_valid = !config.HasErrors();
     config.error_message = JoinErrorMessages(config.issues);
 
-    spdlog::info("GraphCompiler: Compiled {} layers, input_size={}, output_size={}, "
+    CYXWIZ_BUILDER_INFO("GraphCompiler: Compiled {} layers, input_size={}, output_size={}, "
                  "issues: {} errors / {} warnings / {} info, valid={}",
                  config.layers.size(), config.input_size, config.output_size,
                  config.CountIssues(IssueLevel::Error),
@@ -5543,13 +5544,13 @@ TrainingConfiguration GraphCompiler::Compile(
                 spdlog::warn("{}", prefix);
                 break;
             case IssueLevel::Info:
-                spdlog::info("{}", prefix);
+                CYXWIZ_BUILDER_INFO("{}", prefix);
                 break;
         }
     }
     if (!config.backend_placements.empty()) {
         const auto summary = config.SummarizeBackendPlacements();
-        spdlog::info(
+        CYXWIZ_BUILDER_INFO(
             "GraphCompiler: Backend placement plan: total={}, gpu={}, cpu={}, mixed={}, risk={}, unsupported={}, unknown={}",
             summary.total,
             summary.gpu,
@@ -5558,11 +5559,11 @@ TrainingConfiguration GraphCompiler::Compile(
             summary.risk,
             summary.unsupported,
             summary.unknown);
-        spdlog::info(
+        CYXWIZ_BUILDER_INFO(
             "GraphCompiler: Backend placement fingerprint={}",
             config.compiler_placement_fingerprint);
         for (const auto& placement : config.backend_placements) {
-            spdlog::info("  [{}] {} '{}' -> expected={}, fallback={}, reason={}",
+            CYXWIZ_BUILDER_INFO("  [{}] {} '{}' -> expected={}, fallback={}, reason={}",
                          placement.status,
                          placement.node_type,
                          placement.node_name,
@@ -5575,7 +5576,7 @@ TrainingConfiguration GraphCompiler::Compile(
     timing("placement_and_final_validation");
     std::ostringstream timing_text;
     for (const auto& [name, elapsed] : stage_ms) timing_text << name << "=" << elapsed << "ms ";
-    spdlog::info("GraphCompiler timing: thread={} total_ms={:.3f} {}",
+    CYXWIZ_BUILDER_INFO("GraphCompiler timing: thread={} total_ms={:.3f} {}",
         std::hash<std::thread::id>{}(std::this_thread::get_id()),
         std::chrono::duration<double, std::milli>(stage_start-compile_started).count(), timing_text.str());
     return config;
@@ -5918,7 +5919,7 @@ static void ExtractImageResize(const gui::MLNode& node, TrainingConfiguration& c
         else if (mode == "fill")   config.image_preprocessing.resize_mode = ResizeMode::AspectFill;
         else if (mode == "center") config.image_preprocessing.resize_mode = ResizeMode::Center;
     }
-    spdlog::info("GraphCompiler: Resize {}x{} mode={}",
+    CYXWIZ_BUILDER_INFO("GraphCompiler: Resize {}x{} mode={}",
                  config.image_preprocessing.target_width,
                  config.image_preprocessing.target_height,
                  static_cast<int>(config.image_preprocessing.resize_mode));
@@ -5976,7 +5977,7 @@ static void ExtractSpectrogram(const gui::MLNode& node, TrainingConfiguration& c
         config.audio_preprocessing.hop_length = std::stoi(node.parameters.at("hop_length"));
     if (node.parameters.count("log_scale"))
         config.audio_preprocessing.log_scale = (node.parameters.at("log_scale") == "true");
-    spdlog::info("GraphCompiler: Spectrogram n_fft={}, hop={}, log={}",
+    CYXWIZ_BUILDER_INFO("GraphCompiler: Spectrogram n_fft={}, hop={}, log={}",
                  config.audio_preprocessing.n_fft,
                  config.audio_preprocessing.hop_length,
                  config.audio_preprocessing.log_scale);
@@ -5997,7 +5998,7 @@ static void ExtractMelSpectrogram(const gui::MLNode& node, TrainingConfiguration
         config.audio_preprocessing.fmax = std::stof(node.parameters.at("fmax"));
     if (node.parameters.count("log_scale"))
         config.audio_preprocessing.log_scale = (node.parameters.at("log_scale") == "true");
-    spdlog::info("GraphCompiler: MelSpectrogram n_mels={}, n_fft={}, hop={}",
+    CYXWIZ_BUILDER_INFO("GraphCompiler: MelSpectrogram n_mels={}, n_fft={}, hop={}",
                  config.audio_preprocessing.n_mels,
                  config.audio_preprocessing.n_fft,
                  config.audio_preprocessing.hop_length);
@@ -6014,7 +6015,7 @@ static void ExtractMFCC(const gui::MLNode& node, TrainingConfiguration& config) 
         config.audio_preprocessing.hop_length = std::stoi(node.parameters.at("hop_length"));
     if (node.parameters.count("n_mels"))
         config.audio_preprocessing.n_mels = std::stoi(node.parameters.at("n_mels"));
-    spdlog::info("GraphCompiler: MFCC n_mfcc={}, n_mels={}, n_fft={}",
+    CYXWIZ_BUILDER_INFO("GraphCompiler: MFCC n_mfcc={}, n_mels={}, n_fft={}",
                  config.audio_preprocessing.n_mfcc,
                  config.audio_preprocessing.n_mels,
                  config.audio_preprocessing.n_fft);
@@ -6028,7 +6029,7 @@ static void ExtractAudioAugmentation(const gui::MLNode& node, TrainingConfigurat
         config.audio_preprocessing.time_stretch = (node.parameters.at("time_stretch") == "true");
     if (node.parameters.count("pitch_shift"))
         config.audio_preprocessing.pitch_shift = (node.parameters.at("pitch_shift") == "true");
-    spdlog::info("GraphCompiler: AudioAugmentation noise={}, time_stretch={}, pitch_shift={}",
+    CYXWIZ_BUILDER_INFO("GraphCompiler: AudioAugmentation noise={}, time_stretch={}, pitch_shift={}",
                  config.audio_preprocessing.noise_level,
                  config.audio_preprocessing.time_stretch,
                  config.audio_preprocessing.pitch_shift);
@@ -6061,7 +6062,7 @@ static void ExtractTextTokenizerShape(
         config.text_preprocessing.pad_value =
             static_cast<int>(ParseSizeParam(node.parameters, "pad_value", 0));
     }
-    spdlog::info("GraphCompiler: TextTokenizer max_length={} drives text input shape",
+    CYXWIZ_BUILDER_INFO("GraphCompiler: TextTokenizer max_length={} drives text input shape",
                  config.text_preprocessing.max_length);
 }
 
@@ -6072,7 +6073,7 @@ static void ExtractTextVectorizerShape(
     const int max_features = static_cast<int>(
         ParseSizeParam(node.parameters, "max_features", 2000));
     config.text_preprocessing.max_length = std::max(1, max_features);
-    spdlog::info(
+    CYXWIZ_BUILDER_INFO(
         "GraphCompiler: text vectorizer max_features={} drives text input shape",
         config.text_preprocessing.max_length);
 }

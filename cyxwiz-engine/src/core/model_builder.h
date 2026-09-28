@@ -113,6 +113,20 @@ ResolvedOptimizerConfiguration ResolveOptimizerConfiguration(
 // executable path.
 BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& config);
 
+// While alive, graph compiles and model builds on this thread do not log
+// their info lines (the background compile runs after every edit and counts
+// parameters, TOFIX123); warnings still log. Other threads are unaffected.
+class QuietModelBuildScope {
+public:
+    QuietModelBuildScope();
+    ~QuietModelBuildScope();
+    QuietModelBuildScope(const QuietModelBuildScope&) = delete;
+    QuietModelBuildScope& operator=(const QuietModelBuildScope&) = delete;
+
+private:
+    bool previous_;
+};
+
 // Build a graph-plan-backed executable. Used directly by focused graph-runtime
 // tests and indirectly by BuildExecutableFromConfig for graph-op configs.
 BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration& config);

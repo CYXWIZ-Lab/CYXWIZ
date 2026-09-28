@@ -20,6 +20,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include "quiet_build_log.h"
+
 namespace {
 // Engine policy strings -> backend block options (tofix112). The policy has
 // already validated every value; an unknown value here is a programming error.
@@ -383,7 +385,7 @@ bool BuildSequential(
     SequentialModel& model,
     const TrainingConfiguration& config,
     std::vector<BuiltModuleProvenance>* provenance) {
-    spdlog::info("TrainingExecutor: Building model from {} layer configs", config.layers.size());
+    CYXWIZ_BUILDER_INFO("TrainingExecutor: Building model from {} layer configs", config.layers.size());
 
     if (provenance) {
         provenance->clear();
@@ -447,7 +449,7 @@ bool BuildSequential(
                 const size_t out_features =
                     dense_activation_configuration.dense_units;
                 model.Add<LinearModule>(current_input_size, out_features, true);
-                spdlog::info("  [{}] Linear({} -> {})", i, current_input_size, out_features);
+                CYXWIZ_BUILDER_INFO("  [{}] Linear({} -> {})", i, current_input_size, out_features);
                 current_input_size = out_features;
                 break;
             }
@@ -503,7 +505,7 @@ bool BuildSequential(
                 current_sequence_length =
                     config.input_size > 0 ? config.input_size : 1;
                 current_input_size = word_embedding_dim + pos_embedding_dim;
-                spdlog::info(
+                CYXWIZ_BUILDER_INFO(
                     "  [{}] SequenceFeatureFusion(word={}x{}, pos={}x{}) - "
                     "output [batch, seq_len={}, features={}]",
                     i,
@@ -560,7 +562,7 @@ bool BuildSequential(
                         Tensor weights = LoadEmbeddingWeightsTextFile(
                             weights_file, num_embeddings, embedding_dim);
                         embedding->LoadPretrainedWeights(weights, freeze_embedding);
-                        spdlog::info("  [{}] Loaded embedding weights from '{}'{}",
+                        CYXWIZ_BUILDER_INFO("  [{}] Loaded embedding weights from '{}'{}",
                                      i, weights_file,
                                      freeze_embedding ? " (frozen)" : "");
                     } catch (const std::exception& e) {
@@ -605,7 +607,7 @@ bool BuildSequential(
                     }
                 }
                 if (next_is_recurrent) {
-                    spdlog::info("  [{}] Embedding({} x {}) — shape "
+                    CYXWIZ_BUILDER_INFO("  [{}] Embedding({} x {}) — shape "
                                  "[seq_len={}] -> [seq_len={}, embed={}], "
                                  "next layer is recurrent: input_size={} "
                                  "(per-timestep features)",
@@ -615,7 +617,7 @@ bool BuildSequential(
                     current_input_size = embedding_dim;
                 } else {
                     const size_t new_size = seq_len * embedding_dim;
-                    spdlog::info("  [{}] Embedding({} x {}) — shape "
+                    CYXWIZ_BUILDER_INFO("  [{}] Embedding({} x {}) — shape "
                                  "[seq_len={}] -> [seq_len={}, embed={}], "
                                  "next Flatten/Dense sees {} features",
                                  i, num_embeddings, embedding_dim,
@@ -660,7 +662,7 @@ bool BuildSequential(
 
                 const size_t output_features = hidden_size *
                                                (bidirectional ? 2 : 1);
-                spdlog::info("  [{}] LSTM(in={}, hidden={}, layers={}, "
+                CYXWIZ_BUILDER_INFO("  [{}] LSTM(in={}, hidden={}, layers={}, "
                              "bidir={}, return_seq={}) — output "
                              "[batch, {}] ({} features)",
                              i, current_input_size, hidden_size,
@@ -705,7 +707,7 @@ bool BuildSequential(
 
                 const size_t output_features = hidden_size *
                                                (bidirectional ? 2 : 1);
-                spdlog::info("  [{}] GRU(in={}, hidden={}, layers={}, "
+                CYXWIZ_BUILDER_INFO("  [{}] GRU(in={}, hidden={}, layers={}, "
                              "bidir={}, return_seq={}) — output "
                              "[batch, {}] ({} features)",
                              i, current_input_size, hidden_size,
@@ -759,7 +761,7 @@ bool BuildSequential(
 
                 const size_t output_features =
                     hidden_size * (bidirectional ? 2 : 1);
-                spdlog::info("  [{}] RNN(in={}, hidden={}, layers={}, "
+                CYXWIZ_BUILDER_INFO("  [{}] RNN(in={}, hidden={}, layers={}, "
                              "nonlinearity={}, bidir={}, return_seq={}) — "
                              "output [batch, {}]",
                              i, current_input_size, hidden_size,
@@ -803,7 +805,7 @@ bool BuildSequential(
                 }
 
                 const size_t downstream_features = current_sequence_length * d_model;
-                spdlog::info("  [{}] TransformerEncoder(d_model={}, heads={}, "
+                CYXWIZ_BUILDER_INFO("  [{}] TransformerEncoder(d_model={}, heads={}, "
                              "ff={}, dropout={}) - output [batch, {}, {}]",
                              i, d_model, transformer_configuration.num_heads,
                              transformer_configuration.feedforward_width,
@@ -849,7 +851,7 @@ bool BuildSequential(
 
                 const size_t downstream_features =
                     current_sequence_length * embed_dim;
-                spdlog::info("  [{}] MultiHeadAttention(embed_dim={}, heads={}, "
+                CYXWIZ_BUILDER_INFO("  [{}] MultiHeadAttention(embed_dim={}, heads={}, "
                              "dropout={}) - self-attention output [batch, {}, {}]",
                              i, embed_dim, transformer_configuration.num_heads,
                              transformer_configuration.dropout,
@@ -877,7 +879,7 @@ bool BuildSequential(
                     model.Add<PositionalEncodingModule>(
                         d_model, transformer_configuration.max_sequence_length);
                 }
-                spdlog::info("  [{}] PositionalEncoding({}, d_model={}, max_len={}) - output "
+                CYXWIZ_BUILDER_INFO("  [{}] PositionalEncoding({}, d_model={}, max_len={}) - output "
                              "[batch, {}, {}]",
                              i, transformer_configuration.encoding_type, d_model,
                              transformer_configuration.max_sequence_length,
@@ -921,7 +923,7 @@ bool BuildSequential(
                 }
 
                 const size_t downstream_features = current_sequence_length * d_model;
-                spdlog::info("  [{}] TransformerDecoder(d_model={}, heads={}, "
+                CYXWIZ_BUILDER_INFO("  [{}] TransformerDecoder(d_model={}, heads={}, "
                              "ff={}, dropout={}) - output [batch, {}, {}]",
                              i, d_model, transformer_configuration.num_heads,
                              transformer_configuration.feedforward_width,
@@ -965,7 +967,7 @@ bool BuildSequential(
                             std::to_string(current_input_size) + " -> " + std::to_string(out_features));
                     }
                     model.Add<TiedOutputProjectionModule>(*embedding, false);
-                    spdlog::info("  [{}] TiedOutputProjection({} -> {}) shares the Embedding table",
+                    CYXWIZ_BUILDER_INFO("  [{}] TiedOutputProjection({} -> {}) shares the Embedding table",
                                  i, current_input_size, out_features);
                     current_input_size = out_features;
                     break;
@@ -973,7 +975,7 @@ bool BuildSequential(
                 model.Add<TimeDistributedDenseModule>(current_input_size,
                                                       out_features,
                                                       true);
-                spdlog::info("  [{}] TimeDistributedDense({} -> {}) - output "
+                CYXWIZ_BUILDER_INFO("  [{}] TimeDistributedDense({} -> {}) - output "
                              "[batch, seq_len, {}]",
                              i, current_input_size, out_features,
                              out_features);
@@ -983,19 +985,19 @@ bool BuildSequential(
 
             case gui::NodeType::ReLU: {
                 model.Add<ReLUModule>();
-                spdlog::info("  [{}] ReLU", i);
+                CYXWIZ_BUILDER_INFO("  [{}] ReLU", i);
                 break;
             }
 
             case gui::NodeType::Sigmoid: {
                 model.Add<SigmoidModule>();
-                spdlog::info("  [{}] Sigmoid", i);
+                CYXWIZ_BUILDER_INFO("  [{}] Sigmoid", i);
                 break;
             }
 
             case gui::NodeType::Tanh: {
                 model.Add<TanhModule>();
-                spdlog::info("  [{}] Tanh", i);
+                CYXWIZ_BUILDER_INFO("  [{}] Tanh", i);
                 break;
             }
 
@@ -1003,45 +1005,45 @@ bool BuildSequential(
                 const float slope =
                     dense_activation_configuration.negative_slope;
                 model.Add<LeakyReLUModule>(slope);
-                spdlog::info("  [{}] LeakyReLU(slope={})", i, slope);
+                CYXWIZ_BUILDER_INFO("  [{}] LeakyReLU(slope={})", i, slope);
                 break;
             }
 
             case gui::NodeType::ELU: {
                 const float alpha = dense_activation_configuration.elu_alpha;
                 model.Add<ELUModule>(alpha);
-                spdlog::info("  [{}] ELU(alpha={})", i, alpha);
+                CYXWIZ_BUILDER_INFO("  [{}] ELU(alpha={})", i, alpha);
                 break;
             }
 
             case gui::NodeType::GELU: {
                 model.Add<GELUModule>();
-                spdlog::info("  [{}] GELU", i);
+                CYXWIZ_BUILDER_INFO("  [{}] GELU", i);
                 break;
             }
 
             case gui::NodeType::Swish: {
                 model.Add<SwishModule>();
-                spdlog::info("  [{}] Swish", i);
+                CYXWIZ_BUILDER_INFO("  [{}] Swish", i);
                 break;
             }
 
             case gui::NodeType::Mish: {
                 model.Add<MishModule>();
-                spdlog::info("  [{}] Mish", i);
+                CYXWIZ_BUILDER_INFO("  [{}] Mish", i);
                 break;
             }
 
             case gui::NodeType::Softmax: {
                 model.Add<SoftmaxModule>();
-                spdlog::info("  [{}] Softmax", i);
+                CYXWIZ_BUILDER_INFO("  [{}] Softmax", i);
                 break;
             }
 
             case gui::NodeType::Dropout: {
                 model.Add<DropoutModule>(
                     normalization_regularization_configuration.dropout_rate);
-                spdlog::info(
+                CYXWIZ_BUILDER_INFO(
                     "  [{}] Dropout(p={})", i,
                     normalization_regularization_configuration.dropout_rate);
                 break;
@@ -1064,7 +1066,7 @@ bool BuildSequential(
                 } else {
                     model.Add<PixelShuffleModule>(resolved.factor);
                 }
-                spdlog::info("  [{}] {} (semantic [H,W,C,N])", i,
+                CYXWIZ_BUILDER_INFO("  [{}] {} (semantic [H,W,C,N])", i,
                              model.GetModule(model.Size() - 1)->GetName());
                 break;
             }
@@ -1073,11 +1075,11 @@ bool BuildSequential(
                 if (spatial_head && spatial_head->flatten_index == i) {
                     model.Add<SpatialFlattenModule>(spatial_head->sample_shape);
                     current_input_size = spatial_head->features;
-                    spdlog::info("  [{}] SpatialFlatten [H,W,C,N] -> [N,{}]",
+                    CYXWIZ_BUILDER_INFO("  [{}] SpatialFlatten [H,W,C,N] -> [N,{}]",
                                  i, current_input_size);
                 } else {
                     model.Add<FlattenModule>(1);
-                    spdlog::info("  [{}] Flatten", i);
+                    CYXWIZ_BUILDER_INFO("  [{}] Flatten", i);
                 }
                 break;
             }
@@ -1091,7 +1093,7 @@ bool BuildSequential(
                     break;
                 }
                 model.Add<ReshapeModule>(layer_cfg.output_shape);
-                spdlog::info("  [{}] ShapeOp({} dims)", i, layer_cfg.output_shape.size());
+                CYXWIZ_BUILDER_INFO("  [{}] ShapeOp({} dims)", i, layer_cfg.output_shape.size());
                 break;
             }
 
@@ -1101,7 +1103,7 @@ bool BuildSequential(
                     break;
                 }
                 model.Add<PermuteModule>(layer_cfg.dims);
-                spdlog::info("  [{}] Permute({} dims)", i, layer_cfg.dims.size());
+                CYXWIZ_BUILDER_INFO("  [{}] Permute({} dims)", i, layer_cfg.dims.size());
                 break;
             }
 
@@ -1111,7 +1113,7 @@ bool BuildSequential(
                     break;
                 }
                 model.Add<TensorShapeModule>(TensorShapeOp::BroadcastTo, layer_cfg.output_shape);
-                spdlog::info("  [{}] TensorBroadcastTo({} dims)", i, layer_cfg.output_shape.size());
+                CYXWIZ_BUILDER_INFO("  [{}] TensorBroadcastTo({} dims)", i, layer_cfg.output_shape.size());
                 break;
             }
 
@@ -1121,7 +1123,7 @@ bool BuildSequential(
                     break;
                 }
                 model.Add<TensorShapeModule>(TensorShapeOp::Expand, layer_cfg.output_shape);
-                spdlog::info("  [{}] TensorExpand({} dims)", i, layer_cfg.output_shape.size());
+                CYXWIZ_BUILDER_INFO("  [{}] TensorExpand({} dims)", i, layer_cfg.output_shape.size());
                 break;
             }
 
@@ -1132,45 +1134,45 @@ bool BuildSequential(
                                              std::vector<size_t>{},
                                              dim,
                                              indices);
-                spdlog::info("  [{}] TensorIndexSelect(dim={}, indices={})",
+                CYXWIZ_BUILDER_INFO("  [{}] TensorIndexSelect(dim={}, indices={})",
                              i, dim, indices.size());
                 break;
             }
 
             case gui::NodeType::TensorAbs: {
                 model.Add<TensorUnaryModule>(TensorUnaryOp::Abs);
-                spdlog::info("  [{}] TensorAbs", i);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorAbs", i);
                 break;
             }
 
             case gui::NodeType::TensorExp: {
                 model.Add<TensorUnaryModule>(TensorUnaryOp::Exp);
-                spdlog::info("  [{}] TensorExp", i);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorExp", i);
                 break;
             }
 
             case gui::NodeType::TensorLog: {
                 model.Add<TensorUnaryModule>(TensorUnaryOp::Log);
-                spdlog::info("  [{}] TensorLog", i);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorLog", i);
                 break;
             }
 
             case gui::NodeType::TensorSqrt: {
                 model.Add<TensorUnaryModule>(TensorUnaryOp::Sqrt);
-                spdlog::info("  [{}] TensorSqrt", i);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorSqrt", i);
                 break;
             }
 
             case gui::NodeType::TensorSign: {
                 model.Add<TensorUnaryModule>(TensorUnaryOp::Sign);
-                spdlog::info("  [{}] TensorSign", i);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorSign", i);
                 break;
             }
 
             case gui::NodeType::TensorPow: {
                 const float exponent = ParseFloatParam(layer_cfg, "exponent", 2.0f);
                 model.Add<TensorUnaryModule>(TensorUnaryOp::Pow, exponent);
-                spdlog::info("  [{}] TensorPow(exponent={})", i, exponent);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorPow(exponent={})", i, exponent);
                 break;
             }
 
@@ -1178,7 +1180,7 @@ bool BuildSequential(
                 const float min_val = ParseFloatParam(layer_cfg, "min", 0.0f);
                 const float max_val = ParseFloatParam(layer_cfg, "max", 1.0f);
                 model.Add<TensorUnaryModule>(TensorUnaryOp::Clip, min_val, max_val);
-                spdlog::info("  [{}] TensorClip(min={}, max={})", i, min_val, max_val);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorClip(min={}, max={})", i, min_val, max_val);
                 break;
             }
 
@@ -1186,13 +1188,13 @@ bool BuildSequential(
                 const TensorMaskOp op = ParseTensorMaskOp(layer_cfg);
                 const float scalar = ParseFloatParam(layer_cfg, "scalar", 0.0f);
                 model.Add<TensorMaskModule>(op, scalar);
-                spdlog::info("  [{}] TensorCompare(scalar={})", i, scalar);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorCompare(scalar={})", i, scalar);
                 break;
             }
 
             case gui::NodeType::TensorLogicalMask: {
                 model.Add<TensorMaskModule>(TensorMaskOp::LogicalNot);
-                spdlog::info("  [{}] TensorLogicalMask(op=not)", i);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorLogicalMask(op=not)", i);
                 break;
             }
 
@@ -1200,7 +1202,7 @@ bool BuildSequential(
                 const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
                 const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
                 model.Add<TensorReductionModule>(TensorReductionOp::Sum, dim, keepdim);
-                spdlog::info("  [{}] TensorSum(dim={}, keepdim={})", i, dim, keepdim);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorSum(dim={}, keepdim={})", i, dim, keepdim);
                 break;
             }
 
@@ -1208,7 +1210,7 @@ bool BuildSequential(
                 const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
                 const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
                 model.Add<TensorReductionModule>(TensorReductionOp::Mean, dim, keepdim);
-                spdlog::info("  [{}] TensorMean(dim={}, keepdim={})", i, dim, keepdim);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorMean(dim={}, keepdim={})", i, dim, keepdim);
                 break;
             }
 
@@ -1216,7 +1218,7 @@ bool BuildSequential(
                 const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
                 const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
                 model.Add<TensorReductionModule>(TensorReductionOp::Max, dim, keepdim);
-                spdlog::info("  [{}] TensorMax(dim={}, keepdim={})", i, dim, keepdim);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorMax(dim={}, keepdim={})", i, dim, keepdim);
                 break;
             }
 
@@ -1224,7 +1226,7 @@ bool BuildSequential(
                 const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
                 const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
                 model.Add<TensorReductionModule>(TensorReductionOp::Min, dim, keepdim);
-                spdlog::info("  [{}] TensorMin(dim={}, keepdim={})", i, dim, keepdim);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorMin(dim={}, keepdim={})", i, dim, keepdim);
                 break;
             }
 
@@ -1232,7 +1234,7 @@ bool BuildSequential(
                 const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
                 const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
                 model.Add<TensorReductionModule>(TensorReductionOp::Prod, dim, keepdim);
-                spdlog::info("  [{}] TensorProd(dim={}, keepdim={})", i, dim, keepdim);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorProd(dim={}, keepdim={})", i, dim, keepdim);
                 break;
             }
 
@@ -1240,7 +1242,7 @@ bool BuildSequential(
                 const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
                 const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
                 model.Add<TensorReductionModule>(TensorReductionOp::Var, dim, keepdim);
-                spdlog::info("  [{}] TensorVar(dim={}, keepdim={})", i, dim, keepdim);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorVar(dim={}, keepdim={})", i, dim, keepdim);
                 break;
             }
 
@@ -1248,7 +1250,7 @@ bool BuildSequential(
                 const int dim = static_cast<int>(ParseFloatParam(layer_cfg, "dim", -1.0f));
                 const bool keepdim = ParseBoolParam(layer_cfg, "keepdim", false);
                 model.Add<TensorReductionModule>(TensorReductionOp::Std, dim, keepdim);
-                spdlog::info("  [{}] TensorStd(dim={}, keepdim={})", i, dim, keepdim);
+                CYXWIZ_BUILDER_INFO("  [{}] TensorStd(dim={}, keepdim={})", i, dim, keepdim);
                 break;
             }
 
@@ -1257,7 +1259,7 @@ bool BuildSequential(
                     current_input_size,
                     normalization_regularization_configuration.epsilon,
                     normalization_regularization_configuration.momentum);
-                spdlog::info(
+                CYXWIZ_BUILDER_INFO(
                     "  [{}] BatchNorm(features={}, eps={}, momentum={})", i,
                     current_input_size,
                     normalization_regularization_configuration.epsilon,
@@ -1280,7 +1282,7 @@ bool BuildSequential(
                     normalization_regularization_configuration.epsilon,
                     normalization_regularization_configuration
                         .elementwise_affine);
-                spdlog::info("  [{}] LayerNorm(normalized_shape={}, eps={}, affine={})",
+                CYXWIZ_BUILDER_INFO("  [{}] LayerNorm(normalized_shape={}, eps={}, affine={})",
                              i, normalized_shape.front(),
                              normalization_regularization_configuration.epsilon,
                              normalization_regularization_configuration
@@ -1305,7 +1307,7 @@ bool BuildSequential(
             case gui::NodeType::SequenceTagOutput: {
                 // Output node is just a marker, not an actual layer
                 // The actual output transformation is done by the preceding Dense layer
-                spdlog::info("  [{}] Output (marker, no layer added)", i);
+                CYXWIZ_BUILDER_INFO("  [{}] Output (marker, no layer added)", i);
                 break;
             }
 
@@ -1553,7 +1555,7 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
     const Reduction reduction = resolved.reduction;
     switch (config.loss_type) {
         case gui::NodeType::CrossEntropyLoss: {
-            spdlog::info("TrainingExecutor: Using CrossEntropy loss "
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using CrossEntropy loss "
                          "(reduction={}, ignore_index={}, class_weights={}, "
                          "label_smoothing={})",
                          ReductionName(reduction), resolved.ignore_index,
@@ -1566,48 +1568,48 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
         case gui::NodeType::FocalLoss: {
             const float alpha = resolved.alpha.value();
             const float gamma = resolved.gamma.value();
-            spdlog::info("TrainingExecutor: Using Focal loss "
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using Focal loss "
                          "(reduction={}, alpha={}, gamma={})",
                          ReductionName(reduction), alpha, gamma);
             return std::make_unique<FocalLoss>(
                 alpha, gamma, reduction);
         }
         case gui::NodeType::MSELoss:
-            spdlog::info("TrainingExecutor: Using MSE loss (reduction={})",
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using MSE loss (reduction={})",
                          ReductionName(reduction));
             return CreateLoss(LossType::MSE, reduction);
         case gui::NodeType::BCELoss:
-            spdlog::info("TrainingExecutor: Using BCE loss (reduction={})",
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using BCE loss (reduction={})",
                          ReductionName(reduction));
             return CreateLoss(LossType::BinaryCrossEntropy, reduction);
         case gui::NodeType::BCEWithLogits: {
             const float pos_weight = resolved.pos_weight.value();
-            spdlog::info("TrainingExecutor: Using BCEWithLogits loss "
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using BCEWithLogits loss "
                          "(reduction={}, pos_weight={})",
                          ReductionName(reduction), pos_weight);
             return std::make_unique<BCEWithLogitsLoss>(
                 reduction, pos_weight);
         }
         case gui::NodeType::L1Loss:
-            spdlog::info("TrainingExecutor: Using L1 loss (reduction={})",
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using L1 loss (reduction={})",
                          ReductionName(reduction));
             return CreateLoss(LossType::L1, reduction);
         case gui::NodeType::SmoothL1Loss: {
             const float beta = resolved.beta.value();
-            spdlog::info("TrainingExecutor: Using SmoothL1 loss "
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using SmoothL1 loss "
                          "(reduction={}, beta={})",
                          ReductionName(reduction), beta);
             return CreateLoss(LossType::SmoothL1, reduction, beta);
         }
         case gui::NodeType::HuberLoss: {
             const float delta = resolved.beta.value();
-            spdlog::info("TrainingExecutor: Using Huber loss "
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using Huber loss "
                          "(reduction={}, delta={})",
                          ReductionName(reduction), delta);
             return CreateLoss(LossType::Huber, reduction, delta);
         }
         case gui::NodeType::NLLLoss: {
-            spdlog::info("TrainingExecutor: Using NLL loss "
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using NLL loss "
                          "(reduction={}, ignore_index={})",
                          ReductionName(reduction), resolved.ignore_index);
             return std::make_unique<NLLLoss>(
@@ -1615,7 +1617,7 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
         }
         case gui::NodeType::SoftDiceLoss: {
             const float smooth = resolved.smooth.value();
-            spdlog::info("TrainingExecutor: Using SoftDice loss "
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using SoftDice loss "
                          "(reduction={}, smooth={})",
                          ReductionName(reduction), smooth);
             return std::make_unique<SoftDiceLoss>(reduction, smooth);
@@ -1624,7 +1626,7 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
             const float alpha = resolved.alpha.value();
             const float beta = resolved.beta.value();
             const float smooth = resolved.smooth.value();
-            spdlog::info("TrainingExecutor: Using Tversky loss "
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using Tversky loss "
                          "(reduction={}, alpha={}, beta={}, smooth={})",
                          ReductionName(reduction), alpha, beta, smooth);
             return std::make_unique<TverskyLoss>(
@@ -1632,13 +1634,13 @@ std::unique_ptr<Loss> BuildLossFromConfigImpl(const TrainingConfiguration& confi
         }
         case gui::NodeType::JaccardLoss: {
             const float smooth = resolved.smooth.value();
-            spdlog::info("TrainingExecutor: Using Jaccard loss "
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Using Jaccard loss "
                          "(reduction={}, smooth={})",
                          ReductionName(reduction), smooth);
             return std::make_unique<JaccardLoss>(reduction, smooth);
         }
         default:
-            spdlog::info("TrainingExecutor: Defaulting to CrossEntropy loss "
+            CYXWIZ_BUILDER_INFO("TrainingExecutor: Defaulting to CrossEntropy loss "
                          "(reduction={})", ReductionName(reduction));
             return CreateLoss(LossType::CrossEntropy, reduction);
     }
@@ -1749,7 +1751,7 @@ BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config) {
             return out;
         }
 
-        spdlog::info("TrainingExecutor: Using {} optimizer with lr={}",
+        CYXWIZ_BUILDER_INFO("TrainingExecutor: Using {} optimizer with lr={}",
                      config.GetOptimizerName(), config.learning_rate);
     } catch (const std::exception& e) {
         out.error_message = errors::FormatError(
@@ -1762,6 +1764,14 @@ BuiltModel BuildSequentialFromConfig(const TrainingConfiguration& config) {
     }
 
     return out;
+}
+
+QuietModelBuildScope::QuietModelBuildScope() : previous_(g_quiet_build_log) {
+    g_quiet_build_log = true;
+}
+
+QuietModelBuildScope::~QuietModelBuildScope() {
+    g_quiet_build_log = previous_;
 }
 
 BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& config) {
@@ -1833,7 +1843,7 @@ BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration&
                 "GraphExecutableModel failed to create loss or optimizer");
             return out;
         }
-        spdlog::info("TrainingExecutor: Using {} optimizer with lr={}",
+        CYXWIZ_BUILDER_INFO("TrainingExecutor: Using {} optimizer with lr={}",
                      config.GetOptimizerName(), config.learning_rate);
     }
 
