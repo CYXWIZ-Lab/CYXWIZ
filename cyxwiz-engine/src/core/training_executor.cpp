@@ -1855,11 +1855,13 @@ void TrainingExecutor::Train(
                 final_metrics.checkpoint_used);
             spdlog::info(
                 "TrainingExecutor: Held-out Sequence test metrics "
-                "test_loss={:.4f}, token_acc={:.2f}%, entity_f1={:.2f}% "
+                "test_loss={:.4f}, token_acc={:.2f}%{} "
                 "({} samples, {} tokens)",
                 test_evaluation.loss,
                 test_evaluation.accuracy * 100.0f,
-                test_evaluation.entity_f1 * 100.0f,
+                config_.sequence_batch.create_causal_lm_targets
+                    ? std::string()
+                    : fmt::format(", entity_f1={:.2f}%", test_evaluation.entity_f1 * 100.0f),
                 active_sequence_batcher->GetNumSamples(),
                 test_evaluation.token_count);
         } else if (active_sequence_batcher->HasPhase(BatcherPhase::Test)) {
@@ -2634,11 +2636,15 @@ void TrainingExecutor::RunTrainingEpochSequence(
                 ? (batch_num * 1000.0f / static_cast<float>(elapsed_ms))
                 : 0.0f;
             const auto snapshot = GetMetrics();
+            // Entity F1 is a token-tagging metric; a language model has no entities.
+            const std::string entity_f1 = config_.sequence_batch.create_causal_lm_targets
+                ? std::string()
+                : fmt::format(" entity_f1={:.2f}%", current_f1 * 100.0f);
             spdlog::info("Epoch {} [{}/{}] seq_loss={:.4f} "
-                         "token_acc={:.2f}% entity_f1={:.2f}% "
+                         "token_acc={:.2f}%{} "
                          "({:.1f}s, {:.1f} batches/s) lr={:.3g}{}",
                          epoch, batch_num, total_batches, current_loss,
-                         current_acc * 100.0f, current_f1 * 100.0f,
+                         current_acc * 100.0f, entity_f1,
                          elapsed_s, rate,
                          snapshot.learning_rate > 0.0 ? snapshot.learning_rate
                                                       : static_cast<double>(config_.learning_rate),
