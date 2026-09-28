@@ -110,6 +110,40 @@ int main() {
     Check(cyxwiz::ComputeMaterializationCacheKey(changed_source) != key,
           "source file size changes should invalidate the cache key");
 
+    Check(key.size() == 32,
+          "materialization cache keys should be 128-bit (32 hex characters)");
+
+    auto renamed = input;
+    renamed.nodes[0].name = "Renamed tokenizer";
+    Check(cyxwiz::ComputeMaterializationCacheKey(renamed) == key,
+          "renaming a node should not invalidate the prepared data");
+
+    auto with_content = input;
+    with_content.source_content_fingerprint = "rows_a";
+    auto changed_content = input;
+    changed_content.source_content_fingerprint = "rows_b";
+    Check(cyxwiz::ComputeMaterializationCacheKey(with_content) != key &&
+              cyxwiz::ComputeMaterializationCacheKey(with_content) !=
+                  cyxwiz::ComputeMaterializationCacheKey(changed_content),
+          "row content fingerprints should key sources without a file identity");
+
+    {
+        arrow::Int64Builder builder_a;
+        Check(builder_a.AppendValues({1, 2, 3}).ok(), "append rows a");
+        arrow::Int64Builder builder_b;
+        Check(builder_b.AppendValues({1, 2, 4}).ok(), "append rows b");
+        auto field_schema = arrow::schema({arrow::field("x", arrow::int64())});
+        auto table_a = arrow::Table::Make(field_schema, {builder_a.Finish().ValueOrDie()});
+        auto table_a2 = arrow::Table::Make(field_schema, {table_a->column(0)->chunk(0)});
+        auto table_b = arrow::Table::Make(field_schema, {builder_b.Finish().ValueOrDie()});
+        Check(cyxwiz::ComputeTableContentFingerprint(table_a) ==
+                  cyxwiz::ComputeTableContentFingerprint(table_a2),
+              "the same rows should give the same content fingerprint");
+        Check(cyxwiz::ComputeTableContentFingerprint(table_a) !=
+                  cyxwiz::ComputeTableContentFingerprint(table_b),
+              "changed rows should change the content fingerprint");
+    }
+
     auto changed_dependency = input;
     changed_dependency.dependencies[0].content_sha256 = std::string(64, 'b');
     Check(cyxwiz::ComputeMaterializationCacheKey(changed_dependency) != key,
@@ -229,6 +263,72 @@ int main() {
     Check(!cyxwiz::ReadMaterializationCacheManifest(
               corrupt_path, corrupt_manifest, &error),
           "corrupt manifest should fail closed");
+
+    // Size policy: least recently used entries go first; keep_key stays.
+    {
+        const auto make_entry = [&](const std::string& entry_key, int bytes,
+                                    const std::string& last_used,
+                                    int schema_version =
+                                        cyxwiz::kMaterializationCacheSchemaVersion) {
+            const auto dir = cyxwiz::MaterializationCacheEntryDirectory(config, entry_key);
+            fs::create_directories(dir);
+            {
+                std::ofstream data(dir / "data.parquet", std::ios::binary);
+                data << std::string(static_cast<size_t>(bytes), 'x');
+            }
+            cyxwiz::MaterializationCacheManifest entry_manifest;
+            entry_manifest.cache_key = entry_key;
+            entry_manifest.artifact_path = (dir / "data.parquet").string();
+            entry_manifest.last_used_at = last_used;
+            entry_manifest.created_at = last_used;
+            entry_manifest.cache_status = cyxwiz::MaterializationCacheStatus::Saved;
+            entry_manifest.materializer_cache_schema_version = schema_version;
+            std::string write_error;
+            Check(cyxwiz::WriteMaterializationCacheManifest(
+                      entry_manifest, dir / "manifest.json", &write_error),
+                  "write test manifest: " + write_error);
+        };
+        fs::remove_all(cyxwiz::MaterializationCacheDirectory(config));
+        make_entry("aaaa", 1000, "100");  // least recently used
+        make_entry("bbbb", 1000, "200");
+        make_entry("cccc", 1000, "300");  // most recently used
+        fs::create_directories(cyxwiz::MaterializationCacheDirectory(config) / "not-a-key");
+
+        const auto usage = cyxwiz::MeasureMaterializationCache(config);
+        Check(usage.entries == 3 && usage.total_bytes > 3000,
+              "usage should count only cache entries");
+
+        auto limited = config;
+        limited.max_entries = 2;
+        auto pruned = cyxwiz::PruneMaterializationCache(limited, "aaaa");
+        Check(pruned.removed_entries == 1 && pruned.remaining_entries == 2,
+              "entry limit should remove one entry");
+        Check(fs::exists(cyxwiz::MaterializationCacheEntryDirectory(config, "aaaa")) &&
+                  !fs::exists(cyxwiz::MaterializationCacheEntryDirectory(config, "bbbb")) &&
+                  fs::exists(cyxwiz::MaterializationCacheEntryDirectory(config, "cccc")),
+              "prune should keep keep_key and remove the least recently used other entry");
+
+        auto size_limited = config;
+        size_limited.max_total_bytes = 2500;  // one entry (data + manifest) fits
+        auto size_pruned = cyxwiz::PruneMaterializationCache(size_limited);
+        Check(size_pruned.removed_entries == 1 && size_pruned.remaining_entries == 1 &&
+                  fs::exists(cyxwiz::MaterializationCacheEntryDirectory(config, "cccc")),
+              "size limit should remove least recently used entries until it fits");
+
+        make_entry("dddd", 10, "900", cyxwiz::kMaterializationCacheSchemaVersion - 1);
+        auto outdated_pruned = cyxwiz::PruneMaterializationCache(config);
+        Check(outdated_pruned.removed_entries == 1 &&
+                  !fs::exists(cyxwiz::MaterializationCacheEntryDirectory(config, "dddd")) &&
+                  fs::exists(cyxwiz::MaterializationCacheEntryDirectory(config, "cccc")),
+              "entries from an older cache schema should be removed even under the limit");
+
+        auto cleared = cyxwiz::ClearMaterializationCache(config);
+        Check(cleared.removed_entries == 1 &&
+                  cyxwiz::MeasureMaterializationCache(config).entries == 0,
+              "clear should remove every cache entry");
+        Check(fs::exists(cyxwiz::MaterializationCacheDirectory(config) / "not-a-key"),
+              "clear should not touch folders that are not cache entries");
+    }
 
     fs::remove_all(root);
     std::cout << "Materialization cache tests passed\n";

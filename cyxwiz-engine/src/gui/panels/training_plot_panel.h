@@ -4,6 +4,7 @@
 #include "../../core/training_run_comparison_record.h"
 #include "../../core/training_progress_estimate.h"
 #include <chrono>
+#include <functional>
 #include "../../plotting/plot_manager.h"
 #include <imgui.h>
 #include <vector>
@@ -114,6 +115,24 @@ public:
     void SetMaterializationComplete(const std::string& output_dataset,
                                     int operators_applied,
                                     const std::string& status = "completed");
+    // Prepared-data cache on disk (Data preparation card).
+    void SetMaterializationCacheInfo(const std::string& cache_directory,
+                                     int entries,
+                                     uint64_t total_bytes,
+                                     uint64_t size_limit_bytes,
+                                     int pruned_entries = 0,
+                                     uint64_t pruned_bytes = 0,
+                                     const std::string& rebuild_reason = "");
+    // Something the user must know, e.g. preprocessing nodes not applied.
+    void SetMaterializationNotice(const std::string& notice);
+    void SetMaterializationClearResult(int removed_entries,
+                                       uint64_t freed_bytes,
+                                       const std::string& error);
+    // Actions: "rebuild", "cancel_rebuild", "clear", "refresh".
+    void SetMaterializationActionCallback(
+        std::function<void(const std::string&)> callback) {
+        materialization_action_callback_ = std::move(callback);
+    }
     void SetTrainingComplete(float total_time_seconds,
                              const std::string& terminal_status = "completed",
                              const std::string& terminal_reason = "",
@@ -170,6 +189,9 @@ private:
     };
 
     struct MaterializationProgress {
+        // When the step started and was last updated (step durations).
+        std::chrono::steady_clock::time_point started_at{};
+        std::chrono::steady_clock::time_point updated_at{};
         std::string stage;
         std::string message;
         std::string status = "running";
@@ -216,9 +238,27 @@ private:
     int64_t materialization_cache_row_count_ = 0;
     int64_t materialization_cache_column_count_ = 0;
     int materialization_operators_applied_ = 0;
+    std::string materialization_notice_;
+    std::string materialization_rebuild_reason_;
+    std::string materialization_cache_directory_;
+    int materialization_cache_entries_ = -1;  // -1: not measured yet
+    uint64_t materialization_cache_bytes_ = 0;
+    uint64_t materialization_cache_limit_bytes_ = 0;
+    int materialization_pruned_entries_ = 0;
+    uint64_t materialization_pruned_bytes_ = 0;
+    std::string materialization_clear_message_;
+    bool materialization_rebuild_pending_ = false;
+    bool materialization_details_open_ = false;
+    bool materialization_cache_refresh_requested_ = false;
+    bool materialization_clear_confirm_ = false;
+    std::function<void(const std::string&)> materialization_action_callback_;
 
     // UI state
     bool show_loss_plot_ = true;
+    // Charts opened in their own dockable windows.
+    bool loss_window_open_ = false;
+    bool accuracy_window_open_ = false;
+    bool custom_window_open_ = false;
     bool show_accuracy_plot_ = true;
     bool show_custom_metrics_ = false;
     bool log_loss_scale_ = false;
@@ -276,6 +316,10 @@ private:
     void RenderAccuracyPlot(float plot_height);
     void RenderCustomMetricsPlot(float plot_height);
     void RenderKpiCards();
+    void DrawLossPlot(const ImVec2& size, bool fit);
+    void DrawAccuracyPlot(const ImVec2& size, bool fit);
+    void DrawCustomMetricsPlot(const ImVec2& size, bool fit);
+    void RenderChartWindows();
     void RenderEmptyState();
     void RenderControls();
     void RenderCurveSummary();

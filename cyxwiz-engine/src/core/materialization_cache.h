@@ -12,7 +12,9 @@
 
 namespace cyxwiz {
 
-inline constexpr int kMaterializationCacheSchemaVersion = 2;
+// 3: 128-bit keys, node display names left out of the key, content
+// fingerprint for sources without a file identity.
+inline constexpr int kMaterializationCacheSchemaVersion = 3;
 
 enum class MaterializationCacheMode {
     Disabled,
@@ -36,6 +38,10 @@ struct MaterializationCacheConfig {
     MaterializationCacheMode mode = MaterializationCacheMode::Disabled;
     std::filesystem::path cache_root;
     std::string artifact_format = "parquet";
+    // Size policy applied after each save (0 = unlimited). Least recently
+    // used entries are removed first; the entry just saved is always kept.
+    uint64_t max_total_bytes = 0;
+    int max_entries = 0;
 };
 
 struct MaterializationCacheDependencyIdentity {
@@ -53,6 +59,9 @@ struct MaterializationCacheKeyInput {
     uint64_t source_file_size = 0;
     uint64_t source_file_mtime = 0;
     std::string source_schema_fingerprint;
+    // Row content fingerprint, used when the source has no file identity
+    // (in-memory or derived datasets) so changed rows cannot hit a stale entry.
+    std::string source_content_fingerprint;
     std::vector<MaterializationCacheDependencyIdentity> dependencies;
     std::vector<gui::MLNode> nodes;
     std::vector<gui::NodeLink> links;
@@ -90,6 +99,9 @@ const char* MaterializationCacheStatusName(MaterializationCacheStatus status);
 
 std::string ComputeSchemaFingerprint(
     const std::shared_ptr<arrow::Schema>& schema);
+// Hash of the table's row count and column buffers (not the schema).
+std::string ComputeTableContentFingerprint(
+    const std::shared_ptr<arrow::Table>& table);
 std::string ComputeMaterializationCacheKey(
     const MaterializationCacheKeyInput& input);
 bool ResolveMaterializationCacheDependencyIdentity(
@@ -122,6 +134,38 @@ bool ReadMaterializationCacheManifest(
 // artifact cannot be inspected and must not be reused from memory.
 std::string MaterializationArtifactIdentity(
     const MaterializationCacheManifest& manifest);
+
+// Directory holding every cache entry: <cache_root>/cache/materialized.
+std::filesystem::path MaterializationCacheDirectory(
+    const MaterializationCacheConfig& config);
+
+struct MaterializationCacheUsage {
+    int entries = 0;
+    uint64_t total_bytes = 0;
+};
+
+struct MaterializationCachePruneResult {
+    int removed_entries = 0;
+    uint64_t freed_bytes = 0;
+    int remaining_entries = 0;
+    uint64_t remaining_bytes = 0;
+    std::string error;  // first removal error, if any
+};
+
+// Entries and bytes on disk under MaterializationCacheDirectory.
+MaterializationCacheUsage MeasureMaterializationCache(
+    const MaterializationCacheConfig& config);
+
+// Removes entries from an older cache schema (never reusable), then least
+// recently used entries until the cache fits max_total_bytes and max_entries
+// (0 = no limit for that dimension). keep_key is never removed.
+MaterializationCachePruneResult PruneMaterializationCache(
+    const MaterializationCacheConfig& config,
+    const std::string& keep_key = {});
+
+// Removes every cache entry. Prepared datasets are rebuilt when next needed.
+MaterializationCachePruneResult ClearMaterializationCache(
+    const MaterializationCacheConfig& config);
 
 MaterializationCacheValidationResult ValidateMaterializationCacheManifest(
     const MaterializationCacheManifest& manifest,

@@ -382,6 +382,14 @@ std::map<std::string, std::string> BuildOperatorParams(
 
 } // namespace
 
+int PipelineMaterializer::CountTableOperatorNodes(
+    const std::vector<gui::MLNode>& nodes) {
+    return static_cast<int>(std::count_if(
+        nodes.begin(), nodes.end(), [](const gui::MLNode& node) {
+            return IsArrowTableMaterializerOperator(node.type);
+        }));
+}
+
 MaterializationCacheability PipelineMaterializer::EvaluateCacheability(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,

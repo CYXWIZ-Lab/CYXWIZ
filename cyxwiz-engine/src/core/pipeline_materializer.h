@@ -82,6 +82,11 @@ struct MaterializeResult {
     int64_t cache_row_count = 0;
     int64_t cache_column_count = 0;
     std::string cache_message;
+    // Why an existing entry was rebuilt (stale, corrupt, rebuild requested).
+    std::string cache_rebuild_reason;
+    // Entries removed by the cache size policy after this save.
+    int cache_pruned_entries = 0;
+    uint64_t cache_pruned_bytes = 0;
     bool loaded_from_cache = false;
     bool reused_resident_cache = false;
     bool saved_to_cache = false;
@@ -110,6 +115,16 @@ struct MaterializeTableResult {
     MaterializationFailureKind failure_kind = MaterializationFailureKind::None;
     int failed_node_id = -1;
     std::string failed_node_name;
+};
+
+// Result of a cheap cache lookup that loads nothing (see ProbeCache).
+struct MaterializationCacheProbe {
+    bool usable = false;
+    MaterializationCacheStatus status = MaterializationCacheStatus::Disabled;
+    std::string cache_key;
+    std::string message;
+    int64_t row_count = 0;
+    int64_t column_count = 0;
 };
 
 struct MaterializationCacheability {
@@ -147,6 +162,19 @@ public:
         const std::shared_ptr<arrow::Table>& source_table,
         const std::string& source_dataset_name = {},
         MaterializationMemoryContext memory_context = {});
+
+    // Checks whether Materialize would reuse a cached prepared dataset,
+    // without loading it or running any operator. Used before the memory
+    // preflight so a cache hit does not ask for a memory confirmation.
+    static MaterializationCacheProbe ProbeCache(
+        const std::vector<gui::MLNode>& nodes,
+        const std::vector<gui::NodeLink>& links,
+        DataRegistry& registry,
+        const std::string& source_dataset_name,
+        const MaterializationCacheConfig& cache_config);
+
+    // Number of graph nodes the materializer would run as table operators.
+    static int CountTableOperatorNodes(const std::vector<gui::MLNode>& nodes);
 
     static MaterializeTableResult MaterializeTable(
         const std::vector<gui::MLNode>& nodes,

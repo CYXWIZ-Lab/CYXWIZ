@@ -1210,8 +1210,12 @@ int main(int argc, char** argv) {
     config.target.value_kind = cyxwiz::TargetValueKind::Categorical;
     config.target.primary_column = "label";
     config.target.width = 1;
+    // Memory estimates are checked against an empty prepared-data cache: a
+    // cached prepared dataset (from an earlier run) skips the estimate.
+    const auto empty_cache_root = work_dir / "empty_prepared_data_cache";
+    std::filesystem::remove_all(empty_cache_root);
     auto safe_memory_preflight = gui::PreflightGraphMaterialization(
-        nodes, links, config, registry);
+        nodes, links, config, registry, {}, empty_cache_root);
     Check(safe_memory_preflight.checked &&
               safe_memory_preflight.estimate_available,
           "GUI pre-start check should reuse tokenizer memory evidence");
@@ -1231,7 +1235,7 @@ int main(int argc, char** argv) {
         cyxwiz::MaterializationMemorySnapshot{
             estimated_peak * 2ULL, estimated_peak * 2ULL, true};
     auto warning_memory_preflight = gui::PreflightGraphMaterialization(
-        nodes, links, config, registry, warning_memory_context);
+        nodes, links, config, registry, warning_memory_context, empty_cache_root);
     Check(!warning_memory_preflight.blocked &&
               warning_memory_preflight.requires_confirmation,
           "warning estimate should require main-thread confirmation");
@@ -1244,7 +1248,7 @@ int main(int argc, char** argv) {
     blocked_memory_context.snapshot_override =
         cyxwiz::MaterializationMemorySnapshot{1024, 1024, true};
     auto blocked_memory_preflight = gui::PreflightGraphMaterialization(
-        nodes, links, config, registry, blocked_memory_context);
+        nodes, links, config, registry, blocked_memory_context, empty_cache_root);
     Check(blocked_memory_preflight.blocked &&
               !blocked_memory_preflight.requires_confirmation,
           "hard-limit estimate should block before the launch worker");
@@ -1443,7 +1447,8 @@ int main(int argc, char** argv) {
     sparse_config.target.primary_column = "label";
     sparse_config.target.width = 1;
     auto sparse_preflight = gui::PreflightGraphMaterialization(
-        sparse_nodes, sparse_links, sparse_config, registry);
+        sparse_nodes, sparse_links, sparse_config, registry, {},
+        work_dir / "empty_prepared_data_cache");
     Check(sparse_preflight.checked && sparse_preflight.estimate_available &&
               !sparse_preflight.blocked,
           "sparse vectorizer must expose bounded pre-start memory evidence");

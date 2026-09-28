@@ -709,6 +709,70 @@ void ValidateSparseFeatureTrainingContract(
     }
 }
 
+// Suggests sparse output for a wide dense vectorizer when the selected path
+// meets every sparse training rule above (final preprocessing output,
+// non-sequence, Dense first, no external dev/test roles). Sparse output keeps
+// only the non-zero values, so preparation is faster and far smaller.
+void SuggestSparseFeatureOutput(
+    TrainingConfiguration& config,
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    const std::unordered_set<int>& training_path_ids,
+    const std::vector<int>& sorted_ids) {
+    constexpr size_t kSuggestSparseFromWidth = 1000;
+    if (config.sequence_batch.enabled || config.is_time_series ||
+        config.dataset_roles.dev.IsSupplied() ||
+        config.dataset_roles.test.IsSupplied()) {
+        return;
+    }
+
+    const gui::MLNode* vectorizer = nullptr;
+    for (int node_id : sorted_ids) {
+        if (training_path_ids.count(node_id) == 0) continue;
+        const auto* node = FindNodeById(nodes, node_id);
+        if (!node) continue;
+        if (RequestsSparseFeatureOutput(*node)) return;  // already sparse
+        if (node->type != gui::NodeType::TFIDFVectorizer &&
+            node->type != gui::NodeType::CountVectorizer) {
+            continue;
+        }
+        if (vectorizer) return;  // sparse supports exactly one vectorizer
+        vectorizer = node;
+    }
+    if (!vectorizer) return;
+    const size_t width = ParsePositiveSizeParam(*vectorizer, "max_features", 2000);
+    if (width < kSuggestSparseFromWidth) return;
+
+    const auto downstream = CollectReachableNodeIds(vectorizer->id, links);
+    const gui::MLNode* first_model_layer = nullptr;
+    for (int node_id : sorted_ids) {
+        if (node_id == vectorizer->id || training_path_ids.count(node_id) == 0 ||
+            downstream.count(node_id) == 0) {
+            continue;
+        }
+        const auto* node = FindNodeById(nodes, node_id);
+        if (!node) continue;
+        if (ResolvePipelineRuntimeSupport(node->type).materializer_arrow_table_supported) {
+            return;  // a later operator needs the dense Arrow table
+        }
+        if (!first_model_layer && IsTrainingModelLayerType(node->type)) {
+            first_model_layer = node;
+        }
+    }
+    if (!first_model_layer || first_model_layer->type != gui::NodeType::Dense) {
+        return;
+    }
+
+    std::ostringstream message;
+    message << "'" << vectorizer->name << "' outputs " << width
+            << " dense feature columns (" << width * 4
+            << " bytes per row) and most values are zero. Set its Output format "
+               "to Sparse: data preparation is faster and uses far less memory; "
+               "batches are made dense only when they reach the model.";
+    AddIssue(config, IssueLevel::Warning, message.str(),
+             vectorizer->id, vectorizer->name);
+}
+
 bool IsLossNodeType(gui::NodeType type) {
     return type == gui::NodeType::MSELoss ||
            type == gui::NodeType::CrossEntropyLoss ||
@@ -4539,6 +4603,7 @@ TrainingConfiguration GraphCompiler::Compile(
 
     // Get topologically sorted node IDs
     std::vector<int> sorted_ids = TopologicalSort(nodes, links);
+    SuggestSparseFeatureOutput(config, nodes, links, training_path_ids, sorted_ids);
     ValidateSparseFeatureTrainingContract(
         config, nodes, links, training_path_ids, sorted_ids);
     CollectGraphRuntimeOpNodeIds(

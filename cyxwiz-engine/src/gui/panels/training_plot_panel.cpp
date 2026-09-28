@@ -300,6 +300,51 @@ void PopDashPlotStyle() {
     ImPlot::PopStyleColor(9);
 }
 
+// Small borderless icon button, tinted with the accent while active.
+bool DashIconButton(const char* id_label, bool active, const DashColors& c) {
+    ImGui::PushStyleColor(ImGuiCol_Button, active ? WithAlpha(c.accent, 0.24f) : ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, WithAlpha(c.text, 0.08f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, WithAlpha(c.accent, 0.40f));
+    ImGui::PushStyleColor(ImGuiCol_Text, active ? c.accent_text : c.muted);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
+    const bool pressed = ImGui::Button(id_label);
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(4);
+    return pressed;
+}
+
+// Title and y-axis label of the custom metrics chart from the metric names.
+template <typename Series>
+void ClassifyCustomMetrics(const std::vector<Series>& metrics,
+                           const char** plot_title,
+                           const char** y_label) {
+    bool has_sequence_metrics = false;
+    bool has_regression_metrics = false;
+    bool has_non_sequence_metrics = false;
+    for (const auto& metric : metrics) {
+        if (metric.values.empty()) {
+            continue;
+        }
+        if (IsSequenceMetricName(metric.name)) {
+            has_sequence_metrics = true;
+        } else {
+            has_non_sequence_metrics = true;
+        }
+        if (IsRegressionMetricName(metric.name)) {
+            has_regression_metrics = true;
+        }
+    }
+    *plot_title =
+        has_sequence_metrics && !has_non_sequence_metrics
+            ? "Sequence Metrics"
+            : (has_regression_metrics ? "Regression Metrics" : "Custom Metrics");
+    *y_label =
+        has_sequence_metrics && !has_non_sequence_metrics
+            ? "Score (%)"
+            : (has_regression_metrics ? "Error" : "Value");
+}
+
 std::string FormatTraceBytes(uint64_t bytes) {
     std::ostringstream out;
     out.setf(std::ios::fixed);
@@ -552,6 +597,8 @@ void TrainingPlotPanel::Render() {
             RecordPanelEvent("TrainingPlotPanel.Hidden");
             last_render_visible_ = false;
         }
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        RenderChartWindows();
         return;
     }
     if (!last_render_visible_) {
@@ -564,6 +611,8 @@ void TrainingPlotPanel::Render() {
 
     if (!ImGui::Begin(name_.c_str(), &visible_)) {
         ImGui::End();
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        RenderChartWindows();
         return;
     }
 
@@ -573,8 +622,6 @@ void TrainingPlotPanel::Render() {
     // Header: run status, progress and run actions (always visible).
     RenderTrainingStatus();
     RenderActiveTaskSummary();
-    RenderMaterializationSummary();
-    RenderTrainingWarningSummary();
 
     // Metric cards: latest values, change and timing.
     RenderKpiCards();
@@ -647,13 +694,22 @@ void TrainingPlotPanel::Render() {
                 RenderStatistics();
             }
         }
-    } else {
+    }
+
+    // Run details below the charts: data preparation and execution truth.
+    RenderMaterializationSummary();
+    RenderTrainingWarningSummary();
+
+    if (!has_data) {
         RenderEmptyState();
     }
 
     RenderRunComparisonTable();
 
     ImGui::End();
+
+    // Charts opened in their own windows.
+    RenderChartWindows();
 }
 
 void TrainingPlotPanel::RenderEmptyState() {
@@ -1011,6 +1067,10 @@ void TrainingPlotPanel::ClearLocked() {
     materialization_cache_row_count_ = 0;
     materialization_cache_column_count_ = 0;
     materialization_operators_applied_ = 0;
+    materialization_notice_.clear();
+    materialization_rebuild_reason_.clear();
+    materialization_pruned_entries_ = 0;
+    materialization_pruned_bytes_ = 0;
 
     // Reset training state
     is_training_ = false;
@@ -1366,8 +1426,12 @@ void TrainingPlotPanel::RecordMaterializationProgress(
         materialization_cache_column_count_ = cache_column_count;
     }
 
+    const auto now = std::chrono::steady_clock::now();
+    event.started_at = now;
+    event.updated_at = now;
     if (!materialization_events_.empty() &&
         materialization_events_.back().stage == event.stage) {
+        event.started_at = materialization_events_.back().started_at;
         materialization_events_.back() = std::move(event);
     } else {
         materialization_events_.push_back(std::move(event));
@@ -1386,6 +1450,8 @@ void TrainingPlotPanel::SetMaterializationComplete(
     materialization_output_dataset_ = output_dataset;
     materialization_status_ = status.empty() ? "completed" : status;
     materialization_operators_applied_ = operators_applied;
+    // The run that just prepared its data used up a pending rebuild request.
+    materialization_rebuild_pending_ = false;
 
     MaterializationProgress event;
     event.status = materialization_status_;
@@ -1406,8 +1472,12 @@ void TrainingPlotPanel::SetMaterializationComplete(
         event.message = "Materialization completed";
     }
     event.progress = 1.0f;
+    const auto now = std::chrono::steady_clock::now();
+    event.started_at = now;
+    event.updated_at = now;
     if (!materialization_events_.empty() &&
         materialization_events_.back().stage == event.stage) {
+        event.started_at = materialization_events_.back().started_at;
         materialization_events_.back() = std::move(event);
     } else {
         materialization_events_.push_back(std::move(event));
@@ -1417,17 +1487,76 @@ void TrainingPlotPanel::SetMaterializationComplete(
     }
 }
 
+void TrainingPlotPanel::SetMaterializationCacheInfo(
+    const std::string& cache_directory,
+    int entries,
+    uint64_t total_bytes,
+    uint64_t size_limit_bytes,
+    int pruned_entries,
+    uint64_t pruned_bytes,
+    const std::string& rebuild_reason) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    materialization_cache_directory_ = cache_directory;
+    materialization_cache_entries_ = entries;
+    materialization_cache_bytes_ = total_bytes;
+    materialization_cache_limit_bytes_ = size_limit_bytes;
+    materialization_pruned_entries_ = pruned_entries;
+    materialization_pruned_bytes_ = pruned_bytes;
+    if (!rebuild_reason.empty()) {
+        materialization_rebuild_reason_ = rebuild_reason;
+    }
+}
+
+void TrainingPlotPanel::SetMaterializationNotice(const std::string& notice) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    materialization_notice_ = notice;
+}
+
+void TrainingPlotPanel::SetMaterializationClearResult(
+    int removed_entries,
+    uint64_t freed_bytes,
+    const std::string& error) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    if (!error.empty()) {
+        materialization_clear_message_ = error;
+    } else {
+        materialization_clear_message_ =
+            "Removed " + std::to_string(removed_entries) + " prepared dataset" +
+            (removed_entries == 1 ? "" : "s") + " (" +
+            FormatTraceBytes(freed_bytes) + ").";
+    }
+}
+
 void TrainingPlotPanel::RenderLossPlot(float plot_height) {
     const DashColors c = CurrentDashColors();
     ImGui::Spacing();
-    if (!BeginDashCard("##dash_loss_card", c)) {
-        EndDashCard();
-        return;
+    if (BeginDashCard("##dash_loss_card", c)) {
+        DashCardTitle("Loss", log_loss_scale_ ? "training and validation, log axis" : "training and validation", c);
+        // Open this chart in its own dockable window.
+        ImGui::SameLine();
+        const char* pop_label = ICON_FA_WINDOW_RESTORE "##pop_loss";
+        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
+                                      ImGui::GetWindowContentRegionMax().x -
+                                          ImGui::CalcTextSize(ICON_FA_WINDOW_RESTORE).x - 12.0f));
+        if (DashIconButton(pop_label, loss_window_open_, c)) {
+            loss_window_open_ = !loss_window_open_;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(loss_window_open_ ? "Close the chart window"
+                                     : "Open this chart in its own window (dock it or make it full size)");
+        }
+        DrawLossPlot(ImVec2(-1, plot_height), false);
     }
-    DashCardTitle("Loss", log_loss_scale_ ? "training and validation, log axis"
-                                          : "training and validation", c);
+    EndDashCard();
+}
+
+void TrainingPlotPanel::DrawLossPlot(const ImVec2& size, bool fit) {
+    const DashColors c = CurrentDashColors();
     PushDashPlotStyle(c);
-    if (ImPlot::BeginPlot("Loss", ImVec2(-1, plot_height), ImPlotFlags_NoTitle)) {
+    if (fit) {
+        ImPlot::SetNextAxesToFit();
+    }
+    if (ImPlot::BeginPlot("Loss", size, ImPlotFlags_NoTitle)) {
         ImPlot::SetupAxes("Epoch", "Loss", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
         ImPlot::SetupLegend(ImPlotLocation_NorthEast);
         if (log_loss_scale_) {
@@ -1523,19 +1652,38 @@ void TrainingPlotPanel::RenderLossPlot(float plot_height) {
         ImPlot::EndPlot();
     }
     PopDashPlotStyle();
-    EndDashCard();
 }
 
 void TrainingPlotPanel::RenderAccuracyPlot(float plot_height) {
     const DashColors c = CurrentDashColors();
     ImGui::Spacing();
-    if (!BeginDashCard("##dash_accuracy_card", c)) {
-        EndDashCard();
-        return;
+    if (BeginDashCard("##dash_accuracy_card", c)) {
+        DashCardTitle("Accuracy", "training and validation, percent", c);
+        // Open this chart in its own dockable window.
+        ImGui::SameLine();
+        const char* pop_label = ICON_FA_WINDOW_RESTORE "##pop_accuracy";
+        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
+                                      ImGui::GetWindowContentRegionMax().x -
+                                          ImGui::CalcTextSize(ICON_FA_WINDOW_RESTORE).x - 12.0f));
+        if (DashIconButton(pop_label, accuracy_window_open_, c)) {
+            accuracy_window_open_ = !accuracy_window_open_;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(accuracy_window_open_ ? "Close the chart window"
+                                     : "Open this chart in its own window (dock it or make it full size)");
+        }
+        DrawAccuracyPlot(ImVec2(-1, plot_height), false);
     }
-    DashCardTitle("Accuracy", "training and validation, percent", c);
+    EndDashCard();
+}
+
+void TrainingPlotPanel::DrawAccuracyPlot(const ImVec2& size, bool fit) {
+    const DashColors c = CurrentDashColors();
     PushDashPlotStyle(c);
-    if (ImPlot::BeginPlot("Accuracy", ImVec2(-1, plot_height), ImPlotFlags_NoTitle)) {
+    if (fit) {
+        ImPlot::SetNextAxesToFit();
+    }
+    if (ImPlot::BeginPlot("Accuracy", size, ImPlotFlags_NoTitle)) {
         ImPlot::SetupAxes("Epoch", "Accuracy (%)", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
         ImPlot::SetupLegend(ImPlotLocation_SouthEast);
 
@@ -1597,45 +1745,45 @@ void TrainingPlotPanel::RenderAccuracyPlot(float plot_height) {
         ImPlot::EndPlot();
     }
     PopDashPlotStyle();
-    EndDashCard();
 }
 
 void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
-    bool has_sequence_metrics = false;
-    bool has_regression_metrics = false;
-    bool has_non_sequence_metrics = false;
-    for (const auto& metric : custom_metrics_) {
-        if (metric.values.empty()) {
-            continue;
-        }
-        if (IsSequenceMetricName(metric.name)) {
-            has_sequence_metrics = true;
-        } else {
-            has_non_sequence_metrics = true;
-        }
-        if (IsRegressionMetricName(metric.name)) {
-            has_regression_metrics = true;
-        }
-    }
-
-    const char* plot_title =
-        has_sequence_metrics && !has_non_sequence_metrics
-            ? "Sequence Metrics"
-            : (has_regression_metrics ? "Regression Metrics" : "Custom Metrics");
-    const char* y_label =
-        has_sequence_metrics && !has_non_sequence_metrics
-            ? "Score (%)"
-            : (has_regression_metrics ? "Error" : "Value");
-
+    const char* plot_title = nullptr;
+    const char* y_label = nullptr;
+    ClassifyCustomMetrics(custom_metrics_, &plot_title, &y_label);
+    (void)y_label;
     const DashColors c = CurrentDashColors();
     ImGui::Spacing();
-    if (!BeginDashCard("##dash_custom_card", c)) {
-        EndDashCard();
-        return;
+    if (BeginDashCard("##dash_custom_card", c)) {
+        DashCardTitle(plot_title, "per epoch", c);
+        // Open this chart in its own dockable window.
+        ImGui::SameLine();
+        const char* pop_label = ICON_FA_WINDOW_RESTORE "##pop_custom";
+        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
+                                      ImGui::GetWindowContentRegionMax().x -
+                                          ImGui::CalcTextSize(ICON_FA_WINDOW_RESTORE).x - 12.0f));
+        if (DashIconButton(pop_label, custom_window_open_, c)) {
+            custom_window_open_ = !custom_window_open_;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(custom_window_open_ ? "Close the chart window"
+                                     : "Open this chart in its own window (dock it or make it full size)");
+        }
+        DrawCustomMetricsPlot(ImVec2(-1, plot_height), false);
     }
-    DashCardTitle(plot_title, "per epoch", c);
+    EndDashCard();
+}
+
+void TrainingPlotPanel::DrawCustomMetricsPlot(const ImVec2& size, bool fit) {
+    const char* plot_title = nullptr;
+    const char* y_label = nullptr;
+    ClassifyCustomMetrics(custom_metrics_, &plot_title, &y_label);
+    const DashColors c = CurrentDashColors();
     PushDashPlotStyle(c);
-    if (ImPlot::BeginPlot(plot_title, ImVec2(-1, plot_height), ImPlotFlags_NoTitle)) {
+    if (fit) {
+        ImPlot::SetNextAxesToFit();
+    }
+    if (ImPlot::BeginPlot(plot_title, size, ImPlotFlags_NoTitle)) {
         // Enable zoom and pan on both axes
         ImPlot::SetupAxes("Epoch", y_label, ImPlotAxisFlags_None, ImPlotAxisFlags_None);
         ImPlot::SetupLegend(ImPlotLocation_NorthEast);
@@ -1664,7 +1812,92 @@ void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
         ImPlot::EndPlot();
     }
     PopDashPlotStyle();
-    EndDashCard();
+}
+
+void TrainingPlotPanel::RenderChartWindows() {
+    const DashColors c = CurrentDashColors();
+    const auto chart_window = [&](const char* title, bool* open, int kind) {
+        if (!*open) {
+            return;
+        }
+        ImGui::SetNextWindowSize(ImVec2(960, 600), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin(title, open)) {
+            // Toolbar: fit, the shared view options, help.
+            bool fit = false;
+            if (DashButton(ICON_FA_EXPAND " Fit", DashButtonKind::Secondary, c)) {
+                fit = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Fit all data (with Auto scale on, the axes already follow the data).");
+            }
+            ImGui::SameLine(0.0f, 14.0f);
+            ImGui::AlignTextToFramePadding();
+            ImGui::Checkbox("Auto scale", &auto_scale_);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When enabled, axes adapt to the live training data.\nDisable to manually zoom/pan.");
+            }
+            ImGui::SameLine();
+            ImGui::Checkbox("Follow current epoch", &follow_current_epoch_);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Keep the epoch axis scrolled to the latest batch/epoch.");
+            }
+            if (follow_current_epoch_) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(120.0f);
+                ImGui::SliderInt("Epoch window", &visible_epoch_window_, 3, 50);
+            }
+            if (kind == 0) {
+                ImGui::SameLine();
+                ImGui::Checkbox("Log loss axis", &log_loss_scale_);
+            }
+            if (kind != 2) {
+                ImGui::SameLine();
+                ImGui::Checkbox("Smooth", &show_smoothed_curves_);
+                if (show_smoothed_curves_) {
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(100.0f);
+                    ImGui::SliderInt("Smooth window", &smoothing_window_, 2, 50);
+                }
+            }
+            ImGui::SameLine(0.0f, 14.0f);
+            ImGui::TextColored(c.muted, ICON_FA_CIRCLE_INFO);
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::Text("Plot Controls:");
+                ImGui::BulletText("Scroll wheel: Zoom both axes");
+                ImGui::BulletText("Scroll on axis: Zoom that axis only");
+                ImGui::BulletText("Drag: Pan view");
+                ImGui::BulletText("Right-drag: Zoom to a box");
+                ImGui::BulletText("Double-click: Fit data");
+                ImGui::BulletText("Right-click: Chart menu (axes, legend, fit)");
+                ImGui::BulletText("Click a legend entry: Show or hide that curve");
+                ImGui::BulletText("Disable Auto Scale or Follow Current for manual control");
+                ImGui::EndTooltip();
+            }
+
+            const bool has_series =
+                kind == 0 ? !train_loss_.values.empty()
+                          : (kind == 1 ? !train_accuracy_.values.empty() : !custom_metrics_.empty());
+            if (!has_series) {
+                ImGui::Spacing();
+                ImGui::TextColored(c.muted, "%s",
+                                   kind == 0 ? "No loss data yet. Start training to see the curve."
+                                   : kind == 1 ? "No accuracy data yet. Start training to see the curve."
+                                               : "No custom metrics yet.");
+            } else if (kind == 0) {
+                DrawLossPlot(ImVec2(-1, -1), fit);
+            } else if (kind == 1) {
+                DrawAccuracyPlot(ImVec2(-1, -1), fit);
+            } else {
+                DrawCustomMetricsPlot(ImVec2(-1, -1), fit);
+            }
+        }
+        ImGui::End();
+    };
+
+    chart_window(ICON_FA_CHART_LINE " Training Loss###TrainingLossChart", &loss_window_open_, 0);
+    chart_window(ICON_FA_CHART_LINE " Training Accuracy###TrainingAccuracyChart", &accuracy_window_open_, 1);
+    chart_window(ICON_FA_CHART_LINE " Training Metrics###TrainingCustomChart", &custom_window_open_, 2);
 }
 
 void TrainingPlotPanel::RenderControls() {
@@ -1672,6 +1905,9 @@ void TrainingPlotPanel::RenderControls() {
     ImGui::Spacing();
 
     // Which charts to show.
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(c.muted, "Charts");
+    ImGui::SameLine(0.0f, 10.0f);
     DashChip("Loss", &show_loss_plot_, c);
     ImGui::SameLine();
     DashChip("Accuracy", &show_accuracy_plot_, c);
@@ -1736,8 +1972,11 @@ void TrainingPlotPanel::RenderControls() {
         ImGui::Text("Plot Controls:");
         ImGui::BulletText("Scroll wheel: Zoom both axes");
         ImGui::BulletText("Scroll on axis: Zoom that axis only");
-        ImGui::BulletText("Right-drag: Pan view");
-        ImGui::BulletText("Double-click: Reset zoom");
+        ImGui::BulletText("Drag: Pan view");
+        ImGui::BulletText("Right-drag: Zoom to a box");
+        ImGui::BulletText("Right-click: Chart menu (axes, legend, fit)");
+        ImGui::BulletText("Chart window button: open the chart in its own window");
+        ImGui::BulletText("Double-click: Fit data");
         ImGui::BulletText("Disable Auto Scale or Follow Current for manual control");
         ImGui::EndTooltip();
     }
@@ -1772,6 +2011,13 @@ void TrainingPlotPanel::RenderControls() {
         if (show_smoothed_curves_) {
             ImGui::SetNextItemWidth(160.0f);
             ImGui::SliderInt("Smooth window", &smoothing_window_, 2, 50);
+        }
+        ImGui::Spacing();
+        ImGui::TextColored(c.muted, "Open in a window");
+        ImGui::MenuItem(ICON_FA_WINDOW_RESTORE " Loss chart", nullptr, &loss_window_open_);
+        ImGui::MenuItem(ICON_FA_WINDOW_RESTORE " Accuracy chart", nullptr, &accuracy_window_open_);
+        if (!custom_metrics_.empty()) {
+            ImGui::MenuItem(ICON_FA_WINDOW_RESTORE " Metrics chart", nullptr, &custom_window_open_);
         }
         ImGui::EndPopup();
     }
@@ -2099,201 +2345,421 @@ void TrainingPlotPanel::RenderActiveTaskSummary() {
 }
 
 void TrainingPlotPanel::RenderMaterializationSummary() {
-    if (materialization_events_.empty()) {
+    if (materialization_events_.empty() && materialization_notice_.empty()) {
         return;
+    }
+    const DashColors c = CurrentDashColors();
+    const auto now = std::chrono::steady_clock::now();
+    const bool has_actions = static_cast<bool>(materialization_action_callback_);
+    if (has_actions && materialization_cache_entries_ < 0 &&
+        !materialization_cache_refresh_requested_) {
+        materialization_cache_refresh_requested_ = true;
+        materialization_action_callback_("refresh");
+    }
+
+    const std::string& status = materialization_status_;
+    const MaterializationProgress* latest =
+        materialization_events_.empty() ? nullptr : &materialization_events_.back();
+    const bool blocked = latest && latest->status == "blocked";
+    const bool complete = !status.empty();
+    const bool preparing = !complete && is_preparing_ && !preparation_failed_;
+
+    // Overall state.
+    const char* state = "Prepared";
+    ImVec4 state_color = c.success;
+    if (preparation_failed_ && !complete) {
+        state = blocked ? "Blocked" : "Failed";
+        state_color = c.error;
+    } else if (preparing) {
+        state = "Preparing";
+        state_color = c.info;
+    } else if (!materialization_notice_.empty() && materialization_events_.empty()) {
+        state = "Not applied";
+        state_color = c.warning;
+    } else if (status == "cache_hit") {
+        state = "Reused from cache";
+    } else if (status == "cache_saved") {
+        state = materialization_rebuild_reason_.empty() ? "Prepared and cached"
+                                                        : "Rebuilt and cached";
+    } else if (status == "cache_save_failed") {
+        state = "Prepared, not cached";
+        state_color = c.warning;
+    } else if (!complete) {
+        state = "Stopped";
+        state_color = c.muted;
     }
 
     ImGui::Spacing();
-    if (!ImGui::CollapsingHeader("Materialization",
-                                 ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (!BeginDashCard("##dash_dataprep", c)) {
+        EndDashCard();
         return;
     }
 
-    const auto& latest = materialization_events_.back();
-    ImGui::TextColored(ImVec4(0.35f, 0.75f, 1.0f, 1.0f),
-                       "Latest stage: %s", latest.stage.c_str());
-
-    if (!latest.node_name.empty()) {
-        ImGui::TextWrapped("Node: %s", latest.node_name.c_str());
+    // Header: title, state, actions.
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(c.text, "Data preparation");
+    ImGui::SameLine(0.0f, 10.0f);
+    DashPill(state, state_color);
+    if (has_actions) {
+        const char* rebuild_label = materialization_rebuild_pending_
+            ? ICON_FA_ARROWS_ROTATE " Rebuild on next run###dash_rebuild"
+            : "Rebuild on next run###dash_rebuild";
+        const char* actions_label = "Actions " ICON_FA_CHEVRON_DOWN "###dash_prep_actions";
+        const float width = DashButtonWidth("Rebuild on next run") + 26.0f +
+                            DashButtonWidth("Actions ") + 16.0f +
+                            ImGui::GetStyle().ItemSpacing.x;
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
+                                      ImGui::GetWindowContentRegionMax().x - width));
+        bool pending = materialization_rebuild_pending_;
+        if (DashChip(rebuild_label, &pending, c)) {
+            materialization_rebuild_pending_ = pending;
+            materialization_action_callback_(pending ? "rebuild" : "cancel_rebuild");
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(materialization_rebuild_pending_
+                                  ? "The next Train rebuilds the prepared data. Click to cancel."
+                                  : "The next Train rebuilds the prepared data instead of reusing it.");
+        }
+        ImGui::SameLine();
+        if (DashButton(actions_label, DashButtonKind::Secondary, c)) {
+            ImGui::OpenPopup("##dash_prep_actions_menu");
+        }
+        if (ImGui::BeginPopup("##dash_prep_actions_menu")) {
+            const std::string folder = !materialization_cache_directory_.empty()
+                ? materialization_cache_directory_
+                : ParentDirectoryForPath(ParentDirectoryForPath(
+                      materialization_cache_manifest_path_));
+            if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Open cache folder", nullptr, false,
+                                !folder.empty())) {
+                if (OpenDirectoryInFileBrowser(folder)) {
+                    RecordPanelEvent("TrainingPlotPanel.OpenCacheLocation", folder);
+                } else {
+                    RecordPanelEvent("TrainingPlotPanel.OpenCacheLocationFailed", folder);
+                }
+            }
+            if (ImGui::MenuItem(ICON_FA_COPY " Copy prepared data path", nullptr, false,
+                                !materialization_cache_artifact_path_.empty())) {
+                ImGui::SetClipboardText(materialization_cache_artifact_path_.c_str());
+            }
+            if (ImGui::MenuItem(ICON_FA_COPY " Copy manifest path", nullptr, false,
+                                !materialization_cache_manifest_path_.empty())) {
+                ImGui::SetClipboardText(materialization_cache_manifest_path_.c_str());
+            }
+            if (ImGui::MenuItem(ICON_FA_ARROWS_ROTATE " Refresh cache size")) {
+                materialization_action_callback_("refresh");
+            }
+            ImGui::Separator();
+            ImGui::PushStyleColor(ImGuiCol_Text, c.error);
+            const bool clear = ImGui::MenuItem(ICON_FA_TRASH " Clear prepared-data cache...",
+                                               nullptr, false, !is_preparing_);
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && is_preparing_) {
+                ImGui::SetTooltip("Available after the current preparation finishes.");
+            }
+            if (clear) {
+                materialization_clear_confirm_ = true;
+            }
+            ImGui::EndPopup();
+        }
     }
 
-    if (!materialization_status_.empty()) {
-        const bool successful = materialization_status_ == "completed" ||
-                                materialization_status_ == "cache_hit" ||
-                                materialization_status_ == "cache_saved";
-        const ImVec4 color = successful
-            ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
-            : ImVec4(1.0f, 0.75f, 0.25f, 1.0f);
-        ImGui::TextColored(
-            color,
-            "Status: %s",
-            MaterializationStatusDisplayName(materialization_status_));
-    }
+    // Source -> prepared dataset and a one-line summary.
     if (!materialization_output_dataset_.empty()) {
-        ImGui::TextWrapped("Output dataset: %s",
-                           materialization_output_dataset_.c_str());
-    }
-    if (materialization_operators_applied_ > 0) {
-        ImGui::Text("Operators: %d applied",
-                    materialization_operators_applied_);
-    }
-    if (!materialization_cache_key_.empty()) {
-        const std::string short_key = materialization_cache_key_.substr(
-            0, std::min<size_t>(12, materialization_cache_key_.size()));
-        ImGui::TextWrapped("Cache key: %s", materialization_cache_key_.c_str());
-        ImGui::SameLine();
-        ImGui::TextDisabled("short %s", short_key.c_str());
-    }
-    if (!materialization_cache_artifact_path_.empty()) {
-        ImGui::TextWrapped("Prepared dataset artifact: %s",
-                           materialization_cache_artifact_path_.c_str());
-        if (ImGui::SmallButton("Copy artifact path")) {
-            ImGui::SetClipboardText(materialization_cache_artifact_path_.c_str());
+        std::string source = materialization_output_dataset_;
+        const std::string suffix = "__materialized";
+        if (source.size() > suffix.size() &&
+            source.compare(source.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            source.erase(source.size() - suffix.size());
+            ImGui::TextUnformatted(source.c_str());
+            ImGui::SameLine(0.0f, 6.0f);
+            ImGui::TextColored(c.faint, ICON_FA_ARROW_RIGHT);
+            ImGui::SameLine(0.0f, 6.0f);
         }
+        ImGui::TextUnformatted(materialization_output_dataset_.c_str());
     }
-    if (!materialization_cache_manifest_path_.empty()) {
-        ImGui::TextWrapped("Cache manifest: %s",
-                           materialization_cache_manifest_path_.c_str());
-        if (ImGui::SmallButton("Copy manifest path")) {
-            ImGui::SetClipboardText(materialization_cache_manifest_path_.c_str());
+    {
+        std::string summary;
+        if (materialization_operators_applied_ > 0) {
+            summary = std::to_string(materialization_operators_applied_) +
+                      " preprocessing node" +
+                      (materialization_operators_applied_ == 1 ? "" : "s");
         }
-    }
-    const std::string cache_location_source =
-        !materialization_cache_manifest_path_.empty()
-            ? materialization_cache_manifest_path_
-            : materialization_cache_artifact_path_;
-    if (!cache_location_source.empty()) {
-        const std::string cache_directory =
-            ParentDirectoryForPath(cache_location_source);
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Open cache location")) {
-            if (OpenDirectoryInFileBrowser(cache_directory)) {
-                RecordPanelEvent("TrainingPlotPanel.OpenCacheLocation",
-                                 cache_directory);
-            } else {
-                RecordPanelEvent("TrainingPlotPanel.OpenCacheLocationFailed",
-                                 cache_directory);
-            }
+        if (materialization_cache_row_count_ > 0 || materialization_cache_column_count_ > 0) {
+            summary += (summary.empty() ? "" : " \xC2\xB7 ") +
+                       std::to_string(materialization_cache_row_count_) + " rows x " +
+                       std::to_string(materialization_cache_column_count_) + " columns";
+        }
+        if (!summary.empty()) {
+            ImGui::TextColored(c.muted, "%s", summary.c_str());
         }
     }
-    if (materialization_cache_row_count_ > 0 ||
-        materialization_cache_column_count_ > 0) {
-        ImGui::Text("Prepared dataset: %lld rows, %lld columns",
-                    static_cast<long long>(materialization_cache_row_count_),
-                    static_cast<long long>(materialization_cache_column_count_));
+    if (latest && !preparing && !latest->message.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(c.muted, "%s", latest->message.c_str());
+        ImGui::PopTextWrapPos();
     }
-    ImGui::TextWrapped("Message: %s", latest.message.c_str());
-    ImGui::ProgressBar(latest.progress, ImVec2(-1.0f, 0.0f));
-
-    if (latest.estimated_memory_bytes > 0 ||
-        latest.total_items > 0 ||
-        latest.processed_items > 0) {
-        if (latest.estimated_memory_bytes > 0) {
-            ImGui::Text("Estimated memory: %s",
-                        FormatTraceBytes(latest.estimated_memory_bytes).c_str());
-        }
-        if (latest.available_memory_bytes > 0) {
-            ImGui::Text("Available RAM / safe budget: %s / %s",
-                        FormatTraceBytes(latest.available_memory_bytes).c_str(),
-                        FormatTraceBytes(latest.safe_memory_budget_bytes).c_str());
-        }
-        if (latest.process_memory_detected) {
-            ImGui::Text("Process resident / growth: %s / +%s",
-                        FormatTraceBytes(
-                            latest.process_resident_memory_bytes).c_str(),
-                        FormatTraceBytes(
-                            latest.process_resident_growth_bytes).c_str());
-            if (latest.process_private_memory_bytes > 0) {
-                ImGui::Text("Process %s: %s",
-                            latest.process_private_memory_name.empty()
-                                ? "private memory"
-                                : latest.process_private_memory_name.c_str(),
-                            FormatTraceBytes(
-                                latest.process_private_memory_bytes).c_str());
-            }
-            ImGui::TextDisabled(
-                "Process RAM; ArrayFire device memory is reported separately.");
-        }
-        if (!latest.memory_risk_level.empty()) {
-            ImGui::Text("Memory risk: %s", latest.memory_risk_level.c_str());
-        }
-        if (!latest.status.empty() && latest.status != "running") {
-            ImGui::Text("Decision status: %s", latest.status.c_str());
-        }
-        if (latest.total_items > 0) {
-            ImGui::Text("Work: %llu / %llu",
-                        static_cast<unsigned long long>(latest.processed_items),
-                        static_cast<unsigned long long>(latest.total_items));
-        }
+    if (!materialization_rebuild_reason_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(c.warning, "Rebuilt: %s", materialization_rebuild_reason_.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    if (!materialization_notice_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(c.warning, ICON_FA_TRIANGLE_EXCLAMATION " %s",
+                           materialization_notice_.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    if (preparing && latest) {
+        DashProgress(latest->progress, c.accent, c);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::Text("%s", latest->message.c_str());
+        ImGui::PopTextWrapPos();
     }
 
-    ImGui::Spacing();
-    ImGui::SeparatorText("Stages");
-    ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
-    int stage_index = 1;
-    for (const auto& event : materialization_events_) {
-        ImGui::PushID(stage_index);
+    // Steps.
+    if (!materialization_events_.empty()) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.85f, 0.92f, 1.0f, 1.0f),
-                           "%d. %s", stage_index, event.stage.c_str());
-        ImGui::SameLine();
-        ImGui::TextDisabled("(%.0f%%)", event.progress * 100.0f);
-
-        if (!event.node_name.empty()) {
-            ImGui::TextWrapped("Node: %s", event.node_name.c_str());
-        }
-        if (event.estimated_memory_bytes > 0) {
-            ImGui::Text("Estimated memory: %s",
-                        FormatTraceBytes(event.estimated_memory_bytes).c_str());
-        }
-        if (event.process_memory_detected) {
-            ImGui::Text("Process resident: %s (+%s)",
-                        FormatTraceBytes(
-                            event.process_resident_memory_bytes).c_str(),
-                        FormatTraceBytes(
-                            event.process_resident_growth_bytes).c_str());
-        }
-        if (!event.memory_risk_level.empty()) {
-            ImGui::Text("Memory risk: %s", event.memory_risk_level.c_str());
-        }
-        if (!event.status.empty() && event.status != "running") {
-            ImGui::Text("Decision status: %s", event.status.c_str());
-        }
-        if (!event.cache_key.empty()) {
-            ImGui::TextWrapped("Cache key: %s", event.cache_key.c_str());
-        }
-        if (!event.cache_artifact_path.empty()) {
-            ImGui::TextWrapped("Prepared dataset artifact: %s",
-                               event.cache_artifact_path.c_str());
-        }
-        if (!event.cache_manifest_path.empty()) {
-            ImGui::TextWrapped("Cache manifest: %s",
-                               event.cache_manifest_path.c_str());
-        }
-        if (event.cache_row_count > 0 || event.cache_column_count > 0) {
-            ImGui::Text("Prepared dataset: %lld rows, %lld columns",
-                        static_cast<long long>(event.cache_row_count),
-                        static_cast<long long>(event.cache_column_count));
-        }
-        if (event.total_items > 0 || event.processed_items > 0) {
-            if (event.total_items > 0) {
-                ImGui::Text("Work: %llu / %llu",
-                            static_cast<unsigned long long>(event.processed_items),
-                            static_cast<unsigned long long>(event.total_items));
-            } else {
-                ImGui::Text("Processed: %llu",
-                            static_cast<unsigned long long>(event.processed_items));
+        ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
+        if (ImGui::BeginTable("##dash_prep_steps", 3,
+                              ImGuiTableFlags_SizingStretchProp |
+                                  ImGuiTableFlags_BordersInnerH)) {
+            ImGui::TableSetupColumn("icon", ImGuiTableColumnFlags_WidthFixed, 18.0f);
+            ImGui::TableSetupColumn("step", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("time", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+            for (size_t i = 0; i < materialization_events_.size(); ++i) {
+                const auto& event = materialization_events_[i];
+                const bool last = i + 1 == materialization_events_.size();
+                const bool running = last && preparing;
+                const bool stale = event.status == "cache_stale" ||
+                                   event.status == "cache_corrupt" ||
+                                   event.status == "cache_miss";
+                const bool failed_step = event.status == "blocked" ||
+                                         (last && preparation_failed_ && !complete);
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                if (failed_step) {
+                    ImGui::TextColored(c.error, ICON_FA_CIRCLE_XMARK);
+                } else if (running) {
+                    ImGui::TextColored(c.info, ICON_FA_SPINNER);
+                } else if (stale) {
+                    ImGui::TextColored(c.warning, ICON_FA_ARROWS_ROTATE);
+                } else {
+                    ImGui::TextColored(c.success, ICON_FA_CHECK);
+                }
+                ImGui::TableNextColumn();
+                const std::string title = event.stage == "MaterializationCache"
+                    ? std::string("Cache decision")
+                    : event.stage;
+                ImGui::TextUnformatted(title.c_str());
+                std::string detail;
+                const auto add = [&detail](const std::string& part) {
+                    if (part.empty()) return;
+                    detail += (detail.empty() ? "" : " \xC2\xB7 ") + part;
+                };
+                if (event.message != event.stage) add(event.message);
+                if (!event.node_name.empty()) add("node " + event.node_name);
+                if (event.total_items > 0) {
+                    add(std::to_string(event.processed_items) + " / " +
+                        std::to_string(event.total_items));
+                } else if (event.processed_items > 0) {
+                    add(std::to_string(event.processed_items) + " processed");
+                }
+                if (event.estimated_memory_bytes > 0) {
+                    add("estimate " + FormatTraceBytes(event.estimated_memory_bytes));
+                }
+                if (!event.memory_risk_level.empty()) add("risk " + event.memory_risk_level);
+                if (event.process_memory_detected) {
+                    add("process " + FormatTraceBytes(event.process_resident_memory_bytes) +
+                        " (+" + FormatTraceBytes(event.process_resident_growth_bytes) + ")");
+                }
+                if (event.cache_row_count > 0 || event.cache_column_count > 0) {
+                    add(std::to_string(event.cache_row_count) + " x " +
+                        std::to_string(event.cache_column_count));
+                }
+                if (!detail.empty()) {
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextColored(c.faint, "%s", detail.c_str());
+                    ImGui::PopTextWrapPos();
+                }
+                ImGui::TableNextColumn();
+                const auto end_time = !last
+                    ? materialization_events_[i + 1].started_at
+                    : (running ? now : event.updated_at);
+                const double seconds =
+                    std::chrono::duration<double>(end_time - event.started_at).count();
+                if (running && event.progress > 0.0f && event.progress < 1.0f) {
+                    ImGui::TextColored(c.faint, "%.0f%%", event.progress * 100.0f);
+                } else if (seconds >= 0.05) {
+                    ImGui::TextColored(c.faint, "%s",
+                                       FormatTrainingDuration(seconds).c_str());
+                } else {
+                    ImGui::TextColored(c.faint, "%s", running ? "..." : "<0.1s");
+                }
+                ImGui::PopID();
             }
+            ImGui::EndTable();
         }
-        if (!event.message.empty()) {
-            ImGui::TextWrapped("Message: %s", event.message.c_str());
-        }
-        ImGui::ProgressBar(event.progress, ImVec2(-1.0f, 0.0f));
-        ImGui::Separator();
-        ImGui::PopID();
-        ++stage_index;
+        ImGui::PopStyleColor();
     }
-    ImGui::PopTextWrapPos();
+
+    // Cache usage and the Details disclosure.
+    ImGui::Spacing();
+    if (materialization_cache_entries_ >= 0) {
+        ImGui::TextColored(c.muted, "Prepared-data cache");
+        ImGui::SameLine();
+        std::string usage = std::to_string(materialization_cache_entries_) + " dataset" +
+                            (materialization_cache_entries_ == 1 ? "" : "s") + " \xC2\xB7 " +
+                            FormatTraceBytes(materialization_cache_bytes_);
+        if (materialization_cache_limit_bytes_ > 0) {
+            usage += " of " + FormatTraceBytes(materialization_cache_limit_bytes_);
+        }
+        ImGui::TextUnformatted(usage.c_str());
+        if (materialization_pruned_entries_ > 0) {
+            ImGui::SameLine();
+            ImGui::TextColored(c.faint, "(removed %d older, %s)",
+                               materialization_pruned_entries_,
+                               FormatTraceBytes(materialization_pruned_bytes_).c_str());
+        }
+        ImGui::SameLine();
+    }
+    {
+        const char* label = materialization_details_open_ ? "Hide details" : "Details";
+        const float width = ImGui::CalcTextSize(label).x;
+        if (materialization_cache_entries_ < 0) {
+            ImGui::NewLine();
+            ImGui::SameLine();
+        }
+        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
+                                      ImGui::GetWindowContentRegionMax().x - width));
+        ImGui::TextColored(c.accent_text, "%s", label);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        }
+        if (ImGui::IsItemClicked()) {
+            materialization_details_open_ = !materialization_details_open_;
+        }
+    }
+    if (!materialization_clear_message_.empty()) {
+        ImGui::TextColored(c.faint, "%s", materialization_clear_message_.c_str());
+    }
+
+    if (materialization_details_open_) {
+        ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
+        if (ImGui::BeginTable("##dash_prep_details", 2,
+                              ImGuiTableFlags_SizingStretchProp |
+                                  ImGuiTableFlags_BordersInnerH)) {
+            ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            const auto row = [&](const char* label, const std::string& value) {
+                if (value.empty()) return;
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(c.muted, "%s", label);
+                ImGui::TableNextColumn();
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextUnformatted(value.c_str());
+                ImGui::PopTextWrapPos();
+            };
+            if (!status.empty()) {
+                row("Status", std::string(MaterializationStatusDisplayName(status)) +
+                                  " (" + status + ")");
+            }
+            if (latest && !latest->node_name.empty()) row("Node", latest->node_name);
+            row("Output dataset", materialization_output_dataset_);
+            if (materialization_operators_applied_ > 0) {
+                row("Operators applied", std::to_string(materialization_operators_applied_));
+            }
+            row("Cache key", materialization_cache_key_);
+            row("Prepared data file", materialization_cache_artifact_path_);
+            row("Manifest", materialization_cache_manifest_path_);
+            row("Cache folder", materialization_cache_directory_);
+            if (latest) {
+                if (latest->estimated_memory_bytes > 0) {
+                    row("Estimated memory", FormatTraceBytes(latest->estimated_memory_bytes));
+                }
+                if (latest->available_memory_bytes > 0) {
+                    row("Available RAM / safe budget",
+                        FormatTraceBytes(latest->available_memory_bytes) + " / " +
+                            FormatTraceBytes(latest->safe_memory_budget_bytes));
+                }
+                if (latest->process_memory_detected) {
+                    row("Process resident / growth",
+                        FormatTraceBytes(latest->process_resident_memory_bytes) + " / +" +
+                            FormatTraceBytes(latest->process_resident_growth_bytes));
+                    if (latest->process_private_memory_bytes > 0) {
+                        row(latest->process_private_memory_name.empty()
+                                ? "Process private memory"
+                                : ("Process " + latest->process_private_memory_name).c_str(),
+                            FormatTraceBytes(latest->process_private_memory_bytes));
+                    }
+                    row("Memory note",
+                        "Process RAM; ArrayFire device memory is reported separately.");
+                }
+                row("Memory risk", latest->memory_risk_level);
+                if (!latest->status.empty() && latest->status != "running") {
+                    row("Decision status", latest->status);
+                }
+                if (latest->total_items > 0) {
+                    row("Work", std::to_string(latest->processed_items) + " / " +
+                                    std::to_string(latest->total_items));
+                }
+            }
+            row("Rebuild reason", materialization_rebuild_reason_);
+            if (materialization_cache_limit_bytes_ > 0) {
+                row("Cache limit",
+                    FormatTraceBytes(materialization_cache_limit_bytes_) +
+                        "; least recently used prepared data is removed first");
+            }
+            ImGui::EndTable();
+        }
+        ImGui::PopStyleColor();
+    }
+    EndDashCard();
+
+    // Clear confirmation.
+    if (materialization_clear_confirm_) {
+        ImGui::OpenPopup("Clear prepared-data cache?###dash_clear_cache");
+        materialization_clear_confirm_ = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Clear prepared-data cache?###dash_clear_cache", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(430.0f);
+        if (materialization_cache_entries_ >= 0) {
+            ImGui::TextColored(c.muted,
+                               "Removes %d prepared dataset%s (%s) from this project's cache "
+                               "folder. They are rebuilt the next time a graph needs them. "
+                               "Your datasets and graphs are not touched.",
+                               materialization_cache_entries_,
+                               materialization_cache_entries_ == 1 ? "" : "s",
+                               FormatTraceBytes(materialization_cache_bytes_).c_str());
+        } else {
+            ImGui::TextColored(c.muted,
+                               "Removes every prepared dataset from this project's cache "
+                               "folder. They are rebuilt the next time a graph needs them. "
+                               "Your datasets and graphs are not touched.");
+        }
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+        const float buttons = DashButtonWidth("Cancel") + DashButtonWidth("Clear cache") +
+                              ImGui::GetStyle().ItemSpacing.x;
+        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
+                                      ImGui::GetWindowContentRegionMax().x - buttons));
+        if (DashButton("Cancel", DashButtonKind::Secondary, c)) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (DashButton("Clear cache", DashButtonKind::Danger, c)) {
+            materialization_clear_message_ = "Clearing prepared-data cache...";
+            if (materialization_action_callback_) {
+                materialization_action_callback_("clear");
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 void TrainingPlotPanel::RenderTrainingWarningSummary() {
@@ -2316,8 +2782,20 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
     }
 
     ImGui::Spacing();
-    if (has_execution_truth || !trace.residency_verdict.empty()) {
-        ImGui::SeparatorText("Execution Truth");
+    bool truth_open = false;
+    if (has_execution_truth || !trace.residency_verdict.empty() || transfer || fallback) {
+        std::string header = "Execution Truth";
+        std::string summary = trace.effective_backend;
+        if (!trace.residency_verdict.empty()) {
+            summary += (summary.empty() ? "" : ", ") + trace.residency_verdict;
+        }
+        if (!summary.empty()) {
+            header += "  (" + summary + ")";
+        }
+        header += "###training_execution_truth_section";
+        truth_open = ImGui::CollapsingHeader(header.c_str());
+    }
+    if (truth_open && (has_execution_truth || !trace.residency_verdict.empty())) {
         if (ImGui::BeginTable(
                 "##training_execution_truth",
                 2,
@@ -2450,7 +2928,7 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
         }
     }
 
-    if (transfer) {
+    if (truth_open && transfer) {
         ImGui::SeparatorText("Transfer Detail");
         const ImVec4 color = transfer->status == "warning"
             ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
@@ -2475,7 +2953,7 @@ void TrainingPlotPanel::RenderTrainingWarningSummary() {
         }
     }
 
-    if (fallback) {
+    if (truth_open && fallback) {
         ImGui::SeparatorText("Fallback Detail");
         const ImVec4 color = fallback->status == "error"
             ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)

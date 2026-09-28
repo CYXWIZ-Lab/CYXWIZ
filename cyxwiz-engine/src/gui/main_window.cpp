@@ -563,6 +563,52 @@ MainWindow::MainWindow()
     toolbar_ = std::make_unique<cyxwiz::ToolbarPanel>();
     asset_browser_ = std::make_unique<cyxwiz::AssetBrowserPanel>();
     training_plot_panel_ = std::make_shared<cyxwiz::TrainingPlotPanel>();  // Now named "Training Dashboard"
+    // Prepared-data cache actions from the dashboard's Data preparation card.
+    training_plot_panel_->SetMaterializationActionCallback(
+        [weak_panel = std::weak_ptr<cyxwiz::TrainingPlotPanel>(training_plot_panel_)](
+            const std::string& action) {
+            const std::filesystem::path project_root =
+                cyxwiz::ProjectManager::Instance().GetProjectRoot();
+            const auto publish_usage = [weak_panel, project_root]() {
+                const auto usage = MeasureGraphMaterializationCache(project_root);
+                const auto config = GraphMaterializationCacheConfig(project_root);
+                cyxwiz::AsyncTaskManager::Instance().PostToMainThread(
+                    [weak_panel, usage,
+                     directory = cyxwiz::MaterializationCacheDirectory(config).string(),
+                     limit = config.max_total_bytes]() {
+                        if (auto panel = weak_panel.lock()) {
+                            panel->SetMaterializationCacheInfo(
+                                directory, usage.entries, usage.total_bytes, limit);
+                        }
+                    });
+            };
+            if (action == "rebuild") {
+                RequestGraphMaterializationRebuild(true);
+                spdlog::info("Prepared data will be rebuilt on the next training run");
+            } else if (action == "cancel_rebuild") {
+                RequestGraphMaterializationRebuild(false);
+            } else if (action == "refresh") {
+                cyxwiz::AsyncTaskManager::Instance().RunAsync(
+                    "Measure prepared-data cache",
+                    [publish_usage](cyxwiz::LambdaTask&) { publish_usage(); });
+            } else if (action == "clear") {
+                cyxwiz::AsyncTaskManager::Instance().RunAsync(
+                    "Clear prepared-data cache",
+                    [project_root, publish_usage, weak_panel](cyxwiz::LambdaTask& task) {
+                        task.ReportProgress(0.1f, "Removing prepared datasets...");
+                        const auto cleared = ClearGraphMaterializationCache(project_root);
+                        cyxwiz::AsyncTaskManager::Instance().PostToMainThread(
+                            [weak_panel, cleared]() {
+                                if (auto panel = weak_panel.lock()) {
+                                    panel->SetMaterializationClearResult(
+                                        cleared.removed_entries, cleared.freed_bytes,
+                                        cleared.error);
+                                }
+                            });
+                        publish_usage();
+                    });
+            }
+        });
 
     plot_test_control_ = std::make_unique<cyxwiz::PlotTestControlPanel>();
     script_editor_ = std::make_unique<cyxwiz::ScriptEditorPanel>();
@@ -3693,7 +3739,12 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             "StartTrainingFromGraph: preparing materialization memory plan");
         const auto memory_preflight = PreflightGraphMaterialization(
             nodes, links, config, registry,
-            std::move(preflight_memory_context));
+            std::move(preflight_memory_context),
+            cyxwiz::ProjectManager::Instance().GetProjectRoot());
+        if (memory_preflight.cache_hit) {
+            spdlog::info("StartTrainingFromGraph: {}",
+                         memory_preflight.status_detail);
+        }
         if (memory_preflight.blocked) {
             compile_result_success_ = false;
             compile_result_mode_ = CompileResultMode::BlockedTrain;
