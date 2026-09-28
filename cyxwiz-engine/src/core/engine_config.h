@@ -15,6 +15,18 @@ struct RuntimeLogSavedFilterConfig {
     bool operator==(const RuntimeLogSavedFilterConfig&) const = default;
 };
 
+// Engine-wide look (tofix121): applies to every project. Values are
+// normalized by core/appearance_options when read.
+struct AppearanceConfig {
+    int theme_preset = 0;          // gui::ThemePreset index (0 = CyxWiz Dark)
+    int ui_text_px = 15;           // interface text: 13, 15, 17 or 20
+    float code_font_scale = 1.3f;  // code text: 1.0/1.3/1.6/2.0 = 14/16/20/24 px
+    bool sidebar_left = false;     // tool sidebar on the left
+    std::string custom_theme_file; // saved Theme Editor theme applied over the preset
+
+    bool operator==(const AppearanceConfig&) const = default;
+};
+
 /**
  * @brief Centralized configuration management for the CyxWiz Engine.
  *
@@ -137,6 +149,11 @@ public:
     void SetRuntimeLogSavedFilters(
         const std::vector<RuntimeLogSavedFilterConfig>& filters);
 
+    // ===== Appearance (Engine-wide) =====
+
+    AppearanceConfig GetAppearance() const;
+    void SetAppearance(const AppearanceConfig& appearance);
+
     // ===== Recent Projects =====
 
     // Get list of recent projects (up to 10)
@@ -189,6 +206,7 @@ private:
     bool require_debug_before_train_ = false;
 
     std::vector<RuntimeLogSavedFilterConfig> runtime_log_saved_filters_;
+    AppearanceConfig appearance_;
 
     // Recent projects
     std::vector<std::string> recent_projects_;  // Recent project paths (max 10)

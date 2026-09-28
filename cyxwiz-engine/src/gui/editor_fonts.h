@@ -33,6 +33,12 @@ inline std::array<ImFont *, kEditorFontScales.size()> g_editor_mono_fonts = {};
 
 inline void ClearEditorMonoFonts() { g_editor_mono_fonts.fill(nullptr); }
 
+// Engine-wide code text size (tofix121): one of kEditorFontScales, shared by
+// the Script Editor, Python REPL, Logs, Commands and terminals. Set by
+// gui/appearance_settings; read by every code view.
+inline float g_code_font_scale = 1.3f;
+inline float CodeFontScale() { return g_code_font_scale; }
+
 inline ImFont *AddTerminalCapableMonoFont(ImFontAtlas *atlas,
                                           const char *mono_path,
                                           const char *symbol_fallback_path,
@@ -98,6 +104,9 @@ inline ImFont *GetEditorMonoFont(float scale) {
   ImFont *font = g_editor_mono_fonts[EditorFontIndexForScale(scale)];
   return font ? font : g_editor_mono_fonts[0];
 }
+
+// The mono font at the Engine-wide code text size.
+inline ImFont *GetCodeFont() { return GetEditorMonoFont(g_code_font_scale); }
 
 inline float GetEditorMonoFontPixelSize(float scale) {
   return kEditorMonoFontPixels[EditorFontIndexForScale(scale)];

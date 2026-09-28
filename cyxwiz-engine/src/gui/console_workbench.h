@@ -44,6 +44,7 @@ public:
   ConsoleSessionCreateResult ActivateSession(ConsoleSessionKind kind);
   ConsoleSessionCreateResult EnsureSession(ConsoleSessionKind kind);
   bool MarkUnread(std::uint64_t session_id);
+  bool SetProblemBadge(std::uint64_t session_id, std::uint32_t count);
   bool ConsumeFocusRequest();
   void SetProjectRoot(std::string project_root);
   void CloseProject(std::string_view project_root);

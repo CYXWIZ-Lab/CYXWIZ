@@ -186,6 +186,70 @@ if(CYXWIZ_BUILD_TESTS)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
 
+    add_executable(test_python_repl_presentation
+        "${_cyxwiz_installer_engine_dir}/tests/test_python_repl_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/python_repl_presentation.cpp"
+    )
+    target_include_directories(test_python_repl_presentation PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+    )
+    set_target_properties(test_python_repl_presentation PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME python_repl_presentation_contract
+        COMMAND test_python_repl_presentation
+    )
+
+    add_executable(test_runtime_log_presentation
+        "${_cyxwiz_installer_engine_dir}/tests/test_runtime_log_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/runtime_log_presentation.cpp"
+    )
+    target_include_directories(test_runtime_log_presentation PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+    )
+    set_target_properties(test_runtime_log_presentation PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME runtime_log_presentation_contract
+        COMMAND test_runtime_log_presentation
+    )
+
+    add_executable(test_console_commands_presentation
+        "${_cyxwiz_installer_engine_dir}/tests/test_console_commands_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/console_commands_presentation.cpp"
+    )
+    target_include_directories(test_console_commands_presentation PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+    )
+    set_target_properties(test_console_commands_presentation PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME console_commands_presentation_contract
+        COMMAND test_console_commands_presentation
+    )
+
+    add_executable(test_appearance_options
+        "${_cyxwiz_installer_engine_dir}/tests/test_appearance_options.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/appearance_options.cpp"
+    )
+    target_include_directories(test_appearance_options PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+    )
+    set_target_properties(test_appearance_options PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME appearance_options_contract
+        COMMAND test_appearance_options
+    )
+
     add_executable(test_installer_product_removal
         "${_cyxwiz_installer_engine_dir}/tests/test_installer_product_removal.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"

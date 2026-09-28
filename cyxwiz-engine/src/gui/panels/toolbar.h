@@ -386,6 +386,7 @@ private:
     void RenderSearchDialogs();
     void RenderAccountDialogs();
     void RenderPreferencesDialog();
+    void RenderAppearancePreferences();  // Preferences > Appearance
     bool RenderBackendManagerSection(bool training_active);
     // Compute devices: one card per physical device (tofix119 C).
     struct ComputeDeviceCardsContext {
@@ -574,6 +575,7 @@ private:
 
     // Preferences dialog state
     bool show_preferences_dialog_ = false;
+    bool preferences_open_appearance_ = false;
     int preferences_tab_ = 0;  // 0 = Python/Scripting, 1 = Keyboard Shortcuts
 
     // Python/Scripting preferences
@@ -822,9 +824,6 @@ private:
     int materialization_memory_limit_mb_ = 0;
 
     // Appearance preferences
-    float appearance_ui_scale_ = 1.0f;
-    bool appearance_smooth_scrolling_ = true;
-    int appearance_sidebar_position_ = 0;  // 0 = Left, 1 = Right
 
     // Minimap visibility pointers
     bool* node_editor_minimap_ptr_ = nullptr;

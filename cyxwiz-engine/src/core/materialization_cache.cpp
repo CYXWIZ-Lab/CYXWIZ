@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -34,6 +35,60 @@ uint64_t Fnv1a64(const std::string& text) {
 
 std::string StableFingerprint(const std::string& text) {
     return Hex(Fnv1a64(text));
+}
+
+// 128-bit key: two FNV-1a 64 passes with independent offset bases.
+std::string StableKey(const std::string& text) {
+    uint64_t second = 0x6c62272e07bb0142ull;
+    for (unsigned char ch : text) {
+        second ^= static_cast<uint64_t>(ch);
+        second *= 1099511628211ull;
+    }
+    return Hex(Fnv1a64(text)) + Hex(second);
+}
+
+// Word-at-a-time FNV-style mix for large buffers.
+void MixBytes(uint64_t& hash, const uint8_t* data, int64_t size) {
+    int64_t i = 0;
+    for (; i + 8 <= size; i += 8) {
+        uint64_t word = 0;
+        std::memcpy(&word, data + i, sizeof(word));
+        hash ^= word;
+        hash *= 1099511628211ull;
+        hash ^= hash >> 29;
+    }
+    for (; i < size; ++i) {
+        hash ^= static_cast<uint64_t>(data[i]);
+        hash *= 1099511628211ull;
+    }
+}
+
+void MixValue(uint64_t& hash, int64_t value) {
+    MixBytes(hash, reinterpret_cast<const uint8_t*>(&value), sizeof(value));
+}
+
+void MixArrayData(uint64_t& hash, const std::shared_ptr<arrow::ArrayData>& data) {
+    if (!data) {
+        MixValue(hash, -1);
+        return;
+    }
+    MixValue(hash, data->length);
+    MixValue(hash, data->offset);
+    MixValue(hash, data->null_count.load());
+    for (const auto& buffer : data->buffers) {
+        if (buffer && buffer->is_cpu()) {
+            MixValue(hash, buffer->size());
+            MixBytes(hash, buffer->data(), buffer->size());
+        } else {
+            MixValue(hash, 0);
+        }
+    }
+    for (const auto& child : data->child_data) {
+        MixArrayData(hash, child);
+    }
+    if (data->dictionary) {
+        MixArrayData(hash, data->dictionary);
+    }
 }
 
 std::string NowIsoLikeUtc() {
@@ -80,6 +135,9 @@ std::string CanonicalKeyInput(const MaterializationCacheKeyInput& input) {
     out << "source_file_size=" << input.source_file_size << "\n";
     out << "source_file_mtime=" << input.source_file_mtime << "\n";
     out << "source_schema=" << EscapePart(input.source_schema_fingerprint) << "\n";
+    if (!input.source_content_fingerprint.empty()) {
+        out << "source_content=" << EscapePart(input.source_content_fingerprint) << "\n";
+    }
 
     auto dependencies = input.dependencies;
     std::sort(
@@ -105,9 +163,9 @@ std::string CanonicalKeyInput(const MaterializationCacheKeyInput& input) {
         return a.id < b.id;
     });
     for (const auto& node : nodes) {
+        // Display names do not change the prepared data.
         out << "node=" << node.id << "|"
-            << static_cast<int>(node.type) << "|"
-            << EscapePart(node.name) << "\n";
+            << static_cast<int>(node.type) << "\n";
         for (const auto& [key, value] : node.parameters) {
             out << "param=" << node.id << "|"
                 << EscapePart(key) << "=" << EscapePart(value) << "\n";
@@ -274,9 +332,30 @@ std::string ComputeSchemaFingerprint(
     return StableFingerprint(schema->ToString(/*show_metadata=*/true));
 }
 
+std::string ComputeTableContentFingerprint(
+    const std::shared_ptr<arrow::Table>& table) {
+    if (!table) {
+        return StableFingerprint("null_table");
+    }
+    uint64_t hash = 14695981039346656037ull;
+    MixValue(hash, table->num_rows());
+    MixValue(hash, table->num_columns());
+    for (const auto& column : table->columns()) {
+        if (!column) {
+            MixValue(hash, -1);
+            continue;
+        }
+        MixValue(hash, column->num_chunks());
+        for (const auto& chunk : column->chunks()) {
+            MixArrayData(hash, chunk ? chunk->data() : nullptr);
+        }
+    }
+    return Hex(hash);
+}
+
 std::string ComputeMaterializationCacheKey(
     const MaterializationCacheKeyInput& input) {
-    return StableFingerprint(CanonicalKeyInput(input));
+    return StableKey(CanonicalKeyInput(input));
 }
 
 bool ResolveMaterializationCacheDependencyIdentity(
@@ -347,10 +426,15 @@ bool ResolveMaterializationCacheDependencyIdentity(
     return true;
 }
 
+std::filesystem::path MaterializationCacheDirectory(
+    const MaterializationCacheConfig& config) {
+    return config.cache_root / "cache" / "materialized";
+}
+
 std::filesystem::path MaterializationCacheEntryDirectory(
     const MaterializationCacheConfig& config,
     const std::string& cache_key) {
-    return config.cache_root / "cache" / "materialized" / cache_key;
+    return MaterializationCacheDirectory(config) / cache_key;
 }
 
 std::filesystem::path MaterializationCacheManifestPath(
@@ -496,6 +580,167 @@ std::string MaterializationArtifactIdentity(
            std::to_string(manifest.row_count) + ":" +
            std::to_string(manifest.column_count) + ":" +
            std::to_string(manifest.operators_applied);
+}
+
+namespace {
+
+struct CacheEntryOnDisk {
+    std::filesystem::path directory;
+    std::string key;
+    uint64_t bytes = 0;
+    uint64_t last_used = 0;
+    bool outdated = false;  // older cache schema: can never be reused
+};
+
+bool LooksLikeCacheKey(const std::string& name) {
+    return !name.empty() && name.size() <= 64 &&
+           std::all_of(name.begin(), name.end(), [](unsigned char ch) {
+               return std::isxdigit(ch) != 0;
+           });
+}
+
+// Only hex-named entry directories are considered, so nothing else under the
+// project's cache folder is ever touched.
+std::vector<CacheEntryOnDisk> ListCacheEntries(
+    const MaterializationCacheConfig& config) {
+    std::vector<CacheEntryOnDisk> entries;
+    if (config.cache_root.empty()) {
+        return entries;
+    }
+    std::error_code ec;
+    const auto root = MaterializationCacheDirectory(config);
+    if (!std::filesystem::is_directory(root, ec)) {
+        return entries;
+    }
+    for (std::filesystem::directory_iterator it(root, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        std::error_code entry_ec;
+        if (!it->is_directory(entry_ec)) {
+            continue;
+        }
+        CacheEntryOnDisk entry;
+        entry.directory = it->path();
+        entry.key = it->path().filename().string();
+        if (!LooksLikeCacheKey(entry.key)) {
+            continue;
+        }
+        for (std::filesystem::recursive_directory_iterator
+                 file(entry.directory, entry_ec), file_end;
+             !entry_ec && file != file_end; file.increment(entry_ec)) {
+            std::error_code size_ec;
+            if (file->is_regular_file(size_ec)) {
+                const auto size = file->file_size(size_ec);
+                if (!size_ec) entry.bytes += size;
+            }
+        }
+        MaterializationCacheManifest manifest;
+        if (ReadMaterializationCacheManifest(entry.directory / "manifest.json",
+                                             manifest)) {
+            try {
+                entry.last_used = manifest.last_used_at.empty()
+                    ? 0 : std::stoull(manifest.last_used_at);
+            } catch (...) {
+                entry.last_used = 0;
+            }
+            entry.outdated = manifest.materializer_cache_schema_version != 0 &&
+                             manifest.materializer_cache_schema_version !=
+                                 kMaterializationCacheSchemaVersion;
+        }
+        entries.push_back(std::move(entry));
+    }
+    return entries;
+}
+
+bool RemoveCacheEntry(const CacheEntryOnDisk& entry, std::string& error) {
+    std::error_code ec;
+    std::filesystem::remove_all(entry.directory, ec);
+    if (ec) {
+        error = "could not remove '" + entry.directory.string() + "': " +
+                ec.message();
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+MaterializationCacheUsage MeasureMaterializationCache(
+    const MaterializationCacheConfig& config) {
+    MaterializationCacheUsage usage;
+    for (const auto& entry : ListCacheEntries(config)) {
+        ++usage.entries;
+        usage.total_bytes += entry.bytes;
+    }
+    return usage;
+}
+
+MaterializationCachePruneResult PruneMaterializationCache(
+    const MaterializationCacheConfig& config,
+    const std::string& keep_key) {
+    MaterializationCachePruneResult result;
+    auto entries = ListCacheEntries(config);
+    uint64_t total = 0;
+    for (const auto& entry : entries) total += entry.bytes;
+    int count = static_cast<int>(entries.size());
+
+    // Least recently used first; entries never used sort first.
+    std::sort(entries.begin(), entries.end(),
+              [](const CacheEntryOnDisk& a, const CacheEntryOnDisk& b) {
+                  return a.last_used < b.last_used;
+              });
+    const auto over_limit = [&]() {
+        return (config.max_total_bytes > 0 && total > config.max_total_bytes) ||
+               (config.max_entries > 0 && count > config.max_entries);
+    };
+    std::vector<bool> removed(entries.size(), false);
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const auto& entry = entries[i];
+        if (!entry.outdated || entry.key == keep_key) continue;
+        std::string error;
+        if (RemoveCacheEntry(entry, error)) {
+            removed[i] = true;
+            ++result.removed_entries;
+            result.freed_bytes += entry.bytes;
+            total -= std::min(total, entry.bytes);
+            --count;
+        } else if (result.error.empty()) {
+            result.error = error;
+        }
+    }
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const auto& entry = entries[i];
+        if (!over_limit()) break;
+        if (removed[i] || entry.key == keep_key) continue;
+        std::string error;
+        if (RemoveCacheEntry(entry, error)) {
+            ++result.removed_entries;
+            result.freed_bytes += entry.bytes;
+            total -= std::min(total, entry.bytes);
+            --count;
+        } else if (result.error.empty()) {
+            result.error = error;
+        }
+    }
+    result.remaining_entries = count;
+    result.remaining_bytes = total;
+    return result;
+}
+
+MaterializationCachePruneResult ClearMaterializationCache(
+    const MaterializationCacheConfig& config) {
+    MaterializationCachePruneResult result;
+    for (const auto& entry : ListCacheEntries(config)) {
+        std::string error;
+        if (RemoveCacheEntry(entry, error)) {
+            ++result.removed_entries;
+            result.freed_bytes += entry.bytes;
+        } else {
+            ++result.remaining_entries;
+            result.remaining_bytes += entry.bytes;
+            if (result.error.empty()) result.error = error;
+        }
+    }
+    return result;
 }
 
 } // namespace cyxwiz

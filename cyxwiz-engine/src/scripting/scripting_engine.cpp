@@ -8,6 +8,7 @@
 #include <optional>
 #include <filesystem>
 #include <algorithm>
+#include <iterator>
 #include <sstream>
 
 namespace py = pybind11;
@@ -141,9 +142,108 @@ bool ScriptingEngine::EnsurePythonInitialized(std::string* error_out) {
         if (error_out) {
             *error_out = init_error.empty() ? "Failed to initialize Python" : init_error;
         }
+        std::lock_guard<std::mutex> lock(init_error_mutex_);
+        last_init_error_ = init_error.empty() ? "Failed to initialize Python" : init_error;
         return false;
     }
 
+    {
+        std::lock_guard<std::mutex> lock(init_error_mutex_);
+        last_init_error_.clear();
+    }
+    return true;
+}
+
+std::string ScriptingEngine::GetLastInitError() const {
+    std::lock_guard<std::mutex> lock(init_error_mutex_);
+    return last_init_error_;
+}
+
+ScriptingEngine::InterpreterInfo ScriptingEngine::GetInterpreterInfo() {
+    InterpreterInfo info;
+    if (!python_engine_) {
+        return info;
+    }
+    info.initialized = python_engine_->IsInitialized();
+    if (info.initialized) {
+        info.interpreter_path = python_engine_->ActiveInterpreterPath();
+        info.source = python_engine_->ActiveSource();
+        python_engine_->HasInterpreterMismatch(&info.mismatch);
+        if (cached_python_version_.empty() && !python_busy_ &&
+            !command_running_ && !script_running_) {
+            try {
+                py::gil_scoped_acquire gil;
+                py::object vi = py::module_::import("sys").attr("version_info");
+                cached_python_version_ = std::to_string(vi.attr("major").cast<int>()) + "." +
+                    std::to_string(vi.attr("minor").cast<int>()) + "." +
+                    std::to_string(vi.attr("micro").cast<int>());
+            } catch (const std::exception& e) {
+                spdlog::debug("GetInterpreterInfo: version unavailable: {}", e.what());
+            }
+        }
+        info.version = cached_python_version_;
+    } else {
+        info.interpreter_path = python_engine_->PreviewInterpreterPath();
+    }
+    return info;
+}
+
+std::vector<std::string> ScriptingEngine::CompleteSync(const std::string& text,
+                                                       size_t max_results) {
+    std::vector<std::string> matches;
+    if (text.empty() || !python_engine_ || !python_engine_->IsInitialized() ||
+        python_busy_ || command_running_ || script_running_) {
+        return matches;
+    }
+    try {
+        py::gil_scoped_acquire gil;
+        py::object namespace_dict = py::module_::import("__main__").attr("__dict__");
+        py::object completer =
+            py::module_::import("rlcompleter").attr("Completer")(namespace_dict);
+        for (int state = 0; matches.size() < max_results; ++state) {
+            py::object match = completer.attr("complete")(text, state);
+            if (match.is_none()) break;
+            std::string value = match.cast<std::string>();
+            if (std::find(matches.begin(), matches.end(), value) == matches.end()) {
+                matches.push_back(std::move(value));
+            }
+        }
+    } catch (const std::exception& e) {
+        spdlog::debug("CompleteSync: {}", e.what());
+        matches.clear();
+    }
+    return matches;
+}
+
+bool ScriptingEngine::ResetSession(std::string* error_out) {
+    if (!python_engine_ || !python_engine_->IsInitialized()) {
+        return true;  // nothing to clear yet
+    }
+    if (!IsSafeForNewCommand()) {
+        if (error_out) *error_out = "Python is busy; stop the running command first.";
+        return false;
+    }
+    try {
+        py::gil_scoped_acquire gil;
+        // Clear from C++: Python code run in __main__ would delete its own
+        // loop variables mid-loop.
+        static const char* const kKeep[] = {"__name__", "__doc__", "__package__",
+                                            "__loader__", "__spec__", "__builtins__",
+                                            "__annotations__"};
+        py::dict ns = py::module_::import("__main__").attr("__dict__");
+        py::list keys = ns.attr("keys")();
+        for (const auto& key : keys) {
+            const std::string name = py::str(key);
+            if (std::find(std::begin(kKeep), std::end(kKeep), name) == std::end(kKeep)) {
+                PyDict_DelItem(ns.ptr(), key.ptr());
+            }
+        }
+    } catch (const std::exception& e) {
+        if (error_out) *error_out = e.what();
+        return false;
+    }
+    matlab_aliases_initialized_ = false;
+    training_dashboard_registered_ = false;
     return true;
 }
 
@@ -683,14 +783,11 @@ void ScriptingEngine::StopCommand() {
     spdlog::info("Requesting command stop");
     command_stop_requested_ = true;
 
-    // Set the shared cancel flag that Python trace function checks
+    // The command's wait loop polls this flag and stops the command thread
+    // at its next line. No PyErr_SetInterrupt: that KeyboardInterrupt is
+    // delivered to whichever Python code the main thread runs next (for
+    // example a later Restart), not to the command.
     shared_cancel_flag_.store(1);
-
-    // Also send interrupt signal
-    {
-        py::gil_scoped_acquire acquire;
-        PyErr_SetInterrupt();
-    }
 }
 
 std::optional<ExecutionResult> ScriptingEngine::GetCommandResult() {
@@ -722,28 +819,23 @@ void ScriptingEngine::CommandAsyncWorker(const std::string& command) {
     try {
         py::gil_scoped_acquire acquire;
 
-        // Escape the command for embedding in Python triple-quoted string
-        std::string escaped_command = command;
-        size_t pos = 0;
-        while ((pos = escaped_command.find('\\', pos)) != std::string::npos) {
-            escaped_command.replace(pos, 1, "\\\\");
-            pos += 2;
-        }
-        pos = 0;
-        while ((pos = escaped_command.find("'''", pos)) != std::string::npos) {
-            escaped_command.replace(pos, 3, "\\'\\'\\'");
-            pos += 6;
-        }
+        // The source reaches Python as a value, never spliced into code.
+        py::module_::import("__main__").attr("_cyxwiz_repl_source") = command;
+        // Polled while the command runs, so Interrupt stops it at the next
+        // Python line (a blocking C call finishes first).
+        py::module_::import("__main__").attr("_cyxwiz_repl_cancelled") =
+            py::cpp_function([]() { return shared_cancel_flag_.load() != 0; });
 
         double timeout_secs = console_timeout_seconds_;
 
-        // Python code that runs the command with timeout using threading + trace
+        // Interactive semantics like the standard REPL: the last expression's
+        // value is echoed, tracebacks show the user's own lines, and stdout,
+        // stderr (warnings), the exception type and the traceback stay apart.
         std::string timeout_code = R"(
-import sys
-import threading
-import io
+import sys, threading, io, ast, traceback, linecache
 
-_cmd_result = {'output': '', 'error': '', 'success': False, 'timeout': False}
+_cmd_result = {'output': '', 'stderr': '', 'error': '', 'traceback': '',
+               'exc_type': '', 'success': False, 'timeout': False}
 _cmd_cancel = [False]
 
 def _cmd_trace(frame, event, arg):
@@ -753,40 +845,63 @@ def _cmd_trace(frame, event, arg):
 
 def _run_command():
     global _cmd_result
+    ns = __import__('__main__').__dict__
+    src = ns.pop('_cyxwiz_repl_source', '')
+    linecache.cache['<console>'] = (len(src), None, src.splitlines(True), '<console>')
     old_stdout = sys.stdout
     old_stderr = sys.stderr
     sys.stdout = io.StringIO()
     sys.stderr = io.StringIO()
     sys.settrace(_cmd_trace)
     try:
-        exec(''')" + escaped_command + R"(''', __import__('__main__').__dict__)
+        tree = ast.parse(src, '<console>', 'exec')
+        last = None
+        if tree.body and isinstance(tree.body[-1], ast.Expr):
+            last = tree.body.pop()
+        exec(compile(tree, '<console>', 'exec'), ns)
+        if last is not None:
+            value = eval(compile(ast.Expression(last.value), '<console>', 'eval'), ns)
+            if value is not None:
+                ns['_'] = value
+                print(repr(value))
         _cmd_result['success'] = True
     except KeyboardInterrupt:
-        _cmd_result['error'] = 'Command interrupted (timeout)'
-        _cmd_result['timeout'] = True
-    except Exception as e:
-        _cmd_result['error'] = str(e)
+        _cmd_result['error'] = 'Command interrupted'
+        _cmd_result['exc_type'] = 'KeyboardInterrupt'
+    except BaseException as e:
+        _cmd_result['exc_type'] = type(e).__name__
+        _cmd_result['error'] = ''.join(traceback.format_exception_only(type(e), e)).strip()
+        frames = [f for f in traceback.extract_tb(e.__traceback__) if f.filename != '<string>']
+        if frames:
+            _cmd_result['traceback'] = ('Traceback (most recent call last):\n' +
+                ''.join(traceback.format_list(frames)) + _cmd_result['error'])
+        else:
+            _cmd_result['traceback'] = _cmd_result['error']
     finally:
         sys.settrace(None)
         _cmd_result['output'] = sys.stdout.getvalue()
-        if sys.stderr.getvalue():
-            _cmd_result['error'] = sys.stderr.getvalue()
+        _cmd_result['stderr'] = sys.stderr.getvalue()
         sys.stdout = old_stdout
         sys.stderr = old_stderr
 
 _cmd_thread = threading.Thread(target=_run_command)
 _cmd_thread.start()
-_cmd_thread.join(timeout=)" + std::to_string(timeout_secs) + R"()
-
-if _cmd_thread.is_alive():
-    _cmd_cancel[0] = True
-    _cmd_thread.join(timeout=2.0)
-    if _cmd_thread.is_alive():
-        _cmd_result['error'] = 'Command timed out and could not be stopped'
+_cmd_deadline = __import__('time').monotonic() + )" + std::to_string(timeout_secs) + R"(
+_cmd_cancelled = __import__('__main__').__dict__.pop('_cyxwiz_repl_cancelled', lambda: False)
+while _cmd_thread.is_alive():
+    _cmd_thread.join(0.05)
+    if not _cmd_cancel[0] and _cmd_cancelled():
+        _cmd_cancel[0] = True  # user interrupt: stop at the next line
+    if __import__('time').monotonic() > _cmd_deadline:
+        _cmd_cancel[0] = True
+        _cmd_thread.join(timeout=2.0)
+        if _cmd_thread.is_alive():
+            _cmd_result['error'] = 'Command timed out and could not be stopped'
+        else:
+            _cmd_result['error'] = 'Command interrupted (timeout)'
         _cmd_result['timeout'] = True
-    else:
-        _cmd_result['error'] = 'Command interrupted (timeout)'
-        _cmd_result['timeout'] = True
+        _cmd_result['success'] = False
+        break
 )";
 
         py::exec(timeout_code);
@@ -796,7 +911,10 @@ if _cmd_thread.is_alive():
 
         result.success = cmd_result["success"].cast<bool>();
         result.output = cmd_result["output"].cast<std::string>();
+        result.stderr_output = cmd_result["stderr"].cast<std::string>();
         result.error_message = cmd_result["error"].cast<std::string>();
+        result.traceback = cmd_result["traceback"].cast<std::string>();
+        result.exception_type = cmd_result["exc_type"].cast<std::string>();
         result.timeout_exceeded = cmd_result["timeout"].cast<bool>();
 
         if (result.timeout_exceeded) {

@@ -1,3 +1,4 @@
+#include "appearance_settings.h"
 #include "dock_style.h"
 #include <algorithm>
 #include <cctype>
@@ -503,10 +504,10 @@ bool DockStyle::RenderSidebarToggles() {
                 ImGui::Separator();
 
                 if (ImGui::MenuItem("Left Side", nullptr, sidebar_position_ == SidebarPosition::Left)) {
-                    sidebar_position_ = SidebarPosition::Left;
+                    SetSidebarOnLeft(true);  // saved Engine-wide
                 }
                 if (ImGui::MenuItem("Right Side", nullptr, sidebar_position_ == SidebarPosition::Right)) {
-                    sidebar_position_ = SidebarPosition::Right;
+                    SetSidebarOnLeft(false);
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Hide Sidebar")) {

@@ -161,21 +161,9 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Spacing();
 
                     ImGui::Text("Font Size:");
-                    ImGui::SetNextItemWidth(200);
-                    const char* font_size_items[] = { "Small (14 px)", "Medium (16 px)", "Large (20 px)", "Extra Large (24 px)" };
-                    int font_size_index = 1;  // Default to Medium
-                    if (editor_font_size_ <= 14) font_size_index = 0;
-                    else if (editor_font_size_ <= 16) font_size_index = 1;
-                    else if (editor_font_size_ <= 20) font_size_index = 2;
-                    else font_size_index = 3;
-
-                    if (ImGui::Combo("##font_size", &font_size_index, font_size_items, IM_ARRAYSIZE(font_size_items))) {
-                        float scales[] = { 1.0f, 1.3f, 1.6f, 2.0f };
-                        int sizes[] = { 14, 16, 20, 24 };
-                        editor_font_size_ = sizes[font_size_index];
-                        if (editor_font_scale_callback_) {
-                            editor_font_scale_callback_(scales[font_size_index]);
-                        }
+                    ImGui::TextDisabled("Code text size is set for the whole Engine under Appearance.");
+                    if (ui::LinkButton("Open Appearance settings##editor_font")) {
+                        preferences_open_appearance_ = true;
                     }
 
                     ImGui::Spacing();
@@ -228,39 +216,14 @@ void ToolbarPanel::RenderPreferencesDialog() {
                 }
 
                 // ========== Appearance Tab ==========
-                if (ImGui::BeginTabItem(ICON_FA_PALETTE " Appearance")) {
+                const ImGuiTabItemFlags appearance_flags =
+                    preferences_open_appearance_ ? ImGuiTabItemFlags_SetSelected
+                                                 : ImGuiTabItemFlags_None;
+                preferences_open_appearance_ = false;
+                if (ImGui::BeginTabItem(ICON_FA_PALETTE " Appearance", nullptr, appearance_flags)) {
                     preferences_tab_ = 2;
                     ImGui::Spacing();
-
-                    ImGui::Text("User Interface");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    ImGui::Text("UI Scale:");
-                    ImGui::SetNextItemWidth(200);
-                    ImGui::SliderFloat("##ui_scale", &appearance_ui_scale_, 0.8f, 2.0f, "%.1fx");
-                    ImGui::SameLine();
-                    if (ImGui::Button("Reset##scale")) {
-                        appearance_ui_scale_ = 1.0f;
-                    }
-
-                    ImGui::Spacing();
-                    ImGui::Checkbox("Smooth Scrolling", &appearance_smooth_scrolling_);
-
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                    ImGui::Text("Layout");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-
-                    ImGui::Text("Sidebar Position:");
-                    ImGui::RadioButton("Left", &appearance_sidebar_position_, 0);
-                    ImGui::SameLine();
-                    ImGui::RadioButton("Right", &appearance_sidebar_position_, 1);
-
-                    ImGui::Spacing();
-                    ImGui::TextDisabled("Note: Editor theme can be changed in the Editor tab.");
-
+                    RenderAppearancePreferences();
                     ImGui::EndTabItem();
                 }
 

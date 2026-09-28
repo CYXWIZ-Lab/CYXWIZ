@@ -40,6 +40,8 @@ struct GraphTrainingLaunchResult {
 
 struct GraphMaterializationPreflightResult {
     bool checked = false;
+    // Prepared data for this graph is already cached: no estimate needed.
+    bool cache_hit = false;
     bool estimate_available = false;
     bool blocked = false;
     bool requires_confirmation = false;
@@ -66,12 +68,24 @@ cyxwiz::MaterializationCacheConfig GraphMaterializationCacheConfig(
 // Synchronous, allocation-light pre-start check. It executes the existing
 // operator-owned estimator and stops at its first memory decision; it does not
 // publish a dataset or approximate unknown downstream shapes.
+// A cached prepared dataset for the graph skips the estimate (cache_hit).
 GraphMaterializationPreflightResult PreflightGraphMaterialization(
     const std::vector<MLNode>& nodes,
     const std::vector<NodeLink>& links,
     const cyxwiz::TrainingConfiguration& config,
     cyxwiz::DataRegistry& registry,
-    cyxwiz::MaterializationMemoryContext memory_context = {});
+    cyxwiz::MaterializationMemoryContext memory_context = {},
+    const std::filesystem::path& project_root = {});
+
+// Prepared-data cache actions (Training Dashboard).
+// The next graph training rebuilds its prepared data instead of reusing it.
+void RequestGraphMaterializationRebuild(bool requested = true);
+bool IsGraphMaterializationRebuildRequested();
+cyxwiz::MaterializationCacheUsage MeasureGraphMaterializationCache(
+    const std::filesystem::path& project_root = {});
+// Refuses (error set) while a training preparation is running.
+cyxwiz::MaterializationCachePruneResult ClearGraphMaterializationCache(
+    const std::filesystem::path& project_root = {});
 
 // Launch-readiness findings Compile reports before a run is started, so Train
 // never starts a task that is already known to fail:

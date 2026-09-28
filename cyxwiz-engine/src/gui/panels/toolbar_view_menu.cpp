@@ -1,3 +1,4 @@
+#include "../appearance_settings.h"
 #include "toolbar.h"
 #include "plot_window.h"
 #include "../theme.h"
@@ -93,7 +94,7 @@ void ToolbarPanel::RenderViewMenu() {
             for (auto preset : gui::Theme::GetAvailablePresets()) {
                 bool is_selected = (current_preset == preset);
                 if (ImGui::MenuItem(gui::Theme::GetPresetName(preset), nullptr, is_selected)) {
-                    theme.ApplyPreset(preset);
+                    gui::SetThemePreset(preset);  // applies and saves Engine-wide
                     spdlog::info("Theme changed to: {}", gui::Theme::GetPresetName(preset));
                     // Notify callback to save the theme
                     if (app_theme_changed_callback_) {

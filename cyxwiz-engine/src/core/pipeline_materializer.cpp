@@ -215,7 +215,8 @@ MaterializationCacheKeyInput BuildCacheKeyInput(
     const std::vector<gui::NodeLink>& links,
     const std::string& source_dataset_name,
     const std::string& source_schema_fingerprint,
-    const std::vector<MaterializationCacheDependencyIdentity>& dependencies) {
+    const std::vector<MaterializationCacheDependencyIdentity>& dependencies,
+    const std::shared_ptr<arrow::Table>& source_table) {
     MaterializationCacheKeyInput input;
     input.source_dataset_name = source_dataset_name;
     input.source_identity = "arrow:" + source_dataset_name;
@@ -225,7 +226,35 @@ MaterializationCacheKeyInput BuildCacheKeyInput(
     input.links = links;
     PopulateSourceFileIdentity(
         input, FindSourceFilePath(nodes, source_dataset_name));
+    if (input.source_file_size == 0 && input.source_file_mtime == 0) {
+        // No file behind the dataset (in-memory or derived): key the rows
+        // themselves so changed content cannot reuse an old entry.
+        input.source_content_fingerprint =
+            ComputeTableContentFingerprint(source_table);
+    }
     return input;
+}
+
+void ReportCacheStage(const PipelineOperatorProgressCallback& callback,
+                      const char* stage,
+                      const std::string& message,
+                      float progress) {
+    if (!callback) return;
+    PipelineOperatorProgress event;
+    event.stage = stage;
+    event.message = message;
+    event.progress = progress;
+    event.status = "running";
+    callback(event);
+}
+
+std::string CacheRebuildReason(MaterializationCacheStatus status,
+                               const std::string& message) {
+    if (status != MaterializationCacheStatus::Stale &&
+        status != MaterializationCacheStatus::Corrupt) {
+        return {};
+    }
+    return message.empty() ? MaterializationCacheStatusName(status) : message;
 }
 
 std::shared_ptr<ArrowDataset> LoadCachedArrowDataset(
@@ -385,6 +414,71 @@ PipelineMaterializerSourceKind ResolvePipelineMaterializerSourceKind(
     return PipelineMaterializerSourceKind::Unknown;
 }
 
+MaterializationCacheProbe PipelineMaterializer::ProbeCache(
+    const std::vector<gui::MLNode>& nodes,
+    const std::vector<gui::NodeLink>& links,
+    DataRegistry& registry,
+    const std::string& source_dataset_name,
+    const MaterializationCacheConfig& cache_config) {
+    MaterializationCacheProbe probe;
+    if (cache_config.mode == MaterializationCacheMode::Disabled ||
+        cache_config.cache_root.empty()) {
+        return probe;
+    }
+    probe.status = MaterializationCacheStatus::Miss;
+    if (cache_config.mode == MaterializationCacheMode::Rebuild) {
+        probe.status = MaterializationCacheStatus::Stale;
+        probe.message = "materialization cache rebuild requested";
+        return probe;
+    }
+    if (ResolvePipelineMaterializerSourceKind(registry, source_dataset_name) !=
+        PipelineMaterializerSourceKind::ArrowTable) {
+        probe.status = MaterializationCacheStatus::Unsupported;
+        return probe;
+    }
+    auto source_dataset = registry.GetArrowDataset(source_dataset_name);
+    auto source_table = source_dataset ? source_dataset->GetArrowTable() : nullptr;
+    if (!source_table) {
+        probe.status = MaterializationCacheStatus::Unsupported;
+        return probe;
+    }
+    const auto cacheability =
+        EvaluateCacheability(nodes, links, source_dataset_name);
+    if (!cacheability.valid || !cacheability.cacheable) {
+        probe.status = MaterializationCacheStatus::Unsupported;
+        probe.message = cacheability.reason;
+        return probe;
+    }
+    const std::string schema_fingerprint =
+        ComputeSchemaFingerprint(source_table->schema());
+    probe.cache_key = ComputeMaterializationCacheKey(BuildCacheKeyInput(
+        nodes, links, source_dataset_name, schema_fingerprint,
+        cacheability.dependencies, source_table));
+    MaterializationCacheManifest manifest;
+    if (!ReadMaterializationCacheManifest(
+            MaterializationCacheManifestPath(cache_config, probe.cache_key),
+            manifest)) {
+        return probe;
+    }
+    auto validation = ValidateMaterializationCacheManifest(
+        manifest, probe.cache_key, schema_fingerprint);
+    const std::string requested_format =
+        GraphRequestsSparseFeatureMaterialization(nodes, links, source_dataset_name)
+            ? kSparseCacheArtifactFormat
+            : cache_config.artifact_format;
+    if (validation.usable && validation.manifest.artifact_format != requested_format) {
+        validation.usable = false;
+        validation.status = MaterializationCacheStatus::Stale;
+    }
+    probe.usable = validation.usable;
+    probe.status = validation.usable ? MaterializationCacheStatus::Hit
+                                     : validation.status;
+    probe.message = validation.message;
+    probe.row_count = validation.manifest.row_count;
+    probe.column_count = validation.manifest.column_count;
+    return probe;
+}
+
 MaterializeResult PipelineMaterializer::Materialize(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
@@ -519,9 +613,12 @@ MaterializeResult PipelineMaterializer::Materialize(
     }
 
     if (cache_enabled) {
+        ReportCacheStage(progress_callback, "Checking prepared data cache",
+                         "Looking for prepared data from an earlier run...",
+                         0.0f);
         result.cache_key = ComputeMaterializationCacheKey(BuildCacheKeyInput(
             nodes, links, source_dataset_name, source_schema_fingerprint,
-            cacheability.dependencies));
+            cacheability.dependencies, source_table));
         const auto manifest_path =
             MaterializationCacheManifestPath(cache_config, result.cache_key);
         result.cache_manifest_path = manifest_path.string();
@@ -577,6 +674,10 @@ MaterializeResult PipelineMaterializer::Materialize(
                             : PipelineMaterializerSourceKind::ArrowTable;
                     } else if (validation.manifest.artifact_format ==
                         kSparseCacheArtifactFormat) {
+                        ReportCacheStage(progress_callback,
+                                         "Loading prepared data from cache",
+                                         "Loading prepared data from cache...",
+                                         0.5f);
                         auto cached = SparseFeatureDatasetCache::Load(
                             validation.manifest.artifact_path);
                         if (!cached.ok()) {
@@ -603,6 +704,10 @@ MaterializeResult PipelineMaterializer::Materialize(
                                 PipelineMaterializerSourceKind::SparseFeatureDataset;
                         }
                     } else {
+                        ReportCacheStage(progress_callback,
+                                         "Loading prepared data from cache",
+                                         "Loading prepared data from cache...",
+                                         0.5f);
                         auto cached = LoadCachedArrowDataset(
                             validation.manifest, materialized_name);
                         if (cached && cached->GetArrowTable()) {
@@ -724,6 +829,9 @@ MaterializeResult PipelineMaterializer::Materialize(
         }
     }
 
+    result.cache_rebuild_reason =
+        CacheRebuildReason(result.cache_status, result.cache_message);
+
     auto table_result = MaterializeTable(
         nodes, links, source_table, source_dataset_name, progress_callback,
         execution_context);
@@ -761,6 +869,8 @@ MaterializeResult PipelineMaterializer::Materialize(
         : PipelineMaterializerSourceKind::ArrowTable;
 
     if (cache_enabled) {
+        ReportCacheStage(progress_callback, "Saving prepared data to cache",
+                         "Saving prepared data for the next run...", 0.97f);
         std::filesystem::path artifact_path;
         std::string cache_error;
         bool artifact_saved = false;
@@ -806,8 +916,30 @@ MaterializeResult PipelineMaterializer::Materialize(
                                                   &cache_error)) {
                 result.cache_status = MaterializationCacheStatus::Saved;
                 result.cache_artifact_path = artifact_path.string();
-                result.cache_message = "Materialization completed and saved.";
+                result.cache_message = result.cache_rebuild_reason.empty()
+                    ? "Materialization completed and saved."
+                    : "Prepared data rebuilt (" + result.cache_rebuild_reason +
+                          ") and saved.";
                 result.saved_to_cache = true;
+                if (cache_config.max_total_bytes > 0 ||
+                    cache_config.max_entries > 0) {
+                    const auto pruned = PruneMaterializationCache(
+                        cache_config, result.cache_key);
+                    result.cache_pruned_entries = pruned.removed_entries;
+                    result.cache_pruned_bytes = pruned.freed_bytes;
+                    if (pruned.removed_entries > 0) {
+                        spdlog::info(
+                            "PipelineMaterializer: cache size policy removed {} "
+                            "older entr{} ({} bytes)",
+                            pruned.removed_entries,
+                            pruned.removed_entries == 1 ? "y" : "ies",
+                            pruned.freed_bytes);
+                    }
+                    if (!pruned.error.empty()) {
+                        spdlog::warn("PipelineMaterializer: cache cleanup: {}",
+                                     pruned.error);
+                    }
+                }
             } else {
                 result.cache_status = MaterializationCacheStatus::SaveFailed;
                 result.cache_artifact_path = artifact_path.string();

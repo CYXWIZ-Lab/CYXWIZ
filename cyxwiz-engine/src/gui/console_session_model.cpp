@@ -90,6 +90,16 @@ bool ConsoleSessionModel::Activate(std::uint64_t session_id) {
     return false;
   active_session_id_ = session_id;
   session->unread = false;
+  session->problem_badge = 0;
+  return true;
+}
+
+bool ConsoleSessionModel::SetProblemBadge(std::uint64_t session_id,
+                                          std::uint32_t count) {
+  auto *session = FindMutable(session_id);
+  if (!session)
+    return false;
+  session->problem_badge = active_session_id_ == session_id ? 0 : count;
   return true;
 }
 

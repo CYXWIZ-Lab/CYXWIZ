@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../panel.h"
+#include <chrono>
 #include "../../core/async_task_manager.h"
 #include "../../core/large_text_file.h"
 #include "../../scripting/cell_manager.h"
@@ -104,7 +105,8 @@ public:
     void JoinLines();
 
     // Settings access (for Preferences synchronization)
-    void SetFontScale(float scale) { font_scale_ = scale; }
+    // Engine-wide code text size (Preferences > Appearance).
+    void SetFontScale(float scale);
     void SetTabSize(int size);
     void SetShowWhitespace(bool show);
     void SetWordWrap(bool wrap);
@@ -112,7 +114,7 @@ public:
     void SetSyntaxHighlighting(bool enabled);
     void SetTheme(int theme_index);
     void SetShowMinimap(bool show) { show_minimap_ = show; }
-    float GetFontScale() const { return font_scale_; }
+    float GetFontScale() const;
     int GetTabSize() const { return tab_size_; }
     bool GetShowWhitespace() const { return show_whitespace_; }
     bool GetWordWrap() const { return word_wrap_; }
@@ -266,6 +268,10 @@ private:
     // Async execution state
     bool script_running_;
     float running_indicator_time_;
+    // Name shown for the running script in the Console (file, selection or
+    // section) and when it started, for its outcome line.
+    std::string running_script_name_;
+    std::chrono::steady_clock::time_point running_script_started_{};
 
     // View settings
     enum class EditorTheme { Dark, Light, RetroBlu, Monokai, Dracula, OneDark, GitHub };

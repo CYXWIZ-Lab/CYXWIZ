@@ -141,6 +141,13 @@ void TestRegistryAndCompatibility(cyxwiz::RuntimeConsoleCommandService& service,
               ContainsLine(filter_help, "event or event_name"),
           "help filter should explain session behavior and examples");
 
+    const auto grep_help = service.Execute("help grep");
+    Check(grep_help.success && ContainsLine(grep_help, "ignoring letter case") &&
+              ContainsLine(grep_help, "show logs grep timed out") &&
+              service.Execute("help tasks").success &&
+              ContainsLine(service.Execute("help syntax"), "Quote values containing spaces"),
+          "help topics grep, tasks and syntax should explain searches with examples");
+
     Check(!service.Execute("help missing").success &&
               !service.Execute("help show extra").success,
           "unknown help topics and extra arguments should be explicit errors");

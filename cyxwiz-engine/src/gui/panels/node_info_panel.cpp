@@ -94,7 +94,19 @@ void NodeInfoPanel::Render() {
     ImGui::SetNextWindowSize(ImVec2(320, 450), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin(GetName(), &visible_)) {
-        if (HasSelection() && metadata_) {
+        // A hover preview wins while it lasts (the browser may render after
+        // this panel, so last frame's hover still counts); otherwise the
+        // pinned node stays.
+        const bool previewing = preview_metadata_ &&
+                                ImGui::GetFrameCount() - preview_frame_ <= 1 &&
+                                preview_type_ != selected_type_;
+        metadata_ = previewing ? preview_metadata_ : pinned_metadata_;
+        if (metadata_) {
+            if (previewing) {
+                ImGui::TextDisabled(ICON_FA_EYE " Preview - click the node to keep it here");
+            } else {
+                ImGui::TextDisabled(ICON_FA_CIRCLE_CHECK " Selected node");
+            }
             RenderHeader();
             ImGui::Separator();
             RenderDescription();
@@ -124,15 +136,25 @@ const char* NodeInfoPanel::GetIcon() const {
 
 void NodeInfoPanel::SetSelectedNode(NodeType type) {
     selected_type_ = type;
-    if (type != NodeType::Unknown) {
-        metadata_ = NodeMetadataRegistry::Instance().GetMetadata(type);
-    } else {
-        metadata_ = nullptr;
+    pinned_metadata_ = type != NodeType::Unknown
+                           ? NodeMetadataRegistry::Instance().GetMetadata(type)
+                           : nullptr;
+    metadata_ = pinned_metadata_;
+}
+
+void NodeInfoPanel::PreviewNode(NodeType type) {
+    if (type != preview_type_) {
+        preview_type_ = type;
+        preview_metadata_ = type != NodeType::Unknown
+                                ? NodeMetadataRegistry::Instance().GetMetadata(type)
+                                : nullptr;
     }
+    preview_frame_ = ImGui::GetFrameCount();
 }
 
 void NodeInfoPanel::ClearSelection() {
     selected_type_ = NodeType::Unknown;
+    pinned_metadata_ = nullptr;
     metadata_ = nullptr;
 }
 
@@ -455,7 +477,7 @@ void NodeInfoPanel::RenderPlaceholder() {
 
     ImGui::Spacing();
 
-    const char* hint = "Hover in Node Browser or\nselect in Node Editor";
+    const char* hint = "Click a node in the Nodes panel to keep\nits details here; hover to preview";
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
     // Center multi-line hint
     ImVec2 hint_size = ImGui::CalcTextSize(hint);

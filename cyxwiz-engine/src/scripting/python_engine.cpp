@@ -819,6 +819,16 @@ void PythonEngine::ConfigureCustomPythonPath() {
     }
 }
 
+std::string PythonEngine::PreviewInterpreterPath() const {
+    // Same priority as ResolvePythonConfig, without its logging (the REPL
+    // header asks for this on refresh).
+    const std::string project_venv = ReadProjectInterpreterOverride();
+    if (!project_venv.empty() && std::filesystem::exists(project_venv)) {
+        return project_venv;
+    }
+    return cyxwiz::core::EngineConfig::Instance().GetSystemPythonPath();
+}
+
 PythonEngine::PythonSelection PythonEngine::ResolvePythonConfig() const {
     auto& config = cyxwiz::core::EngineConfig::Instance();
     PythonSelection selection;

@@ -11,125 +11,127 @@ void Theme::ApplyCyxWizDark() {
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
-    // CyxWiz brand colors - Clean, minimal borders
-    ImVec4 bg_dark       = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);   // Very dark background
-    ImVec4 bg_medium     = ImVec4(0.14f, 0.14f, 0.16f, 1.00f);   // Panel background
-    ImVec4 bg_light      = ImVec4(0.18f, 0.18f, 0.21f, 1.00f);   // Lighter elements
-    ImVec4 border        = ImVec4(0.20f, 0.20f, 0.23f, 0.50f);   // Very subtle borders (semi-transparent)
-    ImVec4 text          = ImVec4(0.92f, 0.92f, 0.94f, 1.00f);   // Main text
-    ImVec4 text_dim      = ImVec4(0.60f, 0.60f, 0.65f, 1.00f);   // Dimmed text
-    ImVec4 accent        = ImVec4(0.20f, 0.55f, 0.85f, 1.00f);   // Blue accent
-    ImVec4 accent_hover  = ImVec4(0.30f, 0.65f, 0.95f, 1.00f);   // Hover state
-    ImVec4 accent_active = ImVec4(0.15f, 0.45f, 0.75f, 1.00f);   // Active state
-    ImVec4 success       = ImVec4(0.20f, 0.70f, 0.40f, 1.00f);   // Green success
+    // Palette of the redesigned Console (tofix121): navy panels, soft grey
+    // text, bordered fields and buttons, purple accent. Owner decision
+    // 2026-09-27: the whole Engine follows it.
+    const ImVec4 bg_deep       = ImVec4(0.043f, 0.055f, 0.075f, 1.00f);  // #0B0E13 menus, fields
+    const ImVec4 bg_panel      = ImVec4(0.059f, 0.075f, 0.098f, 1.00f);  // #0F1319 windows
+    const ImVec4 bg_bar        = ImVec4(0.067f, 0.086f, 0.118f, 1.00f);  // #11161E headers, popups
+    const ImVec4 bg_raised     = ImVec4(0.078f, 0.102f, 0.145f, 1.00f);  // #141A25 buttons, chips
+    const ImVec4 bg_hover      = ImVec4(0.102f, 0.133f, 0.200f, 1.00f);  // #1A2233 hover
+    const ImVec4 border_soft   = ImVec4(0.118f, 0.145f, 0.200f, 1.00f);  // #1E2533 separators
+    const ImVec4 border        = ImVec4(0.141f, 0.196f, 0.322f, 1.00f);  // #243252 fields, buttons
+    const ImVec4 text          = ImVec4(0.839f, 0.859f, 0.902f, 1.00f);  // #D6DBE6
+    const ImVec4 text_dim      = ImVec4(0.545f, 0.580f, 0.655f, 1.00f);  // #8B94A7
+    const ImVec4 accent        = ImVec4(0.357f, 0.239f, 0.961f, 1.00f);  // #5B3DF5
+    const ImVec4 accent_hover  = ImVec4(0.439f, 0.333f, 0.980f, 1.00f);
+    const ImVec4 accent_active = ImVec4(0.290f, 0.192f, 0.820f, 1.00f);
+    const ImVec4 accent_light  = ImVec4(0.702f, 0.651f, 1.000f, 1.00f);  // #B3A6FF
+    const ImVec4 success       = ImVec4(0.240f, 0.840f, 0.550f, 1.00f);  // #3DD68C
+    const auto with_alpha = [](ImVec4 c, float a) { c.w = a; return c; };
 
     // Text
     colors[ImGuiCol_Text]                   = text;
     colors[ImGuiCol_TextDisabled]           = text_dim;
+    colors[ImGuiCol_TextLink]               = accent_light;
+    colors[ImGuiCol_TextSelectedBg]         = with_alpha(accent, 0.35f);
 
-    // Window
-    colors[ImGuiCol_WindowBg]               = bg_medium;
+    // Windows
+    colors[ImGuiCol_WindowBg]               = bg_panel;
     colors[ImGuiCol_ChildBg]                = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_PopupBg]                = ImVec4(bg_dark.x, bg_dark.y, bg_dark.z, 0.98f);
-
-    // Borders
-    colors[ImGuiCol_Border]                 = border;
+    colors[ImGuiCol_PopupBg]                = with_alpha(bg_bar, 0.98f);
+    colors[ImGuiCol_Border]                 = border_soft;
     colors[ImGuiCol_BorderShadow]           = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
 
-    // Frame (input boxes, etc.)
-    colors[ImGuiCol_FrameBg]                = bg_light;
-    colors[ImGuiCol_FrameBgHovered]         = ImVec4(bg_light.x + 0.05f, bg_light.y + 0.05f, bg_light.z + 0.05f, 1.00f);
-    colors[ImGuiCol_FrameBgActive]          = ImVec4(bg_light.x + 0.10f, bg_light.y + 0.10f, bg_light.z + 0.10f, 1.00f);
+    // Fields (inputs, combos, checkboxes): raised fill, no border
+    colors[ImGuiCol_FrameBg]                = bg_raised;
+    colors[ImGuiCol_FrameBgHovered]         = bg_hover;
+    colors[ImGuiCol_FrameBgActive]          = ImVec4(0.122f, 0.157f, 0.251f, 1.00f);  // #1F2840
 
-    // Title bar
-    colors[ImGuiCol_TitleBg]                = bg_dark;
-    colors[ImGuiCol_TitleBgActive]          = ImVec4(bg_dark.x + 0.02f, bg_dark.y + 0.02f, bg_dark.z + 0.04f, 1.00f);
-    colors[ImGuiCol_TitleBgCollapsed]       = ImVec4(bg_dark.x, bg_dark.y, bg_dark.z, 0.75f);
+    // Title and menu bars
+    colors[ImGuiCol_TitleBg]                = bg_deep;
+    colors[ImGuiCol_TitleBgActive]          = bg_bar;
+    colors[ImGuiCol_TitleBgCollapsed]       = with_alpha(bg_deep, 0.75f);
+    colors[ImGuiCol_MenuBarBg]              = bg_deep;
 
-    // Menu bar
-    colors[ImGuiCol_MenuBarBg]              = bg_dark;
+    // Scrollbars
+    colors[ImGuiCol_ScrollbarBg]            = with_alpha(bg_deep, 0.60f);
+    colors[ImGuiCol_ScrollbarGrab]          = ImVec4(0.165f, 0.200f, 0.282f, 1.00f);  // #2A3348
+    colors[ImGuiCol_ScrollbarGrabHovered]   = ImVec4(0.227f, 0.267f, 0.345f, 1.00f);  // #3A4458
+    colors[ImGuiCol_ScrollbarGrabActive]    = with_alpha(accent, 0.80f);
 
-    // Scrollbar
-    colors[ImGuiCol_ScrollbarBg]            = bg_dark;
-    colors[ImGuiCol_ScrollbarGrab]          = ImVec4(0.30f, 0.30f, 0.35f, 1.00f);
-    colors[ImGuiCol_ScrollbarGrabHovered]   = ImVec4(0.40f, 0.40f, 0.45f, 1.00f);
-    colors[ImGuiCol_ScrollbarGrabActive]    = ImVec4(0.50f, 0.50f, 0.55f, 1.00f);
-
-    // Check mark
-    colors[ImGuiCol_CheckMark]              = accent;
-
-    // Slider
+    // Check marks and sliders
+    colors[ImGuiCol_CheckMark]              = accent_light;
     colors[ImGuiCol_SliderGrab]             = accent;
-    colors[ImGuiCol_SliderGrabActive]       = accent_active;
+    colors[ImGuiCol_SliderGrabActive]       = accent_hover;
 
-    // Button
-    colors[ImGuiCol_Button]                 = ImVec4(accent.x, accent.y, accent.z, 0.65f);
-    colors[ImGuiCol_ButtonHovered]          = accent_hover;
-    colors[ImGuiCol_ButtonActive]           = accent_active;
+    // Buttons: like the Console's bordered buttons (purple is kept for the
+    // one primary action, drawn with cyxwiz::ui::PrimaryButton)
+    colors[ImGuiCol_Button]                 = bg_hover;
+    colors[ImGuiCol_ButtonHovered]          = border;
+    colors[ImGuiCol_ButtonActive]           = ImVec4(0.165f, 0.227f, 0.376f, 1.00f);
 
-    // Header (selectable, tree nodes)
-    colors[ImGuiCol_Header]                 = ImVec4(accent.x, accent.y, accent.z, 0.30f);
-    colors[ImGuiCol_HeaderHovered]          = ImVec4(accent.x, accent.y, accent.z, 0.50f);
-    colors[ImGuiCol_HeaderActive]           = ImVec4(accent.x, accent.y, accent.z, 0.70f);
+    // Headers (selectables, tree nodes, table selection)
+    colors[ImGuiCol_Header]                 = with_alpha(accent, 0.22f);
+    colors[ImGuiCol_HeaderHovered]          = with_alpha(accent, 0.30f);
+    colors[ImGuiCol_HeaderActive]           = with_alpha(accent, 0.42f);
 
-    // Separator - Very subtle
-    colors[ImGuiCol_Separator]              = ImVec4(0.20f, 0.20f, 0.23f, 0.30f);  // Almost invisible
-    colors[ImGuiCol_SeparatorHovered]       = accent;
-    colors[ImGuiCol_SeparatorActive]        = accent_active;
-
-    // Resize grip
-    colors[ImGuiCol_ResizeGrip]             = ImVec4(accent.x, accent.y, accent.z, 0.20f);
-    colors[ImGuiCol_ResizeGripHovered]      = ImVec4(accent.x, accent.y, accent.z, 0.60f);
+    // Separators and resize grips
+    colors[ImGuiCol_Separator]              = border_soft;
+    colors[ImGuiCol_SeparatorHovered]       = with_alpha(accent, 0.70f);
+    colors[ImGuiCol_SeparatorActive]        = accent;
+    colors[ImGuiCol_ResizeGrip]             = with_alpha(accent, 0.18f);
+    colors[ImGuiCol_ResizeGripHovered]      = with_alpha(accent, 0.55f);
     colors[ImGuiCol_ResizeGripActive]       = accent;
 
-    // Tabs
-    colors[ImGuiCol_Tab]                    = bg_light;
-    colors[ImGuiCol_TabHovered]             = ImVec4(accent.x, accent.y, accent.z, 0.70f);
-    colors[ImGuiCol_TabActive]              = ImVec4(accent.x, accent.y, accent.z, 0.90f);
-    colors[ImGuiCol_TabUnfocused]           = bg_light;
-    colors[ImGuiCol_TabUnfocusedActive]     = ImVec4(accent.x, accent.y, accent.z, 0.50f);
+    // Tabs: navy, the selected one with a purple line on top
+    colors[ImGuiCol_Tab]                    = bg_deep;
+    colors[ImGuiCol_TabHovered]             = bg_hover;
+    colors[ImGuiCol_TabSelected]            = bg_panel;
+    colors[ImGuiCol_TabSelectedOverline]    = accent;
+    colors[ImGuiCol_TabDimmed]              = bg_deep;
+    colors[ImGuiCol_TabDimmedSelected]      = bg_panel;
+    colors[ImGuiCol_TabDimmedSelectedOverline] = with_alpha(accent, 0.55f);
 
     // Docking
-    colors[ImGuiCol_DockingPreview]         = ImVec4(accent.x, accent.y, accent.z, 0.70f);
-    colors[ImGuiCol_DockingEmptyBg]         = bg_dark;
+    colors[ImGuiCol_DockingPreview]         = with_alpha(accent, 0.55f);
+    colors[ImGuiCol_DockingEmptyBg]         = bg_deep;
 
-    // Plot
-    colors[ImGuiCol_PlotLines]              = accent;
+    // Plots
+    colors[ImGuiCol_PlotLines]              = accent_light;
     colors[ImGuiCol_PlotLinesHovered]       = accent_hover;
     colors[ImGuiCol_PlotHistogram]          = success;
-    colors[ImGuiCol_PlotHistogramHovered]   = ImVec4(success.x + 0.10f, success.y + 0.10f, success.z, 1.00f);
+    colors[ImGuiCol_PlotHistogramHovered]   = ImVec4(0.34f, 0.92f, 0.64f, 1.00f);
 
-    // Table
-    colors[ImGuiCol_TableHeaderBg]          = bg_light;
-    colors[ImGuiCol_TableBorderStrong]      = border;
-    colors[ImGuiCol_TableBorderLight]       = ImVec4(border.x, border.y, border.z, 0.50f);
+    // Tables
+    colors[ImGuiCol_TableHeaderBg]          = ImVec4(0.051f, 0.067f, 0.094f, 1.00f);  // #0D1118
+    colors[ImGuiCol_TableBorderStrong]      = border_soft;
+    colors[ImGuiCol_TableBorderLight]       = ImVec4(0.082f, 0.106f, 0.149f, 1.00f);  // #151B26
     colors[ImGuiCol_TableRowBg]             = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_TableRowBgAlt]          = ImVec4(1.00f, 1.00f, 1.00f, 0.03f);
+    colors[ImGuiCol_TableRowBgAlt]          = ImVec4(1.00f, 1.00f, 1.00f, 0.025f);
 
-    // Text selection
-    colors[ImGuiCol_TextSelectedBg]         = ImVec4(accent.x, accent.y, accent.z, 0.35f);
-
-    // Drag drop
-    colors[ImGuiCol_DragDropTarget]         = accent;
-
-    // Navigation
-    colors[ImGuiCol_NavHighlight]           = accent;
+    // Drag and drop, navigation, modals
+    colors[ImGuiCol_DragDropTarget]         = accent_light;
+    colors[ImGuiCol_NavCursor]              = accent_light;
     colors[ImGuiCol_NavWindowingHighlight]  = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
     colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
-
-    // Modal
     colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.00f, 0.00f, 0.00f, 0.60f);
 
-    // Configuration - Clean, minimal appearance
-    config_.window_rounding = 4.0f;
-    config_.frame_rounding = 3.0f;
-    config_.popup_rounding = 4.0f;
-    config_.scrollbar_rounding = 4.0f;
-    config_.grab_rounding = 3.0f;
-    config_.tab_rounding = 3.0f;
-    config_.window_border_size = 0.0f;   // No window borders - cleaner look
+    style.TabBarOverlineSize = 2.0f;
+
+    // Shapes: 6 px rounding like the Console buttons. Borders only mark
+    // docked panels, windows and popups (owner, 2026-09-28): no borders on
+    // fields, buttons or child regions such as the Studio canvas.
+    config_.window_rounding = 6.0f;
+    config_.frame_rounding = 6.0f;
+    config_.popup_rounding = 8.0f;
+    config_.scrollbar_rounding = 6.0f;
+    config_.grab_rounding = 4.0f;
+    config_.tab_rounding = 4.0f;
+    config_.window_border_size = 0.0f;
     config_.frame_border_size = 0.0f;
-    config_.popup_border_size = 1.0f;    // Keep popup borders for visibility
+    config_.popup_border_size = 1.0f;
+    config_.child_border_size = 0.0f;
 }
 
 // ============================================================================

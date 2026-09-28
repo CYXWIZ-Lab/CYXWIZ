@@ -384,6 +384,26 @@ int main() {
     Check(sparse_config.input_size == 64 &&
               sparse_config.input_shape == std::vector<size_t>({64}),
           "sparse vectorizer max_features should define the compiled input width");
+    Check(!HasIssueText(sparse_config, "Set its Output format to Sparse"),
+          "a sparse vectorizer should not be told to switch to sparse");
+
+    // A wide dense vectorizer on a sparse-eligible path gets a suggestion.
+    auto wide_dense = sparse_count;
+    wide_dense.parameters["output_format"] = "dense";
+    wide_dense.parameters["max_features"] = "8000";
+    auto wide_nodes = std::vector<gui::MLNode>{
+        data, wide_dense, dense, loss, optimizer};
+    auto wide_config = compiler.Compile(wide_nodes, sparse_links, true);
+    Check(HasIssueText(wide_config, "Set its Output format to Sparse"),
+          "a wide dense vectorizer feeding Dense should suggest sparse output");
+
+    auto narrow_dense = wide_dense;
+    narrow_dense.parameters["max_features"] = "64";
+    auto narrow_nodes = std::vector<gui::MLNode>{
+        data, narrow_dense, dense, loss, optimizer};
+    auto narrow_config = compiler.Compile(narrow_nodes, sparse_links, true);
+    Check(!HasIssueText(narrow_config, "Set its Output format to Sparse"),
+          "a narrow dense vectorizer should not get the sparse suggestion");
 
     auto embedding = Node(
         9,

@@ -144,6 +144,78 @@ void AddHelpLines(RuntimeConsoleCommandResult& result,
     }
 }
 
+std::string_view HelpTasksText() {
+    return "=== Help: common tasks ===\n"
+           "Training failed or behaved oddly:\n"
+           "  show errors last 20 - the newest errors, the first place to look\n"
+           "  show training last - how the last run ended, its backend and fallback\n"
+           "  show code <CW-X-NNNN> - meaning and next step for a code you saw\n"
+           "  show run <run_id> codes CW-* - every diagnostic code of one run\n"
+           "Training is slower than expected:\n"
+           "  show device active - confirm training runs on the GPU you expect\n"
+           "  show training fallback - steps that ran on the CPU instead of the GPU\n"
+           "  show training host-sync - device-to-host copies that stall the GPU\n"
+           "  show training placement - where tensors lived during the run\n"
+           "Choosing or checking a GPU:\n"
+           "  show device available - every detected device and backend\n"
+           "  show device qualification - verification evidence per device\n"
+           "  show device recommendations cuda:0 - recommended use of one device\n"
+           "  show backend packs - installed GPU packs\n"
+           "  show backend compatibility - backends this machine can run\n"
+           "Searching the logs:\n"
+           "  show logs grep \"timed out\" - text search in messages (help grep)\n"
+           "  show logs where category=training and level>=warn - structured search\n"
+           "  filter set backend=arrayfire_cuda, then show logs last 50 - focus on one backend\n"
+           "Python packages:\n"
+           "  pip list / pip show numpy - what is installed\n"
+           "  pip install pandas - install; runs in the background, Cancel pip stops it\n"
+           "Reporting a problem:\n"
+           "  show backend support-bundle 32 - diagnostics to attach to a report\n"
+           "  Logs tab > Actions > Export... - the full log with redaction";
+}
+
+std::string_view HelpGrepText() {
+    return "=== Help: grep (search log messages) ===\n"
+           "show logs grep <text> finds runtime events whose message contains the\n"
+           "text anywhere, ignoring letter case, and shows the newest 100 matches in\n"
+           "sequence order (a \"Result limit omitted N older\" line says when older\n"
+           "matches were left out).\n"
+           "How it reads the text:\n"
+           "  Every word after grep is joined with single spaces, so quotes are\n"
+           "  optional: show logs grep timed out == show logs grep \"timed out\".\n"
+           "  Use quotes to keep several spaces or special characters exactly.\n"
+           "  It searches the message only; use show logs where for other fields.\n"
+           "  The session filter (filter set) still applies.\n"
+           "Examples:\n"
+           "  show logs grep \"native CPU fallback\" - steps that left the GPU\n"
+           "  show logs grep timed out - connection and task timeouts\n"
+           "  show logs grep cuda - anything mentioning CUDA (any case)\n"
+           "  show logs grep \"Python execution error\" - failed scripts and REPL code\n"
+           "  show logs grep checkpoint - checkpoint saves and loads\n"
+           "Going further:\n"
+           "  Text plus other fields: show logs where message contains \"host sync\"\n"
+           "    and category=training and level>=warn\n"
+           "  Only errors with the text: show logs where message contains cuda and\n"
+           "    level>=error\n"
+           "  Search one backend repeatedly: filter set backend=arrayfire_cuda,\n"
+           "    then show logs grep fallback\n"
+           "  More than 100 rows or every field: the Logs tab search box and Export.";
+}
+
+std::string_view HelpSyntaxText() {
+    return "=== Help: syntax ===\n"
+           "Arguments are separated by spaces. Quote text that contains spaces:\n"
+           "  show logs grep \"native CPU fallback\"\n"
+           "Inside quotes write \\\" for a quote and \\\\ for a backslash.\n"
+           "Counts: <n> is 1-1000 (show logs last 50, show errors last 20).\n"
+           "Device routes: <backend>:<id> such as cpu:0, cuda:0, opencl:0, oneapi:0\n"
+           "  (show device available lists the ids on this machine).\n"
+           "Diagnostic codes: CW-<family>-<number> such as CW-C-0101; a family\n"
+           "  pattern ends in * such as CW-G-*.\n"
+           "Run ids: shown by show training current/last and in the Logs Run column.\n"
+           "Filter expressions (show logs where, show codes where, filter set):";
+}
+
 std::optional<size_t> ParseLimit(std::string_view value) {
     size_t parsed = 0;
     const auto conversion = std::from_chars(
@@ -711,34 +783,58 @@ RuntimeConsoleCommandService::Descriptors() {
 const std::vector<RuntimeConsoleCommandService::CommandRegistration>&
 RuntimeConsoleCommandService::Registry() {
     static const std::vector<CommandRegistration> registrations{
-        {{"help", "help [command]", "Show command help",
+        {{"help", "help [command|topic]", "Show command help",
+          "Lists commands, explains one command in full, or opens a topic.\n"
           "Usage:\n"
-          "  help\n"
-          "  help <command>\n"
+          "  help  Overview, every command and the help topics\n"
+          "  help <command>  Forms, options, behaviour and examples of one command\n"
+          "  help tasks  Common questions and the commands that answer them\n"
+          "  help syntax  Quoting, numbers, device ids, codes and filter expressions\n"
+          "  help grep  Searching log messages for text\n"
           "Examples:\n"
-          "  help show\n"
-          "  help filter"},
+          "  help show        every show form and what it reads\n"
+          "  help filter      session filters and the expression language\n"
+          "  help tasks       where to start when training fails or is slow"},
          &RuntimeConsoleCommandService::ExecuteHelp, true},
         {{"clear", "clear", "Clear this Console view",
           "Clears only the visible Console transcript. Runtime event "
-          "ingestion continues from a new view watermark.\n"
+          "ingestion continues from a new view watermark; the Logs tab, the "
+          "runtime log and engine_log.txt keep every event.\n"
+          "Usage:\n"
+          "  clear  Empty the Commands transcript (same as Ctrl+L)\n"
           "Example:\n"
           "  clear"},
          &RuntimeConsoleCommandService::ExecuteClear, true},
         {{"test", "test", "Emit one line at each Console severity",
           "Emits info, warning, error, and success lines to verify Console "
-          "presentation.\n"
+          "presentation (colours and copy).\n"
+          "Usage:\n"
+          "  test  Print one line per severity\n"
           "Example:\n"
           "  test"},
          &RuntimeConsoleCommandService::ExecuteTest, true},
         {{"pip", "pip <arguments>",
           "Run project-environment pip asynchronously",
-          "Runs pip only from the active project's virtual environment. "
-          "Output streams to the Console and the task can be cancelled.\n"
+          "Runs pip only from the active project's virtual environment "
+          "(<project>/python), never the system Python. Output streams to the "
+          "Console while the Engine stays responsive, and the task can be "
+          "cancelled from the header (Cancel pip) or the Task View. Needs an "
+          "open project whose environment has finished setting up.\n"
+          "Usage:\n"
+          "  pip list  Packages installed in the project environment\n"
+          "  pip show <package>  Version, location and dependencies of one package\n"
+          "  pip install <package ...>  Install packages into the project environment\n"
+          "  pip install --upgrade <package>  Upgrade a package\n"
+          "  pip uninstall -y <package>  Remove a package without prompting\n"
+          "  pip freeze  Pinned list, suitable for requirements.txt\n"
+          "Every other pip argument is passed through unchanged.\n"
           "Examples:\n"
           "  pip list\n"
           "  pip show numpy\n"
-          "  pip install numpy pandas"},
+          "  pip install numpy pandas\n"
+          "  pip install --upgrade polars\n"
+          "Use case: the Python REPL reports ModuleNotFoundError -> run the "
+          "suggested pip install here, then run the code again."},
          &RuntimeConsoleCommandService::ExecutePip, true},
         {{"pip3", "pip3 <arguments>", "Alias for pip",
           "Alias for the project-environment pip command.\n"
@@ -747,33 +843,53 @@ RuntimeConsoleCommandService::Registry() {
          &RuntimeConsoleCommandService::ExecutePip, false},
         {{"show", "show logs|errors|code|codes|training|device|backend|run|materialization ...",
           "Query bounded runtime diagnostics",
-          "Log queries are read-only, bounded to 1-1000 displayed rows, and "
-          "show the newest matching events in sequence order.\n"
+          "How show works: every form only reads state and never changes "
+          "anything. Log forms search the retained in-memory runtime log (the "
+          "newest events the Logs tab holds), are bounded to 1-1000 displayed "
+          "rows, and show the newest matching events in sequence order; a "
+          "\"Result limit omitted N older\" line says when older matches were "
+          "left out. The session filter (filter set) is combined with every "
+          "log form. Training, device, backend, run and materialization forms "
+          "read the Engine's live runtime state and the last recorded run.\n"
           "Forms:\n"
-          "  show logs last <n>\n"
-          "  show logs errors\n"
-          "  show logs warnings\n"
-          "  show logs where <filter>\n"
-          "  show logs grep <text>\n"
-          "  show logs code <CW-X-NNNN>\n"
-          "  show logs codes <CW-X-*>\n"
-          "  show errors last <n>\n"
-          "  show code <CW-X-NNNN>\n"
-          "  show codes family <CW-X-*>\n"
-          "  show codes last <n>\n"
-          "  show codes where <filter>\n"
+          "  show logs last <n>  Newest n events (1-1000)\n"
+          "  show logs errors  Errors and critical events\n"
+          "  show logs warnings  Warnings and worse\n"
+          "  show logs where <filter>  Events matching a filter expression (help syntax)\n"
+          "  show logs grep <text>  Events whose message contains the text\n"
+          "  show logs code <CW-X-NNNN>  Events carrying one diagnostic code\n"
+          "  show logs codes <CW-X-*>  Events carrying a code family\n"
+          "  show errors last <n>  Newest n errors and critical events\n"
+          "  show code <CW-X-NNNN>  What a diagnostic code means and what to do\n"
+          "  show codes family <CW-X-*>  Every known code in a family\n"
+          "  show codes last <n>  Newest n events that carry any code\n"
+          "  show codes where <filter>  Coded events matching a filter\n"
           "  show training current|last|trace|fallback|host-sync|placement|materialization\n"
           "  show device active|available|queued|backends|oneapi|qualification\n"
-          "  show device route <backend>:<id>\n"
-          "  show device recommendations <backend>:<id>\n"
-          "  show backend packs\n"
-          "  show backend compatibility\n"
-          "  show backend support-bundle [1-100]\n"
-          "  show run current\n"
+          "  show device route <backend>:<id>  Verification result of one device route\n"
+          "  show device recommendations <backend>:<id>  Recommended use of one device\n"
+          "  show backend packs  Installed GPU packs and their state\n"
+          "  show backend compatibility  Which backends this machine can run\n"
+          "  show backend support-bundle [1-100]  Diagnostics to share when reporting a problem\n"
+          "  show run current  The run in progress\n"
           "  show run <run_id> summary|events|codes|host-sync|fallback\n"
-          "  show run <run_id> code <CW-X-NNNN>\n"
-          "  show run <run_id> codes <CW-X-*>\n"
-          "  show materialization last\n"
+          "  show run <run_id> code <CW-X-NNNN>  One code within a run\n"
+          "  show run <run_id> codes <CW-X-*>  A code family within a run\n"
+          "  show materialization last  Last data materialization (dataset to tensors)\n"
+          "Subjects:\n"
+          "  training: current = the running job, last = the previous run; trace = "
+          "recent training events; fallback = steps that ran on the CPU instead "
+          "of the GPU; host-sync = device-to-host copies that stall the GPU; "
+          "placement = where tensors lived; materialization = how the dataset "
+          "was turned into tensors.\n"
+          "  device: active = device in use now, available = every detected "
+          "device, queued = device the next run will use, backends = backend "
+          "providers, oneapi = Intel oneAPI details, qualification = "
+          "verification evidence.\n"
+          "  logs grep: text search in messages, any letter case, quotes optional; "
+          "help grep has the details.\n"
+          "  run: <run_id> is the id shown by show training current/last or in "
+          "the Logs Run column (for example train-1786337176120).\n"
           "Examples:\n"
           "  show logs last 50\n"
           "  show logs where category=training and level>=warn\n"
@@ -792,17 +908,21 @@ RuntimeConsoleCommandService::Registry() {
         {{"filter", "filter set|clear|save|use ...",
           "Manage the session runtime-log filter",
           "The active session filter is combined with subsequent show-log "
-          "queries. Saved filters remain in memory for this Console session.\n"
+          "queries until it is cleared; the header shows it. Saved filters "
+          "remain in memory for this Console session (Logs tab saved views are "
+          "separate and persist).\n"
           "Forms:\n"
-          "  filter set <expression>\n"
-          "  filter clear\n"
-          "  filter save <name> <expression>\n"
-          "  filter use <name>\n"
+          "  filter set <expression>  Narrow every later show logs query\n"
+          "  filter clear  Remove the session filter\n"
+          "  filter save <name> <expression>  Remember an expression by name\n"
+          "  filter use <name>  Make a saved expression the session filter\n"
           "Examples:\n"
           "  filter set category=training and level>=info\n"
           "  filter set error_code matches CW-G-*\n"
           "  filter save cuda_errors backend=arrayfire_cuda and level>=error\n"
-          "  filter use cuda_errors"},
+          "  filter use cuda_errors\n"
+          "Use case: while chasing one backend, set its filter once, then use "
+          "short queries such as show logs last 50 and show logs errors."},
          &RuntimeConsoleCommandService::ExecuteFilter, true},
     };
     return registrations;
@@ -888,6 +1008,14 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ExecuteHelp(
             }
             return result;
         }
+        if (topic == "tasks" || topic == "syntax" || topic == "grep") {
+            RuntimeConsoleCommandResult result;
+            AddHelpLines(result, topic == "tasks"    ? HelpTasksText()
+                                 : topic == "grep" ? HelpGrepText()
+                                                   : HelpSyntaxText());
+            if (topic == "syntax") AddHelpLines(result, RuntimeLogFilterHelpText());
+            return result;
+        }
         auto result = ErrorResult("Unknown help topic: " +
                                   tokens.values[1].text);
         AddLine(result, RuntimeConsoleOutputLevel::Info,
@@ -898,11 +1026,30 @@ RuntimeConsoleCommandResult RuntimeConsoleCommandService::ExecuteHelp(
     RuntimeConsoleCommandResult result;
     AddLine(result, RuntimeConsoleOutputLevel::Info,
             "=== CyxWiz Console Help ===");
+    AddLine(result, RuntimeConsoleOutputLevel::Info,
+            "Commands ask the Engine what is happening: runtime logs, "
+            "diagnostic codes, the device and backend in use, training runs "
+            "and the project's Python packages. Everything except pip and "
+            "filter only reads state, so commands are safe at any time.");
+    AddLine(result, RuntimeConsoleOutputLevel::Info, "Commands:");
     for (const auto& descriptor : Descriptors()) {
         AddLine(result, RuntimeConsoleOutputLevel::Info,
                 "  " + std::string(descriptor.usage) + " - " +
                     std::string(descriptor.description));
     }
+    AddHelpLines(result,
+                 "Topics:\n"
+                 "  help tasks - common questions and the commands that answer them\n"
+                 "  help syntax - quoting, numbers, device ids, codes, filter expressions\n"
+                 "  help grep - search log messages for text\n"
+                 "Quick start:\n"
+                 "  show logs errors - recent errors and critical events\n"
+                 "  show device active - the device training is using\n"
+                 "  show training current - progress and health of the running job\n"
+                 "  show code CW-C-0101 - what a diagnostic code means\n"
+                 "  pip list - packages in the project environment\n"
+                 "Keys: Enter run, Up/Down history, Tab complete a form, "
+                 "Ctrl+L clear, Esc close suggestions.");
     AddLine(result, RuntimeConsoleOutputLevel::Info,
             "Use 'help <command>' for forms, behavior, and examples");
     return result;

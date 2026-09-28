@@ -20,6 +20,22 @@ bool DangerButton(const char* label, bool enabled = true,
                   const char* disabled_reason = nullptr,
                   ButtonSize size = ButtonSize::Small);
 
+// Pill toggle with a label in `accent_rgba` (0xAABBGGRR, as ImU32) and a
+// muted count; dimmed when off. Returns true when clicked. `id` keeps the
+// widget identity stable while the count text changes.
+bool ToggleChip(const char* id, const char* label, const char* count, bool on,
+                unsigned int accent_rgba, bool emphasise = false);
+// Pill-shaped action (quick commands): monospace-friendly label, bordered.
+bool ChipButton(const char* label);
+float ChipButtonWidth(const char* label);
+
+// Segmented choice (one of several options side by side). Returns true when
+// the selection changed; `selected` is updated.
+bool SegmentedControl(const char* id, const char* const* labels, int count, int* selected);
+
+// Width a ToggleChip will take.
+float ToggleChipWidth(const char* label, const char* count);
+
 // Width a button will take, for sizing fixed table columns.
 float ButtonWidth(const char* label, ButtonSize size);
 

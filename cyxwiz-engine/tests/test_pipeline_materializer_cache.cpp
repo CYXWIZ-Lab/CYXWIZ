@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/data_registry.h"
 #include "../src/core/node_executors/count_vectorizer_operator.h"
@@ -256,9 +257,34 @@ int main() {
     cache_config.mode = cyxwiz::MaterializationCacheMode::Auto;
     cache_config.cache_root = cache_root;
 
-    auto saved = cyxwiz::PipelineMaterializer::Materialize(
+    const auto probe_before = cyxwiz::PipelineMaterializer::ProbeCache(
         nodes, links, registry, kDatasetName, cache_config);
+    Check(!probe_before.usable &&
+              probe_before.status == cyxwiz::MaterializationCacheStatus::Miss,
+          "cache probe should report a miss before anything is saved");
+
+    std::vector<std::string> saved_stages;
+    auto saved = cyxwiz::PipelineMaterializer::Materialize(
+        nodes, links, registry, kDatasetName, cache_config,
+        [&saved_stages](const cyxwiz::PipelineOperatorProgress& event) {
+            saved_stages.push_back(event.stage);
+        });
     Check(saved.success, saved.error_message);
+    const auto has_stage = [&saved_stages](const std::string& stage) {
+        return std::find(saved_stages.begin(), saved_stages.end(), stage) !=
+               saved_stages.end();
+    };
+    Check(has_stage("Checking prepared data cache") &&
+              has_stage("Saving prepared data to cache"),
+          "materialization should report the cache check and save stages");
+    Check(saved.cache_rebuild_reason.empty(),
+          "a first save is not a rebuild");
+
+    const auto probe_after = cyxwiz::PipelineMaterializer::ProbeCache(
+        nodes, links, registry, kDatasetName, cache_config);
+    Check(probe_after.usable && probe_after.cache_key == saved.cache_key &&
+              probe_after.row_count == saved.cache_row_count,
+          "cache probe should find the saved prepared data without loading it");
     Check(saved.operators_applied == 1,
           "cache miss should materialize tokenizer output");
     Check(saved.cache_status == cyxwiz::MaterializationCacheStatus::Saved,
@@ -352,6 +378,9 @@ int main() {
         nodes, links, registry, kDatasetName, rebuild_config);
     Check(rebuilt.success && rebuilt.saved_to_cache && !rebuilt.reused_resident_cache,
           "explicit Rebuild must not reuse a resident table");
+    Check(!rebuilt.cache_rebuild_reason.empty() &&
+              rebuilt.cache_message.find("rebuilt") != std::string::npos,
+          "a rebuild should keep why the prepared data was rebuilt");
     cyxwiz::PipelineOperatorExecutionContext cancelled_context;
     cancelled_context.cancellation_requested = [] { return true; };
     const auto cancelled = cyxwiz::PipelineMaterializer::Materialize(
