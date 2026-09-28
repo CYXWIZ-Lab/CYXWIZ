@@ -569,6 +569,10 @@ int main() {
           "fused layer should take each Embedding node's width");
     Check(compiled.graph_op_node_ids.empty(),
           "the fused Concatenate should not also run as a graph op");
+    Check(compiled.input_shape == std::vector<size_t>{96} &&
+              compiled.layers.front().output_shape == std::vector<size_t>{96, 116} &&
+              compiled.layers.back().output_shape == std::vector<size_t>{96, 19},
+          "compiled shapes are per token: [96] ids -> [96, 116] fused -> [96, 19] tags");
     CheckWordPosFusionRejections(nodes, links);
     Check(compiled.sequence_batch.enabled,
           "saved NER graph should compile a sequence batch contract");

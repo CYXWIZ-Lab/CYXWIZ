@@ -101,18 +101,21 @@ int main(int argc, char** argv) {
     std::vector<std::filesystem::path> graphs;
     std::filesystem::path reference_path;
     bool print_parameters = false;  // --parameters: build the model and count its parameters
+    bool print_layers = false;      // --layers: each compiled layer's node and shapes (TOFIX123)
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--reference" && i + 1 < argc) {
             reference_path = argv[++i];
         } else if (arg == "--parameters") {
             print_parameters = true;
+        } else if (arg == "--layers") {
+            print_layers = true;
         } else {
             graphs.emplace_back(arg);
         }
     }
     if (graphs.empty()) {
-        std::cerr << "usage: cyxwiz-graph-compile-check [--reference known_good.cyxgraph] [--parameters] <graph.cyxgraph> [more ...]\n";
+        std::cerr << "usage: cyxwiz-graph-compile-check [--reference known_good.cyxgraph] [--parameters] [--layers] <graph.cyxgraph> [more ...]\n";
         return 2;
     }
     std::multiset<std::string> reference_keys;
@@ -164,6 +167,20 @@ int main(int argc, char** argv) {
                   << " clip=" << config.grad_clip_norm << " weight_decay=" << config.weight_decay
                   << " decay_exclude=" << config.weight_decay_exclude
                   << " checkpoint_dir=" << config.checkpoint_dir << "\n";
+        if (print_layers) {
+            const auto shape = [](const std::vector<size_t>& dims) {
+                std::string text = "[";
+                for (size_t d = 0; d < dims.size(); ++d) text += (d ? "," : "") + std::to_string(dims[d]);
+                return text + "]";
+            };
+            std::cout << "   input_shape=" << shape(config.input_shape) << "\n";
+            for (size_t i = 0; i < config.layers.size(); ++i) {
+                const auto& layer = config.layers[i];
+                std::cout << "   layer " << i << " node=" << layer.node_id << " '" << layer.name
+                          << "' type=" << static_cast<int>(layer.type) << " in=" << shape(layer.input_shape)
+                          << " out=" << shape(layer.output_shape) << "\n";
+            }
+        }
         if (print_parameters) {
             // The model CyxWiz trains for this graph (TOFIX112: the PyTorch
             // export must declare the same parameters).

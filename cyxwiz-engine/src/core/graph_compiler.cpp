@@ -4522,6 +4522,16 @@ TrainingConfiguration GraphCompiler::Compile(
             }
         }
     }
+    // A token-tagging batch feeds [seq_len] ids per sample. When its contract
+    // fixes the length, compiled layer shapes are per token from the start
+    // (TOFIX123: the Properties panel shows these); the batcher still sets
+    // the real length at launch.
+    if (config.sequence_batch.enabled && config.input_shape.empty() &&
+        config.sequence_batch.max_sequence_length > 0) {
+        const auto length = static_cast<size_t>(config.sequence_batch.max_sequence_length);
+        config.input_shape = {length};
+        config.input_size = length;
+    }
     ValidateTrainingPathImplementationStatus(nodes, links, training_path_ids, config);
 
     if (dataset_node) {
