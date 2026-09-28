@@ -22,8 +22,10 @@ set(CYXWIZ_PACKAGE_INTEL_NOTICES_DIR
 set(CYXWIZ_PACKAGE_NVIDIA_NOTICES_DIR
     ""
     CACHE PATH "NVIDIA redistribution notices required when the CUDA pack is selected")
+# OpenCL ships with oneAPI: on Intel GPUs it is the preferred route while the
+# oneAPI provider is host-staged (owner decision 2026-09-28, TOFIX116).
 set(CYXWIZ_PACKAGE_FULL_BACKENDS
-    "cpu,oneapi"
+    "cpu,oneapi,opencl"
     CACHE STRING "Comma-separated ArrayFire backend packs for the full release package")
 
 function(cyxwiz_add_release_packaging_targets)

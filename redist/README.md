@@ -402,14 +402,15 @@ Windows minimal:
 redist\scripts\package_minimal.bat --version 0.2.0
 ```
 
-Windows full CPU plus oneAPI:
+Windows full CPU plus oneAPI and OpenCL (OpenCL is the preferred route on
+Intel GPUs while the oneAPI provider is host-staged):
 
 ```batch
 redist\scripts\package_full.bat --version 0.2.0 ^
   --arrayfire-dir "C:\Program Files\ArrayFire\v3" ^
   --python-dir "C:\Python312-embed" ^
   --intel-runtime-license-dir "C:\release-notices\intel" ^
-  --backends cpu,oneapi
+  --backends cpu,oneapi,opencl
 ```
 
 Windows CPU base:
