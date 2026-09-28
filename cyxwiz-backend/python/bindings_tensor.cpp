@@ -219,6 +219,8 @@ py::class_<cyxwiz::Tensor>(m, "Tensor",
     }, py::arg("exponent"), "Raise tensor values to a power")
     .def("sqrt", &cyxwiz::Tensor::Sqrt, "Element-wise square root")
     .def("exp", &cyxwiz::Tensor::Exp, "Element-wise exponential")
+    .def("sin", &cyxwiz::Tensor::Sin, "Element-wise sine (radians)")
+    .def("cos", &cyxwiz::Tensor::Cos, "Element-wise cosine (radians)")
     .def("log", &cyxwiz::Tensor::Log, "Element-wise natural log")
     .def("abs", &cyxwiz::Tensor::Abs, "Element-wise absolute value")
     .def("sign", &cyxwiz::Tensor::Sign, "Element-wise sign")

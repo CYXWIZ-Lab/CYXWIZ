@@ -27,6 +27,8 @@ enum class UnaryOp {
     Sqrt,
     Exp,
     Log,
+    Sin,
+    Cos,
     Abs,
     Sign,
     Clip,
@@ -39,6 +41,8 @@ const char* UnaryOperationName(UnaryOp operation) {
         case UnaryOp::Sqrt: return "Tensor::Sqrt";
         case UnaryOp::Exp: return "Tensor::Exp";
         case UnaryOp::Log: return "Tensor::Log";
+        case UnaryOp::Sin: return "Tensor::Sin";
+        case UnaryOp::Cos: return "Tensor::Cos";
         case UnaryOp::Abs: return "Tensor::Abs";
         case UnaryOp::Sign: return "Tensor::Sign";
         case UnaryOp::Clip: return "Tensor::Clip";
@@ -53,6 +57,8 @@ const char* UnaryName(UnaryOp operation) {
         case UnaryOp::Sqrt: return "sqrt";
         case UnaryOp::Exp: return "exp";
         case UnaryOp::Log: return "log";
+        case UnaryOp::Sin: return "sin";
+        case UnaryOp::Cos: return "cos";
         case UnaryOp::Abs: return "abs";
         case UnaryOp::Sign: return "sign";
         case UnaryOp::Clip: return "clip";
@@ -130,6 +136,8 @@ Tensor NativeRealUnaryTyped(const Tensor& input,
             case UnaryOp::Sqrt: output[index] = std::sqrt(value); break;
             case UnaryOp::Exp: output[index] = std::exp(value); break;
             case UnaryOp::Log: output[index] = std::log(value); break;
+            case UnaryOp::Sin: output[index] = std::sin(value); break;
+            case UnaryOp::Cos: output[index] = std::cos(value); break;
             case UnaryOp::Clip:
                 output[index] = (std::min)(
                     (std::max)(value, static_cast<Out>(first)),
@@ -330,6 +338,8 @@ Tensor ArrayFireRealUnary(const Tensor& input,
         case UnaryOp::Sqrt: output = af::sqrt(values); break;
         case UnaryOp::Exp: output = af::exp(values); break;
         case UnaryOp::Log: output = af::log(values); break;
+        case UnaryOp::Sin: output = af::sin(values); break;
+        case UnaryOp::Cos: output = af::cos(values); break;
         case UnaryOp::Clip:
             output = (af::min)((af::max)(values, first), second);
             break;
@@ -515,6 +525,14 @@ Tensor Tensor::Exp() const {
 
 Tensor Tensor::Log() const {
     return ApplyRealUnary(*this, UnaryOp::Log);
+}
+
+Tensor Tensor::Sin() const {
+    return ApplyRealUnary(*this, UnaryOp::Sin);
+}
+
+Tensor Tensor::Cos() const {
+    return ApplyRealUnary(*this, UnaryOp::Cos);
 }
 
 Tensor Tensor::Abs() const {

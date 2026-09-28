@@ -94,6 +94,8 @@ cyxwiz::Tensor ApplyElementwise(const cyxwiz::Tensor& input,
     if (operation == "sqrt") return input.Sqrt();
     if (operation == "exp") return input.Exp();
     if (operation == "log") return input.Log();
+    if (operation == "sin") return input.Sin();
+    if (operation == "cos") return input.Cos();
     if (operation == "abs") return input.Abs();
     if (operation == "sign") return input.Sign();
     if (operation == "clip") {
@@ -323,12 +325,14 @@ TEST_CASE("Tensor rank-five elementwise fallback is explicit and strict-safe",
         REQUIRE(left.Sqrt().Shape() == left.Shape());
         REQUIRE(left.Exp().Shape() == left.Shape());
         REQUIRE(left.Log().Shape() == left.Shape());
+        REQUIRE(left.Sin().Shape() == left.Shape());
+        REQUIRE(left.Cos().Shape() == left.Shape());
         REQUIRE(left.Abs().Shape() == left.Shape());
         REQUIRE(left.Sign().Shape() == left.Shape());
         REQUIRE(left.Clip(1.0f, 4.0f).Shape() == left.Shape());
         REQUIRE((-left).Shape() == left.Shape());
     }
-    REQUIRE(g_elementwise_fallback_count == 17);
+    REQUIRE(g_elementwise_fallback_count == 19);
     REQUIRE(g_elementwise_fallback_operations == std::vector<std::string>{
         "Tensor::operator+",
         "Tensor::operator-",
@@ -343,6 +347,8 @@ TEST_CASE("Tensor rank-five elementwise fallback is explicit and strict-safe",
         "Tensor::Sqrt",
         "Tensor::Exp",
         "Tensor::Log",
+        "Tensor::Sin",
+        "Tensor::Cos",
         "Tensor::Abs",
         "Tensor::Sign",
         "Tensor::Clip",
@@ -385,6 +391,17 @@ TEST_CASE("Tensor elementwise finite extremes and invalid domains follow PyTorch
     const cyxwiz::Tensor sign = input.Sign();
     const cyxwiz::Tensor clipped = input.Clip(-0.5f, 0.5f);
     const cyxwiz::Tensor divided = input / 0.0f;
+    const cyxwiz::Tensor sine = input.Sin();
+    const cyxwiz::Tensor cosine = input.Cos();
+    // PyTorch: sin/cos of +-inf and NaN are NaN; sin keeps the sign of -0.
+    REQUIRE(std::isnan(sine.ReadData<float>()[0]));
+    REQUIRE(std::isnan(sine.ReadData<float>()[5]));
+    REQUIRE(std::isnan(sine.ReadData<float>()[6]));
+    REQUIRE(std::signbit(sine.ReadData<float>()[2]));
+    REQUIRE(sine.ReadData<float>()[2] == 0.0f);
+    REQUIRE(std::isnan(cosine.ReadData<float>()[0]));
+    REQUIRE(cosine.ReadData<float>()[3] == 1.0f);
+    REQUIRE(std::isnan(cosine.ReadData<float>()[6]));
     REQUIRE(std::isnan(root.ReadData<float>()[0]));
     REQUIRE(std::isnan(root.ReadData<float>()[1]));
     REQUIRE(std::signbit(root.ReadData<float>()[2]));

@@ -22220,6 +22220,84 @@
             3
           ],
           "values": [
+            -0.14112000167369843,
+            0.0,
+            0.9092974066734314,
+            -0.8414709568023682,
+            -0.756802499294281,
+            0.8414709568023682
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            0.0,
+            2.0,
+            -1.0,
+            4.0,
+            1.0
+          ]
+        },
+        "input_dtype": "float32",
+        "name": "unary_sin_f32",
+        "operation": "sin",
+        "output_dtype": "float32",
+        "rhs_kind": "none",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -0.9899924993515015,
+            1.0,
+            -0.416146844625473,
+            0.5403023362159729,
+            -0.6536436080932617,
+            0.5403023362159729
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            0.0,
+            2.0,
+            -1.0,
+            4.0,
+            1.0
+          ]
+        },
+        "input_dtype": "float32",
+        "name": "unary_cos_f32",
+        "operation": "cos",
+        "output_dtype": "float32",
+        "rhs_kind": "none",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
             -1.5,
             0.0,
             2.0,
@@ -22681,6 +22759,84 @@
         "input_dtype": "float64",
         "name": "unary_negate_f64",
         "operation": "negate",
+        "output_dtype": "float64",
+        "rhs_kind": "none",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -0.1411200080598672,
+            0.0,
+            0.9092974268256817,
+            -0.8414709848078965,
+            -0.7568024953079282,
+            0.8414709848078965
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            0.0,
+            2.0,
+            -1.0,
+            4.0,
+            1.0
+          ]
+        },
+        "input_dtype": "float64",
+        "name": "unary_sin_f64",
+        "operation": "sin",
+        "output_dtype": "float64",
+        "rhs_kind": "none",
+        "tolerance": {
+          "atol": 1e-10,
+          "rtol": 1e-10
+        }
+      },
+      {
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -0.9899924966004454,
+            1.0,
+            -0.4161468365471424,
+            0.5403023058681398,
+            -0.6536436208636119,
+            0.5403023058681398
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3.0,
+            0.0,
+            2.0,
+            -1.0,
+            4.0,
+            1.0
+          ]
+        },
+        "input_dtype": "float64",
+        "name": "unary_cos_f64",
+        "operation": "cos",
         "output_dtype": "float64",
         "rhs_kind": "none",
         "tolerance": {
@@ -23170,6 +23326,84 @@
             3
           ],
           "values": [
+            -0.14112000167369843,
+            0.0,
+            0.9092974066734314,
+            -0.8414709568023682,
+            -0.756802499294281,
+            0.8414709568023682
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            0,
+            2,
+            -1,
+            4,
+            1
+          ]
+        },
+        "input_dtype": "int32",
+        "name": "unary_sin_i32",
+        "operation": "sin",
+        "output_dtype": "float32",
+        "rhs_kind": "none",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -0.9899924993515015,
+            1.0,
+            -0.416146844625473,
+            0.5403023362159729,
+            -0.6536436080932617,
+            0.5403023362159729
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            0,
+            2,
+            -1,
+            4,
+            1
+          ]
+        },
+        "input_dtype": "int32",
+        "name": "unary_cos_i32",
+        "operation": "cos",
+        "output_dtype": "float32",
+        "rhs_kind": "none",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
             -1.5,
             0.0,
             2.0,
@@ -23645,6 +23879,84 @@
             3
           ],
           "values": [
+            -0.14112000167369843,
+            0.0,
+            0.9092974066734314,
+            -0.8414709568023682,
+            -0.756802499294281,
+            0.8414709568023682
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            0,
+            2,
+            -1,
+            4,
+            1
+          ]
+        },
+        "input_dtype": "int64",
+        "name": "unary_sin_i64",
+        "operation": "sin",
+        "output_dtype": "float32",
+        "rhs_kind": "none",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -0.9899924993515015,
+            1.0,
+            -0.416146844625473,
+            0.5403023362159729,
+            -0.6536436080932617,
+            0.5403023362159729
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            -3,
+            0,
+            2,
+            -1,
+            4,
+            1
+          ]
+        },
+        "input_dtype": "int64",
+        "name": "unary_cos_i64",
+        "operation": "cos",
+        "output_dtype": "float32",
+        "rhs_kind": "none",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
             -1.5,
             0.0,
             2.0,
@@ -24107,6 +24419,84 @@
         "name": "unary_negate_u8",
         "operation": "negate",
         "output_dtype": "uint8",
+        "rhs_kind": "none",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0.0,
+            0.8414709568023682,
+            0.9092974066734314,
+            0.14112000167369843,
+            -0.756802499294281,
+            -0.5063916444778442
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            255
+          ]
+        },
+        "input_dtype": "uint8",
+        "name": "unary_sin_u8",
+        "operation": "sin",
+        "output_dtype": "float32",
+        "rhs_kind": "none",
+        "tolerance": {
+          "atol": 1e-05,
+          "rtol": 1e-05
+        }
+      },
+      {
+        "expected": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            1.0,
+            0.5403023362159729,
+            -0.416146844625473,
+            -0.9899924993515015,
+            -0.6536436080932617,
+            -0.862303614616394
+          ]
+        },
+        "input": {
+          "shape": [
+            2,
+            3
+          ],
+          "values": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            255
+          ]
+        },
+        "input_dtype": "uint8",
+        "name": "unary_cos_u8",
+        "operation": "cos",
+        "output_dtype": "float32",
         "rhs_kind": "none",
         "tolerance": {
           "atol": 1e-05,

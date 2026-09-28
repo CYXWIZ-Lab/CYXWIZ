@@ -1939,6 +1939,10 @@ def tensor_elementwise_case(
         expected = torch.exp(left)
     elif operation == "log":
         expected = torch.log(left)
+    elif operation == "sin":
+        expected = torch.sin(left)
+    elif operation == "cos":
+        expected = torch.cos(left)
     elif operation == "abs":
         expected = torch.abs(left)
     elif operation == "sign":
@@ -2038,7 +2042,7 @@ def tensor_elementwise_matrix() -> list[dict[str, Any]]:
             cases.append(tensor_elementwise_case(
                 f"unary_{operation}_{dtype_name}", operation, positive
             ))
-        for operation in ["abs", "sign", "negate"]:
+        for operation in ["abs", "sign", "negate", "sin", "cos"]:
             cases.append(tensor_elementwise_case(
                 f"unary_{operation}_{dtype_name}", operation, signed_values
             ))

@@ -218,6 +218,10 @@ public:
     Tensor Sqrt() const;
     Tensor Exp() const;
     Tensor Log() const;
+    // Element-wise sine and cosine in radians; integer inputs give Float32,
+    // as PyTorch promotes them.
+    Tensor Sin() const;
+    Tensor Cos() const;
     Tensor Abs() const;
     Tensor Sign() const;
     Tensor Clip(float min_val, float max_val) const;

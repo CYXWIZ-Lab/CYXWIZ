@@ -1025,8 +1025,12 @@ TEST_CASE("Tensor unary real math keeps Float32 ArrayFire output device-resident
     cyxwiz::Tensor exp = input.Exp();
     cyxwiz::Tensor log = input.Log();
     cyxwiz::Tensor pow = input.Pow(2.0f);
+    cyxwiz::Tensor sin = input.Sin();
+    cyxwiz::Tensor cos = input.Cos();
 
     REQUIRE(sqrt.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(sin.GetDataType() == cyxwiz::DataType::Float32);
+    REQUIRE(cos.GetDataType() == cyxwiz::DataType::Float32);
     REQUIRE(sqrt.Shape() == std::vector<size_t>{3});
     REQUIRE(exp.GetDataType() == cyxwiz::DataType::Float32);
     REQUIRE(log.GetDataType() == cyxwiz::DataType::Float32);
@@ -1039,6 +1043,8 @@ TEST_CASE("Tensor unary real math keeps Float32 ArrayFire output device-resident
     REQUIRE(exp.Data<float>()[0] == Catch::Approx(std::exp(1.0f)));
     REQUIRE(log.Data<float>()[1] == Catch::Approx(std::log(4.0f)));
     REQUIRE(pow.Data<float>()[2] == Catch::Approx(81.0f));
+    REQUIRE(sin.Data<float>()[0] == Catch::Approx(std::sin(1.0f)));
+    REQUIRE(cos.Data<float>()[2] == Catch::Approx(std::cos(9.0f)));
 }
 
 TEST_CASE("Tensor preserving unary and scalar ops keep Float64 ArrayFire output device-resident", "[tensor]") {
