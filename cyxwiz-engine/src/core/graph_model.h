@@ -645,6 +645,9 @@ struct MLNode {
     std::string extension_version;       // node contract version it was created with
     std::string extension_content_hash;  // code it was last built against
     bool extension_missing = false;      // the extension is not registered
+    // What differs between the saved node and the installed extension
+    // (version, code, pins); empty when nothing does. Not saved.
+    std::string extension_load_note;
 };
 
 inline bool IsGeneratedDenseName(const std::string& name) {

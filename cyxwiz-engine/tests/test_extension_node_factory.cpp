@@ -121,11 +121,9 @@ void TestIdentityIsNotAParameter() {
     int next_pin_id = 1;
     const gui::MLNode node =
         gui::CreateExtensionGraphNode("test.nodes:Gate", next_node_id, next_pin_id);
-    // The saved-file format still reads this key until step 1.3 replaces it
-    // with the extension block; it must agree with the node's own field.
-    const auto it = node.parameters.find("plugin_qualified_name");
-    Check(it != node.parameters.end() && it->second == node.extension_type_id,
-          "the transitional parameter agrees with the identity field");
+    Check(node.parameters.count("plugin_qualified_name") == 0,
+          "the identity is a field of the node, not one of its parameters");
+    Check(node.parameters.size() == 2, "the node has only its declared parameters");
 }
 
 void TestResolveMetadata() {

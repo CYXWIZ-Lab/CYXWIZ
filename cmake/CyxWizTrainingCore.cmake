@@ -88,6 +88,7 @@ add_library(cyxwiz-training-core STATIC
     ${_cyxwiz_engine_src}/core/graph_compiler_dataset_hooks.cpp
     ${_cyxwiz_engine_src}/core/graph_node_factory.cpp
     ${_cyxwiz_engine_src}/core/graph_document.cpp
+    ${_cyxwiz_engine_src}/core/extension_node_document.cpp
     ${_cyxwiz_engine_src}/core/graph_training_prep.cpp
     ${_cyxwiz_engine_src}/core/graph_training_job.cpp
     ${_cyxwiz_engine_src}/core/compiled_graph_plan.cpp

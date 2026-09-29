@@ -1735,9 +1735,6 @@ MLNode CreateGraphNode(NodeType type,
             // provider may unload while the node lives on.
             const auto descriptor = cyxwiz::ExtensionNodeRegistry::Instance().Find(name);
             node.extension_type_id = name;
-            // Read by the saved-graph format until the extension block
-            // replaces it (TOFIX125 P1 step 1.3).
-            node.parameters["plugin_qualified_name"] = name;
             if (descriptor.has_value()) {
                 node.name = descriptor->metadata.name;
                 node.extension_version = descriptor->version;

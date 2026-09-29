@@ -1,6 +1,7 @@
 #include "graph_document.h"
 
 #include "data_input_parameters.h"
+#include "extension_node_document.h"
 #include "graph_node_factory.h"
 #include "pipeline_runtime_capabilities.h"
 #include "../gui/node_import_guardrails.h"
@@ -310,7 +311,17 @@ bool BuildGraphDocument(const nlohmann::json& document, const nlohmann::json& co
 
             const int saved_node_id = node_json.at("id").get<int>();
             const std::string saved_node_name = node_json.at("name").get<std::string>();
-            MLNode node = CreateGraphNode(node_type, saved_node_name, next_node_id, next_pin_id);
+            MLNode node;
+            if (node_type == NodeType::PluginCustom) {
+                // Identified by the saved type id, never by the display name.
+                std::string reason;
+                if (!cyxwiz::ReadExtensionNode(node_json, next_node_id, next_pin_id, node, reason)) {
+                    error = "node '" + saved_node_name + "': " + reason;
+                    return false;
+                }
+            } else {
+                node = CreateGraphNode(node_type, saved_node_name, next_node_id, next_pin_id);
+            }
             node.id = saved_node_id;
             node.name = saved_node_name;
             node.description = node_json.value("description", std::string{});

@@ -183,7 +183,6 @@ void RenderPluginCustomNodeProperties(MLNode& node, RenderNodePropertiesContext 
             else {
                 // Render editable parameters (skip internal keys)
                 for (auto& [key, value] : node.parameters) {
-                    if (key == "plugin_qualified_name") continue;
                     if (key.starts_with("_meta_")) continue;
 
                     char buf[512];

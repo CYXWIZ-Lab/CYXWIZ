@@ -131,6 +131,21 @@ int main(int argc, char** argv) {
             Reject([&]{ f.Save(); }, "new cross-boundary edge rejected");
             auto ordinary = json{{"nodes", json::array()}, {"links", json::array()}};
             Check(FlattenSubgraphDocument(ordinary) == ordinary, "ordinary graph unchanged");
+            // The editor's writer saves an extension node with its identity and pins (TOFIX125).
+            MLNode extension = Node(70, NodeType::PluginCustom, 701, 702);
+            extension.extension_type_id = "test.nodes:Gate";
+            extension.extension_version = "1.0.0";
+            json with_extension;
+            WriteEditorGraphContent(with_extension, {extension, f.source}, {{7, 1, 11, 70, 701}}, {}, {});
+            const auto& saved_extension = with_extension["nodes"][0];
+            Check(saved_extension.contains("extension") &&
+                  saved_extension["extension"]["type_id"] == "test.nodes:Gate" &&
+                  saved_extension["extension"]["contract"] == 1, "extension node saved with its type id");
+            Check(saved_extension["extension"]["inputs"].size() == 1 &&
+                  saved_extension["extension"]["inputs"][0]["name"] == "Data" &&
+                  saved_extension["extension"]["inputs"][0]["type"] == "Dataset" &&
+                  saved_extension["extension"]["outputs"].size() == 1, "extension node saved with its pins");
+            Check(!with_extension["nodes"][1].contains("extension"), "built-in node saved without an extension block");
             if (argc == 3 && std::string(argv[1]) == "--write") {
                 std::ofstream file(argv[2]); file << original.dump(2); if (!file) throw std::runtime_error("cannot write fixture");
             }

@@ -1,4 +1,5 @@
 #include "subgraph_document.h"
+#include "../core/extension_node_document.h"
 #include <algorithm>
 #include <limits>
 #include <set>
@@ -22,10 +23,13 @@ json Nodes(const std::vector<MLNode>& nodes, const std::map<int, ImVec2>& positi
         const auto it = positions.find(node.id);
         const auto pos = it == positions.end()
             ? ImVec2(node.initial_pos_x, node.initial_pos_y) : it->second;
-        result.push_back({{"id", node.id}, {"type", static_cast<int>(node.type)},
+        json entry = {{"id", node.id}, {"type", static_cast<int>(node.type)},
             {"category", static_cast<int>(node.category)}, {"name", node.name},
             {"description", node.description}, {"parameters", node.parameters},
-            {"pos_x", pos.x}, {"pos_y", pos.y}});
+            {"pos_x", pos.x}, {"pos_y", pos.y}};
+        // An extension node is identified by its type id and keeps its pins.
+        if (node.type == NodeType::PluginCustom) entry["extension"] = cyxwiz::WriteExtensionBlock(node);
+        result.push_back(std::move(entry));
     }
     return result;
 }

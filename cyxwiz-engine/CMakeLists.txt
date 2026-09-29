@@ -2983,6 +2983,7 @@ add_executable(test_sequence_fusion_presentation
     tests/test_sequence_fusion_presentation.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_document.cpp
+    src/core/extension_node_document.cpp
     src/core/graph_node_factory.cpp
     src/core/node_metadata_registry.cpp
     src/core/pipeline_runtime_capabilities.cpp
@@ -3644,6 +3645,7 @@ add_executable(test_cyxmodel_layernorm_roundtrip
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
     src/core/graph_document.cpp
+    src/core/extension_node_document.cpp
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
@@ -3697,6 +3699,7 @@ add_executable(test_cyxmodel_mha_roundtrip
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
     src/core/graph_document.cpp
+    src/core/extension_node_document.cpp
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
@@ -3750,6 +3753,7 @@ add_executable(test_cyxmodel_transformer_encoder_roundtrip
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
     src/core/graph_document.cpp
+    src/core/extension_node_document.cpp
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
@@ -3802,6 +3806,7 @@ add_executable(test_cyxmodel_transformer_decoder_roundtrip
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
     src/core/graph_document.cpp
+    src/core/extension_node_document.cpp
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
@@ -3854,6 +3859,7 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
     src/core/graph_document.cpp
+    src/core/extension_node_document.cpp
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/language_model_generation.cpp
@@ -3909,6 +3915,7 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/graph_compiler.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_document.cpp
+    src/core/extension_node_document.cpp
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
@@ -3987,6 +3994,7 @@ add_executable(cyxwiz-graph-compile-check
     src/core/graph_compiler.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_document.cpp
+    src/core/extension_node_document.cpp
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
@@ -4066,6 +4074,7 @@ add_executable(test_compiled_node_presentation
     src/core/graph_compiler.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_document.cpp
+    src/core/extension_node_document.cpp
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/graph_compiler_dataset_hooks.cpp
@@ -5195,7 +5204,7 @@ set_target_properties(test_html_document_text_unavailable PROPERTIES RUNTIME_OUT
 add_executable(test_subgraph_document tests/test_subgraph_document.cpp
     src/gui/subgraph_document.cpp src/gui/node_editor_nodes.cpp src/core/graph_node_factory.cpp
     src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp
-    src/core/extension_node_registry.cpp)
+    src/core/extension_node_registry.cpp src/core/extension_node_document.cpp)
 target_include_directories(test_subgraph_document PRIVATE src external/imnodes)
 target_compile_definitions(test_subgraph_document PRIVATE CYXWIZ_NODE_FACTORY_ONLY NOMINMAX)
 target_link_libraries(test_subgraph_document PRIVATE imgui::imgui nlohmann_json::nlohmann_json
@@ -5255,6 +5264,10 @@ target_link_libraries(test_training_benchmark PRIVATE cyxwiz-training-core)
 # ===== Test: measured machine capability (TOFIX118 P3 S2) =====
 add_executable(test_machine_capability tests/test_machine_capability.cpp)
 target_link_libraries(test_machine_capability PRIVATE cyxwiz-training-core)
+
+# ===== Test: saved graphs with extension nodes, on the core alone (TOFIX125) =====
+add_executable(test_extension_graph_document tests/test_extension_graph_document.cpp)
+target_link_libraries(test_extension_graph_document PRIVATE cyxwiz-training-core)
 
 # ===== Test: Engine vs Server Node training parity (TOFIX118 P2 slice 4) =====
 # The Engine path (launcher preparation + MainWindow's dispatch + TrainingManager)
