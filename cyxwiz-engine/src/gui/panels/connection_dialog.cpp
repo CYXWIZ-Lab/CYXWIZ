@@ -1,4 +1,5 @@
 #include "connection_dialog.h"
+#include "../ui_buttons.h"
 #include "wallet_panel.h"
 #include "../icons.h"
 #include "../node_editor.h"
@@ -745,6 +746,13 @@ void ConnectionDialog::RenderActiveReservationPanel() {
 
         ImGui::Spacing();
 
+        // Will this job fit on the node? (TOFIX118 P4 GUI)
+        if (p2p_connected) {
+            UpdateJobEstimate();
+            RenderJobFitCard();
+            ImGui::Spacing();
+        }
+
         // Action buttons
         if (p2p_connected) {
             // Check training state
@@ -772,23 +780,21 @@ void ConnectionDialog::RenderActiveReservationPanel() {
                 if (reservation_batch_size_ > 512) reservation_batch_size_ = 512;
                 ImGui::Spacing();
 
-                // Start New Training button
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.3f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.4f, 1.0f));
-                if (ImGui::Button(ICON_FA_PLAY " Start New Training", ImVec2(160, 28))) {
+                // Start New Training button (off when the job will not fit)
+                const auto fit = CurrentJobFitCard();
+                if (cyxwiz::ui::PrimaryButton(ICON_FA_PLAY " Start New Training", fit.start_enabled,
+                                              fit.start_note.c_str())) {
                     StartNewP2PTraining();
                 }
-                ImGui::PopStyleColor(2);
                 ImGui::SameLine();
             }
             else if (!is_streaming) {
-                // Not streaming, not waiting - initial state
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 0.9f, 1.0f));
-                if (ImGui::Button(ICON_FA_PLAY " Start Training", ImVec2(140, 28))) {
+                // Not streaming, not waiting - initial state (off when the job will not fit)
+                const auto fit = CurrentJobFitCard();
+                if (cyxwiz::ui::PrimaryButton(ICON_FA_PLAY " Start Training", fit.start_enabled,
+                                              fit.start_note.c_str())) {
                     StartP2PTraining();
                 }
-                ImGui::PopStyleColor(2);
                 ImGui::SameLine();
             } else {
                 // Training in progress - show stop button
@@ -919,6 +925,7 @@ void ConnectionDialog::StartReservation() {
     }
 
     const auto& node = discovered_nodes_[selected_node_index_];
+    reserved_node_ = node;
 
     reserving_ = true;
     reservation_error_.clear();
@@ -1193,6 +1200,9 @@ void ConnectionDialog::StartP2PTraining() {
     config.set_batch_size(reservation_batch_size_);  // From user input
     config.set_epochs(reservation_epochs_);          // From user input
     config.set_required_device(cyxwiz::protocol::DEVICE_CUDA);
+    // The Engine's measurement; the node's admission compares it with its
+    // device (TOFIX118 P4b). 0 = not measured, the node skips the check.
+    config.set_estimated_memory(static_cast<int64_t>(CurrentJobFitCard().estimated_memory));
 
     // remote://: the node fetches the graph's dataset files from the Engine
     // (TOFIX118 P2). Registered before the job is sent so the node's first
@@ -1216,9 +1226,14 @@ void ConnectionDialog::StartP2PTraining() {
         send_success = p2p_client_->SendJob(config);
     }
 
+    last_rejection_reason_ = send_success ? std::string() : p2p_client_->GetLastRejectionReason();
     if (!send_success) {
-        reservation_error_ = "Failed to send job to node: " + p2p_client_->GetLastError();
-        spdlog::error("{}", reservation_error_);
+        // A refusal is shown on the fit card with its category; other
+        // failures (network, auth) keep the plain error line.
+        if (last_rejection_reason_.empty()) {
+            reservation_error_ = "Failed to send job to node: " + p2p_client_->GetLastError();
+        }
+        spdlog::error("Failed to send job to node: {}", p2p_client_->GetLastError());
         return;
     }
 
@@ -1266,6 +1281,9 @@ void ConnectionDialog::StartP2PTraining() {
 
     p2p_client_->SetErrorCallback([this](const std::string& error, bool is_fatal) {
         spdlog::error("Training error: {} (fatal: {})", error, is_fatal);
+        if (p2p_training_panel_) {
+            p2p_training_panel_->OnErrorUpdate(error, is_fatal);
+        }
         if (is_fatal) {
             reservation_error_ = "Training error: " + error;
         }
@@ -1285,7 +1303,15 @@ void ConnectionDialog::StartP2PTraining() {
     reservation_error_.clear();
 }
 
-void ConnectionDialog::StartNewP2PTraining() {
+void ConnectionDialog::SetP2PTrainingPanel(P2PTrainingPanel* panel) {
+    p2p_training_panel_ = panel;
+    if (!panel) return;
+    panel->SetRecoveryActions(
+        [this](const std::string& job_id) { StartNewP2PTraining(job_id); },
+        [this]() { StartNewP2PTraining(); });
+}
+
+void ConnectionDialog::StartNewP2PTraining(const std::string& resume_job_id) {
     spdlog::info("[DEBUG] StartNewP2PTraining called");
     spdlog::info("  IsConnected: {}", p2p_client_ ? p2p_client_->IsConnected() : false);
     spdlog::info("  IsStreaming: {}", p2p_client_ ? p2p_client_->IsStreaming() : false);
@@ -1296,7 +1322,8 @@ void ConnectionDialog::StartNewP2PTraining() {
         return;
     }
 
-    if (!p2p_client_->IsWaitingForNewJob()) {
+    const bool resuming = !resume_job_id.empty();
+    if (!p2p_client_->IsWaitingForNewJob() && !(resuming && !p2p_client_->IsStreaming())) {
         reservation_error_ = "Server Node is not ready for a new job.";
         return;
     }
@@ -1321,8 +1348,10 @@ void ConnectionDialog::StartNewP2PTraining() {
 
     // Build new JobConfig for the new training run
     // Generate a new job ID for this run (within same reservation)
-    std::string new_job_id = active_reservation_.job_id + "_" +
-        std::to_string(std::time(nullptr));
+    // Resuming sends the same job id again: the node finds its checkpoint
+    // under that id and continues (TOFIX118 P4e-3).
+    std::string new_job_id = resuming ? resume_job_id
+                                      : active_reservation_.job_id + "_" + std::to_string(std::time(nullptr));
 
     cyxwiz::protocol::JobConfig config;
     config.set_job_id(new_job_id);
@@ -1333,6 +1362,7 @@ void ConnectionDialog::StartNewP2PTraining() {
     config.set_batch_size(reservation_batch_size_);
     config.set_epochs(reservation_epochs_);
     config.set_required_device(cyxwiz::protocol::DEVICE_CUDA);
+    config.set_estimated_memory(static_cast<int64_t>(CurrentJobFitCard().estimated_memory));
 
     // remote://: the node fetches the graph's dataset files from the Engine
     // (TOFIX118 P2). Registered before the job is sent so the node's first
@@ -1400,6 +1430,9 @@ void ConnectionDialog::StartNewP2PTraining() {
 
             p2p_client_->SetErrorCallback([this](const std::string& error, bool is_fatal) {
                 spdlog::error("Training error (fatal={}): {}", is_fatal, error);
+                if (p2p_training_panel_) {
+                    p2p_training_panel_->OnErrorUpdate(error, is_fatal);
+                }
                 if (is_fatal) {
                     reservation_error_ = "Training error: " + error;
                 }
@@ -1415,9 +1448,12 @@ void ConnectionDialog::StartNewP2PTraining() {
         }
     }
 
+    last_rejection_reason_ = send_success ? std::string() : p2p_client_->GetLastRejectionReason();
     if (!send_success) {
-        reservation_error_ = "Failed to send new job config: " + p2p_client_->GetLastError();
-        spdlog::error("{}", reservation_error_);
+        if (last_rejection_reason_.empty()) {
+            reservation_error_ = "Failed to send new job config: " + p2p_client_->GetLastError();
+        }
+        spdlog::error("Failed to send new job config: {}", p2p_client_->GetLastError());
         return;
     }
 

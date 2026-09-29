@@ -15,7 +15,7 @@
 #include "../../cyxwiz-engine/tests/causal_lm_token_window_fixture.h"
 #include "../../cyxwiz-engine/tests/route_qualification_test_fixture.h"
 #include "../src/node_client.h"
-#include "../src/node_admission.h"
+#include "core/job_admission.h"
 #include "../src/node_data_dir.h"
 #include "../src/node_doctor.h"
 #include "core/training_resume_checkpoint.h"
@@ -1302,8 +1302,8 @@ TEST_CASE("Central server ranks a registered node by measured throughput", "[.][
 
 TEST_CASE("Admission refuses jobs the node cannot run", "[admission]") {
     using cyxwiz::TrainingFailureKind;
-    using cyxwiz::servernode::AdmissionFacts;
-    using cyxwiz::servernode::EvaluateJobAdmission;
+    using cyxwiz::AdmissionFacts;
+    using cyxwiz::EvaluateJobAdmission;
     constexpr std::uint64_t GB = 1024ull * 1024 * 1024;
 
     AdmissionFacts fits{"arrayfire_cuda:0", true, 4 * GB, 2 * GB};

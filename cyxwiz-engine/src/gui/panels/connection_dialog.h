@@ -1,5 +1,8 @@
 #pragma once
 
+#include "../../core/graph_job_memory_probe.h"
+#include "../../core/remote_job_presentation.h"
+#include <future>
 #include <string>
 #include <functional>
 #include <vector>
@@ -48,7 +51,8 @@ public:
     void SetWalletPanel(gui::WalletPanel* panel) { wallet_panel_ = panel; }
 
     // Set P2P training panel for monitoring
-    void SetP2PTrainingPanel(P2PTrainingPanel* panel) { p2p_training_panel_ = panel; }
+    // Also wires the panel's Resume / Start over actions (TOFIX118 P4 GUI).
+    void SetP2PTrainingPanel(P2PTrainingPanel* panel);
 
     // Set reservation and P2P clients
     void SetReservationClient(std::shared_ptr<network::ReservationClient> client) {
@@ -83,7 +87,14 @@ private:
     void DoReleaseReservation();  // Actual release logic
     void ConnectToReservedNode();
     void StartP2PTraining();     // Send job directly to Server Node via P2P
-    void StartNewP2PTraining();  // Start new job within same reservation
+    // Start a new job within the same reservation; with resume_job_id, send
+    // that job again so the node continues from its checkpoint (P4e-3).
+    void StartNewP2PTraining(const std::string& resume_job_id = std::string());
+    // "Will this job fit?" (connection_dialog_job_fit.cpp, TOFIX118 P4 GUI):
+    // measure the job once per graph and batch size, then draw the card.
+    void UpdateJobEstimate();
+    cyxwiz::JobFitCard CurrentJobFitCard() const;
+    void RenderJobFitCard();
 
     // Reconnection support (after Engine restart)
     void CheckForActiveReservations();  // Check if user has active reservations
@@ -130,6 +141,18 @@ private:
     std::string reservation_error_;
     network::ReservationInfo active_reservation_;
     bool has_active_reservation_ = false;
+    network::NodeDisplayInfo reserved_node_;  // the listing the reservation was made from
+
+    // Job memory estimate (ProbeGraphJobMemory on a worker), keyed by the
+    // graph and batch size it measured.
+    std::future<cyxwiz::GraphJobMemoryProbe> estimate_future_;
+    cyxwiz::GraphJobMemoryProbe estimate_result_;
+    cyxwiz::JobEstimateState estimate_state_ = cyxwiz::JobEstimateState::NotStarted;
+    std::size_t estimate_key_ = 0;
+    std::string estimate_device_;
+    double estimate_next_check_ = 0.0;
+    std::string last_rejection_reason_;  // the node's words for the last refusal
+    bool fit_details_open_ = false;
 
     // Dataset URI for P2P training
     char dataset_uri_[512];
