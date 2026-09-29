@@ -638,7 +638,13 @@ struct MLNode {
     bool has_dynamic_pins = false;
     std::string dynamic_pin_trigger;     // Parameter name that triggers pin rebuild
     std::string resolved_config;         // Last resolved config value (to detect changes)
-    std::string plugin_qualified_name;   // "plugin_id:type_name" for calling ResolveDynamicPins
+
+    // Extension nodes (NodeType::PluginCustom, TOFIX125): the identity is the
+    // type id, never the display name.
+    std::string extension_type_id;       // "<provider_id>:<TypeName>"
+    std::string extension_version;       // node contract version it was created with
+    std::string extension_content_hash;  // code it was last built against
+    bool extension_missing = false;      // the extension is not registered
 };
 
 inline bool IsGeneratedDenseName(const std::string& name) {

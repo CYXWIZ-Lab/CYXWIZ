@@ -4381,7 +4381,7 @@ bool NodeEditor::HasSimulationNodes() const {
         }
         // Check for MuJoCo Plant or other simulation plugin nodes
         if (node.type == NodeType::PluginCustom) {
-            auto qname = node.plugin_qualified_name;
+            auto qname = node.extension_type_id;
             if (qname.find("MuJoCoPlant") != std::string::npos ||
                 qname.find("MuJoCoEnv") != std::string::npos) {
                 return true;
@@ -4578,8 +4578,8 @@ void NodeEditor::OnStartRLTraining() {
     // Find MuJoCo Plant node for MJCF path
     for (const auto& node : nodes_) {
         if (node.type == NodeType::PluginCustom) {
-            if (node.plugin_qualified_name.find("MuJoCoPlant") != std::string::npos) {
-                config.plugin_qualified_name = node.plugin_qualified_name;
+            if (node.extension_type_id.find("MuJoCoPlant") != std::string::npos) {
+                config.plugin_qualified_name = node.extension_type_id;
                 auto mp = node.parameters.find("mjcf_path");
                 if (mp != node.parameters.end() && !mp->second.empty()) {
                     config.env_mjcf_path = mp->second;
@@ -4596,10 +4596,10 @@ void NodeEditor::OnStartRLTraining() {
     std::map<std::string, std::string> reward_params, obs_filter_params;
     for (const auto& node : nodes_) {
         if (node.type == NodeType::PluginCustom) {
-            if (node.plugin_qualified_name.find("RewardFunction") != std::string::npos) {
+            if (node.extension_type_id.find("RewardFunction") != std::string::npos) {
                 reward_params = node.parameters;
             }
-            if (node.plugin_qualified_name.find("ObservationFilter") != std::string::npos) {
+            if (node.extension_type_id.find("ObservationFilter") != std::string::npos) {
                 obs_filter_params = node.parameters;
             }
         }
@@ -4660,8 +4660,8 @@ void NodeEditor::ExportPolicyONNX(const std::string& output_path) {
     std::string plugin_qname;
     for (const auto& node : nodes_) {
         if (node.type == NodeType::PluginCustom &&
-            node.plugin_qualified_name.find("MuJoCo") != std::string::npos) {
-            plugin_qname = node.plugin_qualified_name;
+            node.extension_type_id.find("MuJoCo") != std::string::npos) {
+            plugin_qname = node.extension_type_id;
             break;
         }
     }

@@ -93,6 +93,7 @@ add_library(cyxwiz-training-core STATIC
     ${_cyxwiz_engine_src}/core/compiled_graph_plan.cpp
     ${_cyxwiz_engine_src}/core/graph_topology_utils.cpp
     ${_cyxwiz_engine_src}/core/node_metadata_registry.cpp
+    ${_cyxwiz_engine_src}/core/extension_node_metadata.cpp
     ${_cyxwiz_engine_src}/core/pipeline_runtime_capabilities.cpp
     ${_cyxwiz_engine_src}/core/sequence_arrow_batcher.cpp
     ${_cyxwiz_engine_src}/core/sha256_digest.cpp

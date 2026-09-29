@@ -2547,6 +2547,38 @@ set_target_properties(test_extension_node_registry PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: Extension node identity and creation (TOFIX125) =====
+add_executable(test_extension_node_factory
+    tests/test_extension_node_factory.cpp
+    src/core/extension_node_metadata.cpp
+    src/core/extension_node_registry.cpp
+    src/core/graph_node_factory.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+)
+
+target_include_directories(test_extension_node_factory PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_extension_node_factory PRIVATE
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_extension_node_factory PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_extension_node_factory PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ===== Test: Legacy PipelineExecutor operator routing =====
 add_executable(test_pipeline_executor_operator_routing
     tests/test_pipeline_executor_operator_routing.cpp

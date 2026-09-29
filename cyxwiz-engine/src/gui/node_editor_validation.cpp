@@ -184,7 +184,7 @@ void NodeEditor::ResolveDynamicPins(int node_id) {
     for (auto& n : nodes_) {
         if (n.id == node_id) { node = &n; break; }
     }
-    if (!node || !node->has_dynamic_pins || node->plugin_qualified_name.empty()) return;
+    if (!node || !node->has_dynamic_pins || node->extension_type_id.empty()) return;
 
     // Check if trigger value actually changed
     const std::string& trigger = node->dynamic_pin_trigger;
@@ -202,10 +202,10 @@ void NodeEditor::ResolveDynamicPins(int node_id) {
 
     // Call plugin to resolve new pins
     auto result = cyxwiz::ExtensionNodeRegistry::Instance().ResolveDynamicPins(
-        node->plugin_qualified_name, node->parameters);
+        node->extension_type_id, node->parameters);
 
     if (result.pins.empty()) {
-        spdlog::warn("ResolveDynamicPins: plugin returned empty pins for {}", node->plugin_qualified_name);
+        spdlog::warn("ResolveDynamicPins: plugin returned empty pins for {}", node->extension_type_id);
         return;
     }
 

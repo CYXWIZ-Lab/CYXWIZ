@@ -13,8 +13,15 @@ namespace gui {
 
 NodeCategory GetNodeCategoryForType(NodeType type);
 
-// A node with its pins; ids come from (and advance) the two cursors.
+// A node with its pins; ids come from (and advance) the two cursors. For
+// NodeType::PluginCustom, `name` is the extension type id.
 MLNode CreateGraphNode(NodeType type, const std::string& name, int& next_node_id, int& next_pin_id);
+
+// An extension node (TOFIX125) by its type id "<provider_id>:<TypeName>".
+// Pins and default parameters come from ExtensionNodeRegistry. When the
+// extension is not registered the node is marked extension_missing and gets
+// one input and one output.
+MLNode CreateExtensionGraphNode(const std::string& type_id, int& next_node_id, int& next_pin_id);
 
 // Data Input / Data Split / Data Loader pins: the dataset.v2 contract, or the
 // preserved legacy pins for an unmigrated graph.

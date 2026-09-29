@@ -17,7 +17,7 @@ void RenderPluginCustomNodeProperties(MLNode& node, RenderNodePropertiesContext 
         case NodeType::PluginCustom: {
             // Get plugin info for display
             const auto descriptor =
-                cyxwiz::ExtensionNodeRegistry::Instance().Find(node.plugin_qualified_name);
+                cyxwiz::ExtensionNodeRegistry::Instance().Find(node.extension_type_id);
 
             std::string node_type_name;
             if (descriptor.has_value()) {

@@ -126,7 +126,7 @@ struct SearchableNode {
     std::string name;      // Display name (e.g., "Dense (512 units)")
     std::string category;  // Category (e.g., "Layers > Dense / Linear")
     std::string keywords;  // Additional keywords for search
-    std::string plugin_qualified_name;  // For PluginCustom: "plugin_id:type_name"
+    std::string extension_type_id;  // For PluginCustom: "provider_id:TypeName"
     NodeImplementationStatus status = NodeImplementationStatus::Implemented;  // Default to implemented
     std::string description;  // Brief description for info panel
     std::string tooltip;      // Tooltip text (for templates: why not available)

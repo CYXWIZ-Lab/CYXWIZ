@@ -199,7 +199,7 @@ void NodeEditor::InitializeSearchableNodes() {
             sn.category = "Plugin/" + descriptor.menu_category;
             sn.keywords = descriptor.type_name + " " + descriptor.metadata.name + " " +
                           descriptor.metadata.brief_description + " plugin";
-            sn.plugin_qualified_name = descriptor.type_id;
+            sn.extension_type_id = descriptor.type_id;
             all_searchable_nodes_.push_back(std::move(sn));
         }
     } catch (const std::exception& e) {
@@ -395,8 +395,8 @@ void NodeEditor::ShowNodeAddSearch() {
                 );
 
                 // For plugin nodes, pass qualified name so CreateNode can look up the registry
-                if (selected->type == NodeType::PluginCustom && !selected->plugin_qualified_name.empty())
-                    AddNode(selected->type, selected->plugin_qualified_name);
+                if (selected->type == NodeType::PluginCustom && !selected->extension_type_id.empty())
+                    AddNode(selected->type, selected->extension_type_id);
                 else
                     AddNode(selected->type, selected->name);
 
@@ -477,8 +477,8 @@ void NodeEditor::ShowNodeAddSearch() {
                     );
 
                     if (node->type == NodeType::PluginCustom &&
-                        !node->plugin_qualified_name.empty())
-                        AddNode(node->type, node->plugin_qualified_name);
+                        !node->extension_type_id.empty())
+                        AddNode(node->type, node->extension_type_id);
                     else
                         AddNode(node->type, node->name);
 
