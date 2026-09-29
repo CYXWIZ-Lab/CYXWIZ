@@ -2944,6 +2944,7 @@ set_target_properties(test_pattern_template_guard PROPERTIES
 add_executable(test_graph_compiler_deferred_nodes
     tests/test_graph_compiler_deferred_nodes.cpp
     src/core/graph_compiler.cpp
+    src/core/extension_node_registry.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
@@ -3043,6 +3044,7 @@ add_executable(test_graph_compiler_causal_lm_shape
     src/core/runtime_log_store.cpp
     src/core/route_qualification_snapshot.cpp
     src/core/graph_compiler.cpp
+    src/core/extension_node_registry.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
@@ -3084,6 +3086,7 @@ set_target_properties(test_graph_compiler_causal_lm_shape PROPERTIES
 add_executable(test_bert_encoder_contracts
     tests/test_bert_encoder_contracts.cpp
     src/core/graph_compiler.cpp
+    src/core/extension_node_registry.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
@@ -3124,6 +3127,7 @@ set_target_properties(test_bert_encoder_contracts PROPERTIES
 add_executable(test_recurrent_backend_placement
     tests/test_recurrent_backend_placement.cpp
     src/core/graph_compiler.cpp
+    src/core/extension_node_registry.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
     src/core/compiled_graph_plan.cpp
@@ -5287,6 +5291,10 @@ target_link_libraries(test_machine_capability PRIVATE cyxwiz-training-core)
 # ===== Test: saved graphs with extension nodes, on the core alone (TOFIX125) =====
 add_executable(test_extension_graph_document tests/test_extension_graph_document.cpp)
 target_link_libraries(test_extension_graph_document PRIVATE cyxwiz-training-core)
+
+# ===== Test: the compiler reports extension nodes, never skips them (TOFIX125) =====
+add_executable(test_extension_graph_compile tests/test_extension_graph_compile.cpp)
+target_link_libraries(test_extension_graph_compile PRIVATE cyxwiz-training-core)
 
 # ===== Test: Engine vs Server Node training parity (TOFIX118 P2 slice 4) =====
 # The Engine path (launcher preparation + MainWindow's dispatch + TrainingManager)
