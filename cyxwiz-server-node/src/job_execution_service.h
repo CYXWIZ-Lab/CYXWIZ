@@ -46,8 +46,10 @@ public:
                    const std::string& p2p_secret);
 
     // Set the NodeClient for Central Server communication
+    // Call before StartServer: job outcomes and the reservation end reach
+    // the Central Server through it (TOFIX118 gap 1).
     void SetNodeClient(std::shared_ptr<cyxwiz::servernode::NodeClient> client) {
-        node_client_ = client;
+        node_client_ = std::move(client);
     }
 
     // Start the P2P server on the specified port
@@ -240,7 +242,10 @@ private:
     std::unordered_map<std::string, std::string> completed_model_paths_;  // job_id -> weights_path
 
     // Node information
-    std::string node_id_;
+    std::string node_id_;  // local id from Initialize; see CurrentNodeId
+    // The Central Server's id once the node registered, else node_id_. P2P
+    // tokens name the Central Server's id (TOFIX118 gap 3).
+    std::string CurrentNodeId() const;
     cyxwiz::protocol::NodeCapabilities capabilities_;
 
     // P2P JWT validator

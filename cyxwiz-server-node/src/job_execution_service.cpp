@@ -174,11 +174,11 @@ grpc::Status JobExecutionServiceImpl::ConnectToNode(
 
     // Build response
     response->set_status(cyxwiz::protocol::STATUS_SUCCESS);
-    response->set_node_id(node_id_);
+    response->set_node_id(CurrentNodeId());
     *response->mutable_capabilities() = capabilities_;
 
     spdlog::info("[P2P WORKFLOW] Engine connected successfully!");
-    spdlog::info("  Server Node ID: {}", node_id_);
+    spdlog::info("  Server Node ID: {}", CurrentNodeId());
     spdlog::info("  Awaiting job config via SendJob...");
     return grpc::Status::OK;
 }
@@ -380,11 +380,11 @@ grpc::Status JobExecutionServiceImpl::SendJob(
     spdlog::info("========================================");
 
     // Notify Central Server about job acceptance (marks node as BUSY)
-    if (!NotifyCentralServer(request->job_id(), node_id_)) {
+    if (!NotifyCentralServer(request->job_id(), CurrentNodeId())) {
         spdlog::warn("Failed to notify Central Server about job acceptance");
         // Continue anyway - job can still run
     } else {
-        spdlog::info("[CENTRAL SERVER] Notified: Node {} is BUSY with job {}", node_id_, request->job_id());
+        spdlog::info("[CENTRAL SERVER] Notified: Node {} is BUSY with job {}", CurrentNodeId(), request->job_id());
     }
 
     // Build response
@@ -1185,6 +1185,10 @@ grpc::Status JobExecutionServiceImpl::DownloadWeights(
 
 // ========== Helper Methods ==========
 
+std::string JobExecutionServiceImpl::CurrentNodeId() const {
+    return node_client_ ? node_client_->GetNodeId() : node_id_;
+}
+
 bool JobExecutionServiceImpl::VerifyAuthToken(const std::string& token,
                                               const std::string& job_id) {
     if (token.empty()) {
@@ -1199,7 +1203,7 @@ bool JobExecutionServiceImpl::VerifyAuthToken(const std::string& token,
     }
 
     // Validate JWT token: signature, expiration, job_id, node_id
-    return jwt_validator_->ValidateForJob(token, job_id, node_id_);
+    return jwt_validator_->ValidateForJob(token, job_id, CurrentNodeId());
 }
 
 bool JobExecutionServiceImpl::NotifyCentralServer(const std::string& job_id,
@@ -1254,11 +1258,11 @@ void JobExecutionServiceImpl::NotifyJobEnded(const std::string& job_id, bool suc
 
         // Prepare heartbeat request to update node status
         cyxwiz::protocol::HeartbeatRequest request;
-        request.set_node_id(node_id_);
+        request.set_node_id(CurrentNodeId());
 
         // Set current status - node is now available
         auto* node_info = request.mutable_current_status();
-        node_info->set_node_id(node_id_);
+        node_info->set_node_id(CurrentNodeId());
         node_info->set_ram_available(capabilities_.max_memory());  // All memory available now
 
         // Clear active jobs list (no jobs running)
@@ -1533,7 +1537,7 @@ void JobExecutionServiceImpl::ReportReservationEnd(const std::string& reservatio
     spdlog::info("[CENTRAL SERVER NOTIFICATION]");
     spdlog::info("  Action: ReportReservationEndFromNode");
     spdlog::info("  Reservation ID: {}", reservation_id);
-    spdlog::info("  Node ID: {}", node_id_);
+    spdlog::info("  Node ID: {}", CurrentNodeId());
     spdlog::info("  Jobs completed: {}", jobs_completed);
     spdlog::info("  node_available: true (move to FREE list)");
     spdlog::info("  Expected Central Server actions:");
@@ -1557,7 +1561,7 @@ void JobExecutionServiceImpl::ReportReservationEnd(const std::string& reservatio
         );
 
         if (reported) {
-            spdlog::info("[CENTRAL SERVER] SUCCESS - Node {} is now FREE on Central Server", node_id_);
+            spdlog::info("[CENTRAL SERVER] SUCCESS - Node {} is now FREE on Central Server", CurrentNodeId());
             spdlog::info("  Node can now accept new reservations from Engines");
         } else {
             spdlog::error("[CENTRAL SERVER] FAILED to report reservation end!");
