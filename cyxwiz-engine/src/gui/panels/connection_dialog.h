@@ -2,6 +2,7 @@
 
 #include "../../core/graph_job_memory_probe.h"
 #include "../../core/remote_job_presentation.h"
+#include "../../core/reservation_presentation.h"
 #include <atomic>
 #include <future>
 #include <string>
@@ -71,9 +72,19 @@ private:
     void RenderNodeTable();
     void RenderNodeSearchFilters();
     void RenderSelectedNodeInfo();
-    void RenderReservationPanel();       // Reserve node UI
-    void RenderReservationConfirmDialog(); // Confirmation dialog
-    void RenderActiveReservationPanel();  // Show active reservation
+    // The reservation card (connection_dialog_reservation.cpp, TOFIX118
+    // gaps 5-6, mockup approved 2026-09-30).
+    void RenderReservationPanel();        // reserve quote for the selected node
+    void RenderActiveReservationPanel();  // time left, Extend, End, details
+    void RenderTrainingOnNodePanel();     // fit card, start / stop, disconnect
+    void RenderEndReservationPopup();
+    void RenderStopTrainingPopup();
+    void RenderReservationReceipt();      // after a reservation ended
+    void RenderReconnectPrompt();         // active reservations found on connect
+    void RenderReservationError();        // reservation_error_, in every state
+    static ReservationNodeFacts FactsFor(const network::NodeDisplayInfo& node);
+    ActiveReservationInputs CurrentReservationInputs() const;
+    const network::NodeDisplayInfo* SelectedNode() const;
     // RenderActiveJobsPanel removed - jobs tracked via P2P Training Progress panel
 
     // Node discovery actions
@@ -82,8 +93,11 @@ private:
 
     // Reservation actions
     void StartReservation();
-    void CancelReservation();
-    void DoReleaseReservation();  // Actual release logic
+    void DoReleaseReservation();  // End the active reservation (after the confirm popup)
+    // The reservation is over: disconnect, stop the heartbeat, keep a receipt.
+    void FinishReservation(ReservationEndReason reason, const std::string& error);
+    void DisconnectFromNode();    // P2P only; the reservation stays
+    void EndFoundReservation(const std::string& reservation_id);  // from the reconnect rows
     // Add minutes to the active reservation and hand the node the new end
     // (TOFIX118 gap 5). False with reservation_error_ set when refused.
     bool ExtendActiveReservation(int additional_minutes);
@@ -99,8 +113,8 @@ private:
     void RenderJobFitCard();
 
     // Reconnection support (after Engine restart)
-    void CheckForActiveReservations();  // Check if user has active reservations
-    void ReconnectToReservation(const std::string& reservation_id);  // Reconnect to existing reservation
+    void CheckForActiveReservations();  // lists them in the reconnect prompt
+    void ReconnectToReservation(const std::string& reservation_id);  // one of found_reservations_
 
     network::GRPCClient* client_;
     network::JobManager* job_manager_;
@@ -133,12 +147,14 @@ private:
     static constexpr float node_refresh_interval_seconds_ = 10.0f;
 
     // Reservation state
-    bool show_reservation_confirm_ = false;
-    bool show_release_confirm_ = false;   // Confirmation before releasing reservation
+    bool show_release_confirm_ = false;   // opens the End reservation popup
+    bool show_stop_confirm_ = false;      // opens the Stop training popup
+    bool quote_details_open_ = false;
+    bool reservation_details_open_ = false;
+    bool receipt_details_open_ = false;
     int reservation_duration_minutes_ = 60;
     int reservation_epochs_ = 10;           // Default training epochs
     int reservation_batch_size_ = 32;       // Default batch size
-    char user_wallet_[128] = "";
     bool reserving_ = false;
     std::string reservation_error_;
     network::ReservationInfo active_reservation_;
@@ -146,7 +162,13 @@ private:
     // From the Central Server's heartbeat (every 30 s, heartbeat thread):
     // seconds left, -1 before the first reply; and its "extend soon" hint.
     std::atomic<long long> reservation_seconds_left_{-1};
+    std::atomic<long long> reservation_heartbeat_at_{0};  // Unix seconds of that reply
     std::atomic<bool> reservation_should_extend_{false};
+    long long expired_at_ = 0;       // when the card first saw time run out
+    int jobs_started_ = 0;           // in the active reservation
+    bool has_receipt_ = false;       // show the receipt of the last reservation
+    ReservationEndFacts receipt_facts_;
+    std::vector<ActiveReservationListing> found_reservations_;  // reconnect prompt
     network::NodeDisplayInfo reserved_node_;  // the listing the reservation was made from
 
     // Job memory estimate (ProbeGraphJobMemory on a worker), keyed by the

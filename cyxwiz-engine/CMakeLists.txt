@@ -315,6 +315,7 @@ set(ENGINE_SOURCES
     src/core/live_graph_compile.cpp
     src/core/extension_node_presentation.cpp
     src/core/remote_job_presentation.cpp
+    src/core/reservation_presentation.cpp
     src/gui/node_config_dialog.cpp
     src/gui/data_input_capabilities.cpp
     src/gui/data_input_preview.cpp
@@ -393,6 +394,7 @@ set(ENGINE_SOURCES
     src/gui/panels/visualization_panel.cpp
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/connection_dialog_job_fit.cpp
+    src/gui/panels/connection_dialog_reservation.cpp
     src/gui/dialogs/python_setup_wizard.cpp
     src/gui/dialogs/project_selection_dialog.cpp
     src/gui/dialogs/start_page.cpp
@@ -3029,6 +3031,18 @@ target_link_libraries(test_remote_job_presentation PRIVATE
     fmt::fmt
 )
 set_target_properties(test_remote_job_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Reservation card presentation (TOFIX118 gaps 5-6) =====
+add_executable(test_reservation_presentation
+    tests/test_reservation_presentation.cpp
+    src/core/reservation_presentation.cpp
+)
+target_include_directories(test_reservation_presentation PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+set_target_properties(test_reservation_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
