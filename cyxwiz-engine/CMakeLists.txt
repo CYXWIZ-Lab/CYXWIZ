@@ -5196,6 +5196,21 @@ if(WIN32)
 endif()
 set_target_properties(test_async_task_cancellation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# tofix94: atomic crash heartbeat under concurrent reads.
+add_executable(test_crash_heartbeat_atomic tests/test_crash_heartbeat_atomic.cpp
+    src/core/async_task_manager.cpp src/core/training_trace_collector.cpp
+    src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp
+    src/core/route_qualification_snapshot.cpp)
+target_include_directories(test_crash_heartbeat_atomic PRIVATE src
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+target_link_libraries(test_crash_heartbeat_atomic PRIVATE cyxwiz-backend
+    spdlog::spdlog nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_link_libraries(test_crash_heartbeat_atomic PRIVATE Psapi)
+    target_compile_definitions(test_crash_heartbeat_atomic PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_crash_heartbeat_atomic PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 add_executable(test_async_task_lifecycle tests/test_async_task_lifecycle.cpp
     src/core/async_task_manager.cpp src/core/training_trace_collector.cpp
     src/core/crash_run_recorder.cpp src/core/runtime_log_store.cpp

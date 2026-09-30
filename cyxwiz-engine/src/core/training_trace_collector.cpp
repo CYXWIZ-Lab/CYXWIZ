@@ -1,4 +1,5 @@
 #include "training_trace_collector.h"
+#include "atomic_json_file.h"
 #include "debug_run_paths.h"
 #include "algorithms/arrayfire_backend_utils.h"
 #include "execution_device_context.h"
@@ -40,47 +41,6 @@ std::filesystem::path TraceDir() {
 
 std::filesystem::path CurrentTracePath() {
     return TraceDir() / "current_training_trace.json";
-}
-
-bool PublishTraceAtomically(const std::filesystem::path& temporary,
-                            const std::filesystem::path& target) {
-#ifdef _WIN32
-    return MoveFileExW(
-               temporary.c_str(), target.c_str(),
-               MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
-#else
-    std::error_code error;
-    std::filesystem::rename(temporary, target, error);
-    return !error;
-#endif
-}
-
-bool WriteTraceAtomically(const std::filesystem::path& target,
-                          const nlohmann::json& document) {
-    auto temporary = target;
-    temporary += ".tmp";
-
-    {
-        std::ofstream file(temporary, std::ios::trunc);
-        if (!file) {
-            return false;
-        }
-        file << std::setw(2) << document << '\n';
-        file.flush();
-        if (!file) {
-            std::error_code ignored;
-            std::filesystem::remove(temporary, ignored);
-            return false;
-        }
-    }
-
-    if (PublishTraceAtomically(temporary, target)) {
-        return true;
-    }
-
-    std::error_code ignored;
-    std::filesystem::remove(temporary, ignored);
-    return false;
 }
 
 void PopulateMemorySnapshot(TrainingTraceEvent& event) {
@@ -1971,7 +1931,7 @@ void TrainingTraceCollector::WriteLocked() const {
         j["placement_summary"] = summary.placement_summary;
         j["residency_verdict"] = summary.residency_verdict;
         j["residency_reason"] = summary.residency_reason;
-        if (WriteTraceAtomically(CurrentTracePath(), j)) {
+        if (WriteJsonFileAtomically(CurrentTracePath(), j)) {
             InvalidatePersistedTraceCache();
         }
     } catch (...) {
