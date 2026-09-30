@@ -61,6 +61,10 @@ void TestModeAndStateKeysRoundTrip() {
 }
 
 void TestSmokeCapabilityBeforeDispatch() {
+    Check(EvaluateSmokeCapability(StudioDebuggerDomainLabel(PreprocessingDomain::Text)).supported,
+          "compiled text domain supports Smoke Run");
+    Check(std::string(StudioDebuggerDomainLabel(PreprocessingDomain::Tabular)) == "Tabular",
+          "tabular domain label");
     const auto text = EvaluateSmokeCapability("Text");
     Check(text.supported, "text graphs support Smoke Run");
     const auto tabular = EvaluateSmokeCapability("Tabular");
@@ -144,6 +148,23 @@ void TestTraceStatusVocabulary() {
     Check(WorstTraceStatus({"ok", "shape_mismatch", "ok"}) == "shape_mismatch", "worst picks warning over ok");
     Check(WorstTraceStatus({"warning", "failed"}) == "failed", "worst picks failure");
     Check(WorstTraceStatus({}).empty(), "worst of nothing is empty");
+}
+
+void TestTrainingProvenance() {
+    TrainingTraceSummary trace;
+    trace.available = true;
+    trace.run_id = "train-1790797";
+    trace.status = "running";
+    Check(IsTrainingTraceLive(trace, true), "running trace with active training is live");
+    Check(!IsTrainingTraceLive(trace, false), "no active training -> historical");
+    trace.status = "completed";
+    Check(!IsTrainingTraceLive(trace, true), "completed trace is historical");
+    trace.status = "Cancelled";
+    Check(!IsTrainingTraceLive(trace, true), "cancelled trace is historical");
+    trace.status = "running";
+    trace.run_id.clear();
+    Check(!IsTrainingTraceLive(trace, true), "trace without run id is not live");
+    Check(!IsTrainingTraceLive(TrainingTraceSummary{}, true), "unavailable trace is not live");
 }
 
 StudioDebuggerSnapshot OwnerMachineSnapshot() {
@@ -316,6 +337,7 @@ int main() {
     TestStepPlans();
     TestOutcomeAggregation();
     TestTraceStatusVocabulary();
+    TestTrainingProvenance();
     TestStatusLine();
     TestGraphLayout();
     TestNodeAggregation();

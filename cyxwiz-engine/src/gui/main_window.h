@@ -141,6 +141,7 @@ class DataStudioPanel;
 // Node Info panel (Phase 2)
 class NodeInfoPanel;
 struct StudioDebuggerSnapshot;
+struct StudioDebuggerRunControl;
 enum class StudioDebuggerRunMode;
 } // namespace cyxwiz
 
@@ -257,13 +258,13 @@ private:
                                                 int sample_index,
                                                 std::vector<MLNode> nodes,
                                                 std::vector<NodeLink> links,
-                                                int explain_node_id = -1);
+                                                int explain_node_id = -1,
+                                                const cyxwiz::StudioDebuggerRunControl* control = nullptr);
     void RecordArtifactConsistencyTrace(
         const cyxwiz::DebugArtifactConsistencyInput& input);
 
-    // Run Local Debug: gate on Compile, then execute one forward +
-    // one backward pass on synthetic data via DebugExecutor. Feeds the
-    // result through the compile popup (in CompileResultMode::Debug mode).
+    // Run Local Debug (F6) as a background Studio Debugger run: compile
+    // gate, preflight, then one synthetic forward/backward pass.
     void LocalDebugGraphAndReport();
 
     // Shared compile pass used by both the explicit Compile button and

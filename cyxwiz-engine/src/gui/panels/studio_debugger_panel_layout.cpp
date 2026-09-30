@@ -153,61 +153,7 @@ void StudioDebuggerPanel::RenderToolbar() {
             ? ICON_FA_CLOCK " Running##StudioDebuggerRunAction"
             : ICON_FA_PLAY " Run##StudioDebuggerRunAction";
         if (ImGui::Button(run_label, ImVec2(-FLT_MIN, 0.0f))) {
-            if (run_debug_callback_) {
-                const StudioDebuggerRunMode mode = run_mode_;
-                const int sample_index = selected_sample_index_;
-                auto task = std::make_shared<std::function<StudioDebuggerSnapshot()>>(
-                    run_debug_callback_(mode, sample_index));
-                auto state = std::make_shared<AsyncRunState>();
-                pending_run_state_ = state;
-                run_status_message_ =
-                    "Studio Debugger run is executing in the background.";
-                run_in_progress_ = true;
-                pending_task_id_ = AsyncTaskManager::Instance().RunAsync(
-                    "Studio Debugger Run",
-                    [task, state](LambdaTask& async_task) {
-                        async_task.ReportProgress(
-                            0.05f, "Preparing Studio Debugger run");
-                        if (async_task.ShouldStop()) {
-                            return;
-                        }
-                        StudioDebuggerSnapshot result = (*task)();
-                        {
-                            std::lock_guard<std::mutex> lock(state->mutex);
-                            state->result = std::move(result);
-                        }
-                        async_task.ReportProgress(
-                            1.0f, "Studio Debugger run completed");
-                    },
-                    nullptr,
-                    [this, state](bool success, const std::string& error) {
-                        run_in_progress_ = false;
-                        pending_task_id_ = 0;
-                        if (!success) {
-                            StudioDebuggerSnapshot failed;
-                            failed.success = false;
-                            failed.failure_summary = error.empty()
-                                ? "Studio Debugger task failed."
-                                : error;
-                            SetSession(failed);
-                            run_status_message_ = failed.failure_summary;
-                            return;
-                        }
-
-                        std::optional<StudioDebuggerSnapshot> result;
-                        {
-                            std::lock_guard<std::mutex> lock(state->mutex);
-                            result = std::move(state->result);
-                        }
-                        if (result) {
-                            SetSession(*result);
-                            run_status_message_.clear();
-                        } else {
-                            run_status_message_ =
-                                "Studio Debugger task completed without a result.";
-                        }
-                    });
-            }
+            StartRun(run_mode_, selected_sample_index_);
         }
         ImGui::PopStyleColor(3);
         if (controls_disabled) {
@@ -729,6 +675,7 @@ void StudioDebuggerPanel::Render() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 4.0f));
     std::string title = std::string(ICON_FA_BUG) +
         " Studio Debugger###StudioDebuggerPanel";
+    PollRunProgress();
     if (ImGui::Begin(title.c_str(), &visible_)) {
         RenderToolbar();
         RenderSectionNavigation();

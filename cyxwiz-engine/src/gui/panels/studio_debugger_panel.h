@@ -9,8 +9,9 @@
 #include "../../core/training_trace_collector.h"
 #include "../../core/debug_run_store.h"
 #include "../../core/async_task_manager.h"
-#include "../../core/studio_debugger_snapshot.h"
+#include "../../core/studio_debugger_presentation.h"
 #include "../icons.h"
+#include <atomic>
 #include <cstddef>
 #include <chrono>
 #include <imgui.h>
@@ -51,11 +52,25 @@ public:
     void Render() override;
     const char* GetIcon() const override { return ICON_FA_BUG; }
 
-    using RunDebugCallback = std::function<std::function<StudioDebuggerSnapshot()>(StudioDebuggerRunMode, int)>;
+    // Returns the work for one run (called on the UI thread with the frozen
+    // graph); the returned function runs on a worker and reports through the
+    // control it is given.
+    using RunDebugCallback = std::function<std::function<StudioDebuggerSnapshot(
+        const StudioDebuggerRunControl&)>(StudioDebuggerRunMode, int sample_index, int explain_node_id)>;
+    using RunCompletedCallback = std::function<void(const StudioDebuggerSnapshot&)>;
     using FocusNodeCallback = std::function<void(int)>;
+    // The current graph's compiled data domain, for Smoke capability.
+    using GraphDomainCallback = std::function<std::string()>;
 
     void SetRunDebugCallback(RunDebugCallback callback) { run_debug_callback_ = std::move(callback); }
+    void SetRunCompletedCallback(RunCompletedCallback callback) { run_completed_callback_ = std::move(callback); }
     void SetFocusNodeCallback(FocusNodeCallback callback) { focus_node_callback_ = std::move(callback); }
+    void SetGraphDomainCallback(GraphDomainCallback callback) { graph_domain_callback_ = std::move(callback); }
+
+    // One run path for Run, F6 and Explain Node. False if a run is active.
+    bool StartRun(StudioDebuggerRunMode mode, int sample_index, int explain_node_id = -1);
+    void RequestStop();
+    bool IsRunning() const { return run_in_progress_; }
 
     void SetSession(const StudioDebuggerSnapshot& session);
     void ShowRuntimeProfile();
@@ -71,6 +86,15 @@ private:
     struct AsyncRunState {
         std::mutex mutex;
         std::optional<StudioDebuggerSnapshot> result;
+        std::vector<StudioDebuggerStep> steps;
+        std::string running_step;
+        float progress = 0.0f;
+        std::atomic<bool> stop{false};
+    };
+    struct AsyncLoadState {
+        std::mutex mutex;
+        std::optional<StudioDebuggerSnapshot> result;
+        std::vector<DebugRunStoreSummary> history;
     };
 
     void RenderToolbar();
@@ -86,6 +110,9 @@ private:
     void RenderRunHistory();
     void RenderRunComparison();
     void LoadStoredRun(const std::string& run_id);
+    void RequestRunHistoryRefresh();
+    void PollRunProgress();
+    void RefreshSmokeCapability();
     void RefreshLiveTrainingTrace();
     void RenderLiveTrainingStatus();
     void RenderOverview();
@@ -118,9 +145,25 @@ private:
     static std::string FormatShape(const std::vector<size_t>& shape);
 
     RunDebugCallback run_debug_callback_;
+    RunCompletedCallback run_completed_callback_;
     FocusNodeCallback focus_node_callback_;
+    GraphDomainCallback graph_domain_callback_;
     std::shared_ptr<AsyncRunState> pending_run_state_;
     uint64_t pending_task_id_ = 0;
+    std::shared_ptr<AsyncLoadState> pending_load_state_;
+    bool load_in_progress_ = false;
+    bool history_refresh_in_progress_ = false;
+    bool history_loaded_ = false;
+    // Live view of the running run, copied from the worker each frame.
+    StudioDebuggerRunMode running_mode_ = StudioDebuggerRunMode::FullWorkflow;
+    std::vector<StudioDebuggerStep> running_steps_;
+    std::string running_step_;
+    float running_progress_ = 0.0f;
+    bool stop_requested_ = false;
+    std::chrono::steady_clock::time_point run_started_{};
+    int pending_explain_node_id_ = -1;
+    SmokeCapability smoke_capability_;
+    bool smoke_capability_known_ = false;
 
     StudioDebuggerSnapshot session_;
     StudioDebuggerSnapshot current_session_;

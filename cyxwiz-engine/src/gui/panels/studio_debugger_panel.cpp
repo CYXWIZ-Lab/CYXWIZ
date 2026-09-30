@@ -1,5 +1,6 @@
 #include "studio_debugger_panel.h"
 #include "../../core/debug_training_graph_diff.h"
+#include "../../core/training_manager.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -72,22 +73,6 @@ const char* ClassifyTrainingWarning(const std::string& text) {
         return "Memory";
     }
     return "Warning";
-}
-
-int TraceStatusSeverity(const std::string& status) {
-    if (status == "failed" || status == "nan") {
-        return 4;
-    }
-    if (status == "shape_mismatch" || status == "blocked") {
-        return 3;
-    }
-    if (status == "warning" || status == "zero") {
-        return 2;
-    }
-    if (status == "ok" || status == "passed" || status == "ready" || status == "captured") {
-        return 1;
-    }
-    return 0;
 }
 
 int CountTraceStatus(const StudioDebuggerSnapshot& session, const std::string& status) {
@@ -796,29 +781,149 @@ StudioDebuggerPanel::StudioDebuggerPanel()
     : Panel("Studio Debugger", false) {}
 
 void StudioDebuggerPanel::SetSession(const StudioDebuggerSnapshot& session) {
+    // The run already carries its evidence (loaded on the worker); the panel
+    // does no disk I/O here and never replaces the run's training truth with
+    // whatever trace is newest (tofix96).
     session_ = session;
     current_session_ = session;
     has_current_session_ = true;
     current_run_id_ = session_.run_id;
-    if (auto last_run = CrashRunRecorder::LoadLastRun()) {
-        session_.last_run = *last_run;
+    if (!session_.run_history.empty()) {
+        history_loaded_ = true;
     }
-    const auto training_trace = TrainingTraceCollector::LatestTrace();
-    if (training_trace.available) {
-        session_.training_trace = training_trace;
-        current_session_.training_trace = training_trace;
-        if (!session_.execution.available) {
-            session_.execution = MakeDebugRunExecutionSummary(training_trace);
-            current_session_.execution = session_.execution;
-        }
+    if (!session_.graph_domain.empty()) {
+        smoke_capability_ = EvaluateSmokeCapability(session_.graph_domain);
+        smoke_capability_known_ = true;
     }
-    session_.run_history = DebugRunStore::ListRecent(8);
-    current_session_.run_history = session_.run_history;
     has_session_ = true;
     selected_trace_index_ = session_.debug_result.layer_traces.empty() ? -1 : 0;
     run_comparison_trace_.reset();
     run_comparison_baseline_id_.clear();
     run_comparison_current_id_.clear();
+}
+
+bool StudioDebuggerPanel::StartRun(StudioDebuggerRunMode mode,
+                                   int sample_index,
+                                   int explain_node_id) {
+    if (run_in_progress_ || !run_debug_callback_) {
+        return false;
+    }
+    auto task = std::make_shared<std::function<StudioDebuggerSnapshot(
+        const StudioDebuggerRunControl&)>>(
+        run_debug_callback_(mode, sample_index, explain_node_id));
+    auto state = std::make_shared<AsyncRunState>();
+    state->steps = PlanStudioDebuggerSteps(
+        mode, smoke_capability_known_ ? smoke_capability_ : SmokeCapability{true, {}, {}});
+    pending_run_state_ = state;
+    running_mode_ = mode;
+    running_steps_ = state->steps;
+    running_step_.clear();
+    running_progress_ = 0.0f;
+    stop_requested_ = false;
+    run_started_ = std::chrono::steady_clock::now();
+    pending_explain_node_id_ = explain_node_id;
+    run_status_message_.clear();
+    run_in_progress_ = true;
+    pending_task_id_ = AsyncTaskManager::Instance().RunAsync(
+        std::string("Studio Debugger: ") + StudioDebuggerRunModeLabel(mode),
+        [task, state](LambdaTask& async_task) {
+            StudioDebuggerRunControl control;
+            control.on_progress = [state, &async_task](
+                                      const std::vector<StudioDebuggerStep>& steps,
+                                      const std::string& running_step,
+                                      float progress) {
+                {
+                    std::lock_guard<std::mutex> lock(state->mutex);
+                    state->steps = steps;
+                    state->running_step = running_step;
+                    state->progress = progress;
+                }
+                async_task.ReportProgress(progress, running_step);
+            };
+            control.should_stop = [state, &async_task]() {
+                return state->stop.load() || async_task.ShouldStop();
+            };
+            StudioDebuggerSnapshot result = (*task)(control);
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->result = std::move(result);
+        },
+        nullptr,
+        [this, state](bool success, const std::string& error) {
+            run_in_progress_ = false;
+            pending_task_id_ = 0;
+            std::optional<StudioDebuggerSnapshot> result;
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                result = std::move(state->result);
+            }
+            if (!result) {
+                StudioDebuggerSnapshot failed;
+                failed.mode = running_mode_;
+                failed.outcome = StudioDebuggerOutcome::Failed;
+                failed.failure_summary = !success && !error.empty()
+                    ? error : "Studio Debugger run ended without a result.";
+                result = std::move(failed);
+            }
+            SetSession(*result);
+            if (pending_explain_node_id_ >= 0) {
+                ShowNodeExplanation(pending_explain_node_id_);
+            }
+            pending_explain_node_id_ = -1;
+            if (run_completed_callback_) {
+                run_completed_callback_(*result);
+            }
+        });
+    return true;
+}
+
+void StudioDebuggerPanel::RequestStop() {
+    if (!run_in_progress_ || !pending_run_state_) {
+        return;
+    }
+    pending_run_state_->stop.store(true);
+    stop_requested_ = true;
+}
+
+void StudioDebuggerPanel::PollRunProgress() {
+    if (!run_in_progress_ || !pending_run_state_) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(pending_run_state_->mutex);
+    running_steps_ = pending_run_state_->steps;
+    running_step_ = pending_run_state_->running_step;
+    running_progress_ = pending_run_state_->progress;
+}
+
+void StudioDebuggerPanel::RefreshSmokeCapability() {
+    if (!graph_domain_callback_) {
+        return;
+    }
+    const std::string domain = graph_domain_callback_();
+    smoke_capability_ = EvaluateSmokeCapability(domain);
+    smoke_capability_known_ = !domain.empty();
+}
+
+void StudioDebuggerPanel::RequestRunHistoryRefresh() {
+    if (history_refresh_in_progress_) {
+        return;
+    }
+    history_refresh_in_progress_ = true;
+    auto state = std::make_shared<AsyncLoadState>();
+    AsyncTaskManager::Instance().RunAsync(
+        "Studio Debugger: saved runs",
+        [state](LambdaTask&) {
+            auto history = DebugRunStore::ListRecent(8);
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->history = std::move(history);
+        },
+        nullptr,
+        [this, state](bool, const std::string&) {
+            history_refresh_in_progress_ = false;
+            history_loaded_ = true;
+            std::lock_guard<std::mutex> lock(state->mutex);
+            session_.run_history = state->history;
+            current_session_.run_history = state->history;
+        });
 }
 
 void StudioDebuggerPanel::ShowRuntimeProfile() {
@@ -1159,29 +1264,57 @@ void StudioDebuggerPanel::RenderTraceSettings() {
 }
 
 void StudioDebuggerPanel::LoadStoredRun(const std::string& run_id) {
-    auto record = DebugRunStore::Load(run_id);
-    if (!record) {
+    if (load_in_progress_ || run_in_progress_) {
         return;
     }
-
-    const auto history = DebugRunStore::ListRecent(8);
-    session_ = StudioDebuggerSnapshot{};
-    session_.run_id = record->summary.run_id;
-    session_.graph_hash = record->summary.graph_hash;
-    session_.success = record->summary.success;
-    session_.failure_summary = record->summary.success ? "" : record->summary.summary;
-    session_.sample_summary = "Saved Studio Debugger run";
-    session_.issues = std::move(record->issues);
-    session_.traces = std::move(record->traces);
-    session_.studio_events = std::move(record->studio_events);
-    session_.recommendations = std::move(record->recommendations);
-    session_.execution = record->summary.execution;
-    session_.run_history = history;
-    has_session_ = true;
-    selected_trace_index_ = session_.traces.empty() ? -1 : 0;
-    run_comparison_trace_.reset();
-    run_comparison_baseline_id_.clear();
-    run_comparison_current_id_.clear();
+    load_in_progress_ = true;
+    auto state = std::make_shared<AsyncLoadState>();
+    pending_load_state_ = state;
+    AsyncTaskManager::Instance().RunAsync(
+        "Studio Debugger: load saved run",
+        [state, run_id](LambdaTask&) {
+            auto record = DebugRunStore::Load(run_id);
+            auto history = DebugRunStore::ListRecent(8);
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->history = std::move(history);
+            if (!record) {
+                return;
+            }
+            StudioDebuggerSnapshot loaded;
+            loaded.run_id = record->summary.run_id;
+            loaded.graph_hash = record->summary.graph_hash;
+            loaded.success = record->summary.success;
+            loaded.failure_summary = record->summary.success ? "" : record->summary.summary;
+            loaded.sample_summary = "Saved Studio Debugger run";
+            loaded.issues = std::move(record->issues);
+            loaded.traces = std::move(record->traces);
+            loaded.studio_events = std::move(record->studio_events);
+            loaded.recommendations = std::move(record->recommendations);
+            loaded.execution = record->summary.execution;
+            if (!ApplyStudioDebuggerRunSummaryTrace(loaded)) {
+                // Saved before run summaries existed: keep the stored verdict.
+                loaded.outcome = loaded.success ? StudioDebuggerOutcome::Passed
+                                                : StudioDebuggerOutcome::Failed;
+            }
+            state->result = std::move(loaded);
+        },
+        nullptr,
+        [this, state](bool, const std::string&) {
+            load_in_progress_ = false;
+            std::lock_guard<std::mutex> lock(state->mutex);
+            if (!state->result) {
+                run_status_message_ = "That saved run could not be loaded.";
+                return;
+            }
+            session_ = std::move(*state->result);
+            session_.run_history = state->history;
+            history_loaded_ = true;
+            has_session_ = true;
+            selected_trace_index_ = -1;
+            run_comparison_trace_.reset();
+            run_comparison_baseline_id_.clear();
+            run_comparison_current_id_.clear();
+        });
 }
 
 void StudioDebuggerPanel::RenderRunComparison() {
@@ -1398,18 +1531,26 @@ void StudioDebuggerPanel::RefreshLiveTrainingTrace() {
         return;
     }
     next_training_trace_refresh_ = now + std::chrono::milliseconds(250);
-    const auto trace = TrainingTraceCollector::LatestTrace();
-    if (trace.available) {
-        if (has_current_session_) {
-            current_session_.training_trace = trace;
-        }
-        const bool viewing_saved_history = has_current_session_ &&
-            !current_run_id_.empty() &&
-            !session_.run_id.empty() &&
-            session_.run_id != current_run_id_;
-        if (!viewing_saved_history) {
-            session_.training_trace = trace;
-        }
+    // Only live training replaces the shown evidence, and it is labeled live.
+    if (!TrainingManager::Instance().IsTrainingActive()) {
+        return;
+    }
+    const auto trace = TrainingTraceCollector::Instance().Snapshot();
+    if (!IsTrainingTraceLive(trace, true)) {
+        return;
+    }
+    if (has_current_session_) {
+        current_session_.training_trace = trace;
+        current_session_.training_trace_historical = false;
+    }
+    const bool viewing_saved_history = has_current_session_ &&
+        !current_run_id_.empty() &&
+        !session_.run_id.empty() &&
+        session_.run_id != current_run_id_;
+    if (!viewing_saved_history) {
+        session_.training_trace = trace;
+        session_.training_trace_historical = false;
+        session_.execution = MakeDebugRunExecutionSummary(trace);
     }
 }
 
@@ -1684,8 +1825,8 @@ void StudioDebuggerPanel::RenderGraphTraceView() {
 }
 
 void StudioDebuggerPanel::RenderRunHistory() {
-    if (session_.run_history.empty()) {
-        session_.run_history = DebugRunStore::ListRecent(8);
+    if (!history_loaded_) {
+        RequestRunHistoryRefresh();
     }
 
     ImGui::Text("Run History");

@@ -69,6 +69,7 @@
 #include "panels/architecture_diagram.h"
 #include "panels/lr_finder_panel.h"
 #include "panels/studio_debugger_panel.h"
+#include "../core/studio_debugger_presentation.h"
 #include "panels/data_profiler_panel.h"
 #include "panels/correlation_matrix_panel.h"
 #include "panels/missing_value_panel.h"
@@ -857,30 +858,58 @@ MainWindow::MainWindow()
         this->CompileGraphAndReport();
     });
 
-    // Local Debug: gated by Compile, then runs DebugExecutor on a synthetic
-    // batch. Result renders through the same compile popup infrastructure
-    // in CompileResultMode::Debug mode.
+    // Local Debug (F6): a background Studio Debugger run (compile gate,
+    // preflight, one synthetic batch through DebugExecutor).
     node_editor_->SetDebugCallback([this]() {
         this->LocalDebugGraphAndReport();
     });
 
     if (studio_debugger_panel_) {
+        // One run path for the panel's Run, F6 and Explain Node: the graph is
+        // frozen here on the UI thread and the run executes on a worker.
         studio_debugger_panel_->SetRunDebugCallback([this](cyxwiz::StudioDebuggerRunMode mode,
-                                                           int sample_index) {
+                                                           int sample_index,
+                                                           int explain_node_id) {
             std::vector<MLNode> nodes;
             std::vector<NodeLink> links;
             if (node_editor_) {
                 nodes = node_editor_->GetNodes();
                 links = node_editor_->GetLinks();
             }
-            return [this, mode, sample_index,
+            return [this, mode, sample_index, explain_node_id,
                     nodes = std::move(nodes),
-                    links = std::move(links)]() mutable {
+                    links = std::move(links)](
+                       const cyxwiz::StudioDebuggerRunControl& control) mutable {
                 cyxwiz::StudioDebuggerSnapshot session;
                 this->BuildStudioDebuggerSessionFromSnapshot(
-                    session, mode, sample_index, std::move(nodes), std::move(links));
+                    session, mode, sample_index, std::move(nodes), std::move(links),
+                    explain_node_id, &control);
                 return session;
             };
+        });
+        studio_debugger_panel_->SetRunCompletedCallback(
+            [this](const cyxwiz::StudioDebuggerSnapshot& session) {
+                // Staleness cache for the Train gate: only a successful Local
+                // Debug of this exact graph counts.
+                if (session.has_debug_result && session.debug_result.success) {
+                    last_debug_graph_hash_ = session.graph_hash;
+                    have_last_debug_result_ = true;
+                    spdlog::info("Studio Debugger: cached debug hash {:#018x}",
+                                 last_debug_graph_hash_);
+                }
+            });
+        studio_debugger_panel_->SetGraphDomainCallback([this]() -> std::string {
+            if (!node_editor_) {
+                return {};
+            }
+            try {
+                cyxwiz::GraphCompiler compiler;
+                const auto config = compiler.Compile(node_editor_->GetNodes(),
+                                                     node_editor_->GetLinks());
+                return cyxwiz::StudioDebuggerDomainLabel(config.preprocessing_domain);
+            } catch (const std::exception&) {
+                return {};
+            }
         });
         studio_debugger_panel_->SetFocusNodeCallback([this](int node_id) {
             if (node_editor_) {
@@ -894,18 +923,11 @@ MainWindow::MainWindow()
         if (!node_editor_ || !studio_debugger_panel_) {
             return;
         }
-        auto nodes = node_editor_->GetNodes();
-        auto links = node_editor_->GetLinks();
-        cyxwiz::StudioDebuggerSnapshot session;
-        BuildStudioDebuggerSessionFromSnapshot(
-            session,
-            cyxwiz::StudioDebuggerRunMode::Preflight,
-            0,
-            std::move(nodes),
-            std::move(links),
-            node_id);
-        studio_debugger_panel_->SetSession(session);
-        studio_debugger_panel_->ShowNodeExplanation(node_id);
+        studio_debugger_panel_->Show();
+        if (!studio_debugger_panel_->StartRun(
+                cyxwiz::StudioDebuggerRunMode::Preflight, 0, node_id)) {
+            spdlog::info("Explain Node: a Studio Debugger run is already active");
+        }
     });
 
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
@@ -4020,7 +4042,7 @@ void MainWindow::CompileGraphAndReport() {
 }
 
 void MainWindow::LocalDebugGraphAndReport() {
-    if (!node_editor_) {
+    if (!node_editor_ || !studio_debugger_panel_) {
         compile_result_success_ = false;
         compile_result_mode_ = CompileResultMode::BlockedDebug;
         compile_result_message_ = "Node editor is not available.";
@@ -4038,143 +4060,12 @@ void MainWindow::LocalDebugGraphAndReport() {
         return;
     }
 
-    auto nodes = node_editor_->GetNodes();
-    auto links = node_editor_->GetLinks();
-
-    // --- Gate on Compile --------------------------------------------------
-    // Reuses the same BuildCompileResult the Train button uses, so the same
-    // set of structural errors (missing dataset, bad DataSplit ratios, etc.)
-    // blocks both paths. Debug adds a runtime layer on top, not a relaxation.
-    spdlog::info("LocalDebugGraphAndReport: running compile gate "
-                 "({} nodes, {} links)", nodes.size(), links.size());
-    BuildCompileResult(nodes, links);
-    if (!compile_result_success_) {
-        compile_result_mode_ = CompileResultMode::BlockedDebug;
-        show_compile_result_popup_ = true;
-        spdlog::error("LocalDebugGraphAndReport: blocked by compile gate");
-        return;
-    }
-
-    // --- Compile passed: rebuild config and hand to DebugExecutor --------
-    // BuildCompileResult discards the TrainingConfiguration after populating
-    // the summary, so Compile again. The second call is cheap (ms-scale on
-    // typical graphs) and keeps DebugExecutor independent of the popup
-    // plumbing.
-    cyxwiz::TrainingConfiguration config;
-    try {
-        cyxwiz::GraphCompiler compiler;
-        config = compiler.Compile(nodes, links);
-    } catch (const std::exception& e) {
-        compile_result_issues_.push_back(
-            {cyxwiz::IssueLevel::Error, -1, "",
-             std::string("Recompile threw: ") + e.what(),
-             cyxwiz::errors::Compiler::InvariantViolation});
-        compile_result_success_ = false;
-        compile_result_mode_ = CompileResultMode::BlockedDebug;
-        show_compile_result_popup_ = true;
-        return;
-    }
-
-    spdlog::info("LocalDebugGraphAndReport: running DebugExecutor "
-                 "({} compiled layers, input_size={}, output_size={})",
-                 config.layers.size(), config.input_size, config.output_size);
-
-    const uint64_t graph_hash = HashGraphStructure(nodes, links);
-    cyxwiz::PreflightValidator preflight_validator;
-    cyxwiz::DebugPreflightResult preflight =
-        preflight_validator.Validate(config, nodes, links, graph_hash);
-
-    cyxwiz::DebugExecutor exe(std::move(config));
-    cyxwiz::DebugResult result = exe.Run();
-
-    // --- Map DebugResult -> compile popup state --------------------------
-    // The popup already renders compile_result_issues_ with severity icons,
-    // so DebugResult::issues flows straight through. The per-layer trace
-    // and timings replace the compile summary text.
-    compile_result_issues_ = result.issues;
-    compile_result_success_ = result.success;
-    compile_result_mode_ = CompileResultMode::Debug;
-    compile_result_message_.clear();
-
-    std::ostringstream out;
-    const char* stage_name = "NotRun";
-    switch (result.reached) {
-        case cyxwiz::DebugStage::NotRun:        stage_name = "NotRun";        break;
-        case cyxwiz::DebugStage::BuildModel:    stage_name = "BuildModel";    break;
-        case cyxwiz::DebugStage::Forward:       stage_name = "Forward";       break;
-        case cyxwiz::DebugStage::Loss:          stage_name = "Loss";          break;
-        case cyxwiz::DebugStage::Backward:      stage_name = "Backward";      break;
-        case cyxwiz::DebugStage::OptimizerStep: stage_name = "OptimizerStep"; break;
-        case cyxwiz::DebugStage::Complete:      stage_name = "Complete";      break;
-    }
-    out << "Stage reached:     " << stage_name << "\n";
-    if (!result.failure_summary.empty()) {
-        out << "Failure:           " << result.failure_summary << "\n";
-    }
-    out << "Forward time:      " << result.forward_total_ms << " ms\n";
-    out << "Backward time:     " << result.backward_total_ms << " ms\n";
-    out << "Optimizer time:    " << result.optimizer_step_ms << " ms\n";
-    out << "Loss:              " << result.loss_value
-        << (result.loss_finite ? "" : "  (NON-FINITE)") << "\n";
-    out << "Params with grad:  " << result.params_with_grad << "\n";
-    out << "Params missing:    " << result.params_missing_grad << "\n";
-
-    if (!result.layer_traces.empty()) {
-        out << "\nLayer trace:\n";
-        for (const auto& t : result.layer_traces) {
-            out << "  " << t.name << "  shape=[";
-            for (size_t i = 0; i < t.actual_shape.size(); ++i) {
-                if (i) out << ",";
-                out << t.actual_shape[i];
-            }
-            out << "]  " << t.forward_ms << " ms";
-            if (t.has_nan) out << "  [NaN!]";
-            if (t.has_inf) out << "  [Inf!]";
-            out << "\n";
-        }
-    }
-
-    if (!result.grad_norms.empty()) {
-        out << "\nGradient L2 norms:\n";
-        for (const auto& g : result.grad_norms) {
-            out << "  " << g.param_name << "  ||g||=" << g.l2_norm;
-            if (!g.has_gradient) out << "  [missing]";
-            if (g.is_nan)  out << "  [NaN!]";
-            if (g.has_gradient && g.is_zero) out << "  [zero]";
-            out << "\n";
-        }
-    }
-
-    compile_result_summary_ = out.str();
-    show_compile_result_popup_ = true;
-
-    if (studio_debugger_panel_) {
-        cyxwiz::StudioDebuggerSnapshot session;
-        session.success = result.success;
-        session.has_debug_result = true;
-        session.graph_hash = graph_hash;
-        session.node_count = nodes.size();
-        session.link_count = links.size();
-        session.preflight = preflight;
-        session.preflight_summary = preflight.summary;
-        session.graph_summary = compile_result_summary_;
-        session.sample_summary = "Synthetic sample 0 (Local Debug)";
-        session.failure_summary = result.failure_summary;
-        session.issues = result.issues;
-        session.debug_result = result;
-        studio_debugger_panel_->SetSession(session);
-        studio_debugger_panel_->Show();
-    }
-
-    // Staleness cache: only record the hash when the debug run actually
-    // succeeded. A failed run leaves the previous cache in place, so the
-    // user can fix the graph, re-run F6, and have the staleness gate
-    // match correctly.
-    if (result.success) {
-        last_debug_graph_hash_ = HashGraphStructure(nodes, links);
-        have_last_debug_result_ = true;
-        spdlog::info("LocalDebugGraphAndReport: cached debug hash {:#018x}",
-                     last_debug_graph_hash_);
+    // F6 runs Local Debug through the Studio Debugger's background run path
+    // (compile gate, preflight, one synthetic batch), with progress and Stop.
+    // The staleness cache is updated by the run-completed callback.
+    studio_debugger_panel_->Show();
+    if (!studio_debugger_panel_->StartRun(cyxwiz::StudioDebuggerRunMode::LocalDebug, 0)) {
+        spdlog::info("LocalDebugGraphAndReport: a Studio Debugger run is already active");
     }
 }
 
@@ -4264,8 +4155,98 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     int sample_index,
     std::vector<MLNode> nodes,
     std::vector<NodeLink> links,
-    int explain_node_id) {
+    int explain_node_id,
+    const cyxwiz::StudioDebuggerRunControl* control) {
     session = cyxwiz::StudioDebuggerSnapshot{};
+    const auto run_started = std::chrono::steady_clock::now();
+    session.mode = mode;
+    // Planned as if Smoke were available; the real capability is known
+    // once Compile reports the graph's data domain.
+    cyxwiz::SmokeCapability planned_smoke;
+    planned_smoke.supported = true;
+    session.steps = cyxwiz::PlanStudioDebuggerSteps(mode, planned_smoke);
+    bool stopped = false;
+    auto step_started = std::chrono::steady_clock::now();
+    auto find_step = [&session](const char* id) -> cyxwiz::StudioDebuggerStep* {
+        for (auto& step : session.steps) {
+            if (step.id == id) return &step;
+        }
+        return nullptr;
+    };
+    auto report_progress = [&session, control](const std::string& running) {
+        if (!control || !control->on_progress) return;
+        size_t done = 0;
+        for (const auto& step : session.steps) {
+            if (step.state != cyxwiz::StudioDebuggerStepState::Pending &&
+                step.state != cyxwiz::StudioDebuggerStepState::Running) {
+                ++done;
+            }
+        }
+        const float progress = session.steps.empty()
+            ? 0.0f : static_cast<float>(done) / static_cast<float>(session.steps.size());
+        control->on_progress(session.steps, running, progress);
+    };
+    auto begin_step = [&](const char* id) {
+        step_started = std::chrono::steady_clock::now();
+        if (auto* step = find_step(id)) {
+            step->state = cyxwiz::StudioDebuggerStepState::Running;
+            report_progress(step->name);
+        }
+    };
+    auto end_step = [&](const char* id, cyxwiz::StudioDebuggerStepState state,
+                        const std::string& detail) {
+        if (auto* step = find_step(id)) {
+            step->state = state;
+            if (!detail.empty()) step->detail = detail;
+            step->seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - step_started).count();
+            report_progress("");
+        }
+    };
+    auto stop_requested = [&]() {
+        if (!stopped && control && control->should_stop && control->should_stop()) {
+            stopped = true;
+        }
+        return stopped;
+    };
+    // Outcome from the steps, never from the last stage that ran.
+    auto finalize_outcome = [&]() {
+        for (auto& step : session.steps) {
+            if (step.state == cyxwiz::StudioDebuggerStepState::Running) {
+                step.state = stopped ? cyxwiz::StudioDebuggerStepState::Stopped
+                                     : cyxwiz::StudioDebuggerStepState::Failed;
+            } else if (step.state == cyxwiz::StudioDebuggerStepState::Pending) {
+                step.state = cyxwiz::StudioDebuggerStepState::Skipped;
+            }
+        }
+        const bool has_warnings = std::any_of(
+            session.issues.begin(), session.issues.end(),
+            [](const cyxwiz::ValidationIssue& issue) {
+                return issue.level != cyxwiz::IssueLevel::Info;
+            });
+        session.outcome = cyxwiz::AggregateStudioDebuggerOutcome(
+            session.steps, stopped, has_warnings);
+        session.success = session.outcome == cyxwiz::StudioDebuggerOutcome::Passed ||
+            session.outcome == cyxwiz::StudioDebuggerOutcome::NeedsAttention;
+        if (session.success) {
+            session.failure_summary.clear();
+        } else if (session.failure_summary.empty()) {
+            if (stopped) {
+                session.failure_summary = "Stopped before all steps finished.";
+            }
+            for (const auto& step : session.steps) {
+                if (!session.failure_summary.empty()) break;
+                if ((step.state == cyxwiz::StudioDebuggerStepState::Failed ||
+                     step.state == cyxwiz::StudioDebuggerStepState::Unsupported) &&
+                    step.required) {
+                    session.failure_summary = step.detail.empty()
+                        ? step.name + " did not pass." : step.detail;
+                }
+            }
+        }
+        session.duration_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - run_started).count();
+    };
 
     session.node_count = nodes.size();
     session.link_count = links.size();
@@ -4291,20 +4272,39 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     session.studio_events = debug_session.studio_events;
     session.sample_summary = std::string("Studio Debugger mode: ") + mode_name +
         " | sample " + std::to_string(selected_sample_index);
+    // tofix96: training evidence is this run's execution truth only while
+    // that training is live. A finished run is shown as historical and does
+    // not feed this run's execution summary, analyzers or recommendations
+    // (Runtime Trace inspects it on purpose, so it may analyze it).
     const auto training_trace =
         cyxwiz::TrainingTraceCollector::LatestTrace();
     if (training_trace.available) {
         session.training_trace = training_trace;
-        session.execution =
-            cyxwiz::MakeDebugRunExecutionSummary(
-                session.training_trace,
-                mode == cyxwiz::StudioDebuggerRunMode::RuntimeTrace);
+        const bool live = cyxwiz::IsTrainingTraceLive(
+            training_trace,
+            cyxwiz::TrainingManager::Instance().IsTrainingActive());
+        session.training_trace_historical = !live;
+        if (live) {
+            session.execution =
+                cyxwiz::MakeDebugRunExecutionSummary(
+                    session.training_trace,
+                    mode == cyxwiz::StudioDebuggerRunMode::RuntimeTrace);
+        }
+    }
+    const cyxwiz::TrainingTraceSummary no_training_evidence;
+    const bool use_training_evidence = !session.training_trace_historical ||
+        mode == cyxwiz::StudioDebuggerRunMode::RuntimeTrace;
+    auto training_evidence = [&]() -> const cyxwiz::TrainingTraceSummary& {
+        return use_training_evidence ? session.training_trace : no_training_evidence;
+    };
+    if (auto last_run = cyxwiz::CrashRunRecorder::LoadLastRun()) {
+        session.last_run = *last_run;
     }
     const std::string& run_id = session.run_id;
     cyxwiz::DebugRunReplayCapsule replay_capsule =
         cyxwiz::MakeDebugRunReplayCapsule(
             debug_session, nullptr, session.execution);
-    auto collect_runtime_diagnostics = [&session, &run_id]() {
+    auto collect_runtime_diagnostics = [&session, &run_id, use_training_evidence]() {
         cyxwiz::RuntimeLogSnapshotRequest request;
         request.limit = cyxwiz::RuntimeLogStore::kDefaultCapacity;
         const auto snapshot =
@@ -4312,7 +4312,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         std::vector<cyxwiz::RuntimeLogEvent> events;
         for (const auto& event : snapshot.events) {
             const bool same_debug_run = event.run_id == run_id;
-            const bool linked_training_run =
+            const bool linked_training_run = use_training_evidence &&
                 !session.training_trace.run_id.empty() &&
                 event.run_id == session.training_trace.run_id;
             if ((same_debug_run || linked_training_run) &&
@@ -4341,7 +4341,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 session.last_run));
         };
     auto append_training_stall_analysis =
-        [&session, &run_id](
+        [&session, &run_id, &training_evidence](
             const cyxwiz::TrainingConfiguration* training_config) {
             const bool already_present = std::any_of(
                 session.traces.begin(), session.traces.end(),
@@ -4358,11 +4358,12 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             }
             cyxwiz::DebugTrainingStallDetector detector;
             session.traces.push_back(detector.BuildTrace(
-                run_id, session.traces, session.training_trace, evidence));
+                run_id, session.traces, training_evidence(), evidence));
         };
     const cyxwiz::TrainingConfiguration* loss_metric_config = nullptr;
     auto save_session = [&session, &replay_capsule, &loss_metric_config,
-                         &nodes]() {
+                         &nodes, &finalize_outcome]() {
+        finalize_outcome();
         const bool loss_metric_present = std::any_of(
             session.traces.begin(), session.traces.end(),
             [](const cyxwiz::DebugTraceRecord& trace) {
@@ -4411,13 +4412,16 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                     session.traces,
                     session.execution));
         }
+        session.traces.push_back(
+            cyxwiz::BuildStudioDebuggerRunSummaryTrace(session));
         cyxwiz::DebugRunStoreRecord record;
         record.summary.run_id = session.run_id;
         record.summary.timestamp = NowLocalTimestampForDebugStore();
         record.summary.graph_hash = session.graph_hash;
         record.summary.success = session.success;
         record.summary.summary = session.failure_summary.empty()
-            ? "Studio debugger run completed."
+            ? std::string(cyxwiz::StudioDebuggerRunModeLabel(session.mode)) + ": " +
+                  cyxwiz::StudioDebuggerOutcomeLabel(session.outcome)
             : session.failure_summary;
         record.summary.execution = session.execution;
         record.replay_capsule = replay_capsule;
@@ -4440,19 +4444,26 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     });
 
     if (mode == cyxwiz::StudioDebuggerRunMode::RuntimeTrace) {
-        if (auto last_run = cyxwiz::CrashRunRecorder::LoadLastRun()) {
-            session.last_run = *last_run;
-        }
+        begin_step("runtime");
         cyxwiz::DebugRecommendationEngine recommendation_engine;
         cyxwiz::DebugSlowPathDetector slow_path_detector;
         session.traces.push_back(slow_path_detector.BuildTrace(
-            run_id, session.traces, session.training_trace));
+            run_id, session.traces, training_evidence()));
         append_training_stall_analysis(nullptr);
         append_error_timeline();
         session.recommendations = recommendation_engine.Build(
             session.traces, session.issues, session.smoke_result,
-            session.last_run, session.training_trace);
-        session.success = true;
+            session.last_run, training_evidence());
+        const bool has_runtime_evidence =
+            session.training_trace.available || !session.last_run.run_id.empty();
+        end_step("runtime",
+                 has_runtime_evidence ? cyxwiz::StudioDebuggerStepState::Passed
+                                      : cyxwiz::StudioDebuggerStepState::Warning,
+                 has_runtime_evidence
+                     ? (session.training_trace_historical
+                            ? "Loaded historical training evidence."
+                            : "Loaded runtime evidence.")
+                     : "No training trace or crash heartbeat was found.");
         session.graph_summary =
             "Runtime Trace loaded crash heartbeat and training trace without executing graph debug.";
         save_session();
@@ -4463,10 +4474,12 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     bool compile_success = false;
     bool compile_completed = false;
     std::string compile_summary;
+    begin_step("compile");
     try {
         cyxwiz::GraphCompiler compiler;
         config = compiler.Compile(nodes, links);
         compile_completed = true;
+        session.graph_domain = cyxwiz::StudioDebuggerDomainLabel(config.preprocessing_domain);
         session.issues = config.issues;
         compile_success = config.is_valid;
         if (compile_success) {
@@ -4590,6 +4603,8 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         if (session.failure_summary.empty()) {
             session.failure_summary = "Compile gate failed.";
         }
+        end_step("compile", cyxwiz::StudioDebuggerStepState::Failed,
+                 session.failure_summary);
         session.studio_events.push_back({
             run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
             "Compile", "failed", session.failure_summary
@@ -4598,7 +4613,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             cyxwiz::DebugRecommendationEngine recommendation_engine;
             session.recommendations = recommendation_engine.Build(
                 session.traces, session.issues, session.smoke_result,
-                session.last_run, session.training_trace);
+                session.last_run, training_evidence());
         }
         append_error_timeline();
         append_node_explanation(compile_completed ? &config : nullptr);
@@ -4609,6 +4624,32 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
         "Compile", "passed", "Compile gate passed before Local Debug."
     });
+    end_step("compile", cyxwiz::StudioDebuggerStepState::Passed,
+             std::to_string(config.layers.size()) + " layers, " +
+                 session.graph_domain + " data");
+    // Smoke capability from the compiled domain, before Smoke is dispatched.
+    const cyxwiz::SmokeCapability smoke_capability =
+        cyxwiz::EvaluateSmokeCapability(session.graph_domain);
+    if (auto* smoke_step = find_step("smoke"); smoke_step && !smoke_capability.supported) {
+        smoke_step->state = cyxwiz::StudioDebuggerStepState::Unsupported;
+        smoke_step->detail = smoke_capability.reason + " " + smoke_capability.alternative;
+        if (run_full) {
+            smoke_step->required = false;
+        }
+    }
+    auto finish_stopped = [&]() {
+        session.studio_events.push_back({
+            run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
+            "StudioDebugger.Run", "stopped", "Stopped by the user."
+        });
+        append_error_timeline();
+        save_session();
+        return false;
+    };
+    if (stop_requested()) {
+        return finish_stopped();
+    }
+    begin_step("preflight");
 
     cyxwiz::PreflightValidator preflight_validator;
     session.preflight = preflight_validator.Validate(config, nodes, links, session.graph_hash);
@@ -4644,21 +4685,28 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         "Preflight", session.preflight.ready ? "ready" : "blocked",
         session.preflight.ready ? "Preflight checks passed." : "Preflight reported blocking issues."
     });
+    end_step("preflight",
+             session.preflight.ready ? cyxwiz::StudioDebuggerStepState::Passed
+                                     : cyxwiz::StudioDebuggerStepState::Failed,
+             session.preflight.ready ? std::string{}
+                                     : "Preflight reported blocking issues.");
 
     if (mode == cyxwiz::StudioDebuggerRunMode::Preflight) {
-        session.success = session.preflight.ready && compile_success;
-        session.failure_summary = session.success ? "" : "Preflight reported issues.";
+        session.failure_summary = session.preflight.ready ? "" : "Preflight reported issues.";
         append_training_stall_analysis(&config);
         cyxwiz::DebugRecommendationEngine recommendation_engine;
         session.recommendations = recommendation_engine.Build(
             session.traces, session.issues, session.smoke_result,
-            session.last_run, session.training_trace);
+            session.last_run, training_evidence());
         append_error_timeline();
         append_node_explanation(&config);
         save_session();
         return session.success;
     }
 
+    if (stop_requested()) {
+        return finish_stopped();
+    }
     if ((run_smoke || run_local_debug) && !config.dataset_name.empty()) {
         auto arrow_dataset = cyxwiz::DataRegistry::Instance().GetArrowDataset(
             config.dataset_name);
@@ -4685,7 +4733,13 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             }
         }
     }
-    if (run_smoke) {
+    if (run_smoke && !smoke_capability.supported) {
+        session.studio_events.push_back({
+            run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
+            "SmokeRun", "unsupported", smoke_capability.reason
+        });
+    } else if (run_smoke) {
+        begin_step("smoke");
         cyxwiz::TextPreprocessingTracer text_tracer;
         auto preprocessing_traces = text_tracer.TraceSample(
             config, nodes, run_id, selected_sample_index);
@@ -4724,8 +4778,19 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                                   session.smoke_result.issues.begin(),
                                   session.smoke_result.issues.end());
         }
+        end_step("smoke",
+                 !session.smoke_result.supported
+                     ? cyxwiz::StudioDebuggerStepState::Unsupported
+                     : (session.smoke_result.success
+                            ? cyxwiz::StudioDebuggerStepState::Passed
+                            : cyxwiz::StudioDebuggerStepState::Failed),
+                 session.smoke_result.summary);
+    }
+    if (run_local_debug && stop_requested()) {
+        return finish_stopped();
     }
 
+    if (run_local_debug) begin_step("local_debug");
     if (run_local_debug) try {
         // The debugger continues to use the compiled configuration for
         // explanations, stall analysis, replay metadata, and persistence
@@ -5135,8 +5200,15 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         out << "  Params with grad: " << session.debug_result.params_with_grad << "\n";
         out << "  Params missing: " << session.debug_result.params_missing_grad << "\n";
         session.graph_summary = out.str();
+        end_step("local_debug",
+                 session.debug_result.success ? cyxwiz::StudioDebuggerStepState::Passed
+                                              : cyxwiz::StudioDebuggerStepState::Failed,
+                 session.debug_result.success ? std::string("Stage reached: ") + stage_name
+                                              : session.debug_result.failure_summary);
     } catch (const std::exception& e) {
         session.failure_summary = std::string("Debug run threw: ") + e.what();
+        end_step("local_debug", cyxwiz::StudioDebuggerStepState::Failed,
+                 session.failure_summary);
         session.success = false;
         session.issues.push_back({
             cyxwiz::IssueLevel::Error,
@@ -5154,44 +5226,26 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         return false;
     }
 
-    if (!run_local_debug && run_smoke) {
-        session.success =
-            session.smoke_result.supported && session.smoke_result.success;
-        session.failure_summary = session.success ? "" : session.smoke_result.summary;
-    }
-
-    if (run_full) {
-        session.success = cyxwiz::DebugSessionManager::FullWorkflowSucceeded(
-            compile_success,
-            session.preflight.ready,
-            session.smoke_result.supported,
-            session.smoke_result.success,
-            session.has_debug_result,
-            session.debug_result.success);
-        if (!session.success && session.failure_summary.empty()) {
-            if (!session.preflight.ready) {
-                session.failure_summary = "Preflight reported blocking issues.";
-            } else if (!session.smoke_result.supported ||
-                       !session.smoke_result.success) {
-                session.failure_summary = session.smoke_result.summary.empty()
-                    ? "Smoke Run did not complete successfully."
-                    : session.smoke_result.summary;
-            } else {
-                session.failure_summary =
-                    "Local Debug did not complete successfully.";
-            }
-        }
+    // tofix96: the outcome comes from the per-step requirements in
+    // finalize_outcome(); a later passing stage never erases an earlier
+    // required failure.
+    if (run_runtime && stop_requested()) {
+        return finish_stopped();
     }
 
     if (run_runtime) {
-        if (auto last_run = cyxwiz::CrashRunRecorder::LoadLastRun()) {
-            session.last_run = *last_run;
-        }
-        const auto runtime_training_trace =
-            cyxwiz::TrainingTraceCollector::LatestTrace();
-        if (runtime_training_trace.available) {
-            session.training_trace = runtime_training_trace;
-        }
+        begin_step("runtime");
+        const bool live_evidence =
+            session.training_trace.available && !session.training_trace_historical;
+        end_step("runtime",
+                 live_evidence ? cyxwiz::StudioDebuggerStepState::Passed
+                               : cyxwiz::StudioDebuggerStepState::Skipped,
+                 live_evidence
+                     ? "Live training " + session.training_trace.run_id
+                     : (session.training_trace.available
+                            ? "Only historical training evidence (" +
+                                  session.training_trace.run_id + "); shown in Runtime."
+                            : "No training is running."));
     }
     cyxwiz::DebugSlowPathLocalTimings local_timings;
     if (session.has_debug_result) {
@@ -5207,13 +5261,13 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     }
     cyxwiz::DebugSlowPathDetector slow_path_detector;
     session.traces.push_back(slow_path_detector.BuildTrace(
-        run_id, session.traces, session.training_trace, local_timings));
+        run_id, session.traces, training_evidence(), local_timings));
     append_training_stall_analysis(&config);
     append_error_timeline();
     cyxwiz::DebugRecommendationEngine recommendation_engine;
     session.recommendations = recommendation_engine.Build(
         session.traces, session.issues, session.smoke_result,
-        session.last_run, session.training_trace);
+        session.last_run, training_evidence());
 
     append_node_explanation(&config);
 

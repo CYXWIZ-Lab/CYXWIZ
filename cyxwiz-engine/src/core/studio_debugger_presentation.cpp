@@ -189,6 +189,18 @@ DebuggerTone StudioDebuggerStepStateTone(StudioDebuggerStepState state) {
     return DebuggerTone::Muted;
 }
 
+const char* StudioDebuggerDomainLabel(PreprocessingDomain domain) {
+    switch (domain) {
+        case PreprocessingDomain::Tabular: return "Tabular";
+        case PreprocessingDomain::Image: return "Image";
+        case PreprocessingDomain::Audio: return "Audio";
+        case PreprocessingDomain::Text: return "Text";
+        case PreprocessingDomain::TimeSeries: return "Time series";
+        case PreprocessingDomain::General: return "General";
+    }
+    return "Unknown";
+}
+
 SmokeCapability EvaluateSmokeCapability(const std::string& graph_domain) {
     SmokeCapability capability;
     const std::string domain = Lower(graph_domain);
@@ -292,6 +304,14 @@ StudioDebuggerOutcome AggregateStudioDebuggerOutcome(
     if (!any_run) return StudioDebuggerOutcome::NotStarted;
     if (any_warning) return StudioDebuggerOutcome::NeedsAttention;
     return any_required_passed ? StudioDebuggerOutcome::Passed : StudioDebuggerOutcome::NeedsAttention;
+}
+
+bool IsTrainingTraceLive(const TrainingTraceSummary& trace, bool training_active) {
+    if (!training_active || !trace.available || trace.run_id.empty()) return false;
+    const std::string status = Lower(trace.status);
+    return status != "completed" && status != "complete" && status != "cancelled" &&
+           status != "canceled" && status != "failed" && status != "stopped" &&
+           status != "crashed" && status != "error";
 }
 
 DebuggerTone TraceStatusTone(const std::string& raw) {

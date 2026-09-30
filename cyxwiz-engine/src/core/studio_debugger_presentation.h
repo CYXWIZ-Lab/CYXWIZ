@@ -28,6 +28,9 @@ const char* StudioDebuggerStepStateKey(StudioDebuggerStepState state);
 bool ParseStudioDebuggerStepStateKey(const std::string& key, StudioDebuggerStepState& state);
 DebuggerTone StudioDebuggerStepStateTone(StudioDebuggerStepState state);
 
+// Display name of the compiled graph's data domain ("Tabular", "Text", ...).
+const char* StudioDebuggerDomainLabel(PreprocessingDomain domain);
+
 // Smoke Run capability from the graph's data domain, known before dispatch.
 struct SmokeCapability {
     bool supported = false;
@@ -45,6 +48,11 @@ std::vector<StudioDebuggerStep> PlanStudioDebuggerSteps(
 // Needs attention; nothing run is Not started.
 StudioDebuggerOutcome AggregateStudioDebuggerOutcome(
     const std::vector<StudioDebuggerStep>& steps, bool stopped, bool has_warnings);
+
+// Training evidence is live only while a training run is active and its
+// trace has not reached a terminal status; anything else is historical and
+// must not stand in for this debugger run's execution (tofix96).
+bool IsTrainingTraceLive(const TrainingTraceSummary& trace, bool training_active);
 
 // One vocabulary for raw trace statuses (ok, shape_mismatch, nan, ...).
 DebuggerTone TraceStatusTone(const std::string& status);

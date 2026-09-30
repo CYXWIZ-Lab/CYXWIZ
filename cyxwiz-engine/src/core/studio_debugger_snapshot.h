@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -59,6 +60,15 @@ struct StudioDebuggerStep {
     StudioDebuggerStepState state = StudioDebuggerStepState::Pending;
     bool required = true;
     double seconds = 0.0;
+};
+
+// Hooks a run reports through: the current step with overall progress
+// (0..1) and the step list, and a cooperative stop checked between steps.
+struct StudioDebuggerRunControl {
+    std::function<void(const std::vector<StudioDebuggerStep>& steps,
+                       const std::string& running_step,
+                       float progress)> on_progress;
+    std::function<bool()> should_stop;
 };
 
 struct StudioDebuggerSnapshot {
