@@ -30,6 +30,7 @@
 #include "../core/rl_script_generator.h"
 #include "../scripting/scripting_engine.h"
 #include "../core/extension_node_registry.h"
+#include "../core/extension_node_presentation.h"
 #include "../core/node_metadata_registry.h"
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -644,6 +645,24 @@ void NodeEditor::Render() {
                         static_cast<NodeType>(dropped_type), node_name, drop_pos);
 
                     spdlog::info("Drag-drop: Adding {} node at ({}, {})", node_name, drop_pos.x, drop_pos.y);
+                }
+            }
+
+            // An extension node from the Node Browser carries its type id.
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("EXTENSION_NODE")) {
+                const std::string type_id(static_cast<const char*>(payload->Data),
+                                          static_cast<size_t>(payload->DataSize));
+                if (!CanAddNodeToGraph(NodeType::PluginCustom, type_id)) {
+                    spdlog::warn("Blocked drag-drop graph add for extension node '{}'", type_id);
+                } else {
+                    ImVec2 editor_origin = ImGui::GetWindowPos();
+                    ImVec2 panning = ImNodes::EditorContextGetPanning();
+                    ImVec2 drop_pos(
+                        (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
+                        (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_);
+                    pending_nodes_.emplace_back(NodeType::PluginCustom, type_id, drop_pos);
+                    spdlog::info("Drag-drop: Adding extension node {} at ({}, {})",
+                                 type_id, drop_pos.x, drop_pos.y);
                 }
             }
 
@@ -2009,6 +2028,18 @@ void NodeEditor::RenderNodes() {
             // Normal color based on type
             title_color = GetNodeColor(node.type);
         }
+        // Extension nodes: the colour the plugin declares, or the
+        // not-installed look (TOFIX125, approved mockup).
+        std::optional<cyxwiz::ExtensionCanvasStyle> extension_style;
+        if (node.type == NodeType::PluginCustom) {
+            const auto descriptor =
+                cyxwiz::ExtensionNodeRegistry::Instance().Find(node.extension_type_id);
+            extension_style = cyxwiz::BuildExtensionCanvasStyle(
+                node, descriptor ? &*descriptor : nullptr, GetNodeColor(node.type));
+            if (exec_state == NodeExecutionState::Idle) {
+                title_color = extension_style->box_color;
+            }
+        }
 
         // ===== KNIME-STYLE RENDERING for ALL Nodes =====
         bool is_knime_style = true;  // Apply to all node types
@@ -2202,6 +2233,18 @@ void NodeEditor::RenderNodes() {
             // Add rounded border around the icon box
             ImU32 border_color = IM_COL32(80, 80, 90, 200);
             draw_list->AddRect(icon_pos, icon_max, border_color, CORNER_RADIUS, 0, 1.5f);
+
+            // A missing extension: orange outline and "Not installed" under
+            // the box, like the Subgraph role line below.
+            if (extension_style && extension_style->missing) {
+                draw_list->AddRect(icon_pos, icon_max, extension_style->outline_color,
+                                   CORNER_RADIUS, 0, 2.5f);
+                const char* status = extension_style->status_line.c_str();
+                const ImVec2 status_size = ImGui::CalcTextSize(status);
+                draw_list->AddText(
+                    ImVec2(icon_pos.x + (ICON_BOX_SIZE - status_size.x) * 0.5f, icon_max.y + 3.0f),
+                    extension_style->outline_color, status);
+            }
 
             // A recipe and a visual group look alike otherwise; say which it is.
             if (node.type == NodeType::Subgraph) {
@@ -4326,7 +4369,7 @@ void NodeEditor::DeleteFrame(int frame_id) {
 // ========== Menu Operations Implementation ==========
 
 void NodeEditor::AddNodeFromMenu(NodeType type, const std::string& name) {
-    if (!CanAddNodeToGraph(type)) {
+    if (!CanAddNodeToGraph(type, name)) {
         spdlog::warn("Blocked toolbar graph add for unsupported node '{}' (type={})",
                      name, static_cast<int>(type));
         return;
@@ -4380,12 +4423,9 @@ bool NodeEditor::HasSimulationNodes() const {
             return true;
         }
         // Check for MuJoCo Plant or other simulation plugin nodes
-        if (node.type == NodeType::PluginCustom) {
-            auto qname = node.extension_type_id;
-            if (qname.find("MuJoCoPlant") != std::string::npos ||
-                qname.find("MuJoCoEnv") != std::string::npos) {
-                return true;
-            }
+        if (cyxwiz::IsExtensionTypeName(node, "MuJoCoPlant") ||
+            cyxwiz::IsExtensionTypeName(node, "MuJoCoEnv")) {
+            return true;
         }
     }
     return false;
@@ -4578,7 +4618,7 @@ void NodeEditor::OnStartRLTraining() {
     // Find MuJoCo Plant node for MJCF path
     for (const auto& node : nodes_) {
         if (node.type == NodeType::PluginCustom) {
-            if (node.extension_type_id.find("MuJoCoPlant") != std::string::npos) {
+            if (cyxwiz::IsExtensionTypeName(node, "MuJoCoPlant")) {
                 config.plugin_qualified_name = node.extension_type_id;
                 auto mp = node.parameters.find("mjcf_path");
                 if (mp != node.parameters.end() && !mp->second.empty()) {
@@ -4596,10 +4636,10 @@ void NodeEditor::OnStartRLTraining() {
     std::map<std::string, std::string> reward_params, obs_filter_params;
     for (const auto& node : nodes_) {
         if (node.type == NodeType::PluginCustom) {
-            if (node.extension_type_id.find("RewardFunction") != std::string::npos) {
+            if (cyxwiz::IsExtensionTypeName(node, "RewardFunction")) {
                 reward_params = node.parameters;
             }
-            if (node.extension_type_id.find("ObservationFilter") != std::string::npos) {
+            if (cyxwiz::IsExtensionTypeName(node, "ObservationFilter")) {
                 obs_filter_params = node.parameters;
             }
         }
@@ -4659,8 +4699,9 @@ void NodeEditor::ExportPolicyONNX(const std::string& output_path) {
     // Request export via plugin's EvaluateNode with "export_onnx" command
     std::string plugin_qname;
     for (const auto& node : nodes_) {
-        if (node.type == NodeType::PluginCustom &&
-            node.extension_type_id.find("MuJoCo") != std::string::npos) {
+        if (cyxwiz::IsExtensionTypeName(node, "MuJoCoPlant") ||
+            cyxwiz::IsExtensionTypeName(node, "MuJoCoEnv") ||
+            cyxwiz::IsExtensionTypeName(node, "RLAgent")) {
             plugin_qname = node.extension_type_id;
             break;
         }

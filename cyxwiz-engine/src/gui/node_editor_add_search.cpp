@@ -6,6 +6,7 @@
 #include "../core/node_metadata.h"
 #include "../core/node_metadata_registry.h"
 #include "../core/extension_node_registry.h"
+#include "../core/extension_node_presentation.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <imnodes.h>
@@ -128,7 +129,12 @@ int NodeEditor::FuzzyMatch(const std::string& pattern, const std::string& str) {
 // Extension nodes (plugins) are registered at run time in
 // ExtensionNodeRegistry, which doesn't flow through NodeMetadataRegistry.
 void NodeEditor::InitializeSearchableNodes() {
-    if (searchable_nodes_initialized_) return;
+    const uint64_t extension_generation = cyxwiz::ExtensionNodeRegistry::Instance().Generation();
+    if (searchable_nodes_initialized_ &&
+        searchable_nodes_extension_generation_ == extension_generation) {
+        return;
+    }
+    searchable_nodes_extension_generation_ = extension_generation;
 
     all_searchable_nodes_.clear();
 
@@ -192,14 +198,17 @@ void NodeEditor::InitializeSearchableNodes() {
 
     // Plugin-provided nodes
     try {
-        for (const auto& descriptor : cyxwiz::ExtensionNodeRegistry::Instance().All()) {
+        const auto palette =
+            cyxwiz::BuildExtensionPalette(cyxwiz::ExtensionNodeRegistry::Instance().All());
+        for (const auto& entry : palette) {
             SearchableNode sn;
             sn.type = NodeType::PluginCustom;
-            sn.name = descriptor.metadata.name;
-            sn.category = "Plugin/" + descriptor.menu_category;
-            sn.keywords = descriptor.type_name + " " + descriptor.metadata.name + " " +
-                          descriptor.metadata.brief_description + " plugin";
-            sn.extension_type_id = descriptor.type_id;
+            sn.name = entry.name;
+            sn.category = entry.category_label;
+            sn.keywords = entry.keywords;
+            sn.description = entry.description;
+            sn.tooltip = entry.pins_summary;
+            sn.extension_type_id = entry.type_id;
             all_searchable_nodes_.push_back(std::move(sn));
         }
     } catch (const std::exception& e) {

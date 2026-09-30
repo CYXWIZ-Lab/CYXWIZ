@@ -1,6 +1,9 @@
 #include "node_browser_panel.h"
 #include "../node_editor.h"
 #include "../../core/node_metadata_registry.h"
+#include "../../core/extension_node_registry.h"
+#include "../../plugin/plugin_manager.h"
+#include "../ui_buttons.h"
 #include "../patterns/pattern_library.h"
 #include "../icons.h"
 #include <imgui.h>
@@ -175,11 +178,29 @@ void NodeBrowserPanel::Render() {
             // Search results mode - show as grid
             auto results = registry.Search(search_query_, true);
             results = ApplySupportFilter(results);
-            if (results.empty()) {
+            results.erase(std::remove_if(results.begin(), results.end(),
+                                         [](const cyxwiz::NodeMetadata* m) {
+                                             return m->type == cyxwiz::NodeType::PluginCustom;
+                                         }),
+                          results.end());
+            std::vector<cyxwiz::ExtensionPaletteEntry> extension_results;
+            if (support_filter_mode_ == SupportFilterMode::All) {
+                for (auto& entry : cyxwiz::BuildExtensionPalette(
+                         cyxwiz::ExtensionNodeRegistry::Instance().All())) {
+                    if (cyxwiz::ExtensionPaletteEntryMatches(entry, search_query_)) {
+                        extension_results.push_back(std::move(entry));
+                    }
+                }
+            }
+            if (results.empty() && extension_results.empty()) {
                 ImGui::TextDisabled("No nodes found matching '%s'", search_query_.c_str());
             } else {
                 RenderNodeGrid(results);
+                RenderExtensionGrid(extension_results);
             }
+        } else if (showing_all_in_category_ &&
+                   current_category_ == cyxwiz::NodeCategory::Plugin) {
+            RenderExtensionSection(true);
         } else if (showing_all_in_category_) {
             // Showing all nodes in a specific category
             auto nodes = registry.GetByCategory(current_category_, true);
@@ -189,7 +210,11 @@ void NodeBrowserPanel::Render() {
             // Normal category view
             auto categories = registry.GetCategories();
             for (auto category : categories) {
-                RenderCategorySection(category);
+                if (category == cyxwiz::NodeCategory::Plugin) {
+                    RenderExtensionSection(false);
+                } else {
+                    RenderCategorySection(category);
+                }
             }
         }
 
@@ -752,12 +777,127 @@ void NodeBrowserPanel::RenderNodeGrid(const std::vector<const cyxwiz::NodeMetada
     }
 }
 
-void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, float card_width) {
+void NodeBrowserPanel::RenderExtensionGrid(const std::vector<cyxwiz::ExtensionPaletteEntry>& entries) {
+    if (entries.empty()) return;
+    auto& registry = cyxwiz::ExtensionNodeRegistry::Instance();
+
+    // Card data: the descriptor's metadata, copied (a plugin may unload).
+    std::vector<cyxwiz::NodeMetadata> metadata;
+    std::vector<const cyxwiz::ExtensionPaletteEntry*> shown;
+    metadata.reserve(entries.size());
+    for (const auto& entry : entries) {
+        const auto descriptor = registry.Find(entry.type_id);
+        if (!descriptor) continue;
+        metadata.push_back(descriptor->metadata);
+        // The engine's plug icon, as the catalog uses for plugin nodes.
+        if (metadata.back().icon.empty()) metadata.back().icon = ICON_FA_PLUG;
+        shown.push_back(&entry);
+    }
+
+    float available_width = ImGui::GetContentRegionAvail().x;
+    float card_width = (available_width - (GRID_COLUMNS - 1) * GRID_SPACING) / GRID_COLUMNS;
+    card_width = std::max(card_width, 70.0f);
+    for (size_t i = 0; i < metadata.size(); ++i) {
+        if (i % GRID_COLUMNS != 0) {
+            ImGui::SameLine(0, GRID_SPACING);
+        }
+        RenderNodeCard(&metadata[i], card_width, shown[i]);
+    }
+}
+
+void NodeBrowserPanel::RenderExtensionSection(bool show_all) {
+    // Only the All filter lists extension nodes: the other filters sort
+    // built-in nodes by their support facts, which extension nodes lack.
+    if (support_filter_mode_ != SupportFilterMode::All) return;
+
+    const auto entries =
+        cyxwiz::BuildExtensionPalette(cyxwiz::ExtensionNodeRegistry::Instance().All());
+    std::vector<std::pair<std::string, std::string>> provider_names;
+    for (const auto& entry : entries) {
+        std::string provider_id;
+        std::string type_name;
+        if (!cyxwiz::SplitExtensionTypeId(entry.type_id, provider_id, type_name)) continue;
+        if (const auto* plugin = cyxwiz::plugin::PluginManager::Instance().GetLoadedPlugin(provider_id)) {
+            provider_names.emplace_back(provider_id, plugin->manifest.name);
+        }
+    }
+
+    // Section header, as other categories draw it, with the summary.
+    const std::string cat_name = cyxwiz::GetCategoryDisplayName(cyxwiz::NodeCategory::Plugin);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::TextUnformatted(cat_name.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", cyxwiz::ExtensionPaletteSummary(entries, provider_names).c_str());
+    ImGui::PopStyleColor();
+
+    if (entries.empty()) {
+        ImGui::PushID("no_extension_nodes");
+        if (ImGui::BeginChild("##empty", ImVec2(0.0f, 0.0f),
+                              ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY |
+                                  ImGuiChildFlags_AlwaysUseWindowPadding)) {
+            ImGui::TextUnformatted("No extension nodes are loaded");
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("Load a plugin that provides nodes and they appear here.");
+            ImGui::PopTextWrapPos();
+            if (cyxwiz::ui::SecondaryButton("Open Plugin Manager", node_editor_ != nullptr,
+                                            "The node editor is not available")) {
+                node_editor_->OpenPluginManager();
+            }
+        }
+        ImGui::EndChild();
+        ImGui::PopID();
+        ImGui::Spacing();
+        ImGui::Spacing();
+        return;
+    }
+
+    // One grid per plugin category ("RL / Simulation", ...).
+    size_t shown = 0;
+    const size_t limit = show_all ? entries.size() : static_cast<size_t>(GRID_COLUMNS * VISIBLE_ROWS_COLLAPSED);
+    for (size_t i = 0; i < entries.size() && shown < limit;) {
+        const std::string& group = entries[i].group;
+        std::vector<cyxwiz::ExtensionPaletteEntry> group_entries;
+        for (; i < entries.size() && entries[i].group == group && shown < limit; ++i, ++shown) {
+            group_entries.push_back(entries[i]);
+        }
+        ImGui::TextDisabled("%s", group.c_str());
+        RenderExtensionGrid(group_entries);
+    }
+
+    if (!show_all && entries.size() > limit) {
+        if (cyxwiz::ui::LinkButton("Show all##plugins")) {
+            NavigateToCategory(cyxwiz::NodeCategory::Plugin);
+        }
+    }
+    ImGui::Spacing();
+    ImGui::Spacing();
+}
+
+void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, float card_width,
+                                      const cyxwiz::ExtensionPaletteEntry* extension) {
     if (!metadata) return;
 
     auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
 
-    ImGui::PushID(static_cast<int>(metadata->type));
+    // Extension nodes share one NodeType: they are keyed by type id.
+    if (extension) {
+        ImGui::PushID(extension->type_id.c_str());
+    } else {
+        ImGui::PushID(static_cast<int>(metadata->type));
+    }
+    const bool pinned = extension ? extension->type_id == pinned_extension_id_
+                                  : (pinned_extension_id_.empty() && metadata->type == pinned_node_type_);
+    const auto select = [&]() {
+        if (extension) {
+            pinned_extension_id_ = extension->type_id;
+            pinned_node_type_ = cyxwiz::NodeType::Unknown;
+            if (on_extension_select_) on_extension_select_(extension->type_id);
+        } else {
+            pinned_extension_id_.clear();
+            pinned_node_type_ = metadata->type;
+            if (on_node_select_) on_node_select_(metadata->type);
+        }
+    };
 
     ImVec2 card_size(card_width, NODE_CARD_HEIGHT);
     ImVec2 cursor_start = ImGui::GetCursorScreenPos();
@@ -778,19 +918,23 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
 
     // Single click pins the node in the Info Panel.
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-        pinned_node_type_ = metadata->type;
-        if (on_node_select_) on_node_select_(metadata->type);
+        select();
     }
 
     // Handle double-click to create node
     if (hovered && ImGui::IsMouseDoubleClicked(0) && can_add_to_graph) {
-        CreateNodeAtMouse(metadata);
-        registry.RecordUsage(metadata->type);
+        CreateNodeAtMouse(metadata, extension);
+        if (!extension) registry.RecordUsage(metadata->type);
     }
 
     // Handle drag-drop source (only for graph-addable nodes)
     if (can_add_to_graph && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-        ImGui::SetDragDropPayload("NODE_TYPE", &metadata->type, sizeof(cyxwiz::NodeType));
+        if (extension) {
+            ImGui::SetDragDropPayload("EXTENSION_NODE", extension->type_id.data(),
+                                      extension->type_id.size());
+        } else {
+            ImGui::SetDragDropPayload("NODE_TYPE", &metadata->type, sizeof(cyxwiz::NodeType));
+        }
         ImGui::Text("%s %s", metadata->icon.c_str(), metadata->name.c_str());
         dragging_node_ = metadata;
         ImGui::EndDragDropSource();
@@ -803,11 +947,12 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
 
         if (can_add_to_graph) {
             if (ImGui::MenuItem(ICON_FA_PLUS " Add to Canvas", "Double-click")) {
-                CreateNodeAtMouse(metadata);
-                registry.RecordUsage(metadata->type);
+                CreateNodeAtMouse(metadata, extension);
+                if (!extension) registry.RecordUsage(metadata->type);
             }
 
-            if (ImGui::MenuItem(ICON_FA_STAR " Toggle Favorite")) {
+            // Favourites are kept per NodeType; extension nodes share one.
+            if (!extension && ImGui::MenuItem(ICON_FA_STAR " Toggle Favorite")) {
                 registry.ToggleFavorite(metadata->type);
             }
         } else if (metadata->IsTemplate()) {
@@ -827,10 +972,7 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
 
         if (ImGui::MenuItem(ICON_FA_CIRCLE_INFO " View Documentation")) {
             // Pin this node in the Info Panel
-            pinned_node_type_ = metadata->type;
-            if (on_node_select_) {
-                on_node_select_(metadata->type);
-            }
+            select();
         }
 
         if (ImGui::MenuItem(ICON_FA_COPY " Copy Node Name")) {
@@ -855,7 +997,7 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     ImVec2 icon_size(NODE_ICON_SIZE, NODE_ICON_SIZE);
 
     // Draw node icon with color
-    RenderNodeIcon(metadata, icon_pos, icon_size);
+    RenderNodeIcon(metadata, icon_pos, icon_size, extension);
 
     if (const auto* support_state = FindSupportState(metadata)) {
         const std::string state_label = SupportStateLabel(support_state->value);
@@ -932,7 +1074,7 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
 
     // Pinned card: accent outline. Hover: light outline and a preview in the
     // Info Panel (it returns to the pinned node when the hover ends).
-    if (metadata->type == pinned_node_type_) {
+    if (pinned) {
         draw_list->AddRect(cursor_start,
                           ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
                           IM_COL32(91, 61, 245, 255), 4.0f, 0, 2.0f);
@@ -941,7 +1083,9 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
         draw_list->AddRect(cursor_start,
                           ImVec2(cursor_start.x + card_width, cursor_start.y + card_size.y),
                           IM_COL32(179, 166, 255, 110), 4.0f);
-        if (on_node_hover_) {
+        if (extension) {
+            if (on_extension_hover_) on_extension_hover_(extension->type_id);
+        } else if (on_node_hover_) {
             on_node_hover_(metadata->type);
         }
     }
@@ -949,7 +1093,8 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     ImGui::PopID();
 }
 
-void NodeBrowserPanel::RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 size) {
+void NodeBrowserPanel::RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 size,
+                                      const cyxwiz::ExtensionPaletteEntry* extension) {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
     // Use the passed icon position (calculated in RenderNodeCard)
@@ -959,6 +1104,10 @@ void NodeBrowserPanel::RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVe
     // Get category color
     ImU32 bg_color = GetNodeColor(metadata->category);
     ImU32 border_color = GetNodeColorDark(metadata->category);
+
+    if (extension && (extension->color >> 24) != 0) {
+        bg_color = extension->color;
+    }
 
     // Template nodes are grayed out
     if (metadata->IsTemplate()) {
@@ -1133,7 +1282,8 @@ void NodeBrowserPanel::NavigateBack() {
     }
 }
 
-void NodeBrowserPanel::CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata) {
+void NodeBrowserPanel::CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata,
+                                         const cyxwiz::ExtensionPaletteEntry* extension) {
     if (!node_editor_ || !metadata) return;
 
     // Only create nodes that central support metadata says are graph-addable.
@@ -1141,8 +1291,12 @@ void NodeBrowserPanel::CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata) {
         return;
     }
 
-    // TODO: Implement direct node creation
-    // node_editor_->CreateNode(metadata->type, mouse_pos);
+    // Added at the centre of the canvas view, like the toolbar's menus.
+    if (extension) {
+        node_editor_->AddNodeFromMenu(cyxwiz::NodeType::PluginCustom, extension->type_id);
+    } else {
+        node_editor_->AddNodeFromMenu(metadata->type, metadata->name);
+    }
 }
 
 ImU32 NodeBrowserPanel::GetNodeColor(cyxwiz::NodeCategory category) const {

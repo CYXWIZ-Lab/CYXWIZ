@@ -17,7 +17,7 @@ NodeCategory NodeEditor::GetCategoryForNodeType(NodeType type) {
 
 #ifndef CYXWIZ_NODE_FACTORY_ONLY
 void NodeEditor::AddNode(NodeType type, const std::string& name) {
-    if (!CanAddNodeToGraph(type)) {
+    if (!CanAddNodeToGraph(type, name)) {
         spdlog::warn("Blocked graph add for unsupported node '{}' (type={})",
                      name, static_cast<int>(type));
         return;
@@ -30,14 +30,16 @@ void NodeEditor::AddNode(NodeType type, const std::string& name) {
                  static_cast<int>(type), name, context_menu_pos_.x, context_menu_pos_.y);
 }
 
-bool NodeEditor::CanAddNodeToGraph(NodeType type) const {
+bool NodeEditor::CanAddNodeToGraph(NodeType type, const std::string& name) const {
+    // Extension nodes share one NodeType; the catalog's single PluginCustom
+    // entry is a preview and says nothing about a particular extension.
+    if (type == NodeType::PluginCustom) {
+        return cyxwiz::ExtensionNodeRegistry::Instance().Has(name);
+    }
+
     auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
     registry.Initialize();
     const auto* metadata = registry.GetMetadata(type);
-
-    // Plugin nodes may be registered dynamically outside the built-in
-    // metadata catalog. Preserve that extension path when no static contract
-    // exists; catalogued nodes must obey central support truth.
     return metadata == nullptr || cyxwiz::CanAddNodeToGraph(*metadata);
 }
 #endif

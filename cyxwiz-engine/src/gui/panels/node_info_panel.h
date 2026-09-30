@@ -1,5 +1,8 @@
 #pragma once
 
+#include "../../core/extension_node_presentation.h"
+#include <optional>
+#include <string>
 #include "../panel.h"
 #include "../../core/node_metadata.h"
 #include <imgui.h>
@@ -43,6 +46,13 @@ public:
     void PreviewNode(NodeType type);
 
     /**
+     * Extension nodes (TOFIX125) share one NodeType; they are identified by
+     * their type id "<provider_id>:<TypeName>".
+     */
+    void SetSelectedExtension(const std::string& type_id);
+    void PreviewExtension(const std::string& type_id);
+
+    /**
      * Clear the current selection (show placeholder)
      */
     void ClearSelection();
@@ -79,6 +89,20 @@ private:
     NodeType preview_type_ = NodeType::Unknown;
     const NodeMetadata* preview_metadata_ = nullptr;
     int preview_frame_ = -10;
+
+    // Extension nodes: copies taken when selected, so an unloaded plugin
+    // leaves nothing dangling.
+    struct ExtensionView {
+        std::string type_id;
+        NodeMetadata metadata;
+        ExtensionInfoFacts facts;
+    };
+    static std::optional<ExtensionView> BuildExtensionView(const std::string& type_id);
+    void RenderProvidedBy();
+    std::optional<ExtensionView> pinned_extension_;
+    std::optional<ExtensionView> preview_extension_;
+    int preview_extension_frame_ = -10;
+    const ExtensionInfoFacts* facts_ = nullptr;  // this frame's, when an extension node is shown
 };
 
 } // namespace cyxwiz

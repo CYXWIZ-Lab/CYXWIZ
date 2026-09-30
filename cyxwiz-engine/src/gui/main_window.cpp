@@ -775,11 +775,24 @@ MainWindow::MainWindow()
         node_browser_panel_->SetNodeSelectCallback([this](cyxwiz::NodeType type) {
             node_info_panel_->SetSelectedNode(type);
         });
+        // Extension nodes share one NodeType and are identified by type id.
+        node_browser_panel_->SetExtensionHoverCallback([this](const std::string& type_id) {
+            node_info_panel_->PreviewExtension(type_id);
+        });
+        node_browser_panel_->SetExtensionSelectCallback([this](const std::string& type_id) {
+            node_info_panel_->SetSelectedExtension(type_id);
+        });
     }
     cloud_dataset_manager_panel_ = std::make_unique<gui::CloudDatasetManagerPanel>();
 
     // Plugin Manager panel
     plugin_manager_panel_ = std::make_unique<cyxwiz::PluginManagerPanel>();
+    // A missing extension node, or an empty Plugins section, opens it (TOFIX125).
+    if (node_editor_) {
+        node_editor_->SetOpenPluginManagerCallback([this]() {
+            if (plugin_manager_panel_) plugin_manager_panel_->SetVisible(true);
+        });
+    }
 
     // Data Studio panel (Phase 1 Week 1)
     data_studio_panel_ = std::make_unique<cyxwiz::DataStudioPanel>();

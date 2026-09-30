@@ -313,6 +313,7 @@ set(ENGINE_SOURCES
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
     src/core/live_graph_compile.cpp
+    src/core/extension_node_presentation.cpp
     src/core/remote_job_presentation.cpp
     src/gui/node_config_dialog.cpp
     src/gui/data_input_capabilities.cpp
@@ -2581,6 +2582,25 @@ endif()
 set_target_properties(test_extension_node_factory PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== Test: editor presentation of extension nodes (TOFIX125) =====
+add_executable(test_extension_node_presentation
+    tests/test_extension_node_presentation.cpp
+    src/core/extension_node_presentation.cpp
+    src/core/extension_node_document.cpp
+    src/core/extension_node_registry.cpp
+    src/core/graph_node_factory.cpp
+    src/core/node_metadata_registry.cpp
+    src/core/pipeline_runtime_capabilities.cpp
+)
+target_include_directories(test_extension_node_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_extension_node_presentation PRIVATE
+    imgui::imgui nlohmann_json::nlohmann_json spdlog::spdlog cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_extension_node_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_extension_node_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Test: Legacy PipelineExecutor operator routing =====
 add_executable(test_pipeline_executor_operator_routing

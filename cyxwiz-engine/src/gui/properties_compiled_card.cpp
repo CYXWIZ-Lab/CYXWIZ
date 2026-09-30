@@ -3,6 +3,7 @@
 // canvas, so the panel shows what the compiler built for the selected node.
 // Replaces the legacy editor-side Shape Info; the node type's support axes
 // (formerly "Support Truth" under General) live under Details.
+#include "../core/extension_node_metadata.h"
 #include "properties.h"
 
 #include "../core/compiled_node_presentation.h"
@@ -84,7 +85,7 @@ void Properties::RenderCompiledSection(MLNode& node) {
     const auto& links = node_editor_->GetLinks();
 
     cyxwiz::CompiledNodeInputs inputs;
-    const auto* metadata = cyxwiz::NodeMetadataRegistry::Instance().GetMetadata(node.type);
+    const auto metadata = cyxwiz::ResolveNodeMetadata(node);
     inputs.type_label = metadata ? metadata->name : std::string();
     if (live_compile_) {
         inputs.state = live_compile_->State();
