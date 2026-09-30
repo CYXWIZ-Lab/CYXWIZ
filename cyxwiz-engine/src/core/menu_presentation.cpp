@@ -103,10 +103,10 @@ std::vector<MenuItem> ExportSubmenu(Context focus, bool onnx_available) {
 std::vector<MenuItem> RecentProjects(Context focus, const MenuInputs& in, const std::string& id,
                                      const std::string& hint) {
     std::vector<MenuItem> items;
-    for (const auto& path : in.recent_projects) {
+    for (const auto& project : in.recent_projects) {
         Opts opts;
-        opts.argument = path;
-        items.push_back(Action(focus, id, path, hint, opts));
+        opts.argument = project.id;
+        items.push_back(Action(focus, id, project.label, hint, opts));
     }
     return items;
 }

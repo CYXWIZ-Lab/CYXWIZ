@@ -5,6 +5,7 @@
 #include "python_settings_panel.h"
 #include "auth/auth_client.h"
 #include "../../core/backend_pack_manager_model.h"
+#include "../../core/menu_presentation.h"
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -12,6 +13,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <unordered_map>
 #include <memory>
 #include <future>
 #include <filesystem>
@@ -96,7 +98,6 @@ public:
     bool IsCommandPaletteOpen() const { return show_command_palette_; }
 
     // User profile popup (for custom title bar integration)
-    void ToggleUserProfilePopup() { show_user_profile_popup_ = !show_user_profile_popup_; }
 
     // Callbacks
     void SetResetLayoutCallback(std::function<void()> callback) { reset_layout_callback_ = callback; }
@@ -115,6 +116,7 @@ public:
     void SetLocalDebugCallback(std::function<void()> callback) { local_debug_callback_ = callback; }
     void SetStartTrainingCallback(std::function<void()> callback) { start_training_callback_ = callback; }
     void SetPauseTrainingCallback(std::function<void()> callback) { pause_training_callback_ = callback; }
+    void SetResumeTrainingCallback(std::function<void()> callback) { resume_training_callback_ = callback; }
     void SetStopTrainingCallback(std::function<void()> callback) { stop_training_callback_ = callback; }
     void SetTrainingSettingsCallback(std::function<void()> callback) { training_settings_callback_ = callback; }
     void SetOptimizerSettingsCallback(std::function<void()> callback) { optimizer_settings_callback_ = callback; }
@@ -144,6 +146,28 @@ public:
     void SetOpenScriptCallback(std::function<void()> callback) { open_script_callback_ = callback; }
     void SetOpenScriptInEditorCallback(std::function<void(const std::string&)> callback) { open_script_in_editor_callback_ = callback; }
     void SetOpenPythonConsoleCallback(std::function<void()> callback) { open_python_console_callback_ = callback; }
+    void SetRunScriptCallback(std::function<void()> callback) { run_script_callback_ = callback; }
+    void SetStopScriptCallback(std::function<void()> callback) { stop_script_callback_ = callback; }
+
+    // Menu bar state (TOFIX129): the menus, palette and shortcut handler read
+    // the same snapshot every frame.
+    struct MenuStateSnapshot {
+        menu::Context focus = menu::Context::Any;
+        int selected_nodes = 0;
+        menu::TrainingState training = menu::TrainingState::Idle;
+        bool script_open = false;
+        bool script_running = false;
+    };
+    void SetMenuStateProvider(std::function<MenuStateSnapshot()> provider) { menu_state_provider_ = provider; }
+    // One sentence about the hovered menu item, for the status bar. Empty
+    // when no menu item is hovered this frame.
+    const std::string& StatusHint() const { return status_hint_; }
+    void OpenPreferences(const std::string& tab = "") {
+        show_preferences_dialog_ = true;
+        preferences_select_tab_ = tab;
+    }
+    // Run one menu action by id (the Command Palette and shortcuts use this).
+    void Dispatch(const std::string& id, const std::string& argument = "");
     void SetSaveAllCallback(std::function<void()> callback) { save_all_callback_ = callback; }
     void SetAccountSettingsCallback(std::function<void()> callback) { account_settings_callback_ = callback; }
     void SetExitCallback(std::function<void()> callback) { exit_callback_ = callback; }
@@ -358,31 +382,20 @@ public:
     }
 
     // Access to created plot windows
-    const std::vector<std::shared_ptr<PlotWindow>>& GetPlotWindows() const { return plot_windows_; }
 
 private:
-    void RenderFileMenu();
+    // Menu bar from the presentation model (toolbar_menus.cpp).
+    menu::MenuInputs BuildMenuInputs() const;
+    void RenderMenuBar();
+    void RenderMenuItems(const std::vector<menu::MenuItem>& items);
+    void BuildActionHandlers();
     // File > Open Script... and Script > Open Script...: one action.
     void OpenScriptFromDialog();
-    void RenderEditMenu();
-    void RenderViewMenu();
-    void RenderNodesMenu();
-    void RenderTrainMenu();
-    void RenderSimulationMenu();
-    void RenderDatasetMenu();
-    void RenderScriptMenu();
-    void RenderDeployMenu();
-    void RenderToolsMenu();
-    void RenderProfileMenu();
 
     // File search functionality
     void SearchInFiles(const std::string& search_text, const std::string& search_path,
                        const std::string& file_patterns, bool case_sensitive,
                        bool whole_word, bool use_regex);
-    void RenderAppsMenu();
-    void RenderHelpMenu();
-    void RenderUserAvatar();
-    void RenderUserProfilePopup();
     void RenderProjectDialogs();
     void HandleAutoSaveTimer();
     void RenderEditorDialogs();
@@ -390,6 +403,7 @@ private:
     void RenderAccountDialogs();
     void RenderPreferencesDialog();
     void RenderAppearancePreferences();  // Preferences > Appearance
+    void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)
     bool RenderBackendManagerSection(bool training_active);
     // Compute devices: one card per physical device (tofix119 C).
     struct ComputeDeviceCardsContext {
@@ -412,7 +426,6 @@ private:
     // Helper functions
     std::string OpenFolderDialog();
     std::string OpenFileDialog(const char* filter, const char* title);
-    void CreatePlotWindow(const std::string& title, PlotWindow::PlotWindowType type);
 
     bool show_new_project_dialog_;
     bool show_about_dialog_;
@@ -426,7 +439,6 @@ private:
     bool is_logged_in_ = false;
     bool is_logging_in_ = false;
     bool session_restore_pending_ = true;
-    bool show_user_profile_popup_ = false;
     bool show_login_required_popup_ = false;
     std::string login_required_action_;  // What action requires login (for popup message)
     int popup_open_frames_ = 0;  // Track frames since popup opened (for click-away delay)
@@ -466,6 +478,7 @@ private:
     std::function<void()> local_debug_callback_;
     std::function<void()> start_training_callback_;
     std::function<void()> pause_training_callback_;
+    std::function<void()> resume_training_callback_;
     std::function<void()> stop_training_callback_;
     std::function<void()> training_settings_callback_;
     std::function<void()> optimizer_settings_callback_;
@@ -495,6 +508,11 @@ private:
     std::function<void()> open_script_callback_;
     std::function<void(const std::string&)> open_script_in_editor_callback_;
     std::function<void()> open_python_console_callback_;
+    std::function<void()> run_script_callback_;
+    std::function<void()> stop_script_callback_;
+    std::function<MenuStateSnapshot()> menu_state_provider_;
+    std::unordered_map<std::string, std::function<void(const std::string&)>> action_handlers_;
+    std::string status_hint_;
     std::function<void()> save_all_callback_;
     std::function<void()> account_settings_callback_;
     std::function<void()> exit_callback_;
@@ -517,7 +535,6 @@ private:
     int new_script_type_ = 0;  // 0 = .cyx, 1 = .py
 
     // Plot windows management
-    std::vector<std::shared_ptr<PlotWindow>> plot_windows_;
 
     // Edit menu callbacks
     std::function<void()> undo_callback_;
@@ -579,6 +596,7 @@ private:
     // Preferences dialog state
     bool show_preferences_dialog_ = false;
     bool preferences_open_appearance_ = false;
+    std::string preferences_select_tab_;  // tab to select when the dialog opens
     int preferences_tab_ = 0;  // 0 = Python/Scripting, 1 = Keyboard Shortcuts
 
     // Python/Scripting preferences
@@ -593,16 +611,8 @@ private:
     std::string python_diagnostics_text_;
 
     // Keyboard shortcuts (action name -> shortcut string)
-    struct ShortcutEntry {
-        std::string category;     // Category name (e.g., "General", "Script Editor", "Node Editor")
-        std::string action;
-        std::string shortcut;
-        std::string description;
-        bool editable;
-    };
-    std::vector<ShortcutEntry> shortcuts_;
-    int editing_shortcut_index_ = -1;
-    char shortcut_edit_buffer_[64] = "";
+    int shortcuts_context_ = 0;        // Preferences > Shortcuts: selected window
+    char shortcuts_search_[128] = "";
 
     // Device preferences
     int selected_device_index_ = -1;  // Active index into cached_devices_

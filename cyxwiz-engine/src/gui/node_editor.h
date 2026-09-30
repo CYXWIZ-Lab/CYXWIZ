@@ -266,6 +266,7 @@ public:
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
     int GetSelectedNodeId() const { return selected_node_id_; }
+    int GetSelectedNodeCount() const { return static_cast<int>(selected_node_ids_.size()); }
     // A node to configure by id (e.g. the Properties panel opening another
     // node's dialog); nullptr when it no longer exists.
     MLNode* GetNodeForConfiguration(int node_id) { return FindNodeById(node_id); }

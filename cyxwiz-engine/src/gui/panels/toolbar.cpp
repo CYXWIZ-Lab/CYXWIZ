@@ -168,46 +168,8 @@ void ToolbarPanel::Render() {
         }
     }
 
-    // Use standard ImGui main menu bar (positioned right below the OS title bar)
-    if (ImGui::BeginMainMenuBar()) {
-        RenderFileMenu();
-        RenderEditMenu();
-        RenderViewMenu();
-        RenderProfileMenu();
-        RenderNodesMenu();
-        RenderTrainMenu();
-        RenderSimulationMenu();
-        RenderToolsMenu();
-        RenderDatasetMenu();
-        RenderScriptMenu();
-        RenderDeployMenu();
-        RenderAppsMenu();
-        RenderHelpMenu();
-
-        // Show current project name in menu bar if active
-        auto& pm = ProjectManager::Instance();
-        if (pm.HasActiveProject()) {
-            ImGui::Separator();
-            ImGui::TextDisabled("| Project: %s", pm.GetProjectName().c_str());
-        }
-
-        // User avatar on the right side of menu bar
-        RenderUserAvatar();
-
-        ImGui::EndMainMenuBar();
-    }
-
-    // Render user profile popup outside menu bar
-    if (show_user_profile_popup_ && is_logged_in_) {
-        RenderUserProfilePopup();
-    }
-
-    // Render all plot windows
-    for (auto& plot_window : plot_windows_) {
-        if (plot_window) {
-            plot_window->Render();
-        }
-    }
+    // Main menu bar, drawn from the menu presentation model (TOFIX129).
+    RenderMenuBar();
 
     RenderProjectDialogs();
 

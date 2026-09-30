@@ -62,7 +62,6 @@ ImVec4 ArrayFireBackendColor(DeviceType type) {
 void ToolbarPanel::RenderPreferencesDialog() {
     // ========== Preferences Dialog ==========
     if (show_preferences_dialog_) {
-        // Note: shortcuts_ is initialized in RenderEditMenu() when Preferences is clicked
 
         // Python settings have been moved to PythonSettingsPanel
         // This initialization code is no longer needed
@@ -343,89 +342,13 @@ void ToolbarPanel::RenderPreferencesDialog() {
                 }
 
                 // ========== Keyboard Shortcuts Tab ==========
-                if (ImGui::BeginTabItem(ICON_FA_KEYBOARD " Shortcuts")) {
+                const ImGuiTabItemFlags shortcuts_flags =
+                    preferences_select_tab_ == "Shortcuts" ? ImGuiTabItemFlags_SetSelected
+                                                           : ImGuiTabItemFlags_None;
+                if (ImGui::BeginTabItem(ICON_FA_KEYBOARD " Shortcuts", nullptr, shortcuts_flags)) {
                     preferences_tab_ = 5;
-                    ImGui::Spacing();
-
-                    ImGui::TextDisabled("Double-click a shortcut to edit. Some shortcuts are system-level and cannot be changed.");
-                    ImGui::Spacing();
-
-                    // Table of shortcuts with category grouping
-                    if (ImGui::BeginTable("ShortcutsTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 320))) {
-                        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 180);
-                        ImGui::TableSetupColumn("Shortcut", ImGuiTableColumnFlags_WidthFixed, 150);
-                        ImGui::TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch);
-                        ImGui::TableHeadersRow();
-
-                        std::string current_category = "";
-                        for (int i = 0; i < static_cast<int>(shortcuts_.size()); ++i) {
-                            auto& shortcut = shortcuts_[i];
-
-                            // Check if we're entering a new category
-                            if (shortcut.category != current_category) {
-                                current_category = shortcut.category;
-
-                                // Render category header row
-                                ImGui::TableNextRow();
-                                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImGuiCol_TableHeaderBg));
-
-                                ImGui::TableNextColumn();
-                                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                                ImGui::TextUnformatted(ICON_FA_FOLDER);
-                                ImGui::SameLine();
-                                ImGui::Text("%s", current_category.c_str());
-                                ImGui::PopStyleColor();
-
-                                ImGui::TableNextColumn();
-                                ImGui::TextDisabled("---");
-
-                                ImGui::TableNextColumn();
-                                ImGui::TextDisabled("---");
-                            }
-
-                            ImGui::TableNextRow();
-
-                            // Action column (indented to show hierarchy)
-                            ImGui::TableNextColumn();
-                            ImGui::Text("  %s", shortcut.action.c_str());
-
-                            // Shortcut column
-                            ImGui::TableNextColumn();
-                            if (editing_shortcut_index_ == i) {
-                                // Edit mode
-                                ImGui::SetNextItemWidth(-1);
-                                if (ImGui::InputText("##edit_shortcut", shortcut_edit_buffer_, sizeof(shortcut_edit_buffer_), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                                    shortcut.shortcut = shortcut_edit_buffer_;
-                                    editing_shortcut_index_ = -1;
-                                }
-                                if (ImGui::IsItemDeactivated() && !ImGui::IsItemActive()) {
-                                    editing_shortcut_index_ = -1;
-                                }
-                            } else {
-                                // Display mode
-                                if (shortcut.editable) {
-                                    if (ImGui::Selectable(shortcut.shortcut.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
-                                        editing_shortcut_index_ = i;
-                                        strncpy(shortcut_edit_buffer_, shortcut.shortcut.c_str(), sizeof(shortcut_edit_buffer_) - 1);
-                                    }
-                                } else {
-                                    ImGui::TextDisabled("%s", shortcut.shortcut.c_str());
-                                }
-                            }
-
-                            // Description column
-                            ImGui::TableNextColumn();
-                            ImGui::TextDisabled("%s", shortcut.description.c_str());
-                        }
-
-                        ImGui::EndTable();
-                    }
-
-                    ImGui::Spacing();
-                    if (ImGui::Button("Reset to Defaults")) {
-                        shortcuts_.clear();  // Will be re-initialized on next open
-                    }
-
+                    preferences_select_tab_.clear();
+                    RenderShortcutsPreferences();
                     ImGui::EndTabItem();
                 }
 

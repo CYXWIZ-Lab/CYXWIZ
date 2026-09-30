@@ -52,6 +52,10 @@ public:
 
     // Execution
     void RunScript();
+    void StopScript();
+    bool IsScriptRunning() const { return script_running_; }
+    // True when the active tab holds a script that can be run or edited.
+    bool HasEditableScript() const { return IsActiveTabEditable(); }
     void RunSelection();
     void RunCurrentSection();  // Execute code between %% markers
     void Debug();

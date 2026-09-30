@@ -343,13 +343,9 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_search.cpp
     src/gui/panels/toolbar_file_dialogs.cpp
     src/gui/panels/toolbar_command_palette.cpp
-    src/gui/panels/toolbar_file_menu.cpp
-    src/gui/panels/toolbar_edit_menu.cpp
-    src/gui/panels/toolbar_view_menu.cpp
+    src/gui/panels/toolbar_menus.cpp
+    src/gui/panels/toolbar_shortcuts_tab.cpp
     src/gui/panels/toolbar_appearance.cpp
-    src/gui/panels/toolbar_profile_menu.cpp
-    src/gui/panels/toolbar_other_menus.cpp
-    src/gui/panels/toolbar_tools_menu.cpp
     src/gui/panels/toolbar_dialogs.cpp
     src/gui/panels/toolbar_account_dialogs.cpp
     src/gui/panels/toolbar_preferences_dialog.cpp

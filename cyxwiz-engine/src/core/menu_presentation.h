@@ -57,7 +57,7 @@ struct MenuInputs {
     bool idle_log = false;
     bool verbose_python = false;
     std::vector<PanelEntry> panels;
-    std::vector<std::string> recent_projects;
+    std::vector<NamedEntry> recent_projects;  // id = path, label = project name
     std::vector<NamedEntry> themes;
     std::vector<NamedEntry> icon_packs;
     std::vector<NamedEntry> tutorials;      // checked = completed

@@ -1202,6 +1202,15 @@ MainWindow::MainWindow()
         }
     });
 
+    // Resume Training
+    toolbar_->SetResumeTrainingCallback([]() {
+        auto& tm = cyxwiz::TrainingManager::Instance();
+        if (tm.IsTrainingActive() && tm.IsPaused()) {
+            tm.ResumeTraining();
+            spdlog::info("Resumed training");
+        }
+    });
+
     // Stop Training
     toolbar_->SetStopTrainingCallback([]() {
         auto& tm = cyxwiz::TrainingManager::Instance();
@@ -2245,6 +2254,38 @@ MainWindow::MainWindow()
             script_editor_->SetVisible(true);  // Show the Script Editor panel
             spdlog::info("Opened script in editor: {}", file_path);
         }
+    });
+
+    // Script > Run Script / Stop Script (the same actions as F5 / Shift+F5 in the editor)
+    toolbar_->SetRunScriptCallback([this]() {
+        if (script_editor_) {
+            script_editor_->SetVisible(true);
+            script_editor_->RunScript();
+        }
+    });
+    toolbar_->SetStopScriptCallback([this]() {
+        if (script_editor_) script_editor_->StopScript();
+    });
+
+    // Menu bar state: focus window, selection, training and script state
+    // (TOFIX129). Read by the menus, the palette and the shortcut handler.
+    toolbar_->SetMenuStateProvider([this]() {
+        cyxwiz::ToolbarPanel::MenuStateSnapshot s;
+        switch (KeyboardShortcutManager::Instance().GetActiveContext()) {
+            case KeyboardContext::NodeEditor: s.focus = cyxwiz::menu::Context::StudioCanvas; break;
+            case KeyboardContext::ScriptEditor:
+            case KeyboardContext::CompletionPopup: s.focus = cyxwiz::menu::Context::ScriptEditor; break;
+            default: break;
+        }
+        if (node_editor_) s.selected_nodes = node_editor_->GetSelectedNodeCount();
+        auto& tm = cyxwiz::TrainingManager::Instance();
+        s.training = !tm.IsTrainingActive() ? cyxwiz::menu::TrainingState::Idle
+                     : (tm.IsPaused() ? cyxwiz::menu::TrainingState::Paused : cyxwiz::menu::TrainingState::Running);
+        if (script_editor_) {
+            s.script_open = script_editor_->HasEditableScript();
+            s.script_running = script_editor_->IsScriptRunning();
+        }
+        return s;
     });
 
     // Set up Open Python Console callback
@@ -6430,9 +6471,13 @@ void MainWindow::RenderStatusBar() {
             ImGui::TextDisabled("%s No Project", ICON_FA_FOLDER);
         }
 
-        // Center: Spacer
+        // Centre: one sentence about the hovered menu item (TOFIX129).
         ImGui::SameLine();
-        (void)ImGui::GetContentRegionAvail().x; // Reserve for future use
+        if (toolbar_ && !toolbar_->StatusHint().empty()) {
+            ImGui::TextDisabled("|");
+            ImGui::SameLine();
+            ImGui::TextUnformatted(toolbar_->StatusHint().c_str());
+        }
 
         // Right side: Task indicator (if tasks are running)
         if (task_progress_panel_ && task_progress_panel_->HasActiveTasks()) {

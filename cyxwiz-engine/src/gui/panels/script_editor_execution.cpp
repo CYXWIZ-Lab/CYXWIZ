@@ -14,6 +14,12 @@
 
 namespace cyxwiz {
 
+void ScriptEditorPanel::StopScript() {
+    if (!script_running_ || !scripting_engine_) return;
+    scripting_engine_->StopScript();
+    spdlog::info("Stop script requested");
+}
+
 void ScriptEditorPanel::RunScript() {
     if (!IsActiveTabEditable() || !scripting_engine_) return;
 
