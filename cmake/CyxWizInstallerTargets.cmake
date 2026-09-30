@@ -250,6 +250,23 @@ if(CYXWIZ_BUILD_TESTS)
         COMMAND test_appearance_options
     )
 
+    # Menu bar presentation model (TOFIX129): menus, palette, shortcuts.
+    add_executable(test_menu_presentation
+        "${_cyxwiz_installer_engine_dir}/tests/test_menu_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/menu_presentation.cpp"
+    )
+    target_include_directories(test_menu_presentation PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+    )
+    set_target_properties(test_menu_presentation PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME menu_presentation_contract
+        COMMAND test_menu_presentation
+    )
+
     add_executable(test_installer_product_removal
         "${_cyxwiz_installer_engine_dir}/tests/test_installer_product_removal.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"

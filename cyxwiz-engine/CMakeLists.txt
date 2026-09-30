@@ -312,6 +312,7 @@ set(ENGINE_SOURCES
     src/gui/properties_truth.cpp
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
+    src/core/menu_presentation.cpp
     src/core/live_graph_compile.cpp
     src/core/remote_job_presentation.cpp
     src/gui/node_config_dialog.cpp
