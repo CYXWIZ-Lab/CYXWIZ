@@ -724,7 +724,7 @@ int main(int argc, char** argv) {
 
         // Create NodeClient for Central Server communication (but don't auto-connect)
         // Connection happens when user applies allocations via GUI
-        auto node_client = std::make_unique<cyxwiz::servernode::NodeClient>(
+        auto node_client = std::make_shared<cyxwiz::servernode::NodeClient>(
             daemon_config.central_server,
             node_id
         );
@@ -737,6 +737,10 @@ int main(int argc, char** argv) {
                 node_service_ptr->ClearAllPendingJobs();
             }
         });
+
+        // Job outcomes and the reservation end reach the Central Server
+        // through this client (TOFIX118 gap 1).
+        p2p_service->SetNodeClient(node_client);
 
         spdlog::info("Central Server configured at {} (not connected - waiting for user allocation)",
                      daemon_config.central_server);

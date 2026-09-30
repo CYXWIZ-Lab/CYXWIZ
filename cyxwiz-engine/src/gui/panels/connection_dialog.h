@@ -2,6 +2,7 @@
 
 #include "../../core/graph_job_memory_probe.h"
 #include "../../core/remote_job_presentation.h"
+#include <atomic>
 #include <future>
 #include <string>
 #include <functional>
@@ -55,9 +56,7 @@ public:
     void SetP2PTrainingPanel(P2PTrainingPanel* panel);
 
     // Set reservation and P2P clients
-    void SetReservationClient(std::shared_ptr<network::ReservationClient> client) {
-        reservation_client_ = client;
-    }
+    void SetReservationClient(std::shared_ptr<network::ReservationClient> client);
     void SetP2PClient(std::shared_ptr<network::P2PClient> client) {
         p2p_client_ = client;
     }
@@ -85,6 +84,9 @@ private:
     void StartReservation();
     void CancelReservation();
     void DoReleaseReservation();  // Actual release logic
+    // Add minutes to the active reservation and hand the node the new end
+    // (TOFIX118 gap 5). False with reservation_error_ set when refused.
+    bool ExtendActiveReservation(int additional_minutes);
     void ConnectToReservedNode();
     void StartP2PTraining();     // Send job directly to Server Node via P2P
     // Start a new job within the same reservation; with resume_job_id, send
@@ -141,6 +143,10 @@ private:
     std::string reservation_error_;
     network::ReservationInfo active_reservation_;
     bool has_active_reservation_ = false;
+    // From the Central Server's heartbeat (every 30 s, heartbeat thread):
+    // seconds left, -1 before the first reply; and its "extend soon" hint.
+    std::atomic<long long> reservation_seconds_left_{-1};
+    std::atomic<bool> reservation_should_extend_{false};
     network::NodeDisplayInfo reserved_node_;  // the listing the reservation was made from
 
     // Job memory estimate (ProbeGraphJobMemory on a worker), keyed by the

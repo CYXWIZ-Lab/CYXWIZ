@@ -1303,6 +1303,42 @@ void ConnectionDialog::StartP2PTraining() {
     reservation_error_.clear();
 }
 
+void ConnectionDialog::SetReservationClient(std::shared_ptr<network::ReservationClient> client) {
+    reservation_client_ = std::move(client);
+    if (!reservation_client_) return;
+    reservation_client_->SetHeartbeatCallback([this](int64_t time_remaining, bool should_extend) {
+        reservation_seconds_left_ = time_remaining;
+        reservation_should_extend_ = should_extend;
+    });
+}
+
+bool ConnectionDialog::ExtendActiveReservation(int additional_minutes) {
+    if (!reservation_client_ || !has_active_reservation_) {
+        reservation_error_ = "No active reservation to extend.";
+        return false;
+    }
+    int64_t new_expires = 0;
+    int64_t additional_escrow = 0;
+    std::string token;
+    if (!reservation_client_->ExtendReservation(active_reservation_.reservation_id, additional_minutes, new_expires,
+                                                additional_escrow, token)) {
+        reservation_error_ = "Could not extend the reservation: " + reservation_client_->GetLastError();
+        return false;
+    }
+    active_reservation_.end_time = new_expires;
+    active_reservation_.p2p_auth_token = token;
+    reservation_seconds_left_ = new_expires - static_cast<int64_t>(std::time(nullptr));
+    reservation_should_extend_ = false;
+    // The node enforces the end it knows; without the new token it would stop
+    // at the old one.
+    if (p2p_client_ && p2p_client_->IsConnected() && !p2p_client_->SendReservationExtension(token)) {
+        reservation_error_ = "Extended, but the node did not get the new end time: " + p2p_client_->GetLastError();
+        return false;
+    }
+    reservation_error_.clear();
+    return true;
+}
+
 void ConnectionDialog::SetP2PTrainingPanel(P2PTrainingPanel* panel) {
     p2p_training_panel_ = panel;
     if (!panel) return;

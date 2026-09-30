@@ -92,12 +92,14 @@ public:
         const std::map<std::string, double>& final_metrics,
         bool success = true);
 
-    // Extend reservation time
+    // Extend reservation time. p2p_auth_token carries the new end; forward
+    // it to the node (P2PClient::SendReservationExtension, TOFIX118 gap 5).
     bool ExtendReservation(
         const std::string& reservation_id,
         int32_t additional_minutes,
         int64_t& new_expires,
-        int64_t& additional_escrow);
+        int64_t& additional_escrow,
+        std::string& p2p_auth_token);
 
     // Release reservation early (proportional refund)
     bool ReleaseReservation(

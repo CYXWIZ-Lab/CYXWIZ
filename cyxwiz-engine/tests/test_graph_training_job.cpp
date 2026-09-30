@@ -207,7 +207,8 @@ int main() {
             float loss;
         };
         const auto run = [&](const std::string& root_name, const std::string& resume_from, int stop_at_epoch,
-                             std::vector<Step>& steps, int stop_at_batch = 1, int every_steps = 0) {
+                             std::vector<Step>& steps, int stop_at_batch = 1, int every_steps = 0,
+                             bool checkpoint_on_stop = false) {
             cyxwiz::GraphTrainingJobRequest request;
             request.graph_json = graph.dump();
             request.dataset_files["tiny_causal_lm_tokens"] = parquet.string();
@@ -229,7 +230,11 @@ int main() {
                 }
                 steps.push_back({epoch, batch, loss});
             };
-            callbacks.should_cancel = [&] { return stop.load(); };
+            if (checkpoint_on_stop) {
+                callbacks.should_stop_with_checkpoint = [&] { return stop.load(); };
+            } else {
+                callbacks.should_cancel = [&] { return stop.load(); };
+            }
             return cyxwiz::RunGraphTrainingJob(request, callbacks);
         };
 
@@ -286,6 +291,33 @@ int main() {
                             std::to_string(after.size()) + " batches)");
             Check(continued.metrics.loss_history == baseline.metrics.loss_history,
                   "epoch losses, including the resumed epoch's total, are identical");
+        }
+
+        std::cout << "a stop with a checkpoint keeps the batches already trained\n";
+        {
+            // A node's reservation ends mid-epoch (TOFIX118 gap 6): no
+            // periodic checkpoints, the stop itself writes one after batch 1.
+            std::vector<Step> before;
+            const auto stopped = run("resume_stop_split", "", 2, before, 1, 0, true);
+            Check(stopped.cancelled, "the run stops at epoch 2, batch 1");
+            std::vector<Step> after;
+            const auto continued = run("resume_stop_split", "latest", 0, after);
+            Check(continued.ok, "resumed from the stop's checkpoint" +
+                                    (continued.error.empty() ? "" : " (" + continued.error + ")"));
+            Check(Contains(continued.metrics.last_resume_checkpoint, "resume-") && !after.empty() &&
+                      after.front().epoch == 2 && after.front().batch == 2,
+                  "the resume continues at epoch 2, batch 2");
+            std::vector<Step> expected_rest;
+            for (const auto& step : uninterrupted) {
+                if (step.epoch > 2 || (step.epoch == 2 && step.batch >= 2)) expected_rest.push_back(step);
+            }
+            bool same = !expected_rest.empty() && expected_rest.size() == after.size();
+            for (size_t i = 0; same && i < after.size(); ++i) {
+                same = expected_rest[i].epoch == after[i].epoch && expected_rest[i].batch == after[i].batch &&
+                       expected_rest[i].loss == after[i].loss;
+            }
+            Check(same, "the rest of epoch 2 and epoch 3 match the uninterrupted run bit for bit (" +
+                            std::to_string(after.size()) + " batches)");
         }
 
         // A checkpoint does not resume into a different graph.

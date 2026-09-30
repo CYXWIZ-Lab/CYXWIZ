@@ -152,7 +152,8 @@ grpc::Status JobExecutionServiceImpl::ConnectToNode(
     spdlog::info("========================================");
 
     // Verify auth token
-    if (!VerifyAuthToken(request->auth_token(), request->job_id())) {
+    const auto claims = VerifyAuthToken(request->auth_token(), request->job_id());
+    if (!claims) {
         response->set_status(cyxwiz::protocol::STATUS_ERROR);
         response->mutable_error()->set_code(401);
         response->mutable_error()->set_message("Invalid or expired auth token");
@@ -166,6 +167,8 @@ grpc::Status JobExecutionServiceImpl::ConnectToNode(
     conn_info.engine_address = context->peer();
     conn_info.connected_at = std::chrono::system_clock::now().time_since_epoch().count();
     conn_info.is_authenticated = true;
+    conn_info.reservation_id = claims->reservation_id;
+    conn_info.reservation_expires = claims->reservation_expires;
 
     {
         std::lock_guard<std::mutex> lock(connections_mutex_);
@@ -174,11 +177,11 @@ grpc::Status JobExecutionServiceImpl::ConnectToNode(
 
     // Build response
     response->set_status(cyxwiz::protocol::STATUS_SUCCESS);
-    response->set_node_id(node_id_);
+    response->set_node_id(CurrentNodeId());
     *response->mutable_capabilities() = capabilities_;
 
     spdlog::info("[P2P WORKFLOW] Engine connected successfully!");
-    spdlog::info("  Server Node ID: {}", node_id_);
+    spdlog::info("  Server Node ID: {}", CurrentNodeId());
     spdlog::info("  Awaiting job config via SendJob...");
     return grpc::Status::OK;
 }
@@ -265,6 +268,7 @@ grpc::Status JobExecutionServiceImpl::SendJob(
     spdlog::info("========================================");
 
     // Verify connection is authenticated
+    ConnectionInfo connection;
     {
         std::lock_guard<std::mutex> lock(connections_mutex_);
         auto it = connections_.find(context->peer());
@@ -277,6 +281,7 @@ grpc::Status JobExecutionServiceImpl::SendJob(
             response->mutable_error()->set_message("Not authenticated");
             return grpc::Status::OK;
         }
+        connection = it->second;
     }
 
     // Cleanup any stale jobs before checking capacity
@@ -321,17 +326,14 @@ grpc::Status JobExecutionServiceImpl::SendJob(
     session->is_paused = false;
     session->should_stop = false;
 
-    // HOTEL ROOM MODEL: Initialize reservation timing
-    // The reservation duration should come from the job config or the JWT token
-    // For now, use a default of 1 hour. In production, this would be parsed from the auth token.
+    // HOTEL ROOM MODEL: the reservation and its end come from the Central
+    // Server's token, not from the Engine (TOFIX118 gap 2).
+    session->reservation_id = connection.reservation_id;
     session->reservation_start = std::chrono::steady_clock::now();
-    int reservation_minutes = request->config().reservation_duration_minutes();
-    if (reservation_minutes <= 0) {
-        reservation_minutes = 60;  // Default 1 hour if not specified
-    }
-    session->reservation_duration = std::chrono::seconds(reservation_minutes * 60);
+    session->reservation_expires = connection.reservation_expires;
     session->engine_connected = true;
-    spdlog::info("[HOTEL ROOM] Reservation initialized: {} minutes", reservation_minutes);
+    spdlog::info("[HOTEL ROOM] Reservation {}: {}s left", session->reservation_id,
+                 connection.reservation_expires - UnixNow());
 
     // Save dataset if provided inline
     if (!request->initial_dataset().empty()) {
@@ -379,13 +381,9 @@ grpc::Status JobExecutionServiceImpl::SendJob(
     spdlog::info("  Duration: {} epochs", request->config().epochs());
     spdlog::info("========================================");
 
-    // Notify Central Server about job acceptance (marks node as BUSY)
-    if (!NotifyCentralServer(request->job_id(), node_id_)) {
-        spdlog::warn("Failed to notify Central Server about job acceptance");
-        // Continue anyway - job can still run
-    } else {
-        spdlog::info("[CENTRAL SERVER] Notified: Node {} is BUSY with job {}", node_id_, request->job_id());
-    }
+    // The Central Server marked this node busy when it issued the
+    // reservation; job outcomes reach it through the NodeClient
+    // (ReportJobCompleteFromNode, authenticated). TOFIX118 gap 7.
 
     // Build response
     response->set_status(cyxwiz::protocol::STATUS_SUCCESS);
@@ -469,6 +467,13 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     std::condition_variable new_job_cv;
     cyxwiz::protocol::JobConfig pending_job_config;
 
+    // The reservation's end (TOFIX118 gap 6): woken by an extension or by the
+    // stream ending.
+    std::mutex deadline_mutex;
+    std::condition_variable deadline_cv;
+    std::atomic<bool> stream_done{false};
+    std::atomic<bool> expiry_reported{false};  // a job's completion told the Engine
+
     // Command thread runs for entire reservation, handles all commands
     std::thread command_thread([&, job_id, session]() {
         cyxwiz::protocol::TrainingCommand command;
@@ -516,6 +521,22 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 }
                 new_job_cv.notify_one();
             }
+            else if (command.has_reservation_extension_token()) {
+                // ExtendReservation's token (TOFIX118 gap 5): same
+                // reservation, this node, a later end.
+                std::optional<cyxwiz::P2PAuthClaims> claims;
+                if (jwt_validator_) claims = jwt_validator_->ValidateToken(command.reservation_extension_token());
+                if (claims && claims->reservation_id == session->reservation_id &&
+                    claims->node_id == CurrentNodeId() &&
+                    claims->reservation_expires > session->reservation_expires.load()) {
+                    session->reservation_expires = claims->reservation_expires;
+                    deadline_cv.notify_all();
+                    spdlog::info("[RESERVATION] Extended: {}s left", claims->reservation_expires - UnixNow());
+                } else {
+                    spdlog::warn("[RESERVATION] Extension token refused (invalid, another reservation or node, "
+                                 "or not later)");
+                }
+            }
             else if (command.has_reservation_end()) {
                 spdlog::info("[RESERVATION] Reservation end signal received");
                 reservation_ended = true;
@@ -533,8 +554,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
             // Calculate time remaining in reservation
             auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - session->reservation_start);
-            auto remaining = session->reservation_duration - elapsed;
+            auto remaining = std::chrono::seconds(session->reservation_expires.load() - UnixNow());
 
             if (remaining.count() > 0) {
                 spdlog::warn("[HOTEL ROOM] Reservation has {}s remaining", remaining.count());
@@ -563,6 +583,32 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             engine_disconnected = true;
             new_job_cv.notify_one();
         }
+    });
+
+    // At the reservation's end: a running job stops with a checkpoint (its
+    // completion reports RESERVATION_ENDED), and no new job is waited for.
+    std::thread deadline_thread([&, session]() {
+        std::unique_lock<std::mutex> lock(deadline_mutex);
+        while (!stream_done && !reservation_ended && !engine_disconnected) {
+            const int64_t end = session->reservation_expires.load();
+            if (UnixNow() >= end) {
+                session->reservation_expired = true;
+                break;
+            }
+            deadline_cv.wait_until(lock, std::chrono::system_clock::time_point(std::chrono::seconds(end)));
+        }
+        if (!session->reservation_expired) return;
+        lock.unlock();
+        spdlog::warn("[RESERVATION] Reservation {} ended; stopping", session->reservation_id);
+        cancel_fetch();
+        if (session->is_running && job_executor_) {
+            job_executor_->StopJobWithCheckpoint(session->job_config.job_id());
+        }
+        {
+            std::lock_guard<std::mutex> job_lock(new_job_mutex);
+            reservation_ended = true;
+        }
+        new_job_cv.notify_one();
     });
 
     // ========== MULTI-JOB TRAINING LOOP ==========
@@ -757,7 +803,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 // Save the weights now: the executor drops the job's model
                 // right after this callback.
                 const auto run_timing = job_executor_->GetJobRunTiming(current_job_id);
-                if (success || session->should_stop) {
+                if (success || session->should_stop || session->reservation_expired) {
                     const auto save_start = std::chrono::steady_clock::now();
                     const std::string path = SavePartialModel(current_job_id);
                     std::lock_guard<std::mutex> lock(error_mutex);
@@ -785,7 +831,12 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
         // Start real training
         session->is_running = true;
-        if (!job_executor_->ExecuteJobAsync(run_config)) {
+        if (session->reservation_expired) {
+            // The reservation ended while the dataset was arriving (gap 6).
+            std::lock_guard<std::mutex> lock(error_mutex);
+            failure = cyxwiz::TrainingFailureKind::ReservationEnded;
+            training_complete = true;
+        } else if (!job_executor_->ExecuteJobAsync(run_config)) {
             std::lock_guard<std::mutex> lock(error_mutex);
             training_error = "the node could not start the job";
             failure = cyxwiz::TrainingFailureKind::Internal;
@@ -896,6 +947,19 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 spdlog::warn("[P2P WORKFLOW] No trained weights were saved for job {}; none advertised",
                              current_job_id);
             }
+        } else if (session->reservation_expired) {
+            // The reservation ran out (TOFIX118 gap 6): the job stopped with a
+            // checkpoint; the Engine offers a resume in a new reservation.
+            auto* error = complete_update.mutable_error();
+            error->set_error_code(cyxwiz::TrainingFailureCode(cyxwiz::TrainingFailureKind::ReservationEnded));
+            {
+                std::lock_guard<std::mutex> lock(error_mutex);
+                error->set_error_message("The reservation ended; training stopped during epoch " +
+                                         std::to_string(epochs_completed + 1) +
+                                         ". The node kept this job's checkpoints for a resume.");
+            }
+            error->set_recoverable(false);
+            expiry_reported = true;
         } else if (session->should_stop) {
             // User-initiated stop - send COMPLETE with success=false (NOT an error)
             // This allows the Engine to continue with new training within the reservation
@@ -1059,6 +1123,33 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     spdlog::info("  Reservation timer ended: {}", reservation_ended ? "YES" : "NO");
     spdlog::info("========================================");
 
+    {
+        std::lock_guard<std::mutex> lock(deadline_mutex);
+        stream_done = true;
+    }
+    deadline_cv.notify_all();
+    if (deadline_thread.joinable()) {
+        deadline_thread.join();
+    }
+    if (session->reservation_expired) {
+        // Tell an idle Engine why the stream ends, then close it: the
+        // command thread is blocked reading the Engine.
+        if (!expiry_reported) {
+            cyxwiz::protocol::TrainingUpdate ended;
+            ended.set_job_id(session->job_config.job_id());
+            ended.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
+            auto* error = ended.mutable_error();
+            error->set_error_code(cyxwiz::TrainingFailureCode(cyxwiz::TrainingFailureKind::ReservationEnded));
+            error->set_error_message("The reservation ended.");
+            error->set_recoverable(false);
+            {
+                std::lock_guard<std::mutex> stream_lock(*stream_mutex);
+                stream->Write(ended);
+            }
+        }
+        context->TryCancel();
+    }
+
     session->should_stop = true;
     if (command_thread.joinable()) {
         command_thread.join();
@@ -1185,104 +1276,30 @@ grpc::Status JobExecutionServiceImpl::DownloadWeights(
 
 // ========== Helper Methods ==========
 
-bool JobExecutionServiceImpl::VerifyAuthToken(const std::string& token,
-                                              const std::string& job_id) {
+int64_t JobExecutionServiceImpl::UnixNow() {
+    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+std::string JobExecutionServiceImpl::CurrentNodeId() const {
+    return node_client_ ? node_client_->GetNodeId() : node_id_;
+}
+
+std::optional<cyxwiz::P2PAuthClaims> JobExecutionServiceImpl::VerifyAuthToken(const std::string& token,
+                                                                              const std::string& job_id) {
     if (token.empty()) {
         spdlog::warn("Empty auth token for job {}", job_id);
-        return false;
+        return std::nullopt;
     }
 
     // If no validator configured, reject all tokens (secure default)
     if (!jwt_validator_) {
         spdlog::error("P2P JWT validator not configured - rejecting token");
-        return false;
+        return std::nullopt;
     }
 
     // Validate JWT token: signature, expiration, job_id, node_id
-    return jwt_validator_->ValidateForJob(token, job_id, node_id_);
-}
-
-bool JobExecutionServiceImpl::NotifyCentralServer(const std::string& job_id,
-                                                  const std::string& node_id) {
-    try {
-        // Create gRPC channel to Central Server
-        auto channel = grpc::CreateChannel(central_server_address_,
-                                          grpc::InsecureChannelCredentials());
-        auto stub = cyxwiz::protocol::NodeService::NewStub(channel);
-
-        // Prepare request
-        cyxwiz::protocol::JobAcceptedRequest request;
-        request.set_node_id(node_id);
-        request.set_job_id(job_id);
-        request.set_engine_address("direct_p2p");
-        request.set_accepted_at(
-            std::chrono::system_clock::now().time_since_epoch().count());
-        // Set our P2P endpoint from config
-        auto& backend = cyxwiz::servernode::core::BackendManager::Instance();
-        std::string p2p_endpoint = backend.IsInitialized() ? backend.GetConfig().p2p_address : "0.0.0.0:50052";
-        request.set_node_endpoint(p2p_endpoint);
-
-        // Send notification
-        cyxwiz::protocol::JobAcceptedResponse response;
-        grpc::ClientContext context;
-
-        auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(5);
-        context.set_deadline(deadline);
-
-        grpc::Status status = stub->NotifyJobAccepted(&context, request, &response);
-
-        if (status.ok() && response.status() == cyxwiz::protocol::STATUS_SUCCESS) {
-            spdlog::info("Central Server notified about job {} acceptance", job_id);
-            return true;
-        } else {
-            spdlog::error("Failed to notify Central Server: {}",
-                         status.error_message());
-            return false;
-        }
-    } catch (const std::exception& e) {
-        spdlog::error("Exception notifying Central Server: {}", e.what());
-        return false;
-    }
-}
-
-void JobExecutionServiceImpl::NotifyJobEnded(const std::string& job_id, bool success, const std::string& reason) {
-    try {
-        // Create gRPC channel to Central Server
-        auto channel = grpc::CreateChannel(central_server_address_,
-                                          grpc::InsecureChannelCredentials());
-        auto stub = cyxwiz::protocol::NodeService::NewStub(channel);
-
-        // Prepare heartbeat request to update node status
-        cyxwiz::protocol::HeartbeatRequest request;
-        request.set_node_id(node_id_);
-
-        // Set current status - node is now available
-        auto* node_info = request.mutable_current_status();
-        node_info->set_node_id(node_id_);
-        node_info->set_ram_available(capabilities_.max_memory());  // All memory available now
-
-        // Clear active jobs list (no jobs running)
-        request.clear_active_jobs();
-
-        // Send heartbeat to update status
-        cyxwiz::protocol::HeartbeatResponse response;
-        grpc::ClientContext context;
-
-        auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(5);
-        context.set_deadline(deadline);
-
-        grpc::Status status = stub->Heartbeat(&context, request, &response);
-
-        if (status.ok()) {
-            spdlog::info("Notified Central Server: job {} ended (success={}, reason={})",
-                        job_id, success, reason);
-        } else {
-            spdlog::warn("Failed to notify Central Server about job end: {}",
-                        status.error_message());
-        }
-    } catch (const std::exception& e) {
-        spdlog::error("Exception notifying Central Server about job end: {}", e.what());
-    }
+    return jwt_validator_->ValidateForJob(token, job_id, CurrentNodeId());
 }
 
 void JobExecutionServiceImpl::CleanupJob(const std::string& job_id) {
@@ -1533,7 +1550,7 @@ void JobExecutionServiceImpl::ReportReservationEnd(const std::string& reservatio
     spdlog::info("[CENTRAL SERVER NOTIFICATION]");
     spdlog::info("  Action: ReportReservationEndFromNode");
     spdlog::info("  Reservation ID: {}", reservation_id);
-    spdlog::info("  Node ID: {}", node_id_);
+    spdlog::info("  Node ID: {}", CurrentNodeId());
     spdlog::info("  Jobs completed: {}", jobs_completed);
     spdlog::info("  node_available: true (move to FREE list)");
     spdlog::info("  Expected Central Server actions:");
@@ -1557,7 +1574,7 @@ void JobExecutionServiceImpl::ReportReservationEnd(const std::string& reservatio
         );
 
         if (reported) {
-            spdlog::info("[CENTRAL SERVER] SUCCESS - Node {} is now FREE on Central Server", node_id_);
+            spdlog::info("[CENTRAL SERVER] SUCCESS - Node {} is now FREE on Central Server", CurrentNodeId());
             spdlog::info("  Node can now accept new reservations from Engines");
         } else {
             spdlog::error("[CENTRAL SERVER] FAILED to report reservation end!");

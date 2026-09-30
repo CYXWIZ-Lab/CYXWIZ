@@ -227,6 +227,11 @@ public:
      * Stop training (thread-safe, cooperative cancellation)
      */
     void Stop();
+    // Stop, first writing a resume checkpoint at the batch it stops on where
+    // the loop supports mid-epoch resume (sequence batches); the other loops
+    // keep their epoch-end checkpoint. Needs EnableResumeCheckpoints. Used
+    // when a node's reservation ends (TOFIX118 gap 6).
+    void StopWithCheckpoint();
 
     // Resume checkpoints (TOFIX118 P4e). Enable before Train: a checkpoint is
     // written under `root` at every epoch end (the newest `keep` are kept).
@@ -354,6 +359,7 @@ private:
     // Thread safety
     std::atomic<bool> is_training_{false};
     std::atomic<bool> stop_requested_{false};
+    std::atomic<bool> checkpoint_on_stop_{false};
     std::atomic<bool> is_paused_{false};
 
     mutable std::mutex metrics_mutex_;
