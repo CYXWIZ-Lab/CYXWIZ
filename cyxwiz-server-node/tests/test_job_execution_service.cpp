@@ -72,6 +72,10 @@ std::string GenerateTestJwt(const std::string& job_id,
         .set_expires_at(exp)
         .set_payload_claim("job_id", job_id)
         .set_payload_claim("node_id", node_id)
+        .set_payload_claim("reservation_id", job_id)
+        .set_payload_claim("reservation_expires",
+                           jwt::basic_claim<jwt_traits>(static_cast<int64_t>(
+                               std::chrono::duration_cast<std::chrono::seconds>(exp.time_since_epoch()).count())))
         .sign(jwt::algorithm::hs256{TEST_SECRET});
 
     return token;
@@ -235,6 +239,33 @@ TEST_CASE("JobExecutionService - ConnectToNode", "[p2p][connect]") {
         REQUIRE(status.ok());  // gRPC call succeeds
         REQUIRE(response.status() == STATUS_ERROR);  // But auth fails
         REQUIRE(response.has_error());
+    }
+
+    SECTION("A token without the reservation is refused") {
+        // The node reports the reservation's end under its id and enforces
+        // its end time, so both claims are required (TOFIX118 gap 2).
+        using jwt_traits = jwt::traits::nlohmann_json;
+        const auto now = std::chrono::system_clock::now();
+        const std::string token = jwt::create<jwt_traits>()
+                                      .set_issuer("CyxWiz-Central-Server")
+                                      .set_subject("test_user")
+                                      .set_issued_at(now)
+                                      .set_expires_at(now + std::chrono::hours(1))
+                                      .set_payload_claim("job_id", std::string("test_job_004"))
+                                      .set_payload_claim("node_id", std::string(TEST_NODE_ID))
+                                      .sign(jwt::algorithm::hs256{TEST_SECRET});
+        ConnectRequest request;
+        request.set_job_id("test_job_004");
+        request.set_auth_token(token);
+        request.set_engine_version("1.0.0");
+
+        ConnectResponse response;
+        grpc::ClientContext context;
+        SetRpcDeadline(context);
+
+        REQUIRE(test.stub->ConnectToNode(&context, request, &response).ok());
+        REQUIRE(response.status() == STATUS_ERROR);
+        REQUIRE(response.error().code() == 401);
     }
 
     SECTION("Node capabilities are populated") {

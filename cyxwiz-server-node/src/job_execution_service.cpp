@@ -152,7 +152,8 @@ grpc::Status JobExecutionServiceImpl::ConnectToNode(
     spdlog::info("========================================");
 
     // Verify auth token
-    if (!VerifyAuthToken(request->auth_token(), request->job_id())) {
+    const auto claims = VerifyAuthToken(request->auth_token(), request->job_id());
+    if (!claims) {
         response->set_status(cyxwiz::protocol::STATUS_ERROR);
         response->mutable_error()->set_code(401);
         response->mutable_error()->set_message("Invalid or expired auth token");
@@ -166,6 +167,8 @@ grpc::Status JobExecutionServiceImpl::ConnectToNode(
     conn_info.engine_address = context->peer();
     conn_info.connected_at = std::chrono::system_clock::now().time_since_epoch().count();
     conn_info.is_authenticated = true;
+    conn_info.reservation_id = claims->reservation_id;
+    conn_info.reservation_expires = claims->reservation_expires;
 
     {
         std::lock_guard<std::mutex> lock(connections_mutex_);
@@ -265,6 +268,7 @@ grpc::Status JobExecutionServiceImpl::SendJob(
     spdlog::info("========================================");
 
     // Verify connection is authenticated
+    ConnectionInfo connection;
     {
         std::lock_guard<std::mutex> lock(connections_mutex_);
         auto it = connections_.find(context->peer());
@@ -277,6 +281,7 @@ grpc::Status JobExecutionServiceImpl::SendJob(
             response->mutable_error()->set_message("Not authenticated");
             return grpc::Status::OK;
         }
+        connection = it->second;
     }
 
     // Cleanup any stale jobs before checking capacity
@@ -321,17 +326,16 @@ grpc::Status JobExecutionServiceImpl::SendJob(
     session->is_paused = false;
     session->should_stop = false;
 
-    // HOTEL ROOM MODEL: Initialize reservation timing
-    // The reservation duration should come from the job config or the JWT token
-    // For now, use a default of 1 hour. In production, this would be parsed from the auth token.
+    // HOTEL ROOM MODEL: the reservation and its end come from the Central
+    // Server's token, not from the Engine (TOFIX118 gap 2).
+    session->reservation_id = connection.reservation_id;
     session->reservation_start = std::chrono::steady_clock::now();
-    int reservation_minutes = request->config().reservation_duration_minutes();
-    if (reservation_minutes <= 0) {
-        reservation_minutes = 60;  // Default 1 hour if not specified
-    }
-    session->reservation_duration = std::chrono::seconds(reservation_minutes * 60);
+    session->reservation_expires =
+        std::chrono::system_clock::time_point(std::chrono::seconds(connection.reservation_expires));
     session->engine_connected = true;
-    spdlog::info("[HOTEL ROOM] Reservation initialized: {} minutes", reservation_minutes);
+    spdlog::info("[HOTEL ROOM] Reservation {}: {}s left", session->reservation_id,
+                 std::chrono::duration_cast<std::chrono::seconds>(
+                     session->reservation_expires - std::chrono::system_clock::now()).count());
 
     // Save dataset if provided inline
     if (!request->initial_dataset().empty()) {
@@ -533,8 +537,8 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
             // Calculate time remaining in reservation
             auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - session->reservation_start);
-            auto remaining = session->reservation_duration - elapsed;
+            auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
+                session->reservation_expires - std::chrono::system_clock::now());
 
             if (remaining.count() > 0) {
                 spdlog::warn("[HOTEL ROOM] Reservation has {}s remaining", remaining.count());
@@ -1189,17 +1193,17 @@ std::string JobExecutionServiceImpl::CurrentNodeId() const {
     return node_client_ ? node_client_->GetNodeId() : node_id_;
 }
 
-bool JobExecutionServiceImpl::VerifyAuthToken(const std::string& token,
-                                              const std::string& job_id) {
+std::optional<cyxwiz::P2PAuthClaims> JobExecutionServiceImpl::VerifyAuthToken(const std::string& token,
+                                                                              const std::string& job_id) {
     if (token.empty()) {
         spdlog::warn("Empty auth token for job {}", job_id);
-        return false;
+        return std::nullopt;
     }
 
     // If no validator configured, reject all tokens (secure default)
     if (!jwt_validator_) {
         spdlog::error("P2P JWT validator not configured - rejecting token");
-        return false;
+        return std::nullopt;
     }
 
     // Validate JWT token: signature, expiration, job_id, node_id

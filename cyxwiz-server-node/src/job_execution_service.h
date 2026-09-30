@@ -142,6 +142,9 @@ private:
         std::string auth_token;
         int64_t connected_at;
         bool is_authenticated;
+        // From the Central Server's token (TOFIX118 gap 2).
+        std::string reservation_id;
+        int64_t reservation_expires = 0;  // Unix time
     };
 
     // Reservation limits (minimal - user paid for time, can use it freely)
@@ -187,7 +190,8 @@ private:
         std::atomic<int> jobs_completed_in_reservation{0};
         std::atomic<bool> waiting_for_new_job{false};
         std::chrono::steady_clock::time_point reservation_start;
-        std::chrono::seconds reservation_duration{0};
+        // When the reservation ends, from the Central Server's token.
+        std::chrono::system_clock::time_point reservation_expires;
 
         // HOTEL ROOM MODEL: Track engine connection status
         std::atomic<bool> engine_connected{true};
@@ -195,7 +199,8 @@ private:
     };
 
     // Helper methods
-    bool VerifyAuthToken(const std::string& token, const std::string& job_id);
+    // The token's claims if it is valid for this job on this node.
+    std::optional<cyxwiz::P2PAuthClaims> VerifyAuthToken(const std::string& token, const std::string& job_id);
     bool NotifyCentralServer(const std::string& job_id, const std::string& node_id);
     void NotifyJobEnded(const std::string& job_id, bool success, const std::string& reason);
     void CleanupJob(const std::string& job_id);
