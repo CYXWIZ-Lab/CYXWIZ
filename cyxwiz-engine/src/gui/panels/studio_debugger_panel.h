@@ -9,6 +9,7 @@
 #include "../../core/training_trace_collector.h"
 #include "../../core/debug_run_store.h"
 #include "../../core/async_task_manager.h"
+#include "../../core/studio_debugger_snapshot.h"
 #include "../icons.h"
 #include <cstddef>
 #include <chrono>
@@ -40,41 +41,6 @@ enum class StudioDebuggerSection {
     Training,
     Runtime,
     Diagnostics
-};
-
-enum class StudioDebuggerRunMode {
-    FullWorkflow = 0,
-    Preflight,
-    LocalDebug,
-    SmokeRun,
-    RuntimeTrace
-};
-
-struct StudioDebuggerSnapshot {
-    bool success = false;
-    bool has_debug_result = false;
-    std::string run_id;
-
-    uint64_t graph_hash = 0;
-    size_t node_count = 0;
-    size_t link_count = 0;
-
-    std::string graph_summary;
-    std::string preflight_summary;
-    std::string sample_summary = "Synthetic sample 0 (POC)";
-    std::string failure_summary;
-
-    DebugPreflightResult preflight;
-    std::vector<ValidationIssue> issues;
-    std::vector<DebugTraceRecord> traces;
-    std::vector<StudioEventRecord> studio_events;
-    DebugResult debug_result;
-    SmokeRunResult smoke_result;
-    CrashRunSummary last_run;
-    TrainingTraceSummary training_trace;
-    DebugRunExecutionSummary execution;
-    std::vector<DebugRecommendation> recommendations;
-    std::vector<DebugRunStoreSummary> run_history;
 };
 
 class StudioDebuggerPanel : public Panel {

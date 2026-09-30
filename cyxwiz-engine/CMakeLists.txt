@@ -188,6 +188,7 @@ set(ENGINE_SOURCES
     src/core/smoke_run_executor.cpp
     src/core/debug_recommendation_engine.cpp
     src/core/debug_run_store.cpp
+    src/core/studio_debugger_presentation.cpp
     src/core/metric_learning_metrics.cpp
     src/core/training_manager.cpp
     src/core/test_executor.cpp
@@ -4853,6 +4854,35 @@ if(WIN32)
 endif()
 
 set_target_properties(test_debugger_contracts PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Studio Debugger Presentation (TOFIX128) =====
+add_executable(test_studio_debugger_presentation
+    tests/test_studio_debugger_presentation.cpp
+    src/core/studio_debugger_presentation.cpp
+)
+
+target_include_directories(test_studio_debugger_presentation PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_studio_debugger_presentation PRIVATE
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_studio_debugger_presentation PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_studio_debugger_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

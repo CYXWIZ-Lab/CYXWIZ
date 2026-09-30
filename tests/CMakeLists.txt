@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 
 find_package(Catch2 CONFIG REQUIRED)
+# Defines catch_discover_tests (used by the ONNX export tests below).
+include(Catch)
 
 # Unit tests
 add_executable(cyxwiz-tests
