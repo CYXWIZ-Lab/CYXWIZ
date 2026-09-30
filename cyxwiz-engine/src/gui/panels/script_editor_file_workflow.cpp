@@ -447,4 +447,26 @@ void ScriptEditorPanel::DoCloseFile(int tab_index) {
     pending_close_tab_index_ = -1;
 }
 
+bool ScriptEditorPanel::HasUnsavedChangesFor(const std::string& filepath) const {
+    for (const auto& tab : tabs_) {
+        if (tab->filepath == filepath) return tab->is_modified;
+    }
+    return false;
+}
+
+bool ScriptEditorPanel::ReloadOpenFile(const std::string& filepath) {
+    for (auto& tab : tabs_) {
+        if (tab->filepath != filepath) continue;
+        if (tab->is_modified || tab->is_large_file || tab->is_loading) return false;
+        std::ifstream file(filepath, std::ios::binary);
+        if (!file.is_open()) return false;
+        std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        tab->editor.SetText(content);
+        tab->is_modified = false;
+        spdlog::info("Reloaded {} after Replace in Files", filepath);
+        return true;
+    }
+    return false;
+}
+
 } // namespace cyxwiz

@@ -271,6 +271,9 @@ public:
     // node's dialog); nullptr when it no longer exists.
     MLNode* GetNodeForConfiguration(int node_id) { return FindNodeById(node_id); }
     const std::string& GetCurrentFilePath() const { return current_file_path_; }
+    // File > Save: writes the graph to its file, asking for one the first time.
+    // An empty graph is nothing to save and returns true.
+    bool SaveCurrentGraph();
     std::string GetNodeTypeDisplayName(NodeType type) const { return GetNodeTypeName(type); }
 
     // Thread-safe scalar simulation bridge used by Properties.

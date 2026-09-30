@@ -48,11 +48,10 @@ void ToolbarPanel::RenderSearchDialogs() {
                 }
             }
             ImGui::SameLine();
-            ImGui::BeginDisabled();
-            ImGui::Button("Find Previous", ImVec2(button_width, 0));
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Find Previous is planned");
+            if (ImGui::Button("Find Previous", ImVec2(button_width, 0))) {
+                if (find_previous_callback_ && strlen(find_text_buffer_) > 0) {
+                    find_previous_callback_(find_text_buffer_, find_case_sensitive_, find_whole_word_, find_use_regex_);
+                }
             }
             ImGui::SameLine();
             if (ImGui::Button("Close", ImVec2(button_width, 0))) {
@@ -309,11 +308,19 @@ void ToolbarPanel::RenderSearchDialogs() {
                 }
             }
             ImGui::SameLine();
-            ImGui::BeginDisabled();
-            ImGui::Button("Replace All", ImVec2(100, 0));
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Replace in files is planned");
+            if (ImGui::Button("Replace All", ImVec2(100, 0))) {
+                if (strlen(find_text_buffer_) > 0 && strlen(find_in_files_path_) > 0) {
+                    ReplaceInFiles(find_text_buffer_, replace_text_buffer_, find_in_files_path_,
+                                   find_in_files_pattern_, find_case_sensitive_, find_whole_word_,
+                                   find_use_regex_);
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Replaces every match in the files below the folder. Files open in the editor with unsaved edits are skipped.");
+            }
+            if (!replace_in_files_summary_.empty()) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", replace_in_files_summary_.c_str());
             }
             ImGui::SameLine();
             if (ImGui::Button("Close", ImVec2(100, 0))) {

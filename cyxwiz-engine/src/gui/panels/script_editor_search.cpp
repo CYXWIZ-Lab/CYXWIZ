@@ -208,6 +208,16 @@ bool ScriptEditorPanel::FindNext() {
     return FindInEditor(last_search_text_, last_case_sensitive_, last_whole_word_, last_use_regex_);
 }
 
+bool ScriptEditorPanel::FindPreviousOf(const std::string& search_text, bool case_sensitive, bool whole_word,
+                                       bool use_regex) {
+    if (search_text.empty()) return false;
+    last_search_text_ = search_text;
+    last_case_sensitive_ = case_sensitive;
+    last_whole_word_ = whole_word;
+    last_use_regex_ = use_regex;
+    return FindPrevious();
+}
+
 bool ScriptEditorPanel::FindPrevious() {
     if (last_search_text_.empty()) {
         return false;

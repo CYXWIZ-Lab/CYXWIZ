@@ -67,6 +67,8 @@ public:
     void SetStartTrainingCallback(std::function<void()> callback) { start_training_callback_ = callback; }
     void SetPauseTrainingCallback(std::function<void()> callback) { pause_training_callback_ = callback; }
     void SetResumeTrainingCallback(std::function<void()> callback) { resume_training_callback_ = callback; }
+    // File > Save: project settings, open scripts and the graph (TOFIX129 G4).
+    void SetSaveProjectCallback(std::function<void()> callback) { save_project_callback_ = callback; }
     void SetStopTrainingCallback(std::function<void()> callback) { stop_training_callback_ = callback; }
     void SetTrainingSettingsCallback(std::function<void()> callback) { training_settings_callback_ = callback; }
     void SetOptimizerSettingsCallback(std::function<void()> callback) { optimizer_settings_callback_ = callback; }
@@ -137,6 +139,11 @@ public:
     void SetToggleBlockCommentCallback(std::function<void()> callback) { toggle_block_comment_callback_ = callback; }
     void SetFindCallback(std::function<void(const std::string&, bool, bool, bool)> callback) { find_callback_ = callback; }
     void SetFindNextCallback(std::function<void()> callback) { find_next_callback_ = callback; }
+    void SetFindPreviousCallback(std::function<void(const std::string&, bool, bool, bool)> callback) { find_previous_callback_ = callback; }
+    // Replace in Files: files open in the editor with unsaved edits are skipped;
+    // open unmodified files are reloaded after the write.
+    void SetFileHasUnsavedChangesCallback(std::function<bool(const std::string&)> callback) { file_has_unsaved_changes_callback_ = callback; }
+    void SetReloadOpenFileCallback(std::function<void(const std::string&)> callback) { reload_open_file_callback_ = callback; }
     void SetReplaceCallback(std::function<void(const std::string&, const std::string&, bool, bool, bool)> callback) { replace_callback_ = callback; }
     void SetReplaceAllCallback(std::function<void(const std::string&, const std::string&, bool, bool, bool)> callback) { replace_all_callback_ = callback; }
 
@@ -428,6 +435,7 @@ private:
     std::function<void()> start_training_callback_;
     std::function<void()> pause_training_callback_;
     std::function<void()> resume_training_callback_;
+    std::function<void()> save_project_callback_;
     std::function<void()> stop_training_callback_;
     std::function<void()> training_settings_callback_;
     std::function<void()> optimizer_settings_callback_;
@@ -497,6 +505,9 @@ private:
     std::function<void()> toggle_block_comment_callback_;
     std::function<void(const std::string&, bool, bool, bool)> find_callback_;  // text, case_sensitive, whole_word, regex
     std::function<void()> find_next_callback_;  // Find next occurrence
+    std::function<void(const std::string&, bool, bool, bool)> find_previous_callback_;
+    std::function<bool(const std::string&)> file_has_unsaved_changes_callback_;
+    std::function<void(const std::string&)> reload_open_file_callback_;
     std::function<void(const std::string&, const std::string&, bool, bool, bool)> replace_callback_;  // find, replace, case_sensitive, whole_word, regex
     std::function<void(const std::string&, const std::string&, bool, bool, bool)> replace_all_callback_;
 
@@ -541,6 +552,10 @@ private:
     };
     std::vector<SearchResult> search_results_;
     bool search_in_progress_ = false;
+    std::string replace_in_files_summary_;  // shown after Replace All
+    void ReplaceInFiles(const std::string& search_text, const std::string& replace_text,
+                        const std::string& search_path, const std::string& file_patterns,
+                        bool case_sensitive, bool whole_word, bool use_regex);
 
     // Preferences dialog state
     bool show_preferences_dialog_ = false;

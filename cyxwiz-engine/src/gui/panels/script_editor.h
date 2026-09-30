@@ -70,6 +70,12 @@ public:
     bool FindInEditor(const std::string& search_text, bool case_sensitive, bool whole_word, bool use_regex);
     bool FindNext();
     bool FindPrevious();
+    // Find dialog "Find Previous": sets the search, then steps back one match.
+    bool FindPreviousOf(const std::string& search_text, bool case_sensitive, bool whole_word, bool use_regex);
+    // Replace in Files support: an open tab with unsaved edits must not be
+    // overwritten on disk; an open unmodified tab is reloaded after the write.
+    bool HasUnsavedChangesFor(const std::string& filepath) const;
+    bool ReloadOpenFile(const std::string& filepath);
     bool Replace(const std::string& search_text, const std::string& replace_text,
                  bool case_sensitive, bool whole_word, bool use_regex);
     int ReplaceAll(const std::string& search_text, const std::string& replace_text,

@@ -189,4 +189,92 @@ void ToolbarPanel::SearchInFiles(const std::string& search_text, const std::stri
 
     search_in_progress_ = false;
 }
+// Replace in Files (TOFIX129 G3): every match in every file under the folder
+// that matches the patterns. Files open in the Script Editor with unsaved
+// edits are skipped so no edit is lost; open unmodified files are reloaded.
+void ToolbarPanel::ReplaceInFiles(const std::string& search_text, const std::string& replace_text,
+                                  const std::string& search_path, const std::string& file_patterns,
+                                  bool case_sensitive, bool whole_word, bool use_regex) {
+    namespace fs = std::filesystem;
+    replace_in_files_summary_.clear();
+    if (search_text.empty() || search_path.empty()) return;
+
+    size_t files_changed = 0;
+    size_t replacements = 0;
+    size_t skipped_unsaved = 0;
+    size_t failed = 0;
+
+    try {
+        for (const auto& entry : fs::recursive_directory_iterator(search_path,
+                fs::directory_options::skip_permission_denied)) {
+            if (!entry.is_regular_file()) continue;
+            if (!MatchesFilePattern(entry.path().filename().string(), file_patterns)) continue;
+            const std::string path = entry.path().string();
+
+            std::ifstream in(entry.path(), std::ios::binary);
+            if (!in.is_open()) continue;
+            std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            in.close();
+
+            // Replace line by line so the whole-word and regex rules of the
+            // search apply the same way; line endings are kept as they are.
+            std::string out;
+            out.reserve(content.size());
+            size_t file_replacements = 0;
+            size_t pos = 0;
+            while (pos <= content.size()) {
+                size_t end = content.find('\n', pos);
+                const bool last = end == std::string::npos;
+                std::string line = content.substr(pos, last ? std::string::npos : end - pos);
+                std::string rebuilt;
+                size_t offset = 0;
+                int match_start = 0, match_length = 0;
+                while (offset < line.size() &&
+                       SearchInLine(line.substr(offset), search_text, case_sensitive, whole_word, use_regex,
+                                    match_start, match_length) && match_length > 0) {
+                    rebuilt += line.substr(offset, match_start);
+                    rebuilt += replace_text;
+                    offset += static_cast<size_t>(match_start + match_length);
+                    ++file_replacements;
+                }
+                rebuilt += line.substr(std::min(offset, line.size()));
+                out += rebuilt;
+                if (last) break;
+                out += '\n';
+                pos = end + 1;
+            }
+            if (file_replacements == 0) continue;
+
+            if (file_has_unsaved_changes_callback_ && file_has_unsaved_changes_callback_(path)) {
+                ++skipped_unsaved;
+                spdlog::warn("Replace in Files: skipped {} (unsaved edits in the editor)", path);
+                continue;
+            }
+            std::ofstream file_out(entry.path(), std::ios::binary | std::ios::trunc);
+            if (!file_out.is_open()) {
+                ++failed;
+                spdlog::error("Replace in Files: cannot write {}", path);
+                continue;
+            }
+            file_out << out;
+            file_out.close();
+            ++files_changed;
+            replacements += file_replacements;
+            if (reload_open_file_callback_) reload_open_file_callback_(path);
+        }
+    } catch (const fs::filesystem_error& e) {
+        spdlog::error("Filesystem error during replace: {}", e.what());
+    }
+
+    replace_in_files_summary_ = std::to_string(replacements) + " replacement" + (replacements == 1 ? "" : "s") +
+                                " in " + std::to_string(files_changed) + " file" + (files_changed == 1 ? "" : "s");
+    if (skipped_unsaved > 0)
+        replace_in_files_summary_ += "; " + std::to_string(skipped_unsaved) + " open file(s) with unsaved edits skipped";
+    if (failed > 0) replace_in_files_summary_ += "; " + std::to_string(failed) + " could not be written";
+    spdlog::info("Replace in Files: {}", replace_in_files_summary_);
+
+    // Refresh the results list so it shows what is left.
+    SearchInFiles(search_text, search_path, file_patterns, case_sensitive, whole_word, use_regex);
+}
+
 } // namespace cyxwiz

@@ -339,7 +339,8 @@ void ToolbarPanel::BuildActionHandlers() {
     };
     h["script.open"] = [this](const std::string&) { OpenScriptFromDialog(); };
     h["file.save"] = [this](const std::string&) {
-        if (save_project_settings_callback_) save_project_settings_callback_();
+        if (save_project_callback_) save_project_callback_();
+        else if (save_project_settings_callback_) save_project_settings_callback_();
         else if (ProjectManager::Instance().SaveProject()) spdlog::info("Project saved");
     };
     h["file.save_as"] = [this](const std::string&) {

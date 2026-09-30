@@ -787,6 +787,15 @@ void NodeEditor::ShowSaveDialog() {
     }
 }
 
+bool NodeEditor::SaveCurrentGraph() {
+    if (nodes_.empty()) return true;
+    if (current_file_path_.empty()) {
+        ShowSaveDialog();
+        return !current_file_path_.empty();
+    }
+    return SaveGraph(current_file_path_);
+}
+
 void NodeEditor::ShowLoadDialog() {
     if (!CanReplaceGraph("load a graph")) return;
     auto& project = cyxwiz::ProjectManager::Instance();

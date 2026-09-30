@@ -1202,6 +1202,16 @@ MainWindow::MainWindow()
         }
     });
 
+    // File > Save: settings and layout, every open script, and the graph
+    // (asks where to put the graph the first time). Owner decision G4.
+    toolbar_->SetSaveProjectCallback([this]() {
+        SaveProjectSettings();
+        if (script_editor_) script_editor_->SaveAllFiles();
+        if (node_editor_ && !node_editor_->SaveCurrentGraph()) {
+            spdlog::warn("File > Save: the graph was not saved");
+        }
+    });
+
     // Resume Training
     toolbar_->SetResumeTrainingCallback([]() {
         auto& tm = cyxwiz::TrainingManager::Instance();
@@ -2315,6 +2325,17 @@ MainWindow::MainWindow()
     // Set up Has Unsaved Changes callback (called to check if confirmation dialog is needed)
     toolbar_->SetHasUnsavedChangesCallback([this]() -> bool {
         return HasUnsavedFiles();
+    });
+
+    // Find dialog: Find Previous; Replace in Files: editor state (TOFIX129 G3)
+    toolbar_->SetFindPreviousCallback([this](const std::string& text, bool case_sensitive, bool whole_word, bool use_regex) {
+        if (script_editor_) script_editor_->FindPreviousOf(text, case_sensitive, whole_word, use_regex);
+    });
+    toolbar_->SetFileHasUnsavedChangesCallback([this](const std::string& path) {
+        return script_editor_ && script_editor_->HasUnsavedChangesFor(path);
+    });
+    toolbar_->SetReloadOpenFileCallback([this](const std::string& path) {
+        if (script_editor_) script_editor_->ReloadOpenFile(path);
     });
 
     // Set up Edit menu callbacks for Find/Replace
