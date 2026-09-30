@@ -32,7 +32,8 @@ MenuInputs SampleInputs() {
                  {"Patterns", "Workspace", false, ""}, {"Table Viewer", "Data", false, ""},
                  {"Training", "Training", false, ""}, {"Jobs", "Network", false, ""},
                  {"Plugin Manager", "Extensions", false, ""}};
-    in.recent_projects = {"D:/projects/berean/berean.cyxwiz", "D:/projects/mnist/mnist.cyxwiz"};
+    in.recent_projects = {{"D:/projects/berean/berean.cyxwiz", "berean", false, ""},
+                          {"D:/projects/mnist/mnist.cyxwiz", "mnist", false, ""}};
     in.themes = {{"CyxWizDark", "CyxWiz Dark", true, "CyxWiz"}, {"CyxWizLight", "CyxWiz Light", false, "CyxWiz"},
                  {"Dracula", "Dracula", false, "Vibrant"}};
     in.icon_packs = {{"0", "FontAwesome (Default)", true, ""}, {"1", "Tabler Icons", false, ""}};
@@ -271,7 +272,7 @@ int main() {
         Check(Find(model, "view.panel", "CyxWiz Studio")->checked, "visible panel is checked");
         Check(Find(model, "view.theme", "CyxWizDark")->checked && !Find(model, "view.theme", "Dracula")->checked,
               "theme check state");
-        Check(Find(model, "file.open_recent", in.recent_projects[1]) != nullptr, "recent project entry");
+        Check(Find(model, "file.open_recent", in.recent_projects[1].id)->label == "mnist", "recent project entry");
         Check(Find(model, "apps.panel", "mujoco_viewport") != nullptr, "plugin panel entry");
         Check(Find(model, "help.tutorial", "getting_started")->checked, "completed tutorial is checked");
         Check(Find(model, "account.sign_out") != nullptr && Find(model, "account.sign_in") == nullptr,
