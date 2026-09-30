@@ -195,11 +195,16 @@ bool ToolbarPanel::RenderBackendManagerSection(bool training_active) {
             backend_pack_catalog_records_ = BuildBackendPackCatalogRecords(
                 snapshot, next_runtime);
             backend_pack_catalog_available_ = true;
+            // Count only optional packs for this computer; the catalog also
+            // lists the CPU base of every platform.
+            const auto optional_packs = std::count_if(
+                backend_pack_catalog_records_.begin(),
+                backend_pack_catalog_records_.end(),
+                [](const auto& record) { return record.backend != "cpu"; });
             backend_pack_catalog_message_ =
                 "Signed catalog " + snapshot.catalog.catalog_id +
-                " verified; " +
-                std::to_string(snapshot.records.size()) +
-                " optional pack(s) published.";
+                " verified; " + std::to_string(optional_packs) +
+                " optional pack(s) for this computer.";
         } else {
             backend_pack_catalog_message_ = catalog_error.empty()
                 ? "No current signed backend-pack catalog is available."

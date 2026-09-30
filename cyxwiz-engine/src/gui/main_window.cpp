@@ -10,9 +10,9 @@
 #endif
 
 #include "main_window.h"
+#include "appearance_settings.h"
 #include "../core/live_graph_compile.h"
 #include "ui_buttons.h"
-#include "appearance_settings.h"
 #include "loaders/data_loader.h"
 #include "graph_training_launcher.h"
 #include "engine_graph_training_dispatch.h"
