@@ -347,7 +347,14 @@ bool HttpsBackendPackArtifactSource::Transfer(
         }
     }
     if (status != (offset == 0 ? 200U : 206U)) {
-        error = "HTTPS artifact server did not honor the exact transfer request";
+        if (status == 404U) {
+            error = "The release file was not found on the server (HTTP 404); "
+                    "the release may not be published yet";
+        } else {
+            error = "The download server answered HTTP " +
+                    std::to_string(status) + " instead of " +
+                    (offset == 0 ? "200 (full file)" : "206 (resumed range)");
+        }
         return false;
     }
     std::wstring content_length_text;

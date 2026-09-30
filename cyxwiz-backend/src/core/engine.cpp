@@ -2,8 +2,11 @@
 #include "cyxwiz/engine.h"
 #include <spdlog/spdlog.h>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <mutex>
 #include <string>
+#include <thread>
 
 #ifdef CYXWIZ_HAS_ARRAYFIRE
 #include <arrayfire.h>
@@ -178,12 +181,58 @@ bool Initialize() {
 #ifdef CYXWIZ_HAS_ARRAYFIRE
     bool backend_activated = false;
 
+    // Each activation step is timed, and a watchdog names a step that runs
+    // longer than 30 s (first-run driver/kernel caches can take minutes on a
+    // busy machine; without this a stall looks like a silent hang).
+    std::mutex step_mutex;
+    std::condition_variable step_cv;
+    const char* current_step = "starting";
+    auto step_started = std::chrono::steady_clock::now();
+    bool init_done = false;
+    std::thread watchdog([&]() {
+        std::unique_lock<std::mutex> guard(step_mutex);
+        while (!step_cv.wait_for(guard, std::chrono::seconds(30),
+                                 [&]() { return init_done; })) {
+            const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - step_started).count();
+            spdlog::warn(
+                "Backend initialization is still running: {} for {} s. First "
+                "use of a GPU backend can take minutes while drivers build "
+                "their caches, especially when the machine is busy.",
+                current_step, seconds);
+        }
+    });
+    const auto run_step = [&](const char* name, const auto& activate) {
+        {
+            std::lock_guard<std::mutex> guard(step_mutex);
+            current_step = name;
+            step_started = std::chrono::steady_clock::now();
+        }
+        spdlog::info("Backend initialization: trying {}", name);
+        const auto started = std::chrono::steady_clock::now();
+        const bool activated = activate();
+        const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started).count();
+        spdlog::info("Backend initialization: {} {} in {:.1f} s", name,
+                     activated ? "activated" : "not activated",
+                     static_cast<double>(elapsed_ms) / 1000.0);
+        return activated;
+    };
+    const auto stop_watchdog = [&]() {
+        {
+            std::lock_guard<std::mutex> guard(step_mutex);
+            init_done = true;
+        }
+        step_cv.notify_all();
+        if (watchdog.joinable()) watchdog.join();
+    };
+
 #ifdef CYXWIZ_ENABLE_CUDA
-    backend_activated = TryActivateCUDABackend();
+    backend_activated = run_step("CUDA", [] { return TryActivateCUDABackend(); });
 #endif
 
     if (!backend_activated && IsUncertifiedOneAPITrainingEnabled()) {
-        backend_activated = TryActivateOneAPIBackend();
+        backend_activated = run_step("oneAPI", [] { return TryActivateOneAPIBackend(); });
     } else if (!backend_activated) {
         spdlog::info(
             "Skipping automatic oneAPI activation because training support "
@@ -196,13 +245,14 @@ bool Initialize() {
 
 #ifdef CYXWIZ_ENABLE_OPENCL
     if (!backend_activated) {
-        backend_activated = TryActivateOpenCLBackend();
+        backend_activated = run_step("OpenCL", [] { return TryActivateOpenCLBackend(); });
     }
 #endif
 
     if (!backend_activated) {
-        backend_activated = TryActivateCpuBackend();
+        backend_activated = run_step("CPU", [] { return TryActivateCpuBackend(); });
     }
+    stop_watchdog();
 
     if (!backend_activated) {
         spdlog::error("ArrayFire initialization failed: no usable backend (CUDA/oneAPI/OpenCL/CPU)");

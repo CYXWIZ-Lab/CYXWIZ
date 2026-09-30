@@ -284,9 +284,11 @@ void RenderComponents(InstallerViewState &state,
     ImGui::TextWrapped("%s", presentation.explanation.c_str());
     if (record.backend == "cuda" &&
         !catalog.cuda_prerequisite.message.empty()) {
-      ImGui::TextColored(
-          catalog.cuda_prerequisite.device_available ? kSuccess : kWarning,
-          "%s", catalog.cuda_prerequisite.message.c_str());
+      ImGui::PushStyleColor(
+          ImGuiCol_Text,
+          catalog.cuda_prerequisite.device_available ? kSuccess : kWarning);
+      ImGui::TextWrapped("%s", catalog.cuda_prerequisite.message.c_str());
+      ImGui::PopStyleColor();
     }
     if (!presentation.action.empty()) {
       ImGui::PushStyleColor(ImGuiCol_Text, kWarning);
@@ -349,9 +351,11 @@ void RenderComponents(InstallerViewState &state,
         BackendName(backend));
     if (backend == "cuda" &&
         !catalog.cuda_prerequisite.message.empty()) {
-      ImGui::TextColored(
-          catalog.cuda_prerequisite.device_available ? kSuccess : kWarning,
-          "%s", catalog.cuda_prerequisite.message.c_str());
+      ImGui::PushStyleColor(
+          ImGuiCol_Text,
+          catalog.cuda_prerequisite.device_available ? kSuccess : kWarning);
+      ImGui::TextWrapped("%s", catalog.cuda_prerequisite.message.c_str());
+      ImGui::PopStyleColor();
     }
     ImGui::Unindent(29.0f);
     ImGui::EndChild();

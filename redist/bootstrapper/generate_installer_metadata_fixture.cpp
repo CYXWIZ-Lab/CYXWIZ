@@ -128,9 +128,8 @@ Json ManifestBody(const std::string &pack_id, const std::string &backend,
   const auto recommendation_targets = [&]() {
     if (base)
       return Json::array();
-    if (backend == "cuda")
-      return Json::array({"opencl", "cpu"});
-    return Json::array({"cuda", "oneapi", "cpu"});
+    // Backends this pack may be recommended for once verified.
+    return Json::array({backend});
   }();
   const auto component_name = base                ? "ci-afcpu.bin"
                               : backend == "cuda" ? "ci-afcuda.bin"
