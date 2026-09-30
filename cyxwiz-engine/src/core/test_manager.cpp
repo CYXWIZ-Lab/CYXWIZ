@@ -312,9 +312,11 @@ void TestManager::TestingThreadFunc(
 {
     spdlog::info("TestManager: Testing thread started");
 
-    // Store executor reference
+    // Store executor reference; apply and clear the one-shot quick-test limit
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        executor->SetBatchLimit(next_run_batch_limit_);
+        next_run_batch_limit_ = 0;
         current_executor_ = std::move(executor);
     }
 

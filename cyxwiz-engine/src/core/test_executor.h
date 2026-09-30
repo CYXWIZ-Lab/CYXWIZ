@@ -59,6 +59,8 @@ struct TestingMetrics {
     int current_batch = 0;
     int total_batches = 0;
     int total_samples = 0;
+    int batch_limit = 0;      // > 0: a quick test that stops after this many batches
+    bool partial = false;     // true when the quick test stopped before the end
     int correct_predictions = 0;
 
     // Overall metrics
@@ -149,6 +151,8 @@ public:
      * Stop testing (thread-safe, cooperative cancellation)
      */
     void Stop();
+    // Quick test (TOFIX129 G3): stop after this many batches, 0 = all.
+    void SetBatchLimit(int batches) { batch_limit_ = batches; }
 
     /**
      * Check if testing is currently running
@@ -186,6 +190,7 @@ private:
     // Thread safety
     std::atomic<bool> is_testing_{false};
     std::atomic<bool> stop_requested_{false};
+    int batch_limit_ = 0;
 
     mutable std::mutex metrics_mutex_;
     TestingMetrics metrics_;

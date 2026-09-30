@@ -84,6 +84,10 @@ CYXWIZ_API bool IsInitialized();
 // Shutdown the backend
 CYXWIZ_API void Shutdown();
 
+// Return unused device buffers to the driver (ArrayFire garbage collection).
+// Safe to call at any time; a no-op without ArrayFire.
+CYXWIZ_API void ReleaseUnusedDeviceMemory();
+
 // Get version string
 CYXWIZ_API const char* GetVersionString();
 

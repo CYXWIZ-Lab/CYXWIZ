@@ -307,8 +307,9 @@ void TestExecutor::Test(
     } else {
         total_batches = external_test_batcher ? external_test_batcher->GetNumBatches() : 0;
     }
-    UpdateMetrics([total_batches](TestingMetrics& m) {
+    UpdateMetrics([total_batches, this](TestingMetrics& m) {
         m.total_batches = static_cast<int>(total_batches);
+        m.batch_limit = batch_limit_;
     });
 
     spdlog::info(
@@ -357,6 +358,12 @@ void TestExecutor::Test(
         }
 
         if (!batch.IsValid()) break;
+
+        if (batch_limit_ > 0 && batch_num >= batch_limit_) {
+            UpdateMetrics([](TestingMetrics& m) { m.partial = true; });
+            spdlog::info("TestExecutor: quick test stopped after {} batches", batch_num);
+            break;
+        }
 
         batch_num++;
 

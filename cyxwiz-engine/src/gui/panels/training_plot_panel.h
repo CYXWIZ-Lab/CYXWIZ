@@ -251,6 +251,16 @@ private:
     bool materialization_details_open_ = false;
     bool materialization_cache_refresh_requested_ = false;
     bool materialization_clear_confirm_ = false;
+
+public:
+    // Tools > Monitoring > Clear Cache: shows the panel and asks the same
+    // question as the dashboard card (TOFIX129 G3).
+    void RequestClearPreparedDataCache() {
+        SetVisible(true);
+        materialization_clear_confirm_ = true;
+    }
+
+private:
     std::function<void(const std::string&)> materialization_action_callback_;
 
     // UI state

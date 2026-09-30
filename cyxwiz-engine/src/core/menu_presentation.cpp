@@ -294,7 +294,7 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         i.push_back(Action(f, "script.new", "New Script...", "Asks for a name and folder, then opens the new script."));
         i.push_back(Action(f, "script.open", "Open Script...", "Opens a Python script in the Script Editor."));
         i.push_back(Sep());
-        i.push_back(Action(f, "file.save", "Save", "Saves the project: graph, open scripts, layout and settings.",
+        i.push_back(Action(f, "file.save", "Save", "Saves the graph, every open script, the layout and the project settings.",
                            Opts{need_project}));
         i.push_back(Action(f, "file.save_as", "Save As...", "Saves the project under a new name.", Opts{need_project}));
         i.push_back(Action(f, "file.save_all", "Save All", "Saves every open script."));
@@ -467,11 +467,11 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         i.push_back(Sep());
         i.push_back(Sub("train.test", "Test", "Test a trained model.",
                         {Action(f, "train.run_test", "Run Test", "Tests the trained model on the test split."),
-                         Action(f, "train.quick_test", "Run Quick Test", "Tests on a small sample."),
+                         Action(f, "train.quick_test", "Run Quick Test", "Tests the first 10 batches of the test split and marks the result as partial."),
                          Action(f, "train.view_test_results", "View Test Results", "Opens the Test Results panel."),
-                         Action(f, "train.compare_test_results", "Compare Test Results...", "Compares two test runs."),
+                         Action(f, "train.compare_test_results", "Compare Test Results...", "Shows the latest test run beside the previous one."),
                          Action(f, "train.export_test_report", "Export Test Report...",
-                                "Saves a test report to a file."),
+                                "Saves the latest test results as a JSON report."),
                          Sep(),
                          Action(f, "train.load_checkpoint", "Load Checkpoint for Testing...",
                                 "Loads saved weights to test them.")}));
@@ -590,8 +590,8 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Action(f, "tools.memory_panel", "Memory Visualization", "Opens the Memory panel."),
                          Action(f, "tools.system_monitor", "System Monitor", "Opens the system monitor."),
                          Sep(),
-                         Action(f, "tools.clear_cache", "Clear Cache", "Frees cached data."),
-                         Action(f, "tools.gc", "Garbage Collection", "Frees unused memory.")}));
+                         Action(f, "tools.clear_cache", "Clear Cache", "Removes the prepared-data cache of this project, after asking."),
+                         Action(f, "tools.gc", "Garbage Collection", "Returns unused device memory to the driver and runs a Python garbage collection.")}));
         i.push_back(Sub("tools.diagnostics", "Diagnostics", "Extra logging for support.",
                         {Toggle(f, "tools.idle_log", "Log Idle Mode Transitions",
                                 "Logs when the Engine slows its frame rate to save power.", in.idle_log),

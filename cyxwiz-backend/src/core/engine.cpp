@@ -232,6 +232,14 @@ bool IsInitialized() {
     return g_initialized.load(std::memory_order_acquire);
 }
 
+void ReleaseUnusedDeviceMemory() {
+#ifdef CYXWIZ_HAS_ARRAYFIRE
+    if (g_initialized) {
+        af::deviceGC();
+    }
+#endif
+}
+
 void Shutdown() {
     std::lock_guard<std::mutex> lock(LifecycleMutex());
 

@@ -43,6 +43,9 @@ public:
     // Check if we have results from a completed test
     bool HasResults() const { return has_results_; }
 
+    // Quick test (TOFIX129 G3): the next test stops after this many batches.
+    void SetNextRunBatchLimit(int batches) { next_run_batch_limit_ = batches; }
+
     /**
      * Start testing with compiled graph configuration
      * @param config Compiled training configuration from GraphCompiler
@@ -132,6 +135,7 @@ private:
 
     mutable std::mutex mutex_;
     std::unique_ptr<TestExecutor> current_executor_;
+    int next_run_batch_limit_ = 0;  // consumed by the next Start*; 0 = full test
     std::unique_ptr<std::thread> testing_thread_;
 
     // Cached metrics for thread-safe access

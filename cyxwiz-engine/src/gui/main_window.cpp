@@ -1202,6 +1202,22 @@ MainWindow::MainWindow()
         }
     });
 
+    // Tools > Monitoring > Clear Cache: the prepared-data cache of this
+    // project, after the dashboard's confirmation. Garbage Collection:
+    // device buffers back to the driver and a Python gc pass (TOFIX129 G3).
+    toolbar_->SetClearCacheCallback([this]() {
+        if (training_plot_panel_) training_plot_panel_->RequestClearPreparedDataCache();
+    });
+    toolbar_->SetRunGCCallback([this]() {
+        cyxwiz::ReleaseUnusedDeviceMemory();
+        if (scripting_engine_ && !scripting_engine_->IsCommandRunning() && !scripting_engine_->IsScriptRunning()) {
+            scripting_engine_->ExecuteCommandAsync("import gc; gc.collect()");
+            spdlog::info("Garbage collection: device buffers released, Python gc.collect() requested");
+        } else {
+            spdlog::info("Garbage collection: device buffers released (Python busy, gc skipped)");
+        }
+    });
+
     // File > Save: settings and layout, every open script, and the graph
     // (asks where to put the graph the first time). Owner decision G4.
     toolbar_->SetSaveProjectCallback([this]() {
@@ -1253,6 +1269,25 @@ MainWindow::MainWindow()
             auto links = node_editor_->GetLinks();
             StartTestingFromGraph(nodes, links);
         }
+    });
+
+    // Train > Test > Run Quick Test: the first 10 batches of the test split
+    // (TOFIX129 G3); the result says it is partial.
+    toolbar_->SetRunQuickTestCallback([this]() {
+        if (node_editor_) {
+            cyxwiz::TestManager::Instance().SetNextRunBatchLimit(10);
+            StartTestingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
+        }
+    });
+    toolbar_->SetCompareTestResultsCallback([this]() {
+        if (test_results_panel_) test_results_panel_->ShowComparison();
+    });
+    toolbar_->SetExportTestReportCallback([this]() {
+        if (!test_results_panel_ || !test_results_panel_->HasResults()) {
+            ShowOperationError("No test results", "Run a test first, then export its report.");
+            return;
+        }
+        test_results_panel_->ExportReport();
     });
 
     // Set up View Test Results callback

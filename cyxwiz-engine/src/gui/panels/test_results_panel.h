@@ -30,9 +30,19 @@ public:
     // Check if we have results
     bool HasResults() const { return has_results_; }
 
+    // Train > Test > Compare Test Results...: shows the panel on the
+    // Comparison tab (latest run beside the previous one). TOFIX129 G3.
+    void ShowComparison();
+    bool HasPreviousResults() const { return has_previous_; }
+    // Train > Test > Export Test Report...: the JSON report of the latest run.
+    void ExportReport() { ExportToJSON(); }
+
 private:
     TestingMetrics results_;
     bool has_results_ = false;
+    TestingMetrics previous_results_;  // the run before results_, for Comparison
+    bool has_previous_ = false;
+    bool select_comparison_tab_ = false;
     mutable std::mutex results_mutex_;
 
     // Tab state
@@ -51,6 +61,7 @@ private:
     void RenderConfusionMatrixTab();
     void RenderPerClassTab();
     void RenderPredictionsTab();
+    void RenderComparisonTab();
 
     // Helpers
     ImVec4 GetAccuracyColor(float accuracy);

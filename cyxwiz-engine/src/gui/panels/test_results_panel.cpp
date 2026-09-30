@@ -15,6 +15,10 @@ TestResultsPanel::TestResultsPanel()
 
 void TestResultsPanel::SetResults(const TestingMetrics& results) {
     std::lock_guard<std::mutex> lock(results_mutex_);
+    if (has_results_) {
+        previous_results_ = results_;
+        has_previous_ = true;
+    }
     results_ = results;
     has_results_ = true;
     if (results.causal_lm_mode) {
@@ -108,6 +112,15 @@ void TestResultsPanel::Render() {
                     ImGui::EndTabItem();
                 }
 
+                const ImGuiTabItemFlags comparison_flags =
+                    select_comparison_tab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+                if (ImGui::BeginTabItem(ICON_FA_RIGHT_LEFT " Comparison", nullptr, comparison_flags)) {
+                    selected_tab_ = 4;
+                    select_comparison_tab_ = false;
+                    RenderComparisonTab();
+                    ImGui::EndTabItem();
+                }
+
                 ImGui::EndTabBar();
             }
         }
@@ -153,6 +166,14 @@ void TestResultsPanel::RenderToolbar() {
 
 void TestResultsPanel::RenderOverviewTab() {
     std::lock_guard<std::mutex> lock(results_mutex_);
+
+    if (results_.partial) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Quick test: the first %d of %d batches (%d samples). Use Train > Test > Run Test for the whole test split.",
+                            results_.batch_limit, results_.total_batches, results_.total_samples);
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+    }
 
     if (results_.causal_lm_mode) {
         ImGui::Text("Next-token evaluation");
@@ -588,6 +609,82 @@ void TestResultsPanel::ExportToJSON() {
         if (TestManager::Instance().ExportResultsToJSON(*result)) {
             spdlog::info("Exported results to: {}", *result);
         }
+    }
+}
+
+void TestResultsPanel::ShowComparison() {
+    Show();
+    select_comparison_tab_ = true;
+}
+
+void TestResultsPanel::RenderComparisonTab() {
+    std::lock_guard<std::mutex> lock(results_mutex_);
+    if (!has_results_) {
+        ImGui::TextDisabled("Run a test first. The Comparison tab shows the latest run beside the one before it.");
+        return;
+    }
+    if (!has_previous_) {
+        ImGui::TextDisabled("One run so far. Run a second test to compare it with this one.");
+        return;
+    }
+    const TestingMetrics& a = previous_results_;
+    const TestingMetrics& b = results_;
+
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Previous run beside the latest run. The change column is latest minus previous; "
+                        "for loss, MAE and RMSE a negative change is an improvement.");
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+
+    struct Row { const char* name; float prev; float cur; bool percent; bool lower_is_better; bool show; };
+    const bool classification = !b.regression_mode && !b.causal_lm_mode;
+    const Row rows[] = {
+        {"Loss", a.test_loss, b.test_loss, false, true, true},
+        {"Accuracy", a.test_accuracy, b.test_accuracy, true, false, !b.regression_mode},
+        {"Macro precision", a.macro_precision, b.macro_precision, true, false, classification},
+        {"Macro recall", a.macro_recall, b.macro_recall, true, false, classification},
+        {"Macro F1", a.macro_f1, b.macro_f1, true, false, classification},
+        {"Weighted F1", a.weighted_f1, b.weighted_f1, true, false, classification},
+        {"MAE", a.test_mae, b.test_mae, false, true, b.regression_mode},
+        {"RMSE", a.test_rmse, b.test_rmse, false, true, b.regression_mode},
+        {"Samples", static_cast<float>(a.total_samples), static_cast<float>(b.total_samples), false, false, true},
+        {"Time (s)", a.total_time_seconds, b.total_time_seconds, false, true, true},
+    };
+
+    const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                                  ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings;
+    if (ImGui::BeginTable("##comparison", 4, flags)) {
+        ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("Previous", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Latest", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Change", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableHeadersRow();
+        for (const Row& r : rows) {
+            if (!r.show) continue;
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(r.name);
+            const float scale = r.percent ? 100.0f : 1.0f;
+            const char* fmt = r.percent ? "%.2f%%" : "%.4f";
+            ImGui::TableNextColumn();
+            ImGui::Text(fmt, r.prev * scale);
+            ImGui::TableNextColumn();
+            ImGui::Text(fmt, r.cur * scale);
+            ImGui::TableNextColumn();
+            const float delta = (r.cur - r.prev) * scale;
+            const bool better = r.lower_is_better ? delta < 0.0f : delta > 0.0f;
+            const bool same = delta == 0.0f;
+            const ImVec4 colour = same ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
+                                       : (better ? ImVec4(0.24f, 0.84f, 0.55f, 1.0f) : ImVec4(0.96f, 0.63f, 0.29f, 1.0f));
+            ImGui::TextColored(colour, r.percent ? "%+.2f%%" : "%+.4f", delta);
+        }
+        ImGui::EndTable();
+    }
+    if (a.partial || b.partial) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", b.partial && a.partial ? "Both runs were quick tests (first batches only)."
+                            : b.partial ? "The latest run was a quick test (first batches only)."
+                                        : "The previous run was a quick test (first batches only).");
     }
 }
 
