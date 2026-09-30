@@ -383,13 +383,9 @@ grpc::Status JobExecutionServiceImpl::SendJob(
     spdlog::info("  Duration: {} epochs", request->config().epochs());
     spdlog::info("========================================");
 
-    // Notify Central Server about job acceptance (marks node as BUSY)
-    if (!NotifyCentralServer(request->job_id(), CurrentNodeId())) {
-        spdlog::warn("Failed to notify Central Server about job acceptance");
-        // Continue anyway - job can still run
-    } else {
-        spdlog::info("[CENTRAL SERVER] Notified: Node {} is BUSY with job {}", CurrentNodeId(), request->job_id());
-    }
+    // The Central Server marked this node busy when it issued the
+    // reservation; job outcomes reach it through the NodeClient
+    // (ReportJobCompleteFromNode, authenticated). TOFIX118 gap 7.
 
     // Build response
     response->set_status(cyxwiz::protocol::STATUS_SUCCESS);
@@ -1208,89 +1204,6 @@ std::optional<cyxwiz::P2PAuthClaims> JobExecutionServiceImpl::VerifyAuthToken(co
 
     // Validate JWT token: signature, expiration, job_id, node_id
     return jwt_validator_->ValidateForJob(token, job_id, CurrentNodeId());
-}
-
-bool JobExecutionServiceImpl::NotifyCentralServer(const std::string& job_id,
-                                                  const std::string& node_id) {
-    try {
-        // Create gRPC channel to Central Server
-        auto channel = grpc::CreateChannel(central_server_address_,
-                                          grpc::InsecureChannelCredentials());
-        auto stub = cyxwiz::protocol::NodeService::NewStub(channel);
-
-        // Prepare request
-        cyxwiz::protocol::JobAcceptedRequest request;
-        request.set_node_id(node_id);
-        request.set_job_id(job_id);
-        request.set_engine_address("direct_p2p");
-        request.set_accepted_at(
-            std::chrono::system_clock::now().time_since_epoch().count());
-        // Set our P2P endpoint from config
-        auto& backend = cyxwiz::servernode::core::BackendManager::Instance();
-        std::string p2p_endpoint = backend.IsInitialized() ? backend.GetConfig().p2p_address : "0.0.0.0:50052";
-        request.set_node_endpoint(p2p_endpoint);
-
-        // Send notification
-        cyxwiz::protocol::JobAcceptedResponse response;
-        grpc::ClientContext context;
-
-        auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(5);
-        context.set_deadline(deadline);
-
-        grpc::Status status = stub->NotifyJobAccepted(&context, request, &response);
-
-        if (status.ok() && response.status() == cyxwiz::protocol::STATUS_SUCCESS) {
-            spdlog::info("Central Server notified about job {} acceptance", job_id);
-            return true;
-        } else {
-            spdlog::error("Failed to notify Central Server: {}",
-                         status.error_message());
-            return false;
-        }
-    } catch (const std::exception& e) {
-        spdlog::error("Exception notifying Central Server: {}", e.what());
-        return false;
-    }
-}
-
-void JobExecutionServiceImpl::NotifyJobEnded(const std::string& job_id, bool success, const std::string& reason) {
-    try {
-        // Create gRPC channel to Central Server
-        auto channel = grpc::CreateChannel(central_server_address_,
-                                          grpc::InsecureChannelCredentials());
-        auto stub = cyxwiz::protocol::NodeService::NewStub(channel);
-
-        // Prepare heartbeat request to update node status
-        cyxwiz::protocol::HeartbeatRequest request;
-        request.set_node_id(CurrentNodeId());
-
-        // Set current status - node is now available
-        auto* node_info = request.mutable_current_status();
-        node_info->set_node_id(CurrentNodeId());
-        node_info->set_ram_available(capabilities_.max_memory());  // All memory available now
-
-        // Clear active jobs list (no jobs running)
-        request.clear_active_jobs();
-
-        // Send heartbeat to update status
-        cyxwiz::protocol::HeartbeatResponse response;
-        grpc::ClientContext context;
-
-        auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(5);
-        context.set_deadline(deadline);
-
-        grpc::Status status = stub->Heartbeat(&context, request, &response);
-
-        if (status.ok()) {
-            spdlog::info("Notified Central Server: job {} ended (success={}, reason={})",
-                        job_id, success, reason);
-        } else {
-            spdlog::warn("Failed to notify Central Server about job end: {}",
-                        status.error_message());
-        }
-    } catch (const std::exception& e) {
-        spdlog::error("Exception notifying Central Server about job end: {}", e.what());
-    }
 }
 
 void JobExecutionServiceImpl::CleanupJob(const std::string& job_id) {

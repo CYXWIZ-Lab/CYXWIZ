@@ -201,8 +201,6 @@ private:
     // Helper methods
     // The token's claims if it is valid for this job on this node.
     std::optional<cyxwiz::P2PAuthClaims> VerifyAuthToken(const std::string& token, const std::string& job_id);
-    bool NotifyCentralServer(const std::string& job_id, const std::string& node_id);
-    void NotifyJobEnded(const std::string& job_id, bool success, const std::string& reason);
     void CleanupJob(const std::string& job_id);
     void CleanupJobsFromEngine(const std::string& engine_address);  // Cleanup all jobs from disconnected engine
     void CleanupStaleJobs();  // Cleanup jobs that were created but never started
