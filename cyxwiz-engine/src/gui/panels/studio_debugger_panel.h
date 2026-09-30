@@ -73,7 +73,7 @@ public:
     void RequestStop();
     bool IsRunning() const { return run_in_progress_; }
 
-    void SetSession(const StudioDebuggerSnapshot& session);
+    void SetSession(StudioDebuggerSnapshot session);
     void ShowRuntimeProfile();
     void ShowNodeExplanation(int node_id);
     void Clear();
@@ -121,6 +121,8 @@ private:
     void RequestRunHistoryRefresh();
     void PollRunProgress();
     void RefreshSmokeCapability();
+    // The latest run of this session, wherever it is held; null if none.
+    const StudioDebuggerSnapshot* LatestRun() const;
     void RefreshLiveTrainingTrace();
     void RenderLiveTrainingStatus();
     void RenderOverview();
@@ -184,9 +186,10 @@ private:
     int section_view_[6] = {0, 0, 0, 0, 0, 0};
 
     StudioDebuggerSnapshot session_;
-    StudioDebuggerSnapshot current_session_;
+    // The latest run, held here (moved, not copied) only while an older saved
+    // run is shown; otherwise the latest run is session_ itself.
+    std::optional<StudioDebuggerSnapshot> parked_latest_;
     bool has_session_ = false;
-    bool has_current_session_ = false;
     std::string current_run_id_;
     int selected_trace_index_ = -1;
     bool trace_settings_initialized_ = false;

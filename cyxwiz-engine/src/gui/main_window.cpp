@@ -4135,7 +4135,7 @@ void MainWindow::RecordArtifactConsistencyTrace(
             "Failed to persist artifact consistency run {}", run_id);
     }
     session.run_history = cyxwiz::DebugRunStore::ListRecent(8);
-    studio_debugger_panel_->SetSession(session);
+    studio_debugger_panel_->SetSession(std::move(session));
     studio_debugger_panel_->Show();
 }
 

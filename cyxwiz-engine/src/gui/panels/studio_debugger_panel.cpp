@@ -774,13 +774,12 @@ std::optional<LayerTimingRow> ParseLayerTimingEvent(const TrainingTraceEvent& ev
 StudioDebuggerPanel::StudioDebuggerPanel()
     : Panel("Studio Debugger", false) {}
 
-void StudioDebuggerPanel::SetSession(const StudioDebuggerSnapshot& session) {
+void StudioDebuggerPanel::SetSession(StudioDebuggerSnapshot session) {
     // The run already carries its evidence (loaded on the worker); the panel
     // does no disk I/O here and never replaces the run's training truth with
-    // whatever trace is newest (tofix96).
-    session_ = session;
-    current_session_ = session;
-    has_current_session_ = true;
+    // whatever trace is newest (tofix96). One copy is kept.
+    session_ = std::move(session);
+    parked_latest_.reset();
     current_run_id_ = session_.run_id;
     if (!session_.run_history.empty()) {
         history_loaded_ = true;
@@ -861,13 +860,13 @@ bool StudioDebuggerPanel::StartRun(StudioDebuggerRunMode mode,
                     ? error : "Studio Debugger run ended without a result.";
                 result = std::move(failed);
             }
-            SetSession(*result);
+            SetSession(std::move(*result));
             if (pending_explain_node_id_ >= 0) {
                 ShowNodeExplanation(pending_explain_node_id_);
             }
             pending_explain_node_id_ = -1;
             if (run_completed_callback_) {
-                run_completed_callback_(*result);
+                run_completed_callback_(session_);
             }
         });
     return true;
@@ -919,7 +918,9 @@ void StudioDebuggerPanel::RequestRunHistoryRefresh() {
             history_loaded_ = true;
             std::lock_guard<std::mutex> lock(state->mutex);
             session_.run_history = state->history;
-            current_session_.run_history = state->history;
+            if (parked_latest_) {
+                parked_latest_->run_history = state->history;
+            }
         });
 }
 
@@ -952,9 +953,8 @@ void StudioDebuggerPanel::Clear() {
         return;
     }
     session_ = StudioDebuggerSnapshot{};
-    current_session_ = StudioDebuggerSnapshot{};
+    parked_latest_.reset();
     has_session_ = false;
-    has_current_session_ = false;
     current_run_id_.clear();
     selected_trace_index_ = -1;
     run_comparison_trace_.reset();
@@ -1261,8 +1261,28 @@ void StudioDebuggerPanel::RenderTraceSettings() {
     ImGui::TextDisabled("Lower N gives better crash evidence; higher N reduces disk writes.");
 }
 
+const StudioDebuggerSnapshot* StudioDebuggerPanel::LatestRun() const {
+    if (current_run_id_.empty()) {
+        return nullptr;
+    }
+    if (session_.run_id == current_run_id_) {
+        return &session_;
+    }
+    return parked_latest_ ? &*parked_latest_ : nullptr;
+}
+
 void StudioDebuggerPanel::LoadStoredRun(const std::string& run_id) {
     if (load_in_progress_ || run_in_progress_) {
+        return;
+    }
+    if (run_id == current_run_id_ && parked_latest_) {
+        auto history = std::move(session_.run_history);
+        session_ = std::move(*parked_latest_);
+        parked_latest_.reset();
+        if (!history.empty()) {
+            session_.run_history = std::move(history);
+        }
+        selected_trace_index_ = -1;
         return;
     }
     load_in_progress_ = true;
@@ -1304,6 +1324,9 @@ void StudioDebuggerPanel::LoadStoredRun(const std::string& run_id) {
                 run_status_message_ = "That saved run could not be loaded.";
                 return;
             }
+            if (!current_run_id_.empty() && session_.run_id == current_run_id_) {
+                parked_latest_ = std::move(session_);
+            }
             session_ = std::move(*state->result);
             session_.run_history = state->history;
             history_loaded_ = true;
@@ -1320,31 +1343,19 @@ void StudioDebuggerPanel::RenderRunComparison() {
         return;
     }
 
-    if (!has_current_session_ && !current_run_id_.empty()) {
-        if (auto record = DebugRunStore::Load(current_run_id_)) {
-            current_session_ = StudioDebuggerSnapshot{};
-            current_session_.run_id = record->summary.run_id;
-            current_session_.graph_hash = record->summary.graph_hash;
-            current_session_.success = record->summary.success;
-            current_session_.failure_summary = record->summary.success ? "" : record->summary.summary;
-            current_session_.issues = std::move(record->issues);
-            current_session_.traces = std::move(record->traces);
-            current_session_.studio_events = std::move(record->studio_events);
-            current_session_.recommendations = std::move(record->recommendations);
-            has_current_session_ = true;
-        }
-    }
+    const StudioDebuggerSnapshot* latest = LatestRun();
 
     ImGui::Text("Run Comparison");
     ImGui::BeginChild("StudioDebuggerRunComparison", ImVec2(0, 0), false);
 
-    if (!has_current_session_ || current_run_id_.empty()) {
+    if (!latest) {
         ImGui::TextDisabled("Run a new debug session to establish a comparison baseline.");
         ImGui::EndChild();
         return;
     }
 
-    if (session_.run_id == current_session_.run_id) {
+    const StudioDebuggerSnapshot& current_session = *latest;
+    if (session_.run_id == current_session.run_id) {
         ImGui::TextDisabled("Viewing the current run. Select an older run to compare.");
         ImGui::EndChild();
         return;
@@ -1355,23 +1366,23 @@ void StudioDebuggerPanel::RenderRunComparison() {
     ImGui::TextUnformatted(session_.run_id.c_str());
     ImGui::TextColored(DebuggerMuted(), "Latest run");
     ImGui::SameLine(110.0f);
-    ImGui::TextUnformatted(current_session_.run_id.c_str());
+    ImGui::TextUnformatted(current_session.run_id.c_str());
     ImGui::Separator();
 
     const int selected_errors = CountTraceStatus(session_, "failed") +
         CountTraceStatus(session_, "nan");
-    const int current_errors = CountTraceStatus(current_session_, "failed") +
-        CountTraceStatus(current_session_, "nan");
+    const int current_errors = CountTraceStatus(current_session, "failed") +
+        CountTraceStatus(current_session, "nan");
     const int selected_shape = CountTraceStatus(session_, "shape_mismatch");
-    const int current_shape = CountTraceStatus(current_session_, "shape_mismatch");
+    const int current_shape = CountTraceStatus(current_session, "shape_mismatch");
     const int selected_warnings = CountTraceStatus(session_, "warning") +
         static_cast<int>(session_.issues.size());
-    const int current_warnings = CountTraceStatus(current_session_, "warning") +
-        static_cast<int>(current_session_.issues.size());
+    const int current_warnings = CountTraceStatus(current_session, "warning") +
+        static_cast<int>(current_session.issues.size());
     const int selected_critical = CountRecommendationSeverity(
         session_, DebugRecommendationSeverity::Critical);
     const int current_critical = CountRecommendationSeverity(
-        current_session_, DebugRecommendationSeverity::Critical);
+        current_session, DebugRecommendationSeverity::Critical);
 
     auto render_delta = [](const char* label, int selected, int current) {
         const int delta = current - selected;
@@ -1394,7 +1405,7 @@ void StudioDebuggerPanel::RenderRunComparison() {
     render_delta("Critical recommendations", selected_critical, current_critical);
     render_delta("Total traces",
                  static_cast<int>(session_.traces.size()),
-                 static_cast<int>(current_session_.traces.size()));
+                 static_cast<int>(current_session.traces.size()));
 
     const bool comparison_pair_changed =
         run_comparison_baseline_id_ != session_.run_id ||
@@ -1565,12 +1576,11 @@ void StudioDebuggerPanel::RefreshLiveTrainingTrace() {
     if (!IsTrainingTraceLive(trace, true)) {
         return;
     }
-    if (has_current_session_) {
-        current_session_.training_trace = trace;
-        current_session_.training_trace_historical = false;
+    if (parked_latest_) {
+        parked_latest_->training_trace = trace;
+        parked_latest_->training_trace_historical = false;
     }
-    const bool viewing_saved_history = has_current_session_ &&
-        !current_run_id_.empty() &&
+    const bool viewing_saved_history = !current_run_id_.empty() &&
         !session_.run_id.empty() &&
         session_.run_id != current_run_id_;
     if (!viewing_saved_history) {
