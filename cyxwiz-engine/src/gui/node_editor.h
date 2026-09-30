@@ -265,6 +265,9 @@ public:
     // Access to graph data for compilation
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
+    // Grid-space node positions from the last frame the canvas drew (empty
+    // until it has drawn once).
+    const std::map<int, ImVec2>& GetCachedNodePositions() const { return cached_node_positions_; }
     int GetSelectedNodeId() const { return selected_node_id_; }
     // A node to configure by id (e.g. the Properties panel opening another
     // node's dialog); nullptr when it no longer exists.

@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <map>
+#include <utility>
 #include "../core/graph_compiler.h"  // for cyxwiz::ValidationIssue
 
 namespace cyxwiz {
@@ -259,7 +261,8 @@ private:
                                                 std::vector<MLNode> nodes,
                                                 std::vector<NodeLink> links,
                                                 int explain_node_id = -1,
-                                                const cyxwiz::StudioDebuggerRunControl* control = nullptr);
+                                                const cyxwiz::StudioDebuggerRunControl* control = nullptr,
+                                                const std::map<int, std::pair<float, float>>* node_positions = nullptr);
     void RecordArtifactConsistencyTrace(
         const cyxwiz::DebugArtifactConsistencyInput& input);
 

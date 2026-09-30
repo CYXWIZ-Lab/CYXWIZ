@@ -16,6 +16,7 @@
 #include <chrono>
 #include <imgui.h>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -99,9 +100,16 @@ private:
 
     void RenderToolbar();
     void RenderTraceSettings();
-    void RenderSectionNavigation();
+    void RenderSectionRail();
+    void RenderStepChecklist(const std::vector<StudioDebuggerStep>& steps);
+    void RenderRunningBoard();
     void RenderSessionStatusStrip();
-    void RenderPreprocessingSampleSelector();
+    void RenderSampleStepper();
+    void RenderSummaryCards();
+    void RenderInspectorHeader();
+    // Rebuilds the graph layout and per-node / per-section status only when
+    // the shown run changes, not every frame.
+    void RebuildViewModelIfNeeded();
     void RenderWorkbenchBody();
     void RenderActiveWorkspace();
     void RenderInspectorPane();
@@ -116,7 +124,7 @@ private:
     void RefreshLiveTrainingTrace();
     void RenderLiveTrainingStatus();
     void RenderOverview();
-    void RenderGraphTraceView();
+    void RenderGraphTraceView(float height = 0.0f);
     void RenderLastRun();
     void RenderTrainingTrace();
     void RenderMaterializationTrace(const TrainingTraceSummary& trace);
@@ -165,6 +173,16 @@ private:
     SmokeCapability smoke_capability_;
     bool smoke_capability_known_ = false;
 
+    // View model for the shown run (see RebuildViewModelIfNeeded).
+    std::string view_key_;
+    std::map<int, DebuggerNodeStatus> view_node_status_;
+    DebuggerGraphLayout view_graph_layout_;
+    std::vector<DebuggerGraphLinkInput> view_graph_links_;
+    std::map<StudioDebuggerSection, DebuggerTone> view_section_tone_;
+    int selected_graph_node_ = -1;
+    // Selected sub-view per section (Summary / Runs / Compare, ...).
+    int section_view_[6] = {0, 0, 0, 0, 0, 0};
+
     StudioDebuggerSnapshot session_;
     StudioDebuggerSnapshot current_session_;
     bool has_session_ = false;
@@ -184,6 +202,7 @@ private:
     std::optional<DebugTraceRecord> run_comparison_trace_;
     std::string run_comparison_baseline_id_;
     std::string run_comparison_current_id_;
+    bool comparison_loading_ = false;
     char trace_search_[128] = {};
     bool trace_attention_only_ = false;
     bool trace_drawer_open_ = false;

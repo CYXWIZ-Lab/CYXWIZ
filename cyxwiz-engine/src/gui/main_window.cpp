@@ -872,18 +872,23 @@ MainWindow::MainWindow()
                                                            int explain_node_id) {
             std::vector<MLNode> nodes;
             std::vector<NodeLink> links;
+            std::map<int, std::pair<float, float>> positions;
             if (node_editor_) {
                 nodes = node_editor_->GetNodes();
                 links = node_editor_->GetLinks();
+                for (const auto& [id, position] : node_editor_->GetCachedNodePositions()) {
+                    positions[id] = {position.x, position.y};
+                }
             }
             return [this, mode, sample_index, explain_node_id,
                     nodes = std::move(nodes),
-                    links = std::move(links)](
+                    links = std::move(links),
+                    positions = std::move(positions)](
                        const cyxwiz::StudioDebuggerRunControl& control) mutable {
                 cyxwiz::StudioDebuggerSnapshot session;
                 this->BuildStudioDebuggerSessionFromSnapshot(
                     session, mode, sample_index, std::move(nodes), std::move(links),
-                    explain_node_id, &control);
+                    explain_node_id, &control, &positions);
                 return session;
             };
         });
@@ -4156,7 +4161,8 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     std::vector<MLNode> nodes,
     std::vector<NodeLink> links,
     int explain_node_id,
-    const cyxwiz::StudioDebuggerRunControl* control) {
+    const cyxwiz::StudioDebuggerRunControl* control,
+    const std::map<int, std::pair<float, float>>* node_positions) {
     session = cyxwiz::StudioDebuggerSnapshot{};
     const auto run_started = std::chrono::steady_clock::now();
     session.mode = mode;
@@ -4270,6 +4276,22 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         session.run_id, mode_name, session.graph_hash, nodes, links, selected_sample_index);
     session.traces = debug_session.traces;
     session.studio_events = debug_session.studio_events;
+    // Canvas positions let the debugger lay the graph out like the canvas.
+    if (node_positions && !node_positions->empty()) {
+        for (auto& trace : session.traces) {
+            if (trace.phase != "GraphSnapshot" || !trace.payload.contains("nodes") ||
+                !trace.payload["nodes"].is_array()) {
+                continue;
+            }
+            for (auto& node : trace.payload["nodes"]) {
+                const auto position = node_positions->find(node.value("id", -1));
+                if (position != node_positions->end()) {
+                    node["x"] = position->second.first;
+                    node["y"] = position->second.second;
+                }
+            }
+        }
+    }
     session.sample_summary = std::string("Studio Debugger mode: ") + mode_name +
         " | sample " + std::to_string(selected_sample_index);
     // tofix96: training evidence is this run's execution truth only while
@@ -4857,7 +4879,13 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 run_id,
                 trace.node_id,
                 trace.name,
-                std::to_string(static_cast<int>(trace.type)),
+                [&trace]() -> std::string {
+                    if (const auto* metadata =
+                            cyxwiz::NodeMetadataRegistry::Instance().GetMetadata(trace.type)) {
+                        return metadata->name;
+                    }
+                    return "Node type " + std::to_string(static_cast<int>(trace.type));
+                }(),
                 "Forward",
                 cyxwiz::DebugTraceRole::Activation,
                 trace.actual_input_shape,
