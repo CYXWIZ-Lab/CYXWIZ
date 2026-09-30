@@ -257,7 +257,8 @@ bool ReservationClient::ExtendReservation(
     const std::string& reservation_id,
     int32_t additional_minutes,
     int64_t& new_expires,
-    int64_t& additional_escrow) {
+    int64_t& additional_escrow,
+    std::string& p2p_auth_token) {
 
     if (!connected_ || !stub_) {
         last_error_ = "Not connected";
@@ -291,10 +292,12 @@ bool ReservationClient::ExtendReservation(
 
     new_expires = response.new_expires();
     additional_escrow = response.additional_escrow();
+    p2p_auth_token = response.p2p_auth_token();
 
     // Update current reservation
     current_reservation_.end_time = new_expires;
     current_reservation_.escrow_amount += additional_escrow;
+    current_reservation_.p2p_auth_token = p2p_auth_token;
 
     spdlog::info("Reservation extended! New end time: {}", new_expires);
     return true;

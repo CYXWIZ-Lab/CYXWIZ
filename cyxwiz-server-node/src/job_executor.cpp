@@ -160,6 +160,21 @@ bool JobExecutor::CancelJob(const std::string& job_id) {
     return true;
 }
 
+bool JobExecutor::StopJobWithCheckpoint(const std::string& job_id) {
+    std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+    auto it = active_jobs_.find(job_id);
+    if (it == active_jobs_.end()) {
+        spdlog::warn("Cannot stop job {}: not found", job_id);
+        return false;
+    }
+
+    spdlog::info("Stopping job {} with a checkpoint...", job_id);
+    it->second->stop_with_checkpoint = true;
+    it->second->is_paused = false;
+    return true;
+}
+
 bool JobExecutor::PauseJob(const std::string& job_id) {
     std::lock_guard<std::mutex> lock(jobs_mutex_);
 
@@ -690,6 +705,7 @@ bool JobExecutor::RunTraining(const std::string& job_id, JobState* state) {
                      metrics.loss, metrics.accuracy * 100.0);
     };
     callbacks.should_cancel = [state] { return state->should_cancel.load(); };
+    callbacks.should_stop_with_checkpoint = [state] { return state->stop_with_checkpoint.load(); };
     callbacks.on_checkpoint = [this, &job_id](const std::string& checkpoint, int epoch, int next_batch) {
         std::lock_guard<std::mutex> lock(callback_mutex_);
         if (checkpoint_callback_) checkpoint_callback_(job_id, checkpoint, epoch, next_batch);

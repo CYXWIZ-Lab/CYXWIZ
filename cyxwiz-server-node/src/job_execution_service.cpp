@@ -330,12 +330,10 @@ grpc::Status JobExecutionServiceImpl::SendJob(
     // Server's token, not from the Engine (TOFIX118 gap 2).
     session->reservation_id = connection.reservation_id;
     session->reservation_start = std::chrono::steady_clock::now();
-    session->reservation_expires =
-        std::chrono::system_clock::time_point(std::chrono::seconds(connection.reservation_expires));
+    session->reservation_expires = connection.reservation_expires;
     session->engine_connected = true;
     spdlog::info("[HOTEL ROOM] Reservation {}: {}s left", session->reservation_id,
-                 std::chrono::duration_cast<std::chrono::seconds>(
-                     session->reservation_expires - std::chrono::system_clock::now()).count());
+                 connection.reservation_expires - UnixNow());
 
     // Save dataset if provided inline
     if (!request->initial_dataset().empty()) {
@@ -469,6 +467,13 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     std::condition_variable new_job_cv;
     cyxwiz::protocol::JobConfig pending_job_config;
 
+    // The reservation's end (TOFIX118 gap 6): woken by an extension or by the
+    // stream ending.
+    std::mutex deadline_mutex;
+    std::condition_variable deadline_cv;
+    std::atomic<bool> stream_done{false};
+    std::atomic<bool> expiry_reported{false};  // a job's completion told the Engine
+
     // Command thread runs for entire reservation, handles all commands
     std::thread command_thread([&, job_id, session]() {
         cyxwiz::protocol::TrainingCommand command;
@@ -516,6 +521,22 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 }
                 new_job_cv.notify_one();
             }
+            else if (command.has_reservation_extension_token()) {
+                // ExtendReservation's token (TOFIX118 gap 5): same
+                // reservation, this node, a later end.
+                std::optional<cyxwiz::P2PAuthClaims> claims;
+                if (jwt_validator_) claims = jwt_validator_->ValidateToken(command.reservation_extension_token());
+                if (claims && claims->reservation_id == session->reservation_id &&
+                    claims->node_id == CurrentNodeId() &&
+                    claims->reservation_expires > session->reservation_expires.load()) {
+                    session->reservation_expires = claims->reservation_expires;
+                    deadline_cv.notify_all();
+                    spdlog::info("[RESERVATION] Extended: {}s left", claims->reservation_expires - UnixNow());
+                } else {
+                    spdlog::warn("[RESERVATION] Extension token refused (invalid, another reservation or node, "
+                                 "or not later)");
+                }
+            }
             else if (command.has_reservation_end()) {
                 spdlog::info("[RESERVATION] Reservation end signal received");
                 reservation_ended = true;
@@ -533,8 +554,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
             // Calculate time remaining in reservation
             auto now = std::chrono::steady_clock::now();
-            auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
-                session->reservation_expires - std::chrono::system_clock::now());
+            auto remaining = std::chrono::seconds(session->reservation_expires.load() - UnixNow());
 
             if (remaining.count() > 0) {
                 spdlog::warn("[HOTEL ROOM] Reservation has {}s remaining", remaining.count());
@@ -563,6 +583,32 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
             engine_disconnected = true;
             new_job_cv.notify_one();
         }
+    });
+
+    // At the reservation's end: a running job stops with a checkpoint (its
+    // completion reports RESERVATION_ENDED), and no new job is waited for.
+    std::thread deadline_thread([&, session]() {
+        std::unique_lock<std::mutex> lock(deadline_mutex);
+        while (!stream_done && !reservation_ended && !engine_disconnected) {
+            const int64_t end = session->reservation_expires.load();
+            if (UnixNow() >= end) {
+                session->reservation_expired = true;
+                break;
+            }
+            deadline_cv.wait_until(lock, std::chrono::system_clock::time_point(std::chrono::seconds(end)));
+        }
+        if (!session->reservation_expired) return;
+        lock.unlock();
+        spdlog::warn("[RESERVATION] Reservation {} ended; stopping", session->reservation_id);
+        cancel_fetch();
+        if (session->is_running && job_executor_) {
+            job_executor_->StopJobWithCheckpoint(session->job_config.job_id());
+        }
+        {
+            std::lock_guard<std::mutex> job_lock(new_job_mutex);
+            reservation_ended = true;
+        }
+        new_job_cv.notify_one();
     });
 
     // ========== MULTI-JOB TRAINING LOOP ==========
@@ -757,7 +803,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 // Save the weights now: the executor drops the job's model
                 // right after this callback.
                 const auto run_timing = job_executor_->GetJobRunTiming(current_job_id);
-                if (success || session->should_stop) {
+                if (success || session->should_stop || session->reservation_expired) {
                     const auto save_start = std::chrono::steady_clock::now();
                     const std::string path = SavePartialModel(current_job_id);
                     std::lock_guard<std::mutex> lock(error_mutex);
@@ -785,7 +831,12 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
 
         // Start real training
         session->is_running = true;
-        if (!job_executor_->ExecuteJobAsync(run_config)) {
+        if (session->reservation_expired) {
+            // The reservation ended while the dataset was arriving (gap 6).
+            std::lock_guard<std::mutex> lock(error_mutex);
+            failure = cyxwiz::TrainingFailureKind::ReservationEnded;
+            training_complete = true;
+        } else if (!job_executor_->ExecuteJobAsync(run_config)) {
             std::lock_guard<std::mutex> lock(error_mutex);
             training_error = "the node could not start the job";
             failure = cyxwiz::TrainingFailureKind::Internal;
@@ -896,6 +947,19 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
                 spdlog::warn("[P2P WORKFLOW] No trained weights were saved for job {}; none advertised",
                              current_job_id);
             }
+        } else if (session->reservation_expired) {
+            // The reservation ran out (TOFIX118 gap 6): the job stopped with a
+            // checkpoint; the Engine offers a resume in a new reservation.
+            auto* error = complete_update.mutable_error();
+            error->set_error_code(cyxwiz::TrainingFailureCode(cyxwiz::TrainingFailureKind::ReservationEnded));
+            {
+                std::lock_guard<std::mutex> lock(error_mutex);
+                error->set_error_message("The reservation ended; training stopped during epoch " +
+                                         std::to_string(epochs_completed + 1) +
+                                         ". The node kept this job's checkpoints for a resume.");
+            }
+            error->set_recoverable(false);
+            expiry_reported = true;
         } else if (session->should_stop) {
             // User-initiated stop - send COMPLETE with success=false (NOT an error)
             // This allows the Engine to continue with new training within the reservation
@@ -1059,6 +1123,33 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     spdlog::info("  Reservation timer ended: {}", reservation_ended ? "YES" : "NO");
     spdlog::info("========================================");
 
+    {
+        std::lock_guard<std::mutex> lock(deadline_mutex);
+        stream_done = true;
+    }
+    deadline_cv.notify_all();
+    if (deadline_thread.joinable()) {
+        deadline_thread.join();
+    }
+    if (session->reservation_expired) {
+        // Tell an idle Engine why the stream ends, then close it: the
+        // command thread is blocked reading the Engine.
+        if (!expiry_reported) {
+            cyxwiz::protocol::TrainingUpdate ended;
+            ended.set_job_id(session->job_config.job_id());
+            ended.set_timestamp(std::chrono::system_clock::now().time_since_epoch().count());
+            auto* error = ended.mutable_error();
+            error->set_error_code(cyxwiz::TrainingFailureCode(cyxwiz::TrainingFailureKind::ReservationEnded));
+            error->set_error_message("The reservation ended.");
+            error->set_recoverable(false);
+            {
+                std::lock_guard<std::mutex> stream_lock(*stream_mutex);
+                stream->Write(ended);
+            }
+        }
+        context->TryCancel();
+    }
+
     session->should_stop = true;
     if (command_thread.joinable()) {
         command_thread.join();
@@ -1184,6 +1275,11 @@ grpc::Status JobExecutionServiceImpl::DownloadWeights(
 }
 
 // ========== Helper Methods ==========
+
+int64_t JobExecutionServiceImpl::UnixNow() {
+    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
 
 std::string JobExecutionServiceImpl::CurrentNodeId() const {
     return node_client_ ? node_client_->GetNodeId() : node_id_;

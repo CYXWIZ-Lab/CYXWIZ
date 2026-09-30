@@ -88,6 +88,11 @@ void CheckFitCard() {
 void CheckFailureAndProgress() {
     const auto oom = cyxwiz::BuildFailureCardFromCode("OUT_OF_MEMORY", "The node ran out of device memory.", 17920);
     Check(oom.title == "Out of memory" && oom.when == "at batch 17,920", "failure card from the node's code");
+    const auto expired = cyxwiz::BuildFailureCardFromCode(
+        "RESERVATION_ENDED", "The reservation ended at 14:32; training stopped at epoch 3, batch 1,200.", 1200);
+    Check(expired.title == "Reservation ended" &&
+              expired.next == "Reserve a node again, then resume from the last checkpoint.",
+          "the node's reservation-ended code has its own words (TOFIX118 gap 6)");
     const auto older = cyxwiz::BuildFailureCardFromCode("TRAINING_FAILED", "x", 0);
     Check(older.title == "Training failed" && older.when.empty(), "an older node's code reads as a plain failure");
     const auto device = cyxwiz::BuildFailureCardFromRejection(

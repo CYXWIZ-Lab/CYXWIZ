@@ -76,6 +76,9 @@ public:
 
     // Cancel a running job
     bool CancelJob(const std::string& job_id);
+    // Stop a running job, writing a resume checkpoint where the run supports
+    // one mid-epoch; its checkpoints stay for a resume (TOFIX118 gap 6).
+    bool StopJobWithCheckpoint(const std::string& job_id);
 
     // Pause a running job
     bool PauseJob(const std::string& job_id);
@@ -131,6 +134,7 @@ private:
     struct JobState {
         std::thread worker_thread;
         std::atomic<bool> should_cancel{false};
+        std::atomic<bool> stop_with_checkpoint{false};
         std::atomic<bool> is_running{false};
         std::atomic<bool> is_paused{false};  // Pause flag for P2P control
         protocol::JobConfig config;

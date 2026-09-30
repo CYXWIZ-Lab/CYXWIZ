@@ -259,6 +259,9 @@ message TrainingCommand {
     // Reservation-based job management
     JobConfig new_job_config = 20;    // Start new job within same reservation
     bool reservation_end = 21;         // Signal reservation timer expired
+    // A fresh P2P token from ExtendReservation; the node validates it and
+    // takes the reservation's new end from it (TOFIX118 gap 5).
+    string reservation_extension_token = 22;
   }
 }
 

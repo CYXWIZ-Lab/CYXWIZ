@@ -573,6 +573,56 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
     }
 }
 
+TEST_CASE("The node stops a job when its reservation ends", "[p2p][reservation]") {
+    // TOFIX118 gap 6: the node enforces the token's reservation end while
+    // the Engine stays connected; the job stops (keeping its checkpoints),
+    // the Engine is told why, and the stream closes.
+    JobExecutionServiceTest test;
+    const std::string job_id = "test_job_expiry";
+
+    ConnectRequest conn_req;
+    conn_req.set_job_id(job_id);
+    conn_req.set_auth_token(GenerateTestJwt(job_id, TEST_NODE_ID, 4));  // a 4-second reservation
+    conn_req.set_engine_version("1.0.0");
+    ConnectResponse conn_resp;
+    grpc::ClientContext conn_ctx;
+    SetRpcDeadline(conn_ctx);
+    REQUIRE(test.stub->ConnectToNode(&conn_ctx, conn_req, &conn_resp).ok());
+    REQUIRE(conn_resp.status() == STATUS_SUCCESS);
+
+    SendJobRequest job_req;
+    job_req.set_job_id(job_id);
+    auto* config = job_req.mutable_config();
+    config->set_job_id(job_id);
+    config->set_job_type(JOB_TYPE_TRAINING);
+    config->set_batch_size(32);
+    RemoteGraphJob remote;
+    PrepareRemoteGraphJob(remote, *config, 500);  // far longer than the reservation
+    SendJobResponse job_resp;
+    grpc::ClientContext job_ctx;
+    SetRpcDeadline(job_ctx);
+    REQUIRE(test.stub->SendJob(&job_ctx, job_req, &job_resp).ok());
+    REQUIRE(job_resp.accepted());
+
+    const auto start = std::chrono::steady_clock::now();
+    grpc::Status status;
+    const auto updates = RunAsEngine(test, job_id, remote, status);
+    const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+
+    bool reservation_ended = false;
+    bool completed = false;
+    for (const auto& update : updates) {
+        if (update.has_error() && update.error().error_code() == "RESERVATION_ENDED") {
+            reservation_ended = true;
+            CHECK_FALSE(update.error().recoverable());
+        }
+        completed = completed || (update.has_complete() && update.complete().success());
+    }
+    CHECK(reservation_ended);
+    CHECK_FALSE(completed);
+    CHECK(seconds < 30.0);
+}
+
 TEST_CASE("JobExecutionService - DownloadWeights", "[p2p][download]") {
     JobExecutionServiceTest test;
 

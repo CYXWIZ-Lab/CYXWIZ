@@ -190,8 +190,11 @@ private:
         std::atomic<int> jobs_completed_in_reservation{0};
         std::atomic<bool> waiting_for_new_job{false};
         std::chrono::steady_clock::time_point reservation_start;
-        // When the reservation ends, from the Central Server's token.
-        std::chrono::system_clock::time_point reservation_expires;
+        // When the reservation ends (Unix time), from the Central Server's
+        // token; an extension token moves it (TOFIX118 gaps 2, 5).
+        std::atomic<int64_t> reservation_expires{0};
+        // The reservation ran out while this session was open (gap 6).
+        std::atomic<bool> reservation_expired{false};
 
         // HOTEL ROOM MODEL: Track engine connection status
         std::atomic<bool> engine_connected{true};
@@ -249,6 +252,7 @@ private:
     // The Central Server's id once the node registered, else node_id_. P2P
     // tokens name the Central Server's id (TOFIX118 gap 3).
     std::string CurrentNodeId() const;
+    static int64_t UnixNow();
     cyxwiz::protocol::NodeCapabilities capabilities_;
 
     // P2P JWT validator
