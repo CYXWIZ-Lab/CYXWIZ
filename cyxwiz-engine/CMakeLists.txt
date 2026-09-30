@@ -2602,6 +2602,20 @@ endif()
 set_target_properties(test_extension_node_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# ===== Test: unloading a plugin removes its registrations (TOFIX125) =====
+add_executable(test_plugin_unload_registrations
+    tests/test_plugin_unload_registrations.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_include_directories(test_plugin_unload_registrations PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_plugin_unload_registrations PRIVATE cyxwiz-plugin-sdk imgui::imgui spdlog::spdlog)
+if(WIN32)
+    target_compile_definitions(test_plugin_unload_registrations PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_plugin_unload_registrations PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: Legacy PipelineExecutor operator routing =====
 add_executable(test_pipeline_executor_operator_routing
     tests/test_pipeline_executor_operator_routing.cpp

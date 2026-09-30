@@ -377,6 +377,16 @@ void PluginManager::InitializeAll() {
                  ready_count, order.size(), initialized_count);
 }
 
+// Everything a plugin registered points into its library: remove it all
+// before the library can be freed.
+void PluginManager::RemoveRegistrations(const std::string& plugin_id) {
+    ExtensionNodeRegistry::Instance().RemoveByProvider(plugin_id);
+    PluginPanelRegistry::Instance().RemoveByPlugin(plugin_id);
+    PluginDataLoaderRegistry::Instance().RemoveByPlugin(plugin_id);
+    PluginTrainingHookManager::Instance().RemoveByPlugin(plugin_id);
+    PluginAnalyticsRegistry::Instance().RemoveByPlugin(plugin_id);
+}
+
 void PluginManager::ShutdownPlugin(const std::string& plugin_id) {
     std::lock_guard assistant_lock(assistant_command_mutex_);
     std::lock_guard lock(mutex_);
@@ -395,12 +405,7 @@ void PluginManager::ShutdownPlugin(const std::string& plugin_id) {
     security::SafeExecute(plugin_id, "OnShutdown",
         [&]() { plugin->instance->OnShutdown(*ctx_it->second); });
 
-    // Cleanup all registry registrations for this plugin
-    ExtensionNodeRegistry::Instance().RemoveByProvider(plugin_id);
-    PluginPanelRegistry::Instance().RemoveByPlugin(plugin_id);
-    PluginDataLoaderRegistry::Instance().RemoveByPlugin(plugin_id);
-    PluginTrainingHookManager::Instance().RemoveByPlugin(plugin_id);
-    PluginAnalyticsRegistry::Instance().RemoveByPlugin(plugin_id);
+    RemoveRegistrations(plugin_id);
 
     plugin->state = PluginState::Loaded;
     contexts_.erase(ctx_it);
@@ -439,6 +444,9 @@ void PluginManager::UnloadPlugin(const std::string& plugin_id) {
         }
         plugin->state = PluginState::Loaded;
     }
+    // Before OnUnload and before the library is freed: its nodes, panels,
+    // loaders and hooks point into it (Unload used to skip this).
+    RemoveRegistrations(plugin_id);
 
     // Call OnUnload while context still exists (with crash isolation)
     if (plugin->instance && ctx_it != contexts_.end()) {
