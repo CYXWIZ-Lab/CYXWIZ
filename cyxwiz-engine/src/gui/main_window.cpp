@@ -3312,7 +3312,7 @@ void MainWindow::RenderDockSpace() {
     static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
 
     // Status bar height constant - must match RenderStatusBar()
-    const float status_bar_height = 24.0f;
+    const float status_bar_height = StatusBarHeight();
 
     // Always get viewport to fill the available space, minus status bar
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -3475,100 +3475,55 @@ void MainWindow::RegisterPanelsWithSidebar() {
     // Clear any existing registrations
     dock_style.ClearPanels();
 
-    // Register main panels with FontAwesome icons
+    // Sidebar and View > Panels share this list: grouped by area, one icon
+    // per panel (TOFIX129). Order here is the order on screen.
+    auto add = [&dock_style](const char* name, const char* icon, auto& panel, const char* group,
+                             const char* shortcut = "") {
+        if (panel) dock_style.RegisterPanel(name, icon, panel->GetVisiblePtr(), nullptr, group, shortcut);
+    };
 
-    // Main editing panels
-    if (node_editor_) {
-        dock_style.RegisterPanel("CyxWiz Studio", ICON_FA_DIAGRAM_PROJECT, node_editor_->GetVisiblePtr());
-    }
-    if (script_editor_) {
-        dock_style.RegisterPanel("Script Editor", ICON_FA_CODE, script_editor_->GetVisiblePtr());
-    }
-    if (studio_debugger_panel_) {
-        dock_style.RegisterPanel("Studio Debugger", ICON_FA_BUG, studio_debugger_panel_->GetVisiblePtr());
-    }
+    // Workspace
+    add("CyxWiz Studio", ICON_FA_DIAGRAM_PROJECT, node_editor_, "Workspace");
+    add("Properties", ICON_FA_SLIDERS, properties_, "Workspace");
+    add("Node Browser", ICON_FA_CUBES, node_browser_panel_, "Workspace");
+    add("Node Info", ICON_FA_CIRCLE_INFO, node_info_panel_, "Workspace");
+    add("Patterns", ICON_FA_LAYER_GROUP, pattern_browser_, "Workspace",
+        cyxwiz::menu::ShortcutFor("view.patterns", cyxwiz::menu::Context::Any).c_str());
+    add("Asset Browser", ICON_FA_IMAGES, asset_browser_, "Workspace");
+    add("Script Editor", ICON_FA_CODE, script_editor_, "Workspace");
+    add("Console", ICON_FA_TERMINAL, console_, "Workspace");
+    add("Viewport", ICON_FA_CUBE, viewport_, "Workspace");
 
-    // Side panels
-    if (asset_browser_) {
-        dock_style.RegisterPanel("Asset Browser", ICON_FA_IMAGES, asset_browser_->GetVisiblePtr());
-    }
-    if (properties_) {
-        dock_style.RegisterPanel("Properties", ICON_FA_SLIDERS, properties_->GetVisiblePtr());
-    }
+    // Data
+    add("Data Studio", ICON_FA_WAND_MAGIC_SPARKLES, data_studio_panel_, "Data");
+    add("Table Viewer", ICON_FA_TABLE, table_viewer_, "Data");
+    add("Data Explorer", ICON_FA_DATABASE, data_explorer_panel_, "Data");
+    add("Annotation Editor", ICON_FA_DRAW_POLYGON, annotation_editor_panel_, "Data");
+    add("Visualizer", ICON_FA_CHART_SIMPLE, visualization_panel_, "Data");
+    add("Query Console", ICON_FA_MAGNIFYING_GLASS_CHART, query_console_, "Data");
+    add("Variable Explorer", ICON_FA_LIST_UL, variable_explorer_, "Data");
+    add("Plot Output", ICON_FA_CHART_AREA, plot_output_panel_, "Data");
 
-    // Bottom panels
-    if (console_) {
-        dock_style.RegisterPanel("Console", ICON_FA_TERMINAL, console_->GetVisiblePtr());
-    }
-    if (training_plot_panel_) {
-        dock_style.RegisterPanel("Training", ICON_FA_CHART_LINE, training_plot_panel_->GetVisiblePtr());
-    }
-    if (viewport_) {
-        dock_style.RegisterPanel("Viewport", ICON_FA_CUBES, viewport_->GetVisiblePtr());
-    }
+    // Training
+    add("Training", ICON_FA_CHART_LINE, training_plot_panel_, "Training");
+    add("Studio Debugger", ICON_FA_BUG, studio_debugger_panel_, "Training");
+    add("Tasks", ICON_FA_HOURGLASS_HALF, task_progress_panel_, "Training");
 
-    // Additional panels (less commonly used)
-    if (table_viewer_) {
-        dock_style.RegisterPanel("Table Viewer", ICON_FA_TABLE, table_viewer_->GetVisiblePtr());
-    }
-    if (data_explorer_panel_) {
-        dock_style.RegisterPanel("Data Explorer", ICON_FA_DATABASE, data_explorer_panel_->GetVisiblePtr());
-    }
-    if (annotation_editor_panel_) {
-        dock_style.RegisterPanel("Annotation Editor", ICON_FA_DRAW_POLYGON, annotation_editor_panel_->GetVisiblePtr());
-    }
-    if (data_studio_panel_) {
-        dock_style.RegisterPanel("Data Studio", ICON_FA_DIAGRAM_PROJECT, data_studio_panel_->GetVisiblePtr());
-    }
-    if (visualization_panel_) {
-        dock_style.RegisterPanel("Visualizer", ICON_FA_CHART_SIMPLE, visualization_panel_->GetVisiblePtr());
-    }
-    if (job_status_panel_) {
-        dock_style.RegisterPanel("Jobs", ICON_FA_LIST_CHECK, job_status_panel_->GetVisiblePtr());
-    }
-    if (p2p_training_panel_) {
-        dock_style.RegisterPanel("P2P Training", ICON_FA_NETWORK_WIRED, p2p_training_panel_->GetVisiblePtr());
-    }
-    if (wallet_panel_) {
-        dock_style.RegisterPanel("Wallet", ICON_FA_WALLET, wallet_panel_->GetVisiblePtr());
-    }
-    if (task_progress_panel_) {
-        dock_style.RegisterPanel("Tasks", ICON_FA_SPINNER, task_progress_panel_->GetVisiblePtr());
-    }
-    if (pattern_browser_) {
-        dock_style.RegisterPanel("Patterns", ICON_FA_CUBES, pattern_browser_->GetVisiblePtr());
-    }
-    if (query_console_) {
-        dock_style.RegisterPanel("Query Console", ICON_FA_TERMINAL, query_console_->GetVisiblePtr());
-    }
-    if (variable_explorer_) {
-        dock_style.RegisterPanel("Variable Explorer", ICON_FA_LIST_UL, variable_explorer_->GetVisiblePtr());
-    }
-    if (plot_output_panel_) {
-        dock_style.RegisterPanel("Plot Output", ICON_FA_CHART_LINE, plot_output_panel_->GetVisiblePtr());
-    }
-    if (cloud_browser_panel_) {
-        dock_style.RegisterPanel("Cloud Browser", ICON_FA_CLOUD, cloud_browser_panel_->GetVisiblePtr());
-    }
-    if (node_browser_panel_) {
-        dock_style.RegisterPanel("Node Browser", ICON_FA_CUBES, node_browser_panel_->GetVisiblePtr());
-    }
-    if (node_info_panel_) {
-        dock_style.RegisterPanel("Node Info", ICON_FA_CIRCLE_INFO, node_info_panel_->GetVisiblePtr());
-    }
-    if (cloud_dataset_manager_panel_) {
-        dock_style.RegisterPanel("Cloud Manager", ICON_FA_DATABASE, cloud_dataset_manager_panel_->GetVisiblePtr());
-    }
+    // Network
+    add("Jobs", ICON_FA_LIST_CHECK, job_status_panel_, "Network");
+    add("P2P Training", ICON_FA_NETWORK_WIRED, p2p_training_panel_, "Network");
+    add("Cloud Browser", ICON_FA_CLOUD, cloud_browser_panel_, "Network");
+    add("Cloud Manager", ICON_FA_CLOUD_ARROW_UP, cloud_dataset_manager_panel_, "Network");
+    add("Wallet", ICON_FA_WALLET, wallet_panel_, "Network");
 
-    // Plugin Manager panel
-    if (plugin_manager_panel_) {
-        dock_style.RegisterPanel("Plugin Manager", ICON_FA_PLUG, plugin_manager_panel_->GetVisiblePtr());
-    }
-    // Command Palette - action button (not a panel toggle)
+    // Extensions
+    add("Plugin Manager", ICON_FA_PLUG, plugin_manager_panel_, "Extensions");
+
+    // Command Palette: an action, pinned at the bottom of the sidebar
     if (toolbar_) {
-        dock_style.RegisterPanel("Command Palette", ICON_FA_MAGNIFYING_GLASS, nullptr, [this]() {
-            toolbar_->OpenCommandPalette();
-        });
+        dock_style.RegisterPanel("Command Palette", ICON_FA_MAGNIFYING_GLASS, nullptr,
+                                 [this]() { toolbar_->OpenCommandPalette(); }, "",
+                                 cyxwiz::menu::ShortcutFor("view.command_palette", cyxwiz::menu::Context::Any));
     }
 
     spdlog::info("Registered {} panels with sidebar", dock_style.GetPanels().size());
@@ -6256,9 +6211,13 @@ void MainWindow::RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm) {
     }
 }
 
+float MainWindow::StatusBarHeight() {
+    return ImGui::GetTextLineHeight() + 8.0f;
+}
+
 void MainWindow::RenderStatusBar() {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    const float status_bar_height = 24.0f;
+    const float status_bar_height = StatusBarHeight();
 
     // Position status bar at the bottom of the screen
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - status_bar_height));
@@ -6270,7 +6229,7 @@ void MainWindow::RenderStatusBar() {
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 4));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyleColorVec4(ImGuiCol_MenuBarBg));
 
     if (ImGui::Begin("##StatusBar", nullptr, flags)) {
         // Left side: Project info
@@ -6304,7 +6263,7 @@ void MainWindow::RenderStatusBar() {
             }
 
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "%s", status.c_str());
+            ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_CheckMark), "%s", status.c_str());
         } else {
             // Show ready status on the right
             float text_width = ImGui::CalcTextSize("Ready").x + 20;

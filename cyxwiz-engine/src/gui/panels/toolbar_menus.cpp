@@ -35,27 +35,6 @@
 
 namespace cyxwiz {
 
-namespace {
-
-// Sidebar panels grouped as View > Panels shows them. Names not listed go
-// under "Other" in registration order.
-const std::vector<std::pair<const char*, const char*>>& PanelGroups() {
-    static const std::vector<std::pair<const char*, const char*>> groups = {
-        {"CyxWiz Studio", "Workspace"}, {"Properties", "Workspace"}, {"Node Browser", "Workspace"},
-        {"Node Info", "Workspace"}, {"Patterns", "Workspace"}, {"Asset Browser", "Workspace"},
-        {"Script Editor", "Workspace"}, {"Console", "Workspace"}, {"Viewport", "Workspace"},
-        {"Data Studio", "Data"}, {"Table Viewer", "Data"}, {"Data Explorer", "Data"},
-        {"Annotation Editor", "Data"}, {"Visualizer", "Data"}, {"Query Console", "Data"},
-        {"Variable Explorer", "Data"}, {"Plot Output", "Data"},
-        {"Training", "Training"}, {"Studio Debugger", "Training"}, {"Tasks", "Training"},
-        {"Jobs", "Network"}, {"P2P Training", "Network"}, {"Cloud Browser", "Network"},
-        {"Cloud Manager", "Network"}, {"Wallet", "Network"},
-        {"Plugin Manager", "Extensions"}};
-    return groups;
-}
-
-}  // namespace
-
 // One FontAwesome icon per meaning. Actions without an entry draw no icon.
 const char* ToolbarPanel::IconForAction(const std::string& id) {
     static const std::unordered_map<std::string, const char*> icons = {
@@ -165,24 +144,10 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
     in.idle_log = idle_log_ptr_ && *idle_log_ptr_;
     in.verbose_python = verbose_python_log_ptr_ && *verbose_python_log_ptr_;
 
-    // Panels: sidebar registry, grouped and ordered as View > Panels shows them.
-    {
-        const auto& groups = PanelGroups();
-        const auto& registered = gui::GetDockStyle().GetPanels();
-        std::vector<menu::PanelEntry> listed;
-        for (const auto& [name, group] : groups) {
-            for (const auto& p : registered) {
-                if (p.name != name) continue;
-                listed.push_back({p.name, group, p.visible_ptr && *p.visible_ptr, ""});
-            }
-        }
-        for (const auto& p : registered) {
-            if (p.name == "Command Palette") continue;  // an action, not a panel
-            bool known = false;
-            for (const auto& [name, group] : groups) if (p.name == name) known = true;
-            if (!known) listed.push_back({p.name, "Other", p.visible_ptr && *p.visible_ptr, ""});
-        }
-        in.panels = std::move(listed);
+    // Panels: the sidebar registry, already in group order (main_window.cpp).
+    for (const auto& p : gui::GetDockStyle().GetPanels()) {
+        if (!p.visible_ptr) continue;  // actions such as the Command Palette
+        in.panels.push_back({p.name, p.group.empty() ? "Other" : p.group, *p.visible_ptr, p.shortcut});
     }
 
     for (const auto& rp : pm.GetRecentProjects()) in.recent_projects.push_back({rp.path, rp.name, false, ""});

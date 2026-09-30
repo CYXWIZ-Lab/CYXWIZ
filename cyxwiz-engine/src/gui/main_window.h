@@ -226,6 +226,8 @@ private:
     void SetDefaultPanelVisibility();  // Hide tool panels, show only core panels
     void RenderSidebar();
     void RenderStatusBar();
+    // Status bar height follows the interface text size (TOFIX129).
+    static float StatusBarHeight();
     void RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm);
     void DetectKeyboardContext();
     void HandleGlobalShortcuts();

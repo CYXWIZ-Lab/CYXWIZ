@@ -251,7 +251,8 @@ void DockStyle::ApplyBlenderPreset() {
 }
 
 void DockStyle::RegisterPanel(const std::string& name, const std::string& icon,
-                              bool* visible_ptr, std::function<void()> on_toggle) {
+                              bool* visible_ptr, std::function<void()> on_toggle,
+                              const std::string& group, const std::string& shortcut) {
     // Check if already registered
     auto it = std::find_if(panels_.begin(), panels_.end(),
                            [&name](const PanelVisibility& p) { return p.name == name; });
@@ -261,9 +262,11 @@ void DockStyle::RegisterPanel(const std::string& name, const std::string& icon,
         it->icon = icon;
         it->visible_ptr = visible_ptr;
         it->on_toggle = on_toggle;
+        it->group = group;
+        it->shortcut = shortcut;
     } else {
         // Add new
-        panels_.push_back({name, icon, visible_ptr, on_toggle});
+        panels_.push_back({name, icon, visible_ptr, on_toggle, group, shortcut});
     }
 }
 
@@ -287,17 +290,21 @@ bool DockStyle::RenderSidebarToggles() {
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGuiIO& io = ImGui::GetIO();
+    const ImGuiStyle& style = ImGui::GetStyle();
 
-    // Sidebar dimensions
+    // Sidebar geometry: one 26 px square per panel, a thin line between
+    // groups, the action entries (Command Palette) pinned at the bottom.
     const float sidebar_width = kSidebarWidth;
-    const float icon_size = 24.0f;
-    const float icon_padding = 8.0f;
-    const float top_offset = 32.0f;  // Space for toolbar
-    const float hover_zone = 50.0f;  // Edge zone to trigger hover
+    const float icon_size = 26.0f;
+    const float icon_gap = 3.0f;
+    const float group_gap = 9.0f;
+    const float edge_pad = 5.0f;
+    const float top_offset = 32.0f;  // Space for the menu bar
+    const float hover_zone = 50.0f;  // Edge zone that reveals the sidebar
 
-    bool left_side = (sidebar_position_ == SidebarPosition::Left);
+    const bool left_side = (sidebar_position_ == SidebarPosition::Left);
 
-    // Calculate hover detection zone
+    // Hover detection with hysteresis (auto-hide)
     ImVec2 hover_zone_min, hover_zone_max;
     if (left_side) {
         hover_zone_min = ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + top_offset);
@@ -309,227 +316,192 @@ bool DockStyle::RenderSidebarToggles() {
         hover_zone_max = ImVec2(viewport->WorkPos.x + viewport->WorkSize.x,
                                 viewport->WorkPos.y + viewport->WorkSize.y);
     }
-
-    // Check if mouse is in hover zone
-    ImVec2 mouse_pos = io.MousePos;
-    bool in_hover_zone = (mouse_pos.x >= hover_zone_min.x && mouse_pos.x <= hover_zone_max.x &&
-                          mouse_pos.y >= hover_zone_min.y && mouse_pos.y <= hover_zone_max.y);
-
-    // Update hover state with hysteresis
+    const ImVec2 mouse_pos = io.MousePos;
+    const bool in_hover_zone = (mouse_pos.x >= hover_zone_min.x && mouse_pos.x <= hover_zone_max.x &&
+                                mouse_pos.y >= hover_zone_min.y && mouse_pos.y <= hover_zone_max.y);
     if (in_hover_zone) {
         sidebar_hovered_ = true;
         sidebar_hover_timer_ = 0.3f;
     } else if (sidebar_hover_timer_ > 0.0f) {
         sidebar_hover_timer_ -= io.DeltaTime;
-        if (sidebar_hover_timer_ <= 0.0f) {
-            sidebar_hovered_ = false;
-        }
+        if (sidebar_hover_timer_ <= 0.0f) sidebar_hovered_ = false;
     }
 
-    // Animate visibility
-    float target_visibility = (sidebar_auto_hide_ && !sidebar_hovered_) ? 0.0f : 1.0f;
-    float speed = 8.0f;
-
+    // Slide in and out
+    const float target_visibility = (sidebar_auto_hide_ && !sidebar_hovered_) ? 0.0f : 1.0f;
+    const float speed = 8.0f;
     if (sidebar_visibility_ < target_visibility) {
         sidebar_visibility_ = std::min(sidebar_visibility_ + speed * io.DeltaTime, target_visibility);
     } else if (sidebar_visibility_ > target_visibility) {
         sidebar_visibility_ = std::max(sidebar_visibility_ - speed * io.DeltaTime, target_visibility);
     }
+    if (sidebar_visibility_ < 0.01f) return false;
 
-    // Don't render if fully hidden
-    if (sidebar_visibility_ < 0.01f) {
-        return false;
+    const float slide_offset = (1.0f - sidebar_visibility_) * sidebar_width;
+    const ImVec2 sidebar_pos = left_side
+        ? ImVec2(viewport->WorkPos.x - slide_offset, viewport->WorkPos.y + top_offset)
+        : ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - sidebar_width + slide_offset,
+                 viewport->WorkPos.y + top_offset);
+    const float sidebar_height = viewport->WorkSize.y - top_offset;
+    const float alpha = sidebar_visibility_;
+
+    // Content height: panels with their group lines, then the pinned actions.
+    float content_height = edge_pad;
+    {
+        std::string group;
+        bool first = true;
+        for (const auto& panel : panels_) {
+            if (!panel.visible_ptr) continue;  // pinned action
+            if (!first && panel.group != group) content_height += group_gap;
+            group = panel.group;
+            first = false;
+            content_height += icon_size + icon_gap;
+        }
+        for (const auto& panel : panels_) {
+            if (!panel.visible_ptr) content_height += icon_size + icon_gap;
+        }
+        content_height += edge_pad;
     }
 
-    // Calculate animated sidebar position
-    float slide_offset = (1.0f - sidebar_visibility_) * sidebar_width;
-    ImVec2 sidebar_pos;
-    if (left_side) {
-        sidebar_pos = ImVec2(viewport->WorkPos.x - slide_offset, viewport->WorkPos.y + top_offset);
-    } else {
-        sidebar_pos = ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - sidebar_width + slide_offset,
-                             viewport->WorkPos.y + top_offset);
-    }
+    // Colours come from the active theme.
+    auto themed = [&style, alpha](ImGuiCol col) {
+        ImVec4 c = style.Colors[col];
+        c.w *= alpha;
+        return ImGui::ColorConvertFloat4ToU32(c);
+    };
+    ImVec4 window_bg = style.Colors[ImGuiCol_MenuBarBg];
+    window_bg.w = 0.97f * alpha;
 
-    float sidebar_height = viewport->WorkSize.y - top_offset;
-    const float sidebar_content_height =
-        icon_padding + static_cast<float>(panels_.size()) * (icon_size + icon_padding);
-    float alpha = sidebar_visibility_;
-
-    // Create actual window for sidebar (not just drawing on foreground)
     ImGui::SetNextWindowPos(sidebar_pos);
     ImGui::SetNextWindowSize(ImVec2(sidebar_width, sidebar_height));
-    ImGui::SetNextWindowContentSize(ImVec2(0.0f, sidebar_content_height));
-    ImGui::SetNextWindowBgAlpha(0.95f * alpha);
+    ImGui::SetNextWindowContentSize(ImVec2(0.0f, content_height));
+    ImGui::SetNextWindowBgAlpha(window_bg.w);
 
-    ImGuiWindowFlags sidebar_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                                     ImGuiWindowFlags_NoMove |
-                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse |
-                                     ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNav;
+    const ImGuiWindowFlags sidebar_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                           ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                           ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking |
+                                           ImGuiWindowFlags_NoNav;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);  // No sidebar border
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 4.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.10f, 0.10f, 0.95f * alpha));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.15f, 0.15f, 0.15f, 0.3f * alpha));  // Very subtle
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, window_bg);
 
     if (ImGui::Begin("##SidebarPanel", nullptr, sidebar_flags)) {
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-        // Don't process interactions if not fully visible
         if (sidebar_visibility_ >= 0.5f) {
             const ImVec2 content_origin = ImGui::GetCursorScreenPos();
-            float y_offset = icon_padding;
+            const float x = content_origin.x + (sidebar_width - icon_size) * 0.5f;
 
-            for (auto& panel : panels_) {
-                bool is_visible = panel.visible_ptr ? *panel.visible_ptr : false;
+            auto draw_toggle = [&](PanelVisibility& panel, float y) {
+                const bool is_action = panel.visible_ptr == nullptr;
+                const bool is_visible = panel.visible_ptr ? *panel.visible_ptr : false;
+                const ImVec2 icon_min(x, y);
+                const ImVec2 icon_max(x + icon_size, y + icon_size);
 
-                ImVec2 icon_pos = ImVec2(
-                    content_origin.x + (sidebar_width - icon_size) * 0.5f,
-                    content_origin.y + y_offset
-                );
-
-                ImVec2 icon_min = icon_pos;
-                ImVec2 icon_max = ImVec2(icon_pos.x + icon_size, icon_pos.y + icon_size);
-
-                // Use cursor position for button
                 ImGui::SetCursorScreenPos(icon_min);
                 ImGui::PushID(panel.name.c_str());
-
-                bool hovered = false;
-                bool clicked = false;
-
-                // Create invisible button for interaction
-                if (ImGui::InvisibleButton("##toggle", ImVec2(icon_size, icon_size))) {
-                    clicked = true;
-                }
-                hovered = ImGui::IsItemHovered();
-
+                const bool clicked = ImGui::InvisibleButton("##toggle", ImVec2(icon_size, icon_size));
+                const bool hovered = ImGui::IsItemHovered();
                 ImGui::PopID();
 
-                // Determine colors
-                ImU32 icon_bg_color;
-                ImU32 icon_text_color;
-                ImU32 indicator_color = ImGui::ColorConvertFloat4ToU32(
-                    ImVec4(style_.active_indicator_color.x, style_.active_indicator_color.y,
-                           style_.active_indicator_color.z, style_.active_indicator_color.w * alpha));
-
-                if (is_visible) {
-                    if (hovered) {
-                        icon_bg_color = ImGui::ColorConvertFloat4ToU32(ImVec4(0.22f, 0.22f, 0.22f, alpha));
-                    } else {
-                        icon_bg_color = ImGui::ColorConvertFloat4ToU32(ImVec4(0.18f, 0.18f, 0.18f, alpha));
-                    }
-                    icon_text_color = IM_COL32(255, 255, 255, (int)(255 * alpha));
-                } else {
-                    if (hovered) {
-                        icon_bg_color = ImGui::ColorConvertFloat4ToU32(ImVec4(0.16f, 0.16f, 0.16f, alpha));
-                    } else {
-                        icon_bg_color = IM_COL32(0, 0, 0, 0);
-                    }
-                    icon_text_color = IM_COL32(128, 128, 128, (int)(255 * alpha));
-                }
-
-                // Draw icon background
                 if (is_visible || hovered) {
-                    draw_list->AddRectFilled(icon_min, icon_max, icon_bg_color, 4.0f);
+                    draw_list->AddRectFilled(icon_min, icon_max,
+                                             themed(hovered ? ImGuiCol_HeaderHovered : ImGuiCol_Header), 5.0f);
+                }
+                if (is_visible) {
+                    // Accent bar on the outer edge marks a shown panel.
+                    const float bar_x = left_side ? sidebar_pos.x : sidebar_pos.x + sidebar_width - 3.0f;
+                    draw_list->AddRectFilled(ImVec2(bar_x, icon_min.y + 5.0f), ImVec2(bar_x + 3.0f, icon_max.y - 5.0f),
+                                             themed(ImGuiCol_CheckMark), 1.5f);
                 }
 
-                // Draw active indicator bar on edge
-                if (is_visible && left_side) {
-                    draw_list->AddRectFilled(
-                        ImVec2(sidebar_pos.x, icon_min.y),
-                        ImVec2(sidebar_pos.x + 3.0f, icon_max.y),
-                        indicator_color);
-                } else if (is_visible && !left_side) {
-                    draw_list->AddRectFilled(
-                        ImVec2(sidebar_pos.x + sidebar_width - 3.0f, icon_min.y),
-                        ImVec2(sidebar_pos.x + sidebar_width, icon_max.y),
-                        indicator_color);
-                }
-
-                // Draw icon text
-                std::string label = panel.icon.empty() ?
-                                    std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(panel.name[0])))) :
-                                    panel.icon;
-
-                ImVec2 text_size = ImGui::CalcTextSize(label.c_str());
-                ImVec2 text_pos = ImVec2(
-                    icon_min.x + (icon_size - text_size.x) * 0.5f,
-                    icon_min.y + (icon_size - text_size.y) * 0.5f
-                );
-
-                // Use ImGui text rendering for proper merged font support
-                ImGui::SetCursorScreenPos(text_pos);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(icon_text_color));
+                const std::string label = panel.icon.empty()
+                    ? std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(panel.name[0]))))
+                    : panel.icon;
+                const ImVec2 text_size = ImGui::CalcTextSize(label.c_str());
+                ImGui::SetCursorScreenPos(ImVec2(icon_min.x + (icon_size - text_size.x) * 0.5f,
+                                                 icon_min.y + (icon_size - text_size.y) * 0.5f));
+                ImVec4 text_color = style.Colors[(is_visible || is_action) ? ImGuiCol_Text : ImGuiCol_TextDisabled];
+                text_color.w *= alpha;
+                ImGui::PushStyleColor(ImGuiCol_Text, text_color);
                 ImGui::TextUnformatted(label.c_str());
                 ImGui::PopStyleColor();
 
-                // Handle click
                 if (clicked) {
-                    if (panel.visible_ptr) {
-                        *panel.visible_ptr = !*panel.visible_ptr;
-                    }
-                    if (panel.on_toggle) {
-                        panel.on_toggle();
-                    }
+                    if (panel.visible_ptr) *panel.visible_ptr = !*panel.visible_ptr;
+                    if (panel.on_toggle) panel.on_toggle();
                     any_changed = true;
                 }
-
-                // Tooltip on hover
                 if (hovered) {
-                    ImGui::SetNextWindowBgAlpha(0.9f);
                     ImGui::BeginTooltip();
-                    ImGui::Text("%s", panel.name.c_str());
-                    ImGui::TextDisabled(is_visible ? "Click to hide" : "Click to show");
+                    if (panel.shortcut.empty()) ImGui::TextUnformatted(panel.name.c_str());
+                    else ImGui::Text("%s  (%s)", panel.name.c_str(), panel.shortcut.c_str());
+                    if (!is_action) ImGui::TextDisabled(is_visible ? "Click to hide" : "Click to show");
                     ImGui::EndTooltip();
                 }
+            };
 
-                y_offset += icon_size + icon_padding;
+            float y = content_origin.y + edge_pad;
+            std::string group;
+            bool first = true;
+            for (auto& panel : panels_) {
+                if (!panel.visible_ptr) continue;
+                if (!first && panel.group != group) {
+                    const float line_y = y + (group_gap - 1.0f) * 0.5f;
+                    draw_list->AddLine(ImVec2(x + 2.0f, line_y), ImVec2(x + icon_size - 2.0f, line_y),
+                                       themed(ImGuiCol_Separator));
+                    y += group_gap;
+                }
+                group = panel.group;
+                first = false;
+                draw_toggle(panel, y);
+                y += icon_size + icon_gap;
             }
 
-            // Right-click context menu
+            // Pinned actions sit at the bottom when there is room.
+            int actions = 0;
+            for (const auto& panel : panels_) if (!panel.visible_ptr) ++actions;
+            if (actions > 0) {
+                const float window_bottom = ImGui::GetWindowPos().y + ImGui::GetWindowHeight();
+                const float bottom_y = window_bottom - edge_pad - actions * (icon_size + icon_gap) + icon_gap;
+                y = std::max(y, bottom_y);
+                for (auto& panel : panels_) {
+                    if (panel.visible_ptr) continue;
+                    draw_toggle(panel, y);
+                    y += icon_size + icon_gap;
+                }
+            }
+
+            // Right-click: side and auto-hide
             if (ImGui::IsWindowHovered() && io.MouseClicked[1]) {
                 ImGui::OpenPopup("##SidebarContextMenu");
             }
-
-            // Render context menu
-            ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.12f, 0.12f, 0.12f, 0.98f));
-            ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 4.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
-
             if (ImGui::BeginPopup("##SidebarContextMenu")) {
-                ImGui::TextDisabled("Sidebar Position");
+                ImGui::TextDisabled("Sidebar side");
                 ImGui::Separator();
-
-                if (ImGui::MenuItem("Left Side", nullptr, sidebar_position_ == SidebarPosition::Left)) {
+                if (ImGui::MenuItem("Left", nullptr, sidebar_position_ == SidebarPosition::Left)) {
                     SetSidebarOnLeft(true);  // saved Engine-wide
                 }
-                if (ImGui::MenuItem("Right Side", nullptr, sidebar_position_ == SidebarPosition::Right)) {
+                if (ImGui::MenuItem("Right", nullptr, sidebar_position_ == SidebarPosition::Right)) {
                     SetSidebarOnLeft(false);
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Hide Sidebar")) {
-                    sidebar_position_ = SidebarPosition::Hidden;
-                }
-
-                ImGui::Separator();
-                ImGui::TextDisabled("Behavior");
                 if (ImGui::MenuItem("Auto-hide", nullptr, sidebar_auto_hide_)) {
                     sidebar_auto_hide_ = !sidebar_auto_hide_;
                 }
-
+                if (ImGui::MenuItem("Hide sidebar")) {
+                    sidebar_position_ = SidebarPosition::Hidden;
+                }
                 ImGui::EndPopup();
             }
-
-            ImGui::PopStyleVar(2);
-            ImGui::PopStyleColor();
         }
     }
     ImGui::End();
 
-    ImGui::PopStyleColor(2);
+    ImGui::PopStyleColor(1);
     ImGui::PopStyleVar(4);
 
     return any_changed;
