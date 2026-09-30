@@ -168,6 +168,16 @@ InstallerPackPresentation BuildInstallerPackPresentation(
         result.tone = InstallerPackPresentationTone::Warning;
         return result;
     }
+    if (!record.installed) {
+        // Verification runs in CyxWiz after installation; nothing is needed
+        // from the user before installing.
+        result.status = "Verified after install";
+        result.explanation =
+            "CyxWiz checks this backend on your computer after it is "
+            "installed; nothing is needed before installing.";
+        result.tone = InstallerPackPresentationTone::Accent;
+        return result;
+    }
     if (decision.eligibility == runtime::BackendPackEligibility::Unknown) {
         result.status = "Verification needed";
         result.explanation =

@@ -24,7 +24,9 @@ InstallerRemovalViewAction RenderInstallerRemovalControl(
     }
     ImGui::EndDisabled();
     if (!removal.message.empty()) {
-      ImGui::TextDisabled("%s", removal.message.c_str());
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+      ImGui::TextWrapped("%s", removal.message.c_str());
+      ImGui::PopStyleColor();
     }
     return action;
   }
@@ -41,7 +43,10 @@ InstallerRemovalViewAction RenderInstallerRemovalControl(
   }
   ImGui::EndDisabled();
   if (!removal.message.empty()) {
-    ImGui::TextDisabled("%s", removal.message.c_str());
+    // Wrapped: the summary column is narrow and the hint must not clip.
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s", removal.message.c_str());
+    ImGui::PopStyleColor();
   }
 
   ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);

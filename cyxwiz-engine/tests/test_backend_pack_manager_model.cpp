@@ -201,6 +201,28 @@ void TestInstallerPackPresentation() {
             presentation.tone ==
                 cyxwiz::InstallerPackPresentationTone::Danger,
         "an uninstalled pack without compatibility evidence must not appear available");
+
+  // A pack that is not installed yet is verified after install, never
+  // "Verification needed" (verification cannot run before installing).
+  auto fresh = Pack("opencl-v1", cyxwiz::BackendPackCatalogSupport::Supported,
+                    false);
+  fresh.backend = "opencl";
+  fresh.installed = false;
+  fresh.active = false;
+  fresh.delivery_metadata_available = true;
+  fresh.compatibility->eligibility =
+      cyxwiz::runtime::BackendPackEligibility::Unknown;
+  fresh.compatibility->install_recommendation = cyxwiz::runtime::
+      BackendPackInstallRecommendation::AvailableAfterVerification;
+  presentation = cyxwiz::BuildInstallerPackPresentation(fresh);
+  Check(presentation.status == "Verified after install" &&
+            presentation.tone ==
+                cyxwiz::InstallerPackPresentationTone::Accent,
+        "a pack that is not installed must say it is verified after install");
+  fresh.installed = true;
+  presentation = cyxwiz::BuildInstallerPackPresentation(fresh);
+  Check(presentation.status == "Verification needed",
+        "an installed pack with unknown compatibility still asks for verification");
 }
 
 void TestActionPolicy() {
