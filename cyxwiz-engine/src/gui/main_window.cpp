@@ -532,7 +532,7 @@ cyxwiz::DebugArtifactObservation ObserveModelArtifact(
 } // anonymous namespace
 
 MainWindow::MainWindow()
-    : show_about_dialog_(false), show_demo_window_(false), first_time_layout_(true) {
+    : first_time_layout_(true) {
 
     // Run Parquet cache hygiene once at startup. Drops anything older than
     // 30 days and trims the directory back under 10 GB if it grew over the
@@ -3289,14 +3289,6 @@ void MainWindow::Render() {
     if (viewport_) viewport_->Render();
     if (properties_) properties_->Render();
 
-    if (show_about_dialog_) {
-        ShowAboutDialog();
-    }
-
-    if (show_demo_window_) {
-        ImGui::ShowDemoWindow(&show_demo_window_);
-    }
-
     // Render the Compile Graph result popup (triggered from Train -> Compile Graph menu)
     RenderCompileResultPopup();
     RenderOperationErrorPopup();
@@ -3504,25 +3496,6 @@ void MainWindow::BuildInitialDockLayout() {
     spdlog::info("  - Bottom-Left: Console");
     spdlog::info("  - Bottom-Right: Training Dashboard");
     spdlog::info("  - Bottom-Bottom: Viewport");
-}
-
-void MainWindow::ShowAboutDialog() {
-    if (!ImGui::Begin("About CyxWiz Engine", &show_about_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::End();
-        return;
-    }
-
-    ImGui::Text("CyxWiz Engine");
-    ImGui::Text("Version: %s", cyxwiz::GetVersionString());
-    ImGui::Separator();
-    ImGui::Text("Decentralized ML Compute Platform");
-    ImGui::Text("Built with ImGui, ArrayFire, and gRPC");
-    ImGui::Separator();
-    if (ImGui::Button("OK")) {
-        show_about_dialog_ = false;
-    }
-
-    ImGui::End();
 }
 
 void MainWindow::RegisterPanelsWithSidebar() {
@@ -6051,12 +6024,6 @@ void MainWindow::SaveLayout() {
     spdlog::info("Saved layout to imgui.ini");
 }
 
-void MainWindow::LoadLayout() {
-    // Layout is loaded automatically from imgui.ini by ImGui
-    // This function is kept for API compatibility but doesn't need to do anything
-    // Per-project layouts are disabled to avoid dock corruption issues
-}
-
 void MainWindow::SaveProjectSettings() {
     auto& pm = cyxwiz::ProjectManager::Instance();
     if (!pm.HasActiveProject()) {
@@ -6133,9 +6100,6 @@ void MainWindow::LoadProjectSettings() {
     // Theme and text sizes are Engine-wide (Preferences > Appearance); the
     // project's older app_theme / ui_scale fields are no longer applied.
     ImGui::GetIO().FontGlobalScale = 1.0f;
-
-    // Load layout file
-    LoadLayout();
 
     // Restore open scripts
     const auto& open_scripts = pm.GetConfig().open_scripts;

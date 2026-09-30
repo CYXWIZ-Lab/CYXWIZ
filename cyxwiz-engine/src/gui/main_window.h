@@ -23,7 +23,6 @@ class NodeEditor;
 class Console;
 class Viewport;
 class Properties;
-// class TrainingEvaluationPanel;  // Phase 5: Removed - functionality moved to node-based workflow
 class WalletPanel;
 class CustomNodeEditorPanel;
 class ThemeEditorPanel;
@@ -211,7 +210,6 @@ public:
     void SaveProjectSettings();      // Save current editor settings and layout to project
     void LoadProjectSettings();      // Load editor settings and layout from project
     void SaveLayout();               // Save only ImGui layout to project
-    void LoadLayout();               // Load only ImGui layout from project
 
     // Called when project is opened/closed
     void OnProjectOpened(const std::string& project_root);
@@ -221,7 +219,6 @@ public:
 private:
     void RenderDockSpace();
     void BuildInitialDockLayout();
-    void ShowAboutDialog();
     void RegisterPanelsWithSidebar();
     void SetDefaultPanelVisibility();  // Hide tool panels, show only core panels
     void RenderSidebar();
@@ -342,7 +339,6 @@ private:
     std::unique_ptr<cyxwiz::LiveGraphCompile> live_compile_;
     uint64_t live_compile_serial_seen_ = 0;
     void UpdateLiveCompile();
-    // std::unique_ptr<TrainingEvaluationPanel> training_eval_panel_;  // Phase 5: Removed
 
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;
@@ -484,8 +480,6 @@ private:
     // Startup script manager
     std::unique_ptr<scripting::StartupScriptManager> startup_script_manager_;
 
-    bool show_about_dialog_;
-    bool show_demo_window_;
     bool first_time_layout_;
     bool reset_layout_requested_ = false;
 

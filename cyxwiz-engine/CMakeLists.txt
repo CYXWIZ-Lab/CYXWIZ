@@ -391,23 +391,15 @@ set(ENGINE_SOURCES
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/connection_dialog_job_fit.cpp
     src/gui/dialogs/python_setup_wizard.cpp
-    src/gui/dialogs/project_selection_dialog.cpp
     src/gui/dialogs/start_page.cpp
     # Phase 5: Dataset Manager removed - functionality moved to node-based workflow
-    # src/gui/panels/dataset_panel.cpp
-    # src/gui/panels/dataset_panel_interactive.cpp
-    # src/gui/panels/dataset_panel_evaluate.cpp
-    # src/gui/panels/dataset_panel_export.cpp
     # Interactive annotation tools (Phase 4) - kept for future Annotation Editor panel
     src/gui/annotation/annotation_tools.cpp
-    src/gui/annotation/grabcut_editor.cpp
-    src/gui/annotation/watershed_editor.cpp
     # Annotation Editor Panel (Phase 2 - UI Consolidation)
     src/gui/panels/annotation_editor_panel.cpp
     src/gui/panels/task_progress_panel.cpp
     src/gui/panels/custom_node_editor.cpp
     src/gui/panels/theme_editor.cpp
-    src/gui/panels/profiling_panel.cpp
     src/gui/panels/memory_panel.cpp
     src/gui/panels/memory_monitor.cpp
     src/gui/panels/pattern_browser.cpp
@@ -537,8 +529,6 @@ set(ENGINE_SOURCES
     src/gui/panels/node_browser_panel.cpp  # Node Browser: KNIME-style node palette
     src/gui/panels/node_info_panel.cpp     # Node Info: Context-sensitive documentation
     src/gui/panels/cloud_dataset_manager.cpp
-    src/gui/panels/cloud_upload_dialog.cpp
-    src/gui/panels/trust_badge.cpp
     src/gui/panels/p2p_training_panel.cpp
     src/gui/panels/p2p_training_panel_recovery.cpp
     src/gui/panels/job_status_panel.cpp
@@ -699,7 +689,6 @@ set(ENGINE_HEADERS
     src/gui/panels/local_shell_process.h
     src/gui/panels/local_shell_session.h
     src/gui/panels/terminal_buffer.h
-    src/gui/console_sink.h  # Compatibility alias to the core runtime sink
     src/gui/viewport.h
     src/gui/properties.h
     src/gui/panel.h
@@ -717,17 +706,12 @@ set(ENGINE_HEADERS
     src/gui/panels/data_explorer_panel.h
     src/gui/panels/connection_dialog.h
     src/gui/dialogs/python_setup_wizard.h
-    src/gui/dialogs/project_selection_dialog.h
     src/gui/dialogs/start_page.h
-    # src/gui/panels/dataset_panel.h  # Phase 5: Removed
     # Interactive annotation tools (Phase 4)
     src/gui/annotation/annotation_tools.h
-    src/gui/annotation/grabcut_editor.h
-    src/gui/annotation/watershed_editor.h
     src/gui/panels/task_progress_panel.h
     src/gui/panels/custom_node_editor.h
     src/gui/panels/theme_editor.h
-    src/gui/panels/profiling_panel.h
     src/gui/panels/memory_panel.h
     src/gui/panels/memory_monitor.h
     src/gui/panels/pattern_browser.h
@@ -845,8 +829,6 @@ set(ENGINE_HEADERS
     src/gui/panels/node_browser_panel.h  # Node Browser: KNIME-style node palette
     src/gui/panels/node_info_panel.h     # Node Info: Context-sensitive documentation
     src/gui/panels/cloud_dataset_manager.h
-    src/gui/panels/cloud_upload_dialog.h
-    src/gui/panels/trust_badge.h
     src/gui/panels/p2p_training_panel.h
     src/gui/panels/job_status_panel.h
     src/gui/panels/wallet_panel.h
@@ -1094,7 +1076,6 @@ pybind11_add_module(cyxwiz_plotting
     src/plotting/stb_image_impl.cpp
     src/gui/panels/plot_window.cpp
     src/gui/panels/plot_test_control.cpp
-    src/gui/panels/plot_test_panel.cpp
     src/gui/panels/training_plot_panel.cpp
     src/gui/panels/training_plot_panel_global.cpp
     src/gui/panels/python_plot_window_registry.cpp
