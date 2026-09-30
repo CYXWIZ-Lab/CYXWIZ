@@ -31,8 +31,8 @@ public:
     void Render() override;
     void SetDataTableRegistry(DataTableRegistry* registry) { data_registry_ = registry; }
 
-    bool IsOpen() const { return is_open_; }
-    void SetOpen(bool open) { is_open_ = open; }
+    bool IsOpen() const { return visible_; }
+    void SetOpen(bool open) { visible_ = open; }
 
 private:
     void RenderDataSelector();
@@ -46,7 +46,6 @@ private:
     void RunClustering();
     void RunModelSelection();
 
-    bool is_open_ = false;
     DataTableRegistry* data_registry_ = nullptr;
     std::shared_ptr<DataTable> current_table_;
 

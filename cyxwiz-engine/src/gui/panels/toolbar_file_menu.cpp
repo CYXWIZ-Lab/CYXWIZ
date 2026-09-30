@@ -14,6 +14,16 @@
 
 namespace cyxwiz {
 
+void ToolbarPanel::OpenScriptFromDialog() {
+    auto result = FileDialogs::OpenScript();
+    if (result) {
+        if (open_script_in_editor_callback_) {
+            open_script_in_editor_callback_(*result);
+        }
+        spdlog::info("Opening script: {}", *result);
+    }
+}
+
 void ToolbarPanel::RenderFileMenu() {
     if (ImGui::BeginMenu("File")) {
         // Increase padding for menu items
@@ -92,13 +102,7 @@ void ToolbarPanel::RenderFileMenu() {
         }
 
         if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Open Script...", "Ctrl+O")) {
-            auto result = FileDialogs::OpenScript();
-            if (result) {
-                if (open_script_in_editor_callback_) {
-                    open_script_in_editor_callback_(*result);
-                }
-                spdlog::info("Opening script: {}", *result);
-            }
+            OpenScriptFromDialog();
         }
 
         ImGui::Spacing();

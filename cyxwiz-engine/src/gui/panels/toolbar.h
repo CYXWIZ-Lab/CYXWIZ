@@ -187,6 +187,7 @@ public:
     bool IsReplaceInFilesDialogOpen() const { return show_replace_in_files_dialog_; }
 
     void OpenFindDialog() { show_find_dialog_ = true; }
+    void OpenGoToLineDialog() { show_go_to_line_dialog_ = true; }
     void OpenReplaceDialog() { show_replace_dialog_ = true; }
     void OpenFindInFilesDialog() { show_find_in_files_dialog_ = true; }
     void OpenReplaceInFilesDialog() { show_replace_in_files_dialog_ = true; }
@@ -361,6 +362,8 @@ public:
 
 private:
     void RenderFileMenu();
+    // File > Open Script... and Script > Open Script...: one action.
+    void OpenScriptFromDialog();
     void RenderEditMenu();
     void RenderViewMenu();
     void RenderNodesMenu();

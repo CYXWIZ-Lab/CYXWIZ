@@ -29,11 +29,11 @@ GMMPanel::~GMMPanel() {
 }
 
 void GMMPanel::Render() {
-    if (!is_open_) return;
+    if (!visible_) return;
 
     ImGui::SetNextWindowSize(ImVec2(950, 750), ImGuiCond_FirstUseEver);
 
-    if (ImGui::Begin((std::string(ICON_FA_CHART_PIE) + " Gaussian Mixture Models###GMMPanel").c_str(), &is_open_)) {
+    if (ImGui::Begin((std::string(ICON_FA_CHART_PIE) + " Gaussian Mixture Models###GMMPanel").c_str(), &visible_)) {
         if (data_registry_) available_tables_ = data_registry_->GetTableNames();
 
         ImGui::BeginChild("ConfigPanel", ImVec2(320, 0), true);

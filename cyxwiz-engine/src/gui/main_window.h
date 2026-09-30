@@ -485,6 +485,7 @@ private:
     bool show_about_dialog_;
     bool show_demo_window_;
     bool first_time_layout_;
+    bool reset_layout_requested_ = false;
 
     // Network components
     network::JobManager* job_manager_ = nullptr;

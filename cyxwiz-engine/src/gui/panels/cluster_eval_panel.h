@@ -30,8 +30,8 @@ public:
     void Render() override;
     void SetDataTableRegistry(DataTableRegistry* registry) { data_registry_ = registry; }
 
-    bool IsOpen() const { return is_open_; }
-    void SetOpen(bool open) { is_open_ = open; }
+    bool IsOpen() const { return visible_; }
+    void SetOpen(bool open) { visible_ = open; }
 
     // Allow setting data and labels from other panels
     void SetClusteringData(const std::vector<std::vector<double>>& data,
@@ -47,7 +47,6 @@ private:
     void LoadSelectedData();
     void ComputeMetrics();
 
-    bool is_open_ = false;
     DataTableRegistry* data_registry_ = nullptr;
     std::shared_ptr<DataTable> current_table_;
 

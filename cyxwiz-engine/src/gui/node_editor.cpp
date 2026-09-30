@@ -4363,13 +4363,13 @@ void NodeEditor::DuplicateSelectedNodes() {
 }
 
 void NodeEditor::GroupSelectedNodes() {
-    // TODO: Implement node grouping
-    spdlog::info("Group selected nodes - not yet implemented");
+    // Menu entry point: same action as Ctrl+G and the context menu.
+    CreateGroupFromSelection("");
 }
 
 void NodeEditor::UngroupSelectedNodes() {
-    // TODO: Implement node ungrouping
-    spdlog::info("Ungroup selected nodes - not yet implemented");
+    // Menu entry point: same action as Ctrl+Shift+G and the context menu.
+    UngroupSelection();
 }
 
 // ===== Graph Simulation =====

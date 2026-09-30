@@ -290,9 +290,7 @@ void ToolbarPanel::RenderScriptMenu() {
         }
 
         if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Open Script...", "Ctrl+O")) {
-            if (open_script_callback_) {
-                open_script_callback_();
-            }
+            OpenScriptFromDialog();
         }
 
         RenderPlannedMenuItem(ICON_FA_PLAY " Run Script (planned)", "Ctrl+R");
@@ -720,6 +718,10 @@ void ToolbarPanel::RenderUserProfilePopup() {
             logged_in_user_.clear();
             show_user_profile_popup_ = false;
             spdlog::info("User signed out");
+            // Notify application of logout, as the account dialog does
+            if (on_logout_callback_) {
+                on_logout_callback_();
+            }
         }
         ImGui::PopStyleColor();
 

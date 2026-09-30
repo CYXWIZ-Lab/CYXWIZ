@@ -479,7 +479,7 @@ void NodeEditor::HandleKeyboardShortcuts() {
     }
 
     // Ctrl+G - Create group from selection
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_G) && !selected_node_ids_.empty()) {
+    if (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_G) && !selected_node_ids_.empty()) {
         CreateGroupFromSelection("");  // Creates with default name
     }
 

@@ -247,7 +247,7 @@ void ToolbarPanel::InitializeToolEntries() {
     // ==================== Script Commands ====================
     all_tools_.push_back({"Python Console", "Script", "python console repl terminal command", ICON_FA_TERMINAL, "F12", [this]() { if (open_python_console_callback_) open_python_console_callback_(); }});
     all_tools_.push_back({"New Script", "Script", "new script python file", ICON_FA_FILE_CODE, "Ctrl+N", [this]() { if (new_script_callback_) new_script_callback_(); }});
-    all_tools_.push_back({"Open Script", "Script", "open script python file", ICON_FA_FILE_IMPORT, "Ctrl+O", [this]() { if (open_script_callback_) open_script_callback_(); }});
+    all_tools_.push_back({"Open Script", "Script", "open script python file", ICON_FA_FILE_IMPORT, "Ctrl+O", [this]() { OpenScriptFromDialog(); }});
 
     // ==================== Training Commands ====================
     all_tools_.push_back({"Connect to Server", "Training", "connect server network cloud", ICON_FA_PLUG, "", [this]() { if (connect_to_server_callback_) connect_to_server_callback_(); }});
@@ -379,7 +379,7 @@ void ToolbarPanel::InitializeToolEntries() {
     require_tool_callback("Select All", [this]() { return static_cast<bool>(select_all_callback_); });
     require_tool_callback("Python Console", [this]() { return static_cast<bool>(open_python_console_callback_); });
     require_tool_callback("New Script", [this]() { return static_cast<bool>(new_script_callback_); });
-    require_tool_callback("Open Script", [this]() { return static_cast<bool>(open_script_callback_); });
+    require_tool_callback("Open Script", [this]() { return static_cast<bool>(open_script_in_editor_callback_); });
     require_tool_callback("Connect to Server", [this]() { return static_cast<bool>(connect_to_server_callback_); });
     require_tool_callback("Export Model", [this]() { return static_cast<bool>(export_model_callback_); });
     require_tool_callback("Import Model", [this]() { return static_cast<bool>(import_model_callback_); });

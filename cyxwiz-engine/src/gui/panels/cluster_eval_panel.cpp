@@ -17,11 +17,11 @@ ClusterEvalPanel::~ClusterEvalPanel() {
 }
 
 void ClusterEvalPanel::Render() {
-    if (!is_open_) return;
+    if (!visible_) return;
 
     ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
 
-    if (ImGui::Begin((std::string(ICON_FA_CHART_COLUMN) + " Cluster Evaluation###ClusterEvalPanel").c_str(), &is_open_)) {
+    if (ImGui::Begin((std::string(ICON_FA_CHART_COLUMN) + " Cluster Evaluation###ClusterEvalPanel").c_str(), &visible_)) {
         if (data_registry_) available_tables_ = data_registry_->GetTableNames();
 
         ImGui::BeginChild("ConfigPanel", ImVec2(280, 0), true);

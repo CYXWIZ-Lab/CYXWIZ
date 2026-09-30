@@ -195,7 +195,8 @@ void ToolbarPanel::RenderCommandPalette() {
         if (ImGui::IsKeyPressed(ImGuiKey_Enter) && !filtered_tools_.empty()) {
             if (selected_index_ >= 0 && selected_index_ < static_cast<int>(filtered_tools_.size())) {
                 const ToolEntry* tool = filtered_tools_[selected_index_];
-                if (tool->availability == ToolAvailability::Working && tool->callback) {
+                const bool runtime_enabled = !tool->is_enabled || tool->is_enabled();
+                if (tool->availability == ToolAvailability::Working && runtime_enabled && tool->callback) {
                     auto callback = tool->callback;
                     show_command_palette_ = false;
                     callback();

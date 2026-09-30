@@ -30,11 +30,11 @@ HierarchicalPanel::~HierarchicalPanel() {
 }
 
 void HierarchicalPanel::Render() {
-    if (!is_open_) return;
+    if (!visible_) return;
 
     ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
 
-    if (ImGui::Begin((std::string(ICON_FA_SITEMAP) + " Hierarchical Clustering###HierarchicalPanel").c_str(), &is_open_)) {
+    if (ImGui::Begin((std::string(ICON_FA_SITEMAP) + " Hierarchical Clustering###HierarchicalPanel").c_str(), &visible_)) {
         if (data_registry_) available_tables_ = data_registry_->GetTableNames();
 
         ImGui::BeginChild("ConfigPanel", ImVec2(300, 0), true);

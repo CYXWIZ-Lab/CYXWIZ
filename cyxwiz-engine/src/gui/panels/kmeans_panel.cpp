@@ -44,11 +44,11 @@ KMeansPanel::~KMeansPanel() {
 }
 
 void KMeansPanel::Render() {
-    if (!is_open_) return;
+    if (!visible_) return;
 
     ImGui::SetNextWindowSize(ImVec2(900, 700), ImGuiCond_FirstUseEver);
 
-    if (ImGui::Begin((std::string(ICON_FA_BULLSEYE) + " K-Means Clustering###KMeansPanel").c_str(), &is_open_)) {
+    if (ImGui::Begin((std::string(ICON_FA_BULLSEYE) + " K-Means Clustering###KMeansPanel").c_str(), &visible_)) {
         // Update available tables
         if (data_registry_) {
             available_tables_ = data_registry_->GetTableNames();

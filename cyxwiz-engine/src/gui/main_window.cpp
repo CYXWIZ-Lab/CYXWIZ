@@ -3002,8 +3002,9 @@ void MainWindow::PrepareForShutdown() {
 }
 
 void MainWindow::ResetDockLayout() {
-    // Force rebuild of the docking layout
-    first_time_layout_ = true;
+    // Rebuild the default docking layout on the next frame, even when a
+    // layout already exists (first_time_layout_ alone keeps a split layout).
+    reset_layout_requested_ = true;
     spdlog::info("Dock layout reset requested");
 }
 
@@ -3306,6 +3307,13 @@ void MainWindow::RenderDockSpace() {
     ImGuiIO& io = ImGui::GetIO();
     if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable) {
         ImGuiID dockspace_id = ImGui::GetID("CyxWizDockSpace");
+
+        // View > Layout > Reset to Default: rebuild over the current layout
+        if (reset_layout_requested_) {
+            BuildInitialDockLayout();
+            reset_layout_requested_ = false;
+            first_time_layout_ = false;
+        }
 
         // Build the initial layout ONLY if no saved layout exists
         if (first_time_layout_) {
@@ -6111,7 +6119,10 @@ void MainWindow::HandleGlobalShortcuts() {
 
         // Go to Line (Ctrl+G)
         if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_G)) {
-            // Opens the Go to Line dialog in the toolbar
+            if (toolbar_) {
+                toolbar_->OpenGoToLineDialog();
+                spdlog::info("Opened Go to Line dialog via Ctrl+G");
+            }
         }
 
         // Duplicate Line (Ctrl+D)

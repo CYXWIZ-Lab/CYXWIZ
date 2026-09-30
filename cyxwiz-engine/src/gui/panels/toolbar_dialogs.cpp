@@ -75,7 +75,7 @@ void ToolbarPanel::RenderProjectDialogs() {
         ImGui::OpenPopup("About CyxWiz");
         if (ImGui::BeginPopupModal("About CyxWiz", &show_about_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("CyxWiz Engine");
-            ImGui::Text("Version 0.1.0");
+            ImGui::Text("Version %s", cyxwiz::GetVersionString());
             ImGui::Separator();
             ImGui::Text("Decentralized ML Compute Platform");
             ImGui::Text("Built with C++, ImGui, ArrayFire, and Solana");
