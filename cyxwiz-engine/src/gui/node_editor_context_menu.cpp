@@ -304,7 +304,7 @@ void NodeEditor::ShowContextMenu() {
             ImGui::CloseCurrentPopup();
         }
 
-        if (ImGui::MenuItem(ICON_FA_COMPRESS " Create Subgraph", "Ctrl+Shift+S", false, selected_node_ids_.size() >= 2)) {
+        if (ImGui::MenuItem(ICON_FA_COMPRESS " Create Subgraph", "Ctrl+Shift+U", false, selected_node_ids_.size() >= 2)) {
             CreateSubgraphFromSelection("");
             ImGui::CloseCurrentPopup();
         }

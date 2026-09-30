@@ -30,57 +30,6 @@ namespace cyxwiz {
 
 namespace cyxwiz {
 
-enum class ToolSurface {
-    Command,
-    StandalonePanel,
-    GraphBackedPanel,
-    Utility
-};
-
-enum class ToolAvailability {
-    Working,
-    Planned
-};
-
-// Tool entry for command palette search
-struct ToolEntry {
-    ToolEntry() = default;
-    ToolEntry(std::string name_value,
-              std::string category_value,
-              std::string keywords_value,
-              std::string icon_value,
-              std::string shortcut_value,
-              std::function<void()> callback_value,
-              std::function<bool()> is_enabled_value = {},
-              ToolSurface surface_value = ToolSurface::Command,
-              ToolAvailability availability_value = ToolAvailability::Working,
-              std::string status_detail_value = {})
-        : name(std::move(name_value)),
-          category(std::move(category_value)),
-          keywords(std::move(keywords_value)),
-          icon(std::move(icon_value)),
-          shortcut(std::move(shortcut_value)),
-          callback(std::move(callback_value)),
-          is_enabled(std::move(is_enabled_value)),
-          surface(surface_value),
-          availability(availability_value),
-          status_detail(std::move(status_detail_value)) {}
-
-    std::string name;           // Display name (e.g., "K-Means Clustering")
-    std::string category;       // Category (e.g., "Clustering", "Statistics")
-    std::string keywords;       // Search keywords (e.g., "cluster kmeans machine learning")
-    std::string icon;           // FontAwesome icon code
-    std::string shortcut;       // Keyboard shortcut if any (e.g., "Ctrl+P")
-    std::function<void()> callback;  // Action to execute
-    std::function<bool()> is_enabled;  // Optional runtime availability check
-    ToolSurface surface = ToolSurface::Command;
-    ToolAvailability availability = ToolAvailability::Working;
-    std::string status_detail;
-
-    // Fuzzy match score (used during search)
-    mutable int match_score = 0;
-};
-
 /**
  * Top Toolbar Panel
  * Renders main menu bar with File, Edit, View, Nodes, Train, Dataset, Script, Deploy, Plots, Help
@@ -94,7 +43,8 @@ public:
 
     // Command Palette (Ctrl+P)
     void OpenCommandPalette();
-    void HandleGlobalShortcuts();  // Call this from main window to handle Ctrl+P
+    // One FontAwesome icon per action meaning; empty when the action has none.
+    static const char* IconForAction(const std::string& id);
     bool IsCommandPaletteOpen() const { return show_command_palette_; }
 
     // User profile popup (for custom title bar integration)
@@ -417,7 +367,6 @@ private:
     void RenderComputeDeviceCards(const ComputeDeviceCardsContext& context);
 
     // Command Palette functionality
-    void InitializeToolEntries();
     void RenderCommandPalette();
     void UpdateSearchResults(const std::string& query);
     int FuzzyMatch(const std::string& pattern, const std::string& text) const;
@@ -864,8 +813,8 @@ private:
     // Command Palette state
     bool show_command_palette_ = false;
     char search_buffer_[256] = "";
-    std::vector<ToolEntry> all_tools_;           // All available tools
-    std::vector<const ToolEntry*> filtered_tools_;  // Filtered results (pointers to all_tools_)
+    std::vector<menu::PaletteEntry> palette_entries_;  // rebuilt when the palette opens
+    std::vector<int> filtered_entries_;                // indices into palette_entries_, best first
     int selected_index_ = 0;                     // Currently selected item in list
     bool focus_search_input_ = false;            // Flag to focus input on open
 };

@@ -146,6 +146,8 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         // Everywhere: handled by the main window.
         add(any, "file.new_project", "New Project...", "Ctrl+Shift+N", "File");
         add(any, "file.open_project", "Open Project...", "Ctrl+Shift+O", "File");
+        add(any, "script.new", "New Script...", "Ctrl+N", "File, Script");
+        add(any, "script.open", "Open Script...", "Ctrl+O", "File, Script");
         add(any, "file.save", "Save (the script when the Script Editor is focused)", "Ctrl+S", "File");
         add(any, "file.save_as", "Save As... (the script when the Script Editor is focused)", "Ctrl+Shift+S", "File");
         add(any, "file.save_all", "Save All", "Ctrl+Alt+S", "File");

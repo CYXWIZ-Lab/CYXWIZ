@@ -269,6 +269,7 @@ set(ENGINE_SOURCES
     src/gui/graph_training_launcher.cpp
     src/gui/engine_graph_training_dispatch.cpp
     src/gui/main_window.cpp
+    src/gui/main_window_shortcuts.cpp
     src/gui/node_editor.cpp
     src/gui/node_editor_clipboard.cpp
     src/gui/node_editor_codegen.cpp

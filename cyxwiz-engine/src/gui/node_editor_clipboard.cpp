@@ -488,8 +488,8 @@ void NodeEditor::HandleKeyboardShortcuts() {
         UngroupSelection();
     }
 
-    // Ctrl+Shift+S - Create subgraph from selection
-    if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_S) && selected_node_ids_.size() >= 2) {
+    // Ctrl+Shift+U - Create subgraph from selection (Ctrl+Shift+S is Save As)
+    if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_U) && selected_node_ids_.size() >= 2) {
         CreateSubgraphFromSelection("");
     }
 

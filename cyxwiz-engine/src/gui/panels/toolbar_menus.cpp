@@ -54,8 +54,10 @@ const std::vector<std::pair<const char*, const char*>>& PanelGroups() {
     return groups;
 }
 
+}  // namespace
+
 // One FontAwesome icon per meaning. Actions without an entry draw no icon.
-const char* IconFor(const std::string& id) {
+const char* ToolbarPanel::IconForAction(const std::string& id) {
     static const std::unordered_map<std::string, const char*> icons = {
         {"file.new_project", ICON_FA_FOLDER_PLUS}, {"file.open_project", ICON_FA_FOLDER_OPEN},
         {"file.recent", ICON_FA_CLOCK}, {"file.close_project", ICON_FA_FOLDER_MINUS},
@@ -108,6 +110,8 @@ const char* IconFor(const std::string& id) {
     auto it = icons.find(id);
     return it == icons.end() ? "" : it->second;
 }
+
+namespace {
 
 void OpenUrl(const char* url) {
 #ifdef _WIN32
@@ -226,7 +230,7 @@ void ToolbarPanel::RenderMenuItems(const std::vector<menu::MenuItem>& items) {
                 ImGui::TextDisabled("%s", item.label.c_str());
                 break;
             case Kind::Submenu: {
-                const std::string label = std::string(IconFor(item.id)) + (IconFor(item.id)[0] ? " " : "") + item.label;
+                const std::string label = std::string(IconForAction(item.id)) + (IconForAction(item.id)[0] ? " " : "") + item.label;
                 const bool open = ImGui::BeginMenu(label.c_str(), item.enabled);
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     status_hint_ = item.enabled ? item.hint : "Not available: " + item.disabled_reason;
@@ -239,7 +243,7 @@ void ToolbarPanel::RenderMenuItems(const std::vector<menu::MenuItem>& items) {
                 break;
             }
             case Kind::Action: {
-                std::string label = std::string(IconFor(item.id)) + (IconFor(item.id)[0] ? " " : "") + item.label;
+                std::string label = std::string(IconForAction(item.id)) + (IconForAction(item.id)[0] ? " " : "") + item.label;
                 if (item.planned) label += "  (planned)";
                 ImGui::PushID(item.argument.empty() ? item.id.c_str() : (item.id + "#" + item.argument).c_str());
                 const bool clicked = ImGui::MenuItem(label.c_str(), item.shortcut.empty() ? nullptr : item.shortcut.c_str(),

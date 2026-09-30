@@ -1,284 +1,182 @@
+// Command Palette (Ctrl+P), listing every menu action from the menu
+// presentation model (TOFIX129 step 1.4): same labels, chords, enabled rules
+// and hints as the menu bar.
 #include "toolbar.h"
+
+#include "../icons.h"
+
 #include <imgui.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
 
 namespace cyxwiz {
 
-namespace {
-
-const char* ToolSurfaceLabel(ToolSurface surface) {
-    switch (surface) {
-        case ToolSurface::StandalonePanel: return "Panel";
-        case ToolSurface::GraphBackedPanel: return "Graph-backed";
-        case ToolSurface::Utility: return "Utility";
-        case ToolSurface::Command:
-        default: return "Command";
-    }
-}
-
-} // namespace
-
 void ToolbarPanel::OpenCommandPalette() {
     show_command_palette_ = true;
     focus_search_input_ = true;
     selected_index_ = 0;
-    memset(search_buffer_, 0, sizeof(search_buffer_));
-
-    // Initially show all tools
-    filtered_tools_.clear();
-    for (const auto& tool : all_tools_) {
-        filtered_tools_.push_back(&tool);
-    }
-}
-
-void ToolbarPanel::HandleGlobalShortcuts() {
-    // Ctrl+P for command palette
-    if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_P)) {
-        OpenCommandPalette();
-    }
+    std::memset(search_buffer_, 0, sizeof(search_buffer_));
+    palette_entries_ = menu::BuildPaletteEntries(menu::BuildMenuModel(BuildMenuInputs()));
+    UpdateSearchResults("");
 }
 
 std::string ToolbarPanel::ToLowerCase(const std::string& str) const {
     std::string result = str;
-    std::transform(result.begin(), result.end(), result.begin(), ::tolower);
+    std::transform(result.begin(), result.end(), result.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return result;
 }
 
 int ToolbarPanel::FuzzyMatch(const std::string& pattern, const std::string& text) const {
     if (pattern.empty()) return 100;  // Empty pattern matches everything
 
-    std::string lowerPattern = ToLowerCase(pattern);
-    std::string lowerText = ToLowerCase(text);
+    const std::string lower_pattern = ToLowerCase(pattern);
+    const std::string lower_text = ToLowerCase(text);
 
-    // Exact substring match gets highest score
-    if (lowerText.find(lowerPattern) != std::string::npos) {
-        return 100;
-    }
-
-    // Check if pattern starts text (prefix match)
-    if (lowerText.find(lowerPattern) == 0) {
-        return 90;
-    }
+    const size_t at = lower_text.find(lower_pattern);
+    if (at == 0) return 100;                 // prefix match
+    if (at != std::string::npos) return 90;  // substring match
 
     // Fuzzy character matching
     int score = 0;
-    size_t patternIdx = 0;
-    size_t lastMatchIdx = 0;
+    size_t pattern_idx = 0;
+    size_t last_match_idx = 0;
     bool consecutive = true;
-
-    for (size_t i = 0; i < lowerText.size() && patternIdx < lowerPattern.size(); ++i) {
-        if (lowerText[i] == lowerPattern[patternIdx]) {
-            score += 10;
-            // Bonus for consecutive matches
-            if (consecutive && i == lastMatchIdx + 1) {
-                score += 5;
-            } else {
-                consecutive = false;
-            }
-            // Bonus for matching at word boundaries
-            if (i == 0 || lowerText[i - 1] == ' ' || lowerText[i - 1] == '_' || lowerText[i - 1] == '-') {
-                score += 3;
-            }
-            lastMatchIdx = i;
-            ++patternIdx;
-        }
+    for (size_t i = 0; i < lower_text.size() && pattern_idx < lower_pattern.size(); ++i) {
+        if (lower_text[i] != lower_pattern[pattern_idx]) continue;
+        score += 10;
+        if (consecutive && i == last_match_idx + 1) score += 5;
+        else consecutive = false;
+        if (i == 0 || lower_text[i - 1] == ' ' || lower_text[i - 1] == '_' || lower_text[i - 1] == '-') score += 3;
+        last_match_idx = i;
+        ++pattern_idx;
     }
-
-    // Only match if all pattern characters were found
-    if (patternIdx != lowerPattern.size()) {
-        return 0;
-    }
-
-    return score;
+    return pattern_idx == lower_pattern.size() ? score : 0;
 }
 
 void ToolbarPanel::UpdateSearchResults(const std::string& query) {
-    filtered_tools_.clear();
-
-    if (query.empty()) {
-        // Show all tools when query is empty
-        for (const auto& tool : all_tools_) {
-            tool.match_score = 100;
-            filtered_tools_.push_back(&tool);
+    filtered_entries_.clear();
+    std::vector<std::pair<int, int>> scored;  // score, index
+    for (int i = 0; i < static_cast<int>(palette_entries_.size()); ++i) {
+        const auto& e = palette_entries_[i];
+        int score = 100;
+        if (!query.empty()) {
+            score = std::max({FuzzyMatch(query, e.label), FuzzyMatch(query, e.menu_path) / 2,
+                              FuzzyMatch(query, e.shortcut) / 2});
         }
-        return;
+        if (score > 0) scored.push_back({score, i});
     }
-
-    // Score all tools against the query
-    for (const auto& tool : all_tools_) {
-        int nameScore = FuzzyMatch(query, tool.name);
-        int categoryScore = FuzzyMatch(query, tool.category) / 2;  // Lower weight for category
-        int keywordScore = FuzzyMatch(query, tool.keywords) / 2;   // Lower weight for keywords
-
-        tool.match_score = std::max({nameScore, categoryScore, keywordScore});
-
-        if (tool.match_score > 0) {
-            filtered_tools_.push_back(&tool);
-        }
-    }
-
-    // Sort by score (descending)
-    std::sort(filtered_tools_.begin(), filtered_tools_.end(),
-              [](const ToolEntry* a, const ToolEntry* b) {
-                  return a->match_score > b->match_score;
-              });
-
-    // Reset selection when results change
+    std::stable_sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (const auto& [score, index] : scored) filtered_entries_.push_back(index);
     selected_index_ = 0;
 }
 
 void ToolbarPanel::RenderCommandPalette() {
     if (!show_command_palette_) return;
 
-    // Check ESC key globally (even before window is drawn)
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         show_command_palette_ = false;
         return;
     }
 
-    // Draw semi-transparent background overlay for click-outside detection
+    // Dim the workspace so the palette reads as the one active thing.
     ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
-    ImVec2 viewport_pos = ImGui::GetMainViewport()->Pos;
-    ImVec2 viewport_size = ImGui::GetMainViewport()->Size;
+    const ImVec2 viewport_pos = ImGui::GetMainViewport()->Pos;
+    const ImVec2 viewport_size = ImGui::GetMainViewport()->Size;
     draw_list->AddRectFilled(viewport_pos, ImVec2(viewport_pos.x + viewport_size.x, viewport_pos.y + viewport_size.y),
                              IM_COL32(0, 0, 0, 100));
 
-    // Center the modal
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImVec2 window_size(500, 400);
-    ImVec2 window_pos(center.x - window_size.x * 0.5f, center.y - window_size.y * 0.3f);
-    ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always);
+    const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    const ImVec2 window_size(600.0f, 440.0f);
+    ImGui::SetNextWindowPos(ImVec2(center.x - window_size.x * 0.5f, center.y - window_size.y * 0.35f), ImGuiCond_Always);
     ImGui::SetNextWindowSize(window_size, ImGuiCond_Always);
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar;
-
-    if (ImGui::Begin("##CommandPalette", &show_command_palette_, flags)) {
-        // Check for click outside the command palette window (must be inside Begin/End)
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_ChildWindows)) {
-            show_command_palette_ = false;
-            ImGui::End();
-            return;
-        }
-        // Search input
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 8));
-        ImGui::PushItemWidth(-1);
-
-        if (focus_search_input_) {
-            ImGui::SetKeyboardFocusHere();
-            focus_search_input_ = false;
-        }
-
-        bool textChanged = ImGui::InputTextWithHint("##SearchInput", "Type to search tools...",
-                                                     search_buffer_, sizeof(search_buffer_));
-        ImGui::PopItemWidth();
-        ImGui::PopStyleVar();
-
-        if (textChanged) {
-            UpdateSearchResults(search_buffer_);
-        }
-
-        ImGui::Separator();
-
-        // Handle keyboard navigation
-        bool selection_changed_by_keyboard = false;
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
-            selected_index_ = std::min(selected_index_ + 1, static_cast<int>(filtered_tools_.size()) - 1);
-            selection_changed_by_keyboard = true;
-        }
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
-            selected_index_ = std::max(selected_index_ - 1, 0);
-            selection_changed_by_keyboard = true;
-        }
-        if (ImGui::IsKeyPressed(ImGuiKey_Enter) && !filtered_tools_.empty()) {
-            if (selected_index_ >= 0 && selected_index_ < static_cast<int>(filtered_tools_.size())) {
-                const ToolEntry* tool = filtered_tools_[selected_index_];
-                const bool runtime_enabled = !tool->is_enabled || tool->is_enabled();
-                if (tool->availability == ToolAvailability::Working && runtime_enabled && tool->callback) {
-                    auto callback = tool->callback;
-                    show_command_palette_ = false;
-                    callback();
-                }
-            }
-        }
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            show_command_palette_ = false;
-        }
-
-        // Results list
-        ImGui::BeginChild("##ResultsList", ImVec2(0, 0), false);
-
-        for (int i = 0; i < static_cast<int>(filtered_tools_.size()); ++i) {
-            const auto* tool = filtered_tools_[i];
-            const bool runtime_enabled = !tool->is_enabled || tool->is_enabled();
-            const bool can_execute =
-                tool->availability == ToolAvailability::Working &&
-                runtime_enabled &&
-                tool->callback;
-
-            ImGui::PushID(i);
-
-            bool isSelected = (i == selected_index_);
-            if (isSelected) {
-                ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
-            }
-
-            // Selectable row
-            if (ImGui::Selectable("##ToolRow", isSelected, ImGuiSelectableFlags_SpanAllColumns, ImVec2(0, 32))) {
-                if (can_execute) {
-                    show_command_palette_ = false;
-                    tool->callback();
-                }
-            }
-
-            if (isSelected) {
-                ImGui::PopStyleColor();
-                // Only auto-scroll when selection changed via keyboard, not every frame
-                if (selection_changed_by_keyboard) {
-                    ImGui::SetScrollHereY();
-                }
-            }
-
-            // Draw content on top of selectable
-            ImGui::SameLine(10);
-
-            // Icon
-            ImGui::Text("%s", tool->icon.c_str());
-            ImGui::SameLine(40);
-
-            // Tool name
-            if (!can_execute) {
-                ImGui::TextDisabled("%s", tool->name.c_str());
-            } else {
-                ImGui::Text("%s", tool->name.c_str());
-            }
-
-            if (ImGui::IsItemHovered()) {
-                if (!runtime_enabled) {
-                    ImGui::SetTooltip("Unavailable in this workspace state");
-                } else if (!tool->status_detail.empty()) {
-                    ImGui::SetTooltip("%s", tool->status_detail.c_str());
-                }
-            }
-
-            // Category badge (right-aligned)
-            ImGui::SameLine(ImGui::GetWindowWidth() - 210);
-            ImGui::TextDisabled("[%s]", ToolSurfaceLabel(tool->surface));
-            ImGui::SameLine(ImGui::GetWindowWidth() - 110);
-            ImGui::TextDisabled("[%s]", tool->category.c_str());
-
-            ImGui::PopID();
-        }
-
-        if (filtered_tools_.empty()) {
-            ImGui::TextDisabled("No matching tools found");
-        }
-
-        ImGui::EndChild();
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar;
+    if (!ImGui::Begin("##CommandPalette", &show_command_palette_, flags)) {
+        ImGui::End();
+        return;
     }
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+        !ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_ChildWindows)) {
+        show_command_palette_ = false;
+        ImGui::End();
+        return;
+    }
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 8.0f));
+    ImGui::PushItemWidth(-1);
+    if (focus_search_input_) {
+        ImGui::SetKeyboardFocusHere();
+        focus_search_input_ = false;
+    }
+    const bool text_changed = ImGui::InputTextWithHint("##SearchInput", ICON_FA_MAGNIFYING_GLASS " Search every command",
+                                                       search_buffer_, sizeof(search_buffer_));
+    ImGui::PopItemWidth();
+    ImGui::PopStyleVar();
+    if (text_changed) UpdateSearchResults(search_buffer_);
+
+    ImGui::Separator();
+
+    bool moved_by_keyboard = false;
+    const int count = static_cast<int>(filtered_entries_.size());
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) && count > 0) {
+        selected_index_ = std::min(selected_index_ + 1, count - 1);
+        moved_by_keyboard = true;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+        selected_index_ = std::max(selected_index_ - 1, 0);
+        moved_by_keyboard = true;
+    }
+    auto run = [this](const menu::PaletteEntry& e) {
+        if (!e.enabled) return;
+        show_command_palette_ = false;
+        Dispatch(e.id, e.argument);
+    };
+    if (ImGui::IsKeyPressed(ImGuiKey_Enter) && selected_index_ >= 0 && selected_index_ < count) {
+        run(palette_entries_[filtered_entries_[selected_index_]]);
+    }
+
+    ImGui::BeginChild("##ResultsList", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+    const float right_edge = ImGui::GetWindowWidth() - 16.0f;
+    for (int i = 0; i < count; ++i) {
+        const auto& e = palette_entries_[filtered_entries_[i]];
+        ImGui::PushID(i);
+        const bool selected = i == selected_index_;
+        if (selected) ImGui::PushStyleColor(ImGuiCol_Header, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
+        if (ImGui::Selectable("##row", selected, ImGuiSelectableFlags_SpanAllColumns, ImVec2(0.0f, 30.0f))) run(e);
+        if (selected) {
+            ImGui::PopStyleColor();
+            if (moved_by_keyboard) ImGui::SetScrollHereY();
+        }
+        if (ImGui::IsItemHovered()) {
+            if (e.planned) ImGui::SetTooltip("Planned: not available yet.");
+            else if (!e.enabled) ImGui::SetTooltip("%s", e.disabled_reason.c_str());
+            else if (!e.hint.empty()) ImGui::SetTooltip("%s", e.hint.c_str());
+        }
+
+        ImGui::SameLine(10.0f);
+        ImGui::TextDisabled("%s", IconForAction(e.id));
+        ImGui::SameLine(40.0f);
+        if (e.enabled) ImGui::TextUnformatted(e.label.c_str());
+        else ImGui::TextDisabled("%s%s", e.label.c_str(), e.planned ? "  (planned)" : "");
+
+        // Right side: chord, then the menu path.
+        const float path_width = ImGui::CalcTextSize(e.menu_path.c_str()).x;
+        const float chord_width = e.shortcut.empty() ? 0.0f : ImGui::CalcTextSize(e.shortcut.c_str()).x + 16.0f;
+        ImGui::SameLine(right_edge - path_width - chord_width);
+        if (!e.shortcut.empty()) {
+            ImGui::TextDisabled("%s", e.shortcut.c_str());
+            ImGui::SameLine(right_edge - path_width);
+        }
+        ImGui::TextDisabled("%s", e.menu_path.c_str());
+        ImGui::PopID();
+    }
+    if (count == 0) ImGui::TextDisabled("No command matches the search.");
+    ImGui::EndChild();
     ImGui::End();
 }
 
-} // namespace cyxwiz
+}  // namespace cyxwiz

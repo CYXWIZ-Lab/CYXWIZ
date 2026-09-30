@@ -678,7 +678,7 @@ void ScriptEditorPanel::HandleCellKeyboardShortcuts() {
     bool shift = ImGui::GetIO().KeyShift;
     bool is_editing = (tab->editing_cell >= 0);
 
-    // Toggle cell mode: Ctrl+Shift+N
+    // Toggle cell mode: Ctrl+Shift+M (Ctrl+Shift+N is New Project)
     if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_N)) {
         ToggleCellMode();
         return;
