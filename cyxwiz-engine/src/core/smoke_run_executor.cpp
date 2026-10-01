@@ -10,6 +10,7 @@
 #include "label_column_resolver.h"
 #include "model_builder.h"
 #include "pipeline_materializer.h"
+#include "sparse_feature_dataset_batcher.h"
 #include "text_dataset_batcher.h"
 #include <algorithm>
 #include <chrono>
@@ -125,8 +126,12 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
     const std::string& run_id,
-    int max_samples) const {
+    int max_samples,
+    const SmokeRunOptions& options) const {
     SmokeRunResult result;
+    const auto stop_requested = [&options]() {
+        return options.should_stop && options.should_stop();
+    };
     result.requested_samples = max_samples;
 
     if (config.preprocessing_domain != PreprocessingDomain::Text) {
@@ -160,8 +165,17 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     std::string batcher_source = "legacy text";
 
     if (registry.IsArrowDataset(config.dataset_name) && !links.empty()) {
+        PipelineOperatorExecutionContext materialization_context;
+        materialization_context.cancellation_requested = stop_requested;
         auto materialized = PipelineMaterializer::Materialize(
-            nodes, links, registry, config.dataset_name);
+            nodes, links, registry, config.dataset_name, options.cache_config,
+            {}, std::move(materialization_context));
+        if (!materialized.success &&
+            materialized.failure_kind == MaterializationFailureKind::Cancelled) {
+            result.stopped = true;
+            result.summary = "Smoke Run stopped while preparing data.";
+            return result;
+        }
         if (!materialized.success) {
             result.summary = materialized.error_message;
             result.issues.push_back({
@@ -171,7 +185,33 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
             return result;
         }
 
-        if (materialized.operators_applied > 0) {
+        if (materialized.operators_applied > 0 &&
+            materialized.effective_kind ==
+                PipelineMaterializerSourceKind::SparseFeatureDataset) {
+            auto sparse_dataset =
+                registry.GetSparseFeatureDataset(materialized.effective_dataset_name);
+            if (!sparse_dataset) {
+                result.summary = "Materialized sparse dataset is unavailable: " +
+                                 materialized.effective_dataset_name;
+                result.issues.push_back({
+                    IssueLevel::Error, -1, "PipelineMaterializer", result.summary,
+                    errors::Data::MaterializationFailed
+                });
+                return result;
+            }
+            batcher = std::make_unique<SparseFeatureDatasetBatcher>(
+                sparse_dataset,
+                static_cast<size_t>(batch_size),
+                /*shuffle=*/false,
+                config.train_ratio,
+                /*is_training=*/true,
+                BatcherPhase::Train,
+                0.0f,
+                static_cast<uint32_t>(config.dataloader_seed));
+            batcher_source = "materialized sparse features";
+            config.input_size = static_cast<size_t>(sparse_dataset->GetNumFeatures());
+            config.input_shape = {config.input_size};
+        } else if (materialized.operators_applied > 0) {
             auto arrow_dataset =
                 registry.GetArrowDataset(materialized.effective_dataset_name);
             if (!arrow_dataset || !arrow_dataset->GetSchema()) {
@@ -297,6 +337,10 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     float loss_sum = 0.0f;
 
     for (int batch_index = 1; batch_index <= max_batches && !batcher->IsEpochComplete(); ++batch_index) {
+        if (stop_requested()) {
+            result.stopped = true;
+            break;
+        }
         const auto fetch_start = std::chrono::steady_clock::now();
         Batch batch = batcher->GetNextBatch();
         const float fetch_ms = std::chrono::duration<float, std::milli>(
@@ -479,10 +523,11 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
     const bool has_error = std::any_of(
         result.issues.begin(), result.issues.end(),
         [](const ValidationIssue& issue) { return issue.level == IssueLevel::Error; });
-    result.success = result.batches_seen > 0 && !has_error;
+    result.success = !result.stopped && result.batches_seen > 0 && !has_error;
 
     std::ostringstream out;
-    out << "Smoke Run: " << (result.success ? "passed" : "failed")
+    out << "Smoke Run: "
+        << (result.stopped ? "stopped" : (result.success ? "passed" : "failed"))
         << ", source=" << batcher_source
         << ", samples=" << result.samples_seen
         << ", batches=" << result.batches_seen

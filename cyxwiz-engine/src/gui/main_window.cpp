@@ -872,23 +872,24 @@ MainWindow::MainWindow()
                                                            int explain_node_id) {
             std::vector<MLNode> nodes;
             std::vector<NodeLink> links;
-            std::map<int, std::pair<float, float>> positions;
+            cyxwiz::StudioDebuggerRunInputs inputs;
+            inputs.project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
             if (node_editor_) {
                 nodes = node_editor_->GetNodes();
                 links = node_editor_->GetLinks();
                 for (const auto& [id, position] : node_editor_->GetCachedNodePositions()) {
-                    positions[id] = {position.x, position.y};
+                    inputs.node_positions[id] = {position.x, position.y};
                 }
             }
             return [this, mode, sample_index, explain_node_id,
                     nodes = std::move(nodes),
                     links = std::move(links),
-                    positions = std::move(positions)](
+                    inputs = std::move(inputs)](
                        const cyxwiz::StudioDebuggerRunControl& control) mutable {
                 cyxwiz::StudioDebuggerSnapshot session;
                 this->BuildStudioDebuggerSessionFromSnapshot(
                     session, mode, sample_index, std::move(nodes), std::move(links),
-                    explain_node_id, &control, &positions);
+                    explain_node_id, &control, &inputs);
                 return session;
             };
         });
@@ -4162,7 +4163,8 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     std::vector<NodeLink> links,
     int explain_node_id,
     const cyxwiz::StudioDebuggerRunControl* control,
-    const std::map<int, std::pair<float, float>>* node_positions) {
+    const cyxwiz::StudioDebuggerRunInputs* inputs) {
+    const auto* node_positions = inputs ? &inputs->node_positions : nullptr;
     session = cyxwiz::StudioDebuggerSnapshot{};
     const auto run_started = std::chrono::steady_clock::now();
     session.mode = mode;
@@ -4319,6 +4321,10 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     auto training_evidence = [&]() -> const cyxwiz::TrainingTraceSummary& {
         return use_training_evidence ? session.training_trace : no_training_evidence;
     };
+    const cyxwiz::CrashRunSummary no_crash_evidence;
+    auto crash_evidence = [&]() -> const cyxwiz::CrashRunSummary& {
+        return use_training_evidence ? session.last_run : no_crash_evidence;
+    };
     if (auto last_run = cyxwiz::CrashRunRecorder::LoadLastRun()) {
         session.last_run = *last_run;
     }
@@ -4346,7 +4352,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         return events;
     };
     auto append_error_timeline =
-        [&session, &run_id, &collect_runtime_diagnostics]() {
+        [&session, &run_id, &collect_runtime_diagnostics, &crash_evidence]() {
             const bool already_present = std::any_of(
                 session.traces.begin(), session.traces.end(),
                 [](const cyxwiz::DebugTraceRecord& trace) {
@@ -4360,7 +4366,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                 run_id,
                 session.traces,
                 collect_runtime_diagnostics(),
-                session.last_run));
+                crash_evidence()));
         };
     auto append_training_stall_analysis =
         [&session, &run_id, &training_evidence](
@@ -4475,7 +4481,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         append_error_timeline();
         session.recommendations = recommendation_engine.Build(
             session.traces, session.issues, session.smoke_result,
-            session.last_run, training_evidence());
+            crash_evidence(), training_evidence());
         const bool has_runtime_evidence =
             session.training_trace.available || !session.last_run.run_id.empty();
         end_step("runtime",
@@ -4635,7 +4641,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             cyxwiz::DebugRecommendationEngine recommendation_engine;
             session.recommendations = recommendation_engine.Build(
                 session.traces, session.issues, session.smoke_result,
-                session.last_run, training_evidence());
+                crash_evidence(), training_evidence());
         }
         append_error_timeline();
         append_node_explanation(compile_completed ? &config : nullptr);
@@ -4719,7 +4725,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         cyxwiz::DebugRecommendationEngine recommendation_engine;
         session.recommendations = recommendation_engine.Build(
             session.traces, session.issues, session.smoke_result,
-            session.last_run, training_evidence());
+            crash_evidence(), training_evidence());
         append_error_timeline();
         append_node_explanation(&config);
         save_session();
@@ -4778,8 +4784,12 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         }
 
         cyxwiz::SmokeRunExecutor smoke_executor;
+        cyxwiz::SmokeRunOptions smoke_options;
+        smoke_options.cache_config = GraphMaterializationCacheConfig(
+            inputs ? inputs->project_root : std::filesystem::path{});
+        smoke_options.should_stop = [&stop_requested]() { return stop_requested(); };
         session.smoke_result = smoke_executor.RunTextSmoke(
-            config, nodes, links, run_id, 100);
+            config, nodes, links, run_id, 100, smoke_options);
         session.traces.insert(session.traces.end(),
                               std::make_move_iterator(session.smoke_result.traces.begin()),
                               std::make_move_iterator(session.smoke_result.traces.end()));
@@ -4801,7 +4811,9 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
                                   session.smoke_result.issues.end());
         }
         end_step("smoke",
-                 !session.smoke_result.supported
+                 session.smoke_result.stopped
+                     ? cyxwiz::StudioDebuggerStepState::Stopped
+                 : !session.smoke_result.supported
                      ? cyxwiz::StudioDebuggerStepState::Unsupported
                      : (session.smoke_result.success
                             ? cyxwiz::StudioDebuggerStepState::Passed
@@ -5295,7 +5307,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
     cyxwiz::DebugRecommendationEngine recommendation_engine;
     session.recommendations = recommendation_engine.Build(
         session.traces, session.issues, session.smoke_result,
-        session.last_run, training_evidence());
+        crash_evidence(), training_evidence());
 
     append_node_explanation(&config);
 

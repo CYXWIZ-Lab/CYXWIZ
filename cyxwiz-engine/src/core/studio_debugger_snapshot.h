@@ -13,6 +13,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <map>
+#include <utility>
 #include <functional>
 #include <string>
 #include <vector>
@@ -69,6 +72,13 @@ struct StudioDebuggerRunControl {
                        const std::string& running_step,
                        float progress)> on_progress;
     std::function<bool()> should_stop;
+};
+
+// Inputs captured on the UI thread when a run starts.
+struct StudioDebuggerRunInputs {
+    std::map<int, std::pair<float, float>> node_positions;
+    // Project root for the prepared-data cache shared with Train.
+    std::filesystem::path project_root;
 };
 
 struct StudioDebuggerSnapshot {

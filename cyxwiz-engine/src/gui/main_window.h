@@ -144,6 +144,7 @@ class DataStudioPanel;
 class NodeInfoPanel;
 struct StudioDebuggerSnapshot;
 struct StudioDebuggerRunControl;
+struct StudioDebuggerRunInputs;
 enum class StudioDebuggerRunMode;
 } // namespace cyxwiz
 
@@ -262,7 +263,7 @@ private:
                                                 std::vector<NodeLink> links,
                                                 int explain_node_id = -1,
                                                 const cyxwiz::StudioDebuggerRunControl* control = nullptr,
-                                                const std::map<int, std::pair<float, float>>* node_positions = nullptr);
+                                                const cyxwiz::StudioDebuggerRunInputs* inputs = nullptr);
     void RecordArtifactConsistencyTrace(
         const cyxwiz::DebugArtifactConsistencyInput& input);
 

@@ -847,6 +847,7 @@ bool StudioDebuggerPanel::StartRun(StudioDebuggerRunMode mode,
         [this, state](bool success, const std::string& error) {
             run_in_progress_ = false;
             pending_task_id_ = 0;
+            stop_requested_ = false;
             std::optional<StudioDebuggerSnapshot> result;
             {
                 std::lock_guard<std::mutex> lock(state->mutex);
