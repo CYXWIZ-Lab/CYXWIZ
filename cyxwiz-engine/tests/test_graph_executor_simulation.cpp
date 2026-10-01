@@ -170,7 +170,7 @@ void CheckScopeAndPluginRouting() {
     plugin.type = gui::NodeType::PluginCustom;
     plugin.category = gui::NodeCategory::Plugin;
     plugin.name = "External Plant";
-    plugin.plugin_qualified_name = "test:Plant";
+    plugin.extension_type_id = "test:Plant";
     plugin.outputs.push_back(Pin(203, "sensor", false));
     cyxwiz::GraphExecutor missing_provider;
     Check(missing_provider.Build({plugin}, {}), missing_provider.GetError());

@@ -3,29 +3,116 @@
 #include "properties_node_editors.h"
 #include "node_editor.h"
 #include "../core/file_dialogs.h"
-#include "../plugin/registries/plugin_node_registry.h"
+#include "../core/extension_node_registry.h"
+#include "../core/extension_node_presentation.h"
+#include "icons.h"
+#include "ui_buttons.h"
 
 #include <imgui.h>
 
 #include <cstring>
+#include <set>
 #include <string>
 
 namespace gui::properties_node_editors {
 
+namespace {
+
+// Nodes whose Details are open in the not-installed card, by node id.
+std::set<int>& OpenMissingDetails() {
+    static std::set<int> open;
+    return open;
+}
+
+void KeyValueTable(const char* id, const std::vector<std::pair<std::string, std::string>>& rows) {
+    if (rows.empty()) return;
+    if (ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("key", ImGuiTableColumnFlags_WidthStretch, 0.35f);
+        ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch, 0.65f);
+        for (const auto& [key, value] : rows) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", key.c_str());
+            ImGui::TableNextColumn();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(value.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::EndTable();
+    }
+}
+
+// The extension that provides this node is not loaded (approved mockup,
+// "Properties - not installed"). Saved settings are shown, not edited.
+void RenderMissingExtension(const MLNode& node, RenderNodePropertiesContext context) {
+    const auto card = cyxwiz::BuildExtensionMissingCard(node);
+    const ImVec4 warning(0.96f, 0.63f, 0.29f, 1.0f);
+
+    ImGui::TextUnformatted(node.name.c_str());
+    ImGui::TextDisabled("Extension node");
+    ImGui::Spacing();
+
+    ImGui::PushID("missing_extension");
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.42f, 0.29f, 0.12f, 1.0f));
+    if (ImGui::BeginChild("##card", ImVec2(0.0f, 0.0f),
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY |
+                              ImGuiChildFlags_AlwaysUseWindowPadding)) {
+        ImGui::TextColored(warning, "%s %s", ICON_FA_TRIANGLE_EXCLAMATION, card.title.c_str());
+        ImGui::PushTextWrapPos(0.0f);
+        for (const auto& line : card.lines) ImGui::TextUnformatted(line.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+
+        if (cyxwiz::ui::PrimaryButton("Open Plugin Manager", context.node_editor != nullptr,
+                                      "The node editor is not available")) {
+            context.node_editor->OpenPluginManager();
+        }
+        auto& open = OpenMissingDetails();
+        const bool details_open = open.count(node.id) > 0;
+        ImGui::SameLine();
+        if (cyxwiz::ui::LinkButton(details_open ? "Hide" : "Details")) {
+            if (details_open) open.erase(node.id); else open.insert(node.id);
+        }
+        if (open.count(node.id) > 0) {
+            ImGui::Separator();
+            KeyValueTable("##details", card.details);
+        }
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+    ImGui::PopID();
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Settings saved with the graph");
+    ImGui::TextDisabled("Shown as saved. They cannot be edited until the extension is loaded.");
+    KeyValueTable("##saved_settings", card.settings);
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Pins");
+    KeyValueTable("##saved_pins", card.pins);
+}
+
+}  // namespace
+
 void RenderPluginCustomNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
     switch (node.type) {
         case NodeType::PluginCustom: {
+            if (!cyxwiz::ExtensionNodeRegistry::Instance().Has(node.extension_type_id)) {
+                RenderMissingExtension(node, context);
+                break;
+            }
             // Get plugin info for display
-            auto info_opt = cyxwiz::plugin::PluginNodeRegistry::Instance().GetNodeTypeInfoCopy(
-                node.plugin_qualified_name);
+            const auto descriptor =
+                cyxwiz::ExtensionNodeRegistry::Instance().Find(node.extension_type_id);
 
             std::string node_type_name;
-            if (info_opt.has_value()) {
-                const auto& info = info_opt.value();
-                node_type_name = info.type_name;
-                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.8f, 1.0f), "%s", info.display_name.c_str());
-                if (!info.description.empty()) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", info.description.c_str());
+            if (descriptor.has_value()) {
+                node_type_name = descriptor->type_name;
+                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.8f, 1.0f), "%s",
+                                   descriptor->metadata.name.c_str());
+                if (!descriptor->metadata.brief_description.empty()) {
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s",
+                                       descriptor->metadata.brief_description.c_str());
                 }
                 ImGui::Separator();
             }
@@ -47,7 +134,7 @@ void RenderPluginCustomNodeProperties(MLNode& node, RenderNodePropertiesContext 
                     context.invalidate_shapes();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Browse")) {
+                if (cyxwiz::ui::SecondaryButton("Browse")) {
                     if (auto selected = cyxwiz::FileDialogs::OpenFile(
                             "Select MJCF Model", {{"MJCF Files", "xml"}, {"All Files", "*"}},
                             mjcf_path.empty() ? nullptr : mjcf_path.c_str())) {
@@ -182,7 +269,6 @@ void RenderPluginCustomNodeProperties(MLNode& node, RenderNodePropertiesContext 
             else {
                 // Render editable parameters (skip internal keys)
                 for (auto& [key, value] : node.parameters) {
-                    if (key == "plugin_qualified_name") continue;
                     if (key.starts_with("_meta_")) continue;
 
                     char buf[512];

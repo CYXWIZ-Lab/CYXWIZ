@@ -19,6 +19,7 @@ enum class TrainingFailureKind {
     DeviceError,  // the compute device or route failed or is not verified
     OutOfMemory,  // the device or host ran out of memory
     Cancelled,    // stopped on request
+    ReservationEnded,  // the node's reservation ran out; a checkpoint was kept (TOFIX118 gap 6)
     Internal,     // anything else: a CyxWiz fault to report
 };
 
@@ -31,6 +32,7 @@ inline const char* TrainingFailureCode(TrainingFailureKind kind) {
         case TrainingFailureKind::DeviceError: return "DEVICE_ERROR";
         case TrainingFailureKind::OutOfMemory: return "OUT_OF_MEMORY";
         case TrainingFailureKind::Cancelled: return "CANCELLED";
+        case TrainingFailureKind::ReservationEnded: return "RESERVATION_ENDED";
         case TrainingFailureKind::Internal: return "INTERNAL";
     }
     return "INTERNAL";
@@ -44,6 +46,7 @@ inline const char* TrainingFailureLabel(std::string_view code) {
     if (code == "DEVICE_ERROR") return "Device problem";
     if (code == "OUT_OF_MEMORY") return "Out of memory";
     if (code == "CANCELLED") return "Cancelled";
+    if (code == "RESERVATION_ENDED") return "Reservation ended";
     if (code == "INTERNAL") return "Internal error";
     return "Training failed";
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <thread>
@@ -75,7 +76,12 @@ public:
     void SetActiveJobs(const std::vector<std::string>& job_ids);
 
     // Get assigned node ID from server
-    std::string GetNodeId() const { return node_id_; }
+    // The Central Server's id once registered (it replaces the local id);
+    // read from other threads, e.g. the P2P service (TOFIX118 gap 3).
+    std::string GetNodeId() const {
+        std::lock_guard<std::mutex> lock(node_id_mutex_);
+        return node_id_;
+    }
 
     // Check if successfully registered
     bool IsRegistered() const { return is_registered_; }
@@ -155,6 +161,7 @@ private:
 
     std::string central_server_address_;
     std::string node_id_;
+    mutable std::mutex node_id_mutex_;  // guards node_id_ writes vs GetNodeId
     std::string session_token_;
     std::string auth_token_;  // JWT token for authentication
     bool is_registered_;

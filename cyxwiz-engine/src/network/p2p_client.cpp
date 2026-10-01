@@ -184,10 +184,12 @@ bool P2PClient::SendJob(const cyxwiz::protocol::JobConfig& config,
     }
 
     if (response.status() != cyxwiz::protocol::STATUS_SUCCESS || !response.accepted()) {
+        last_rejection_reason_ = response.rejection_reason();
         last_error_ = "Job rejected: " + response.rejection_reason();
         spdlog::error("P2PClient: {}", last_error_);
         return false;
     }
+    last_rejection_reason_.clear();
 
     spdlog::debug("P2PClient: Job {} accepted, estimated start time: {}",
                  config.job_id(),
@@ -224,10 +226,12 @@ bool P2PClient::SendJobWithDatasetURI(const cyxwiz::protocol::JobConfig& config,
     }
 
     if (response.status() != cyxwiz::protocol::STATUS_SUCCESS || !response.accepted()) {
+        last_rejection_reason_ = response.rejection_reason();
         last_error_ = "Job rejected: " + response.rejection_reason();
         spdlog::error("P2PClient: {}", last_error_);
         return false;
     }
+    last_rejection_reason_.clear();
 
     spdlog::debug("P2PClient: Job {} accepted", config.job_id());
     return true;
@@ -371,6 +375,11 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
             progress.progress_percentage = prog.progress_percentage();
             progress.gpu_usage = prog.gpu_usage();
             progress.memory_usage = prog.memory_usage();
+            progress.eta_seconds = prog.estimated_time_remaining() > 0 ? prog.estimated_time_remaining() : -1;
+            progress.elapsed_seconds = prog.elapsed_time() > 0 ? prog.elapsed_time() : -1;
+            progress.samples_per_second = prog.samples_per_second();
+            progress.gpu_memory_used = prog.gpu_memory_used();
+            progress.gpu_memory_total = prog.gpu_memory_total();
 
             // Copy metrics map
             for (const auto& [key, value] : prog.metrics()) {
@@ -386,8 +395,15 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
             CheckpointInfo checkpoint;
             checkpoint.epoch = ckpt.epoch();
             checkpoint.checkpoint_hash = ckpt.checkpoint_hash();
-            checkpoint.storage_uri = "";  // Not in proto, use empty string
+            checkpoint.storage_uri = "";  // the node keeps the files under its data dir
             checkpoint.size_bytes = ckpt.weights_size();
+            for (const auto& [key, value] : ckpt.metrics_at_checkpoint()) {
+                if (key == "next_batch") {
+                    checkpoint.next_batch = static_cast<int64_t>(value);
+                } else {
+                    checkpoint.metrics[key] = value;
+                }
+            }
 
             if (checkpoint_callback_) {
                 checkpoint_callback_(checkpoint);
@@ -400,6 +416,13 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
             complete.total_training_time = comp.total_training_time();
             complete.result_hash = comp.result_hash();
             complete.model_uri = comp.weights_location();  // Use weights_location instead
+            complete.total_epochs_completed = comp.total_epochs_completed();
+            complete.final_weights_size = comp.final_weights_size();
+            if (comp.has_timing()) {
+                complete.train_seconds = comp.timing().train_seconds();
+                complete.wall_seconds = comp.timing().wall_seconds();
+                complete.samples_per_second = comp.timing().samples_per_second();
+            }
 
             // Copy final metrics
             for (const auto& [key, value] : comp.final_metrics()) {
@@ -434,6 +457,11 @@ void P2PClient::StreamingThreadFunc(const std::string& job_id) {
             spdlog::error("P2PClient: Training error ({}): {}", err.error_code(), err.error_message());
 
             bool is_fatal = !err.recoverable();  // If not recoverable, it's fatal
+
+            if (failure_callback_) {
+                failure_callback_(TrainingFailureReport{
+                    err.error_code(), err.error_message(), err.epoch_at_error(), err.recoverable()});
+            }
 
             if (error_callback_) {
                 error_callback_(message, is_fatal);
@@ -557,6 +585,14 @@ bool P2PClient::SendNewJobConfig(const cyxwiz::protocol::JobConfig& config) {
     } else {
         spdlog::error("P2PClient: Failed to send new job config");
     }
+    return success;
+}
+
+bool P2PClient::SendReservationExtension(const std::string& p2p_auth_token) {
+    cyxwiz::protocol::TrainingCommand cmd;
+    cmd.set_reservation_extension_token(p2p_auth_token);
+    const bool success = SendTrainingCommand(cmd);
+    if (!success) spdlog::error("P2PClient: Failed to send the reservation extension");
     return success;
 }
 

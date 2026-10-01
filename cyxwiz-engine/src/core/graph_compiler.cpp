@@ -5,6 +5,7 @@
 #include "error_codes.h"
 #include "backend_placement_capabilities.h"
 #include "execution_placement_plan.h"
+#include "extension_node_registry.h"
 #include "data_registry.h"
 #include "dense_activation_configuration_policy.h"
 #include "upsampling_configuration_policy.h"
@@ -3757,6 +3758,12 @@ void ValidateTrainingPathImplementationStatus(
             continue;
         }
 
+        // The catalog has one generic entry for every extension node;
+        // ValidateExtensionNodes reports each by its own state.
+        if (node.type == gui::NodeType::PluginCustom) {
+            continue;
+        }
+
         const NodeMetadata* metadata = registry.GetMetadata(node.type);
         if (!metadata) {
             continue;
@@ -3797,6 +3804,65 @@ void ValidateUnsupportedTrainingControlNodes(
         msg << "Node '" << node.name << "' is " << training_support.reason;
         AddIssue(config, IssueLevel::Error, msg.str(), node.id,
                  node.name, errors::Compiler::UnsupportedTrainingNode);
+    }
+}
+
+// Extension nodes (TOFIX125) are never passed over: the layer loop only
+// handles node types it knows, so without this an extension node on the
+// training path would be left out of the model with no message.
+void ValidateExtensionNodes(
+    const std::vector<gui::MLNode>& nodes,
+    const std::unordered_set<int>& training_path_ids,
+    TrainingConfiguration& config) {
+
+    for (const auto& node : nodes) {
+        if (node.type != gui::NodeType::PluginCustom) {
+            continue;
+        }
+        const bool on_training_path = training_path_ids.count(node.id) > 0;
+        const auto descriptor =
+            ExtensionNodeRegistry::Instance().Find(node.extension_type_id);
+
+        if (!descriptor.has_value()) {
+            AddIssue(config,
+                     on_training_path ? IssueLevel::Error : IssueLevel::Warning,
+                     "Extension node '" + node.extension_type_id +
+                         "' is not installed. Install and approve the "
+                         "extension that provides it, or remove the node.",
+                     node.id, node.name,
+                     errors::External::PluginDependencyFailure);
+            continue;
+        }
+
+        if (!node.extension_load_note.empty()) {
+            AddIssue(config, IssueLevel::Warning,
+                     "Extension node '" + node.extension_type_id +
+                         "' is not the one this graph was saved with. " +
+                         node.extension_load_note,
+                     node.id, node.name);
+        }
+        if (!on_training_path) {
+            continue;
+        }
+
+        if (descriptor->kind == ExtensionNodeKind::Signal) {
+            AddIssue(config, IssueLevel::Error,
+                     "'" + node.name + "' is a simulation node (" +
+                         node.extension_type_id +
+                         ") and cannot be part of a trained model. Take it "
+                         "off the path between the data and the loss.",
+                     node.id, node.name,
+                     errors::Compiler::UnsupportedTrainingNode);
+            continue;
+        }
+
+        // Replaced by the trainable contract (TOFIX125 P2).
+        AddIssue(config, IssueLevel::Error,
+                 "'" + node.name + "' (" + node.extension_type_id +
+                     ") is a trainable extension node, which the compiler "
+                     "does not build yet. The model would train without it.",
+                 node.id, node.name,
+                 errors::Compiler::UnsupportedTrainingNode);
     }
 }
 
@@ -4051,6 +4117,7 @@ TrainingConfiguration GraphCompiler::Compile(
         ValidateSingleDatasetReachableLossNode(nodes, dataset_reachable, config);
         ValidateSingleDatasetSourceForSelectedLoss(nodes, loss_node, links, config);
         ValidateUnsupportedTrainingControlNodes(nodes, config);
+        ValidateExtensionNodes(nodes, training_path_ids, config);
 
         if (dataset_node && !HasReachablePreTrainInspectionNode(nodes, dataset_reachable)) {
             AddIssue(config, IssueLevel::Warning,

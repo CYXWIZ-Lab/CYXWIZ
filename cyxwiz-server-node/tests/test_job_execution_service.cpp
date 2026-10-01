@@ -15,7 +15,7 @@
 #include "../../cyxwiz-engine/tests/causal_lm_token_window_fixture.h"
 #include "../../cyxwiz-engine/tests/route_qualification_test_fixture.h"
 #include "../src/node_client.h"
-#include "../src/node_admission.h"
+#include "core/job_admission.h"
 #include "../src/node_data_dir.h"
 #include "../src/node_doctor.h"
 #include "core/training_resume_checkpoint.h"
@@ -72,6 +72,10 @@ std::string GenerateTestJwt(const std::string& job_id,
         .set_expires_at(exp)
         .set_payload_claim("job_id", job_id)
         .set_payload_claim("node_id", node_id)
+        .set_payload_claim("reservation_id", job_id)
+        .set_payload_claim("reservation_expires",
+                           jwt::basic_claim<jwt_traits>(static_cast<int64_t>(
+                               std::chrono::duration_cast<std::chrono::seconds>(exp.time_since_epoch()).count())))
         .sign(jwt::algorithm::hs256{TEST_SECRET});
 
     return token;
@@ -235,6 +239,33 @@ TEST_CASE("JobExecutionService - ConnectToNode", "[p2p][connect]") {
         REQUIRE(status.ok());  // gRPC call succeeds
         REQUIRE(response.status() == STATUS_ERROR);  // But auth fails
         REQUIRE(response.has_error());
+    }
+
+    SECTION("A token without the reservation is refused") {
+        // The node reports the reservation's end under its id and enforces
+        // its end time, so both claims are required (TOFIX118 gap 2).
+        using jwt_traits = jwt::traits::nlohmann_json;
+        const auto now = std::chrono::system_clock::now();
+        const std::string token = jwt::create<jwt_traits>()
+                                      .set_issuer("CyxWiz-Central-Server")
+                                      .set_subject("test_user")
+                                      .set_issued_at(now)
+                                      .set_expires_at(now + std::chrono::hours(1))
+                                      .set_payload_claim("job_id", std::string("test_job_004"))
+                                      .set_payload_claim("node_id", std::string(TEST_NODE_ID))
+                                      .sign(jwt::algorithm::hs256{TEST_SECRET});
+        ConnectRequest request;
+        request.set_job_id("test_job_004");
+        request.set_auth_token(token);
+        request.set_engine_version("1.0.0");
+
+        ConnectResponse response;
+        grpc::ClientContext context;
+        SetRpcDeadline(context);
+
+        REQUIRE(test.stub->ConnectToNode(&context, request, &response).ok());
+        REQUIRE(response.status() == STATUS_ERROR);
+        REQUIRE(response.error().code() == 401);
     }
 
     SECTION("Node capabilities are populated") {
@@ -540,6 +571,56 @@ TEST_CASE("JobExecutionService - StreamTrainingMetrics", "[p2p][streaming]") {
         REQUIRE(status.ok());
         REQUIRE(stream_ended);
     }
+}
+
+TEST_CASE("The node stops a job when its reservation ends", "[p2p][reservation]") {
+    // TOFIX118 gap 6: the node enforces the token's reservation end while
+    // the Engine stays connected; the job stops (keeping its checkpoints),
+    // the Engine is told why, and the stream closes.
+    JobExecutionServiceTest test;
+    const std::string job_id = "test_job_expiry";
+
+    ConnectRequest conn_req;
+    conn_req.set_job_id(job_id);
+    conn_req.set_auth_token(GenerateTestJwt(job_id, TEST_NODE_ID, 4));  // a 4-second reservation
+    conn_req.set_engine_version("1.0.0");
+    ConnectResponse conn_resp;
+    grpc::ClientContext conn_ctx;
+    SetRpcDeadline(conn_ctx);
+    REQUIRE(test.stub->ConnectToNode(&conn_ctx, conn_req, &conn_resp).ok());
+    REQUIRE(conn_resp.status() == STATUS_SUCCESS);
+
+    SendJobRequest job_req;
+    job_req.set_job_id(job_id);
+    auto* config = job_req.mutable_config();
+    config->set_job_id(job_id);
+    config->set_job_type(JOB_TYPE_TRAINING);
+    config->set_batch_size(32);
+    RemoteGraphJob remote;
+    PrepareRemoteGraphJob(remote, *config, 500);  // far longer than the reservation
+    SendJobResponse job_resp;
+    grpc::ClientContext job_ctx;
+    SetRpcDeadline(job_ctx);
+    REQUIRE(test.stub->SendJob(&job_ctx, job_req, &job_resp).ok());
+    REQUIRE(job_resp.accepted());
+
+    const auto start = std::chrono::steady_clock::now();
+    grpc::Status status;
+    const auto updates = RunAsEngine(test, job_id, remote, status);
+    const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+
+    bool reservation_ended = false;
+    bool completed = false;
+    for (const auto& update : updates) {
+        if (update.has_error() && update.error().error_code() == "RESERVATION_ENDED") {
+            reservation_ended = true;
+            CHECK_FALSE(update.error().recoverable());
+        }
+        completed = completed || (update.has_complete() && update.complete().success());
+    }
+    CHECK(reservation_ended);
+    CHECK_FALSE(completed);
+    CHECK(seconds < 30.0);
 }
 
 TEST_CASE("JobExecutionService - DownloadWeights", "[p2p][download]") {
@@ -1302,8 +1383,8 @@ TEST_CASE("Central server ranks a registered node by measured throughput", "[.][
 
 TEST_CASE("Admission refuses jobs the node cannot run", "[admission]") {
     using cyxwiz::TrainingFailureKind;
-    using cyxwiz::servernode::AdmissionFacts;
-    using cyxwiz::servernode::EvaluateJobAdmission;
+    using cyxwiz::AdmissionFacts;
+    using cyxwiz::EvaluateJobAdmission;
     constexpr std::uint64_t GB = 1024ull * 1024 * 1024;
 
     AdmissionFacts fits{"arrayfire_cuda:0", true, 4 * GB, 2 * GB};

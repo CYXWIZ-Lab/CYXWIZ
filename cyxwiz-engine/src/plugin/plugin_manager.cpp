@@ -3,7 +3,7 @@
 #include <imgui.h>
 #include "security/safe_execute.h"
 #include "security/permission_store.h"
-#include "registries/plugin_node_registry.h"
+#include "../core/extension_node_registry.h"
 #include "registries/plugin_panel_registry.h"
 #include "registries/plugin_data_loader_registry.h"
 #include "registries/plugin_training_hook_manager.h"
@@ -263,12 +263,14 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
             struct EnumState {
                 std::string plugin_id;
                 INodeProvider* provider;
+                std::string source_path;
                 PluginNodeTypeInfo current;
                 size_t count = 0;
             };
             EnumState state;
             state.plugin_id = plugin_id;
             state.provider = p;
+            state.source_path = plugin->plugin_dir.string();
 
             NodeTypeCallback cb{};
             cb.user_data = &state;
@@ -299,9 +301,16 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
             };
             cb.on_node_done = [](void* ud) {
                 auto* s = static_cast<EnumState*>(ud);
-                PluginNodeRegistry::Instance().RegisterDirect(
-                    s->plugin_id, std::move(s->current), s->provider);
-                s->count++;
+                ExtensionNodeRegistry::Registration registration;
+                registration.descriptor = DescribeSignalNode(s->plugin_id, s->current);
+                registration.descriptor.source_path = s->source_path;
+                registration.signal_provider = s->provider;
+                std::string error;
+                if (ExtensionNodeRegistry::Instance().Register(std::move(registration), error)) {
+                    s->count++;
+                } else {
+                    spdlog::warn("PluginManager: node not registered: {}", error);
+                }
             };
 
             auto reg_result = security::SafeExecute(plugin_id, "RegisterNodes", [&]() {
@@ -368,6 +377,16 @@ void PluginManager::InitializeAll() {
                  ready_count, order.size(), initialized_count);
 }
 
+// Everything a plugin registered points into its library: remove it all
+// before the library can be freed.
+void PluginManager::RemoveRegistrations(const std::string& plugin_id) {
+    ExtensionNodeRegistry::Instance().RemoveByProvider(plugin_id);
+    PluginPanelRegistry::Instance().RemoveByPlugin(plugin_id);
+    PluginDataLoaderRegistry::Instance().RemoveByPlugin(plugin_id);
+    PluginTrainingHookManager::Instance().RemoveByPlugin(plugin_id);
+    PluginAnalyticsRegistry::Instance().RemoveByPlugin(plugin_id);
+}
+
 void PluginManager::ShutdownPlugin(const std::string& plugin_id) {
     std::lock_guard assistant_lock(assistant_command_mutex_);
     std::lock_guard lock(mutex_);
@@ -386,12 +405,7 @@ void PluginManager::ShutdownPlugin(const std::string& plugin_id) {
     security::SafeExecute(plugin_id, "OnShutdown",
         [&]() { plugin->instance->OnShutdown(*ctx_it->second); });
 
-    // Cleanup all registry registrations for this plugin
-    PluginNodeRegistry::Instance().RemoveByPlugin(plugin_id);
-    PluginPanelRegistry::Instance().RemoveByPlugin(plugin_id);
-    PluginDataLoaderRegistry::Instance().RemoveByPlugin(plugin_id);
-    PluginTrainingHookManager::Instance().RemoveByPlugin(plugin_id);
-    PluginAnalyticsRegistry::Instance().RemoveByPlugin(plugin_id);
+    RemoveRegistrations(plugin_id);
 
     plugin->state = PluginState::Loaded;
     contexts_.erase(ctx_it);
@@ -430,6 +444,9 @@ void PluginManager::UnloadPlugin(const std::string& plugin_id) {
         }
         plugin->state = PluginState::Loaded;
     }
+    // Before OnUnload and before the library is freed: its nodes, panels,
+    // loaders and hooks point into it (Unload used to skip this).
+    RemoveRegistrations(plugin_id);
 
     // Call OnUnload while context still exists (with crash isolation)
     if (plugin->instance && ctx_it != contexts_.end()) {

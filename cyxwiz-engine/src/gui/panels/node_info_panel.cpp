@@ -1,6 +1,8 @@
 #include "node_info_panel.h"
 #include "../icons.h"
 #include "../../core/node_metadata_registry.h"
+#include "../../core/extension_node_registry.h"
+#include "../../plugin/plugin_manager.h"
 #include <imgui.h>
 #include <algorithm>
 
@@ -97,10 +99,23 @@ void NodeInfoPanel::Render() {
         // A hover preview wins while it lasts (the browser may render after
         // this panel, so last frame's hover still counts); otherwise the
         // pinned node stays.
-        const bool previewing = preview_metadata_ &&
-                                ImGui::GetFrameCount() - preview_frame_ <= 1 &&
-                                preview_type_ != selected_type_;
-        metadata_ = previewing ? preview_metadata_ : pinned_metadata_;
+        const bool previewing_extension =
+            preview_extension_ && ImGui::GetFrameCount() - preview_extension_frame_ <= 1 &&
+            (!pinned_extension_ || pinned_extension_->type_id != preview_extension_->type_id);
+        const bool previewing = previewing_extension ||
+                                (preview_metadata_ &&
+                                 ImGui::GetFrameCount() - preview_frame_ <= 1 &&
+                                 preview_type_ != selected_type_);
+        const ExtensionView* extension = previewing_extension ? &*preview_extension_
+                                         : (!previewing && pinned_extension_) ? &*pinned_extension_
+                                                                              : nullptr;
+        if (extension) {
+            metadata_ = &extension->metadata;
+            facts_ = &extension->facts;
+        } else {
+            metadata_ = previewing ? preview_metadata_ : pinned_metadata_;
+            facts_ = nullptr;
+        }
         if (metadata_) {
             if (previewing) {
                 ImGui::TextDisabled(ICON_FA_EYE " Preview - click the node to keep it here");
@@ -123,6 +138,10 @@ void NodeInfoPanel::Render() {
                 ImGui::Separator();
                 RenderExamples();
             }
+            if (facts_) {
+                ImGui::Separator();
+                RenderProvidedBy();
+            }
         } else {
             RenderPlaceholder();
         }
@@ -135,11 +154,62 @@ const char* NodeInfoPanel::GetIcon() const {
 }
 
 void NodeInfoPanel::SetSelectedNode(NodeType type) {
+    pinned_extension_.reset();
     selected_type_ = type;
     pinned_metadata_ = type != NodeType::Unknown
                            ? NodeMetadataRegistry::Instance().GetMetadata(type)
                            : nullptr;
     metadata_ = pinned_metadata_;
+}
+
+std::optional<NodeInfoPanel::ExtensionView> NodeInfoPanel::BuildExtensionView(const std::string& type_id) {
+    const auto descriptor = ExtensionNodeRegistry::Instance().Find(type_id);
+    if (!descriptor) return std::nullopt;
+    ExtensionProviderInfo provider;
+    if (const auto* plugin = plugin::PluginManager::Instance().GetLoadedPlugin(descriptor->provider_id)) {
+        provider.name = plugin->manifest.name;
+        provider.version = plugin->manifest.version.ToString();
+        provider.author = plugin->manifest.author;
+    }
+    ExtensionView view;
+    view.type_id = type_id;
+    view.metadata = descriptor->metadata;
+    // The engine's plug icon, as the catalog uses for plugin nodes.
+    if (view.metadata.icon.empty()) view.metadata.icon = ICON_FA_PLUG;
+    view.facts = BuildExtensionInfoFacts(*descriptor, provider);
+    return view;
+}
+
+void NodeInfoPanel::SetSelectedExtension(const std::string& type_id) {
+    pinned_extension_ = BuildExtensionView(type_id);
+    selected_type_ = NodeType::Unknown;
+    pinned_metadata_ = nullptr;
+}
+
+void NodeInfoPanel::PreviewExtension(const std::string& type_id) {
+    if (!preview_extension_ || preview_extension_->type_id != type_id) {
+        preview_extension_ = BuildExtensionView(type_id);
+    }
+    preview_extension_frame_ = ImGui::GetFrameCount();
+}
+
+void NodeInfoPanel::RenderProvidedBy() {
+    if (!facts_ || facts_->provided_by.empty()) return;
+    ImGui::TextUnformatted("Provided by");
+    if (ImGui::BeginTable("##provided_by", 2, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("key", ImGuiTableColumnFlags_WidthStretch, 0.3f);
+        ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch, 0.7f);
+        for (const auto& [key, value] : facts_->provided_by) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", key.c_str());
+            ImGui::TableNextColumn();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(value.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::EndTable();
+    }
 }
 
 void NodeInfoPanel::PreviewNode(NodeType type) {
@@ -153,6 +223,7 @@ void NodeInfoPanel::PreviewNode(NodeType type) {
 }
 
 void NodeInfoPanel::ClearSelection() {
+    pinned_extension_.reset();
     selected_type_ = NodeType::Unknown;
     pinned_metadata_ = nullptr;
     metadata_ = nullptr;
@@ -182,6 +253,21 @@ void NodeInfoPanel::RenderHeader() {
     ImGui::PopFont();
 
     // Category badge
+    if (facts_) {
+        // Extension node: its plugin's own category, and what kind of node it is.
+        ImGui::TextDisabled("%s", facts_->category_line.c_str());
+        std::string chips;
+        for (const auto& chip : facts_->chips) {
+            if (!chips.empty()) chips += "  |  ";
+            chips += chip;
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.81f, 0.78f, 1.0f, 1.0f));
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(chips.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+        return;
+    }
     ImGui::TextDisabled("%s", GetCategoryDisplayName(metadata_->category).c_str());
 
     if (const auto* workflow_lane = FindSupportAxis(metadata_, "Workflow Lane")) {

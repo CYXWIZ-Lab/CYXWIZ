@@ -126,7 +126,7 @@ struct SearchableNode {
     std::string name;      // Display name (e.g., "Dense (512 units)")
     std::string category;  // Category (e.g., "Layers > Dense / Linear")
     std::string keywords;  // Additional keywords for search
-    std::string plugin_qualified_name;  // For PluginCustom: "plugin_id:type_name"
+    std::string extension_type_id;  // For PluginCustom: "provider_id:TypeName"
     NodeImplementationStatus status = NodeImplementationStatus::Implemented;  // Default to implemented
     std::string description;  // Brief description for info panel
     std::string tooltip;      // Tooltip text (for templates: why not available)
@@ -306,6 +306,12 @@ public:
     using OpenStudioDebuggerCallback = std::function<void()>;
     void SetOpenStudioDebuggerCallback(OpenStudioDebuggerCallback callback) { open_studio_debugger_callback_ = callback; }
 
+    // Open the Plugin Manager (TOFIX125): used where an extension node is
+    // missing or none is loaded.
+    using OpenPluginManagerCallback = std::function<void()>;
+    void SetOpenPluginManagerCallback(OpenPluginManagerCallback callback) { open_plugin_manager_callback_ = std::move(callback); }
+    void OpenPluginManager() { if (open_plugin_manager_callback_) open_plugin_manager_callback_(); }
+
     // Explain Node callback - opens a node-scoped explanation in Studio Debugger.
     using ExplainNodeCallback = std::function<void(int)>;
     void SetExplainNodeCallback(ExplainNodeCallback callback) { explain_node_callback_ = std::move(callback); }
@@ -430,7 +436,8 @@ public:
 
     // ===== Menu Operations (Public API for Toolbar) =====
 
-    // Add a node at the center of the visible area
+    // Add a node at the center of the visible area. For NodeType::PluginCustom
+    // `name` is the extension type id.
     void AddNodeFromMenu(NodeType type, const std::string& name);
     void AddDataInputFromAsset(const std::string& path);
 
@@ -524,7 +531,9 @@ private:
 
     // Node management
     void AddNode(NodeType type, const std::string& name);
-    bool CanAddNodeToGraph(NodeType type) const;
+    // For NodeType::PluginCustom, `name` is the extension type id: the node can
+    // be added while its extension is registered.
+    bool CanAddNodeToGraph(NodeType type, const std::string& name = {}) const;
     void DeleteNode(int node_id);
     void ClearGraph();
 
@@ -769,6 +778,7 @@ private:
 
     // Open Custom Node Editor callback (opens CustomNodeEditorPanel)
     OpenCustomNodeEditorCallback open_custom_node_editor_callback_;
+    OpenPluginManagerCallback open_plugin_manager_callback_;
 
     // Open Studio Debugger callback (opens StudioDebuggerPanel)
     OpenStudioDebuggerCallback open_studio_debugger_callback_;
@@ -870,6 +880,9 @@ private:
     std::vector<SearchableNode> all_searchable_nodes_;       // All available nodes for search
     std::vector<std::pair<int, SearchableNode*>> filtered_nodes_;  // Filtered results with scores
     bool searchable_nodes_initialized_ = false;
+    // Extension registry generation the list was built from; a plugin loaded
+    // or unloaded later rebuilds it.
+    uint64_t searchable_nodes_extension_generation_ = 0;
 
     // Unified Canvas Phase 3: Context menu search filter
     char context_menu_search_[256] = "";

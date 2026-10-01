@@ -9,7 +9,7 @@
 
 #include "execution.grpc.pb.h"
 #include "auth/p2p_jwt_validator.h"
-#include "node_admission.h"
+#include "core/job_admission.h"
 
 // Forward declarations - JobExecutor is in servernode namespace
 namespace cyxwiz {
@@ -46,8 +46,10 @@ public:
                    const std::string& p2p_secret);
 
     // Set the NodeClient for Central Server communication
+    // Call before StartServer: job outcomes and the reservation end reach
+    // the Central Server through it (TOFIX118 gap 1).
     void SetNodeClient(std::shared_ptr<cyxwiz::servernode::NodeClient> client) {
-        node_client_ = client;
+        node_client_ = std::move(client);
     }
 
     // Start the P2P server on the specified port
@@ -140,6 +142,9 @@ private:
         std::string auth_token;
         int64_t connected_at;
         bool is_authenticated;
+        // From the Central Server's token (TOFIX118 gap 2).
+        std::string reservation_id;
+        int64_t reservation_expires = 0;  // Unix time
     };
 
     // Reservation limits (minimal - user paid for time, can use it freely)
@@ -185,7 +190,11 @@ private:
         std::atomic<int> jobs_completed_in_reservation{0};
         std::atomic<bool> waiting_for_new_job{false};
         std::chrono::steady_clock::time_point reservation_start;
-        std::chrono::seconds reservation_duration{0};
+        // When the reservation ends (Unix time), from the Central Server's
+        // token; an extension token moves it (TOFIX118 gaps 2, 5).
+        std::atomic<int64_t> reservation_expires{0};
+        // The reservation ran out while this session was open (gap 6).
+        std::atomic<bool> reservation_expired{false};
 
         // HOTEL ROOM MODEL: Track engine connection status
         std::atomic<bool> engine_connected{true};
@@ -193,14 +202,13 @@ private:
     };
 
     // Helper methods
-    bool VerifyAuthToken(const std::string& token, const std::string& job_id);
-    bool NotifyCentralServer(const std::string& job_id, const std::string& node_id);
-    void NotifyJobEnded(const std::string& job_id, bool success, const std::string& reason);
+    // The token's claims if it is valid for this job on this node.
+    std::optional<cyxwiz::P2PAuthClaims> VerifyAuthToken(const std::string& token, const std::string& job_id);
     void CleanupJob(const std::string& job_id);
     void CleanupJobsFromEngine(const std::string& engine_address);  // Cleanup all jobs from disconnected engine
     void CleanupStaleJobs();  // Cleanup jobs that were created but never started
     // What admission judges a job against (TOFIX118 P4b).
-    cyxwiz::servernode::AdmissionFacts GatherAdmissionFacts(const cyxwiz::protocol::JobConfig& config) const;
+    cyxwiz::AdmissionFacts GatherAdmissionFacts(const cyxwiz::protocol::JobConfig& config) const;
 
     // Reservation-based job management
     void ResetJobSession(JobSession* session);
@@ -240,7 +248,11 @@ private:
     std::unordered_map<std::string, std::string> completed_model_paths_;  // job_id -> weights_path
 
     // Node information
-    std::string node_id_;
+    std::string node_id_;  // local id from Initialize; see CurrentNodeId
+    // The Central Server's id once the node registered, else node_id_. P2P
+    // tokens name the Central Server's id (TOFIX118 gap 3).
+    std::string CurrentNodeId() const;
+    static int64_t UnixNow();
     cyxwiz::protocol::NodeCapabilities capabilities_;
 
     // P2P JWT validator

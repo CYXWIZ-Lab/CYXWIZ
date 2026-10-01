@@ -1,18 +1,20 @@
 #pragma once
 
-// Admission before a job is accepted (TOFIX118 P4b): refuse a job this node
+// Admission before a job is accepted (TOFIX118 P4b): refuse a job a node
 // cannot run - its compute route is not verified, or the job's measured
 // memory (JobConfig.estimated_memory, from the Engine) clearly exceeds the
-// device - instead of accepting it and failing later.
+// device - instead of accepting it and failing later. One rule for both
+// sides: the node applies it on SendJob; the Engine applies it before
+// sending so the user sees "won't fit" first (P4 GUI).
 
-#include "core/training_failure.h"
+#include "training_failure.h"
 
 #include <spdlog/fmt/fmt.h>
 
 #include <cstdint>
 #include <string>
 
-namespace cyxwiz::servernode {
+namespace cyxwiz {
 
 struct AdmissionFacts {
     std::string route;              // e.g. arrayfire_cuda:0
@@ -54,4 +56,4 @@ inline AdmissionDecision EvaluateJobAdmission(const AdmissionFacts& facts) {
     return {};
 }
 
-}  // namespace cyxwiz::servernode
+}  // namespace cyxwiz
