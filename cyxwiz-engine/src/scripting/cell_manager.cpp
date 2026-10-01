@@ -254,189 +254,177 @@ void CellManager::AddCellOutput(int index, const CellOutput& output) {
 
     if (IsValidIndex(index)) {
         cells_[index].AddOutput(output);
-
-        if (on_cell_output_added_) {
-            on_cell_output_added_(index, output);
-        }
     }
 }
 
 // ========== Execution ==========
+//
+// TOFIX133 P0 items 8-10. The worker thread never touches cells_: its
+// callbacks only post events to a mailbox (shared, so a closed notebook
+// leaves nothing dangling), and Pump() applies them on the UI thread, then
+// starts the next queued cell there. Before, the completion callback started
+// the next cell on the worker itself (Run All stopped: the engine joined its
+// own thread) and changed cells_ while the UI drew them. The queue holds cell
+// ids, so adding or deleting cells during a run cannot shift it.
 
 void CellManager::SetScriptingEngine(std::shared_ptr<scripting::ScriptingEngine> engine) {
     scripting_engine_ = engine;
 }
 
+int CellManager::IndexOfId(const std::string& id) const {
+    if (id.empty()) return -1;
+    for (int i = 0; i < static_cast<int>(cells_.size()); ++i)
+        if (cells_[i].id == id) return i;
+    return -1;
+}
+
+int CellManager::GetRunningCellIndex() const {
+    return IndexOfId(running_cell_id_);
+}
+
+void CellManager::Enqueue(int from, int to) {
+    for (int i = std::max(0, from); i <= to && i < static_cast<int>(cells_.size()); ++i) {
+        Cell& cell = cells_[i];
+        if (cell.type != CellType::Code) continue;
+        cell.SyncSourceFromEditor();
+        if (cell.source.find_first_not_of(" \t\r\n") == std::string::npos) continue;  // nothing to run
+        if (std::find(execution_queue_.begin(), execution_queue_.end(), cell.id) != execution_queue_.end()) continue;
+        execution_queue_.push_back(cell.id);
+        if (cell.id != running_cell_id_) cell.state = CellState::Queued;
+    }
+    StartNext();
+}
+
 void CellManager::RunCell(int index) {
-    if (!IsValidIndex(index)) {
-        return;
-    }
-
-    Cell& cell = cells_[index];
-
-    // Only run code cells
-    if (cell.type != CellType::Code) {
-        spdlog::debug("Skipping non-code cell {}", index);
-        return;
-    }
-
-    // Sync source from editor
-    cell.SyncSourceFromEditor();
-
-    if (cell.source.empty()) {
-        spdlog::debug("Skipping empty cell {}", index);
-        return;
-    }
-
-    ExecuteCellInternal(index);
+    if (IsValidIndex(index)) Enqueue(index, index);
 }
 
 void CellManager::RunAllCells() {
-    for (int i = 0; i < static_cast<int>(cells_.size()); i++) {
-        if (cells_[i].type == CellType::Code) {
-            execution_queue_.push_back(i);
-        }
-    }
-
-    if (!execution_queue_.empty()) {
-        RunCell(execution_queue_.front());
-        execution_queue_.erase(execution_queue_.begin());
-    }
+    Enqueue(0, static_cast<int>(cells_.size()) - 1);
 }
 
 void CellManager::RunCellsAbove(int index) {
-    for (int i = 0; i <= index && i < static_cast<int>(cells_.size()); i++) {
-        if (cells_[i].type == CellType::Code) {
-            execution_queue_.push_back(i);
-        }
-    }
-
-    if (!execution_queue_.empty()) {
-        RunCell(execution_queue_.front());
-        execution_queue_.erase(execution_queue_.begin());
-    }
+    Enqueue(0, index);
 }
 
 void CellManager::RunCellsBelow(int index) {
-    for (int i = index; i < static_cast<int>(cells_.size()); i++) {
-        if (cells_[i].type == CellType::Code) {
-            execution_queue_.push_back(i);
-        }
-    }
-
-    if (!execution_queue_.empty()) {
-        RunCell(execution_queue_.front());
-        execution_queue_.erase(execution_queue_.begin());
-    }
+    Enqueue(index, static_cast<int>(cells_.size()) - 1);
 }
 
 void CellManager::InterruptExecution() {
-    if (scripting_engine_) {
-        scripting_engine_->StopScript();
+    for (const auto& id : execution_queue_) {
+        const int i = IndexOfId(id);
+        if (i >= 0 && cells_[i].state == CellState::Queued) cells_[i].state = CellState::Idle;
     }
     execution_queue_.clear();
-    is_running_ = false;
-
-    if (running_cell_index_ >= 0 && IsValidIndex(running_cell_index_)) {
-        cells_[running_cell_index_].state = CellState::Error;
-        cells_[running_cell_index_].AddOutput(CellOutput::Error("Execution interrupted"));
+    if (scripting_engine_ && is_running_) {
+        scripting_engine_->StopScript();  // the Done event marks the cell
     }
-    running_cell_index_ = -1;
+}
+
+bool CellManager::StartNext() {
+    if (is_running_ || !scripting_engine_) return false;
+    // Another script (the editor, the console) may hold the engine: wait.
+    if (scripting_engine_->IsScriptRunning()) return false;
+    while (!execution_queue_.empty()) {
+        const std::string id = execution_queue_.front();
+        execution_queue_.erase(execution_queue_.begin());
+        const int index = IndexOfId(id);
+        if (index < 0) continue;  // deleted while queued
+        ExecuteCellInternal(index);
+        return true;
+    }
+    return false;
 }
 
 void CellManager::ExecuteCellInternal(int index) {
-    if (!scripting_engine_) {
-        spdlog::error("No scripting engine set");
-        return;
-    }
-
     Cell& cell = cells_[index];
-
-    // Clear previous outputs
     cell.ClearOutputs();
-
-    // Update state
     cell.state = CellState::Running;
-    running_cell_index_ = index;
+    running_cell_id_ = cell.id;
     is_running_ = true;
-    execution_counter_++;
-    cell.execution_count = execution_counter_;
-
-    if (on_cell_state_changed_) {
-        on_cell_state_changed_(index);
-    }
-
+    cell.execution_count = ++execution_counter_;
+    const std::uint64_t run = ++run_counter_;
     spdlog::info("Executing cell {} [{}]", index, cell.execution_count);
 
-    // Set up output callback for real-time output
-    scripting_engine_->SetOutputCallback([this, index](const std::string& output) {
-        OnExecutionOutput(index, output, false);
-    });
-
-    // Set up completion callback
-    scripting_engine_->SetCompletionCallback([this, index](const scripting::ExecutionResult& result) {
-        // Handle captured plots
+    std::weak_ptr<Mailbox> weak = mailbox_;
+    scripting::ScriptingEngine::RunCallbacks callbacks;
+    callbacks.on_output = [weak, run](const std::string& text) {
+        if (auto box = weak.lock()) {
+            std::lock_guard<std::mutex> lock(box->mutex);
+            box->events.push_back({RunEvent::Kind::Output, run, text, {}, false, false, {}});
+        }
+    };
+    callbacks.on_complete = [weak, run](const scripting::ExecutionResult& result) {
+        auto box = weak.lock();
+        if (!box) return;
+        std::lock_guard<std::mutex> lock(box->mutex);
         for (const auto& plot : result.plots) {
-            CellOutput plot_output;
-            plot_output.type = OutputType::Plot;
-            plot_output.name = plot.label;
-            plot_output.image_data = plot.png_data;
-            plot_output.width = plot.width;
-            plot_output.height = plot.height;
-            plot_output.mime_type = "image/png";
-            AddCellOutput(index, plot_output);
+            RunEvent e{RunEvent::Kind::Plot, run, {}, {}, false, false, {}};
+            e.output.type = OutputType::Plot;
+            e.output.name = plot.label;
+            e.output.image_data = plot.png_data;
+            e.output.width = plot.width;
+            e.output.height = plot.height;
+            e.output.mime_type = "image/png";
+            box->events.push_back(std::move(e));
         }
-
-        OnExecutionComplete(index, result.success, result.error_message);
-    });
-
-    // Execute asynchronously
-    scripting_engine_->ExecuteScriptAsync(cell.source);
+        box->events.push_back(
+            {RunEvent::Kind::Done, run, {}, {}, result.success, result.was_cancelled, result.error_message});
+    };
+    if (!scripting_engine_->ExecuteScriptAsync(cell.source, std::move(callbacks))) {
+        // The engine was taken between the check and the start: queue again.
+        cell.state = CellState::Queued;
+        execution_queue_.insert(execution_queue_.begin(), cell.id);
+        running_cell_id_.clear();
+        is_running_ = false;
+    }
 }
 
-void CellManager::OnExecutionOutput(int cell_index, const std::string& output, bool is_error) {
-    if (!IsValidIndex(cell_index)) return;
-
-    CellOutput cell_output = is_error
-        ? CellOutput::Error(output)
-        : CellOutput::Text(output);
-
-    AddCellOutput(cell_index, cell_output);
-}
-
-void CellManager::OnExecutionComplete(int cell_index, bool success, const std::string& error) {
-    if (!IsValidIndex(cell_index)) return;
-
-    Cell& cell = cells_[cell_index];
-
-    if (success) {
-        cell.state = CellState::Success;
-    } else {
-        cell.state = CellState::Error;
-        if (!error.empty()) {
-            AddCellOutput(cell_index, CellOutput::Error(error));
+void CellManager::Pump() {
+    std::vector<RunEvent> events;
+    {
+        std::lock_guard<std::mutex> lock(mailbox_->mutex);
+        events.swap(mailbox_->events);
+    }
+    for (auto& e : events) {
+        if (e.run != run_counter_) continue;  // a run this notebook no longer tracks
+        const int index = IndexOfId(running_cell_id_);
+        switch (e.kind) {
+            case RunEvent::Kind::Output:
+                if (index >= 0) cells_[index].AddOutput(CellOutput::Text(e.text));
+                break;
+            case RunEvent::Kind::Plot:
+                if (index >= 0) cells_[index].AddOutput(e.output);
+                break;
+            case RunEvent::Kind::Done:
+                if (index >= 0) {
+                    Cell& cell = cells_[index];
+                    if (e.cancelled) {
+                        cell.state = CellState::Error;
+                        cell.AddOutput(CellOutput::Error("Execution interrupted"));
+                    } else if (e.success) {
+                        cell.state = CellState::Success;
+                    } else {
+                        cell.state = CellState::Error;
+                        if (!e.error.empty()) cell.AddOutput(CellOutput::Error(e.error));
+                    }
+                    spdlog::info("Cell {} execution complete. Success: {}", index, e.success);
+                }
+                running_cell_id_.clear();
+                is_running_ = false;
+                if (e.cancelled || !e.success) {
+                    // Stop the rest of Run All after an error, as notebooks do.
+                    for (const auto& id : execution_queue_) {
+                        const int q = IndexOfId(id);
+                        if (q >= 0 && cells_[q].state == CellState::Queued) cells_[q].state = CellState::Idle;
+                    }
+                    execution_queue_.clear();
+                }
+                break;
         }
     }
-
-    running_cell_index_ = -1;
-    is_running_ = false;
-
-    if (on_cell_state_changed_) {
-        on_cell_state_changed_(cell_index);
-    }
-
-    if (on_execution_complete_) {
-        on_execution_complete_(cell_index);
-    }
-
-    // Run next cell in queue if any
-    if (!execution_queue_.empty()) {
-        int next_index = execution_queue_.front();
-        execution_queue_.erase(execution_queue_.begin());
-        RunCell(next_index);
-    }
-
-    spdlog::info("Cell {} execution complete. Success: {}", cell_index, success);
+    StartNext();
 }
 
 // ========== Serialization ==========

@@ -50,9 +50,13 @@ ExecutionResult ScriptingEngine::ExecuteFile(const std::string&) {
     return DisabledResult();
 }
 
-void ScriptingEngine::ExecuteScriptAsync(const std::string&) {
-    std::lock_guard<std::mutex> lock(result_mutex_);
-    async_result_ = DisabledResult();
+bool ScriptingEngine::ExecuteScriptAsync(const std::string&, RunCallbacks callbacks) {
+    {
+        std::lock_guard<std::mutex> lock(result_mutex_);
+        async_result_ = DisabledResult();
+    }
+    if (callbacks.on_complete) callbacks.on_complete(DisabledResult());
+    return true;
 }
 
 void ScriptingEngine::StopScript() { script_running_ = false; }
@@ -66,14 +70,6 @@ std::optional<ExecutionResult> ScriptingEngine::GetAsyncResult() {
 }
 
 std::string ScriptingEngine::GetPendingOutput() { return {}; }
-
-void ScriptingEngine::SetCompletionCallback(CompletionCallback callback) {
-    completion_callback_ = std::move(callback);
-}
-
-void ScriptingEngine::SetOutputCallback(OutputCallback callback) {
-    output_callback_ = std::move(callback);
-}
 
 void ScriptingEngine::EnableSandbox(bool enable) { sandbox_enabled_ = enable; }
 

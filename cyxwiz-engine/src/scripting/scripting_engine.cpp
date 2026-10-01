@@ -346,10 +346,6 @@ bool ScriptingEngine::ReloadPythonForProject() {
     return true;
 }
 
-void ScriptingEngine::SetOutputCallback(OutputCallback callback) {
-    output_callback_ = callback;
-}
-
 ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
     ExecutionResult result;
     result.success = false;
@@ -463,10 +459,7 @@ ExecutionResult ScriptingEngine::ExecuteCommandDirect(const std::string& command
             result.success = false; // Mark as failure if there's stderr output
         }
 
-        // Call output callback if set (skip for internal commands)
-        if (!suppress_output_callback && output_callback_ && !result.output.empty()) {
-            output_callback_(result.output);
-        }
+        (void)suppress_output_callback;  // synchronous commands return their output
 
     } catch (const py::error_already_set& e) {
         result.success = false;
@@ -571,10 +564,6 @@ if _cmd_thread.is_alive():
             spdlog::warn("Command timed out after {} seconds", console_timeout_seconds_);
         }
 
-        // Call output callback if set
-        if (output_callback_ && !result.output.empty()) {
-            output_callback_(result.output);
-        }
 
     } catch (const py::error_already_set& e) {
         result.success = false;
@@ -703,10 +692,6 @@ void ScriptingEngine::ExecuteCommandWorker(const std::string& command) {
             result.success = false;
         }
 
-        // Call output callback if set
-        if (output_callback_ && !result.output.empty()) {
-            output_callback_(result.output);
-        }
 
     } catch (const py::error_already_set& e) {
         // Check for KeyboardInterrupt
@@ -921,10 +906,6 @@ while _cmd_thread.is_alive():
             spdlog::warn("Async command timed out after {} seconds", timeout_secs);
         }
 
-        // Call output callback if set
-        if (output_callback_ && !result.output.empty()) {
-            output_callback_(result.output);
-        }
 
     } catch (const py::error_already_set& e) {
         result.success = false;
@@ -1072,15 +1053,11 @@ void ScriptingEngine::EnsureTrainingDashboardRegistered() {
 
 // ========== Async Execution Implementation ==========
 
-void ScriptingEngine::SetCompletionCallback(CompletionCallback callback) {
-    completion_callback_ = callback;
-}
-
-void ScriptingEngine::ExecuteScriptAsync(const std::string& script) {
+bool ScriptingEngine::ExecuteScriptAsync(const std::string& script, RunCallbacks callbacks) {
     // Don't start if already running
     if (script_running_) {
         spdlog::warn("Script already running, ignoring new execution request");
-        return;
+        return false;
     }
 
     std::string init_error;
@@ -1092,10 +1069,10 @@ void ScriptingEngine::ExecuteScriptAsync(const std::string& script) {
             std::lock_guard<std::mutex> lock(result_mutex_);
             async_result_ = result;
         }
-        if (completion_callback_) {
-            completion_callback_(result);
+        if (callbacks.on_complete) {
+            callbacks.on_complete(result);
         }
-        return;
+        return true;
     }
 
     // Wait for previous thread to finish if it exists
@@ -1121,9 +1098,10 @@ void ScriptingEngine::ExecuteScriptAsync(const std::string& script) {
     script_running_ = true;
 
     // Start worker thread
-    script_thread_ = std::make_unique<std::thread>(&ScriptingEngine::ScriptWorker, this, script);
+    script_thread_ = std::make_unique<std::thread>(&ScriptingEngine::ScriptWorker, this, script, std::move(callbacks));
 
     spdlog::info("Script execution started in background thread");
+    return true;
 }
 
 void ScriptingEngine::StopScript() {
@@ -1190,10 +1168,10 @@ std::vector<CapturedPlot> ScriptingEngine::GetPendingPlots() {
     return plots;
 }
 
-void ScriptingEngine::ScriptWorker(const std::string& script) {
+void ScriptingEngine::ScriptWorker(const std::string& script, RunCallbacks callbacks) {
     spdlog::debug("Script worker thread started");
 
-    ExecutionResult result = ExecuteWithStreaming(script);
+    ExecutionResult result = ExecuteWithStreaming(script, callbacks.on_output);
 
     // Check if cancelled
     if (cancel_requested_) {
@@ -1210,10 +1188,10 @@ void ScriptingEngine::ScriptWorker(const std::string& script) {
     // Mark as not running
     script_running_ = false;
 
-    // Call completion callback if set
-    if (completion_callback_) {
+    // This run's completion callback, if any
+    if (callbacks.on_complete) {
         try {
-            completion_callback_(result);
+            callbacks.on_complete(result);
         } catch (const std::exception& e) {
             spdlog::error("Exception in completion callback: {}", e.what());
         }
@@ -1222,7 +1200,7 @@ void ScriptingEngine::ScriptWorker(const std::string& script) {
     spdlog::debug("Script worker thread finished");
 }
 
-ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script) {
+ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script, const OutputCallback& on_output) {
     ExecutionResult result;
     result.success = false;
 
@@ -1305,10 +1283,10 @@ ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script)
         }
 
         // Create output callback wrapper
-        auto queue_func = [this](const std::string& text) {
+        auto queue_func = [this, on_output](const std::string& text) {
             QueueOutput(text);
-            if (output_callback_) {
-                output_callback_(text);
+            if (on_output) {
+                on_output(text);
             }
         };
 

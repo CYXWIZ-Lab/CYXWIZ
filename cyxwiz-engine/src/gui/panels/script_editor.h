@@ -197,6 +197,7 @@ private:
     // Async loading helper
     void OpenFileAsync(std::uint64_t document_id, const std::string& filepath);
     void FinalizeAsyncLoad(std::uint64_t document_id, std::string content);
+    void StartEditorRun(const std::string& code);  // sets script_running_ only if the run started
     void RetryLoad(int tab_index);  // a failed or cancelled load, again
     void OpenLargeFileAsync(std::uint64_t document_id, const std::string& filepath);
     void RequestLargeFilePage(std::uint64_t document_id, std::uint64_t first_line);

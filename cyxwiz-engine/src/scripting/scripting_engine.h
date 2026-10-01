@@ -91,9 +91,20 @@ public:
     ExecutionResult ExecuteFile(const std::string& filepath);
 
     // ========== Asynchronous Execution (non-blocking) ==========
-    // Start script execution in background thread
-    // Returns immediately, script runs in background
-    void ExecuteScriptAsync(const std::string& script);
+    using CompletionCallback = std::function<void(const ExecutionResult&)>;
+    using OutputCallback = std::function<void(const std::string&)>;
+    // Callbacks for one run only (TOFIX133 P0 item 9: they used to be global
+    // and never cleared, so output went to whichever cell or panel set them
+    // last). Both run on the worker thread; on_complete also runs at once if
+    // Python cannot start.
+    struct RunCallbacks {
+        OutputCallback on_output;
+        CompletionCallback on_complete;
+    };
+    // Starts the script in a background thread and returns at once. Returns
+    // false when another script is still running (nothing is started and no
+    // callback is called).
+    bool ExecuteScriptAsync(const std::string& script, RunCallbacks callbacks = {});
 
     // Stop currently running script
     // Sends interrupt signal to Python interpreter
@@ -110,15 +121,7 @@ public:
     // Call this periodically from GUI to get real-time output
     std::string GetPendingOutput();
 
-    // Completion callback (called when async script finishes)
-    using CompletionCallback = std::function<void(const ExecutionResult&)>;
-    void SetCompletionCallback(CompletionCallback callback);
-
     // ========== Output & Configuration ==========
-    // Output callback (for real-time output streaming)
-    using OutputCallback = std::function<void(const std::string&)>;
-    void SetOutputCallback(OutputCallback callback);
-
     // Sandbox configuration
     void EnableSandbox(bool enable);
     bool IsSandboxEnabled() const { return sandbox_enabled_; }
@@ -177,8 +180,6 @@ private:
     bool training_dashboard_registered_{false};
     std::unique_ptr<PythonEngine> python_engine_;
     std::unique_ptr<PythonSandbox> sandbox_;
-    OutputCallback output_callback_;
-    CompletionCallback completion_callback_;
     bool sandbox_enabled_;
     bool verbose_logging_{false};  // Log all commands including internal ones
     double console_timeout_seconds_{30.0};  // Console command timeout (default 30s)
@@ -201,10 +202,10 @@ private:
     std::optional<ExecutionResult> async_result_;
 
     // Worker thread function
-    void ScriptWorker(const std::string& script);
+    void ScriptWorker(const std::string& script, RunCallbacks callbacks);
 
     // Internal execution with output streaming
-    ExecutionResult ExecuteWithStreaming(const std::string& script);
+    ExecutionResult ExecuteWithStreaming(const std::string& script, const OutputCallback& on_output);
 
     // Convert sandbox result to engine result
     ExecutionResult ConvertSandboxResult(const PythonSandbox::ExecutionResult& sandbox_result);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cell.h"
+#include <cstdint>
 #include <vector>
 #include <string>
 #include <functional>
@@ -184,7 +185,13 @@ public:
     /**
      * Get index of currently running cell (-1 if none)
      */
-    int GetRunningCellIndex() const { return running_cell_index_; }
+    int GetRunningCellIndex() const;
+
+    /**
+     * Every frame, on the UI thread: applies output from the worker thread
+     * and starts the next queued cell (TOFIX133 P0 items 8-10).
+     */
+    void Pump();
 
     // ========== Serialization ==========
 
@@ -205,15 +212,6 @@ public:
      * Check if content has cell markers
      */
     static bool HasCellMarkers(const std::string& content);
-
-    // ========== Callbacks ==========
-
-    using CellCallback = std::function<void(int index)>;
-    using OutputCallback = std::function<void(int index, const CellOutput& output)>;
-
-    void SetOnCellStateChanged(CellCallback callback) { on_cell_state_changed_ = callback; }
-    void SetOnCellOutputAdded(OutputCallback callback) { on_cell_output_added_ = callback; }
-    void SetOnExecutionComplete(CellCallback callback) { on_execution_complete_ = callback; }
 
     // ========== Editor Theme ==========
 
@@ -240,8 +238,24 @@ public:
 private:
     // Execution helpers
     void ExecuteCellInternal(int index);
-    void OnExecutionOutput(int cell_index, const std::string& output, bool is_error);
-    void OnExecutionComplete(int cell_index, bool success, const std::string& error);
+    void Enqueue(int from, int to);  // code cells with text, by id
+    bool StartNext();
+    int IndexOfId(const std::string& id) const;
+
+    // What the worker thread posts; only Pump() reads it.
+    struct RunEvent {
+        enum class Kind { Output, Plot, Done } kind;
+        std::uint64_t run = 0;
+        std::string text;
+        CellOutput output;
+        bool success = false;
+        bool cancelled = false;
+        std::string error;
+    };
+    struct Mailbox {
+        std::mutex mutex;
+        std::vector<RunEvent> events;
+    };
 
     // Data
     std::vector<Cell> cells_;
@@ -250,16 +264,13 @@ private:
     // Execution state
     bool is_running_ = false;
     int execution_counter_ = 0;
-    int running_cell_index_ = -1;
-    std::vector<int> execution_queue_;
+    std::string running_cell_id_;
+    std::vector<std::string> execution_queue_;  // cell ids
+    std::uint64_t run_counter_ = 0;
+    std::shared_ptr<Mailbox> mailbox_ = std::make_shared<Mailbox>();
 
     // Thread safety
     mutable std::mutex mutex_;
-
-    // Callbacks
-    CellCallback on_cell_state_changed_;
-    OutputCallback on_cell_output_added_;
-    CellCallback on_execution_complete_;
 };
 
 } // namespace cyxwiz

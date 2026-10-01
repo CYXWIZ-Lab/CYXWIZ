@@ -14,6 +14,17 @@
 
 namespace cyxwiz {
 
+void ScriptEditorPanel::StartEditorRun(const std::string& code) {
+    running_indicator_time_ = 0.0f;
+    script_running_ = scripting_engine_->ExecuteScriptAsync(code);
+    if (!script_running_ && script_output_sink_) {
+        // A notebook cell or another run holds the interpreter.
+        script_output_sink_->AppendScriptOutput(
+            running_script_name_, "Another script is running. Wait for it to finish or stop it first.", true);
+        script_output_sink_->EndScriptOutput(running_script_name_, false, false, 0.0);
+    }
+}
+
 void ScriptEditorPanel::StopScript() {
     if (!script_running_ || !scripting_engine_) return;
     scripting_engine_->StopScript();
@@ -81,9 +92,7 @@ void ScriptEditorPanel::DoRunScript() {
     }
 
     // Execute asynchronously
-    scripting_engine_->ExecuteScriptAsync(script);
-    script_running_ = true;
-    running_indicator_time_ = 0.0f;
+    StartEditorRun(script);
 }
 
 void ScriptEditorPanel::SyncActiveCellEditor(EditorTab& tab) {
@@ -222,9 +231,7 @@ void ScriptEditorPanel::RunSelection() {
     // Dedent and execute asynchronously for plot capture support
     std::string dedented = DedentCode(selected_text);
     spdlog::debug("Dedented selection:\n{}", dedented);
-    scripting_engine_->ExecuteScriptAsync(dedented);
-    script_running_ = true;
-    running_indicator_time_ = 0.0f;
+    StartEditorRun(dedented);
 }
 
 void ScriptEditorPanel::RunCurrentSection() {
@@ -260,9 +267,7 @@ void ScriptEditorPanel::RunCurrentSection() {
     // Dedent and execute asynchronously for plot capture support
     std::string dedented = DedentCode(section.code);
     spdlog::debug("Dedented section:\n{}", dedented);
-    scripting_engine_->ExecuteScriptAsync(dedented);
-    script_running_ = true;
-    running_indicator_time_ = 0.0f;
+    StartEditorRun(dedented);
 }
 
 std::vector<ScriptEditorPanel::Section> ScriptEditorPanel::ParseSections(const std::string& text) {

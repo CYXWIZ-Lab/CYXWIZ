@@ -53,9 +53,15 @@ void ScriptEditorPanel::Render() {
     // Code text size is Engine-wide; follow it when Preferences changes it.
     font_scale_ = gui::CodeFontScale();
 
-    // Poll for pending output from async script execution
-    if (scripting_engine_ && scripting_engine_->IsScriptRunning()) {
-        script_running_ = true;
+    // Notebook tabs apply their cells' output and start queued cells here,
+    // on the UI thread (TOFIX133 P0 items 8-10).
+    for (auto& tab : tabs_) {
+        if (tab) tab->cell_manager.Pump();
+    }
+
+    // Poll the editor's own run. A run started elsewhere (a notebook cell,
+    // RL training) is not the editor's and must not print here.
+    if (scripting_engine_ && script_running_ && scripting_engine_->IsScriptRunning()) {
         running_indicator_time_ += ImGui::GetIO().DeltaTime;
 
         // Get any pending output and display it

@@ -945,7 +945,7 @@ private:
     // ===== RL Training State =====
     std::unique_ptr<cyxwiz::RLTrainingExecutor> rl_executor_;
     std::shared_ptr<cyxwiz::TrainingDashboardPanel> rl_dashboard_;
-    bool rl_script_running_ = false;
+    std::atomic<bool> rl_script_running_{false};  // cleared on the script's worker thread
 
     // ===== Unified Canvas Phase 2: Data Pipeline Execution =====
     uint64_t pipeline_task_id_ = 0;

@@ -4624,10 +4624,11 @@ void NodeEditor::OnStartRLTraining() {
     std::string setup_script = "import pycyxwiz\npycyxwiz.rl_set_stop(False)\npycyxwiz.rl_set_paused(False)\n";
     scripting_engine_->ExecuteCommand(setup_script);
 
-    // Set completion callback
+    // Completion handling for this run only (TOFIX133 P0 item 9).
     auto dashboard = rl_dashboard_;
     rl_script_running_ = true;
-    scripting_engine_->SetCompletionCallback([this, dashboard](const scripting::ExecutionResult& result) {
+    scripting::ScriptingEngine::RunCallbacks callbacks;
+    callbacks.on_complete = [this, dashboard](const scripting::ExecutionResult& result) {
         rl_script_running_ = false;
         dashboard->SetRLTrainingState(false);
         if (!result.success) {
@@ -4635,10 +4636,14 @@ void NodeEditor::OnStartRLTraining() {
         } else {
             spdlog::info("RL training script completed successfully");
         }
-    });
+    };
 
     // Run training script async
-    scripting_engine_->ExecuteScriptAsync(script);
+    if (!scripting_engine_->ExecuteScriptAsync(script, std::move(callbacks))) {
+        rl_script_running_ = false;
+        dashboard->SetRLTrainingState(false);
+        spdlog::warn("RL training not started: another script is running");
+    }
 }
 
 
