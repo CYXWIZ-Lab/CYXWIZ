@@ -2,6 +2,7 @@
 // cursors, auto-indent and pairs, line commands, grouped undo, saved state.
 #include "../src/core/editor/text_document.h"
 
+#include <cctype>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -199,6 +200,15 @@ int main() {
     Check(Caret(d).col == 6, "cursor after the replacement moved");
     d.Undo();
     Expect(d, "alpha beta", "replace undone");
+
+    // Transform selections (upper case) as one step, text stays selected.
+    d.SetText("ab cd ab");
+    d.SetSelections({Selection{{0, 0}, {0, 2}, -1}, Selection{{0, 6}, {0, 8}, -1}});
+    d.TransformSelections([](const std::string& s) { std::string u = s; for (char& c : u) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c))); return u; });
+    Expect(d, "AB cd AB", "upper case at two selections");
+    Check(d.SelectedText() == "AB\nAB", "new text selected");
+    d.Undo();
+    Expect(d, "ab cd ab", "one undo");
 
     // Saved state follows undo.
     d.SetText("v");

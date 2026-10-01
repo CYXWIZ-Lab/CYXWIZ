@@ -207,7 +207,7 @@ void ScriptEditorPanel::RunSelection() {
     if (script_running_) return;  // Already running
 
     auto& tab = tabs_[active_tab_index_];
-    std::string selected_text = tab->editor.GetSelectedText();
+    std::string selected_text = tab->editor.Doc().SelectedText();
 
     if (selected_text.empty()) {
         spdlog::warn("No text selected");
@@ -326,8 +326,7 @@ ScriptEditorPanel::Section ScriptEditorPanel::GetCurrentSection() {
     }
 
     auto& tab = tabs_[active_tab_index_];
-    auto cursor_pos = tab->editor.GetCursorPosition();
-    int current_line = cursor_pos.mLine;
+    int current_line = tab->editor.Doc().Primary().head.line;
 
     // Get all text and parse sections
     std::string text = tab->editor.GetText();

@@ -102,7 +102,7 @@ void ScriptEditorPanel::Render() {
     // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
     const bool expanded = ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar);
     if (expanded) {
-        // Track focus state (including child windows like TextEditor)
+        // Track focus state (including child windows like the code view)
         is_focused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
 
         // Handle window focus request (bring to front)
@@ -213,21 +213,21 @@ void ScriptEditorPanel::RenderMenuBar() {
 
         if (ImGui::BeginMenu("Edit")) {
             bool has_active_tab = IsActiveTabEditable();
-            if (ImGui::MenuItem("Undo", "Ctrl+Z", false, has_active_tab && tabs_[active_tab_index_]->editor.CanUndo())) {
-                tabs_[active_tab_index_]->editor.Undo();
+            if (ImGui::MenuItem("Undo", "Ctrl+Z", false, has_active_tab && tabs_[active_tab_index_]->editor.Doc().CanUndo())) {
+                Undo();
             }
-            if (ImGui::MenuItem("Redo", "Ctrl+Y", false, has_active_tab && tabs_[active_tab_index_]->editor.CanRedo())) {
-                tabs_[active_tab_index_]->editor.Redo();
+            if (ImGui::MenuItem("Redo", "Ctrl+Y", false, has_active_tab && tabs_[active_tab_index_]->editor.Doc().CanRedo())) {
+                Redo();
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Cut", "Ctrl+X", false, has_active_tab)) {
-                tabs_[active_tab_index_]->editor.Cut();
+                Cut();
             }
             if (ImGui::MenuItem("Copy", "Ctrl+C", false, has_active_tab)) {
-                tabs_[active_tab_index_]->editor.Copy();
+                Copy();
             }
             if (ImGui::MenuItem("Paste", "Ctrl+V", false, has_active_tab)) {
-                tabs_[active_tab_index_]->editor.Paste();
+                Paste();
             }
             ImGui::EndMenu();
         }
@@ -296,53 +296,6 @@ void ScriptEditorPanel::RenderMenuBar() {
 
         // View menu - quick access to editor settings (synced with Preferences)
         if (ImGui::BeginMenu("View")) {
-            // Theme submenu
-            if (ImGui::BeginMenu("Theme")) {
-                ImGui::TextDisabled("Popular");
-                ImGui::Indent(10.0f);
-                if (ImGui::MenuItem("Monokai", nullptr, current_theme_ == EditorTheme::Monokai)) {
-                    current_theme_ = EditorTheme::Monokai;
-                    ApplyThemeToAllTabs();
-                    if (on_settings_changed_callback_) on_settings_changed_callback_();
-                }
-                if (ImGui::MenuItem("Dracula", nullptr, current_theme_ == EditorTheme::Dracula)) {
-                    current_theme_ = EditorTheme::Dracula;
-                    ApplyThemeToAllTabs();
-                    if (on_settings_changed_callback_) on_settings_changed_callback_();
-                }
-                if (ImGui::MenuItem("One Dark", nullptr, current_theme_ == EditorTheme::OneDark)) {
-                    current_theme_ = EditorTheme::OneDark;
-                    ApplyThemeToAllTabs();
-                    if (on_settings_changed_callback_) on_settings_changed_callback_();
-                }
-                if (ImGui::MenuItem("GitHub", nullptr, current_theme_ == EditorTheme::GitHub)) {
-                    current_theme_ = EditorTheme::GitHub;
-                    ApplyThemeToAllTabs();
-                    if (on_settings_changed_callback_) on_settings_changed_callback_();
-                }
-                ImGui::Unindent(10.0f);
-                ImGui::Separator();
-                ImGui::TextDisabled("Classic");
-                ImGui::Indent(10.0f);
-                if (ImGui::MenuItem("Dark", nullptr, current_theme_ == EditorTheme::Dark)) {
-                    current_theme_ = EditorTheme::Dark;
-                    ApplyThemeToAllTabs();
-                    if (on_settings_changed_callback_) on_settings_changed_callback_();
-                }
-                if (ImGui::MenuItem("Light", nullptr, current_theme_ == EditorTheme::Light)) {
-                    current_theme_ = EditorTheme::Light;
-                    ApplyThemeToAllTabs();
-                    if (on_settings_changed_callback_) on_settings_changed_callback_();
-                }
-                if (ImGui::MenuItem("Retro Blue", nullptr, current_theme_ == EditorTheme::RetroBlu)) {
-                    current_theme_ = EditorTheme::RetroBlu;
-                    ApplyThemeToAllTabs();
-                    if (on_settings_changed_callback_) on_settings_changed_callback_();
-                }
-                ImGui::Unindent(10.0f);
-                ImGui::EndMenu();
-            }
-
             // Font Size submenu
             if (ImGui::BeginMenu("Font Size")) {
                 if (ImGui::MenuItem("Small (14 px)", nullptr, font_scale_ == 1.0f)) {
@@ -395,7 +348,7 @@ void ScriptEditorPanel::RenderMenuBar() {
             // Show Whitespace toggle
             if (ImGui::MenuItem("Show Whitespace", nullptr, &show_whitespace_)) {
                 for (auto& tab : tabs_) {
-                    tab->editor.SetShowWhitespaces(show_whitespace_);
+                    tab->editor.SetShowWhitespace(show_whitespace_);
                 }
                 if (on_settings_changed_callback_) on_settings_changed_callback_();
             }
@@ -427,49 +380,6 @@ void ScriptEditorPanel::RenderMenuBar() {
     }
 }
 
-void ScriptEditorPanel::ApplyThemeToAllTabs() {
-    TextEditor::Palette palette;
-    const char* theme_name = "Unknown";
-
-    switch (current_theme_) {
-        case EditorTheme::Dark:
-            palette = TextEditor::GetDarkPalette();
-            theme_name = "Dark";
-            break;
-        case EditorTheme::Light:
-            palette = TextEditor::GetLightPalette();
-            theme_name = "Light";
-            break;
-        case EditorTheme::RetroBlu:
-            palette = TextEditor::GetRetroBluePalette();
-            theme_name = "Retro Blue";
-            break;
-        case EditorTheme::Monokai:
-            palette = GetMonokaiPalette();
-            theme_name = "Monokai";
-            break;
-        case EditorTheme::Dracula:
-            palette = GetDraculaPalette();
-            theme_name = "Dracula";
-            break;
-        case EditorTheme::OneDark:
-            palette = GetOneDarkPalette();
-            theme_name = "One Dark";
-            break;
-        case EditorTheme::GitHub:
-            palette = GetGitHubPalette();
-            theme_name = "GitHub";
-            break;
-    }
-
-    for (auto& tab : tabs_) {
-        tab->editor.SetPalette(palette);
-        tab->cell_manager.ApplyEditorPalette(palette);
-    }
-
-    spdlog::info("Applied editor theme: {}", theme_name);
-}
-
 void ScriptEditorPanel::ApplyTabSizeToAllTabs() {
     for (auto& tab : tabs_) {
         tab->editor.SetTabSize(tab_size_);
@@ -480,7 +390,7 @@ void ScriptEditorPanel::ApplyTabSizeToAllTabs() {
 
 void ScriptEditorPanel::ApplySyntaxHighlightingToAllTabs() {
     for (auto& tab : tabs_) {
-        tab->editor.SetColorizerEnable(syntax_highlighting_);
+        tab->editor.SetColorize(syntax_highlighting_);
         tab->cell_manager.ApplySyntaxHighlighting(syntax_highlighting_);
     }
     spdlog::info("Syntax highlighting: {}", syntax_highlighting_ ? "enabled" : "disabled");
@@ -524,8 +434,7 @@ void ScriptEditorPanel::RenderTabBar() {
             }
         }
 
-        // Clear request_focus_ after processing all tabs
-        request_focus_ = false;
+        // request_focus_ is cleared by the code view once it takes focus.
 
         // "+" button to add new tab
         if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) {
@@ -687,62 +596,36 @@ void ScriptEditorPanel::RenderEditor() {
         ImGui::PushFont(mono_font);
         pushed_editor_font = true;
     }
-    // Calculate editor size (leave room for status bar and minimap)
-    float available_height = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
-    float available_width = ImGui::GetContentRegionAvail().x;
-    float gutter_width = 20.0f;  // Breakpoint gutter width
-
-    // Hide horizontal scrollbar by making it invisible
-    ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive, ImVec4(0, 0, 0, 0));
-
-    // Breakpoint gutter on the left
-    RenderScriptBreakpointGutter(available_height);
-    ImGui::SameLine();
-
-    // Temporarily disable keyboard input if we just accepted a completion
-    // This prevents Tab/Enter from being passed to the editor
-    if (completion_just_accepted_) {
-        tab->editor.SetHandleKeyboardInputs(false);
+    // Size: everything above the status bar. The code view draws its own
+    // gutter (breakpoints, numbers, folds), scrollbars and minimap.
+    const float available_height = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
+    CodeEditor& code = tab->editor;
+    code.SetBreakpoints(&tab->breakpoints);
+    code.on_gutter_click = [this](int line) {
+        if (active_tab_index_ < 0) return;
+        auto& t = tabs_[active_tab_index_];
+        t->editor.Doc().SetCursor({line, 0});
+        ToggleBreakpointAtCursor();
+    };
+    const std::string file_id = tab->filepath.empty() ? tab->filename : tab->filepath;
+    code.SetDebugLine(debug_mode_active_ && debug_current_cell_ == file_id ? debug_current_line_ - 1 : -1);
+    code.SetShowMinimap(show_minimap_);
+    // A completion just accepted with Tab must not also type the Tab.
+    code.SetKeyboardEnabled(!completion_just_accepted_);
+    if (request_focus_) {
+        code.RequestFocus();
+        request_focus_ = false;
     }
-
-    if (show_minimap_) {
-        // Layout: Gutter | Editor | Minimap
-        float editor_width = available_width - minimap_width_ - gutter_width - 8.0f;  // 8px for separators
-
-        // Editor in the middle
-        ImGui::BeginChild("##editor_region", ImVec2(editor_width, available_height), false,
-                          ImGuiWindowFlags_NoScrollbar);
-        tab->editor.Render("##editor", ImVec2(0, 0));
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        // Minimap on the right
-        RenderMinimap();
-    } else {
-        // Layout: Gutter | Editor
-        float editor_width = available_width - gutter_width - 4.0f;
-        ImVec2 editor_size = ImVec2(editor_width, available_height);
-        tab->editor.Render("##editor", editor_size);
-    }
-
-    // Re-enable keyboard input and clear the flag
-    if (completion_just_accepted_) {
-        tab->editor.SetHandleKeyboardInputs(true);
-        completion_just_accepted_ = false;
-    }
-
-    ImGui::PopStyleColor(4);
+    const bool text_changed = code.Render("##code", ImVec2(0.0f, available_height));
+    completion_just_accepted_ = false;
 
     if (pushed_editor_font) {
         ImGui::PopFont();
     }
-    // Track modifications and auto-completion
-    if (tab->editor.IsTextChanged()) {
-        tab->is_modified = true;
+    // Modified follows the document (undoing back to the saved text clears it).
+    tab->is_modified = tab->is_new ? !tab->editor.Doc().Text().empty() || tab->editor.Doc().Modified()
+                                   : tab->editor.Doc().Modified();
+    if (text_changed) {
 
         // Skip auto-trigger if popup was just opened this frame (Ctrl+Space inserts space)
         if (!completion_just_opened_) {
@@ -756,182 +639,6 @@ void ScriptEditorPanel::RenderEditor() {
 
     // Render auto-completion popup (if open)
     RenderCompletionPopup();
-}
-
-void ScriptEditorPanel::RenderMinimap() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
-
-    auto& tab = tabs_[active_tab_index_];
-
-    // Get the text content and line count
-    int total_lines = tab->editor.GetTotalLines();
-    if (total_lines == 0) return;
-
-    // Calculate available height for minimap - use full height (after horizontal scrollbar)
-    float available_height = ImGui::GetContentRegionAvail().y;
-
-    // Get theme-based colors from the current palette
-    TextEditor::Palette palette;
-    switch (current_theme_) {
-        case EditorTheme::Monokai:   palette = GetMonokaiPalette(); break;
-        case EditorTheme::Dracula:   palette = GetDraculaPalette(); break;
-        case EditorTheme::OneDark:   palette = GetOneDarkPalette(); break;
-        case EditorTheme::GitHub:    palette = GetGitHubPalette(); break;
-        case EditorTheme::Dark:      palette = TextEditor::GetDarkPalette(); break;
-        case EditorTheme::Light:     palette = TextEditor::GetLightPalette(); break;
-        case EditorTheme::RetroBlu:  palette = TextEditor::GetRetroBluePalette(); break;
-        default:                     palette = GetMonokaiPalette(); break;
-    }
-
-    // Extract colors from palette (palette values are ABGR format)
-    // Convert to RGBA for ImGui
-    auto PaletteToImU32 = [](uint32_t abgr, uint8_t alpha_override = 0) -> ImU32 {
-        uint8_t a = alpha_override ? alpha_override : ((abgr >> 24) & 0xFF);
-        uint8_t b = (abgr >> 16) & 0xFF;
-        uint8_t g = (abgr >> 8) & 0xFF;
-        uint8_t r = abgr & 0xFF;
-        return IM_COL32(r, g, b, a);
-    };
-
-    // Get colors from palette with reduced alpha for minimap
-    ImU32 bg_color = PaletteToImU32(palette[(int)TextEditor::PaletteIndex::Background]);
-    ImU32 keyword_color = PaletteToImU32(palette[(int)TextEditor::PaletteIndex::Keyword], 200);
-    ImU32 string_color = PaletteToImU32(palette[(int)TextEditor::PaletteIndex::String], 200);
-    ImU32 comment_color = PaletteToImU32(palette[(int)TextEditor::PaletteIndex::Comment], 180);
-    ImU32 default_color = PaletteToImU32(palette[(int)TextEditor::PaletteIndex::Default], 180);
-
-    // Darken background slightly for minimap
-    uint8_t bg_r = (bg_color >> 0) & 0xFF;
-    uint8_t bg_g = (bg_color >> 8) & 0xFF;
-    uint8_t bg_b = (bg_color >> 16) & 0xFF;
-    bg_r = static_cast<uint8_t>(bg_r * 0.85f);
-    bg_g = static_cast<uint8_t>(bg_g * 0.85f);
-    bg_b = static_cast<uint8_t>(bg_b * 0.85f);
-    ImU32 minimap_bg_color = IM_COL32(bg_r, bg_g, bg_b, 255);
-
-    // Begin minimap region
-    ImGui::BeginChild("##minimap", ImVec2(minimap_width_, available_height), true,
-                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-
-    ImVec2 minimap_pos = ImGui::GetCursorScreenPos();
-    ImVec2 minimap_size = ImGui::GetContentRegionAvail();
-    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-
-    // Background color (slightly darker than editor background, theme-aware)
-    draw_list->AddRectFilled(minimap_pos,
-                             ImVec2(minimap_pos.x + minimap_size.x, minimap_pos.y + minimap_size.y),
-                             minimap_bg_color);
-
-    // Calculate line height in minimap (each line is 2 pixels minimum)
-    float line_height = std::max(1.0f, minimap_size.y / static_cast<float>(total_lines));
-    if (line_height > 3.0f) line_height = 3.0f;  // Cap at 3 pixels per line
-
-    // Get text lines for rendering
-    auto text_lines = tab->editor.GetTextLines();
-
-    // Render minimap lines
-    float y_offset = 0.0f;
-    for (int i = 0; i < total_lines && y_offset < minimap_size.y; i++) {
-        if (i < static_cast<int>(text_lines.size())) {
-            const std::string& line = text_lines[i];
-
-            // Determine line color based on content (simple syntax detection)
-            ImU32 line_color = default_color;
-            if (line.find('#') != std::string::npos) {
-                line_color = comment_color;
-            } else if (line.find("def ") != std::string::npos ||
-                       line.find("class ") != std::string::npos ||
-                       line.find("import ") != std::string::npos ||
-                       line.find("from ") != std::string::npos ||
-                       line.find("if ") != std::string::npos ||
-                       line.find("for ") != std::string::npos ||
-                       line.find("while ") != std::string::npos ||
-                       line.find("return ") != std::string::npos) {
-                line_color = keyword_color;
-            } else if (line.find('"') != std::string::npos || line.find('\'') != std::string::npos) {
-                line_color = string_color;
-            }
-
-            // Calculate line width (proportional to character count, max = minimap width - 4)
-            float line_width = std::min(static_cast<float>(line.length()) * 0.8f, minimap_size.x - 4.0f);
-            if (line_width > 2.0f) {
-                draw_list->AddRectFilled(
-                    ImVec2(minimap_pos.x + 2.0f, minimap_pos.y + y_offset),
-                    ImVec2(minimap_pos.x + 2.0f + line_width, minimap_pos.y + y_offset + line_height - 1.0f),
-                    line_color
-                );
-            }
-        }
-        y_offset += line_height;
-    }
-
-    // Draw viewport indicator (visible region)
-    auto cursor_pos = tab->editor.GetCursorPosition();
-    int visible_lines = static_cast<int>(available_height / (gui::GetEditorMonoFontPixelSize(font_scale_) + ImGui::GetStyle().ItemSpacing.y));
-    int first_visible_line = std::max(0, cursor_pos.mLine - visible_lines / 2);
-
-    float viewport_top = first_visible_line * line_height;
-    float viewport_height = visible_lines * line_height;
-
-    // Clamp viewport indicator to minimap bounds
-    viewport_top = std::min(viewport_top, minimap_size.y - viewport_height);
-    viewport_top = std::max(0.0f, viewport_top);
-
-    // Get viewport colors from theme (based on selection color)
-    ImU32 selection_color = PaletteToImU32(palette[(int)TextEditor::PaletteIndex::Selection]);
-    uint8_t sel_r = (selection_color >> 0) & 0xFF;
-    uint8_t sel_g = (selection_color >> 8) & 0xFF;
-    uint8_t sel_b = (selection_color >> 16) & 0xFF;
-    ImU32 viewport_fill = IM_COL32(sel_r, sel_g, sel_b, 60);
-    ImU32 viewport_border = IM_COL32(
-        std::min(255, sel_r + 30),
-        std::min(255, sel_g + 30),
-        std::min(255, sel_b + 30),
-        150
-    );
-
-    // Draw viewport rectangle
-    draw_list->AddRectFilled(
-        ImVec2(minimap_pos.x, minimap_pos.y + viewport_top),
-        ImVec2(minimap_pos.x + minimap_size.x, minimap_pos.y + viewport_top + viewport_height),
-        viewport_fill
-    );
-    draw_list->AddRect(
-        ImVec2(minimap_pos.x, minimap_pos.y + viewport_top),
-        ImVec2(minimap_pos.x + minimap_size.x, minimap_pos.y + viewport_top + viewport_height),
-        viewport_border
-    );
-
-    // Handle click to navigate
-    if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        ImVec2 mouse_pos = ImGui::GetMousePos();
-        float relative_y = mouse_pos.y - minimap_pos.y;
-        int target_line = static_cast<int>(relative_y / line_height);
-        target_line = std::clamp(target_line, 0, total_lines - 1);
-
-        // Navigate to the clicked line
-        TextEditor::Coordinates new_pos;
-        new_pos.mLine = target_line;
-        new_pos.mColumn = 0;
-        tab->editor.SetCursorPosition(new_pos);
-    }
-
-    // Handle drag for smooth scrolling
-    if (ImGui::IsWindowHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-        ImVec2 mouse_pos = ImGui::GetMousePos();
-        float relative_y = mouse_pos.y - minimap_pos.y;
-        int target_line = static_cast<int>(relative_y / line_height);
-        target_line = std::clamp(target_line, 0, total_lines - 1);
-
-        TextEditor::Coordinates new_pos;
-        new_pos.mLine = target_line;
-        new_pos.mColumn = 0;
-        tab->editor.SetCursorPosition(new_pos);
-    }
-
-    ImGui::EndChild();
 }
 
 void ScriptEditorPanel::RenderStatusBar() {
@@ -964,12 +671,16 @@ void ScriptEditorPanel::RenderStatusBar() {
                 cell_count,
                 tab->is_modified ? "Modified" : "Saved");
         } else {
-            auto cursor_pos = tab->editor.GetCursorPosition();
-            ImGui::Text("Line: %d | Column: %d | %s | %d lines",
-                cursor_pos.mLine + 1,
-                cursor_pos.mColumn + 1,
-                tab->is_modified ? "Modified" : "Saved",
-                tab->editor.GetTotalLines());
+            const editor::Document& doc = tab->editor.Doc();
+            const editor::Pos head = doc.Primary().head;
+            const int column = editor::VisualColumn(doc.Line(head.line), head.col, doc.Settings().tab_size) + 1;
+            if (doc.CursorCount() > 1) {
+                ImGui::Text("Line: %d | Column: %d | %d cursors | %s | %d lines", head.line + 1, column,
+                            doc.CursorCount(), tab->is_modified ? "Modified" : "Saved", doc.LineCount());
+            } else {
+                ImGui::Text("Line: %d | Column: %d | %s | %d lines", head.line + 1, column,
+                            tab->is_modified ? "Modified" : "Saved", doc.LineCount());
+            }
         }
 
         // Script running indicator
@@ -1095,8 +806,7 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
         close_tab_index_ = active_tab_index_;
     }
 
-    // Edit operations (handled by TextEditor internally, but we can add extra handling)
-    // The TextEditor component already handles Ctrl+Z, Ctrl+Y, Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+A
+    // Typing, moving, selecting, clipboard and undo keys are the code view's.
 
     // Run, debug and notebook-toggle keys: one table decides, once per
     // frame (TOFIX133 P0 item 7; Preferences > Shortcuts lists the same).

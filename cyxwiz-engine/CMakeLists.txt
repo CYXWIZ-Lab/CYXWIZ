@@ -368,6 +368,7 @@ set(ENGINE_SOURCES
     src/gui/frame_metrics.cpp
     src/gui/panel_memory.cpp
     src/gui/python_language.cpp
+    src/gui/code_editor.cpp
     src/gui/ui_platform.cpp
     src/gui/dialogs/create_project_dialog.cpp
     src/gui/dialogs/new_script_dialog.cpp
@@ -389,7 +390,6 @@ set(ENGINE_SOURCES
     src/gui/panels/script_editor_cells.cpp
     src/gui/panels/script_editor_debug.cpp
     src/gui/panels/script_editor_completion.cpp
-    src/gui/panels/script_editor_language.cpp
     src/gui/panels/script_editor_save.cpp
     src/gui/panels/script_editor_execution.cpp
     src/gui/panels/script_editor_files.cpp

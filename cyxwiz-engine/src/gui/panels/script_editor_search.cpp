@@ -1,5 +1,5 @@
 // Script Editor find and replace operations. Matching lives in
-// core/text_search (TOFIX133 P0 item 13); this file maps it to the editor.
+// core/text_search (TOFIX133 P0 item 13); this file maps it to the document.
 
 #include "script_editor.h"
 
@@ -20,21 +20,32 @@ textsearch::Options MakeOptions(bool case_sensitive, bool whole_word, bool use_r
     return o;
 }
 
-TextEditor::Coordinates ToCoordinates(const std::string& text, size_t offset, int tab_size) {
-    const auto p = textsearch::ToPosition(text, offset, tab_size);
-    return TextEditor::Coordinates(p.line, p.column);
+// The document's columns are byte offsets, so a text offset maps directly.
+editor::Pos ToPos(const std::string& text, size_t offset) {
+    editor::Pos p;
+    size_t line_start = 0;
+    for (size_t i = 0; i < offset && i < text.size(); ++i) {
+        if (text[i] == '\n') {
+            ++p.line;
+            line_start = i + 1;
+        }
+    }
+    p.col = static_cast<int>(std::min(offset, text.size()) - line_start);
+    return p;
 }
 
-size_t ToOffset(const std::string& text, const TextEditor::Coordinates& c, int tab_size) {
-    return textsearch::ToOffset(text, {c.mLine, c.mColumn}, tab_size);
+size_t ToOffset(const editor::Document& doc, editor::Pos p) {
+    size_t offset = 0;
+    for (int l = 0; l < p.line && l < doc.LineCount(); ++l) offset += doc.Line(l).size() + 1;
+    return offset + static_cast<size_t>(p.col);
 }
 
-void SelectMatch(TextEditor& editor, const std::string& text, const textsearch::Match& m) {
-    const int tab = editor.GetTabSize();
-    const auto start = ToCoordinates(text, m.pos, tab);
-    const auto end = ToCoordinates(text, m.pos + m.len, tab);
-    editor.SetSelection(start, end);
-    editor.SetCursorPosition(end);
+void SelectMatch(CodeEditor& code, const std::string& text, const textsearch::Match& m, bool caret_at_start) {
+    const editor::Pos a = ToPos(text, m.pos);
+    const editor::Pos b = ToPos(text, m.pos + m.len);
+    code.Doc().SetSelections({editor::Selection{caret_at_start ? b : a, caret_at_start ? a : b, -1}});
+    code.Folds().Reveal(a.line);
+    code.ScrollToCursor();
 }
 }  // namespace
 
@@ -49,12 +60,11 @@ bool ScriptEditorPanel::FindInEditor(const std::string& search_text, bool case_s
     last_whole_word_ = whole_word;
     last_use_regex_ = use_regex;
 
-    auto& editor = tabs_[active_tab_index_]->editor;
-    const std::string text = editor.GetText();
-    const int tab = editor.GetTabSize();
+    CodeEditor& code = tabs_[active_tab_index_]->editor;
+    const std::string text = code.Doc().Text();
     // From the start of the selection, so a fresh search finds the match
     // under the cursor; FindNext starts after it.
-    const size_t from = ToOffset(text, editor.HasSelection() ? editor.GetSelectionStart() : editor.GetCursorPosition(), tab);
+    const size_t from = ToOffset(code.Doc(), code.Doc().Primary().Start());
     std::string error;
     const auto m = textsearch::FindNext(text, search_text, from, MakeOptions(case_sensitive, whole_word, use_regex), &error);
     if (!error.empty()) spdlog::warn("{}", error);
@@ -62,7 +72,7 @@ bool ScriptEditorPanel::FindInEditor(const std::string& search_text, bool case_s
         spdlog::info("'{}' not found", search_text);
         return false;
     }
-    SelectMatch(editor, text, *m);
+    SelectMatch(code, text, *m, false);
     return true;
 }
 
@@ -70,15 +80,15 @@ bool ScriptEditorPanel::FindNext() {
     if (last_search_text_.empty() || !IsActiveTabTextMode()) {
         return false;
     }
-    auto& editor = tabs_[active_tab_index_]->editor;
-    const std::string text = editor.GetText();
-    const size_t from = ToOffset(text, editor.GetCursorPosition(), editor.GetTabSize());
+    CodeEditor& code = tabs_[active_tab_index_]->editor;
+    const std::string text = code.Doc().Text();
+    const size_t from = ToOffset(code.Doc(), code.Doc().Primary().End());
     std::string error;
     const auto m = textsearch::FindNext(text, last_search_text_, from,
                                         MakeOptions(last_case_sensitive_, last_whole_word_, last_use_regex_), &error);
     if (!error.empty()) spdlog::warn("{}", error);
     if (!m) return false;
-    SelectMatch(editor, text, *m);
+    SelectMatch(code, text, *m, false);
     return true;
 }
 
@@ -96,18 +106,16 @@ bool ScriptEditorPanel::FindPrevious() {
     if (last_search_text_.empty() || !IsActiveTabTextMode()) {
         return false;
     }
-    auto& editor = tabs_[active_tab_index_]->editor;
-    const std::string text = editor.GetText();
-    const int tab = editor.GetTabSize();
+    CodeEditor& code = tabs_[active_tab_index_]->editor;
+    const std::string text = code.Doc().Text();
     // Before the current match (the selection), else before the cursor.
-    const size_t before = ToOffset(text, editor.HasSelection() ? editor.GetSelectionStart() : editor.GetCursorPosition(), tab);
+    const size_t before = ToOffset(code.Doc(), code.Doc().Primary().Start());
     std::string error;
     const auto m = textsearch::FindPrevious(text, last_search_text_, before,
                                             MakeOptions(last_case_sensitive_, last_whole_word_, last_use_regex_), &error);
     if (!error.empty()) spdlog::warn("{}", error);
     if (!m) return false;
-    SelectMatch(editor, text, *m);
-    editor.SetCursorPosition(ToCoordinates(text, m->pos, tab));
+    SelectMatch(code, text, *m, true);
     return true;
 }
 
@@ -116,17 +124,15 @@ bool ScriptEditorPanel::Replace(const std::string& search_text, const std::strin
     if (!IsActiveTabTextMode()) {
         return false;
     }
-    auto& editor = tabs_[active_tab_index_]->editor;
+    editor::Document& doc = tabs_[active_tab_index_]->editor.Doc();
     const auto options = MakeOptions(case_sensitive, whole_word, use_regex);
 
     // Replace the selection when it is a whole match (regex groups expanded),
     // then move to the next match; otherwise only move to the next match.
-    if (editor.HasSelection()) {
-        if (const auto replacement =
-                textsearch::ReplacementFor(editor.GetSelectedText(), search_text, replace_text, options)) {
-            editor.Delete();
-            editor.InsertText(*replacement);
-            tabs_[active_tab_index_]->is_modified = true;
+    const std::string selected = doc.SelectedText();
+    if (!selected.empty()) {
+        if (const auto replacement = textsearch::ReplacementFor(selected, search_text, replace_text, options)) {
+            doc.Paste(*replacement);
         }
     }
     return FindInEditor(search_text, case_sensitive, whole_word, use_regex);
@@ -137,20 +143,21 @@ int ScriptEditorPanel::ReplaceAll(const std::string& search_text, const std::str
     if (!IsActiveTabTextMode() || search_text.empty()) {
         return 0;
     }
-    auto& editor = tabs_[active_tab_index_]->editor;
+    editor::Document& doc = tabs_[active_tab_index_]->editor.Doc();
     int count = 0;
     std::string error;
-    const std::string result = textsearch::ReplaceAll(editor.GetText(), search_text, replace_text,
+    const std::string text = doc.Text();
+    const std::string result = textsearch::ReplaceAll(text, search_text, replace_text,
                                                       MakeOptions(case_sensitive, whole_word, use_regex), &count, &error);
     if (!error.empty()) {
         spdlog::warn("{}", error);
         return 0;
     }
     if (count > 0) {
-        const auto cursor = editor.GetCursorPosition();
-        editor.SetText(result);
-        editor.SetCursorPosition(cursor);
-        tabs_[active_tab_index_]->is_modified = true;
+        // One undoable step (it used to replace the whole text and lose undo).
+        const editor::Pos cursor = doc.Primary().head;
+        doc.Replace({0, 0}, {doc.LineCount() - 1, static_cast<int>(doc.Line(doc.LineCount() - 1).size())}, result);
+        doc.SetCursor(doc.Clamp(cursor));
         spdlog::info("Replaced {} occurrences of '{}' with '{}'", count, search_text, replace_text);
     }
     return count;

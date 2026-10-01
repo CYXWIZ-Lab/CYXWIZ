@@ -180,7 +180,6 @@ public:
     void SetAutoSaveEnabled(bool enabled) { auto_save_enabled_ = enabled; }
 
     // Editor settings callbacks (for Preferences -> Script Editor synchronization)
-    void SetEditorThemeCallback(std::function<void(int)> callback) { editor_theme_callback_ = callback; }
     void SetEditorTabSizeCallback(std::function<void(int)> callback) { editor_tab_size_callback_ = callback; }
     void SetEditorFontScaleCallback(std::function<void(float)> callback) { editor_font_scale_callback_ = callback; }
     void SetEditorShowWhitespaceCallback(std::function<void(bool)> callback) { editor_show_whitespace_callback_ = callback; }
@@ -315,7 +314,6 @@ public:
     void SetPythonDiagnosticsCallback(std::function<std::string()> callback) { python_diagnostics_callback_ = callback; }
 
     // Initialize editor settings from script editor's current values
-    void SetEditorTheme(int theme) { editor_theme_ = theme; }
     void SetEditorTabSize(int size) { editor_tab_size_ = size; }
     void SetEditorFontScale(float scale);  // Converts scale to font size
     void SetMaterializationMemoryLimitBytes(uint64_t bytes) {
@@ -655,7 +653,6 @@ private:
     int go_to_line_number_ = 1;
 
     // Editor preferences
-    int editor_theme_ = 3;  // Default to Monokai (index 3)
     int editor_font_size_ = 16;  // Maps to editor atlas sizes: 14, 16, 20, 24 px
     int editor_tab_size_ = 4;
     bool editor_word_wrap_ = false;
@@ -666,7 +663,6 @@ private:
     bool editor_show_minimap_ = false;
 
     // Editor settings callbacks
-    std::function<void(int)> editor_theme_callback_;
     std::function<void(int)> editor_tab_size_callback_;
     std::function<void(float)> editor_font_scale_callback_;
     std::function<void(bool)> editor_show_whitespace_callback_;

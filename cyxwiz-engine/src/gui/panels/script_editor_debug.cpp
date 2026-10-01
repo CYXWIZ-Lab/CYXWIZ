@@ -104,181 +104,6 @@ void ScriptEditorPanel::RenderDebugToolbar() {
     ImGui::PopStyleColor();
 }
 
-void ScriptEditorPanel::RenderBreakpointGutter(Cell& cell, int /*cell_index*/) {
-    if (cell.type != CellType::Code) return;
-
-    int line_count = cell.editor.GetTotalLines();
-    if (line_count == 0) line_count = 1;
-
-    float line_height = ImGui::GetTextLineHeightWithSpacing();
-    float gutter_width = 20.0f;
-
-    ImGui::BeginChild("##bp_gutter", ImVec2(gutter_width, line_count * line_height), ImGuiChildFlags_None);
-
-    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    ImVec2 cursor_start = ImGui::GetCursorScreenPos();
-
-    for (int line = 0; line < line_count; ++line) {
-        ImVec2 line_pos = ImVec2(cursor_start.x, cursor_start.y + line * line_height);
-        ImVec2 center = ImVec2(line_pos.x + gutter_width * 0.5f, line_pos.y + line_height * 0.5f);
-        float radius = 5.0f;
-
-        // Check if this line has a breakpoint
-        bool has_breakpoint = std::find(cell.breakpoints.begin(), cell.breakpoints.end(), line + 1) != cell.breakpoints.end();
-
-        // Check if this is the current debug line
-        bool is_current_line = debug_mode_active_ &&
-                               debug_current_cell_ == cell.id &&
-                               debug_current_line_ == line + 1;
-
-        // Draw hover indicator
-        ImGui::SetCursorScreenPos(line_pos);
-        ImGui::InvisibleButton(("##bp_line_" + std::to_string(line)).c_str(), ImVec2(gutter_width, line_height));
-
-        if (ImGui::IsItemHovered()) {
-            draw_list->AddCircle(center, radius, IM_COL32(150, 150, 150, 150), 12, 1.0f);
-
-            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-                // Toggle breakpoint
-                if (has_breakpoint) {
-                    cell.breakpoints.erase(
-                        std::remove(cell.breakpoints.begin(), cell.breakpoints.end(), line + 1),
-                        cell.breakpoints.end()
-                    );
-
-                    // Notify debugger
-                    if (debugger_) {
-                        auto breakpoints = debugger_->GetBreakpointsForCell(cell.id);
-                        for (const auto& bp : breakpoints) {
-                            if (bp.line == line + 1) {
-                                debugger_->RemoveBreakpoint(bp.id);
-                                break;
-                            }
-                        }
-                    }
-                } else {
-                    cell.breakpoints.push_back(line + 1);
-
-                    // Notify debugger
-                    if (debugger_) {
-                        debugger_->AddBreakpoint(cell.id, line + 1);
-                    }
-                }
-            }
-        }
-
-        // Draw breakpoint indicator
-        if (has_breakpoint) {
-            draw_list->AddCircleFilled(center, radius, IM_COL32(200, 50, 50, 255), 12);
-        }
-
-        // Draw current line indicator (arrow)
-        if (is_current_line) {
-            ImVec2 arrow_points[3] = {
-                ImVec2(center.x - 4, center.y - 4),
-                ImVec2(center.x + 4, center.y),
-                ImVec2(center.x - 4, center.y + 4)
-            };
-            draw_list->AddTriangleFilled(arrow_points[0], arrow_points[1], arrow_points[2],
-                                         IM_COL32(255, 255, 0, 255));
-        }
-    }
-
-    ImGui::EndChild();
-}
-
-void ScriptEditorPanel::RenderScriptBreakpointGutter(float height) {
-    if (tabs_.empty() || active_tab_index_ < 0) return;
-
-    auto& tab = tabs_[active_tab_index_];
-    int line_count = tab->editor.GetTotalLines();
-    if (line_count == 0) line_count = 1;
-
-    float line_height = ImGui::GetTextLineHeightWithSpacing();
-    float gutter_width = 20.0f;
-
-    ImGui::BeginChild("##script_bp_gutter", ImVec2(gutter_width, height), ImGuiChildFlags_None,
-                      ImGuiWindowFlags_NoScrollbar);
-
-    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    ImVec2 cursor_start = ImGui::GetCursorScreenPos();
-
-    // Calculate visible lines based on height
-    int visible_lines = static_cast<int>(height / line_height) + 1;
-    int start_line = 0;  // Would need TextEditor scroll position for accurate sync
-
-    for (int line = start_line; line < std::min(start_line + visible_lines + 5, line_count); ++line) {
-        ImVec2 line_pos = ImVec2(cursor_start.x, cursor_start.y + (line - start_line) * line_height);
-        ImVec2 center = ImVec2(line_pos.x + gutter_width * 0.5f, line_pos.y + line_height * 0.5f);
-        float radius = 5.0f;
-
-        int line_number = line + 1;  // 1-based line numbers
-
-        // Check if this line has a breakpoint
-        bool has_breakpoint = std::find(tab->breakpoints.begin(), tab->breakpoints.end(), line_number) != tab->breakpoints.end();
-
-        // Check if this is the current debug line
-        std::string file_id = tab->filepath.empty() ? tab->filename : tab->filepath;
-        bool is_current_line = debug_mode_active_ &&
-                               debug_current_cell_ == file_id &&
-                               debug_current_line_ == line_number;
-
-        // Draw hover indicator and handle clicks
-        ImGui::SetCursorScreenPos(line_pos);
-        ImGui::InvisibleButton(("##script_bp_line_" + std::to_string(line)).c_str(), ImVec2(gutter_width, line_height));
-
-        if (ImGui::IsItemHovered()) {
-            draw_list->AddCircle(center, radius, IM_COL32(150, 150, 150, 150), 12, 1.0f);
-
-            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-                // Toggle breakpoint
-                if (has_breakpoint) {
-                    tab->breakpoints.erase(
-                        std::remove(tab->breakpoints.begin(), tab->breakpoints.end(), line_number),
-                        tab->breakpoints.end()
-                    );
-
-                    // Notify debugger
-                    if (debugger_) {
-                        auto breakpoints = debugger_->GetBreakpointsForCell(file_id);
-                        for (const auto& bp : breakpoints) {
-                            if (bp.line == line_number) {
-                                debugger_->RemoveBreakpoint(bp.id);
-                                break;
-                            }
-                        }
-                    }
-                } else {
-                    tab->breakpoints.push_back(line_number);
-
-                    // Notify debugger
-                    if (debugger_) {
-                        debugger_->AddBreakpoint(file_id, line_number);
-                    }
-                }
-            }
-        }
-
-        // Draw breakpoint indicator
-        if (has_breakpoint) {
-            draw_list->AddCircleFilled(center, radius, IM_COL32(200, 50, 50, 255), 12);
-        }
-
-        // Draw current line indicator (arrow)
-        if (is_current_line) {
-            ImVec2 arrow_points[3] = {
-                ImVec2(center.x - 4, center.y - 4),
-                ImVec2(center.x + 4, center.y),
-                ImVec2(center.x - 4, center.y + 4)
-            };
-            draw_list->AddTriangleFilled(arrow_points[0], arrow_points[1], arrow_points[2],
-                                         IM_COL32(255, 255, 0, 255));
-        }
-    }
-
-    ImGui::EndChild();
-}
-
 // F9 while debugging (TOFIX133 P0 item 7: dispatched once, from
 // HandleKeyboardShortcuts, through core/script_keys).
 void ScriptEditorPanel::ToggleBreakpointAtCursor() {
@@ -293,8 +118,7 @@ void ScriptEditorPanel::ToggleBreakpointAtCursor() {
             Cell& cell = tab->cell_manager.GetCell(tab->selected_cell);
             if (cell.type == CellType::Code) {
                 // Get current cursor line from editor
-                auto coords = cell.editor.GetCursorPosition();
-                int line = coords.mLine + 1; // 1-based
+                int line = cell.editor.Doc().Primary().head.line + 1;  // 1-based
 
                 // Toggle breakpoint
                 auto it = std::find(cell.breakpoints.begin(), cell.breakpoints.end(), line);
@@ -319,8 +143,7 @@ void ScriptEditorPanel::ToggleBreakpointAtCursor() {
         }
     } else {
         // Traditional mode - toggle breakpoint in script
-        auto coords = tab->editor.GetCursorPosition();
-        int line = coords.mLine + 1; // 1-based
+        int line = tab->editor.Doc().Primary().head.line + 1;  // 1-based
 
         std::string file_id = tab->filepath.empty() ? tab->filename : tab->filepath;
 

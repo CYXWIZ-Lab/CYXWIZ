@@ -21,23 +21,7 @@ void ScriptEditorPanel::NewFile() {
     tab->is_new = true;
     tab->is_modified = false;
 
-    auto lang = CreatePythonLanguage();
-    tab->editor.SetLanguageDefinition(lang);
-    // Apply current theme
-    switch (current_theme_) {
-        case EditorTheme::Dark: tab->editor.SetPalette(TextEditor::GetDarkPalette()); break;
-        case EditorTheme::Light: tab->editor.SetPalette(TextEditor::GetLightPalette()); break;
-        case EditorTheme::RetroBlu: tab->editor.SetPalette(TextEditor::GetRetroBluePalette()); break;
-        case EditorTheme::Monokai: tab->editor.SetPalette(GetMonokaiPalette()); break;
-        case EditorTheme::Dracula: tab->editor.SetPalette(GetDraculaPalette()); break;
-        case EditorTheme::OneDark: tab->editor.SetPalette(GetOneDarkPalette()); break;
-        case EditorTheme::GitHub: tab->editor.SetPalette(GetGitHubPalette()); break;
-    }
-    tab->editor.SetShowWhitespaces(show_whitespace_);
-    tab->editor.SetColorizerEnable(syntax_highlighting_);
-    tab->editor.SetTabSize(tab_size_);
-    tab->editor.SetImGuiChildIgnored(false);
-    tab->editor.SetReadOnly(false);
+    ConfigureEditor(tab->editor);
 
     tabs_.push_back(std::move(tab));
     active_tab_index_ = static_cast<int>(tabs_.size()) - 1;
@@ -236,25 +220,7 @@ void ScriptEditorPanel::FinalizeAsyncLoad(
     content = std::move(decoded.text);
     tab->load_failed = false;
 
-    auto lang = CreatePythonLanguage();
-    tab->editor.SetLanguageDefinition(lang);
-
-    // Apply current theme
-    switch (current_theme_) {
-        case EditorTheme::Dark: tab->editor.SetPalette(TextEditor::GetDarkPalette()); break;
-        case EditorTheme::Light: tab->editor.SetPalette(TextEditor::GetLightPalette()); break;
-        case EditorTheme::RetroBlu: tab->editor.SetPalette(TextEditor::GetRetroBluePalette()); break;
-        case EditorTheme::Monokai: tab->editor.SetPalette(GetMonokaiPalette()); break;
-        case EditorTheme::Dracula: tab->editor.SetPalette(GetDraculaPalette()); break;
-        case EditorTheme::OneDark: tab->editor.SetPalette(GetOneDarkPalette()); break;
-        case EditorTheme::GitHub: tab->editor.SetPalette(GetGitHubPalette()); break;
-    }
-
-    tab->editor.SetShowWhitespaces(show_whitespace_);
-    tab->editor.SetColorizerEnable(syntax_highlighting_);
-    tab->editor.SetTabSize(tab_size_);
-    tab->editor.SetImGuiChildIgnored(false);
-    tab->editor.SetReadOnly(false);
+    ConfigureEditor(tab->editor);
     tab->editor.SetText(content);
 
     const std::filesystem::path loaded_path(tab->filepath);
@@ -263,7 +229,6 @@ void ScriptEditorPanel::FinalizeAsyncLoad(
         tab->cell_manager.SetScriptingEngine(scripting_engine_);
         tab->cell_manager.ParseFromCyx(content);
         tab->cell_manager.ApplyTabSize(tab_size_);
-        tab->cell_manager.ApplyEditorPalette(tab->editor.GetPalette());
         tab->cell_manager.ApplySyntaxHighlighting(syntax_highlighting_);
         tab->selected_cell = tab->cell_manager.GetCellCount() > 0 ? 0 : -1;
         tab->editing_cell = -1;
@@ -333,8 +298,8 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
     if (existing_tab_index >= 0) {
         // Update existing tab
         auto& tab = tabs_[existing_tab_index];
-        tab->editor.SetText(code);
-        tab->is_modified = true;
+        tab->editor.Doc().SelectAll();
+        tab->editor.Doc().Paste(code);  // undoable, marks the tab modified
         active_tab_index_ = existing_tab_index;
         request_focus_ = true;
         request_window_focus_ = true;
@@ -348,23 +313,7 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
         tab->is_new = true;
         tab->is_modified = true;  // Has content, mark as modified
 
-        auto lang = CreatePythonLanguage();
-        tab->editor.SetLanguageDefinition(lang);
-        // Apply current theme
-        switch (current_theme_) {
-            case EditorTheme::Dark: tab->editor.SetPalette(TextEditor::GetDarkPalette()); break;
-            case EditorTheme::Light: tab->editor.SetPalette(TextEditor::GetLightPalette()); break;
-            case EditorTheme::RetroBlu: tab->editor.SetPalette(TextEditor::GetRetroBluePalette()); break;
-            case EditorTheme::Monokai: tab->editor.SetPalette(GetMonokaiPalette()); break;
-            case EditorTheme::Dracula: tab->editor.SetPalette(GetDraculaPalette()); break;
-            case EditorTheme::OneDark: tab->editor.SetPalette(GetOneDarkPalette()); break;
-            case EditorTheme::GitHub: tab->editor.SetPalette(GetGitHubPalette()); break;
-        }
-        tab->editor.SetShowWhitespaces(show_whitespace_);
-        tab->editor.SetColorizerEnable(syntax_highlighting_);
-        tab->editor.SetTabSize(tab_size_);
-        tab->editor.SetImGuiChildIgnored(false);
-        tab->editor.SetReadOnly(false);
+        ConfigureEditor(tab->editor);
         tab->editor.SetText(code);
 
         tabs_.push_back(std::move(tab));
@@ -395,6 +344,7 @@ void ScriptEditorPanel::SaveFile() {
     std::string error;
     if (SaveFileContent(tab->filepath, content, tab->format, &error)) {
         tab->is_modified = false;
+        tab->editor.Doc().MarkSaved();
         spdlog::info("Saved file: {}", tab->filepath);
     } else {
         spdlog::error("Could not save {}: {}", tab->filepath, error);
@@ -432,6 +382,7 @@ void ScriptEditorPanel::SaveFileAs() {
         tab->filename = std::filesystem::path(path).filename().string();
         tab->is_new = false;
         tab->is_modified = false;
+        tab->editor.Doc().MarkSaved();
         spdlog::info("Saved file as: {}", path);
     } else {
         spdlog::error("Could not save {}: {}", path, error);

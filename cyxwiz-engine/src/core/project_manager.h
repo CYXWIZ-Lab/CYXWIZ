@@ -19,7 +19,6 @@ namespace cyxwiz {
  */
 struct EditorSettings {
     // Script Editor settings
-    int theme = 3;           // 0=Dark, 1=Light, 2=RetroBlu, 3=Monokai, 4=Dracula, 5=OneDark, 6=GitHub
     float font_scale = 1.3f; // 1.0=Small 14px, 1.3=Medium 16px, 1.6=Large 20px, 2.0=Extra Large 24px
     int tab_size = 4;        // 2, 4, or 8
     bool show_whitespace = true;

@@ -8,7 +8,7 @@
 #include "../../scripting/cell_manager.h"
 #include "../../scripting/debugger.h"
 #include "../../scripting/script_manager.h"
-#include <TextEditor.h>
+#include "../code_editor.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -123,7 +123,6 @@ public:
     void SetWordWrap(bool wrap);
     void SetAutoIndent(bool indent);
     void SetSyntaxHighlighting(bool enabled);
-    void SetTheme(int theme_index);
     void SetShowMinimap(bool show) { show_minimap_ = show; }
     float GetFontScale() const;
     int GetTabSize() const { return tab_size_; }
@@ -131,7 +130,6 @@ public:
     bool GetWordWrap() const { return word_wrap_; }
     bool GetAutoIndent() const { return auto_indent_; }
     bool GetSyntaxHighlighting() const { return syntax_highlighting_; }
-    int GetThemeIndex() const { return static_cast<int>(current_theme_); }
     bool GetShowMinimap() const { return show_minimap_; }
     bool* GetShowMinimapPtr() { return &show_minimap_; }
 
@@ -155,7 +153,7 @@ private:
         std::uint64_t document_id = 0; // Stable across tab reordering and closure
         std::string filename;        // Display name (e.g., "script.cyx")
         std::string filepath;        // Full path (empty if unsaved)
-        TextEditor editor;           // ImGuiColorTextEdit instance
+        CodeEditor editor;           // the code view and its document (TOFIX133 P1)
         bool is_modified;            // Unsaved changes flag
         bool is_new;                 // New file (not saved yet)
 
@@ -212,7 +210,6 @@ private:
     void RenderMenuBar();
     void RenderEditorToolbar();
     void RenderEditor();
-    void RenderMinimap();
     void RenderStatusBar();
     void HandleKeyboardShortcuts() override;
 
@@ -228,8 +225,6 @@ private:
 
     // Debugger UI rendering
     void RenderDebugToolbar();
-    void RenderBreakpointGutter(Cell& cell, int cell_index);
-    void RenderScriptBreakpointGutter(float height);  // For traditional script mode
     void ToggleBreakpointAtCursor();
 
     // File operations helpers
@@ -252,9 +247,6 @@ private:
     std::string GetTabContentForPersistence(EditorTab& tab);
     std::string GetTabExecutableText(EditorTab& tab);
     bool IsTabContentBlank(EditorTab& tab) const;
-
-    // Python language definition for syntax highlighting
-    static TextEditor::LanguageDefinition CreatePythonLanguage();
 
     // Data
     std::vector<std::unique_ptr<EditorTab>> tabs_;
@@ -290,9 +282,7 @@ private:
     std::string running_script_name_;
     std::chrono::steady_clock::time_point running_script_started_{};
 
-    // View settings
-    enum class EditorTheme { Dark, Light, RetroBlu, Monokai, Dracula, OneDark, GitHub };
-    EditorTheme current_theme_ = EditorTheme::Monokai;  // Default to Monokai
+    // View settings (code colours follow the Engine theme, TOFIX133 P1)
     float font_scale_ = 1.3f;  // Medium: 16 px native atlas font for crisp rendering
     bool show_whitespace_ = true;
     bool syntax_highlighting_ = true;
@@ -318,15 +308,9 @@ private:
     void DoCloseFile(int tab_index);  // Internal close after save check passed
 
     // Apply settings to all tabs
-    void ApplyThemeToAllTabs();
     void ApplyTabSizeToAllTabs();
     void ApplySyntaxHighlightingToAllTabs();
-
-    // Custom theme palettes
-    static TextEditor::Palette GetMonokaiPalette();
-    static TextEditor::Palette GetDraculaPalette();
-    static TextEditor::Palette GetOneDarkPalette();
-    static TextEditor::Palette GetGitHubPalette();
+    void ConfigureEditor(CodeEditor& editor) const;  // tab size, whitespace, colouring
 
     // Find/Replace state
     std::string last_search_text_;
@@ -345,7 +329,7 @@ private:
     bool completion_just_accepted_ = false;  // Skip editor keyboard input for one frame after accepting
     int selected_completion_ = 0;
     std::string completion_prefix_;
-    TextEditor::Coordinates completion_start_pos_;
+    editor::Pos completion_start_pos_;
 
     // Focus tracking
     bool is_focused_ = false;

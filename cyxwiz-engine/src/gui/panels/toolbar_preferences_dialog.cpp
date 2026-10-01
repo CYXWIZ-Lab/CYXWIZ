@@ -143,15 +143,11 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Separator();
                     ImGui::Spacing();
 
-                    ImGui::Text("Editor Theme:");
-                    ImGui::SetNextItemWidth(200);
-                    const char* theme_items[] = { "Dark", "Light", "Retro Blue", "Monokai", "Dracula", "One Dark", "GitHub" };
-                    int prev_theme = editor_theme_;
-                    if (ImGui::Combo("##editor_theme", &editor_theme_, theme_items, IM_ARRAYSIZE(theme_items))) {
-                        if (editor_theme_callback_ && editor_theme_ != prev_theme) {
-                            editor_theme_callback_(editor_theme_);
-                        }
-                    }
+                    // Code colours follow the Engine theme (TOFIX133 P1); there is
+                    // no separate editor theme any more.
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("Code colours follow the Engine theme (View > Theme).");
+                    ImGui::PopTextWrapPos();
 
                     ImGui::Spacing();
                     ImGui::Spacing();

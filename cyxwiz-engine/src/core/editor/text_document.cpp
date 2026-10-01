@@ -793,6 +793,29 @@ void Document::Replace(Pos a, Pos b, std::string_view text) {
     ApplyEdits({Edit{a, b, std::string(text)}}, GroupKind::Other, CaretRule::KeepMapped);
 }
 
+void Document::TransformSelections(const std::function<std::string(const std::string&)>& transform) {
+    std::vector<Edit> edits;
+    std::vector<Selection> after;
+    for (const auto& s : selections_) {
+        if (s.Empty()) continue;
+        edits.push_back({s.Start(), s.End(), transform(GetRange(s.Start(), s.End()))});
+    }
+    if (edits.empty()) return;
+    merge_open_ = false;
+    std::vector<int> zero(edits.size(), 0);
+    // Land each cursor at its edit's start, then select the new text.
+    const std::vector<Edit> copy = edits;
+    ApplyEdits(std::move(edits), GroupKind::Other, CaretRule::EndOfInsert, &zero);
+    std::vector<Selection> selected;
+    for (size_t i = 0; i < selections_.size() && i < copy.size(); ++i) {
+        const Pos a = selections_[i].head;
+        selected.push_back(Selection{a, EndOf(a, copy[i].text), -1});
+    }
+    selections_ = std::move(selected);
+    Normalize();
+    if (!undo_.empty()) undo_.back().after = selections_;
+}
+
 // ---------------------------------------------------------------- undo
 
 bool Document::Undo() {

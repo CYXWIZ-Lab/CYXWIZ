@@ -114,7 +114,7 @@ std::filesystem::path ResolvePythonHomeFromInterpreter(const std::filesystem::pa
     return parent;
 }
 
-std::filesystem::path FindPosixSitePackages(const std::filesystem::path& base_root) {
+std::filesystem::path FindPosixSitePackages([[maybe_unused]] const std::filesystem::path& base_root) {
 #ifndef _WIN32
     std::filesystem::path lib_dir = base_root / "lib";
     if (!std::filesystem::exists(lib_dir)) {
@@ -706,8 +706,8 @@ void PythonEngine::ConfigureCustomPythonPath() {
         py::object sys = py::module_::import("sys");
         py::list sys_path = sys.attr("path").cast<py::list>();
         py::object version_info = sys.attr("version_info");
-        int major = py::int_(version_info.attr("major"));
-        int minor = py::int_(version_info.attr("minor"));
+        [[maybe_unused]] int major = py::int_(version_info.attr("major"));  // POSIX stdlib path only
+        [[maybe_unused]] int minor = py::int_(version_info.attr("minor"));
 
         // Get base_prefix - for venvs, read from pyvenv.cfg instead of sys.base_prefix
         // (pybind11 embedded interpreter sets sys.base_prefix incorrectly)

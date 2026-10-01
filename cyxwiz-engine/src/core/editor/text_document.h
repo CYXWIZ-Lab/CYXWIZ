@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -101,6 +102,9 @@ public:
     void DeleteLines();
     // One undo step that replaces [a, b) with `text`; cursors follow.
     void Replace(Pos a, Pos b, std::string_view text);
+    // One undo step: each non-empty selection becomes transform(its text) and
+    // stays selected.
+    void TransformSelections(const std::function<std::string(const std::string&)>& transform);
 
     // ---- Undo.
     bool CanUndo() const { return !undo_.empty(); }

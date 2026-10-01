@@ -326,7 +326,6 @@ namespace cyxwiz {
 EditorSettings EditorSettings::FromJson(const nlohmann::json& j) {
     EditorSettings settings;
     // Script Editor settings
-    settings.theme = j.value("theme", 3);
     settings.font_scale = j.value("font_scale", 1.3f);
     settings.tab_size = j.value("tab_size", 4);
     settings.show_whitespace = j.value("show_whitespace", true);
@@ -345,7 +344,6 @@ EditorSettings EditorSettings::FromJson(const nlohmann::json& j) {
 nlohmann::json EditorSettings::ToJson() const {
     nlohmann::json j;
     // Script Editor settings
-    j["theme"] = theme;
     j["font_scale"] = font_scale;
     j["tab_size"] = tab_size;
     j["show_whitespace"] = show_whitespace;

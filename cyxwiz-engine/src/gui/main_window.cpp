@@ -2511,12 +2511,6 @@ MainWindow::MainWindow()
     });
 
     // Set up editor settings callbacks (Preferences -> Script Editor synchronization)
-    toolbar_->SetEditorThemeCallback([this](int theme_index) {
-        if (script_editor_) {
-            script_editor_->SetTheme(theme_index);
-            spdlog::info("Editor theme changed to index {}", theme_index);
-        }
-    });
 
     toolbar_->SetEditorTabSizeCallback([this](int tab_size) {
         if (script_editor_) {
@@ -2553,7 +2547,6 @@ MainWindow::MainWindow()
 
     // Initialize toolbar editor settings from script editor's current values
     if (script_editor_) {
-        toolbar_->SetEditorTheme(script_editor_->GetThemeIndex());
         toolbar_->SetEditorTabSize(script_editor_->GetTabSize());
         toolbar_->SetEditorFontScale(script_editor_->GetFontScale());
         toolbar_->SetEditorShowWhitespace(script_editor_->GetShowWhitespace());
@@ -2564,7 +2557,6 @@ MainWindow::MainWindow()
         // This syncs changes back to the Preferences dialog and saves to project
         script_editor_->SetOnSettingsChangedCallback([this]() {
             if (toolbar_ && script_editor_) {
-                toolbar_->SetEditorTheme(script_editor_->GetThemeIndex());
                 toolbar_->SetEditorTabSize(script_editor_->GetTabSize());
                 toolbar_->SetEditorFontScale(script_editor_->GetFontScale());
                 toolbar_->SetEditorShowWhitespace(script_editor_->GetShowWhitespace());
@@ -6072,7 +6064,6 @@ void MainWindow::SaveProjectSettings() {
     // Get current editor settings from script editor
     cyxwiz::EditorSettings& settings = pm.GetConfig().editor_settings;
     if (script_editor_) {
-        settings.theme = script_editor_->GetThemeIndex();
         settings.font_scale = script_editor_->GetFontScale();
         settings.tab_size = script_editor_->GetTabSize();
         settings.show_whitespace = script_editor_->GetShowWhitespace();
@@ -6115,7 +6106,6 @@ void MainWindow::LoadProjectSettings() {
 
     // Apply editor settings to script editor
     if (script_editor_) {
-        script_editor_->SetTheme(settings.theme);
         script_editor_->SetTabSize(settings.tab_size);
         script_editor_->SetShowWhitespace(settings.show_whitespace);
         script_editor_->SetWordWrap(settings.word_wrap);
@@ -6125,7 +6115,6 @@ void MainWindow::LoadProjectSettings() {
 
     // Sync settings to toolbar/preferences
     if (toolbar_) {
-        toolbar_->SetEditorTheme(settings.theme);
         toolbar_->SetEditorTabSize(settings.tab_size);
         toolbar_->SetEditorFontScale(gui::CodeTextScale());
         toolbar_->SetEditorShowWhitespace(settings.show_whitespace);
@@ -6155,8 +6144,7 @@ void MainWindow::LoadProjectSettings() {
         script_editor_->SetActiveTabIndex(pm.GetConfig().active_script_index);
     }
 
-    spdlog::info("Loaded project settings (theme={}, font_scale={:.1f}, tab_size={})",
-                 settings.theme, settings.font_scale, settings.tab_size);
+    spdlog::info("Loaded project settings (font_scale={:.1f}, tab_size={})", settings.font_scale, settings.tab_size);
 }
 
 void MainWindow::OnProjectOpened(const std::string& project_root) {

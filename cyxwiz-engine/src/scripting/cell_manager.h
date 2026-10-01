@@ -215,10 +215,6 @@ public:
 
     // ========== Editor Theme ==========
 
-    /**
-     * Apply theme palette to all code cell editors
-     */
-    void ApplyEditorPalette(const TextEditor::Palette& palette);
 
     /**
      * Apply tab size to all code cell editors

@@ -1,7 +1,6 @@
 // Script Editor auto-completion popup and insertion handling.
 
 #include "script_editor.h"
-#include "../../core/text_search.h"
 #include "../../scripting/script_manager.h"
 
 #include <algorithm>
@@ -29,10 +28,10 @@ void ScriptEditorPanel::UpdateAutoCompletion(bool force) {
     // Get current cursor position and line. The editor's column is visual
     // (tabs expanded, one per UTF-8 character); the completer needs a byte
     // index into the line (TOFIX133 P0 item 6).
-    auto cursor_pos = tab->editor.GetCursorPosition();
-    std::string current_line = tab->editor.GetCurrentLineText();
-    const int tab_size = tab->editor.GetTabSize();
-    int col = static_cast<int>(textsearch::ToOffset(current_line, {0, cursor_pos.mColumn}, tab_size));
+    const editor::Document& doc = tab->editor.Doc();
+    const editor::Pos cursor_pos = doc.Primary().head;
+    std::string current_line = doc.Line(cursor_pos.line);
+    int col = cursor_pos.col;  // the document's columns are byte offsets already
 
     // Check if we should show completions (allow empty line/col=0 for force mode)
     if (!force && (col <= 0 || current_line.empty())) {
@@ -67,9 +66,7 @@ void ScriptEditorPanel::UpdateAutoCompletion(bool force) {
 
     // Get prefix and start position
     completion_prefix_ = scripting::ScriptManager::GetWordAtCursor(current_line, col);
-    completion_start_pos_ = cursor_pos;
-    completion_start_pos_.mColumn =
-        textsearch::ToPosition(current_line, static_cast<size_t>(col) - completion_prefix_.length(), tab_size).column;
+    completion_start_pos_ = {cursor_pos.line, col - static_cast<int>(completion_prefix_.length())};
 
     show_completion_popup_ = true;
     completion_just_opened_ = true;  // Prevent immediate close from Ctrl+Space inserting space
@@ -92,7 +89,7 @@ void ScriptEditorPanel::RenderCompletionPopup() {
 
     // Under the cursor, from where the editor drew it this frame (the old
     // position assumed a 45 px gutter and an 80 px header).
-    const ImVec2 cursor_screen = tab->editor.GetCursorScreenPos();
+    const ImVec2 cursor_screen = tab->editor.CursorScreenPos();
     const ImVec2 display_size = ImGui::GetIO().DisplaySize;
     const float popup_x = std::min(cursor_screen.x, display_size.x - 320.0f);
     const float popup_y = std::min(cursor_screen.y + 2.0f, display_size.y - 250.0f);
@@ -189,14 +186,12 @@ void ScriptEditorPanel::ApplyCompletion(const scripting::CompletionItem& item) {
     std::string text_to_insert = item.insert_text.empty() ? item.label : item.insert_text;
 
     // Select the prefix text (from completion_start_pos_ to current cursor)
-    auto cursor_pos = tab->editor.GetCursorPosition();
-    tab->editor.SetSelection(completion_start_pos_, cursor_pos);
+    editor::Document& doc = tab->editor.Doc();
+    const editor::Pos cursor_pos = doc.Primary().head;
+    doc.SetSelections({editor::Selection{completion_start_pos_, cursor_pos, -1}});
 
-    // Delete the selected prefix, then insert completion
-    if (tab->editor.HasSelection()) {
-        tab->editor.Delete();  // Deletes selected text
-    }
-    tab->editor.InsertText(text_to_insert);
+    // Replace the typed prefix with the completion (one undo step).
+    doc.Paste(text_to_insert);
 }
 
 void ScriptEditorPanel::CloseCompletionPopup() {

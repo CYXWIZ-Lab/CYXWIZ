@@ -484,16 +484,6 @@ std::string CellManager::SerializeToCyx() const {
 
 // ========== Editor Theme ==========
 
-void CellManager::ApplyEditorPalette(const TextEditor::Palette& palette) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    for (auto& cell : cells_) {
-        if (cell.type == CellType::Code) {
-            cell.editor.SetPalette(palette);
-        }
-    }
-}
-
 void CellManager::ApplyTabSize(int size) {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -509,7 +499,7 @@ void CellManager::ApplyShowWhitespace(bool show) {
 
     for (auto& cell : cells_) {
         if (cell.type == CellType::Code) {
-            cell.editor.SetShowWhitespaces(show);
+            cell.editor.SetShowWhitespace(show);
         }
     }
 }
@@ -518,7 +508,7 @@ void CellManager::ApplySyntaxHighlighting(bool enabled) {
 
     for (auto& cell : cells_) {
         if (cell.type == CellType::Code) {
-            cell.editor.SetColorizerEnable(enabled);
+            cell.editor.SetColorize(enabled);
         }
     }
 }

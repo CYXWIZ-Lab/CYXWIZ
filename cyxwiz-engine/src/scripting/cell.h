@@ -5,8 +5,7 @@
 #include <functional>
 #include <chrono>
 #include <random>
-#include <TextEditor.h>
-#include "../gui/python_language.h"
+#include "../gui/code_editor.h"
 
 // Use GLAD for cross-platform OpenGL loading
 #include <glad/glad.h>
@@ -111,8 +110,8 @@ struct Cell {
     bool is_selected = false;               // Currently selected
     bool is_editing = false;                // Currently in edit mode
 
-    // Editor instance (for code cells)
-    TextEditor editor;
+    // Code view of the cell (TOFIX133 P1: the Script Editor's own editor)
+    CodeEditor editor;
 
     // Breakpoints (line numbers)
     std::vector<int> breakpoints;
@@ -145,8 +144,8 @@ struct Cell {
 
     // Setup code editor with Python syntax
     void SetupCodeEditor() {
-        editor.SetLanguageDefinition(PythonLanguage());
-        editor.SetShowWhitespaces(false);
+        editor.SetLanguageIsPython(type == CellType::Code);
+        editor.SetShowWhitespace(false);
         editor.SetTabSize(4);
         editor.SetText(source);
     }
@@ -161,6 +160,7 @@ struct Cell {
     // Sync editor from source
     void SyncEditorFromSource() {
         if (type == CellType::Code || type == CellType::Markdown) {
+            editor.SetLanguageIsPython(type == CellType::Code);
             editor.SetText(source);
         }
     }
