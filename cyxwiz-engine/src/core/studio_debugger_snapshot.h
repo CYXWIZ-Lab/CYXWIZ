@@ -79,6 +79,8 @@ struct StudioDebuggerRunInputs {
     std::map<int, std::pair<float, float>> node_positions;
     // Project root for the prepared-data cache shared with Train.
     std::filesystem::path project_root;
+    // Re-prepare the data instead of reusing the cache (one run).
+    bool rebuild_prepared_data = false;
 };
 
 struct StudioDebuggerSnapshot {

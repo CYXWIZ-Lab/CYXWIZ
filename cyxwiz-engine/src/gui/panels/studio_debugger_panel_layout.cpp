@@ -337,6 +337,14 @@ void StudioDebuggerPanel::RenderToolbar() {
     if (ImGui::BeginPopup("StudioDebuggerOptionsPopup")) {
         CardHeading("Debugger options");
         ImGui::Separator();
+        ImGui::TextColored(DebuggerFaint(), "DATA");
+        ImGui::Checkbox("Rebuild prepared data on the next run", &rebuild_prepared_data_next_run_);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("The next run re-prepares the dataset (TF-IDF, encoders, ...)\n"
+                              "instead of reusing the cached copy shared with Train.\n"
+                              "Applies to one run.");
+        }
+        ImGui::Separator();
         ImGui::TextColored(DebuggerFaint(), "VIEW");
         ImGui::Checkbox("Show trace timeline", &trace_drawer_open_);
         if (ImGui::Checkbox("Wide inspector", &inspector_expanded_)) {
@@ -420,6 +428,9 @@ void StudioDebuggerPanel::RenderSessionStatusStrip() {
     }
     if (!run_status_message_.empty()) {
         ImGui::TextColored(DebuggerMuted(), "%s", run_status_message_.c_str());
+    }
+    if (rebuild_prepared_data_next_run_ && !run_in_progress_) {
+        ImGui::TextColored(DebuggerWarning(), ICON_FA_ROTATE " The next run rebuilds the prepared data (no cache).");
     }
     ImGui::PopStyleVar();
 }

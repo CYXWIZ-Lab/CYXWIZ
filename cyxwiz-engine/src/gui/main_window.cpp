@@ -874,6 +874,8 @@ MainWindow::MainWindow()
             std::vector<NodeLink> links;
             cyxwiz::StudioDebuggerRunInputs inputs;
             inputs.project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+            inputs.rebuild_prepared_data =
+                studio_debugger_panel_->ConsumeRebuildPreparedDataRequest();
             if (node_editor_) {
                 nodes = node_editor_->GetNodes();
                 links = node_editor_->GetLinks();
@@ -4793,6 +4795,9 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         cyxwiz::SmokeRunOptions smoke_options;
         smoke_options.cache_config = GraphMaterializationCacheConfig(
             inputs ? inputs->project_root : std::filesystem::path{});
+        if (inputs && inputs->rebuild_prepared_data) {
+            smoke_options.cache_config.mode = cyxwiz::MaterializationCacheMode::Rebuild;
+        }
         smoke_options.should_stop = [&stop_requested]() { return stop_requested(); };
         try {
             session.smoke_result = smoke_executor.RunTextSmoke(

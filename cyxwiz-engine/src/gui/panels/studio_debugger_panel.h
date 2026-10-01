@@ -72,6 +72,12 @@ public:
     bool StartRun(StudioDebuggerRunMode mode, int sample_index, int explain_node_id = -1);
     void RequestStop();
     bool IsRunning() const { return run_in_progress_; }
+    // True once after the user asked the next run to rebuild prepared data.
+    bool ConsumeRebuildPreparedDataRequest() {
+        const bool requested = rebuild_prepared_data_next_run_;
+        rebuild_prepared_data_next_run_ = false;
+        return requested;
+    }
 
     void SetSession(StudioDebuggerSnapshot session);
     void ShowRuntimeProfile();
@@ -206,6 +212,7 @@ private:
     std::string run_comparison_baseline_id_;
     std::string run_comparison_current_id_;
     bool comparison_loading_ = false;
+    bool rebuild_prepared_data_next_run_ = false;
     char trace_search_[128] = {};
     bool trace_attention_only_ = false;
     bool trace_drawer_open_ = false;
