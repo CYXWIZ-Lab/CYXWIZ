@@ -102,10 +102,9 @@ void RenderPreview() {
     const auto& palette = ::gui::CurrentConsolePalette();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyle().Colors[ImGuiCol_WindowBg]);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
     ImGui::BeginChild("##appearance_preview", ImVec2(0.0f, 0.0f),
-                      ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY |
-                          ImGuiChildFlags_AlwaysUseWindowPadding);
+                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
     if (ImGui::BeginTabBar("##preview_tabs")) {
         if (ImGui::BeginTabItem("Studio")) {
             if (ui::SecondaryButton("Compile")) {}

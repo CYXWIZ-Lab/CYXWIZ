@@ -150,7 +150,7 @@ void ConsoleWorkbench::RenderCommandBar() {
 
     ImGui::TableSetColumnIndex(1);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);  // fill only, no outline
     ImGui::PushStyleColor(ImGuiCol_Button, style.Colors[ImGuiCol_FrameBg]);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                           style.Colors[ImGuiCol_HeaderHovered]);

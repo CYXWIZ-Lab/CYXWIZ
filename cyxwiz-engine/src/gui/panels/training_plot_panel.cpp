@@ -194,13 +194,14 @@ bool DashButton(const char* label, DashButtonKind kind, const DashColors& c) {
     const ImVec4 hover = kind == DashButtonKind::Danger
         ? WithAlpha(c.error, 0.14f)
         : WithAlpha(c.text, 0.07f);
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+    // A fill instead of an outline (no outlines on buttons).
+    ImGui::PushStyleColor(ImGuiCol_Button, kind == DashButtonKind::Danger ? ImVec4(0, 0, 0, 0) : WithAlpha(c.text, 0.05f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, WithAlpha(hover, hover.w * 1.8f));
     ImGui::PushStyleColor(ImGuiCol_Border,
                           kind == DashButtonKind::Danger ? WithAlpha(c.error, 0.45f) : c.border);
     ImGui::PushStyleColor(ImGuiCol_Text, fg);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 4.0f));
     const bool pressed = ImGui::Button(label);
@@ -216,13 +217,13 @@ float DashButtonWidth(const char* label) {
 // Toggle chip: filled with the accent tint while on.
 bool DashChip(const char* label, bool* value, const DashColors& c) {
     const bool on = *value;
-    ImGui::PushStyleColor(ImGuiCol_Button, on ? WithAlpha(c.accent, 0.24f) : ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_Button, on ? WithAlpha(c.accent, 0.24f) : WithAlpha(c.text, 0.05f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                           on ? WithAlpha(c.accent, 0.34f) : WithAlpha(c.text, 0.07f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, WithAlpha(c.accent, 0.45f));
     ImGui::PushStyleColor(ImGuiCol_Border, on ? WithAlpha(c.accent, 0.55f) : c.border);
     ImGui::PushStyleColor(ImGuiCol_Text, on ? c.accent_text : c.muted);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 11.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 3.0f));
     const bool pressed = ImGui::Button(label);
