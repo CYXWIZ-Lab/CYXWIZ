@@ -345,6 +345,7 @@ void ScriptEditorPanel::SaveFile() {
     if (SaveFileContent(tab->filepath, content, tab->format, &error)) {
         tab->is_modified = false;
         tab->editor.Doc().MarkSaved();
+        tab->format_changed = false;
         spdlog::info("Saved file: {}", tab->filepath);
     } else {
         spdlog::error("Could not save {}: {}", tab->filepath, error);
@@ -383,6 +384,7 @@ void ScriptEditorPanel::SaveFileAs() {
         tab->is_new = false;
         tab->is_modified = false;
         tab->editor.Doc().MarkSaved();
+        tab->format_changed = false;
         spdlog::info("Saved file as: {}", path);
     } else {
         spdlog::error("Could not save {}: {}", path, error);

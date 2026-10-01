@@ -166,6 +166,7 @@ private:
         std::string load_status;         // Status text during loading
         bool load_failed = false;        // the file was not read: never write this tab over it
         scriptfile::TextFormat format;   // BOM and line endings of the file, kept on save
+        bool format_changed = false;     // BOM or line endings changed in the status bar, not saved yet
         std::uint64_t load_task_id = 0;
 
         // Large files use a bounded, read-only, virtualized text view.
@@ -211,7 +212,8 @@ private:
     // Rendering functions
     void RenderTabBar();
     void RenderMenuBar();
-    void RenderEditorToolbar();
+    void RenderBreadcrumbs(EditorTab& tab);
+    void RefreshPythonStatus();
     void RenderEditor();
     void RenderStatusBar();
     void HandleKeyboardShortcuts() override;
@@ -359,6 +361,11 @@ private:
 
     // Focus tracking
     bool is_focused_ = false;
+
+    // Status bar: the Python the editor runs with (refreshed every 2 s)
+    std::string python_status_;
+    std::string python_tooltip_;
+    double python_status_time_ = -10.0;
 
     static constexpr std::uint64_t kEditableFileLimitBytes = 4ULL * 1024ULL * 1024ULL;
     static constexpr std::uint64_t kLargeTextCheckpointStride = 1024;

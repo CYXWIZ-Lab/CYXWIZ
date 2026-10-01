@@ -396,131 +396,6 @@ void ScriptEditorPanel::ApplySyntaxHighlightingToAllTabs() {
     spdlog::info("Syntax highlighting: {}", syntax_highlighting_ ? "enabled" : "disabled");
 }
 
-void ScriptEditorPanel::RenderTabBar() {
-    if (ImGui::BeginTabBar("ScriptEditorTabs", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs | ImGuiTabBarFlags_FittingPolicyScroll)) {
-
-        // Render existing tabs
-        for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
-            auto& tab = tabs_[i];
-
-            // Build tab label with loading/modified indicators
-            std::string tab_label;
-            if (tab->is_loading) {
-                tab_label = ICON_FA_SPINNER " " + tab->filename;
-            } else {
-                tab_label = tab->filename;
-                if (tab->is_modified) {
-                    tab_label += "*";
-                }
-            }
-
-            // Use unique ID to avoid issues with duplicate filenames
-            std::string tab_id = tab_label + "##" + std::to_string(i);
-
-            ImGuiTabItemFlags tab_flags = ImGuiTabItemFlags_None;
-            if (request_focus_ && i == active_tab_index_) {
-                tab_flags |= ImGuiTabItemFlags_SetSelected;
-            }
-
-            bool open = true;
-            if (ImGui::BeginTabItem(tab_id.c_str(), &open, tab_flags)) {
-                active_tab_index_ = i;
-                ImGui::EndTabItem();
-            }
-
-            // Closing a loading tab cancels its background work.
-            if (!open) {
-                close_tab_index_ = i;
-            }
-        }
-
-        // request_focus_ is cleared by the code view once it takes focus.
-
-        // "+" button to add new tab
-        if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) {
-            NewFile();
-        }
-
-        ImGui::EndTabBar();
-    }
-}
-
-void ScriptEditorPanel::RenderEditorToolbar() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
-
-    auto& tab = tabs_[active_tab_index_];
-    const bool has_active_tab = IsActiveTabEditable();
-    const bool not_running = !script_running_ && !(scripting_engine_ && scripting_engine_->IsScriptRunning());
-
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.13f, 0.13f, 0.15f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 5));
-    ImGui::BeginChild("##script_editor_toolbar", ImVec2(0, 38), false, ImGuiWindowFlags_NoScrollbar);
-
-    ImGui::BeginDisabled(!has_active_tab);
-    if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save")) {
-        SaveFile();
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Save current script (Ctrl+S)");
-    }
-    ImGui::SameLine();
-
-    ImGui::BeginDisabled(!not_running);
-    if (ImGui::Button(ICON_FA_PLAY " Run")) {
-        RunScript();
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Run script (F5)");
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_CODE " Section")) {
-        RunCurrentSection();
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Run current %% section (Ctrl+Enter)");
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_PENCIL " Selection")) {
-        RunSelection();
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Run selected code (F9)");
-    }
-    ImGui::EndDisabled();
-
-    ImGui::SameLine();
-    ImGui::BeginDisabled(not_running || !scripting_engine_);
-    if (ImGui::Button(ICON_FA_STOP " Stop")) {
-        scripting_engine_->StopScript();
-        spdlog::info("Stop script requested from editor toolbar");
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Stop running script (Shift+F5)");
-    }
-    ImGui::EndDisabled();
-
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
-
-    const bool was_cell_mode = tab->cell_mode;
-    if (ImGui::Button(was_cell_mode ? ICON_FA_FILE_LINES " Notebook: On" : ICON_FA_FILE_CODE " Notebook: Off")) {
-        ToggleCellMode();
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Toggle notebook/cell mode (Ctrl+Shift+M)");
-    }
-
-    ImGui::SameLine();
-    ImGui::TextDisabled("%s", tab->filepath.empty() ? tab->filename.c_str() : tab->filepath.c_str());
-    ImGui::EndDisabled();
-
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
-}
 void ScriptEditorPanel::RenderEditor() {
     auto& tab = tabs_[active_tab_index_];
 
@@ -598,6 +473,7 @@ void ScriptEditorPanel::RenderEditor() {
     }
     // Size: everything above the status bar. The code view draws its own
     // gutter (breakpoints, numbers, folds), scrollbars and minimap.
+    RenderBreadcrumbs(*tab);
     float available_height = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
     CodeEditor& code = tab->editor;
     // Find: an overlay at the top right, or a full-width row when narrow.
@@ -618,7 +494,7 @@ void ScriptEditorPanel::RenderEditor() {
     };
     const std::string file_id = tab->filepath.empty() ? tab->filename : tab->filepath;
     code.SetDebugLine(debug_mode_active_ && debug_current_cell_ == file_id ? debug_current_line_ - 1 : -1);
-    code.SetShowMinimap(show_minimap_);
+    code.SetShowMinimap(show_minimap_ && code_width >= 620.0f);  // no minimap in a narrow editor (board 3)
     // A completion just accepted with Tab must not also type the Tab.
     code.SetKeyboardEnabled(!completion_just_accepted_);
     if (request_focus_) {
@@ -641,7 +517,7 @@ void ScriptEditorPanel::RenderEditor() {
     }
     // Modified follows the document (undoing back to the saved text clears it).
     tab->is_modified = tab->is_new ? !tab->editor.Doc().Text().empty() || tab->editor.Doc().Modified()
-                                   : tab->editor.Doc().Modified();
+                                   : tab->editor.Doc().Modified() || tab->format_changed;
     if (text_changed) {
 
         // Skip auto-trigger if popup was just opened this frame (Ctrl+Space inserts space)
@@ -656,86 +532,6 @@ void ScriptEditorPanel::RenderEditor() {
 
     // Render auto-completion popup (if open)
     RenderCompletionPopup();
-}
-
-void ScriptEditorPanel::RenderStatusBar() {
-    if (active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size())) {
-        auto& tab = tabs_[active_tab_index_];
-
-        // Show loading status if loading
-        if (tab->is_loading) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), ICON_FA_SPINNER " Loading: %s (%.0f%%)",
-                tab->load_status.c_str(), tab->load_progress * 100.0f);
-            return;
-        }
-
-        if (tab->is_large_file) {
-            const auto first = tab->large_page.lines.empty()
-                ? 0ULL
-                : static_cast<unsigned long long>(tab->large_page.first_line + 1);
-            const auto last = static_cast<unsigned long long>(
-                tab->large_page.first_line + tab->large_page.lines.size());
-            ImGui::Text(
-                "Large file | Read only | Cached lines: %llu-%llu of %llu",
-                first,
-                last,
-                static_cast<unsigned long long>(tab->large_index.line_count));
-        } else if (tab->cell_mode) {
-            const int cell_count = static_cast<int>(tab->cell_manager.GetCellCount());
-            const int selected_cell = tab->selected_cell >= 0 ? tab->selected_cell + 1 : 0;
-            ImGui::Text("Notebook | Cell: %d/%d | %s",
-                selected_cell,
-                cell_count,
-                tab->is_modified ? "Modified" : "Saved");
-        } else {
-            const editor::Document& doc = tab->editor.Doc();
-            const editor::Pos head = doc.Primary().head;
-            const int column = editor::VisualColumn(doc.Line(head.line), head.col, doc.Settings().tab_size) + 1;
-            if (doc.CursorCount() > 1) {
-                ImGui::Text("Line: %d | Column: %d | %d cursors | %s | %d lines", head.line + 1, column,
-                            doc.CursorCount(), tab->is_modified ? "Modified" : "Saved", doc.LineCount());
-            } else {
-                ImGui::Text("Line: %d | Column: %d | %s | %d lines", head.line + 1, column,
-                            tab->is_modified ? "Modified" : "Saved", doc.LineCount());
-            }
-        }
-
-        // Script running indicator
-        if (script_running_) {
-            ImGui::SameLine();
-            ImGui::Text("|");
-            ImGui::SameLine();
-            // Animated running indicator
-            const char* indicators[] = {".", "..", "..."};
-            int idx = static_cast<int>(running_indicator_time_ * 2) % 3;
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "RUNNING%s (Shift+F5 to stop)", indicators[idx]);
-        }
-
-        // Sandbox indicator
-        if (scripting_engine_) {
-            ImGui::SameLine();
-            ImGui::Text("|");
-            ImGui::SameLine();
-            bool sandbox_on = scripting_engine_->IsSandboxEnabled();
-            if (sandbox_on) {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "SANDBOX ON");
-            } else {
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Sandbox Off");
-            }
-        }
-
-        // Path at the right edge when it fits; it used to be drawn at a
-        // fixed x over the rest of the line in a narrow editor.
-        const char* path = tab->filepath.empty() ? "Untitled" : tab->filepath.c_str();
-        ImGui::SameLine();
-        const float path_x = ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(path).x;
-        if (path_x > ImGui::GetCursorPosX() + ImGui::GetStyle().ItemSpacing.x) {
-            ImGui::SetCursorPosX(path_x);
-            ImGui::TextDisabled("%s", path);
-        } else {
-            ImGui::NewLine();
-        }
-    }
 }
 
 void ScriptEditorPanel::HandleKeyboardShortcuts() {

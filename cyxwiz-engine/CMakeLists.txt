@@ -324,6 +324,7 @@ set(ENGINE_SOURCES
     src/core/editor/text_document.cpp
     src/core/editor/python_highlight.cpp
     src/core/editor/folding.cpp
+    src/core/editor/outline.cpp
     src/core/live_graph_compile.cpp
     src/core/remote_job_presentation.cpp
     src/gui/node_config_dialog.cpp
@@ -387,6 +388,7 @@ set(ENGINE_SOURCES
     src/gui/panels/script_editor_edit.cpp
     src/gui/panels/script_editor_search.cpp
     src/gui/panels/script_editor_find.cpp
+    src/gui/panels/script_editor_chrome.cpp
     src/gui/panels/script_editor_settings.cpp
     src/gui/panels/script_editor_cells.cpp
     src/gui/panels/script_editor_debug.cpp

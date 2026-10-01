@@ -1,6 +1,7 @@
 // Script Editor colouring and folding (TOFIX133 P1 step 1.2): multi-line
 // strings, names and calls, the cache, fold regions and folds that follow edits.
 #include "../src/core/editor/folding.h"
+#include "../src/core/editor/outline.h"
 #include "../src/core/editor/python_highlight.h"
 #include "../src/core/editor/text_document.h"
 
@@ -99,6 +100,18 @@ int main() {
     d.DeleteLines();  // the header goes away
     folds.Update(d);
     Check(!folds.IsFolded(2), "a fold without its header is dropped");
+
+    // Breadcrumb scopes.
+    d.SetText("class Model:\n    def fit(self):\n        x = 1\n\n        return x\n\ndef main():\n    pass\n");
+    auto scopes = EnclosingScopes(d, 4);
+    Check(scopes.size() == 2 && scopes[0].name == "Model" && scopes[1].name == "fit" && scopes[1].line == 1,
+          "class > def at a line inside");
+    scopes = EnclosingScopes(d, 3);
+    Check(scopes.size() == 2, "a blank line inside the method belongs to it");
+    scopes = EnclosingScopes(d, 6);
+    Check(scopes.size() == 1 && scopes[0].kind == "def" && scopes[0].name == "main", "header line is its own scope");
+    scopes = EnclosingScopes(d, 0);
+    Check(scopes.size() == 1 && scopes[0].kind == "class", "class header");
 
     std::cout << "editor highlight and folding: names, strings across lines, cache, regions, folds follow edits. OK\n";
     return 0;

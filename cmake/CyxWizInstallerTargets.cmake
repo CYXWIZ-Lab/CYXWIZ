@@ -367,6 +367,7 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/core/editor/text_document.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/editor/python_highlight.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/editor/folding.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/editor/outline.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/python_tokenizer.cpp"
     )
     foreach(_cyxwiz_p0_test test_python_tokenizer test_argb_colour test_text_search test_cyx_format
