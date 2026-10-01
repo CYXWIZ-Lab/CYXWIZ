@@ -5,6 +5,7 @@
 
 #include "../src/core/studio_debugger_presentation.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -324,6 +325,41 @@ void TestRunSummaryRoundTrip() {
                   restored.steps[i].detail == original.steps[i].detail,
               "step restored: " + original.steps[i].id);
     }
+
+    // Card and Overview details come back with a saved run.
+    auto detailed = OwnerMachineSnapshot();
+    detailed.graph_summary = "Layers: 7";
+    detailed.sample_summary = "Studio Debugger mode: FullWorkflow | sample 0";
+    detailed.preflight.ready = true;
+    detailed.preflight.summary = "Preflight ready";
+    detailed.preflight.issues.push_back({IssueLevel::Warning, 1, "Sentiment CSV",
+                                         "No pre-train data inspection node found.", "CW-C-0001"});
+    detailed.smoke_result.supported = true;
+    detailed.smoke_result.success = true;
+    detailed.smoke_result.samples_seen = 128;
+    detailed.smoke_result.batches_seen = 4;
+    detailed.smoke_result.average_loss = 1.94859f;
+    detailed.has_debug_result = true;
+    detailed.debug_result.success = true;
+    detailed.debug_result.reached = DebugStage::Complete;
+    detailed.debug_result.forward_total_ms = 1.5f;
+    detailed.debug_result.backward_total_ms = 1.3f;
+    StudioDebuggerSnapshot reloaded;
+    reloaded.traces.push_back(BuildStudioDebuggerRunSummaryTrace(detailed));
+    Check(ApplyStudioDebuggerRunSummaryTrace(reloaded), "detailed summary applied");
+    Check(reloaded.graph_summary == "Layers: 7", "graph summary restored");
+    Check(reloaded.sample_summary == detailed.sample_summary, "sample summary restored");
+    Check(reloaded.preflight.ready && reloaded.preflight.summary == "Preflight ready" &&
+              reloaded.preflight.issues.size() == 1 &&
+              reloaded.preflight.issues[0].error_code == "CW-C-0001",
+          "preflight restored");
+    Check(reloaded.smoke_result.supported && reloaded.smoke_result.success &&
+              reloaded.smoke_result.samples_seen == 128 && reloaded.smoke_result.batches_seen == 4,
+          "smoke numbers restored");
+    Check(reloaded.has_debug_result && reloaded.debug_result.reached == DebugStage::Complete &&
+              reloaded.debug_result.forward_total_ms == 1.5f,
+          "local debug timings restored");
+    Check(!std::isfinite(reloaded.debug_result.loss_value), "unknown loss stays unknown (not 0)");
 
     StudioDebuggerSnapshot legacy;
     Check(!ApplyStudioDebuggerRunSummaryTrace(legacy), "run without summary trace reports false");

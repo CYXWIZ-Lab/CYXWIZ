@@ -570,6 +570,46 @@ DebugTraceRecord BuildStudioDebuggerRunSummaryTrace(const StudioDebuggerSnapshot
                          {"seconds", step.seconds}});
     }
     trace.payload["steps"] = steps;
+
+    // What the summary cards and Overview show, so a saved run reads like a
+    // fresh one.
+    trace.payload["graph_summary"] = snapshot.graph_summary;
+    trace.payload["sample_summary"] = snapshot.sample_summary;
+    nlohmann::json preflight = {{"ready", snapshot.preflight.ready},
+                                {"summary", snapshot.preflight.summary}};
+    nlohmann::json preflight_issues = nlohmann::json::array();
+    for (const auto& issue : snapshot.preflight.issues) {
+        preflight_issues.push_back({{"level", static_cast<int>(issue.level)},
+                                    {"node_id", issue.node_id},
+                                    {"node_name", issue.node_name},
+                                    {"message", issue.message},
+                                    {"error_code", issue.error_code}});
+    }
+    preflight["issues"] = preflight_issues;
+    trace.payload["preflight"] = preflight;
+    const auto& smoke = snapshot.smoke_result;
+    trace.payload["smoke"] = {{"supported", smoke.supported},
+                              {"success", smoke.success},
+                              {"stopped", smoke.stopped},
+                              {"summary", smoke.summary},
+                              {"samples_seen", smoke.samples_seen},
+                              {"batches_seen", smoke.batches_seen},
+                              {"average_loss", smoke.average_loss},
+                              {"last_accuracy", smoke.last_accuracy}};
+    if (snapshot.has_debug_result) {
+        const auto& debug = snapshot.debug_result;
+        nlohmann::json local = {{"success", debug.success},
+                                {"reached", static_cast<int>(debug.reached)},
+                                {"failure_summary", debug.failure_summary},
+                                {"forward_total_ms", debug.forward_total_ms},
+                                {"backward_total_ms", debug.backward_total_ms},
+                                {"optimizer_step_ms", debug.optimizer_step_ms},
+                                {"loss_finite", debug.loss_finite}};
+        if (std::isfinite(debug.loss_value)) {
+            local["loss_value"] = debug.loss_value;
+        }
+        trace.payload["local_debug"] = local;
+    }
     return trace;
 }
 
@@ -592,6 +632,55 @@ bool ApplyStudioDebuggerRunSummaryTrace(StudioDebuggerSnapshot& snapshot) {
         snapshot.training_trace_historical = payload.value("training_trace_historical", false);
         if (snapshot.failure_summary.empty()) {
             snapshot.failure_summary = payload.value("failure_summary", std::string{});
+        }
+        if (snapshot.graph_summary.empty()) {
+            snapshot.graph_summary = payload.value("graph_summary", std::string{});
+        }
+        if (payload.contains("sample_summary")) {
+            snapshot.sample_summary = payload.value("sample_summary", snapshot.sample_summary);
+        }
+        if (payload.contains("preflight") && payload["preflight"].is_object()) {
+            const auto& preflight = payload["preflight"];
+            snapshot.preflight.ready = preflight.value("ready", false);
+            snapshot.preflight.summary = preflight.value("summary", std::string{});
+            snapshot.preflight_summary = snapshot.preflight.summary;
+            snapshot.preflight.issues.clear();
+            if (preflight.contains("issues") && preflight["issues"].is_array()) {
+                for (const auto& item : preflight["issues"]) {
+                    ValidationIssue issue;
+                    issue.level = static_cast<IssueLevel>(item.value("level", 0));
+                    issue.node_id = item.value("node_id", -1);
+                    issue.node_name = item.value("node_name", std::string{});
+                    issue.message = item.value("message", std::string{});
+                    issue.error_code = item.value("error_code", std::string{});
+                    snapshot.preflight.issues.push_back(issue);
+                }
+            }
+        }
+        if (payload.contains("smoke") && payload["smoke"].is_object()) {
+            const auto& smoke = payload["smoke"];
+            snapshot.smoke_result.supported = smoke.value("supported", false);
+            snapshot.smoke_result.success = smoke.value("success", false);
+            snapshot.smoke_result.stopped = smoke.value("stopped", false);
+            snapshot.smoke_result.summary = smoke.value("summary", std::string{});
+            snapshot.smoke_result.samples_seen = smoke.value("samples_seen", 0);
+            snapshot.smoke_result.batches_seen = smoke.value("batches_seen", 0);
+            snapshot.smoke_result.average_loss = smoke.value("average_loss", 0.0f);
+            snapshot.smoke_result.last_accuracy = smoke.value("last_accuracy", 0.0f);
+        }
+        if (payload.contains("local_debug") && payload["local_debug"].is_object()) {
+            const auto& local = payload["local_debug"];
+            snapshot.has_debug_result = true;
+            snapshot.debug_result.success = local.value("success", false);
+            snapshot.debug_result.reached = static_cast<DebugStage>(local.value("reached", 0));
+            snapshot.debug_result.failure_summary = local.value("failure_summary", std::string{});
+            snapshot.debug_result.forward_total_ms = local.value("forward_total_ms", 0.0f);
+            snapshot.debug_result.backward_total_ms = local.value("backward_total_ms", 0.0f);
+            snapshot.debug_result.optimizer_step_ms = local.value("optimizer_step_ms", 0.0f);
+            snapshot.debug_result.loss_finite = local.value("loss_finite", false);
+            if (local.contains("loss_value")) {
+                snapshot.debug_result.loss_value = local.value("loss_value", 0.0f);
+            }
         }
         snapshot.steps.clear();
         if (payload.contains("steps") && payload["steps"].is_array()) {
