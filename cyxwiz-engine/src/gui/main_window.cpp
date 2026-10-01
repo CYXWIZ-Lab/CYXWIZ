@@ -2415,6 +2415,15 @@ MainWindow::MainWindow()
 
     // Set up Go to Line callback
     if (script_editor_) script_editor_->SetGoToLineRequest([this]() { if (toolbar_) toolbar_->OpenGoToLineDialog(); });
+    if (script_editor_) {
+        // Notebook table results open in the Table Viewer (TOFIX133 P4 board 5).
+        script_editor_->SetOpenTableCallback([this](std::shared_ptr<cyxwiz::DataTable> table) {
+            if (!table_viewer_) return;
+            table_viewer_->SetTable(std::move(table));
+            table_viewer_->SetVisible(true);
+            ImGui::SetWindowFocus(table_viewer_->GetName());
+        });
+    }
     toolbar_->SetGoToLineCallback([this](int line) {
         if (script_editor_) {
             script_editor_->GoToLine(line);

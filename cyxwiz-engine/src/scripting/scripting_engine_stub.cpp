@@ -61,6 +61,11 @@ bool ScriptingEngine::ExecuteScriptAsync(const std::string&, RunCallbacks callba
 
 bool ScriptingEngine::DropNotebookNamespace(const std::string&) { return true; }
 
+bool ScriptingEngine::ExportNotebookValueToCsv(const std::string&, int, const std::string&, std::string* error) {
+    if (error) *error = "This build has no Python scripting";
+    return false;
+}
+
 void ScriptingEngine::StopScript() { script_running_ = false; }
 bool ScriptingEngine::IsScriptRunning() const { return false; }
 

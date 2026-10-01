@@ -358,7 +358,7 @@ void ScriptEditorPanel::RenderCell(Cell& cell, int index) {
             ImGui::Dummy(ImVec2(0.0f, 2.0f));
             ImGui::Indent(12.0f);
             ImGui::PushTextWrapPos(content_x + content_w);
-            for (const auto& output : cell.outputs) RenderCellOutput(output);
+            RenderNotebookOutputs(cell, index, content_w - 12.0f);
             ImGui::PopTextWrapPos();
             ImGui::Unindent(12.0f);
         }

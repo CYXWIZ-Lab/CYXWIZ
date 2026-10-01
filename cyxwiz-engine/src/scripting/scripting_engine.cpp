@@ -1221,6 +1221,36 @@ bool ScriptingEngine::DropNotebookNamespace(const std::string& key) {
     return true;
 }
 
+bool ScriptingEngine::ExportNotebookValueToCsv(const std::string& key, int count, const std::string& path,
+                                               std::string* error) {
+    if (script_running_) {
+        if (error) *error = "A script is running; try again when it finishes";
+        return false;
+    }
+    if (!IsInitialized()) {
+        if (error) *error = "Python is not running; run the cell again";
+        return false;
+    }
+    try {
+        py::gil_scoped_acquire acquire;
+        auto main = py::module_::import("__main__").attr("__dict__").cast<py::dict>();
+        py::object export_fn = main.contains("_cyxwiz_export_value") ? py::object(main["_cyxwiz_export_value"]) : py::none();
+        if (export_fn.is_none()) {
+            if (error) *error = "Run a cell first";
+            return false;
+        }
+        const std::string reason = export_fn(key, count, path).cast<std::string>();
+        if (!reason.empty()) {
+            if (error) *error = reason;
+            return false;
+        }
+        return true;
+    } catch (const py::error_already_set& e) {
+        if (error) *error = e.what();
+        return false;
+    }
+}
+
 ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script, const RunCallbacks& callbacks) {
     const OutputCallback& on_output = callbacks.on_output;
     ExecutionResult result;
@@ -1389,14 +1419,30 @@ try:
 except NameError:
     _cyxwiz_notebook_ns = {}
 
-def _cyxwiz_run_cell(src, key, filename):
+def _cyxwiz_export_value(key, count, path):
+    ns = _cyxwiz_notebook_ns.get(key)
+    if ns is None:
+        return 'The notebook was restarted; run the cell again'
+    value = ns.get('Out', {}).get(count)
+    if value is None:
+        return 'This value is no longer in memory; run the cell again'
+    if not hasattr(value, 'to_csv'):
+        return 'Only tables (pandas DataFrame or Series) open in the Table Viewer'
+    value.to_csv(path)
+    return ''
+
+def _cyxwiz_frames(tb, skip):
+    import traceback
+    return [(f.filename, f.lineno or 0, f.name, f.line or '', '') for f in traceback.extract_tb(tb)[skip:]]
+
+def _cyxwiz_run_cell(src, key, filename, count=0):
     import ast, builtins, linecache, traceback
     ns = _cyxwiz_notebook_ns.get(key)
     if ns is None:
-        ns = {'__name__': '__main__', '__builtins__': builtins}
+        ns = {'__name__': '__main__', '__builtins__': builtins, 'Out': {}}
         _cyxwiz_notebook_ns[key] = ns
     linecache.cache[filename] = (len(src), None, src.splitlines(True), filename)
-    out = {'ok': False, 'repr': None, 'ename': '', 'evalue': '', 'frames': [], 'traceback': ''}
+    out = {'ok': False, 'repr': None, 'html': None, 'ename': '', 'evalue': '', 'frames': [], 'traceback': ''}
     try:
         tree = ast.parse(src, filename, 'exec')
         last = None
@@ -1407,7 +1453,17 @@ def _cyxwiz_run_cell(src, key, filename):
             value = eval(compile(ast.Expression(last.value), filename, 'eval'), ns)
             if value is not None:
                 ns['_'] = value
+                if count:
+                    ns.setdefault('Out', {})[count] = value
                 out['repr'] = repr(value)
+                html = getattr(value, '_repr_html_', None)
+                if callable(html):
+                    try:
+                        h = html()
+                        if isinstance(h, str) and len(h) < 2_000_000:
+                            out['html'] = h
+                    except Exception:
+                        pass
         out['ok'] = True
     except KeyboardInterrupt:
         raise
@@ -1415,10 +1471,24 @@ def _cyxwiz_run_cell(src, key, filename):
         out['ename'] = type(e).__name__
         out['evalue'] = str(e)
         frames = traceback.extract_tb(e.__traceback__)[1:]  # not this helper
-        out['frames'] = [(f.filename, f.lineno or 0, f.name, f.line or '') for f in frames]
+        out['frames'] = _cyxwiz_frames(e.__traceback__, 1)
         if isinstance(e, SyntaxError) and e.filename == filename:
-            out['frames'].append((filename, e.lineno or 0, '<module>', (e.text or '').strip()))
+            out['frames'].append((filename, e.lineno or 0, '<module>', (e.text or '').strip(), ''))
             out['evalue'] = e.msg
+        # "Caused by": the exception this one was raised from (or during).
+        cause = e.__cause__ or (None if e.__suppress_context__ else e.__context__)
+        depth = 0
+        while cause is not None and depth < 5:
+            chained = _cyxwiz_frames(cause.__traceback__, 0)
+            label = type(cause).__name__ + (': ' + str(cause) if str(cause) else '')
+            if chained:
+                f = chained[0]
+                chained[0] = (f[0], f[1], f[2], f[3], label)
+            else:
+                chained = [('', 0, '', '', label)]
+            out['frames'].extend(chained)
+            cause = cause.__cause__ or (None if cause.__suppress_context__ else cause.__context__)
+            depth += 1
         out['traceback'] = ''.join(traceback.format_list(frames)) + ''.join(traceback.format_exception_only(type(e), e))
     return out
 
@@ -1529,9 +1599,12 @@ def _cyxwiz_setup_matplotlib_capture(capture_callback):
                 result.success = true;
             } else {
                 const std::string filename = callbacks.cell_filename.empty() ? "<cell>" : callbacks.cell_filename;
-                auto out = py::eval("_cyxwiz_run_cell")(script, callbacks.notebook_namespace, filename).cast<py::dict>();
+                auto out = py::eval("_cyxwiz_run_cell")(script, callbacks.notebook_namespace, filename,
+                                                        callbacks.execution_count)
+                               .cast<py::dict>();
                 result.success = out["ok"].cast<bool>();
                 if (!out["repr"].is_none()) result.result_repr = out["repr"].cast<std::string>();
+                if (!out["html"].is_none()) result.result_html = out["html"].cast<std::string>();
                 if (!result.success) {
                     result.exception_type = out["ename"].cast<std::string>();
                     result.exception_value = out["evalue"].cast<std::string>();
@@ -1542,7 +1615,7 @@ def _cyxwiz_setup_matplotlib_capture(capture_callback):
                     for (auto item : out["frames"].cast<py::list>()) {
                         auto t = item.cast<py::tuple>();
                         result.frames.push_back({t[0].cast<std::string>(), t[1].cast<int>(), t[2].cast<std::string>(),
-                                                 t[3].cast<std::string>()});
+                                                 t[3].cast<std::string>(), t[4].cast<std::string>()});
                     }
                 }
             }

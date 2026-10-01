@@ -64,6 +64,7 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
     // Handle keyboard shortcuts in cell mode
     HandleCellKeyboardShortcuts();
 
+    if (tab->cell_manager.TakeOutputsChanged() && scriptfile::IsNotebookJson(tab->filepath)) tab->is_modified = true;
     RenderNotebookToolbar(*tab);
     const float available_width = ImGui::GetContentRegionAvail().x;
 
@@ -107,9 +108,6 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
     ImGui::PopStyleColor(5);
 }
 
-void ScriptEditorPanel::RenderCellOutput(const CellOutput& output) {
-    OutputRenderer::RenderCellOutput(output);
-}
 
 void ScriptEditorPanel::HandleCellKeyboardShortcuts() {
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {

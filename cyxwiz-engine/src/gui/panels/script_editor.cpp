@@ -60,6 +60,12 @@ void ScriptEditorPanel::Render() {
         if (tab) tab->cell_manager.Pump();
     }
     CheckFilesOnDisk();
+    RenderPlotWindows();
+    if (!deferred_open_path_.empty()) {
+        const std::string path = std::move(deferred_open_path_);
+        deferred_open_path_.clear();
+        OpenFileAtLine(path, deferred_open_line_);
+    }
 
     // Poll the editor's own run. A run started elsewhere (a notebook cell,
     // RL training) is not the editor's and must not print here.

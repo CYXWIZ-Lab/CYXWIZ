@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 #include <functional>
@@ -11,6 +12,10 @@
 #include <glad/glad.h>
 
 namespace cyxwiz {
+
+namespace html {
+struct Table;
+}
 
 /**
  * Cell type enumeration
@@ -41,6 +46,7 @@ struct TraceFrame {
     int line = 0;
     std::string function;
     std::string code;
+    std::string cause;      // first frame of a chained exception: "URLError: ..." ("Caused by")
 };
 
 /**
@@ -74,6 +80,12 @@ struct CellOutput {
 
     // A cell's value (Jupyter's execute_result), not printed text.
     bool is_result = false;
+    std::string html;       // text/html of a result (pandas tables), with `data` as its plain text
+
+    // View state: a long text or traceback shown in full; a result's table
+    // parsed from `html` once.
+    bool expanded = false;
+    std::shared_ptr<html::Table> table_cache;
 
     // Error outputs: exception name, message and frames (TOFIX133 P4).
     std::string ename;

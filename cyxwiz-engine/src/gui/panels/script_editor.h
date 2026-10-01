@@ -6,6 +6,7 @@
 #include "../../core/large_text_file.h"
 #include "../../core/script_text_file.h"
 #include "../../scripting/cell_manager.h"
+#include "../../core/notebook_presentation.h"
 #include "../../scripting/debugger.h"
 #include "../../scripting/script_manager.h"
 #include "../code_editor.h"
@@ -21,6 +22,10 @@
 namespace scripting {
     class IScriptOutputSink;
     class ScriptingEngine;
+}
+
+namespace cyxwiz {
+class DataTable;
 }
 
 namespace cyxwiz {
@@ -72,6 +77,12 @@ public:
     void OpenFind(bool replace);
     // Edit > Go to Line (the Engine's dialog), offered in the code's right-click menu.
     void SetGoToLineRequest(std::function<void()> request) { go_to_line_request_ = std::move(request); }
+    // A notebook table result opens in the Table Viewer (TOFIX133 P4 board 5).
+    void SetOpenTableCallback(std::function<void(std::shared_ptr<DataTable>)> callback) {
+        open_table_callback_ = std::move(callback);
+    }
+    // Opens a file and moves to a line (1-based) once it is loaded.
+    void OpenFileAtLine(const std::string& path, int line);
 
     // Find/Replace operations
     bool FindInEditor(const std::string& search_text, bool case_sensitive, bool whole_word, bool use_regex);
@@ -242,7 +253,33 @@ private:
     bool RenderCellEditorBlock(Cell& cell, int index, float width, bool editing, bool python);
     void RenderCellActions(Cell& cell, int index, const ImVec2& top_right);
     void RenderInsertBar(int after_index);
-    void RenderCellOutput(const CellOutput& output);
+    void RenderNotebookOutputs(Cell& cell, int index, float width);  // script_editor_notebook_outputs.cpp (board 5)
+    void RenderErrorOutput(Cell& cell, int index, CellOutput& out, float width);
+    void RenderTableOutput(Cell& cell, CellOutput& out, float width);
+    void RenderPlotOutput(Cell& cell, CellOutput& out, float width);
+    void OpenResultInTableViewer(Cell& cell, const CellOutput& out);
+    void OpenTraceFrame(const nbview::FrameLink& link);
+    void RenderPlotWindows();
+    std::function<void(std::shared_ptr<DataTable>)> open_table_callback_;
+    std::string table_open_error_;
+    std::string table_open_error_cell_;
+    std::string pending_goto_path_;
+    std::string deferred_open_path_;  // a traceback frame's file, opened next frame
+    int deferred_open_line_ = 0;
+    int pending_goto_line_ = 0;
+    // Plots opened in their own window: a copy of the image, so clearing the
+    // cell does not take the window's picture with it.
+    struct PlotWindow {
+        int id = 0;
+        std::string title;
+        std::vector<unsigned char> png;
+        unsigned int texture = 0;
+        int width = 0;
+        int height = 0;
+        bool open = true;
+    };
+    std::vector<PlotWindow> plot_windows_;
+    int next_plot_window_ = 1;
     struct CellClipboard {
         bool has = false;
         CellType type = CellType::Code;

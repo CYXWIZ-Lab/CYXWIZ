@@ -122,6 +122,21 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
     }
 }
 
+void ScriptEditorPanel::OpenFileAtLine(const std::string& path, int line) {
+    for (int i = 0; i < static_cast<int>(tabs_.size()); ++i) {
+        if (tabs_[i]->filepath == path && !tabs_[i]->is_loading) {
+            active_tab_index_ = i;
+            request_focus_ = true;
+            request_window_focus_ = true;
+            if (!tabs_[i]->cell_mode) tabs_[i]->editor.GoToLine(std::max(0, line - 1));
+            return;
+        }
+    }
+    pending_goto_path_ = path;
+    pending_goto_line_ = line;
+    OpenFile(path);
+}
+
 void ScriptEditorPanel::OpenFileAsync(
     std::uint64_t document_id,
     const std::string& filepath) {
@@ -261,6 +276,10 @@ void ScriptEditorPanel::FinalizeAsyncLoad(
     }
 
     NoteDiskTime(*tab);
+    if (!pending_goto_path_.empty() && pending_goto_path_ == tab->filepath) {
+        if (!tab->cell_mode) tab->editor.GoToLine(std::max(0, pending_goto_line_ - 1));
+        pending_goto_path_.clear();
+    }
 
     // Clear loading state
     tab->is_loading = false;

@@ -61,12 +61,14 @@ struct ExecutionResult {
     // (empty when it was None or the cell ended with a statement), and the
     // exception's frames, innermost last.
     std::string result_repr;
+    std::string result_html;   // the value's _repr_html_ (pandas tables), when it has one
     std::string exception_value;
     struct Frame {
         std::string file;
         int line = 0;
         std::string function;
         std::string code;
+        std::string cause;     // set on the first frame of a chained exception ("URLError: ...")
     };
     std::vector<Frame> frames;
 };
@@ -120,6 +122,7 @@ public:
         OutputCallback on_stderr;
         std::string notebook_namespace;
         std::string cell_filename;  // shown in tracebacks, e.g. "Cell In[3]"
+        int execution_count = 0;    // the value is kept as Out[n] in the namespace
     };
     // Starts the script in a background thread and returns at once. Returns
     // false when another script is still running (nothing is started and no
@@ -129,6 +132,11 @@ public:
     // Restart for a notebook: forgets the namespace its cells ran in.
     // Returns false (nothing done) while a script is running.
     bool DropNotebookNamespace(const std::string& key);
+
+    // Writes Out[count] of a notebook (a pandas DataFrame or Series) to a CSV
+    // file, for the Table Viewer. False with a reason while a script runs, after
+    // Restart, or when the value is not a table.
+    bool ExportNotebookValueToCsv(const std::string& key, int count, const std::string& path, std::string* error);
 
     // Stop currently running script
     // Sends interrupt signal to Python interpreter

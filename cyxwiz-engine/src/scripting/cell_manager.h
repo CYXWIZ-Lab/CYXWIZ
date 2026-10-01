@@ -196,6 +196,13 @@ public:
     int StoppedAtCount() const { return stopped_at_count_; }
     bool StoppedByInterrupt() const { return stopped_by_interrupt_; }
     double RunningSeconds() const;
+    // True once after a run changed outputs (an .ipynb stores them, so its
+    // tab becomes modified).
+    bool TakeOutputsChanged() {
+        const bool changed = outputs_changed_;
+        outputs_changed_ = false;
+        return changed;
+    }
     void ReleaseNamespace();
 
     /**
@@ -304,6 +311,7 @@ private:
     int batch_total_ = 0;
     int stopped_at_count_ = 0;
     bool stopped_by_interrupt_ = false;
+    bool outputs_changed_ = false;
     std::chrono::steady_clock::time_point run_started_{};
     bool TryRestart();
     void AppendStream(Cell& cell, const std::string& name, const std::string& text);

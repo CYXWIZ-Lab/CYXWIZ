@@ -411,6 +411,7 @@ void CellManager::ExecuteCellInternal(int index) {
     scripting::ScriptingEngine::RunCallbacks callbacks;
     callbacks.notebook_namespace = namespace_key_;
     callbacks.cell_filename = "Cell In[" + std::to_string(cell.execution_count) + "]";
+    callbacks.execution_count = cell.execution_count;
     auto post_text = [weak, run](RunEvent::Kind kind) {
         return [weak, run, kind](const std::string& text) {
             if (auto box = weak.lock()) {
@@ -443,6 +444,7 @@ void CellManager::ExecuteCellInternal(int index) {
         if (!result.result_repr.empty()) {
             CellOutput out = CellOutput::Text(result.result_repr);
             out.is_result = true;
+            out.html = result.result_html;
             add(std::move(out));
         }
         if (!result.success && !result.was_cancelled) {
@@ -451,7 +453,7 @@ void CellManager::ExecuteCellInternal(int index) {
                 out = CellOutput::Error(result.traceback.empty() ? result.error_message : result.traceback);
                 out.ename = result.exception_type;
                 out.evalue = result.exception_value;
-                for (const auto& f : result.frames) out.frames.push_back({f.file, f.line, f.function, f.code});
+                for (const auto& f : result.frames) out.frames.push_back({f.file, f.line, f.function, f.code, f.cause});
             } else {
                 // Python could not start, or the run failed outside the cell.
                 out = CellOutput::Error(result.error_message.empty() ? "The cell could not run" : result.error_message);
@@ -509,6 +511,7 @@ void CellManager::Pump() {
                     }
                     spdlog::info("Cell {} execution complete. Success: {}", index, e.success);
                 }
+                outputs_changed_ = true;
                 if ((e.cancelled || !e.success) && index >= 0) {
                     stopped_at_count_ = cells_[index].execution_count;
                     stopped_by_interrupt_ = e.cancelled;
@@ -618,6 +621,7 @@ CellOutput FromNotebookOutput(const nb::Output& o) {
             } else {
                 out = CellOutput::Text(o.text);
                 out.is_result = o.kind == nb::Output::Kind::Result;
+                out.html = o.html;
             }
             break;
     }
@@ -654,6 +658,7 @@ nb::Output ToNotebookOutput(const CellOutput& out, int execution_count) {
             if (out.is_result) {
                 o.kind = nb::Output::Kind::Result;
                 o.text = out.data;
+                o.html = out.html;
                 break;
             }
             [[fallthrough]];
