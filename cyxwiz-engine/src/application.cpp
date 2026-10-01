@@ -238,9 +238,10 @@ void CyxWizApp::UpdateWindowTitle() {
     std::string title = "CyxWiz Engine";
 
     if (pm.HasActiveProject()) {
-        // Get project name from the project file path
-        std::filesystem::path project_path(pm.GetProjectFilePath());
-        std::string project_name = project_path.stem().string();  // Get filename without extension
+        // The project's own name, as the menu bar shows it; the file name
+        // only when the project has none.
+        std::string project_name = pm.GetProjectName();
+        if (project_name.empty()) project_name = std::filesystem::path(pm.GetProjectFilePath()).stem().string();
         title = "CyxWiz Engine - " + project_name;
     }
 
@@ -414,13 +415,15 @@ bool CyxWizApp::Initialize() {
     python_configured_ = true;
     spdlog::info("Python scripting support is disabled in this build; skipping interpreter setup");
 #endif
-    start_page_ = std::make_unique<cyxwiz::StartPage>();
-
-    // If project was specified on command line, we'll still show the start page
-    // but it can be skipped by the user
+    // A project named on the command line opens straight away; the start
+    // page is for choosing one (its "Continue without project" used to drop
+    // the command-line project).
+    if (!startup_project_path_.empty()) {
+        project_selected_ = true;
+    } else {
+        start_page_ = std::make_unique<cyxwiz::StartPage>();
+    }
     return true;
-
-
 }
 
 int CyxWizApp::Run() {
