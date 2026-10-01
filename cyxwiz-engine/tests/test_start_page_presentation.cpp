@@ -97,6 +97,27 @@ int main() {
         Check(c.target.find("mnist") != std::string::npos && c.preview == c.target, "preview is the target folder");
     }
 
+    // New script checks.
+    {
+        Check(ScriptFileName({"train", "D:/p/scripts", true, false}) == "train.py", "py extension added");
+        Check(ScriptFileName({"train", "D:/p/scripts", false, false}) == "train.cyx", "cyx extension added");
+        Check(ScriptFileName({"train.PY", "D:/p/scripts", false, false}) == "train.PY", "existing extension kept");
+        CreateCheck c = CheckNewScript({"", "D:/p/scripts", true, false});
+        Check(!c.can_create && c.reason == "Enter a script name.", "script name required");
+        c = CheckNewScript({"train", "", true, false});
+        Check(!c.can_create && c.reason == "Choose a folder.", "folder required");
+        c = CheckNewScript({"a:b", "D:/p/scripts", true, false});
+        Check(!c.can_create && !c.warning.empty(), "colon rejected");
+        c = CheckNewScript({"nul", "D:/p/scripts", true, false});
+        Check(!c.can_create, "reserved name rejected");
+        c = CheckNewScript({"train", "D:/p/scripts", true, true});
+        Check(c.can_create && c.warning.find("replaces") != std::string::npos, "existing file warns but allows");
+        c = CheckNewScript({"train", "D:/p/scripts", true, false});
+        Check(c.can_create && c.warning.empty() && c.target.find("train.py") != std::string::npos, "valid script");
+        Check(ScriptTemplate("train.py", true).find("import pycyxwiz") != std::string::npos, "python template");
+        Check(ScriptTemplate("p.cyx", false).find("# p.cyx") == 0, "cyx template");
+    }
+
     std::cout << "start page presentation: grouping, search, time labels, templates, create checks. OK\n";
     return 0;
 }

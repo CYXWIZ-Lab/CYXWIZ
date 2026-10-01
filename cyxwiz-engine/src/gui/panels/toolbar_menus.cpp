@@ -325,11 +325,7 @@ void ToolbarPanel::BuildActionHandlers() {
         if (core::WindowManager::LaunchWindow(path)) spdlog::info("Launched new window with project: {}", path);
         else spdlog::error("Failed to launch new window with project: {}", path);
     };
-    h["script.new"] = [this](const std::string&) {
-        show_new_script_dialog_ = true;
-        std::memset(new_script_name_, 0, sizeof(new_script_name_));
-        new_script_type_ = 0;
-    };
+    h["script.new"] = [this](const std::string&) { new_script_dialog_.Open(); };
     h["script.open"] = [this](const std::string&) { OpenScriptFromDialog(); };
     h["file.save"] = [this](const std::string&) {
         if (save_project_callback_) save_project_callback_();

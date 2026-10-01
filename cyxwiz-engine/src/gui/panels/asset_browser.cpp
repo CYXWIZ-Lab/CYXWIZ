@@ -86,7 +86,6 @@ AssetBrowserPanel::AssetBrowserPanel()
 {
     std::memset(search_buffer_, 0, sizeof(search_buffer_));
     std::memset(rename_buffer_, 0, sizeof(rename_buffer_));
-    std::memset(new_script_name_, 0, sizeof(new_script_name_));
     std::memset(new_folder_name_, 0, sizeof(new_folder_name_));
 
     // Note: ProjectManager callbacks are managed by MainWindow to avoid callback conflicts
@@ -981,50 +980,26 @@ void AssetBrowserPanel::RenderStatusBar() {
 }
 
 void AssetBrowserPanel::RenderNewScriptDialog() {
-    if (!show_new_script_dialog_) return;
-
-    auto& pm = ProjectManager::Instance();
-
-    // Show warning if no project is open
-    if (!pm.HasActiveProject()) {
-        ImGui::OpenPopup("No Project Open");
-
-        if (ImGui::BeginPopupModal("No Project Open", &show_new_script_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), ICON_FA_TRIANGLE_EXCLAMATION " Warning");
-            ImGui::Separator();
-            ImGui::Text("Cannot create a new script without an open project.");
-            ImGui::Text("Please create or open a project first.");
-            ImGui::Separator();
-
-            if (ImGui::Button("OK", ImVec2(120, 0))) {
-                show_new_script_dialog_ = false;
-            }
-            ImGui::EndPopup();
-        }
-        return;
+    // Same dialog as File > New Script (TOFIX129 A2-4), opened in the folder
+    // that was right-clicked, else the project's scripts folder.
+    if (show_new_script_dialog_) {
+        show_new_script_dialog_ = false;
+        std::string folder;
+        if (context_menu_item_ && context_menu_item_->is_directory) folder = context_menu_item_->absolute_path;
+        else if (context_menu_item_) folder = fs::path(context_menu_item_->absolute_path).parent_path().string();
+        new_script_dialog_.Open(folder);
     }
-
-    ImGui::OpenPopup("New Script");
-
-    if (ImGui::BeginPopupModal("New Script", &show_new_script_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Create a new CyxWiz script");
-        ImGui::Separator();
-
-        ImGui::InputTextWithHint("##script_name", "script_name.cyx", new_script_name_, sizeof(new_script_name_));
-
-        ImGui::Separator();
-
-        if (ImGui::Button("Create", ImVec2(120, 0))) {
-            CreateNewScript();
-            show_new_script_dialog_ = false;
-        }
-
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            show_new_script_dialog_ = false;
-        }
-
-        ImGui::EndPopup();
+    if (new_script_dialog_.Render() != NewScriptDialog::Result::Created) return;
+    Refresh();
+    if (on_double_click_) {
+        AssetItem new_item;
+        const fs::path created(new_script_dialog_.CreatedPath());
+        new_item.name = created.filename().string();
+        new_item.absolute_path = created.string();
+        new_item.relative_path = ProjectManager::Instance().MakeRelativePath(created.string());
+        new_item.type = AssetType::Script;
+        new_item.is_directory = false;
+        on_double_click_(new_item);
     }
 }
 
@@ -1293,73 +1268,6 @@ int AssetBrowserPanel::CountItems() const {
     }
 
     return 0;
-}
-
-void AssetBrowserPanel::CreateNewScript() {
-    auto& pm = ProjectManager::Instance();
-    if (!pm.HasActiveProject()) {
-        spdlog::warn("Cannot create script: no active project");
-        return;
-    }
-
-    std::string script_name = new_script_name_;
-    if (script_name.empty()) {
-        spdlog::warn("Script name is empty");
-        return;
-    }
-
-    // Ensure .cyx extension (default script extension)
-    if (!script_name.ends_with(".py") && !script_name.ends_with(".cyx")) {
-        script_name += ".cyx";
-    }
-
-    // Determine target directory - use context_menu_item if it's a directory, otherwise use scripts path
-    fs::path target_dir;
-    if (context_menu_item_ && context_menu_item_->is_directory) {
-        target_dir = context_menu_item_->absolute_path;
-    } else if (context_menu_item_) {
-        target_dir = fs::path(context_menu_item_->absolute_path).parent_path();
-    } else {
-        target_dir = pm.GetScriptsPath();
-    }
-
-    std::string script_path = (target_dir / script_name).string();
-
-    // Create file
-    try {
-        std::ofstream file(script_path);
-        file << "# " << script_name << "\n";
-        file << "# Created with CyxWiz Engine\n\n";
-        file << "# CyxWiz Script\n";
-        file << "# Use this script to define your ML training pipeline\n\n";
-        file << "def main():\n";
-        file << "    pass\n\n";
-        file << "if __name__ == '__main__':\n";
-        file << "    main()\n";
-        file.close();
-
-        spdlog::info("Created new script: {}", script_path);
-
-        // Refresh to show new file
-        Refresh();
-
-        // Auto-open the new script in editor if callback is set
-        if (on_double_click_) {
-            AssetItem new_item;
-            new_item.name = script_name;
-            new_item.absolute_path = script_path;
-            new_item.relative_path = pm.MakeRelativePath(script_path);
-            new_item.type = AssetType::Script;
-            new_item.is_directory = false;
-            on_double_click_(new_item);
-        }
-
-        // Clear input
-        std::memset(new_script_name_, 0, sizeof(new_script_name_));
-
-    } catch (const std::exception& e) {
-        spdlog::error("Failed to create script: {}", e.what());
-    }
 }
 
 void AssetBrowserPanel::CreateNewFolder() {

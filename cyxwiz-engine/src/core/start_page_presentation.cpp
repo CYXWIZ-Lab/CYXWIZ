@@ -106,6 +106,28 @@ const std::vector<ProjectTemplate>& ProjectTemplates() {
     return templates;
 }
 
+namespace {
+
+// Returns an empty string when `name` is usable as a file or folder name,
+// else the reason. `raw` is the untrimmed text (to catch a trailing space).
+std::string NameProblem(const std::string& name, const std::string& raw) {
+    static const std::string bad = "<>:\"/\\|?*";
+    for (char ch : name) {
+        if (bad.find(ch) != std::string::npos || static_cast<unsigned char>(ch) < 32)
+            return "The name contains a character that cannot be used in a file name.";
+    }
+    if (name.back() == '.' || (!raw.empty() && raw.back() == ' ')) return "A name cannot end with a dot or a space.";
+    static const char* reserved[] = {"con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "lpt1", "lpt2", "lpt3"};
+    std::string lower = Lower(name);
+    const auto dot = lower.find('.');
+    if (dot != std::string::npos) lower = lower.substr(0, dot);
+    for (const char* r : reserved)
+        if (lower == r) return "That name is reserved by Windows.";
+    return {};
+}
+
+}  // namespace
+
 CreateCheck CheckCreate(const CreateInputs& in) {
     CreateCheck c;
     const std::string name = Trim(in.name);
@@ -116,32 +138,14 @@ CreateCheck CheckCreate(const CreateInputs& in) {
     } else {
         c.preview = "The folder named above, once you enter a name and a location.";
     }
-
     if (name.empty()) {
         c.reason = "Enter a project name.";
         return c;
     }
-    static const std::string bad = "<>:\"/\\|?*";
-    for (char ch : name) {
-        if (bad.find(ch) != std::string::npos || static_cast<unsigned char>(ch) < 32) {
-            c.reason = "The name contains a character that cannot be used in a folder name.";
-            c.warning = "Remove these characters from the name: < > : \" / \\ | ? *";
-            return c;
-        }
-    }
-    if (name.back() == '.' || in.name.back() == ' ') {
-        c.reason = "A folder name cannot end with a dot or a space.";
-        c.warning = c.reason;
+    if (const std::string problem = NameProblem(name, in.name); !problem.empty()) {
+        c.reason = problem;
+        c.warning = problem + " Avoid < > : \" / \\ | ? * and a trailing dot or space.";
         return c;
-    }
-    static const char* reserved[] = {"con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "lpt1", "lpt2", "lpt3"};
-    const std::string lower = Lower(name);
-    for (const char* r : reserved) {
-        if (lower == r) {
-            c.reason = "That name is reserved by Windows.";
-            c.warning = c.reason + " Choose another name.";
-            return c;
-        }
     }
     if (location.empty()) {
         c.reason = "Choose a location.";
@@ -154,6 +158,53 @@ CreateCheck CheckCreate(const CreateInputs& in) {
     }
     c.can_create = true;
     return c;
+}
+
+std::string ScriptFileName(const ScriptInputs& in) {
+    const std::string name = Trim(in.name);
+    if (name.empty()) return {};
+    const std::string lower = Lower(name);
+    auto ends = [&lower](const char* ext) {
+        const std::string e(ext);
+        return lower.size() > e.size() && lower.compare(lower.size() - e.size(), e.size(), e) == 0;
+    };
+    if (ends(".py") || ends(".cyx")) return name;
+    return name + (in.python ? ".py" : ".cyx");
+}
+
+CreateCheck CheckNewScript(const ScriptInputs& in) {
+    CreateCheck c;
+    const std::string file = ScriptFileName(in);
+    const std::string folder = Trim(in.folder);
+    if (!file.empty() && !folder.empty()) {
+        c.target = (std::filesystem::path(folder) / file).string();
+        c.preview = c.target;
+    } else {
+        c.preview = "The file named above, once you enter a name and a folder.";
+    }
+    if (file.empty()) {
+        c.reason = "Enter a script name.";
+        return c;
+    }
+    if (const std::string problem = NameProblem(Trim(in.name), in.name); !problem.empty()) {
+        c.reason = problem;
+        c.warning = problem + " Avoid < > : \" / \\ | ? * and a trailing dot or space.";
+        return c;
+    }
+    if (folder.empty()) {
+        c.reason = "Choose a folder.";
+        return c;
+    }
+    if (in.target_exists) c.warning = "A file with this name already exists in that folder. Creating replaces it.";
+    c.can_create = true;
+    return c;
+}
+
+std::string ScriptTemplate(const std::string& file_name, bool python) {
+    if (python) {
+        return "# " + file_name + "\n\nimport pycyxwiz\n\n\ndef main():\n    pass\n\n\nif __name__ == \"__main__\":\n    main()\n";
+    }
+    return "# " + file_name + "\n# CyxWiz script: define your ML pipeline here.\n\n";
 }
 
 }  // namespace cyxwiz::startpage

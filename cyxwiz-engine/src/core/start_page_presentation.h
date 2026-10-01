@@ -69,4 +69,18 @@ struct CreateCheck {
 // Windows rejects, not a reserved device name, no trailing dot or space.
 CreateCheck CheckCreate(const CreateInputs& inputs);
 
+// New script (File > New Script, Asset Browser > New > Script): the same
+// name rules; the extension is added when missing. An existing file is a
+// warning, not a block: creating replaces it.
+struct ScriptInputs {
+    std::string name;
+    std::string folder;
+    bool python = true;          // .py, else .cyx
+    bool target_exists = false;  // the caller checks the file system
+};
+std::string ScriptFileName(const ScriptInputs& inputs);  // name with the extension
+CreateCheck CheckNewScript(const ScriptInputs& inputs);
+// Starting text of a new script.
+std::string ScriptTemplate(const std::string& file_name, bool python);
+
 }  // namespace cyxwiz::startpage

@@ -2282,17 +2282,6 @@ MainWindow::MainWindow()
         OnProjectOpened(lifecycle_project_manager.GetProjectRoot());
     }
 
-    // Set up New Script callback - creates new untitled script and opens editor
-    toolbar_->SetNewScriptCallback([this]() {
-        if (script_editor_) {
-            if (!script_editor_->HasEmptyNewTab()) {
-                script_editor_->NewFile();
-            }
-            script_editor_->SetVisible(true);
-            spdlog::info("Created new script in editor");
-        }
-    });
-
     // Set up Open Script in Editor callback (called with file path to open)
     toolbar_->SetOpenScriptInEditorCallback([this](const std::string& file_path) {
         if (script_editor_) {

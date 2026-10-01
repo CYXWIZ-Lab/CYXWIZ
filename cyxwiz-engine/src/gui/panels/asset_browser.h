@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../dialogs/new_script_dialog.h"
 #include <chrono>
 #include <future>
 #include "../panel.h"
@@ -134,7 +135,6 @@ private:
     void GetFlatItemList(AssetItem* root, std::vector<AssetItem*>& out_list);
 
     // Context menu actions
-    void CreateNewScript();
     void CreateNewFolder();
     void DeleteSelectedAsset();
     void RenameSelectedAsset();
@@ -170,7 +170,7 @@ private:
     bool show_new_script_dialog_;
     bool show_new_folder_dialog_;
     char rename_buffer_[256];
-    char new_script_name_[256];
+    NewScriptDialog new_script_dialog_;  // New > Script (shared dialog)
     char new_folder_name_[256];
 
     // Callbacks

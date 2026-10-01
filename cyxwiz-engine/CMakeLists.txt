@@ -359,6 +359,7 @@ set(ENGINE_SOURCES
     src/gui/frame_metrics.cpp
     src/gui/ui_platform.cpp
     src/gui/dialogs/create_project_dialog.cpp
+    src/gui/dialogs/new_script_dialog.cpp
     src/gui/panels/toolbar_search_dialogs.cpp
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp
