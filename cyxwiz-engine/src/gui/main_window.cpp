@@ -4815,7 +4815,12 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         session.traces.insert(session.traces.end(),
                               std::make_move_iterator(session.smoke_result.traces.begin()),
                               std::make_move_iterator(session.smoke_result.traces.end()));
-        if (session.smoke_result.supported) {
+        if (session.smoke_result.stopped) {
+            session.studio_events.push_back({
+                run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
+                "SmokeRun", "stopped", session.smoke_result.summary
+            });
+        } else if (session.smoke_result.supported) {
             session.studio_events.push_back({
                 run_id, NowLocalTimestampForDebugStore(), session.graph_hash, -1,
                 "SmokeRun", session.smoke_result.success ? "passed" : "failed",

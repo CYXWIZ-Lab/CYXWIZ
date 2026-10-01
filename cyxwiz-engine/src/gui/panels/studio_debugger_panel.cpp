@@ -1724,7 +1724,7 @@ void StudioDebuggerPanel::RenderSummaryCards() {
     }
     {
         std::string detail;
-        if (session_.smoke_result.supported) {
+        if (session_.smoke_result.supported && session_.smoke_result.batches_seen > 0) {
             char text[128];
             std::snprintf(text, sizeof(text), "%d samples · %d batches · loss %.4f",
                           session_.smoke_result.samples_seen, session_.smoke_result.batches_seen,

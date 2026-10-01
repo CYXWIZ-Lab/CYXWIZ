@@ -123,9 +123,14 @@ nlohmann::json MakeEntry(const std::string& code,
 class TimelineBuilder {
 public:
     void Add(nlohmann::json entry) {
-        const std::string key = entry.value("source", "") + "|" +
+        // A trace issue carried forward by a later phase (Preflight repeats
+        // the compile findings) is the same finding: keep the first one.
+        const std::string source = entry.value("source", "");
+        const std::string phase_key = source == "canonical_trace_issue"
+            ? std::string{} : entry.value("phase", "");
+        const std::string key = source + "|" +
             entry.value("source_run_id", "") + "|" +
-            entry.value("phase", "") + "|" +
+            phase_key + "|" +
             entry.value("code", "") + "|" +
             std::to_string(entry.value("node_id", -1)) + "|" +
             entry.value("message", "");
