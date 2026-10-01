@@ -941,6 +941,13 @@ void ProjectManager::AddToRecentProjects(const std::string& name, const std::str
     SaveRecentProjects();
 }
 
+void ProjectManager::RemoveRecentProject(const std::string& path) {
+    recent_projects_.erase(std::remove_if(recent_projects_.begin(), recent_projects_.end(),
+                                          [&path](const RecentProject& p) { return p.path == path; }),
+                           recent_projects_.end());
+    SaveRecentProjects();
+}
+
 void ProjectManager::ClearRecentProjects() {
     recent_projects_.clear();
     SaveRecentProjects();

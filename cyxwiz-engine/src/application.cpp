@@ -843,10 +843,6 @@ void CyxWizApp::Render() {
                 project_selected_ = true;    // But allow main window to open
                 start_page_.reset();
 
-            } else if (result == cyxwiz::StartPage::Result::Exit) {
-                spdlog::info("User exited start page - closing application");
-                glfwSetWindowShouldClose(window_, GLFW_TRUE);
-                start_page_.reset();
             }
         }
     }

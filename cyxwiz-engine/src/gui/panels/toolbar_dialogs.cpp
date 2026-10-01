@@ -21,55 +21,8 @@
 
 namespace cyxwiz {
 void ToolbarPanel::RenderProjectDialogs() {
-    // Render dialogs if open
-    if (show_new_project_dialog_) {
-        ImGui::OpenPopup("New Project");
-        if (ImGui::BeginPopupModal("New Project", &show_new_project_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("Create a new CyxWiz project");
-            ImGui::Separator();
-
-            ImGui::InputText("Project Name", project_name_buffer_, sizeof(project_name_buffer_));
-
-            ImGui::InputText("Location", project_path_buffer_, sizeof(project_path_buffer_));
-            ImGui::SameLine();
-            if (ImGui::Button("Browse...")) {
-                std::string selected_folder = OpenFolderDialog();
-                if (!selected_folder.empty()) {
-                    strncpy(project_path_buffer_, selected_folder.c_str(), sizeof(project_path_buffer_) - 1);
-                    project_path_buffer_[sizeof(project_path_buffer_) - 1] = '\0';
-                }
-            }
-
-            ImGui::Separator();
-
-            if (ImGui::Button("Create", ImVec2(120, 0))) {
-                std::string proj_name = project_name_buffer_;
-                std::string proj_path = project_path_buffer_;
-
-                if (!proj_name.empty() && !proj_path.empty()) {
-                    auto& pm = ProjectManager::Instance();
-                    if (pm.CreateProject(proj_name, proj_path)) {
-                        spdlog::info("Project created: {}/{}", proj_path, proj_name);
-                        show_new_project_dialog_ = false;
-                        // Clear buffers
-                        memset(project_name_buffer_, 0, sizeof(project_name_buffer_));
-                        memset(project_path_buffer_, 0, sizeof(project_path_buffer_));
-                    }
-                } else {
-                    spdlog::warn("Project name and location are required");
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-                show_new_project_dialog_ = false;
-                // Clear buffers
-                memset(project_name_buffer_, 0, sizeof(project_name_buffer_));
-                memset(project_path_buffer_, 0, sizeof(project_path_buffer_));
-            }
-
-            ImGui::EndPopup();
-        }
-    }
+    // File > New Project: the same dialog as the start page (TOFIX129 A2-1).
+    create_project_dialog_.Render();
 
     if (show_about_dialog_) {
         ImGui::OpenPopup("About CyxWiz");

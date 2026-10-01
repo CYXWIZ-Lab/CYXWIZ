@@ -153,6 +153,8 @@ public:
     };
     const std::vector<RecentProject>& GetRecentProjects() const { return recent_projects_; }
     void ClearRecentProjects();
+    // Start page > Actions > Remove from this list. The project itself is untouched.
+    void RemoveRecentProject(const std::string& path);
     static constexpr size_t MAX_RECENT_PROJECTS = 10;
 
 private:

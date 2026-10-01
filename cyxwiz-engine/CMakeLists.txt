@@ -314,6 +314,7 @@ set(ENGINE_SOURCES
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
     src/core/menu_presentation.cpp
+    src/core/start_page_presentation.cpp
     src/core/live_graph_compile.cpp
     src/core/remote_job_presentation.cpp
     src/gui/node_config_dialog.cpp
@@ -356,6 +357,8 @@ set(ENGINE_SOURCES
     src/gui/ui_tokens.cpp
     src/gui/ui_widgets.cpp
     src/gui/frame_metrics.cpp
+    src/gui/ui_platform.cpp
+    src/gui/dialogs/create_project_dialog.cpp
     src/gui/panels/toolbar_search_dialogs.cpp
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp

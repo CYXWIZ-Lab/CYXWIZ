@@ -6,6 +6,7 @@
 #include "auth/auth_client.h"
 #include "../../core/backend_pack_manager_model.h"
 #include "../../core/menu_presentation.h"
+#include "../dialogs/create_project_dialog.h"
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -384,7 +385,6 @@ private:
     std::string OpenFolderDialog();
     std::string OpenFileDialog(const char* filter, const char* title);
 
-    bool show_new_project_dialog_;
     bool show_about_dialog_;
     bool show_account_settings_dialog_ = false;
     bool show_exit_confirmation_dialog_ = false;
@@ -480,8 +480,7 @@ private:
     std::function<void()> on_logout_callback_;
 
     // Project creation state
-    char project_name_buffer_[256];
-    char project_path_buffer_[512];
+    CreateProjectDialog create_project_dialog_;  // File > New Project
 
     // Save As dialog state
     bool show_save_as_dialog_ = false;

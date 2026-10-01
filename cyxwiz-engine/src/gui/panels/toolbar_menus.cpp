@@ -10,6 +10,7 @@
 #include "../dock_style.h"
 #include "../icons.h"
 #include "../theme.h"
+#include "../ui_platform.h"
 #include "../tutorial/tutorial_system.h"
 #include "../../auth/auth_client.h"
 #include "../../core/file_dialogs.h"
@@ -92,15 +93,6 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
 
 namespace {
 
-void OpenUrl(const char* url) {
-#ifdef _WIN32
-    ShellExecuteA(nullptr, "open", url, nullptr, nullptr, SW_SHOWNORMAL);
-#elif defined(__APPLE__)
-    std::system((std::string("open ") + url).c_str());
-#else
-    std::system((std::string("xdg-open ") + url).c_str());
-#endif
-}
 
 void ShowSidebarPanel(const std::string& name, bool toggle) {
     for (const auto& panel : gui::GetDockStyle().GetPanels()) {
@@ -309,7 +301,7 @@ void ToolbarPanel::BuildActionHandlers() {
     };
 
     // File
-    h["file.new_project"] = [this](const std::string&) { show_new_project_dialog_ = true; };
+    h["file.new_project"] = [this](const std::string&) { create_project_dialog_.Open(0); };
     h["file.open_project"] = [](const std::string&) {
         auto result = FileDialogs::OpenProject();
         if (!result) return;
@@ -587,7 +579,7 @@ void ToolbarPanel::BuildActionHandlers() {
     };
     h["help.browse_tutorials"] = [](const std::string&) { TutorialSystem::Instance().OpenTutorialBrowser(); };
     h["help.shortcuts"] = [this](const std::string&) { OpenPreferences("Shortcuts"); };
-    h["help.report_issue"] = [](const std::string&) { OpenUrl("https://github.com/CYXWIZ-Lab/CYXWIZ/issues"); };
+    h["help.report_issue"] = [](const std::string&) { ui::OpenUrl("https://github.com/CYXWIZ-Lab/CYXWIZ/issues"); };
     h["help.about"] = [this](const std::string&) { show_about_dialog_ = true; };
 
     // Account

@@ -286,6 +286,23 @@ if(CYXWIZ_BUILD_TESTS)
         COMMAND test_ui_tokens
     )
 
+    # Start page and Create Project model (TOFIX129 piece A2).
+    add_executable(test_start_page_presentation
+        "${_cyxwiz_installer_engine_dir}/tests/test_start_page_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/start_page_presentation.cpp"
+    )
+    target_include_directories(test_start_page_presentation PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+    )
+    set_target_properties(test_start_page_presentation PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME start_page_presentation_contract
+        COMMAND test_start_page_presentation
+    )
+
     add_executable(test_installer_product_removal
         "${_cyxwiz_installer_engine_dir}/tests/test_installer_product_removal.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
