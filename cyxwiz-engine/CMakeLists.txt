@@ -319,6 +319,7 @@ set(ENGINE_SOURCES
     src/core/script_text_file.cpp
     src/core/python_tokenizer.cpp
     src/core/text_search.cpp
+    src/core/cyx_format.cpp
     src/core/live_graph_compile.cpp
     src/core/remote_job_presentation.cpp
     src/gui/node_config_dialog.cpp

@@ -1,4 +1,5 @@
 #include "cell_manager.h"
+#include "../core/cyx_format.h"
 #include "scripting_engine.h"
 #include <spdlog/spdlog.h>
 #include <sstream>
@@ -441,152 +442,56 @@ void CellManager::OnExecutionComplete(int cell_index, bool success, const std::s
 // ========== Serialization ==========
 
 bool CellManager::HasCellMarkers(const std::string& content) {
-    return content.find(CellMarkers::CODE) != std::string::npos ||
-           content.find(CellMarkers::MARKDOWN) != std::string::npos ||
-           content.find(CellMarkers::RAW) != std::string::npos;
+    return cyx::HasCellMarkers(content);
 }
 
-CellType CellManager::ParseCellMarker(const std::string& line) const {
-    std::string trimmed = line;
-    // Trim whitespace
-    trimmed.erase(0, trimmed.find_first_not_of(" \t\r\n"));
-    trimmed.erase(trimmed.find_last_not_of(" \t\r\n") + 1);
-
-    if (trimmed == CellMarkers::CODE || trimmed == CellMarkers::LEGACY_SECTION) {
-        return CellType::Code;
-    } else if (trimmed == CellMarkers::MARKDOWN) {
-        return CellType::Markdown;
-    } else if (trimmed == CellMarkers::RAW) {
-        return CellType::Raw;
+namespace {
+CellType ToCellType(cyx::CellKind kind) {
+    switch (kind) {
+        case cyx::CellKind::Markdown: return CellType::Markdown;
+        case cyx::CellKind::Raw: return CellType::Raw;
+        case cyx::CellKind::Code: break;
     }
-
-    // Not a marker
-    return CellType::Code;  // Default
+    return CellType::Code;
 }
 
-std::string CellManager::GetCellMarker(CellType type) const {
+cyx::CellKind ToCellKind(CellType type) {
     switch (type) {
-        case CellType::Code: return CellMarkers::CODE;
-        case CellType::Markdown: return CellMarkers::MARKDOWN;
-        case CellType::Raw: return CellMarkers::RAW;
-        default: return CellMarkers::CODE;
+        case CellType::Markdown: return cyx::CellKind::Markdown;
+        case CellType::Raw: return cyx::CellKind::Raw;
+        case CellType::Code: break;
     }
+    return cyx::CellKind::Code;
 }
+}  // namespace
 
+// The format lives in core/cyx_format (TOFIX133 P0 item 15): bare %% markers,
+// comments before the first marker kept, empty cells kept, and a stable
+// save/load round trip.
 bool CellManager::ParseFromCyx(const std::string& content) {
     std::lock_guard<std::mutex> lock(mutex_);
-
-    // Clear existing cells
     for (auto& cell : cells_) {
         cell.ClearOutputs();
     }
     cells_.clear();
-
-    // Check if content has cell markers
-    if (!HasCellMarkers(content)) {
-        // Treat entire content as single code cell
-        Cell cell(CellType::Code, content);
-        cells_.push_back(std::move(cell));
-        spdlog::info("Parsed .cyx file as single code cell (no markers)");
-        return true;
+    for (const auto& parsed : cyx::Parse(content)) {
+        cells_.emplace_back(ToCellType(parsed.kind), parsed.source);
     }
-
-    // Parse cells by markers
-    std::istringstream stream(content);
-    std::string line;
-    CellType current_type = CellType::Code;
-    std::string current_content;
-    bool in_cell = false;
-    bool first_marker_found = false;
-
-    // Check for header comments
-    while (std::getline(stream, line)) {
-        std::string trimmed = line;
-        trimmed.erase(0, trimmed.find_first_not_of(" \t\r\n"));
-
-        // Check for cell marker
-        if (trimmed.find("%%") == 0) {
-            // Save previous cell if any
-            if (in_cell && !current_content.empty()) {
-                // Remove trailing newline
-                if (!current_content.empty() && current_content.back() == '\n') {
-                    current_content.pop_back();
-                }
-                Cell cell(current_type, current_content);
-                cells_.push_back(std::move(cell));
-            }
-
-            // Determine new cell type
-            if (trimmed == CellMarkers::CODE || trimmed == "%%") {
-                current_type = CellType::Code;
-            } else if (trimmed == CellMarkers::MARKDOWN) {
-                current_type = CellType::Markdown;
-            } else if (trimmed == CellMarkers::RAW) {
-                current_type = CellType::Raw;
-            } else {
-                // Unknown marker, treat as code section marker
-                current_type = CellType::Code;
-            }
-
-            current_content.clear();
-            in_cell = true;
-            first_marker_found = true;
-        }
-        else if (first_marker_found) {
-            // Add line to current cell
-            current_content += line + "\n";
-        }
-        else if (trimmed.find("#") == 0 || trimmed.empty()) {
-            // Skip header comments before first marker
-            continue;
-        }
-        else {
-            // Content before first marker - treat as code
-            if (!in_cell) {
-                in_cell = true;
-                current_type = CellType::Code;
-            }
-            current_content += line + "\n";
-        }
-    }
-
-    // Save last cell
-    if (in_cell && !current_content.empty()) {
-        // Remove trailing newline
-        if (!current_content.empty() && current_content.back() == '\n') {
-            current_content.pop_back();
-        }
-        Cell cell(current_type, current_content);
-        cells_.push_back(std::move(cell));
-    }
-
-    // Ensure at least one cell exists
     if (cells_.empty()) {
         cells_.emplace_back(CellType::Code);
     }
-
     spdlog::info("Parsed .cyx file with {} cells", cells_.size());
     return true;
 }
 
 std::string CellManager::SerializeToCyx() const {
     std::lock_guard<std::mutex> lock(mutex_);
-
-    std::ostringstream output;
-
-    // Header comment
-    output << "# CyxWiz Script v0.3.0\n";
-    output << "# Cell markers: %%code, %%markdown, %%raw\n\n";
-
+    std::vector<cyx::Cell> cells;
+    cells.reserve(cells_.size());
     for (const auto& cell : cells_) {
-        // Write cell marker
-        output << GetCellMarker(cell.type) << "\n";
-
-        // Write cell content
-        output << cell.source << "\n\n";
+        cells.push_back({ToCellKind(cell.type), cell.source});
     }
-
-    return output.str();
+    return cyx::Serialize(cells);
 }
 
 // ========== Editor Theme ==========

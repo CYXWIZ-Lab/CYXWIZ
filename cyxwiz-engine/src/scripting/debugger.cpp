@@ -1,4 +1,5 @@
 #include "debugger.h"
+#include "../core/python_literal.h"
 #include "scripting_engine.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -260,16 +261,10 @@ int DebuggerManager::AddBreakpoint(const std::string& cell_id, int line, const s
 
     // Notify Python
     if (scripting_engine_) {
-        std::string escaped_condition = condition;
-        // Basic escape for Python string
-        size_t pos = 0;
-        while ((pos = escaped_condition.find("'", pos)) != std::string::npos) {
-            escaped_condition.replace(pos, 1, "\\'");
-            pos += 2;
-        }
-
-        std::string cmd = "_cyxwiz_add_breakpoint('" + cell_id + "', " +
-                          std::to_string(line) + ", '" + escaped_condition + "')";
+        // Paths and conditions are data: quoted, never pasted into the source
+        // (a path like C:\Users became a \U escape; TOFIX133 P0 item 16).
+        std::string cmd = "_cyxwiz_add_breakpoint(" + ::cyxwiz::PythonStringLiteral(cell_id) + ", " +
+                          std::to_string(line) + ", " + ::cyxwiz::PythonStringLiteral(condition) + ")";
         scripting_engine_->ExecuteScript(cmd);
     }
 
@@ -286,7 +281,7 @@ void DebuggerManager::RemoveBreakpoint(int id) {
     if (it != breakpoints_.end()) {
         // Notify Python
         if (scripting_engine_) {
-            std::string cmd = "_cyxwiz_remove_breakpoint('" + it->cell_id + "', " +
+            std::string cmd = "_cyxwiz_remove_breakpoint(" + ::cyxwiz::PythonStringLiteral(it->cell_id) + ", " +
                               std::to_string(it->line) + ")";
             scripting_engine_->ExecuteScript(cmd);
         }
@@ -452,16 +447,20 @@ std::map<std::string, std::string> DebuggerManager::GetGlobals() {
 
     if (!scripting_engine_) return result;
 
+    // Leaves no names in __main__ (TOFIX121 rule).
     std::string cmd = R"(
-import json
-result = {}
-for k, v in globals().items():
-    if not k.startswith('_'):
-        try:
-            result[k] = repr(v)[:100]
-        except:
-            result[k] = '<error>'
-print(json.dumps(result))
+def _cyxwiz_globals_json():
+    import json
+    out = {}
+    for k, v in globals().items():
+        if not k.startswith('_'):
+            try:
+                out[k] = repr(v)[:100]
+            except Exception:
+                out[k] = '<error>'
+    return json.dumps(out)
+print(_cyxwiz_globals_json())
+del _cyxwiz_globals_json
 )";
 
     auto exec_result = scripting_engine_->ExecuteScript(cmd);

@@ -243,10 +243,6 @@ private:
     void OnExecutionOutput(int cell_index, const std::string& output, bool is_error);
     void OnExecutionComplete(int cell_index, bool success, const std::string& error);
 
-    // Parsing helpers
-    CellType ParseCellMarker(const std::string& line) const;
-    std::string GetCellMarker(CellType type) const;
-
     // Data
     std::vector<Cell> cells_;
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;

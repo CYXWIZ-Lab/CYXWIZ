@@ -344,7 +344,16 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/tests/test_text_search.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/text_search.cpp"
     )
-    foreach(_cyxwiz_p0_test test_python_tokenizer test_argb_colour test_text_search)
+    # .cyx notebook format and Python literals for the debugger (TOFIX133 P0 items 15-16).
+    add_executable(test_cyx_format
+        "${_cyxwiz_installer_engine_dir}/tests/test_cyx_format.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/cyx_format.cpp"
+    )
+    add_executable(test_python_literal
+        "${_cyxwiz_installer_engine_dir}/tests/test_python_literal.cpp"
+    )
+    foreach(_cyxwiz_p0_test test_python_tokenizer test_argb_colour test_text_search test_cyx_format
+            test_python_literal)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
