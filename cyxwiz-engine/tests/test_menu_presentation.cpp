@@ -202,6 +202,7 @@ int main() {
     Check(ShortcutFor("notebook.delete_cell", Context::ScriptNotebook) == "D, D", "notebook delete documented");
     Check(ShortcutFor("notebook.to_markdown", Context::ScriptNotebook) == "M", "notebook M documented");
     Check(ShortcutFor("script.cell_mode", Context::ScriptNotebook) == "Ctrl+Shift+M", "leave notebook documented");
+    Check(ShortcutFor("editor.select_occurrences", Context::ScriptEditor) == "Ctrl+Shift+L", "editor keys documented");
     Check(ShortcutFor("tools.model_summary", Context::Any).empty(), "Model Summary has no chord");
     Check(ShortcutFor("data.profiler", Context::Any).empty(), "Data Profiler has no chord");
     // Window-wise: F5 and Ctrl+S do the matching action in the Script Editor.

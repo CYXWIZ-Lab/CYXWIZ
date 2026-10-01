@@ -220,6 +220,14 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(script, "edit.paste", "Paste", "Ctrl+V", "Edit", true);
         add(script, "edit.delete", "Delete", "Delete", "Edit", true);
         add(script, "edit.select_all", "Select All", "Ctrl+A", "Edit", true);
+        // The code view's own keys (TOFIX133 P1).
+        add(script, "editor.cursor_above", "Add a cursor on the line above", "Ctrl+Alt+Up", "", true);
+        add(script, "editor.cursor_below", "Add a cursor on the line below", "Ctrl+Alt+Down", "", true);
+        add(script, "editor.select_occurrences", "Select every occurrence of the word", "Ctrl+Shift+L", "", true);
+        add(script, "editor.single_cursor", "Back to one cursor", "Escape", "", true);
+        add(script, "editor.fold", "Fold the block at the cursor", "Ctrl+Shift+[", "", true);
+        add(script, "editor.unfold", "Unfold the block at the cursor", "Ctrl+Shift+]", "", true);
+        add(script, "editor.add_cursor_click", "Add a cursor where you click", "Alt+Click", "", true);
 
         // Script Editor while debugging: the debugger handles these.
         add(debug, "debug.continue", "Continue", "F5", "", true);
