@@ -317,6 +317,7 @@ set(ENGINE_SOURCES
     src/core/start_page_presentation.cpp
     src/core/python_setup_presentation.cpp
     src/core/script_text_file.cpp
+    src/core/python_tokenizer.cpp
     src/core/live_graph_compile.cpp
     src/core/remote_job_presentation.cpp
     src/gui/node_config_dialog.cpp
@@ -360,6 +361,7 @@ set(ENGINE_SOURCES
     src/gui/ui_widgets.cpp
     src/gui/frame_metrics.cpp
     src/gui/panel_memory.cpp
+    src/gui/python_language.cpp
     src/gui/ui_platform.cpp
     src/gui/dialogs/create_project_dialog.cpp
     src/gui/dialogs/new_script_dialog.cpp

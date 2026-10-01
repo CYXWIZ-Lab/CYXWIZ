@@ -684,6 +684,8 @@ ImU32 TextEditor::GetGlyphColor(const Glyph & aGlyph) const
 		return mPalette[(int)PaletteIndex::Comment];
 	if (aGlyph.mMultiLineComment)
 		return mPalette[(int)PaletteIndex::MultiLineComment];
+	if (aGlyph.mMultiLineString)
+		return mPalette[(int)PaletteIndex::String];
 	auto const color = mPalette[(int)aGlyph.mColorIndex];
 	if (aGlyph.mPreprocessor)
 	{
@@ -2306,10 +2308,113 @@ void TextEditor::ColorizeRange(int aFromLine, int aToLine)
 	}
 }
 
+// CyxWiz: comment and string pass for Python. Marks # comments, and
+// ''' / """ strings that may span lines; one-line strings are coloured by
+// the language tokenizer. A quote inside a comment or another string is text.
+void TextEditor::ColorizePythonStrings()
+{
+	char stringQuote = 0;   // open one-line string
+	char tripleQuote = 0;   // open triple-quoted string
+	for (auto& line : mLines)
+	{
+		stringQuote = 0;    // one-line strings end with the line
+		bool comment = false;
+		bool withinPreproc = false;
+		bool firstChar = true;
+		const int size = (int)line.size();
+		for (int i = 0; i < size; )
+		{
+			auto& g = line[i];
+			const char c = (char)g.mChar;
+			g.mComment = false;
+			g.mMultiLineComment = false;
+			g.mMultiLineString = false;
+			if (firstChar && !isspace((unsigned char)c))
+			{
+				firstChar = false;
+				withinPreproc = c == mLanguageDefinition.mPreprocChar && tripleQuote == 0;
+			}
+			g.mPreprocessor = withinPreproc;
+			int step = UTF8CharLength(g.mChar);
+			if (tripleQuote != 0)
+			{
+				g.mMultiLineString = true;
+				if (c == '\\' && i + 1 < size)
+				{
+					line[i + 1].mMultiLineString = true;
+					line[i + 1].mComment = line[i + 1].mMultiLineComment = false;
+					line[i + 1].mPreprocessor = withinPreproc;
+					step = 2;
+				}
+				else if (c == tripleQuote && i + 2 < size && line[i + 1].mChar == c && line[i + 2].mChar == c)
+				{
+					for (int k = 1; k <= 2; ++k)
+					{
+						line[i + k].mMultiLineString = true;
+						line[i + k].mComment = line[i + k].mMultiLineComment = false;
+						line[i + k].mPreprocessor = withinPreproc;
+					}
+					tripleQuote = 0;
+					step = 3;
+				}
+			}
+			else if (comment)
+			{
+				g.mComment = true;
+			}
+			else if (stringQuote != 0)
+			{
+				if (c == '\\')
+					step = 2;
+				else if (c == stringQuote)
+					stringQuote = 0;
+			}
+			else if (c == '#')
+			{
+				comment = true;
+				g.mComment = true;
+			}
+			else if (c == '"' || c == '\'')
+			{
+				if (i + 2 < size && line[i + 1].mChar == c && line[i + 2].mChar == c)
+				{
+					tripleQuote = c;
+					for (int k = 0; k <= 2; ++k)
+					{
+						line[i + k].mMultiLineString = true;
+						line[i + k].mComment = line[i + k].mMultiLineComment = false;
+						line[i + k].mPreprocessor = withinPreproc;
+					}
+					step = 3;
+				}
+				else
+				{
+					stringQuote = c;
+				}
+			}
+			for (int k = 1; k < step && i + k < size; ++k)
+			{
+				// glyphs skipped by an escape or a multi-byte character
+				if (!line[i + k].mMultiLineString) line[i + k].mMultiLineString = g.mMultiLineString;
+				line[i + k].mComment = g.mComment;
+				line[i + k].mMultiLineComment = false;
+				line[i + k].mPreprocessor = withinPreproc;
+			}
+			i += step;
+		}
+	}
+}
+
 void TextEditor::ColorizeInternal()
 {
 	if (mLines.empty() || !mColorizerEnabled)
 		return;
+
+	if (mCheckComments && mLanguageDefinition.mPythonStrings)
+	{
+		ColorizePythonStrings();
+		mCheckComments = false;
+	}
 
 	if (mCheckComments)
 	{

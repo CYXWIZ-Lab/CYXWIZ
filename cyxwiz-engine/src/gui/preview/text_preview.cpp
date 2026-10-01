@@ -1,4 +1,5 @@
 #include "text_preview.h"
+#include "../python_language.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
@@ -188,38 +189,7 @@ void TextPreviewRenderer::ApplyLanguage(SyntaxLanguage lang) {
 }
 
 TextEditor::LanguageDefinition TextPreviewRenderer::CreatePythonLanguage() {
-    static TextEditor::LanguageDefinition lang;
-    static bool inited = false;
-    if (!inited) {
-        lang.mName = "Python";
-        lang.mCaseSensitive = true;
-        lang.mAutoIndentation = true;
-        lang.mSingleLineComment = "#";
-        lang.mCommentStart = "\"\"\"";
-        lang.mCommentEnd = "\"\"\"";
-
-        static const char* const keywords[] = {
-            "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else",
-            "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is",
-            "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "try",
-            "while", "with", "yield", "async", "await"
-        };
-        for (auto& k : keywords) lang.mKeywords.insert(k);
-
-        static const char* const ids[] = {
-            "abs", "all", "any", "bin", "bool", "dict", "enumerate", "filter", "float",
-            "format", "getattr", "hasattr", "int", "isinstance", "len", "list", "map",
-            "max", "min", "next", "open", "print", "range", "repr", "set", "sorted",
-            "str", "sum", "super", "tuple", "type", "zip"
-        };
-        for (auto& i : ids) {
-            TextEditor::Identifier id;
-            id.mDeclaration = "Built-in";
-            lang.mIdentifiers.insert(std::make_pair(std::string(i), id));
-        }
-        inited = true;
-    }
-    return lang;
+    return ::cyxwiz::PythonLanguage();
 }
 
 TextEditor::LanguageDefinition TextPreviewRenderer::CreateCppLanguage() {

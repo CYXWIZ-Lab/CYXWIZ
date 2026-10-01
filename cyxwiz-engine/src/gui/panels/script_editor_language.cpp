@@ -1,67 +1,33 @@
-// Script Editor language definition and custom editor palettes.
+// Script Editor language and custom editor palettes.
 
 #include "script_editor.h"
+
+#include "../../core/argb_colour.h"
+#include "../python_language.h"
 
 #include <string>
 
 namespace cyxwiz {
+
+namespace {
+// The palettes below are written 0xAARRGGBB; TextEditor draws ImU32
+// 0xAABBGGRR (TOFIX133 P0 item 5).
+TextEditor::Palette FromArgb(TextEditor::Palette palette) {
+    for (auto& colour : palette) colour = ArgbToAbgr(colour);
+    return palette;
+}
+
+}  // namespace
+
 TextEditor::LanguageDefinition ScriptEditorPanel::CreatePythonLanguage() {
-    static bool inited = false;
-    static TextEditor::LanguageDefinition lang;
-
-    if (!inited) {
-        lang.mName = "Python";
-        lang.mCaseSensitive = true;
-        lang.mAutoIndentation = true;
-
-        // Comment markers
-        lang.mSingleLineComment = "#";
-        lang.mCommentStart = "\"\"\"";
-        lang.mCommentEnd = "\"\"\"";
-
-        // Add preprocessor patterns for %% section markers
-        lang.mPreprocChar = '%';
-
-        // Python keywords
-        static const char* const keywords[] = {
-            "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else",
-            "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is",
-            "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "try",
-            "while", "with", "yield", "async", "await"
-        };
-
-        for (auto& k : keywords) {
-            lang.mKeywords.insert(k);
-        }
-
-        // Built-in identifiers
-        static const char* const identifiers[] = {
-            "abs", "all", "any", "ascii", "bin", "bool", "bytearray", "bytes", "callable", "chr",
-            "classmethod", "compile", "complex", "delattr", "dict", "dir", "divmod", "enumerate",
-            "eval", "exec", "filter", "float", "format", "frozenset", "getattr", "globals", "hasattr",
-            "hash", "help", "hex", "id", "input", "int", "isinstance", "issubclass", "iter", "len",
-            "list", "locals", "map", "max", "memoryview", "min", "next", "object", "oct", "open",
-            "ord", "pow", "print", "property", "range", "repr", "reversed", "round", "set", "setattr",
-            "slice", "sorted", "staticmethod", "str", "sum", "super", "tuple", "type", "vars", "zip"
-        };
-
-        for (auto& i : identifiers) {
-            TextEditor::Identifier id;
-            id.mDeclaration = "Built-in function";
-            lang.mIdentifiers.insert(std::make_pair(std::string(i), id));
-        }
-
-        inited = true;
-    }
-
-    return lang;
+    return PythonLanguage();
 }
 
 // ==================== Custom Theme Palettes ====================
 
 TextEditor::Palette ScriptEditorPanel::GetMonokaiPalette() {
     // Monokai theme - popular dark theme with vibrant colors
-    return TextEditor::Palette{{
+    return FromArgb(TextEditor::Palette{{
         0xfff8f8f2, // Default (light gray)
         0xfff92672, // Keyword (pink)
         0xffae81ff, // Number (purple)
@@ -83,12 +49,12 @@ TextEditor::Palette ScriptEditorPanel::GetMonokaiPalette() {
         0x40808080, // Current line fill
         0x30808080, // Current line fill inactive
         0x40808080  // Current line edge
-    }};
+    }});
 }
 
 TextEditor::Palette ScriptEditorPanel::GetDraculaPalette() {
     // Dracula theme - dark theme with purple accents
-    return TextEditor::Palette{{
+    return FromArgb(TextEditor::Palette{{
         0xfff8f8f2, // Default (foreground)
         0xffff79c6, // Keyword (pink)
         0xffbd93f9, // Number (purple)
@@ -110,12 +76,12 @@ TextEditor::Palette ScriptEditorPanel::GetDraculaPalette() {
         0x40404050, // Current line fill
         0x30404050, // Current line fill inactive
         0x40404050  // Current line edge
-    }};
+    }});
 }
 
 TextEditor::Palette ScriptEditorPanel::GetOneDarkPalette() {
     // One Dark theme - Atom editor inspired
-    return TextEditor::Palette{{
+    return FromArgb(TextEditor::Palette{{
         0xffabb2bf, // Default (light gray)
         0xffc678dd, // Keyword (purple)
         0xffd19a66, // Number (orange)
@@ -137,12 +103,12 @@ TextEditor::Palette ScriptEditorPanel::GetOneDarkPalette() {
         0x20ffffff, // Current line fill
         0x15ffffff, // Current line fill inactive
         0x20ffffff  // Current line edge
-    }};
+    }});
 }
 
 TextEditor::Palette ScriptEditorPanel::GetGitHubPalette() {
     // GitHub Light theme - clean light theme
-    return TextEditor::Palette{{
+    return FromArgb(TextEditor::Palette{{
         0xff24292e, // Default (dark gray)
         0xffd73a49, // Keyword (red)
         0xff005cc5, // Number (blue)
@@ -164,6 +130,6 @@ TextEditor::Palette ScriptEditorPanel::GetGitHubPalette() {
         0x10000000, // Current line fill
         0x08000000, // Current line fill inactive
         0x10000000  // Current line edge
-    }};
+    }});
 }
 } // namespace cyxwiz

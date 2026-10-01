@@ -331,6 +331,22 @@ if(CYXWIZ_BUILD_TESTS)
         COMMAND test_script_text_file
     )
 
+    # Script Editor Python colouring and palette byte order (TOFIX133 P0 items 4-5).
+    add_executable(test_python_tokenizer
+        "${_cyxwiz_installer_engine_dir}/tests/test_python_tokenizer.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/python_tokenizer.cpp"
+    )
+    add_executable(test_argb_colour
+        "${_cyxwiz_installer_engine_dir}/tests/test_argb_colour.cpp"
+    )
+    foreach(_cyxwiz_p0_test test_python_tokenizer test_argb_colour)
+        set_target_properties(${_cyxwiz_p0_test} PROPERTIES
+            CXX_STANDARD 20
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+        )
+        add_test(NAME ${_cyxwiz_p0_test}_contract COMMAND ${_cyxwiz_p0_test})
+    endforeach()
+
     add_executable(test_installer_product_removal
         "${_cyxwiz_installer_engine_dir}/tests/test_installer_product_removal.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"

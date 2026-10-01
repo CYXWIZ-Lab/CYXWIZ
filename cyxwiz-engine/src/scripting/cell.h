@@ -6,6 +6,7 @@
 #include <chrono>
 #include <random>
 #include <TextEditor.h>
+#include "../gui/python_language.h"
 
 // Use GLAD for cross-platform OpenGL loading
 #include <glad/glad.h>
@@ -144,28 +145,7 @@ struct Cell {
 
     // Setup code editor with Python syntax
     void SetupCodeEditor() {
-        auto lang = TextEditor::LanguageDefinition::CPlusPlus();
-        lang.mKeywords.clear();
-
-        static const char* const py_keywords[] = {
-            "and", "as", "assert", "break", "class", "continue", "def", "del",
-            "elif", "else", "except", "False", "finally", "for", "from", "global",
-            "if", "import", "in", "is", "lambda", "None", "nonlocal", "not", "or",
-            "pass", "raise", "return", "True", "try", "while", "with", "yield",
-            "async", "await", "print", "len", "range", "str", "int", "float",
-            "list", "dict", "set", "tuple", "bool", "type", "self", "cls"
-        };
-
-        for (const auto& k : py_keywords) {
-            lang.mKeywords.insert(k);
-        }
-
-        lang.mSingleLineComment = "#";
-        lang.mCommentStart = "\"\"\"";
-        lang.mCommentEnd = "\"\"\"";
-        lang.mName = "Python";
-
-        editor.SetLanguageDefinition(lang);
+        editor.SetLanguageDefinition(PythonLanguage());
         editor.SetShowWhitespaces(false);
         editor.SetTabSize(4);
         editor.SetText(source);
