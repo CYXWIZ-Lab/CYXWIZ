@@ -241,6 +241,8 @@ void ScriptEditorPanel::FinalizeAsyncLoad(
         tab->last_editing_cell = -1;
     }
 
+    NoteDiskTime(*tab);
+
     // Clear loading state
     tab->is_loading = false;
     tab->load_progress = 1.0f;
@@ -346,6 +348,7 @@ void ScriptEditorPanel::SaveFile() {
         tab->is_modified = false;
         tab->editor.Doc().MarkSaved();
         tab->format_changed = false;
+        NoteDiskTime(*tab);
         spdlog::info("Saved file: {}", tab->filepath);
     } else {
         spdlog::error("Could not save {}: {}", tab->filepath, error);
@@ -385,6 +388,7 @@ void ScriptEditorPanel::SaveFileAs() {
         tab->is_modified = false;
         tab->editor.Doc().MarkSaved();
         tab->format_changed = false;
+        NoteDiskTime(*tab);
         spdlog::info("Saved file as: {}", path);
     } else {
         spdlog::error("Could not save {}: {}", path, error);
@@ -443,6 +447,7 @@ bool ScriptEditorPanel::ReloadOpenFile(const std::string& filepath) {
         scriptfile::Decoded decoded = scriptfile::Decode(content);
         tab->format = decoded.format;
         tab->editor.SetText(decoded.text);
+        NoteDiskTime(*tab);
         tab->is_modified = false;
         spdlog::info("Reloaded {} after Replace in Files", filepath);
         return true;

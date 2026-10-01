@@ -169,6 +169,9 @@ private:
         bool load_failed = false;        // the file was not read: never write this tab over it
         scriptfile::TextFormat format;   // BOM and line endings of the file, kept on save
         bool format_changed = false;     // BOM or line endings changed in the status bar, not saved yet
+        std::filesystem::file_time_type disk_time{};  // write time seen at load or save
+        bool disk_changed = false;       // changed (or gone) on disk while the tab has edits
+        bool disk_missing = false;
         std::uint64_t load_task_id = 0;
 
         // Large files use a bounded, read-only, virtualized text view.
@@ -350,6 +353,14 @@ private:
 
     std::function<void()> go_to_line_request_;
     void RenderCodeContextMenu(EditorTab& tab);
+
+    // Files changed on disk (TOFIX133 P2 step 2.6)
+    void NoteDiskTime(EditorTab& tab);
+    void CheckFilesOnDisk();
+    void ReloadFromDisk(EditorTab& tab);
+    void RenderDiskChangedBand(EditorTab& tab);
+    void OpenDiskCopy(EditorTab& tab);
+    double disk_check_time_ = -10.0;
 
     // Settings changed callback (for syncing with Preferences)
     std::function<void()> on_settings_changed_callback_;

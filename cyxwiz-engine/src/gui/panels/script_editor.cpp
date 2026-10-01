@@ -58,6 +58,7 @@ void ScriptEditorPanel::Render() {
     for (auto& tab : tabs_) {
         if (tab) tab->cell_manager.Pump();
     }
+    CheckFilesOnDisk();
 
     // Poll the editor's own run. A run started elsewhere (a notebook cell,
     // RL training) is not the editor's and must not print here.
@@ -495,6 +496,8 @@ void ScriptEditorPanel::RenderEditor() {
         RenderLargeFileViewer(*tab);
         return;
     }
+
+    RenderDiskChangedBand(*tab);
 
     // Cell-based mode (Jupyter-like notebook)
     if (tab->cell_mode) {
