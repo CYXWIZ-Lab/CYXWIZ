@@ -5,6 +5,8 @@
 // bordered secondary, text link, and danger. Each returns true when clicked
 // while enabled; a disabled button still shows `disabled_reason` on hover.
 
+struct ImVec4;
+
 namespace cyxwiz::ui {
 
 enum class ButtonSize { Small, Regular };
@@ -16,6 +18,10 @@ bool SecondaryButton(const char* label, bool enabled = true,
                      const char* disabled_reason = nullptr,
                      ButtonSize size = ButtonSize::Small, float width = 0.0f);
 bool LinkButton(const char* label, bool enabled = true);
+// Toolbar action: no fill until hovered; `on` gives it the secondary fill
+// (a panel that is shown, a toggle that is set).
+bool GhostButton(const char* label, bool enabled = true, const char* disabled_reason = nullptr,
+                 bool on = false, ButtonSize size = ButtonSize::Small);
 bool DangerButton(const char* label, bool enabled = true,
                   const char* disabled_reason = nullptr,
                   ButtonSize size = ButtonSize::Small);
@@ -32,6 +38,11 @@ float ChipButtonWidth(const char* label);
 // Segmented choice (one of several options side by side). Returns true when
 // the selection changed; `selected` is updated.
 bool SegmentedControl(const char* id, const char* const* labels, int count, int* selected);
+
+// Rounded status pill with a coloured dot (a kernel or service state).
+// Returns true when clicked.
+bool StatusPill(const char* id, const char* text, const ImVec4& dot);
+float StatusPillWidth(const char* text);
 
 // Width a ToggleChip will take.
 float ToggleChipWidth(const char* label, const char* count);

@@ -6,6 +6,8 @@
 #include "script_editor.h"
 
 #include "../../core/editor/outline.h"
+#include "../../core/notebook_presentation.h"
+#include "../../core/project_manager.h"
 #include "../../scripting/scripting_engine.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
@@ -53,11 +55,13 @@ void ScriptEditorPanel::RenderTabBar() {
     const bool has_tab = IsActiveTabEditable();
     const bool text_mode = IsActiveTabTextMode();
     const bool engine_busy = scripting_engine_ && scripting_engine_->IsScriptRunning();
+    const bool notebook = has_tab && tabs_[active_tab_index_]->cell_mode;
 
     // Run actions at the right; the tabs take the rest (scroll arrows when crowded).
     const float gap = t.space_sm;
     float actions_w = ui::ButtonWidth(ICON_FA_PLAY "  Run", ui::ButtonSize::Small);
-    if (narrow) actions_w += gap + ui::ButtonWidth("\xC2\xB7\xC2\xB7\xC2\xB7", ui::ButtonSize::Small);
+    if (notebook) actions_w = ui::ButtonWidth("Debug cell", ui::ButtonSize::Small);
+    else if (narrow) actions_w += gap + ui::ButtonWidth("\xC2\xB7\xC2\xB7\xC2\xB7", ui::ButtonSize::Small);
     else actions_w += 2.0f * gap + ui::ButtonWidth("Run selection", ui::ButtonSize::Small) + ui::ButtonWidth("Debug", ui::ButtonSize::Small);
 
     ImGui::BeginChild("##tab_strip", ImVec2(std::max(80.0f, avail - actions_w - t.space_md), ImGui::GetFrameHeight() + 2.0f),
@@ -89,6 +93,13 @@ void ScriptEditorPanel::RenderTabBar() {
 
     ImGui::SameLine(0.0f, t.space_md);
     const char* why = !has_tab ? "Open or write a script first" : "Another script is running";
+    if (notebook) {
+        // The notebook toolbar runs cells (board 4); here only the debugger.
+        const bool has_cell = tabs_[active_tab_index_]->selected_cell >= 0;
+        if (ui::SecondaryButton("Debug cell", has_cell && !engine_busy, has_cell ? why : "Select a code cell first")) Debug();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && has_cell) ImGui::SetTooltip("Debug the selected cell (F10)");
+        return;
+    }
     if (script_running_) {
         if (ui::DangerButton(ICON_FA_STOP "  Stop", true, nullptr, ui::ButtonSize::Small)) StopScript();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Stop the script (Shift+F5)");
@@ -199,6 +210,18 @@ void ScriptEditorPanel::RenderStatusBar() {
     } else if (tab->load_failed) {
         state = "Not opened";
         dot = t.error;
+    } else if (tab->cell_mode) {
+        const CellManager& cells = tab->cell_manager;
+        nbview::RunFacts facts;
+        facts.running = cells.IsRunning();
+        facts.run_position = cells.BatchPosition();
+        facts.run_total = cells.BatchTotal();
+        facts.stopped_at_count = cells.StoppedAtCount();
+        facts.stopped_by_interrupt = cells.StoppedByInterrupt();
+        facts.restarting = cells.IsRestarting();
+        const nbview::RunStatus status = nbview::RunStatusFor(facts);
+        state = status.text;
+        dot = NotebookToneColour(static_cast<int>(status.tone));
     }
     {
         const ImVec2 c = ImGui::GetCursorScreenPos();
@@ -219,7 +242,10 @@ void ScriptEditorPanel::RenderStatusBar() {
     } else if (tab->cell_mode) {
         const int cells = static_cast<int>(tab->cell_manager.GetCellCount());
         ImGui::SameLine();
-        ImGui::TextColored(t.text_dim, "Notebook  Cell %d of %d", tab->selected_cell >= 0 ? tab->selected_cell + 1 : 0, cells);
+        ImGui::TextColored(t.text_dim, "Notebook \xC2\xB7 Cell %d of %d", tab->selected_cell >= 0 ? tab->selected_cell + 1 : 0, cells);
+        ImGui::SameLine();
+        ImGui::TextColored(t.text_dim, "%s", tab->editing_cell >= 0 ? "Edit mode" : "Command mode");
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", nbview::NotebookKeysHint());
     } else {
         const editor::Document& doc = tab->editor.Doc();
         const editor::Pos head = doc.Primary().head;
@@ -346,6 +372,11 @@ void ScriptEditorPanel::RefreshPythonStatus() {
         return;
     }
     const auto info = scripting_engine_->GetInterpreterInfo();
+    python_started_ = info.initialized;
+    python_version_ = info.version;
+    python_environment_ = info.source == "system" ? "system Python"
+                          : ProjectManager::Instance().HasActiveProject() ? ProjectManager::Instance().GetProjectName()
+                                                                          : "project environment";
     if (info.initialized) {
         const std::string where = info.source == "project" ? "project environment" : "system Python";
         python_status_ = "Python " + (info.version.empty() ? std::string("") : info.version + " ") + "\xC2\xB7 " + where;

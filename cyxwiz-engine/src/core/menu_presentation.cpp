@@ -244,6 +244,7 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(notebook, "notebook.edit_cell", "Edit the selected cell", "Enter", "", true);
         add(notebook, "notebook.command_mode", "Stop editing (command mode)", "Escape", "", true);
         add(notebook, "notebook.run_cell", "Run cell and select the next", "Shift+Enter", "", true);
+        add(notebook, "notebook.run_cell_stay", "Run cell and stay on it", "Ctrl+Enter", "", true);
         add(notebook, "notebook.previous_cell", "Select the cell above", "Up", "", true);
         add(notebook, "notebook.next_cell", "Select the cell below", "Down", "", true);
         add(notebook, "notebook.add_above", "Add a code cell above", "A", "", true);

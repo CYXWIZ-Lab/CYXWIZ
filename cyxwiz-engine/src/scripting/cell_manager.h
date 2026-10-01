@@ -186,6 +186,16 @@ public:
      * ReleaseNamespace so its variables do not stay in memory.
      */
     const std::string& NamespaceKey() const { return namespace_key_; }
+
+    // What the notebook is doing, for the status bar and gutters (TOFIX133
+    // P4 step 4.3): the cell being run in this batch (1-based) of how many,
+    // the [n] of the cell that stopped the last batch (0 = none), and how
+    // long the running cell has run.
+    int BatchPosition() const { return batch_position_; }
+    int BatchTotal() const { return batch_total_; }
+    int StoppedAtCount() const { return stopped_at_count_; }
+    bool StoppedByInterrupt() const { return stopped_by_interrupt_; }
+    double RunningSeconds() const;
     void ReleaseNamespace();
 
     /**
@@ -290,6 +300,10 @@ private:
     std::uint64_t run_counter_ = 0;
     std::string namespace_key_;
     bool restart_pending_ = false;
+    int batch_position_ = 0;
+    int batch_total_ = 0;
+    int stopped_at_count_ = 0;
+    bool stopped_by_interrupt_ = false;
     std::chrono::steady_clock::time_point run_started_{};
     bool TryRestart();
     void AppendStream(Cell& cell, const std::string& name, const std::string& text);

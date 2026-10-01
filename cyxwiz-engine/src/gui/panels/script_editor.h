@@ -199,6 +199,7 @@ private:
         int editing_cell = -1;           // Cell being edited (-1 = command mode)
         int last_editing_cell = -1;      // Track previous editing cell to detect mode change
         float cell_scroll_y = 0.0f;      // Scroll position in cell view
+        bool restore_cell_scroll = false;  // set when the notebook view returns to a kept position
 
         // Breakpoints for traditional script mode (1-based line numbers)
         std::vector<int> breakpoints;
@@ -224,12 +225,17 @@ private:
     void RenderMenuBar();
     void RenderBreadcrumbs(EditorTab& tab);
     void RefreshPythonStatus();
+    std::string python_version_;      // "3.12.8" once Python runs
+    std::string python_environment_;  // project name, or "system Python"
+    bool python_started_ = false;
     void RenderEditor();
     void RenderStatusBar();
     void HandleKeyboardShortcuts() override;
 
     // Cell-based editor rendering
     void RenderCellBasedEditor();
+    void RenderNotebookToolbar(EditorTab& tab);       // script_editor_notebook.cpp (board 4)
+    static ImVec4 NotebookToneColour(int tone);       // nbview::Tone -> colour
     void RenderCell(Cell& cell, int index);
     void RenderCodeCell(Cell& cell, int index);
     void RenderMarkdownCell(Cell& cell, int index);

@@ -88,6 +88,33 @@ bool DangerButton(const char* label, bool enabled, const char* disabled_reason,
     return Styled(label, enabled, disabled_reason, size, ImVec4(0, 0, 0, 0), kDangerHover, kDangerHover, kDanger);
 }
 
+bool GhostButton(const char* label, bool enabled, const char* disabled_reason, bool on, ButtonSize size) {
+    RefreshColors();
+    return Styled(label, enabled, disabled_reason, size, on ? kSecondary : ImVec4(0, 0, 0, 0), kSecondaryHover,
+                  kSecondaryActive, kText);
+}
+
+float StatusPillWidth(const char* text) {
+    return ImGui::CalcTextSize(text, nullptr, true).x + 12.0f + 8.0f + 8.0f + 12.0f;
+}
+
+bool StatusPill(const char* id, const char* text, const ImVec4& dot) {
+    RefreshColors();
+    const float height = ImGui::GetFrameHeight();
+    const float width = StatusPillWidth(text);
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, height));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), ImGui::GetColorU32(hovered ? kSecondaryHover : kChipBg),
+                      height * 0.5f);
+    dl->AddCircleFilled(ImVec2(pos.x + 16.0f, pos.y + height * 0.5f), 4.0f, ImGui::GetColorU32(dot));
+    dl->AddText(ImVec2(pos.x + 28.0f, pos.y + (height - ImGui::GetTextLineHeight()) * 0.5f),
+                ImGui::GetColorU32(hovered ? kChipTextHover : kChipText), text, ImGui::FindRenderedTextEnd(text));
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return clicked;
+}
+
 bool LinkButton(const char* label, bool enabled) {
     RefreshColors();
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, 4.0f));

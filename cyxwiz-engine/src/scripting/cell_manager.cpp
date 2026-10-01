@@ -285,7 +285,21 @@ int CellManager::GetRunningCellIndex() const {
     return IndexOfId(running_cell_id_);
 }
 
+double CellManager::RunningSeconds() const {
+    if (!is_running_) return 0.0;
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - run_started_).count();
+}
+
 void CellManager::Enqueue(int from, int to) {
+    if (!is_running_ && execution_queue_.empty()) {
+        // A new batch: earlier progress and stop reason no longer apply.
+        batch_position_ = 0;
+        batch_total_ = 0;
+        stopped_at_count_ = 0;
+        stopped_by_interrupt_ = false;
+        for (auto& c : cells_)
+            if (c.state == CellState::NotRun) c.state = CellState::Idle;
+    }
     for (int i = std::max(0, from); i <= to && i < static_cast<int>(cells_.size()); ++i) {
         Cell& cell = cells_[i];
         if (cell.type != CellType::Code) continue;
@@ -293,6 +307,7 @@ void CellManager::Enqueue(int from, int to) {
         if (cell.source.find_first_not_of(" \t\r\n") == std::string::npos) continue;  // nothing to run
         if (std::find(execution_queue_.begin(), execution_queue_.end(), cell.id) != execution_queue_.end()) continue;
         execution_queue_.push_back(cell.id);
+        ++batch_total_;
         if (cell.id != running_cell_id_) cell.state = CellState::Queued;
     }
     StartNext();
@@ -311,6 +326,9 @@ bool CellManager::TryRestart() {
     if (scripting_engine_ && !scripting_engine_->DropNotebookNamespace(namespace_key_)) return false;
     restart_pending_ = false;
     execution_counter_ = 0;
+    batch_position_ = batch_total_ = 0;
+    stopped_at_count_ = 0;
+    stopped_by_interrupt_ = false;
     for (auto& cell : cells_)
         if (cell.state == CellState::Queued || cell.state == CellState::Running) cell.state = CellState::Idle;
     spdlog::info("Notebook restarted: its variables are cleared");
@@ -383,6 +401,7 @@ void CellManager::ExecuteCellInternal(int index) {
     cell.duration_seconds = -1.0;
     running_cell_id_ = cell.id;
     is_running_ = true;
+    ++batch_position_;
     cell.execution_count = ++execution_counter_;
     const std::uint64_t run = ++run_counter_;
     run_started_ = std::chrono::steady_clock::now();
@@ -489,6 +508,10 @@ void CellManager::Pump() {
                         cell.state = CellState::Error;  // the error output came with the run
                     }
                     spdlog::info("Cell {} execution complete. Success: {}", index, e.success);
+                }
+                if ((e.cancelled || !e.success) && index >= 0) {
+                    stopped_at_count_ = cells_[index].execution_count;
+                    stopped_by_interrupt_ = e.cancelled;
                 }
                 running_cell_id_.clear();
                 is_running_ = false;
