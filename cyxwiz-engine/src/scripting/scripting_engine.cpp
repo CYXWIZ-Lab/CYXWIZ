@@ -1209,6 +1209,13 @@ ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script,
         return result;
     }
 
+    // MATLAB-style names are installed once per interpreter, like the
+    // console does; re-running them before every script overwrote the
+    // user's own svd/norm/zeros... (TOFIX133 P0 item 11).
+    if (!matlab_aliases_initialized_) {
+        InitializeMatlabAliases();
+    }
+
     // Reset the cancellation flag at start
     shared_cancel_flag_.store(0);
     python_thread_id_.store(0);
@@ -1418,86 +1425,7 @@ def _cyxwiz_setup_matplotlib_capture(capture_callback):
         # matplotlib not installed, silently skip
         pass
 
-# ============================================================================
-# MATLAB-style Console functions (flat namespace)
-# ============================================================================
-# Import pycyxwiz and create convenient aliases
-import importlib.util as _cyxwiz_importlib
-_pycyxwiz_spec = _cyxwiz_importlib.find_spec("pycyxwiz")
-try:
-    import pycyxwiz
-    cyx = pycyxwiz  # Short alias for grouped namespace
 
-    # Linear Algebra - Flat namespace aliases
-    svd = pycyxwiz.linalg.svd
-    eig = pycyxwiz.linalg.eig
-    qr = pycyxwiz.linalg.qr
-    chol = pycyxwiz.linalg.chol
-    lu = pycyxwiz.linalg.lu
-    det = pycyxwiz.linalg.det
-    rank = pycyxwiz.linalg.rank
-    trace = pycyxwiz.linalg.trace
-    norm = pycyxwiz.linalg.norm
-    cond = pycyxwiz.linalg.cond
-    inv = pycyxwiz.linalg.inv
-    transpose = pycyxwiz.linalg.transpose
-    solve = pycyxwiz.linalg.solve
-    lstsq = pycyxwiz.linalg.lstsq
-    matmul = pycyxwiz.linalg.matmul
-    eye = pycyxwiz.linalg.eye
-    zeros = pycyxwiz.linalg.zeros
-    ones = pycyxwiz.linalg.ones
-
-    # Signal Processing - Flat namespace aliases
-    fft = pycyxwiz.signal.fft
-    ifft = pycyxwiz.signal.ifft
-    conv = pycyxwiz.signal.conv
-    conv2 = pycyxwiz.signal.conv2
-    spectrogram = pycyxwiz.signal.spectrogram
-    lowpass = pycyxwiz.signal.lowpass
-    highpass = pycyxwiz.signal.highpass
-    bandpass = pycyxwiz.signal.bandpass
-    filter = pycyxwiz.signal.filter
-    findpeaks = pycyxwiz.signal.findpeaks
-    sine = pycyxwiz.signal.sine
-    square = pycyxwiz.signal.square
-    noise = pycyxwiz.signal.noise
-
-    # Statistics/Clustering - Flat namespace aliases
-    kmeans = pycyxwiz.stats.kmeans
-    dbscan = pycyxwiz.stats.dbscan
-    gmm = pycyxwiz.stats.gmm
-    pca = pycyxwiz.stats.pca
-    tsne = pycyxwiz.stats.tsne
-    silhouette = pycyxwiz.stats.silhouette
-    confusion_matrix = pycyxwiz.stats.confusion_matrix
-    roc = pycyxwiz.stats.roc
-
-    # Time Series - Flat namespace aliases
-    acf = pycyxwiz.timeseries.acf
-    pacf = pycyxwiz.timeseries.pacf
-    decompose = pycyxwiz.timeseries.decompose
-    stationarity = pycyxwiz.timeseries.stationarity
-    arima = pycyxwiz.timeseries.arima
-    diff = pycyxwiz.timeseries.diff
-    rolling_mean = pycyxwiz.timeseries.rolling_mean
-    rolling_std = pycyxwiz.timeseries.rolling_std
-
-except ImportError as e:
-    # pycyxwiz not available, skip MATLAB-style functions
-    if _pycyxwiz_spec is None:
-        print("[CyxWiz] pycyxwiz not found on sys.path")
-    else:
-        origin = getattr(_pycyxwiz_spec, "origin", None)
-        print(f"[CyxWiz] pycyxwiz found at {origin} but failed to load: {e}")
-        print("[CyxWiz] Likely ABI mismatch or missing DLL dependencies.")
-        print(f"[CyxWiz] Python: {sys.version}")
-except AttributeError as e:
-    # submodule not found (linalg, signal, etc.)
-    print(f"[CyxWiz] MATLAB functions error: {e}")
-except Exception as e:
-    # Any other error
-    print(f"[CyxWiz] Error loading MATLAB functions: {e}")
 )";
         py::exec(setup_code);
         py::globals()["_cyxwiz_is_cancelled"] = py::cpp_function([this]() {
@@ -1636,7 +1564,7 @@ try:
     lowpass = pycyxwiz.signal.lowpass
     highpass = pycyxwiz.signal.highpass
     bandpass = pycyxwiz.signal.bandpass
-    filter = pycyxwiz.signal.filter
+    # No flat "filter": it would hide Python's builtin. Use cyx.signal.filter.
     findpeaks = pycyxwiz.signal.findpeaks
     sine = pycyxwiz.signal.sine
     square = pycyxwiz.signal.square
@@ -1713,7 +1641,18 @@ try:
 
 except ImportError as e:
     # pycyxwiz not available, skip MATLAB-style functions
-    print(f"[CyxWiz] pycyxwiz not found: {e}")
+    def _cyxwiz_report_pycyxwiz(error):
+        import importlib.util
+        import sys
+        spec = importlib.util.find_spec("pycyxwiz")
+        if spec is None:
+            print("[CyxWiz] pycyxwiz not found on sys.path")
+        else:
+            print(f"[CyxWiz] pycyxwiz found at {getattr(spec, 'origin', None)} but failed to load: {error}")
+            print("[CyxWiz] Likely ABI mismatch or missing DLL dependencies.")
+            print(f"[CyxWiz] Python: {sys.version}")
+    _cyxwiz_report_pycyxwiz(e)
+    del _cyxwiz_report_pycyxwiz
 except AttributeError as e:
     # submodule not found (linalg, signal, etc.)
     print(f"[CyxWiz] MATLAB functions error: {e}")
