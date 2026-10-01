@@ -68,6 +68,11 @@ void ScriptEditorPanel::RenderTabBar() {
                       ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     if (ImGui::BeginTabBar("ScriptEditorTabs", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs |
                                                    ImGuiTabBarFlags_FittingPolicyScroll)) {
+        // The tab to bring to the front, read before the loop: the loop sets
+        // active_tab_index_ from the tab ImGui shows, which is still the old
+        // one this frame, so the request went back to it.
+        const int wanted = request_focus_ ? active_tab_index_ : -1;
+        bool shown_wanted = false;
         for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
             auto& tab = tabs_[i];
             // The unsaved dot (it turns into the close button on hover) replaces the old "*".
@@ -75,10 +80,11 @@ void ScriptEditorPanel::RenderTabBar() {
                                       tab->filename + "###tab" + std::to_string(tab->document_id);
             ImGuiTabItemFlags flags = ImGuiTabItemFlags_None;
             if (tab->is_modified) flags |= ImGuiTabItemFlags_UnsavedDocument;
-            if (request_focus_ && i == active_tab_index_) flags |= ImGuiTabItemFlags_SetSelected;
+            if (i == wanted) flags |= ImGuiTabItemFlags_SetSelected;
             bool open = true;
             if (ImGui::BeginTabItem(label.c_str(), &open, flags)) {
-                active_tab_index_ = i;
+                if (wanted < 0 || i == wanted) active_tab_index_ = i;
+                shown_wanted = shown_wanted || i == wanted;
                 ImGui::EndTabItem();
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
@@ -88,6 +94,10 @@ void ScriptEditorPanel::RenderTabBar() {
         }
         if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) NewFile();
         ImGui::EndTabBar();
+        // The text view takes the request to focus its code; other views
+        // (notebook, loading, large file) have nothing to focus, so it ends
+        // here once the tab shows (else the strip would keep forcing it).
+        if (shown_wanted && !IsActiveTabTextMode()) request_focus_ = false;
     }
     ImGui::EndChild();
 
