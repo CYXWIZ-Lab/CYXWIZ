@@ -1,4 +1,5 @@
 #include "data_table.h"
+#include "../core/csv_records.h"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -122,60 +123,38 @@ bool DataTable::SetCellFromString(size_t row, size_t col, const std::string& val
 // CSV Support
 // ============================================================================
 
+// RFC 4180 records (core/csv_records): quoted fields may hold commas, line
+// breaks and quotes, as pandas writes text columns. A cell is a number only
+// when the whole field is one ("3 rows" stays text).
 bool DataTable::LoadFromCSV(const std::string& filepath) {
-    std::ifstream file(filepath);
+    std::ifstream file(filepath, std::ios::binary);
     if (!file.is_open()) {
         spdlog::error("Failed to open CSV file: {}", filepath);
         return false;
     }
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
 
     Clear();
-
-    std::string line;
+    auto records = csv::ReadRecords(buffer.str());
     bool first_row = true;
-
-    while (std::getline(file, line)) {
-        std::vector<std::string> tokens;
-        std::stringstream ss(line);
-        std::string token;
-
-        // Simple CSV parsing (doesn't handle quoted commas)
-        while (std::getline(ss, token, ',')) {
-            // Trim whitespace
-            token.erase(0, token.find_first_not_of(" \t\r\n"));
-            token.erase(token.find_last_not_of(" \t\r\n") + 1);
-            tokens.push_back(token);
-        }
-
+    for (auto& tokens : records) {
         if (first_row) {
-            // First row is headers
             SetHeaders(tokens);
             first_row = false;
-        } else {
-            // Data rows - try to parse as numbers
-            Row row;
-            for (const auto& str : tokens) {
-                if (str.empty()) {
-                    row.push_back(std::monostate{});
-                } else {
-                    // Try to parse as number
-                    try {
-                        // Check if it's an integer
-                        if (str.find('.') == std::string::npos && str.find('e') == std::string::npos && str.find('E') == std::string::npos) {
-                            int64_t val = std::stoll(str);
-                            row.push_back(val);
-                        } else {
-                            double val = std::stod(str);
-                            row.push_back(val);
-                        }
-                    } catch (...) {
-                        // Not a number, store as string
-                        row.push_back(str);
-                    }
-                }
-            }
-            AddRow(std::move(row));
+            continue;
         }
+        Row row;
+        row.reserve(tokens.size());
+        for (auto& str : tokens) {
+            long long i = 0;
+            double d = 0.0;
+            if (str.empty()) row.push_back(std::monostate{});
+            else if (csv::ParseInt(str, i)) row.push_back(static_cast<int64_t>(i));
+            else if (csv::ParseDouble(str, d)) row.push_back(d);
+            else row.push_back(std::move(str));
+        }
+        AddRow(std::move(row));
     }
 
     spdlog::info("Loaded CSV: {} rows, {} columns", GetRowCount(), GetColumnCount());
@@ -183,23 +162,22 @@ bool DataTable::LoadFromCSV(const std::string& filepath) {
 }
 
 bool DataTable::SaveToCSV(const std::string& filepath) const {
-    std::ofstream file(filepath);
+    std::ofstream file(filepath, std::ios::binary);
     if (!file.is_open()) {
         spdlog::error("Failed to open CSV file for writing: {}", filepath);
         return false;
     }
 
-    // Write headers
+    // Fields with commas, quotes or line breaks are quoted, so the file reads back.
     for (size_t i = 0; i < headers_.size(); i++) {
-        file << headers_[i];
+        file << csv::Field(headers_[i]);
         if (i < headers_.size() - 1) file << ",";
     }
     file << "\n";
-
-    // Write data rows
-    for (const auto& row : rows_) {
+    for (size_t r = 0; r < rows_.size(); ++r) {
+        const auto& row = rows_[r];
         for (size_t i = 0; i < row.size(); i++) {
-            file << GetCellAsString(std::distance(rows_.data(), &row), i);
+            file << csv::Field(GetCellAsString(r, i));
             if (i < row.size() - 1) file << ",";
         }
         file << "\n";

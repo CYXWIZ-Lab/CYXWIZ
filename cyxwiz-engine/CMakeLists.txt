@@ -529,6 +529,7 @@ set(ENGINE_SOURCES
     src/gui/query/cyxql_parser.cpp
     src/gui/query/cyxql_executor.cpp
     src/data/data_table.cpp
+    src/core/csv_records.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
     src/scripting/debugger.cpp
@@ -2409,6 +2410,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/preprocessing_state.cpp
     src/core/data_analyzer.cpp
     src/data/data_table.cpp
+    src/core/csv_records.cpp
     src/core/node_metadata_registry.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/pipeline_runtime_capabilities.cpp
@@ -2616,6 +2618,7 @@ add_executable(test_pipeline_executor_operator_routing
     src/core/node_executors/time_series_segment_operator.cpp
     src/core/node_executors/row_count_check_operator.cpp
     src/data/data_table.cpp
+    src/core/csv_records.cpp
     src/plotting/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
 )
@@ -2708,6 +2711,7 @@ add_executable(test_pipeline_operator_materializer_parity
     src/core/node_executors/time_series_segment_operator.cpp
     src/core/node_executors/row_count_check_operator.cpp
     src/data/data_table.cpp
+    src/core/csv_records.cpp
     src/plotting/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
 )
@@ -2801,6 +2805,7 @@ add_executable(test_data_convert_pipeline_input
     src/core/node_executors/time_series_segment_operator.cpp
     src/core/node_executors/row_count_check_operator.cpp
     src/data/data_table.cpp
+    src/core/csv_records.cpp
     src/plotting/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
 )
@@ -3395,6 +3400,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/data_registry_sparse.cpp
     src/core/data_analyzer.cpp
     src/data/data_table.cpp
+    src/core/csv_records.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/clustering_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
@@ -5266,6 +5272,7 @@ add_executable(test_engine_node_parity
     src/core/data_registry_sparse.cpp
     src/core/data_analyzer.cpp
     src/data/data_table.cpp
+    src/core/csv_records.cpp
     src/core/node_executors/pipeline_operator_factory.cpp
     src/core/node_executors/clustering_operators.cpp
     src/core/node_executors/tree_classification_utils.cpp
