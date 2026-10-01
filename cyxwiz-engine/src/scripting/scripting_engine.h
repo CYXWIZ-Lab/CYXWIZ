@@ -56,6 +56,19 @@ struct ExecutionResult {
 
     // Captured matplotlib/plotting figures
     std::vector<CapturedPlot> plots;
+
+    // Notebook cells (TOFIX133 P4): repr of the last expression's value
+    // (empty when it was None or the cell ended with a statement), and the
+    // exception's frames, innermost last.
+    std::string result_repr;
+    std::string exception_value;
+    struct Frame {
+        std::string file;
+        int line = 0;
+        std::string function;
+        std::string code;
+    };
+    std::vector<Frame> frames;
 };
 
 /**
@@ -100,11 +113,22 @@ public:
     struct RunCallbacks {
         OutputCallback on_output;
         CompletionCallback on_complete;
+        // Notebook cells (TOFIX133 P4, decision D4). Set notebook_namespace
+        // to run in that notebook's own namespace with the last expression
+        // echoed; empty runs in __main__ as before. on_stderr empty: stderr
+        // goes to on_output.
+        OutputCallback on_stderr;
+        std::string notebook_namespace;
+        std::string cell_filename;  // shown in tracebacks, e.g. "Cell In[3]"
     };
     // Starts the script in a background thread and returns at once. Returns
     // false when another script is still running (nothing is started and no
     // callback is called).
     bool ExecuteScriptAsync(const std::string& script, RunCallbacks callbacks = {});
+
+    // Restart for a notebook: forgets the namespace its cells ran in.
+    // Returns false (nothing done) while a script is running.
+    bool DropNotebookNamespace(const std::string& key);
 
     // Stop currently running script
     // Sends interrupt signal to Python interpreter
@@ -205,7 +229,7 @@ private:
     void ScriptWorker(const std::string& script, RunCallbacks callbacks);
 
     // Internal execution with output streaming
-    ExecutionResult ExecuteWithStreaming(const std::string& script, const OutputCallback& on_output);
+    ExecutionResult ExecuteWithStreaming(const std::string& script, const RunCallbacks& callbacks);
 
     // Convert sandbox result to engine result
     ExecutionResult ConvertSandboxResult(const PythonSandbox::ExecutionResult& sandbox_result);

@@ -147,6 +147,18 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
         }
         ImGui::EndDisabled();
 
+        // Restart: this notebook's variables are cleared (TOFIX133 P4, D4).
+        // Step 4.3 restyles this toolbar to board 4.
+        ImGui::SameLine();
+        ImGui::BeginDisabled(tab->cell_manager.IsRestarting());
+        if (ImGui::Button(ICON_FA_ROTATE_RIGHT " Restart")) {
+            tab->cell_manager.Restart();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("Clear this notebook's variables and restart the [n] count; outputs stay");
+        }
+        ImGui::EndDisabled();
+
         ImGui::SameLine();
         ImGui::SameLine(0, 15);
         ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "|");

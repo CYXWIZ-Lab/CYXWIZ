@@ -59,6 +59,8 @@ bool ScriptingEngine::ExecuteScriptAsync(const std::string&, RunCallbacks callba
     return true;
 }
 
+bool ScriptingEngine::DropNotebookNamespace(const std::string&) { return true; }
+
 void ScriptingEngine::StopScript() { script_running_ = false; }
 bool ScriptingEngine::IsScriptRunning() const { return false; }
 

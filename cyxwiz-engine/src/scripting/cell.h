@@ -29,7 +29,18 @@ enum class CellState {
     Queued,     // Waiting to run
     Running,    // Currently executing
     Success,    // Completed successfully
-    Error       // Completed with error
+    Error,      // Completed with error
+    NotRun      // Was queued; not run because a cell before it failed or was interrupted
+};
+
+/**
+ * One frame of a cell's traceback, innermost last (TOFIX133 P4).
+ */
+struct TraceFrame {
+    std::string file;       // a path, or the cell's name ("Cell In[3]")
+    int line = 0;
+    std::string function;
+    std::string code;
 };
 
 /**
@@ -60,6 +71,14 @@ struct CellOutput {
     int width = 0;                  // Image width
     int height = 0;                 // Image height
     std::vector<unsigned char> image_data;  // Raw PNG data (alternative to base64 in data)
+
+    // A cell's value (Jupyter's execute_result), not printed text.
+    bool is_result = false;
+
+    // Error outputs: exception name, message and frames (TOFIX133 P4).
+    std::string ename;
+    std::string evalue;
+    std::vector<TraceFrame> frames;
 
     // The output's JSON as read from an .ipynb file, written back unchanged
     // (keeps MIME types this Engine does not draw). Empty for new outputs.
@@ -106,6 +125,7 @@ struct Cell {
     std::vector<CellOutput> outputs;        // Execution outputs
     int execution_count = 0;                // In [ ] number (0 = not run yet)
     CellState state = CellState::Idle;      // Current execution state
+    double duration_seconds = -1.0;         // last run's time (-1 = not timed)
 
     // UI state
     bool collapsed = false;                 // Cell input collapsed

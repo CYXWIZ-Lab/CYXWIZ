@@ -8,6 +8,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <chrono>
 #include <stdexcept>
 
 namespace scripting {
@@ -173,6 +174,21 @@ public:
     void InterruptExecution();
 
     /**
+     * Restart (TOFIX133 P4, D4): interrupts, then forgets this notebook's
+     * namespace and restarts the [n] count. Outputs stay. Cells run after
+     * it wait until the restart is done.
+     */
+    void Restart();
+    bool IsRestarting() const { return restart_pending_; }
+
+    /**
+     * The namespace this notebook's cells run in. A closed notebook calls
+     * ReleaseNamespace so its variables do not stay in memory.
+     */
+    const std::string& NamespaceKey() const { return namespace_key_; }
+    void ReleaseNamespace();
+
+    /**
      * Check if any cell is currently running
      */
     bool IsRunning() const { return is_running_; }
@@ -247,7 +263,7 @@ private:
 
     // What the worker thread posts; only Pump() reads it.
     struct RunEvent {
-        enum class Kind { Output, Plot, Done } kind;
+        enum class Kind { Stdout, Stderr, Add, Done } kind;
         std::uint64_t run = 0;
         std::string text;
         CellOutput output;
@@ -272,6 +288,11 @@ private:
     std::string running_cell_id_;
     std::vector<std::string> execution_queue_;  // cell ids
     std::uint64_t run_counter_ = 0;
+    std::string namespace_key_;
+    bool restart_pending_ = false;
+    std::chrono::steady_clock::time_point run_started_{};
+    bool TryRestart();
+    void AppendStream(Cell& cell, const std::string& name, const std::string& text);
     std::shared_ptr<Mailbox> mailbox_ = std::make_shared<Mailbox>();
 
     // Thread safety

@@ -434,6 +434,7 @@ void ScriptEditorPanel::DoCloseFile(int tab_index) {
 
     spdlog::info("Closing file: {}", tabs_[tab_index]->filename);
     CancelTabTasks(*tabs_[tab_index]);
+    tabs_[tab_index]->cell_manager.ReleaseNamespace();  // its variables go with it
     tabs_.erase(tabs_.begin() + tab_index);
 
     // Adjust active tab index

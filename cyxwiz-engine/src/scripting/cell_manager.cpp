@@ -10,6 +10,8 @@
 namespace cyxwiz {
 
 CellManager::CellManager() {
+    static std::uint64_t next_namespace = 1;
+    namespace_key_ = "notebook-" + std::to_string(next_namespace++);
     // Start with one empty code cell
     AddCell(CellType::Code);
 }
@@ -296,6 +298,41 @@ void CellManager::Enqueue(int from, int to) {
     StartNext();
 }
 
+void CellManager::Restart() {
+    InterruptExecution();
+    restart_pending_ = true;
+    TryRestart();
+}
+
+// The namespace can go only while nothing runs; Pump() retries.
+bool CellManager::TryRestart() {
+    if (!restart_pending_) return true;
+    if (is_running_) return false;
+    if (scripting_engine_ && !scripting_engine_->DropNotebookNamespace(namespace_key_)) return false;
+    restart_pending_ = false;
+    execution_counter_ = 0;
+    for (auto& cell : cells_)
+        if (cell.state == CellState::Queued || cell.state == CellState::Running) cell.state = CellState::Idle;
+    spdlog::info("Notebook restarted: its variables are cleared");
+    return true;
+}
+
+void CellManager::ReleaseNamespace() {
+    if (scripting_engine_ && !is_running_) scripting_engine_->DropNotebookNamespace(namespace_key_);
+}
+
+// Consecutive writes to one stream form one output, as in Jupyter.
+void CellManager::AppendStream(Cell& cell, const std::string& name, const std::string& text) {
+    if (!cell.outputs.empty()) {
+        CellOutput& last = cell.outputs.back();
+        if (last.type == OutputType::Stream && last.name == name && last.ipynb_raw.empty()) {
+            last.data += text;
+            return;
+        }
+    }
+    cell.AddOutput(CellOutput::Stream(text, name));
+}
+
 void CellManager::RunCell(int index) {
     if (IsValidIndex(index)) Enqueue(index, index);
 }
@@ -315,7 +352,7 @@ void CellManager::RunCellsBelow(int index) {
 void CellManager::InterruptExecution() {
     for (const auto& id : execution_queue_) {
         const int i = IndexOfId(id);
-        if (i >= 0 && cells_[i].state == CellState::Queued) cells_[i].state = CellState::Idle;
+        if (i >= 0 && cells_[i].state == CellState::Queued) cells_[i].state = CellState::NotRun;
     }
     execution_queue_.clear();
     if (scripting_engine_ && is_running_) {
@@ -325,6 +362,7 @@ void CellManager::InterruptExecution() {
 
 bool CellManager::StartNext() {
     if (is_running_ || !scripting_engine_) return false;
+    if (!TryRestart()) return false;  // cells run after Restart wait for it
     // Another script (the editor, the console) may hold the engine: wait.
     if (scripting_engine_->IsScriptRunning()) return false;
     while (!execution_queue_.empty()) {
@@ -342,33 +380,66 @@ void CellManager::ExecuteCellInternal(int index) {
     Cell& cell = cells_[index];
     cell.ClearOutputs();
     cell.state = CellState::Running;
+    cell.duration_seconds = -1.0;
     running_cell_id_ = cell.id;
     is_running_ = true;
     cell.execution_count = ++execution_counter_;
     const std::uint64_t run = ++run_counter_;
+    run_started_ = std::chrono::steady_clock::now();
     spdlog::info("Executing cell {} [{}]", index, cell.execution_count);
 
     std::weak_ptr<Mailbox> weak = mailbox_;
     scripting::ScriptingEngine::RunCallbacks callbacks;
-    callbacks.on_output = [weak, run](const std::string& text) {
-        if (auto box = weak.lock()) {
-            std::lock_guard<std::mutex> lock(box->mutex);
-            box->events.push_back({RunEvent::Kind::Output, run, text, {}, false, false, {}});
-        }
+    callbacks.notebook_namespace = namespace_key_;
+    callbacks.cell_filename = "Cell In[" + std::to_string(cell.execution_count) + "]";
+    auto post_text = [weak, run](RunEvent::Kind kind) {
+        return [weak, run, kind](const std::string& text) {
+            if (auto box = weak.lock()) {
+                std::lock_guard<std::mutex> lock(box->mutex);
+                box->events.push_back({kind, run, text, {}, false, false, {}});
+            }
+        };
     };
+    callbacks.on_output = post_text(RunEvent::Kind::Stdout);
+    callbacks.on_stderr = post_text(RunEvent::Kind::Stderr);
     callbacks.on_complete = [weak, run](const scripting::ExecutionResult& result) {
         auto box = weak.lock();
         if (!box) return;
         std::lock_guard<std::mutex> lock(box->mutex);
-        for (const auto& plot : result.plots) {
-            RunEvent e{RunEvent::Kind::Plot, run, {}, {}, false, false, {}};
-            e.output.type = OutputType::Plot;
-            e.output.name = plot.label;
-            e.output.image_data = plot.png_data;
-            e.output.width = plot.width;
-            e.output.height = plot.height;
-            e.output.mime_type = "image/png";
+        auto add = [&](CellOutput output) {
+            RunEvent e{RunEvent::Kind::Add, run, {}, {}, false, false, {}};
+            e.output = std::move(output);
             box->events.push_back(std::move(e));
+        };
+        for (const auto& plot : result.plots) {
+            CellOutput out;
+            out.type = OutputType::Plot;
+            out.name = plot.label;
+            out.image_data = plot.png_data;
+            out.width = plot.width;
+            out.height = plot.height;
+            out.mime_type = "image/png";
+            add(std::move(out));
+        }
+        if (!result.result_repr.empty()) {
+            CellOutput out = CellOutput::Text(result.result_repr);
+            out.is_result = true;
+            add(std::move(out));
+        }
+        if (!result.success && !result.was_cancelled) {
+            CellOutput out;
+            if (!result.exception_type.empty()) {
+                out = CellOutput::Error(result.traceback.empty() ? result.error_message : result.traceback);
+                out.ename = result.exception_type;
+                out.evalue = result.exception_value;
+                for (const auto& f : result.frames) out.frames.push_back({f.file, f.line, f.function, f.code});
+            } else {
+                // Python could not start, or the run failed outside the cell.
+                out = CellOutput::Error(result.error_message.empty() ? "The cell could not run" : result.error_message);
+                out.ename = "Error";
+                out.evalue = out.data;
+            }
+            add(std::move(out));
         }
         box->events.push_back(
             {RunEvent::Kind::Done, run, {}, {}, result.success, result.was_cancelled, result.error_message});
@@ -392,23 +463,30 @@ void CellManager::Pump() {
         if (e.run != run_counter_) continue;  // a run this notebook no longer tracks
         const int index = IndexOfId(running_cell_id_);
         switch (e.kind) {
-            case RunEvent::Kind::Output:
-                if (index >= 0) cells_[index].AddOutput(CellOutput::Text(e.text));
+            case RunEvent::Kind::Stdout:
+                if (index >= 0) AppendStream(cells_[index], "stdout", e.text);
                 break;
-            case RunEvent::Kind::Plot:
+            case RunEvent::Kind::Stderr:
+                if (index >= 0) AppendStream(cells_[index], "stderr", e.text);
+                break;
+            case RunEvent::Kind::Add:
                 if (index >= 0) cells_[index].AddOutput(e.output);
                 break;
             case RunEvent::Kind::Done:
                 if (index >= 0) {
                     Cell& cell = cells_[index];
+                    cell.duration_seconds =
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - run_started_).count();
                     if (e.cancelled) {
                         cell.state = CellState::Error;
-                        cell.AddOutput(CellOutput::Error("Execution interrupted"));
+                        CellOutput out = CellOutput::Error("KeyboardInterrupt: interrupted");
+                        out.ename = "KeyboardInterrupt";
+                        out.evalue = "interrupted";
+                        cell.AddOutput(out);
                     } else if (e.success) {
                         cell.state = CellState::Success;
                     } else {
-                        cell.state = CellState::Error;
-                        if (!e.error.empty()) cell.AddOutput(CellOutput::Error(e.error));
+                        cell.state = CellState::Error;  // the error output came with the run
                     }
                     spdlog::info("Cell {} execution complete. Success: {}", index, e.success);
                 }
@@ -418,7 +496,7 @@ void CellManager::Pump() {
                     // Stop the rest of Run All after an error, as notebooks do.
                     for (const auto& id : execution_queue_) {
                         const int q = IndexOfId(id);
-                        if (q >= 0 && cells_[q].state == CellState::Queued) cells_[q].state = CellState::Idle;
+                        if (q >= 0 && cells_[q].state == CellState::Queued) cells_[q].state = CellState::NotRun;
                     }
                     execution_queue_.clear();
                 }
@@ -504,6 +582,8 @@ CellOutput FromNotebookOutput(const nb::Output& o) {
             for (const auto& line : o.traceback) text += nb::StripAnsi(line) + "\n";
             if (text.empty()) text = o.ename + ": " + o.evalue;
             out = CellOutput::Error(text);
+            out.ename = o.ename;
+            out.evalue = o.evalue;
             break;
         }
         case nb::Output::Kind::Result:
@@ -514,6 +594,7 @@ CellOutput FromNotebookOutput(const nb::Output& o) {
                 out.image_data = nb::DecodeBase64(o.png_base64);
             } else {
                 out = CellOutput::Text(o.text);
+                out.is_result = o.kind == nb::Output::Kind::Result;
             }
             break;
     }
@@ -528,6 +609,10 @@ nb::Output ToNotebookOutput(const CellOutput& out, int execution_count) {
         case OutputType::Error: {
             const std::string raw = o.raw;
             o = nb::ErrorFromText(out.data);
+            if (!out.ename.empty()) {
+                o.ename = out.ename;
+                o.evalue = out.evalue;
+            }
             o.raw = raw;
             break;
         }
@@ -543,6 +628,12 @@ nb::Output ToNotebookOutput(const CellOutput& out, int execution_count) {
             o.text = out.data;
             break;
         case OutputType::Text:
+            if (out.is_result) {
+                o.kind = nb::Output::Kind::Result;
+                o.text = out.data;
+                break;
+            }
+            [[fallthrough]];
         case OutputType::Stream:
         case OutputType::Table:
         case OutputType::Markdown:

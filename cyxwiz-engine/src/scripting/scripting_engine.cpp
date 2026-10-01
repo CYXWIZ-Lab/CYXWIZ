@@ -1171,7 +1171,7 @@ std::vector<CapturedPlot> ScriptingEngine::GetPendingPlots() {
 void ScriptingEngine::ScriptWorker(const std::string& script, RunCallbacks callbacks) {
     spdlog::debug("Script worker thread started");
 
-    ExecutionResult result = ExecuteWithStreaming(script, callbacks.on_output);
+    ExecutionResult result = ExecuteWithStreaming(script, callbacks);
 
     // Check if cancelled
     if (cancel_requested_) {
@@ -1200,7 +1200,29 @@ void ScriptingEngine::ScriptWorker(const std::string& script, RunCallbacks callb
     spdlog::debug("Script worker thread finished");
 }
 
-ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script, const OutputCallback& on_output) {
+bool ScriptingEngine::DropNotebookNamespace(const std::string& key) {
+    if (script_running_) return false;
+    if (!IsInitialized()) return true;  // nothing ran yet
+    try {
+        py::gil_scoped_acquire acquire;
+        auto main = py::module_::import("__main__").attr("__dict__").cast<py::dict>();
+        if (main.contains("_cyxwiz_notebook_ns")) {
+            auto all = main["_cyxwiz_notebook_ns"].cast<py::dict>();
+            if (all.contains(key)) {
+                auto ns = all[py::str(key)].cast<py::dict>();
+                ns.clear();  // break cycles through the namespace before it goes
+                all.attr("pop")(key);
+            }
+        }
+        py::module_::import("gc").attr("collect")();
+    } catch (const py::error_already_set& e) {
+        spdlog::warn("Could not reset notebook namespace: {}", e.what());
+    }
+    return true;
+}
+
+ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script, const RunCallbacks& callbacks) {
+    const OutputCallback& on_output = callbacks.on_output;
     ExecutionResult result;
     result.success = false;
 
@@ -1297,6 +1319,11 @@ ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script,
             }
         };
 
+        auto queue_stderr = [this, callbacks](const std::string& text) {
+            QueueOutput(text);
+            if (callbacks.on_stderr) callbacks.on_stderr(text);
+        };
+
         // Create plot capture callback wrapper
         auto plot_capture_func = [this](py::bytes png_data, int width, int height, const std::string& label) {
             CapturedPlot plot;
@@ -1354,6 +1381,46 @@ def _cyxwiz_trace(frame, event, arg):
     if _cyxwiz_is_cancelled():
         raise KeyboardInterrupt("Script cancelled by user")
     return _cyxwiz_trace
+
+# Notebook cells (TOFIX133 P4): one namespace per notebook, kept between
+# runs until Restart; the last expression's value is echoed as in Jupyter.
+try:
+    _cyxwiz_notebook_ns
+except NameError:
+    _cyxwiz_notebook_ns = {}
+
+def _cyxwiz_run_cell(src, key, filename):
+    import ast, builtins, linecache, traceback
+    ns = _cyxwiz_notebook_ns.get(key)
+    if ns is None:
+        ns = {'__name__': '__main__', '__builtins__': builtins}
+        _cyxwiz_notebook_ns[key] = ns
+    linecache.cache[filename] = (len(src), None, src.splitlines(True), filename)
+    out = {'ok': False, 'repr': None, 'ename': '', 'evalue': '', 'frames': [], 'traceback': ''}
+    try:
+        tree = ast.parse(src, filename, 'exec')
+        last = None
+        if tree.body and isinstance(tree.body[-1], ast.Expr):
+            last = tree.body.pop()
+        exec(compile(tree, filename, 'exec'), ns)
+        if last is not None:
+            value = eval(compile(ast.Expression(last.value), filename, 'eval'), ns)
+            if value is not None:
+                ns['_'] = value
+                out['repr'] = repr(value)
+        out['ok'] = True
+    except KeyboardInterrupt:
+        raise
+    except BaseException as e:
+        out['ename'] = type(e).__name__
+        out['evalue'] = str(e)
+        frames = traceback.extract_tb(e.__traceback__)[1:]  # not this helper
+        out['frames'] = [(f.filename, f.lineno or 0, f.name, f.line or '') for f in frames]
+        if isinstance(e, SyntaxError) and e.filename == filename:
+            out['frames'].append((filename, e.lineno or 0, '<module>', (e.text or '').strip()))
+            out['evalue'] = e.msg
+        out['traceback'] = ''.join(traceback.format_list(frames)) + ''.join(traceback.format_exception_only(type(e), e))
+    return out
 
 # Matplotlib capture setup
 _cyxwiz_plot_capture_callback = None
@@ -1445,18 +1512,42 @@ def _cyxwiz_setup_matplotlib_capture(capture_callback):
         py::object original_stdout = sys.attr("stdout");
         py::object original_stderr = sys.attr("stderr");
 
+        // stderr apart when the caller asks for it (notebook cells)
+        py::object error_obj = callbacks.on_stderr ? output_class(py::cpp_function(queue_stderr)) : output_obj;
+
         // Redirect
         sys.attr("stdout") = output_obj;
-        sys.attr("stderr") = output_obj;
+        sys.attr("stderr") = error_obj;
 
         // Set the trace function
         py::exec("sys.settrace(_cyxwiz_trace)");
 
         try {
             // Execute the user script
-            py::exec(script);
+            if (callbacks.notebook_namespace.empty()) {
+                py::exec(script);
+                result.success = true;
+            } else {
+                const std::string filename = callbacks.cell_filename.empty() ? "<cell>" : callbacks.cell_filename;
+                auto out = py::eval("_cyxwiz_run_cell")(script, callbacks.notebook_namespace, filename).cast<py::dict>();
+                result.success = out["ok"].cast<bool>();
+                if (!out["repr"].is_none()) result.result_repr = out["repr"].cast<std::string>();
+                if (!result.success) {
+                    result.exception_type = out["ename"].cast<std::string>();
+                    result.exception_value = out["evalue"].cast<std::string>();
+                    result.traceback = out["traceback"].cast<std::string>();
+                    result.error_message = result.exception_value.empty()
+                                               ? result.exception_type
+                                               : result.exception_type + ": " + result.exception_value;
+                    for (auto item : out["frames"].cast<py::list>()) {
+                        auto t = item.cast<py::tuple>();
+                        result.frames.push_back({t[0].cast<std::string>(), t[1].cast<int>(), t[2].cast<std::string>(),
+                                                 t[3].cast<std::string>()});
+                    }
+                }
+            }
             output_obj.attr("flush")();
-            result.success = true;
+            if (callbacks.on_stderr) error_obj.attr("flush")();
         } catch (const py::error_already_set& e) {
             if (e.matches(PyExc_KeyboardInterrupt)) {
                 result.success = false;
@@ -1474,6 +1565,8 @@ def _cyxwiz_setup_matplotlib_capture(capture_callback):
         try {
             output_obj.attr("_callback") = py::none();
             output_obj.attr("_buffer") = "";
+            error_obj.attr("_callback") = py::none();
+            error_obj.attr("_buffer") = "";
         } catch (...) {
             spdlog::warn("Error clearing output callback, ignoring");
         }
