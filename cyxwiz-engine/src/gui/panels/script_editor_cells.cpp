@@ -676,19 +676,16 @@ void ScriptEditorPanel::HandleCellKeyboardShortcuts() {
         return;
     }
 
-    // Handle debug shortcuts first (F5, F9, F10, F11)
-    HandleDebugKeyboardShortcuts();
-
     auto& tab = tabs_[active_tab_index_];
     bool ctrl = ImGui::GetIO().KeyCtrl;
     bool shift = ImGui::GetIO().KeyShift;
     bool is_editing = (tab->editing_cell >= 0);
 
-    // Toggle cell mode: Ctrl+Shift+M (Ctrl+Shift+N is New Project)
-    if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_N)) {
-        ToggleCellMode();
-        return;
-    }
+    // Ctrl+Shift+M (notebook on/off) and the run/debug keys are dispatched
+    // once in HandleKeyboardShortcuts. Command-mode letters below take no
+    // modifier, so Ctrl+Shift+M no longer also turns the cell into markdown.
+    const bool alt = ImGui::GetIO().KeyAlt;
+    const bool bare = !ctrl && !shift && !alt;
 
     // Escape - exit edit mode
     if (ImGui::IsKeyPressed(ImGuiKey_Escape) && is_editing) {
@@ -733,8 +730,8 @@ void ScriptEditorPanel::HandleCellKeyboardShortcuts() {
         return;
     }
 
-    // Arrow keys for navigation (when not editing)
-    if (!is_editing) {
+    // Arrow keys and letters (command mode, no modifiers)
+    if (!is_editing && bare) {
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
             if (tab->selected_cell > 0) {
                 tab->selected_cell--;

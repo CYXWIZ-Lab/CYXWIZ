@@ -119,6 +119,7 @@ const char* ContextName(Context context) {
         case Context::StudioCanvas: return "Studio canvas";
         case Context::ScriptEditor: return "Script Editor";
         case Context::ScriptDebugging: return "Script Editor, debugging";
+        case Context::ScriptNotebook: return "Script Editor, notebook";
     }
     return "Everywhere";
 }
@@ -142,6 +143,7 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         const Context canvas = Context::StudioCanvas;
         const Context script = Context::ScriptEditor;
         const Context debug = Context::ScriptDebugging;
+        const Context notebook = Context::ScriptNotebook;
 
         // Everywhere: handled by the main window.
         add(any, "file.new_project", "New Project...", "Ctrl+Shift+N", "File");
@@ -226,6 +228,22 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(debug, "debug.step_into", "Step into", "F11", "", true);
         add(debug, "debug.step_out", "Step out", "Shift+F11", "", true);
         add(debug, "debug.toggle_breakpoint", "Toggle breakpoint", "F9", "", true);
+
+        // Script Editor in notebook mode: the notebook handles these. The
+        // letters work in command mode (no cell being edited).
+        add(notebook, "notebook.edit_cell", "Edit the selected cell", "Enter", "", true);
+        add(notebook, "notebook.command_mode", "Stop editing (command mode)", "Escape", "", true);
+        add(notebook, "notebook.run_cell", "Run cell and select the next", "Shift+Enter", "", true);
+        add(notebook, "notebook.previous_cell", "Select the cell above", "Up", "", true);
+        add(notebook, "notebook.next_cell", "Select the cell below", "Down", "", true);
+        add(notebook, "notebook.add_above", "Add a code cell above", "A", "", true);
+        add(notebook, "notebook.add_below", "Add a code cell below", "B", "", true);
+        add(notebook, "notebook.delete_cell", "Delete the cell (press D twice)", "D, D", "", true);
+        add(notebook, "notebook.to_markdown", "Make the cell markdown", "M", "", true);
+        add(notebook, "notebook.to_code", "Make the cell code", "Y", "", true);
+        add(notebook, "notebook.collapse", "Fold or unfold the cell", "C", "", true);
+        add(notebook, "notebook.collapse_output", "Fold or unfold the output", "O", "", true);
+        add(notebook, "script.cell_mode", "Leave notebook mode", "Ctrl+Shift+M", "", true);
         return t;
     }();
     return table;
@@ -247,7 +265,8 @@ std::string ShortcutFor(const std::string& action_id, Context focus) {
 
 MenuModel BuildMenuModel(const MenuInputs& in) {
     const Context f = in.focus;
-    const bool in_script = f == Context::ScriptEditor || f == Context::ScriptDebugging;
+    const bool in_script =
+        f == Context::ScriptEditor || f == Context::ScriptDebugging || f == Context::ScriptNotebook;
     const bool in_canvas = f == Context::StudioCanvas;
     const bool has_sel = in_canvas && in.selected_nodes > 0;
     const std::string any_editor =

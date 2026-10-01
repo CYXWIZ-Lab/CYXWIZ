@@ -229,7 +229,7 @@ private:
     void RenderDebugToolbar();
     void RenderBreakpointGutter(Cell& cell, int cell_index);
     void RenderScriptBreakpointGutter(float height);  // For traditional script mode
-    void HandleDebugKeyboardShortcuts();
+    void ToggleBreakpointAtCursor();
 
     // File operations helpers
     bool LoadFileContent(const std::string& filepath, std::string& content);

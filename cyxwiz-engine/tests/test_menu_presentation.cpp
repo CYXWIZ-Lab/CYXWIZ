@@ -198,6 +198,10 @@ int main() {
     Check(ShortcutFor("file.save_as", Context::Any) == "Ctrl+Shift+S", "Save As chord");
     Check(ShortcutFor("canvas.subgraph", Context::StudioCanvas) != "Ctrl+Shift+S", "subgraph moved off Save As");
     Check(ShortcutFor("script.cell_mode", Context::ScriptEditor) != "Ctrl+Shift+N", "cell mode moved off New Project");
+    // Notebook command-mode keys are documented (TOFIX133 P0 item 7).
+    Check(ShortcutFor("notebook.delete_cell", Context::ScriptNotebook) == "D, D", "notebook delete documented");
+    Check(ShortcutFor("notebook.to_markdown", Context::ScriptNotebook) == "M", "notebook M documented");
+    Check(ShortcutFor("script.cell_mode", Context::ScriptNotebook) == "Ctrl+Shift+M", "leave notebook documented");
     Check(ShortcutFor("tools.model_summary", Context::Any).empty(), "Model Summary has no chord");
     Check(ShortcutFor("data.profiler", Context::Any).empty(), "Data Profiler has no chord");
     // Window-wise: F5 and Ctrl+S do the matching action in the Script Editor.

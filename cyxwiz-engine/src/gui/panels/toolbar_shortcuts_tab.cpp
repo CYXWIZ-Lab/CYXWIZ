@@ -31,8 +31,9 @@ bool Matches(const menu::ShortcutEntry& e, const std::string& needle) {
 }  // namespace
 
 void ToolbarPanel::RenderShortcutsPreferences() {
-    const menu::Context contexts[] = {menu::Context::Any, menu::Context::StudioCanvas,
-                                      menu::Context::ScriptEditor, menu::Context::ScriptDebugging};
+    const menu::Context contexts[] = {menu::Context::Any, menu::Context::StudioCanvas, menu::Context::ScriptEditor,
+                                      menu::Context::ScriptDebugging, menu::Context::ScriptNotebook};
+    constexpr int kContexts = static_cast<int>(sizeof(contexts) / sizeof(contexts[0]));
     const auto& table = menu::ShortcutTable();
     const std::string needle = Lower(shortcuts_search_);
 
@@ -47,7 +48,7 @@ void ToolbarPanel::RenderShortcutsPreferences() {
     if (ImGui::BeginChild("##shortcut_windows", ImVec2(rail_width, 0.0f), ImGuiChildFlags_None)) {
         ImGui::TextDisabled("WINDOW");
         ImGui::Spacing();
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < kContexts; ++i) {
             int count = 0;
             for (const auto& e : table) if (e.context == contexts[i] && Matches(e, needle)) ++count;
             const std::string label = std::string(menu::ContextName(contexts[i])) + "  (" + std::to_string(count) + ")";
@@ -71,7 +72,7 @@ void ToolbarPanel::RenderShortcutsPreferences() {
         ImGui::TextDisabled("Rebinding: planned");
         ImGui::Spacing();
 
-        const menu::Context context = contexts[std::clamp(shortcuts_context_, 0, 3)];
+        const menu::Context context = contexts[std::clamp(shortcuts_context_, 0, kContexts - 1)];
         const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                                       ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp |
                                       ImGuiTableFlags_NoSavedSettings;

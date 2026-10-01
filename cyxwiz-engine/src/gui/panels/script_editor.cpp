@@ -8,6 +8,7 @@
 #include "../../scripting/scripting_engine.h"
 #include "../../scripting/script_output_sink.h"
 #include "../../core/keyboard_shortcuts.h"
+#include "../../core/script_keys.h"
 #include <imgui.h>
 #include <algorithm>
 #include <spdlog/spdlog.h>
@@ -1010,11 +1011,6 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
         return;  // Not focused and no popup, don't process shortcuts
     }
 
-    // Handle debug shortcuts (F5, F9, F10, F11) - only when focused
-    if (is_focused_ && IsActiveTabEditable()) {
-        HandleDebugKeyboardShortcuts();
-    }
-
     ImGuiIO& io = ImGui::GetIO();
 
     bool ctrl = io.KeyCtrl;
@@ -1074,38 +1070,59 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
         close_tab_index_ = active_tab_index_;
     }
 
-    // Toggle cell mode (Jupyter-like notebook mode)
-    if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_M) && IsActiveTabEditable()) {
-        ToggleCellMode();
-    }
-
     // Edit operations (handled by TextEditor internally, but we can add extra handling)
     // The TextEditor component already handles Ctrl+Z, Ctrl+Y, Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+A
 
-    // Execution shortcuts
-    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F5) && !script_running_ && IsActiveTabEditable()) {
-        RunScript();
+    // Run, debug and notebook-toggle keys: one table decides, once per
+    // frame (TOFIX133 P0 item 7; Preferences > Shortcuts lists the same).
+    if (!IsActiveTabEditable()) return;
+    scriptkeys::State key_state;
+    if (debugger_) {
+        const auto debug_state = debugger_->GetState();
+        key_state.debugging = debug_state != scripting::DebugState::Disconnected;
+        key_state.paused = debug_state == scripting::DebugState::Paused;
     }
-    // Stop script with Shift+F5
-    if (!ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F5) && script_running_) {
-        if (scripting_engine_) {
-            scripting_engine_->StopScript();
-            spdlog::info("Stop script requested via Shift+F5");
+    key_state.script_running = script_running_;
+    key_state.notebook = tabs_[active_tab_index_]->cell_mode;
+    struct Binding {
+        ImGuiKey imgui;
+        scriptkeys::Key key;
+        bool repeat;
+    };
+    static constexpr Binding kBindings[] = {
+        {ImGuiKey_F5, scriptkeys::Key::F5, false},       {ImGuiKey_F9, scriptkeys::Key::F9, false},
+        {ImGuiKey_F10, scriptkeys::Key::F10, false},     {ImGuiKey_F11, scriptkeys::Key::F11, false},
+        {ImGuiKey_Enter, scriptkeys::Key::Enter, false}, {ImGuiKey_Space, scriptkeys::Key::Space, false},
+        {ImGuiKey_M, scriptkeys::Key::M, false}};
+    for (const auto& b : kBindings) {
+        if (!ImGui::IsKeyPressed(b.imgui, b.repeat)) continue;
+        switch (scriptkeys::Resolve(b.key, ctrl, shift, alt, key_state)) {
+            case scriptkeys::Action::RunScript: RunScript(); break;
+            case scriptkeys::Action::StopScript:
+                if (scripting_engine_) {
+                    scripting_engine_->StopScript();
+                    spdlog::info("Stop script requested via Shift+F5");
+                }
+                break;
+            case scriptkeys::Action::RunSelection: RunSelection(); break;
+            case scriptkeys::Action::RunSection: RunCurrentSection(); break;
+            case scriptkeys::Action::StartDebug: Debug(); break;
+            case scriptkeys::Action::Continue: debugger_->Continue(); break;
+            case scriptkeys::Action::StopDebug:
+                debugger_->Stop();
+                debug_mode_active_ = false;
+                debug_current_line_ = -1;
+                debug_current_cell_.clear();
+                break;
+            case scriptkeys::Action::StepOver: debugger_->StepOver(); break;
+            case scriptkeys::Action::StepInto: debugger_->StepInto(); break;
+            case scriptkeys::Action::StepOut: debugger_->StepOut(); break;
+            case scriptkeys::Action::ToggleBreakpoint: ToggleBreakpointAtCursor(); break;
+            case scriptkeys::Action::ToggleNotebook: ToggleCellMode(); break;
+            case scriptkeys::Action::Completion: UpdateAutoCompletion(true); break;
+            case scriptkeys::Action::None: continue;
         }
-    }
-    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F9) && !script_running_ && IsActiveTabEditable()) {
-        RunSelection();
-    }
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Enter) && !script_running_ && IsActiveTabEditable()) {
-        RunCurrentSection();
-    }
-    if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_F10) && !script_running_ && IsActiveTabEditable()) {
-        Debug();
-    }
-
-    // Ctrl+Space triggers completion manually (force = true bypasses trigger char check)
-    if (ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Space, false) && IsActiveTabEditable()) {
-        UpdateAutoCompletion(true);
+        return;  // one action per key press
     }
 }
 

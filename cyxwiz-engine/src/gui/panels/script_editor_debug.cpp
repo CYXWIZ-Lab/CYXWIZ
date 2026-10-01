@@ -279,106 +279,68 @@ void ScriptEditorPanel::RenderScriptBreakpointGutter(float height) {
     ImGui::EndChild();
 }
 
-void ScriptEditorPanel::HandleDebugKeyboardShortcuts() {
-    if (!debugger_) return;
+// F9 while debugging (TOFIX133 P0 item 7: dispatched once, from
+// HandleKeyboardShortcuts, through core/script_keys).
+void ScriptEditorPanel::ToggleBreakpointAtCursor() {
+    if (tabs_.empty() || active_tab_index_ < 0) return;
 
-    auto state = debugger_->GetState();
+    auto& tab = tabs_[active_tab_index_];
 
-    // F5 - Continue / Start Debug
-    if (ImGui::IsKeyPressed(ImGuiKey_F5)) {
-        if (ImGui::GetIO().KeyShift) {
-            // Shift+F5 - Stop debugging
-            debugger_->Stop();
-            debug_mode_active_ = false;
-            debug_current_line_ = -1;
-            debug_current_cell_.clear();
-        } else if (state == scripting::DebugState::Paused) {
-            debugger_->Continue();
-        } else if (state == scripting::DebugState::Disconnected) {
-            Debug(); // Start debugging
-        }
-    }
+    if (tab->cell_mode) {
+        // Cell mode - toggle breakpoint in selected cell
+        if (tab->selected_cell >= 0 &&
+            tab->selected_cell < static_cast<int>(tab->cell_manager.GetCellCount())) {
+            Cell& cell = tab->cell_manager.GetCell(tab->selected_cell);
+            if (cell.type == CellType::Code) {
+                // Get current cursor line from editor
+                auto coords = cell.editor.GetCursorPosition();
+                int line = coords.mLine + 1; // 1-based
 
-    // F10 - Step Over
-    if (ImGui::IsKeyPressed(ImGuiKey_F10)) {
-        if (state == scripting::DebugState::Paused) {
-            debugger_->StepOver();
-        }
-    }
-
-    // F11 - Step Into / Shift+F11 - Step Out
-    if (ImGui::IsKeyPressed(ImGuiKey_F11)) {
-        if (state == scripting::DebugState::Paused) {
-            if (ImGui::GetIO().KeyShift) {
-                debugger_->StepOut();
-            } else {
-                debugger_->StepInto();
-            }
-        }
-    }
-
-    // F9 - Toggle breakpoint at current line
-    if (ImGui::IsKeyPressed(ImGuiKey_F9)) {
-        if (tabs_.empty() || active_tab_index_ < 0) return;
-
-        auto& tab = tabs_[active_tab_index_];
-
-        if (tab->cell_mode) {
-            // Cell mode - toggle breakpoint in selected cell
-            if (tab->selected_cell >= 0 &&
-                tab->selected_cell < static_cast<int>(tab->cell_manager.GetCellCount())) {
-                Cell& cell = tab->cell_manager.GetCell(tab->selected_cell);
-                if (cell.type == CellType::Code) {
-                    // Get current cursor line from editor
-                    auto coords = cell.editor.GetCursorPosition();
-                    int line = coords.mLine + 1; // 1-based
-
-                    // Toggle breakpoint
-                    auto it = std::find(cell.breakpoints.begin(), cell.breakpoints.end(), line);
-                    if (it != cell.breakpoints.end()) {
-                        cell.breakpoints.erase(it);
-                        if (debugger_) {
-                            auto breakpoints = debugger_->GetBreakpointsForCell(cell.id);
-                            for (const auto& bp : breakpoints) {
-                                if (bp.line == line) {
-                                    debugger_->RemoveBreakpoint(bp.id);
-                                    break;
-                                }
+                // Toggle breakpoint
+                auto it = std::find(cell.breakpoints.begin(), cell.breakpoints.end(), line);
+                if (it != cell.breakpoints.end()) {
+                    cell.breakpoints.erase(it);
+                    if (debugger_) {
+                        auto breakpoints = debugger_->GetBreakpointsForCell(cell.id);
+                        for (const auto& bp : breakpoints) {
+                            if (bp.line == line) {
+                                debugger_->RemoveBreakpoint(bp.id);
+                                break;
                             }
                         }
-                    } else {
-                        cell.breakpoints.push_back(line);
-                        if (debugger_) {
-                            debugger_->AddBreakpoint(cell.id, line);
-                        }
+                    }
+                } else {
+                    cell.breakpoints.push_back(line);
+                    if (debugger_) {
+                        debugger_->AddBreakpoint(cell.id, line);
+                    }
+                }
+            }
+        }
+    } else {
+        // Traditional mode - toggle breakpoint in script
+        auto coords = tab->editor.GetCursorPosition();
+        int line = coords.mLine + 1; // 1-based
+
+        std::string file_id = tab->filepath.empty() ? tab->filename : tab->filepath;
+
+        // Toggle breakpoint
+        auto it = std::find(tab->breakpoints.begin(), tab->breakpoints.end(), line);
+        if (it != tab->breakpoints.end()) {
+            tab->breakpoints.erase(it);
+            if (debugger_) {
+                auto breakpoints = debugger_->GetBreakpointsForCell(file_id);
+                for (const auto& bp : breakpoints) {
+                    if (bp.line == line) {
+                        debugger_->RemoveBreakpoint(bp.id);
+                        break;
                     }
                 }
             }
         } else {
-            // Traditional mode - toggle breakpoint in script
-            auto coords = tab->editor.GetCursorPosition();
-            int line = coords.mLine + 1; // 1-based
-
-            std::string file_id = tab->filepath.empty() ? tab->filename : tab->filepath;
-
-            // Toggle breakpoint
-            auto it = std::find(tab->breakpoints.begin(), tab->breakpoints.end(), line);
-            if (it != tab->breakpoints.end()) {
-                tab->breakpoints.erase(it);
-                if (debugger_) {
-                    auto breakpoints = debugger_->GetBreakpointsForCell(file_id);
-                    for (const auto& bp : breakpoints) {
-                        if (bp.line == line) {
-                            debugger_->RemoveBreakpoint(bp.id);
-                            break;
-                        }
-                    }
-                }
-            } else {
-                tab->breakpoints.push_back(line);
-                if (debugger_) {
-                    debugger_->AddBreakpoint(file_id, line);
-                }
+            tab->breakpoints.push_back(line);
+            if (debugger_) {
+                debugger_->AddBreakpoint(file_id, line);
             }
         }
     }
