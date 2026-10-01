@@ -1020,30 +1020,49 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
     // ========================================================================
     // COMPLETION POPUP - Highest priority when popup is open
     // ========================================================================
-    if (show_completion_popup_) {
-        // Escape closes completion popup
-        if (!ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            CloseCompletionPopup();
-            return;  // Don't process other shortcuts
-        }
-        // Tab or Enter applies selected completion
-        if (!ctrl && !shift && !alt && (ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_Enter))) {
-            if (selected_completion_ >= 0 && selected_completion_ < static_cast<int>(completion_items_.size())) {
-                ApplyCompletion(completion_items_[selected_completion_]);
+    if (show_completion_popup_ && !ctrl && !shift && !alt) {
+        // TOFIX133 P0 item 6: Tab inserts, Enter types its new line, Up/Down
+        // move the selection without moving the editor cursor.
+        struct PopupBinding {
+            ImGuiKey imgui;
+            scriptkeys::PopupKey key;
+        };
+        static constexpr PopupBinding kPopupKeys[] = {{ImGuiKey_Tab, scriptkeys::PopupKey::Tab},
+                                                      {ImGuiKey_Enter, scriptkeys::PopupKey::Enter},
+                                                      {ImGuiKey_KeypadEnter, scriptkeys::PopupKey::Enter},
+                                                      {ImGuiKey_Escape, scriptkeys::PopupKey::Escape},
+                                                      {ImGuiKey_UpArrow, scriptkeys::PopupKey::Up},
+                                                      {ImGuiKey_DownArrow, scriptkeys::PopupKey::Down}};
+        const int visible = std::min(static_cast<int>(completion_items_.size()), 10);
+        for (const auto& b : kPopupKeys) {
+            if (!ImGui::IsKeyPressed(b.imgui)) continue;
+            switch (scriptkeys::ResolvePopupKey(b.key)) {
+                case scriptkeys::PopupAction::Accept:
+                    if (selected_completion_ >= 0 && selected_completion_ < static_cast<int>(completion_items_.size())) {
+                        ApplyCompletion(completion_items_[selected_completion_]);
+                    }
+                    CloseCompletionPopup();
+                    // The editor must not also insert the tab this frame.
+                    completion_just_accepted_ = true;
+                    for (int i = io.InputQueueCharacters.Size - 1; i >= 0; --i) {
+                        if (io.InputQueueCharacters[i] == '\t') {
+                            io.InputQueueCharacters.erase(io.InputQueueCharacters.Data + i);
+                        }
+                    }
+                    return;
+                case scriptkeys::PopupAction::CloseAndType:
+                case scriptkeys::PopupAction::Close:
+                    CloseCompletionPopup();
+                    return;  // the editor still gets the key (Enter types its new line)
+                case scriptkeys::PopupAction::Previous:
+                case scriptkeys::PopupAction::Next:
+                    selected_completion_ = scriptkeys::MoveSelection(
+                        selected_completion_, b.key == scriptkeys::PopupKey::Up ? -1 : 1, visible);
+                    completion_just_accepted_ = true;  // keep the editor cursor where it is
+                    return;
             }
-            CloseCompletionPopup();
-            // Set flag to disable editor keyboard input for this frame
-            completion_just_accepted_ = true;
-            // Also clear Tab/Enter/Newline characters from input queue
-            for (int i = io.InputQueueCharacters.Size - 1; i >= 0; --i) {
-                ImWchar c = io.InputQueueCharacters[i];
-                if (c == '\t' || c == '\n' || c == '\r') {
-                    io.InputQueueCharacters.erase(io.InputQueueCharacters.Data + i);
-                }
-            }
-            return;  // Don't process other shortcuts
         }
-        // Let other keys pass through to editor (typing continues)
+        // Other keys reach the editor (typing continues).
     }
 
     // ========================================================================

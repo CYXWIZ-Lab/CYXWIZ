@@ -896,6 +896,13 @@ void TextEditor::Render()
 
 	if (!mLines.empty())
 	{
+		const Coordinates cursor = GetActualCursorCoordinates();
+		mCursorScreenPos = ImVec2(cursorScreenPos.x + mTextStart + TextDistanceToLineStart(cursor),
+			cursorScreenPos.y + (cursor.mLine + 1) * mCharAdvance.y);
+	}
+
+	if (!mLines.empty())
+	{
 		float spaceSize = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, " ", nullptr, nullptr).x;
 
 		while (lineNo <= lineMax)
@@ -1504,7 +1511,6 @@ void TextEditor::SetSelection(const Coordinates & aStart, const Coordinates & aE
 	case TextEditor::SelectionMode::Line:
 	{
 		const auto lineNo = mState.mSelectionEnd.mLine;
-		const auto lineSize = (size_t)lineNo < mLines.size() ? mLines[lineNo].size() : 0;
 		mState.mSelectionStart = Coordinates(mState.mSelectionStart.mLine, 0);
 		mState.mSelectionEnd = Coordinates(lineNo, GetLineMaxColumn(lineNo));
 		break;

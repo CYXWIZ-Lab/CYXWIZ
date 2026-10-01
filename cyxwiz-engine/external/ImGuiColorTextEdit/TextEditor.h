@@ -341,6 +341,12 @@ private:
 	int InsertTextAt(Coordinates& aWhere, const char* aValue);
 	void AddUndo(UndoRecord& aValue);
 	Coordinates ScreenPosToCoordinates(const ImVec2& aPosition) const;
+public:
+	// CyxWiz: bottom-left of the cursor's character on the last Render, in
+	// screen pixels (for popups such as completion). Ignores word wrap.
+	ImVec2 GetCursorScreenPos() const { return mCursorScreenPos; }
+private:
+	ImVec2 mCursorScreenPos = ImVec2(0.0f, 0.0f);
 	Coordinates FindWordStart(const Coordinates& aFrom) const;
 	Coordinates FindWordEnd(const Coordinates& aFrom) const;
 	Coordinates FindNextWord(const Coordinates& aFrom) const;

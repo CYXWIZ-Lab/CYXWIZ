@@ -55,6 +55,14 @@ int main() {
     Check(Resolve(Key::Space, true, false, false, idle) == Action::Completion, "Ctrl+Space completes");
     Check(Resolve(Key::F5, false, false, true, idle) == Action::None, "Alt combinations are not ours");
 
-    std::cout << "script keys: run keys, debug session keys, notebook mode. OK\n";
+    // Completion popup (P0 item 6).
+    Check(ResolvePopupKey(PopupKey::Enter) == PopupAction::CloseAndType, "Enter types a new line");
+    Check(ResolvePopupKey(PopupKey::Tab) == PopupAction::Accept, "Tab inserts");
+    Check(ResolvePopupKey(PopupKey::Down) == PopupAction::Next && ResolvePopupKey(PopupKey::Up) == PopupAction::Previous,
+          "Up/Down move the selection");
+    Check(MoveSelection(0, -1, 5) == 4 && MoveSelection(4, 1, 5) == 0 && MoveSelection(2, 1, 5) == 3, "selection wraps");
+    Check(MoveSelection(3, 1, 0) == 0, "empty list");
+
+    std::cout << "script keys: run keys, debug session keys, notebook mode, completion popup. OK\n";
     return 0;
 }
