@@ -428,7 +428,11 @@ void CloudDatasetManagerPanel::RenderStreamingStatus() {
 
 void CloudDatasetManagerPanel::RenderCreateDatasetWizard() {
     ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Create Dataset", &show_create_wizard_);
+    // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
+    if (!ImGui::Begin("Create Dataset", &show_create_wizard_)) {
+        ImGui::End();
+        return;
+    }
 
     // Progress indicator
     ImGui::Text("Step %d of 3", wizard_step_ + 1);

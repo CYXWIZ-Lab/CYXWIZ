@@ -60,7 +60,11 @@ PlotWindow::~PlotWindow() {
 void PlotWindow::Render() {
     if (!visible_) return;
 
-    ImGui::Begin(name_.c_str(), &visible_, ImGuiWindowFlags_MenuBar);
+    // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
+    if (!ImGui::Begin(name_.c_str(), &visible_, ImGuiWindowFlags_MenuBar)) {
+        ImGui::End();
+        return;
+    }
 
     RenderMenuBar();
     RenderControls();

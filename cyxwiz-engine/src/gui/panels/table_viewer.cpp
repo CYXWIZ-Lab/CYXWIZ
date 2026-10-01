@@ -48,55 +48,59 @@ void TableViewerPanel::Render() {
         }
     }
 
-    ImGui::Begin(GetName(), &visible_);
+    // Not docked yet (layout saved before it had a slot): open at a usable size.
+    ImGui::SetNextWindowSize(ImVec2(900.0f, 560.0f), ImGuiCond_FirstUseEver);
+    // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
+    const bool expanded = ImGui::Begin(GetName(), &visible_);
+    if (expanded) {
+        // Tab bar at top
+        RenderTabBar();
 
-    // Tab bar at top
-    RenderTabBar();
+        ImGui::Separator();
 
-    ImGui::Separator();
+        // Toolbar
+        RenderToolbar();
 
-    // Toolbar
-    RenderToolbar();
+        ImGui::Separator();
 
-    ImGui::Separator();
+        // Table display
+        TableTab* active_tab = GetActiveTab();
+        if (active_tab) {
+            if (active_tab->table) {
+                // 3-pane layout: sidebar + splitter + main table
+                if (show_stats_sidebar_) {
+                    RenderStatsSidebar(active_tab);
+                    ImGui::SameLine();
 
-    // Table display
-    TableTab* active_tab = GetActiveTab();
-    if (active_tab) {
-        if (active_tab->table) {
-            // 3-pane layout: sidebar + splitter + main table
-            if (show_stats_sidebar_) {
-                RenderStatsSidebar(active_tab);
-                ImGui::SameLine();
-
-                // Draggable splitter
-                ImGui::Button("##vsplitter", ImVec2(4.0f, -1));
-                if (ImGui::IsItemActive()) {
-                    stats_sidebar_width_ += ImGui::GetIO().MouseDelta.x;
-                    stats_sidebar_width_ = std::clamp(stats_sidebar_width_, 120.0f, 300.0f);
+                    // Draggable splitter
+                    ImGui::Button("##vsplitter", ImVec2(4.0f, -1));
+                    if (ImGui::IsItemActive()) {
+                        stats_sidebar_width_ += ImGui::GetIO().MouseDelta.x;
+                        stats_sidebar_width_ = std::clamp(stats_sidebar_width_, 120.0f, 300.0f);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                    }
+                    ImGui::SameLine();
                 }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-                }
-                ImGui::SameLine();
+
+                // Main table area
+                ImGui::BeginChild("TableContent", ImVec2(0, -30));
+                RenderTable();
+                ImGui::EndChild();
+            } else {
+                ImGui::TextWrapped("Failed to load table.");
             }
-
-            // Main table area
-            ImGui::BeginChild("TableContent", ImVec2(0, -30));
-            RenderTable();
-            ImGui::EndChild();
         } else {
-            ImGui::TextWrapped("Failed to load table.");
+            ImGui::TextWrapped("No table loaded. Registered datasets are previewed from Asset Browser or Data Input through Data Preview.");
         }
-    } else {
-        ImGui::TextWrapped("No table loaded. Registered datasets are previewed from Asset Browser or Data Input through Data Preview.");
+
+        ImGui::Separator();
+
+        // Status bar
+        RenderStatusBar();
+
     }
-
-    ImGui::Separator();
-
-    // Status bar
-    RenderStatusBar();
-
     ImGui::End();
 
     // Render modal dialogs (must be outside main window)

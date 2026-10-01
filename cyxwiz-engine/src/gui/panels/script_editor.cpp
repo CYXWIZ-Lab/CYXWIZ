@@ -90,53 +90,55 @@ void ScriptEditorPanel::Render() {
         }
     }
 
-    ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar);
+    // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
+    const bool expanded = ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar);
+    if (expanded) {
+        // Track focus state (including child windows like TextEditor)
+        is_focused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
 
-    // Track focus state (including child windows like TextEditor)
-    is_focused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
+        // Handle window focus request (bring to front)
+        if (request_window_focus_) {
+            ImGui::SetWindowFocus();
+            request_window_focus_ = false;
+        }
 
-    // Handle window focus request (bring to front)
-    if (request_window_focus_) {
-        ImGui::SetWindowFocus();
-        request_window_focus_ = false;
-    }
+        // Always show menu bar
+        RenderMenuBar();
 
-    // Always show menu bar
-    RenderMenuBar();
+        // Handle keyboard shortcuts
+        HandleKeyboardShortcuts();
 
-    // Handle keyboard shortcuts
-    HandleKeyboardShortcuts();
+        // Tab bar
+        RenderTabBar();
 
-    // Tab bar
-    RenderTabBar();
+        // Editor content
+        if (active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size())) {
+            RenderEditor();
+        }
 
-    // Editor content
-    if (active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size())) {
-        RenderEditor();
-    }
+        // Status bar
+        RenderStatusBar();
 
-    // Status bar
-    RenderStatusBar();
+        // Show output notification if needed
+        if (show_output_notification_) {
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10);
+            ImGui::TextWrapped("%s", last_execution_output_.c_str());
 
-    // Show output notification if needed
-    if (show_output_notification_) {
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10);
-        ImGui::TextWrapped("%s", last_execution_output_.c_str());
+            // Auto-hide after 5 seconds
+            output_notification_time_ += ImGui::GetIO().DeltaTime;
+            if (output_notification_time_ > 5.0f) {
+                show_output_notification_ = false;
+                output_notification_time_ = 0.0f;
+            }
+        }
 
-        // Auto-hide after 5 seconds
-        output_notification_time_ += ImGui::GetIO().DeltaTime;
-        if (output_notification_time_ > 5.0f) {
-            show_output_notification_ = false;
-            output_notification_time_ = 0.0f;
+        // Handle deferred tab close
+        if (close_tab_index_ >= 0) {
+            CloseFile(close_tab_index_);
+            close_tab_index_ = -1;
         }
     }
-
-    // Handle deferred tab close
-    if (close_tab_index_ >= 0) {
-        CloseFile(close_tab_index_);
-        close_tab_index_ = -1;
-    }
-
+    if (!expanded) is_focused_ = false;
     ImGui::End();
 
     // Render modal dialogs (outside the main window)

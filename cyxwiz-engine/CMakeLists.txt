@@ -358,6 +358,7 @@ set(ENGINE_SOURCES
     src/gui/ui_tokens.cpp
     src/gui/ui_widgets.cpp
     src/gui/frame_metrics.cpp
+    src/gui/panel_memory.cpp
     src/gui/ui_platform.cpp
     src/gui/dialogs/create_project_dialog.cpp
     src/gui/dialogs/new_script_dialog.cpp

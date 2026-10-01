@@ -123,7 +123,11 @@ void AssetBrowserPanel::Render() {
 
     PollForExternalChanges();
 
-    ImGui::Begin(GetName(), &visible_);
+    // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
+    if (!ImGui::Begin(GetName(), &visible_)) {
+        ImGui::End();
+        return;
+    }
 
     // Toolbar at top
     RenderToolbar();

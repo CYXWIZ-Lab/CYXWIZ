@@ -7,6 +7,7 @@
 #include "gui/ui_fonts.h"
 #include "gui/ui_buttons.h"
 #include "gui/ui_tokens.h"
+#include "gui/panel_memory.h"
 #include "gui/ui_widgets.h"
 #include "gui/theme.h"
 #include "gui/dialogs/python_setup_dialog.h"
@@ -348,6 +349,8 @@ bool CyxWizApp::Initialize() {
         imgui_ini_path_ = ec ? std::string("imgui.ini") : ini.string();
     }
     io.IniFilename = imgui_ini_path_.c_str();
+    // Open panels are kept in imgui.ini next to the layout (TOFIX129 0.6).
+    gui::InstallPanelMemory();
 
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;

@@ -72,7 +72,12 @@ void PlotOutputPanel::Render() {
     // Poll for new plots from script execution
     PollForNewPlots();
 
-    ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar);
+    // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
+    if (!ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar)) {
+        focused_ = false;
+        ImGui::End();
+        return;
+    }
     focused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
 
     // Menu bar

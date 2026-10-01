@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -220,7 +221,8 @@ private:
     void RenderDockSpace();
     void BuildInitialDockLayout();
     void RegisterPanelsWithSidebar();
-    void SetDefaultPanelVisibility();  // Hide tool panels, show only core panels
+    void SetDefaultPanelVisibility(bool force = false);  // Hide tool panels, show only core panels
+    std::map<std::string, bool> default_panel_visibility_;  // registered panels before any saved state
     void RenderSidebar();
     void RenderStatusBar();
     // Renders a panel under a frame-metrics timer (Tools > Diagnostics > Frame Time Overlay).
@@ -485,6 +487,7 @@ private:
 
     bool first_time_layout_;
     bool reset_layout_requested_ = false;
+    int front_tabs_countdown_ = 0;  // frames until the default tabs come to the front
 
     // Network components
     network::JobManager* job_manager_ = nullptr;

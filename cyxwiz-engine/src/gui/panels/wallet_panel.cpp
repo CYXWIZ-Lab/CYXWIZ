@@ -57,7 +57,12 @@ void WalletPanel::Render() {
 
     SyncWithAuthClient();
 
-    ImGui::Begin(name_.c_str(), &visible_);
+    // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
+    if (!ImGui::Begin(name_.c_str(), &visible_)) {
+        ImGui::End();
+        if (show_connection_dialog_) RenderConnectionDialog();
+        return;
+    }
 
     RenderConnectionStatus();
     ImGui::Separator();

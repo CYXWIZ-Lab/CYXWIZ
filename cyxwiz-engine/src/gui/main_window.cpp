@@ -10,6 +10,7 @@
 #endif
 
 #include "main_window.h"
+#include "panel_memory.h"
 #include "../core/live_graph_compile.h"
 #include "ui_buttons.h"
 #include "appearance_settings.h"
@@ -2644,11 +2645,16 @@ MainWindow::MainWindow()
         // tutorial.StartTutorial("getting_started");
     }
 
+    // Register panels with sidebar for hide/unhide toggles. Their state
+    // now is the built-in default that Reset to Default returns to.
+    RegisterPanelsWithSidebar();
+    for (const auto& panel : GetDockStyle().GetPanels())
+        if (panel.visible_ptr) default_panel_visibility_[panel.name] = *panel.visible_ptr;
+
     // Set default panel visibility (hides tool panels on first launch)
     SetDefaultPanelVisibility();
-
-    // Register panels with sidebar for hide/unhide toggles
-    RegisterPanelsWithSidebar();
+    // Then the panels open in the last session (TOFIX129 0.6).
+    ApplyRememberedPanels();
 
     spdlog::info("MainWindow initialized with docking layout system");
 }
@@ -3090,11 +3096,19 @@ void MainWindow::ResetDockLayout() {
     // Rebuild the default docking layout on the next frame, even when a
     // layout already exists (first_time_layout_ alone keeps a split layout).
     reset_layout_requested_ = true;
+    // The default panels open again, and only those.
+    for (const auto& panel : GetDockStyle().GetPanels()) {
+        const auto it = default_panel_visibility_.find(panel.name);
+        if (panel.visible_ptr && it != default_panel_visibility_.end()) *panel.visible_ptr = it->second;
+    }
+    SetDefaultPanelVisibility(true);
+    ForgetRememberedPanels();
     spdlog::info("Dock layout reset requested");
 }
 
 void MainWindow::Render() {
     FrameMetrics::Instance().BeginFrame();
+    TrackPanelChanges();
     // Handle global keyboard shortcuts
     HandleGlobalShortcuts();
 
@@ -3388,6 +3402,21 @@ void MainWindow::RenderDockSpace() {
     if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable) {
         ImGuiID dockspace_id = ImGui::GetID("CyxWizDockSpace");
 
+        // After a fresh layout, bring the main tab of each area to the front
+        // (otherwise the panel that opened last wins its slot). New dock tabs
+        // select themselves in their first frames, and a dock node selects
+        // only the tab focused while it updates, so this starts after a few
+        // frames and focuses one window per frame, CyxWiz Studio last.
+        if (front_tabs_countdown_ > 0) {
+            static constexpr const char* kFrontTabs[] = {"Asset Browser", "Console", "Data Studio", "CyxWiz Studio"};
+            constexpr int kCount = static_cast<int>(sizeof(kFrontTabs) / sizeof(kFrontTabs[0]));
+            --front_tabs_countdown_;
+            if (front_tabs_countdown_ < kCount) {
+                const char* name = kFrontTabs[kCount - 1 - front_tabs_countdown_];
+                if (ImGui::FindWindowByName(name)) ImGui::SetWindowFocus(name);
+            }
+        }
+
         // View > Layout > Reset to Default: rebuild over the current layout
         if (reset_layout_requested_) {
             BuildInitialDockLayout();
@@ -3476,8 +3505,24 @@ void MainWindow::BuildInitialDockLayout() {
     ImGui::DockBuilderDockWindow("Training Dashboard", dock_id_bottom_right);
     ImGui::DockBuilderDockWindow("Viewport", dock_id_bottom_bottom);
 
+    // Every other sidebar panel gets a home too, as a tab beside the panel
+    // it belongs with, instead of opening as a small floating window
+    // (TOFIX129 0.6). Names are the window ids the panels pass to Begin.
+    const ImGuiID dock_id_right_bottom =
+        ImGui::DockBuilderSplitNode(dock_id_right, ImGuiDir_Down, 0.45f, nullptr, &dock_id_right);
+    for (const char* name : {"Nodes", "Pattern Browser"}) ImGui::DockBuilderDockWindow(name, dock_id_left);
+    for (const char* name : {"Info", "Wallet"}) ImGui::DockBuilderDockWindow(name, dock_id_right_bottom);
+    for (const char* name : {"Table Viewer", "Data Explorer", "Annotation Editor", "###Visualizer", "Query Console",
+                             "Plot Output", "###CloudBrowser", "###DatasetManager", "Plugin Manager"})
+        ImGui::DockBuilderDockWindow(name, dock_id_center_right);
+    for (const char* name : {ICON_FA_LIST_UL " Variable Explorer", "Background Tasks", "Job Status & Orchestration",
+                             "P2P Training Progress"})
+        ImGui::DockBuilderDockWindow(name, dock_id_bottom_left);
+    ImGui::DockBuilderDockWindow("###StudioDebuggerPanel", dock_id_bottom_right);
+
     // Finish the docking layout
     ImGui::DockBuilderFinish(dockspace_id);
+    front_tabs_countdown_ = 8;
 
     spdlog::info("Initial dock layout built successfully");
     spdlog::info("  - Left: Asset Browser (15%)");
@@ -3549,9 +3594,10 @@ void MainWindow::RegisterPanelsWithSidebar() {
     spdlog::info("Registered {} panels with sidebar", dock_style.GetPanels().size());
 }
 
-void MainWindow::SetDefaultPanelVisibility() {
-    // Only set defaults on first launch (no imgui.ini exists)
-    if (!first_time_layout_) {
+void MainWindow::SetDefaultPanelVisibility(bool force) {
+    // Only set defaults on first launch (no imgui.ini exists), or on
+    // View > Layout > Reset to Default.
+    if (!first_time_layout_ && !force) {
         return;
     }
 

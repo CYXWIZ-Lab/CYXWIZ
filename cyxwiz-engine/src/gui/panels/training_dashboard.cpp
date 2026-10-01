@@ -39,7 +39,11 @@ void TrainingDashboardPanel::InitializeRLPlots() {
 void TrainingDashboardPanel::Render() {
     if (!visible_) return;
 
-    ImGui::Begin(GetName(), &visible_);
+    // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
+    if (!ImGui::Begin(GetName(), &visible_)) {
+        ImGui::End();
+        return;
+    }
 
     InitializeRLPlots();
 
