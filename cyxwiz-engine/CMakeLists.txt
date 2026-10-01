@@ -2613,7 +2613,7 @@ add_executable(test_plugin_unload_registrations
     src/plugin/plugin_loader.cpp
 )
 target_include_directories(test_plugin_unload_registrations PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(test_plugin_unload_registrations PRIVATE cyxwiz-plugin-sdk imgui::imgui spdlog::spdlog)
+target_link_libraries(test_plugin_unload_registrations PRIVATE cyxwiz-plugin-sdk cyxwiz-backend imgui::imgui spdlog::spdlog)
 if(WIN32)
     target_compile_definitions(test_plugin_unload_registrations PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
@@ -5356,6 +5356,16 @@ target_link_libraries(test_training_core_link PRIVATE cyxwiz-training-core)
 # ===== Test: numerical gradient check of hand-written gradients (TOFIX125 P2) =====
 add_executable(test_extension_gradient_check tests/test_extension_gradient_check.cpp)
 target_link_libraries(test_extension_gradient_check PRIVATE cyxwiz-training-core)
+
+# ===== Test: trainable nodes from the example C++ plugin (TOFIX125 P2) =====
+add_executable(test_plugin_tensor_nodes
+    tests/test_plugin_tensor_nodes.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_link_libraries(test_plugin_tensor_nodes PRIVATE cyxwiz-training-core cyxwiz-plugin-sdk imgui::imgui)
+target_compile_definitions(test_plugin_tensor_nodes PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+add_dependencies(test_plugin_tensor_nodes activation_nodes)
 
 # ===== Test: trainable extension nodes train in a real graph (TOFIX125 P2) =====
 add_executable(test_extension_training tests/test_extension_training.cpp)

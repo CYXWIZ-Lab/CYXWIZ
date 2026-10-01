@@ -124,6 +124,10 @@ private:
     PluginManager() = default;
     ~PluginManager();
 
+    // Per plugin: the lease every module of its trainable nodes holds
+    // (TOFIX125). A plugin whose lease is held is in use by a model.
+    std::unordered_map<std::string, std::shared_ptr<int>> extension_leases_;
+
     // Plugin storage: id -> LoadedPlugin
     std::unordered_map<std::string, std::unique_ptr<LoadedPlugin>> plugins_;
 

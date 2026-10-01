@@ -10,6 +10,8 @@
 #include "registries/plugin_analytics_registry.h"
 #include "interfaces/i_panel_provider.h"
 #include "interfaces/i_node_provider.h"
+#include "interfaces/i_tensor_node_provider.h"
+#include <cyxwiz/sequential.h>
 #include "interfaces/i_training_hook.h"
 #include "interfaces/i_data_provider.h"
 #include "interfaces/i_analytics_provider.h"
@@ -20,6 +22,67 @@
 #include <set>
 
 namespace cyxwiz::plugin {
+
+namespace {
+
+// Adapts a plugin's ITensorNodeProvider to the engine's factory for one
+// node type. Every call into the plugin goes through crash isolation, and
+// a fault becomes an error on the node instead of ending the Engine.
+class PluginTensorNodeFactory : public ITensorNodeFactory {
+public:
+    PluginTensorNodeFactory(std::string plugin_id, std::string type_name, ITensorNodeProvider* provider)
+        : plugin_id_(std::move(plugin_id)), type_name_(std::move(type_name)), provider_(provider) {}
+
+    ExtensionShapeResult InferOutputShape(
+        const std::vector<size_t>& input_shape,
+        const std::map<std::string, std::string>& parameters) const override {
+        ExtensionShapeResult result;
+        const auto call = security::SafeExecute(plugin_id_, "InferOutputShape", [&]() {
+            result = provider_->InferOutputShape(type_name_, input_shape, parameters);
+        });
+        if (!call.success) {
+            return {false, {}, call.error_message.empty() ? "the plugin failed" : call.error_message};
+        }
+        return result;
+    }
+
+    std::unique_ptr<Module> CreateModule(
+        const std::vector<size_t>& input_shape,
+        const std::map<std::string, std::string>& parameters,
+        std::string& error) const override {
+        std::unique_ptr<Module> module;
+        const auto call = security::SafeExecute(plugin_id_, "CreateModule", [&]() {
+            module = provider_->CreateModule(type_name_, input_shape, parameters, error);
+        });
+        if (!call.success) {
+            error = call.error_message.empty() ? "the plugin failed" : call.error_message;
+            return nullptr;
+        }
+        return module;
+    }
+
+private:
+    std::string plugin_id_;
+    std::string type_name_;
+    ITensorNodeProvider* provider_;
+};
+
+std::vector<std::string> SplitChoices(const char* text) {
+    std::vector<std::string> choices;
+    std::string current;
+    for (const char* c = text ? text : ""; *c; ++c) {
+        if (*c == ',') {
+            if (!current.empty()) choices.push_back(current);
+            current.clear();
+        } else {
+            current += *c;
+        }
+    }
+    if (!current.empty()) choices.push_back(current);
+    return choices;
+}
+
+}  // namespace
 
 // ============================================================================
 // Singleton
@@ -322,6 +385,88 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                 return false;
             }
             spdlog::info("PluginManager: Registered {} nodes for '{}'", state.count, plugin_id);
+        }
+
+        // Register trainable nodes (TOFIX125, API 1.1), with crash isolation
+        if (auto* p = static_cast<ITensorNodeProvider*>(instance->QueryInterface("ITensorNodeProvider"))) {
+            struct TensorEnumState {
+                std::string plugin_id;
+                std::string source_path;
+                ITensorNodeProvider* provider = nullptr;
+                std::shared_ptr<void> lease;
+                ExtensionNodeDescriptor current;
+                size_t count = 0;
+            };
+            TensorEnumState tstate;
+            tstate.plugin_id = plugin_id;
+            tstate.source_path = plugin->plugin_dir.string();
+            tstate.provider = p;
+            auto& lease = extension_leases_[plugin_id];
+            if (!lease) lease = std::make_shared<int>(0);
+            tstate.lease = lease;
+
+            TensorNodeCallback cb{};
+            cb.user_data = &tstate;
+            cb.on_node = [](void* ud, const char* type_name, const char* display_name,
+                            const char* category, const char* description, const char* version,
+                            uint32_t color, const char* icon, bool is_activation) {
+                auto* s = static_cast<TensorEnumState*>(ud);
+                s->current = ExtensionNodeDescriptor{};
+                auto& d = s->current;
+                d.provider_id = s->plugin_id;
+                d.type_name = type_name ? type_name : "";
+                d.version = version ? version : "";
+                d.source = ExtensionSource::NativePlugin;
+                d.source_path = s->source_path;
+                d.kind = ExtensionNodeKind::TensorLayer;
+                d.role = is_activation ? ExtensionLayerRole::Activation : ExtensionLayerRole::Layer;
+                d.menu_category = category ? category : "";
+                d.color = color;
+                d.metadata.name = (display_name && *display_name) ? display_name : d.type_name;
+                d.metadata.brief_description = description ? description : "";
+                d.metadata.icon = icon ? icon : "";
+            };
+            cb.on_pin = [](void* ud, const char* name, bool is_input) {
+                auto* s = static_cast<TensorEnumState*>(ud);
+                PortDefinition port(name ? name : "", PinType::Tensor);
+                (is_input ? s->current.metadata.inputs : s->current.metadata.outputs).push_back(std::move(port));
+            };
+            cb.on_parameter = [](void* ud, const char* name, const char* type, const char* default_value,
+                                 const char* description, const char* choices) {
+                auto* s = static_cast<TensorEnumState*>(ud);
+                s->current.metadata.parameters.emplace_back(
+                    name ? name : "", type ? type : "string", default_value ? default_value : "",
+                    description ? description : "", SplitChoices(choices));
+            };
+            cb.on_node_done = [](void* ud) {
+                auto* s = static_cast<TensorEnumState*>(ud);
+                ExtensionNodeRegistry::Registration registration;
+                registration.descriptor = std::move(s->current);
+                registration.tensor_factory = std::make_shared<PluginTensorNodeFactory>(
+                    s->plugin_id, registration.descriptor.type_name, s->provider);
+                registration.provider_lease = s->lease;
+                std::string error;
+                if (registration.descriptor.metadata.inputs.size() != 1 ||
+                    registration.descriptor.metadata.outputs.size() != 1) {
+                    spdlog::warn("PluginManager: trainable node {}:{} not registered: it needs exactly "
+                                 "one input and one output pin", s->plugin_id,
+                                 registration.descriptor.type_name);
+                } else if (ExtensionNodeRegistry::Instance().Register(std::move(registration), error)) {
+                    s->count++;
+                } else {
+                    spdlog::warn("PluginManager: trainable node not registered: {}", error);
+                }
+            };
+
+            auto reg_result = security::SafeExecute(plugin_id, "RegisterTensorNodes", [&]() {
+                p->EnumerateTensorNodes(cb);
+            });
+            if (reg_result.crashed) {
+                plugin->state = PluginState::Failed;
+                plugin->error_message = reg_result.error_message;
+                return false;
+            }
+            spdlog::info("PluginManager: Registered {} trainable nodes for '{}'", tstate.count, plugin_id);
         }
 
         // Register training hook (with crash isolation)

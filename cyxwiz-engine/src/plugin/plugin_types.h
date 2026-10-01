@@ -14,7 +14,7 @@ namespace cyxwiz::plugin {
 // ============================================================================
 
 constexpr uint16_t PLUGIN_API_VERSION_MAJOR = 1;
-constexpr uint16_t PLUGIN_API_VERSION_MINOR = 0;
+constexpr uint16_t PLUGIN_API_VERSION_MINOR = 1;  // 1.1: ITensorNodeProvider (TOFIX125)
 constexpr uint16_t PLUGIN_API_VERSION_PATCH = 0;
 
 // ============================================================================
@@ -129,6 +129,7 @@ enum class PluginCapability : uint32_t {
     RequiresPython  = 1 << 5,
     RequiresGPU     = 1 << 6,
     RequiresNetwork = 1 << 7,
+    ProvidesTensorNodes = 1 << 8,  // trainable nodes, ITensorNodeProvider (API 1.1)
 };
 
 using PluginCapabilityFlags = uint32_t;
@@ -233,6 +234,7 @@ struct PluginManifest {
                 else if (s == "RequiresPython")  m.capabilities |= static_cast<uint32_t>(PluginCapability::RequiresPython);
                 else if (s == "RequiresGPU")     m.capabilities |= static_cast<uint32_t>(PluginCapability::RequiresGPU);
                 else if (s == "RequiresNetwork") m.capabilities |= static_cast<uint32_t>(PluginCapability::RequiresNetwork);
+                else if (s == "ProvidesTensorNodes") m.capabilities |= static_cast<uint32_t>(PluginCapability::ProvidesTensorNodes);
             }
         }
 
