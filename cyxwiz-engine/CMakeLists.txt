@@ -5353,6 +5353,10 @@ add_executable(test_training_core_link tests/test_training_core_link.cpp)
 target_link_libraries(test_training_core_link PRIVATE cyxwiz-training-core)
 
 # ===== Test: headless graph training job on the core alone (TOFIX118 P2) =====
+# ===== Test: numerical gradient check of hand-written gradients (TOFIX125 P2) =====
+add_executable(test_extension_gradient_check tests/test_extension_gradient_check.cpp)
+target_link_libraries(test_extension_gradient_check PRIVATE cyxwiz-training-core)
+
 # ===== Test: trainable extension nodes train in a real graph (TOFIX125 P2) =====
 add_executable(test_extension_training tests/test_extension_training.cpp)
 target_link_libraries(test_extension_training PRIVATE cyxwiz-training-core)
