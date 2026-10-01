@@ -125,7 +125,6 @@ public:
     void SetSaveAllCallback(std::function<void()> callback) { save_all_callback_ = callback; }
     void SetAccountSettingsCallback(std::function<void()> callback) { account_settings_callback_ = callback; }
     void SetExitCallback(std::function<void()> callback) { exit_callback_ = callback; }
-    void SetHasUnsavedChangesCallback(std::function<bool()> callback) { has_unsaved_changes_callback_ = callback; }
     void SetOnLoginSuccessCallback(std::function<void(const std::string&)> callback) { on_login_success_callback_ = callback; }
     void SetOnLogoutCallback(std::function<void()> callback) { on_logout_callback_ = callback; }
 
@@ -387,7 +386,6 @@ private:
 
     bool show_about_dialog_;
     bool show_account_settings_dialog_ = false;
-    bool show_exit_confirmation_dialog_ = false;
     bool auto_save_enabled_ = false;
     float auto_save_interval_ = 60.0f;  // Auto save every 60 seconds
     float auto_save_timer_ = 0.0f;      // Current timer countdown
@@ -475,7 +473,6 @@ private:
     std::function<void()> save_all_callback_;
     std::function<void()> account_settings_callback_;
     std::function<void()> exit_callback_;
-    std::function<bool()> has_unsaved_changes_callback_;
     std::function<void(const std::string&)> on_login_success_callback_;
     std::function<void()> on_logout_callback_;
 

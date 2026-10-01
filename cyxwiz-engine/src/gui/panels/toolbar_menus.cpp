@@ -369,10 +369,9 @@ void ToolbarPanel::BuildActionHandlers() {
             spdlog::error("Failed to restart engine");
         }
     };
+    // The application lists unsaved work in its one close dialog.
     h["file.exit"] = [this](const std::string&) {
-        const bool has_unsaved = has_unsaved_changes_callback_ && has_unsaved_changes_callback_();
-        if (has_unsaved) show_exit_confirmation_dialog_ = true;
-        else if (exit_callback_) exit_callback_();
+        if (exit_callback_) exit_callback_();
     };
 
     // Edit

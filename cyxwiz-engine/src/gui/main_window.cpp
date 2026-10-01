@@ -2360,10 +2360,6 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up Has Unsaved Changes callback (called to check if confirmation dialog is needed)
-    toolbar_->SetHasUnsavedChangesCallback([this]() -> bool {
-        return HasUnsavedFiles();
-    });
 
     // Find dialog: Find Previous; Replace in Files: editor state (TOFIX129 G3)
     toolbar_->SetFindPreviousCallback([this](const std::string& text, bool case_sensitive, bool whole_word, bool use_regex) {

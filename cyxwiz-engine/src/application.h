@@ -76,15 +76,12 @@ private:
     bool project_selected_ = false;
 
     // Close confirmation state
-    bool show_close_confirmation_ = false;
-    bool show_unsaved_confirmation_ = false;
-    bool show_data_loaded_confirmation_ = false;
+    bool show_close_dialog_ = false;  // the one close dialog (TOFIX129 A2-2)
+    std::string close_error_;
     bool force_close_ = false;
 
     // Close confirmation handling
-    void HandleCloseConfirmation();
-    void HandleUnsavedConfirmation();
-    void HandleDataLoadedConfirmation();
+    void HandleCloseRequest();
     bool ShouldPreventClose();
     bool HasUnsavedWork();
     bool HasLoadedData();

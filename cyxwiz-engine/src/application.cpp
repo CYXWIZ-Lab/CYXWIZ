@@ -5,6 +5,9 @@
 #include "gui/display_density.h"
 #include "gui/editor_fonts.h"
 #include "gui/ui_fonts.h"
+#include "gui/ui_buttons.h"
+#include "gui/ui_tokens.h"
+#include "gui/ui_widgets.h"
 #include "gui/theme.h"
 #include "gui/dialogs/python_setup_wizard.h"
 #include "gui/dialogs/start_page.h"
@@ -477,23 +480,12 @@ int CyxWizApp::Run() {
                 break;
             }
 
-            // Check if we should prevent close (script running)
-            if (ShouldPreventClose()) {
-                // Cancel the close and show confirmation dialog
+            // Anything still open (running script, unsaved scripts, loaded
+            // data) is listed in one dialog; otherwise close at once.
+            if (ShouldPreventClose() || HasUnsavedWork() || HasLoadedData()) {
                 glfwSetWindowShouldClose(window_, GLFW_FALSE);
-                show_close_confirmation_ = true;
-            }
-            // Check for unsaved files
-            else if (HasUnsavedWork()) {
-                glfwSetWindowShouldClose(window_, GLFW_FALSE);
-                show_unsaved_confirmation_ = true;
-            }
-            // Check for loaded data in memory
-            else if (HasLoadedData()) {
-                glfwSetWindowShouldClose(window_, GLFW_FALSE);
-                show_data_loaded_confirmation_ = true;
+                show_close_dialog_ = true;
             } else {
-                // OK to close
                 break;
             }
         }
@@ -538,170 +530,92 @@ bool CyxWizApp::HasLoadedData() {
     return !registry.GetDatasetNames().empty();
 }
 
-void CyxWizApp::HandleCloseConfirmation() {
-    if (!show_close_confirmation_) return;
+void CyxWizApp::HandleCloseRequest() {
+    // One dialog for every way of closing (File > Exit and the window's close
+    // box): unsaved scripts, a running script and loaded datasets are listed
+    // together, and the choice made here is final (TOFIX129 A2-2).
+    if (!show_close_dialog_) return;
+    using namespace cyxwiz::ui;
+    const Tokens& t = CurrentTokens();
+    constexpr const char* kTitle = "Close CyxWiz Engine?###close_engine";
+    if (!ImGui::IsPopupOpen(kTitle)) ImGui::OpenPopup(kTitle);
 
-    // Center the popup
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->GetWorkCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(480.0f, 0.0f), ImVec2(640.0f, viewport->WorkSize.y * 0.85f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, t.rounding_card);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(t.space_xl, t.space_lg));
+    const bool open = ImGui::BeginPopupModal(kTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::PopStyleVar(2);
+    if (!open) return;
 
-    if (ImGui::BeginPopupModal("Script Running###CloseConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("A Python script is currently running.");
-        ImGui::Spacing();
-        ImGui::Text("What would you like to do?");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+    const std::vector<std::string> unsaved = main_window_ ? main_window_->GetUnsavedFileNames() : std::vector<std::string>{};
+    const bool script_running = main_window_ && main_window_->IsScriptRunning();
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const std::vector<std::string> datasets = registry.GetDatasetNames();
 
-        if (ImGui::Button("Stop Script & Close", ImVec2(150, 0))) {
-            // Stop the script and close
-            if (main_window_) {
-                main_window_->StopRunningScript();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 600.0f);
+    ImGui::TextUnformatted("Some work is still open. Choose what happens to it.");
+    ImGui::Spacing();
+
+    auto section = [&](const char* title, const std::vector<std::string>& lines, const char* note) {
+        BeginCard(title);
+        ImGui::TextColored(t.text_dim, "%s", title);
+        for (const auto& line : lines) ImGui::TextUnformatted(line.c_str());
+        if (note && note[0]) ImGui::TextColored(t.text_dim, "%s", note);
+        EndCard();
+    };
+    if (!unsaved.empty()) {
+        section(("Unsaved scripts (" + std::to_string(unsaved.size()) + ")").c_str(), unsaved, nullptr);
+    }
+    if (script_running) {
+        section("Running script", {"A Python script is running. Closing stops it."}, nullptr);
+    }
+    if (!datasets.empty()) {
+        const auto stats = registry.GetMemoryStats();
+        std::string names;
+        for (size_t i = 0; i < datasets.size() && i < 6; ++i) names += (i ? ", " : "") + datasets[i];
+        if (datasets.size() > 6) names += ", and " + std::to_string(datasets.size() - 6) + " more";
+        section(("Datasets in memory (" + stats.FormatBytes(stats.total_allocated) + ")").c_str(), {names},
+                "Closing unloads them. Prepared data stays on disk and reloads next time.");
+    }
+    if (!close_error_.empty()) StatusText(Status::NotSupported, close_error_.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    auto close_now = [&]() {
+        if (script_running && main_window_) main_window_->StopRunningScript();
+        registry.UnloadAll();
+        show_close_dialog_ = false;
+        force_close_ = true;
+        running_ = false;
+        ImGui::CloseCurrentPopup();
+    };
+
+    if (!unsaved.empty()) {
+        if (PrimaryButton("Save scripts and close")) {
+            main_window_->SaveAllFiles();
+            if (main_window_->HasUnsavedFiles()) {
+                close_error_ = "Some scripts could not be saved; they are still listed above. Details are in the log.";
+            } else {
+                close_now();
             }
-            show_close_confirmation_ = false;
-            running_ = false;
-            ImGui::CloseCurrentPopup();
         }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Force Close", ImVec2(100, 0))) {
-            // Force close without stopping
-            show_close_confirmation_ = false;
-            force_close_ = true;
-            running_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
-            show_close_confirmation_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
+        ImGui::SameLine(0.0f, t.space_md);
+        if (DangerButton("Close without saving", true, nullptr, ButtonSize::Regular)) close_now();
+    } else {
+        if (PrimaryButton("Close")) close_now();
     }
-
-    // Open the popup if we need to show it
-    if (show_close_confirmation_ && !ImGui::IsPopupOpen("Script Running###CloseConfirm")) {
-        ImGui::OpenPopup("Script Running###CloseConfirm");
+    const float keep_w = ButtonWidth("Keep working", ButtonSize::Regular);
+    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - keep_w);
+    if (SecondaryButton("Keep working", true, nullptr, ButtonSize::Regular) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        show_close_dialog_ = false;
+        close_error_.clear();
+        ImGui::CloseCurrentPopup();
     }
-}
-
-void CyxWizApp::HandleUnsavedConfirmation() {
-    if (!show_unsaved_confirmation_) return;
-
-    // Center the popup
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-
-    if (ImGui::BeginPopupModal("Unsaved Changes###UnsavedConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("You have unsaved changes in the following files:");
-        ImGui::Spacing();
-
-        // List unsaved files
-        if (main_window_) {
-            auto unsaved_files = main_window_->GetUnsavedFileNames();
-            for (const auto& filename : unsaved_files) {
-                ImGui::BulletText("%s", filename.c_str());
-            }
-        }
-
-        ImGui::Spacing();
-        ImGui::Text("What would you like to do?");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        if (ImGui::Button("Save All & Close", ImVec2(130, 0))) {
-            // Save all files and close
-            if (main_window_) {
-                main_window_->SaveAllFiles();
-            }
-            show_unsaved_confirmation_ = false;
-            running_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Discard & Close", ImVec2(120, 0))) {
-            // Close without saving
-            show_unsaved_confirmation_ = false;
-            force_close_ = true;
-            running_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
-            show_unsaved_confirmation_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
-    }
-
-    // Open the popup if we need to show it
-    if (show_unsaved_confirmation_ && !ImGui::IsPopupOpen("Unsaved Changes###UnsavedConfirm")) {
-        ImGui::OpenPopup("Unsaved Changes###UnsavedConfirm");
-    }
-}
-
-void CyxWizApp::HandleDataLoadedConfirmation() {
-    if (!show_data_loaded_confirmation_) return;
-
-    // Center the popup
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-
-    if (ImGui::BeginPopupModal("Data Loaded###DataLoadedConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        auto& registry = cyxwiz::DataRegistry::Instance();
-        auto dataset_names = registry.GetDatasetNames();
-        auto stats = registry.GetMemoryStats();
-
-        ImGui::Text("You have datasets loaded in memory:");
-        ImGui::Spacing();
-
-        // List loaded datasets
-        for (const auto& name : dataset_names) {
-            ImGui::BulletText("%s", name.c_str());
-        }
-
-        ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Total memory usage: %s",
-                          stats.FormatBytes(stats.total_allocated).c_str());
-        ImGui::Spacing();
-        ImGui::Text("Closing will unload all data from memory.");
-        ImGui::Text("Make sure you've saved any work that depends on this data.");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        if (ImGui::Button("Unload & Close", ImVec2(130, 0))) {
-            // Unload all datasets and close
-            registry.UnloadAll();
-            show_data_loaded_confirmation_ = false;
-            running_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
-            show_data_loaded_confirmation_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
-    }
-
-    // Open the popup if we need to show it
-    if (show_data_loaded_confirmation_ && !ImGui::IsPopupOpen("Data Loaded###DataLoadedConfirm")) {
-        ImGui::OpenPopup("Data Loaded###DataLoadedConfirm");
-    }
+    ImGui::EndPopup();
 }
 
 void CyxWizApp::HandleInput() {
@@ -894,9 +808,7 @@ void CyxWizApp::Render() {
     }
 
     // Handle close confirmation dialogs
-    HandleCloseConfirmation();
-    HandleUnsavedConfirmation();
-    HandleDataLoadedConfirmation();
+    HandleCloseRequest();
 
     // Rendering
     ImGui::Render();
