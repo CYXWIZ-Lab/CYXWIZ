@@ -23,6 +23,11 @@
 
 namespace cyxwiz::plugin {
 
+// Owns an unloaded plugin's library while modules made by it are alive.
+struct PluginManager::ExtensionLease {
+    std::unique_ptr<LoadedPlugin> parked;
+};
+
 namespace {
 
 // Adapts a plugin's ITensorNodeProvider to the engine's factory for one
@@ -402,7 +407,7 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
             tstate.source_path = plugin->plugin_dir.string();
             tstate.provider = p;
             auto& lease = extension_leases_[plugin_id];
-            if (!lease) lease = std::make_shared<int>(0);
+            if (!lease) lease = std::make_shared<ExtensionLease>();
             tstate.lease = lease;
 
             TensorNodeCallback cb{};
@@ -601,6 +606,19 @@ void PluginManager::UnloadPlugin(const std::string& plugin_id) {
 
     spdlog::info("PluginManager: Unloading plugin {}", plugin_id);
     contexts_.erase(plugin_id);
+
+    // Modules of its trainable nodes may still live in a model (a training
+    // run, a trained model kept for export). Their code is in this library:
+    // hand it to the lease, which frees it with the last such module.
+    const auto lease_it = extension_leases_.find(plugin_id);
+    if (lease_it != extension_leases_.end()) {
+        if (lease_it->second.use_count() > 1) {
+            spdlog::info("PluginManager: {} stays loaded until the {} module(s) made by it are released",
+                         plugin_id, lease_it->second.use_count() - 1);
+        }
+        lease_it->second->parked = std::move(it->second);
+        extension_leases_.erase(lease_it);  // frees the library now when nothing holds it
+    }
     plugins_.erase(it);
 }
 

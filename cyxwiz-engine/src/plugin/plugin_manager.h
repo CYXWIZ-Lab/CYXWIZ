@@ -125,8 +125,10 @@ private:
     ~PluginManager();
 
     // Per plugin: the lease every module of its trainable nodes holds
-    // (TOFIX125). A plugin whose lease is held is in use by a model.
-    std::unordered_map<std::string, std::shared_ptr<int>> extension_leases_;
+    // (TOFIX125). On unload the plugin's library moves into the lease, so
+    // it is freed only when the last module made by it is destroyed.
+    struct ExtensionLease;
+    std::unordered_map<std::string, std::shared_ptr<ExtensionLease>> extension_leases_;
 
     // Plugin storage: id -> LoadedPlugin
     std::unordered_map<std::string, std::unique_ptr<LoadedPlugin>> plugins_;

@@ -13,6 +13,10 @@
 #include <cyxwiz/sequential.h>
 #include <nlohmann/json.hpp>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -65,6 +69,15 @@ nlohmann::json GraphWith(const fs::path& root, const std::string& type_name,
                               {"from_pin_index", 0}, {"to_node", kDenseNodeId}, {"to_pin", 0},
                               {"to_pin_index", 0}, {"link_type", 0}});
     return graph;
+}
+
+// True while the plugin's library is loaded in this process.
+bool LibraryLoaded() {
+#ifdef _WIN32
+    return ::GetModuleHandleA("activation_nodes.dll") != nullptr;
+#else
+    return true;
+#endif
 }
 
 cyxwiz::Module* FindModule(cyxwiz::SequentialModel& model, const std::string& name) {
@@ -171,8 +184,35 @@ int main() {
               "the model holds the plugin's Softsign module");
     }
 
-    manager.UnloadPlugin(kPluginId);
-    Check(!registry.Has(std::string(kPluginId) + ":Snake"), "unloading removes the plugin's nodes");
+    std::cout << "unloading while a model still holds a module keeps the code loaded until it is released\n";
+    {
+        const std::string type_id = std::string(kPluginId) + ":Snake";
+        auto lease = registry.ProviderLease(type_id);  // what GuardedExtensionModule holds
+        std::string error;
+        auto module = registry.TensorFactory(type_id)->CreateModule({2, 3}, {{"initial_a", "1.0"}}, error);
+        Check(module != nullptr && lease != nullptr, "a module and its lease are held");
+
+        manager.UnloadPlugin(kPluginId);
+        Check(!registry.Has(type_id), "unloading removes the plugin's nodes at once");
+        Check(manager.GetLoadedPlugin(kPluginId) == nullptr, "the plugin is no longer listed");
+        Check(LibraryLoaded(), "its library stays loaded while the module lives");
+        const float values[6] = {0.1f, -0.2f, 0.3f, -0.4f, 0.5f, -0.6f};
+        const cyxwiz::Tensor x(std::vector<size_t>{2, 3}, values);
+        Check(module && module->Forward(x).NumElements() == 6, "the module still runs after the unload");
+
+        module.reset();
+        Check(LibraryLoaded(), "the lease alone still keeps it");
+        lease.reset();
+        Check(!LibraryLoaded(), "releasing the last holder frees the library");
+    }
+
+    std::cout << "unloading with nothing in use frees the library at once\n";
+    {
+        Check(manager.LoadPlugin(plugin_dir) && manager.InitializePlugin(kPluginId), "loads again");
+        Check(registry.Has(std::string(kPluginId) + ":Snake"), "its nodes are back");
+        manager.UnloadPlugin(kPluginId);
+        Check(!LibraryLoaded(), "nothing held it: the library is freed with the unload");
+    }
 
     fs::remove_all(work, ec);
     if (g_failures > 0) {
