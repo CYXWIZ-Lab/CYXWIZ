@@ -18,6 +18,7 @@
 
 #include <imgui.h>
 
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -62,6 +63,18 @@ public:
     // Minimap at the right: the text's shape in its colours, the visible part
     // in a lighter tone; click or drag to scroll.
     void SetShowMinimap(bool show) { show_minimap_ = show; }
+
+    // Notebook cells (TOFIX133 P4 step 4.3b, board 4): no line numbers or
+    // fold arrows (a narrow margin keeps breakpoints and change bars), the
+    // caller's surface colour (0 = the editor's own), and no blank rows after
+    // the last line so a view sized to RowCount() rows never scrolls.
+    void SetShowLineNumbers(bool show) { show_line_numbers_ = show; }
+    void SetBackground(ImU32 colour) { background_ = colour; }
+    void SetScrollPastEnd(bool on) { scroll_past_end_ = on; }
+    // Screen rows at the last Render (wrapped pieces count); 0 before it.
+    int RowCount() const { return static_cast<int>(rows_.size()); }
+    // Line height the view uses with the current font.
+    static float LineHeightFor(float font_size) { return std::floor(font_size * 1.4f); }
 
     void RequestFocus() { request_focus_ = true; }
     bool IsFocused() const { return focused_; }
@@ -143,6 +156,9 @@ private:
     std::vector<int> rows_visible_;
 
     bool show_minimap_ = false;
+    bool show_line_numbers_ = true;
+    ImU32 background_ = 0;
+    bool scroll_past_end_ = true;
     float pending_scroll_y_ = -1.0f;  // set by the minimap, applied in the code view
     std::vector<int> visible_;        // visible lines from the last Render
     float last_scroll_y_ = 0.0f;

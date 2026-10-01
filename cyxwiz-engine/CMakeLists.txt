@@ -322,6 +322,7 @@ set(ENGINE_SOURCES
     src/core/cyx_format.cpp
     src/core/notebook_format.cpp
     src/core/notebook_presentation.cpp
+    src/core/markdown_blocks.cpp
     src/core/script_keys.cpp
     src/core/editor/text_document.cpp
     src/core/editor/python_highlight.cpp
@@ -393,6 +394,7 @@ set(ENGINE_SOURCES
     src/gui/panels/script_editor_chrome.cpp
     src/gui/panels/script_editor_disk.cpp
     src/gui/panels/script_editor_notebook.cpp
+    src/gui/markdown_view.cpp
     src/gui/panels/script_editor_settings.cpp
     src/gui/panels/script_editor_cells.cpp
     src/gui/panels/script_editor_debug.cpp

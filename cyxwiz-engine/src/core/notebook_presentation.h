@@ -16,8 +16,10 @@ std::string FormatDuration(double seconds);
 
 // The column left of a code cell: [n] and, below it, how the last run went.
 struct Gutter {
+    enum class Mark { None, Check, Cross };  // drawn as icons before `detail`
     std::string label;   // "[3]", "[*]", "[ ]"
-    std::string detail;  // "✓ 0.02 s", "✕ 2.04 s", "3.2 s", "Queued", ""
+    std::string detail;  // "0.02 s" (with Check), "2.04 s" (with Cross), "3.2 s", "Queued", ""
+    Mark mark = Mark::None;
     Tone tone = Tone::Muted;
 };
 // `seconds` is the last run's time (< 0: not timed); `running_seconds` the

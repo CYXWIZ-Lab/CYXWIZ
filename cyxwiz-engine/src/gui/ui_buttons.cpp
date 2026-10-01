@@ -88,10 +88,11 @@ bool DangerButton(const char* label, bool enabled, const char* disabled_reason,
     return Styled(label, enabled, disabled_reason, size, ImVec4(0, 0, 0, 0), kDangerHover, kDangerHover, kDanger);
 }
 
-bool GhostButton(const char* label, bool enabled, const char* disabled_reason, bool on, ButtonSize size) {
+bool GhostButton(const char* label, bool enabled, const char* disabled_reason, bool on, ButtonSize size,
+                 const ImVec4* text) {
     RefreshColors();
     return Styled(label, enabled, disabled_reason, size, on ? kSecondary : ImVec4(0, 0, 0, 0), kSecondaryHover,
-                  kSecondaryActive, kText);
+                  kSecondaryActive, text ? *text : kText);
 }
 
 float StatusPillWidth(const char* text) {

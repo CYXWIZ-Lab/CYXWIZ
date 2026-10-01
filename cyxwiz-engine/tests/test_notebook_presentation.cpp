@@ -25,9 +25,9 @@ int main() {
 
     // Board 4/5 gutters.
     Gutter g = GutterFor(CellRun::Success, 1, 0.02, 0);
-    Check(g.label == "[1]" && g.detail == "\xE2\x9C\x93 0.02 s" && g.tone == Tone::Success, "done cell");
+    Check(g.label == "[1]" && g.detail == "0.02 s" && g.mark == Gutter::Mark::Check && g.tone == Tone::Success, "done cell");
     g = GutterFor(CellRun::Error, 5, 2.04, 0);
-    Check(g.label == "[5]" && g.detail == "\xE2\x9C\x95 2.04 s" && g.tone == Tone::Error, "failed cell");
+    Check(g.label == "[5]" && g.detail == "2.04 s" && g.mark == Gutter::Mark::Cross && g.tone == Tone::Error, "failed cell");
     g = GutterFor(CellRun::Running, 3, -1, 3.21);
     Check(g.label == "[*]" && g.detail == "3.2 s" && g.tone == Tone::Running, "running cell");
     g = GutterFor(CellRun::Queued, 0, -1, 0);

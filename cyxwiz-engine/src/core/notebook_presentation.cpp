@@ -11,8 +11,6 @@ namespace cyxwiz::nbview {
 
 namespace {
 const char* kDot = " \xC2\xB7 ";  // " · "
-const char* kCheck = "\xE2\x9C\x93 ";  // "✓ "
-const char* kCross = "\xE2\x9C\x95 ";  // "✕ "
 
 std::string Lower(std::string s) {
     for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -61,11 +59,17 @@ Gutter GutterFor(CellRun state, int execution_count, double seconds, double runn
             g.detail = "Queued";
             break;
         case CellRun::Success:
-            if (seconds >= 0.0) g.detail = kCheck + FormatDuration(seconds);
+            if (seconds >= 0.0) {
+                g.detail = FormatDuration(seconds);
+                g.mark = Gutter::Mark::Check;
+            }
             g.tone = Tone::Success;
             break;
         case CellRun::Error:
-            if (seconds >= 0.0) g.detail = kCross + FormatDuration(seconds);
+            if (seconds >= 0.0) {
+                g.detail = FormatDuration(seconds);
+                g.mark = Gutter::Mark::Cross;
+            }
             g.tone = Tone::Error;
             break;
         case CellRun::NotRun:

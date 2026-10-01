@@ -369,7 +369,7 @@ void CodeEditor::HandleMouse(const ImVec2& origin, float gutter, float advance, 
             const Pos p = MouseToPos(mouse, origin, gutter, advance, line_height);
             if (in_gutter) {
                 const float fold_x = win.x + gutter - advance * 2.0f;
-                if (mouse.x >= fold_x && folds_.CanFold(p.line)) folds_.Toggle(p.line);
+                if (show_line_numbers_ && mouse.x >= fold_x && folds_.CanFold(p.line)) folds_.Toggle(p.line);
                 else if (on_gutter_click) on_gutter_click(p.line);
             } else {
                 const int clicks = io.MouseClickedCount[ImGuiMouseButton_Left];
@@ -416,7 +416,8 @@ bool CodeEditor::Render(const char* id, const ImVec2& size) {
         TrackChanges(edits);
     }
     if (colorize_ && python_) highlighter_.Update(doc_);
-    const Palette pal = BuildPalette();
+    Palette pal = BuildPalette();
+    if (background_ != 0) pal.bg = background_;
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg, pal.bg);
     ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, pal.bg);
@@ -452,7 +453,9 @@ bool CodeEditor::Render(const char* id, const ImVec2& size) {
     const float advance = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, " ").x;
     const float line_height = std::floor(font_size * 1.4f);
     const int tab = doc_.Settings().tab_size;
-    const float gutter = std::floor(advance * (2.0f + static_cast<float>(std::max(3, Digits(doc_.LineCount()))) + 3.5f));
+    const float gutter = show_line_numbers_
+                             ? std::floor(advance * (2.0f + static_cast<float>(std::max(3, Digits(doc_.LineCount()))) + 3.5f))
+                             : 12.0f;
     const ImVec2 avail = ImGui::GetContentRegionAvail();
 
     if (focused_ && keyboard_enabled_) HandleKeyboard(avail.y, line_height);
@@ -465,7 +468,7 @@ bool CodeEditor::Render(const char* id, const ImVec2& size) {
 
     // Content size defines the scroll range (a little room after the last row).
     const float content_w = wrap_ ? 0.0f : gutter + (MaxLineWidthColumns() + 4.0f) * advance;
-    const float content_h = (static_cast<float>(rows_.size()) + 2.0f) * line_height;
+    const float content_h = (static_cast<float>(rows_.size()) + (scroll_past_end_ ? 2.0f : 0.0f)) * line_height;
     ImGui::SetCursorPos(ImVec2(0, 0));
     ImGui::Dummy(ImVec2(content_w, content_h));
 
@@ -616,6 +619,12 @@ bool CodeEditor::Render(const char* id, const ImVec2& size) {
         if (line_no < static_cast<int>(changed_.size()) && changed_[static_cast<size_t>(line_no)])
             dl->AddRectFilled(ImVec2(win.x, y), ImVec2(win.x + 3.0f, y + line_height), pal.change_bar);
         if (!row.first) continue;  // numbers, breakpoints and arrows on a line's first row
+        if (!show_line_numbers_) {
+            if (breakpoints_ &&
+                std::find(breakpoints_->begin(), breakpoints_->end(), line_no + 1) != breakpoints_->end())
+                dl->AddCircleFilled(ImVec2(win.x + gutter * 0.5f, y + line_height * 0.5f), 3.5f, pal.breakpoint);
+            continue;
+        }
         if (breakpoints_ &&
             std::find(breakpoints_->begin(), breakpoints_->end(), line_no + 1) != breakpoints_->end()) {
             dl->AddCircleFilled(ImVec2(win.x + advance * 1.2f, y + line_height * 0.5f), advance * 0.45f, pal.breakpoint);

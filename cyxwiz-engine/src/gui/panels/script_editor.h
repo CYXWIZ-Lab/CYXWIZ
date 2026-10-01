@@ -10,6 +10,7 @@
 #include "../../scripting/script_manager.h"
 #include "../code_editor.h"
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <memory>
 #include <filesystem>
@@ -200,6 +201,7 @@ private:
         int last_editing_cell = -1;      // Track previous editing cell to detect mode change
         float cell_scroll_y = 0.0f;      // Scroll position in cell view
         bool restore_cell_scroll = false;  // set when the notebook view returns to a kept position
+        std::unordered_map<std::string, float> cell_heights;  // last frame's row height per cell id
 
         // Breakpoints for traditional script mode (1-based line numbers)
         std::vector<int> breakpoints;
@@ -237,10 +239,16 @@ private:
     void RenderNotebookToolbar(EditorTab& tab);       // script_editor_notebook.cpp (board 4)
     static ImVec4 NotebookToneColour(int tone);       // nbview::Tone -> colour
     void RenderCell(Cell& cell, int index);
-    void RenderCodeCell(Cell& cell, int index);
-    void RenderMarkdownCell(Cell& cell, int index);
+    bool RenderCellEditorBlock(Cell& cell, int index, float width, bool editing, bool python);
+    void RenderCellActions(Cell& cell, int index, const ImVec2& top_right);
+    void RenderInsertBar(int after_index);
     void RenderCellOutput(const CellOutput& output);
-    void RenderCellToolbar(int index);
+    struct CellClipboard {
+        bool has = false;
+        CellType type = CellType::Code;
+        std::string source;
+    };
+    CellClipboard cell_clipboard_;
     void HandleCellKeyboardShortcuts();
     void ToggleCellMode();
 

@@ -380,9 +380,14 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/tests/test_notebook_presentation.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/notebook_presentation.cpp"
     )
+    add_executable(test_markdown_blocks
+        "${_cyxwiz_installer_engine_dir}/tests/test_markdown_blocks.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/markdown_blocks.cpp"
+    )
     foreach(_cyxwiz_p0_test test_python_tokenizer test_argb_colour test_text_search test_cyx_format
             test_python_literal test_script_keys test_text_document test_editor_highlight_folding
-            test_notebook_format test_notebook_presentation)
+            test_notebook_format test_notebook_presentation
+            test_markdown_blocks)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
