@@ -49,12 +49,13 @@ void BeginCard(const char* id) {
     const Tokens& t = CurrentTokens();
     ImGui::PushID(id);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, t.rounding_card);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+    // A card is a tinted area, not an outline (owner rule 2026-10-01).
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, t.card_padding);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
     ImGui::PushStyleColor(ImGuiCol_Border, t.border);
     ImGui::BeginChild("##card", ImVec2(0.0f, 0.0f),
-                      ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
 }
 
 void EndCard() {

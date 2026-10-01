@@ -665,7 +665,7 @@ void Theme::ApplyHighContrast() {
     config_.grab_rounding = 0.0f;
     config_.tab_rounding = 0.0f;
     config_.window_border_size = 2.0f;
-    config_.frame_border_size = 1.0f;
+    config_.frame_border_size = 0.0f;  // no outlines on fields or buttons (owner rule)
 }
 
 // ============================================================================
@@ -1842,7 +1842,7 @@ void Theme::ApplyCyxOSTuiClassic() {
     config_.grab_rounding = 0.0f;
     config_.tab_rounding = 0.0f;
     config_.window_border_size = 1.0f;
-    config_.frame_border_size = 1.0f;
+    config_.frame_border_size = 0.0f;  // no outlines on fields or buttons (owner rule)
     config_.window_padding = ImVec2(8.0f, 8.0f);
     config_.frame_padding = ImVec2(6.0f, 4.0f);
     config_.item_spacing = ImVec2(8.0f, 4.0f);
@@ -1970,7 +1970,7 @@ void Theme::ApplyCyxOSTuiMatrix() {
     config_.grab_rounding = 0.0f;
     config_.tab_rounding = 0.0f;
     config_.window_border_size = 1.0f;
-    config_.frame_border_size = 1.0f;
+    config_.frame_border_size = 0.0f;  // no outlines on fields or buttons (owner rule)
     config_.window_padding = ImVec2(8.0f, 8.0f);
     config_.frame_padding = ImVec2(6.0f, 4.0f);
     config_.item_spacing = ImVec2(8.0f, 4.0f);
@@ -2098,7 +2098,7 @@ void Theme::ApplyCyxOSTuiAmber() {
     config_.grab_rounding = 0.0f;
     config_.tab_rounding = 0.0f;
     config_.window_border_size = 1.0f;
-    config_.frame_border_size = 1.0f;
+    config_.frame_border_size = 0.0f;  // no outlines on fields or buttons (owner rule)
     config_.window_padding = ImVec2(8.0f, 8.0f);
     config_.frame_padding = ImVec2(6.0f, 4.0f);
     config_.item_spacing = ImVec2(8.0f, 4.0f);
