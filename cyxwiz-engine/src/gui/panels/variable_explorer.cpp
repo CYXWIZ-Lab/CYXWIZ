@@ -54,7 +54,7 @@ void VariableExplorerPanel::RenderToolbar() {
         RefreshVariables();
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Refresh variables (F5)");
+        ImGui::SetTooltip("Read the variables of the Python session again");
     }
 
     ImGui::SameLine();
@@ -236,117 +236,74 @@ std::vector<PythonVariable> VariableExplorerPanel::FetchVariablesFromPython() {
         return result;
     }
 
-    // Python code to introspect the namespace
-    std::string py_code = R"(
-import json
-import sys
+    // Python code to introspect the namespace (TOFIX133 P0 item 12). It runs
+    // on the UI thread under the GIL, so it must be cheap and leave nothing
+    // behind: imports live inside the function (a top-level "import json"
+    // replaced the user's own json/sys), values are summarised with reprlib
+    // (a full repr() of a ten-million-item list stalled the Engine), and the
+    // JSON is printed in the same command, so no _cyxwiz_result can be left.
+    static const char* const kIntrospect = R"(
+def _cyxwiz_variables_json():
+    import json
+    import reprlib
+    import sys
 
-def _cyxwiz_get_variables():
+    short = reprlib.Repr()
+    short.maxstring = 200
+    short.maxother = 200
+    short.maxlist = short.maxtuple = short.maxset = short.maxfrozenset = short.maxdeque = 20
+    short.maxdict = 20
+    short.maxlevel = 2
+
     result = []
-    main_globals = __import__('__main__').__dict__
-
-    for name, value in main_globals.items():
-        # Skip private/magic variables and modules
+    for name, value in list(__import__('__main__').__dict__.items()):
         if name.startswith('_'):
             continue
-        if name in ('__name__', '__doc__', '__package__', '__loader__', '__spec__', '__builtins__', '__file__'):
-            continue
-
         try:
             type_name = type(value).__name__
-
-            # Skip functions, modules, and classes by default
             if type_name in ('function', 'module', 'type', 'builtin_function_or_method'):
                 continue
-
-            var_info = {
-                'name': name,
-                'type': type_name,
-                'value': '',
-                'shape': '',
-                'size': 0
-            }
-
-            # Get string representation (truncated)
+            info = {'name': name, 'type': type_name, 'value': '', 'shape': '', 'size': 0}
             try:
-                repr_val = repr(value)
-                if len(repr_val) > 200:
-                    repr_val = repr_val[:200] + '...'
-                var_info['value'] = repr_val
-            except:
-                var_info['value'] = '<error getting repr>'
-
-            # Get size
+                text = short.repr(value)
+                info['value'] = text if len(text) <= 200 else text[:200] + '...'
+            except Exception:
+                info['value'] = '<error getting repr>'
             try:
-                var_info['size'] = sys.getsizeof(value)
-            except:
+                info['size'] = sys.getsizeof(value)
+            except Exception:
                 pass
-
-            # Handle numpy arrays
             if hasattr(value, 'shape') and hasattr(value, 'dtype'):
                 try:
-                    var_info['shape'] = str(value.shape)
-                    var_info['type'] = f"{type_name}[{value.dtype}]"
-                except:
+                    info['shape'] = str(tuple(value.shape))
+                    info['type'] = f"{type_name}[{value.dtype}]"
+                except Exception:
                     pass
-
-            # Handle torch tensors
-            elif type_name == 'Tensor' and hasattr(value, 'shape'):
-                try:
-                    var_info['shape'] = str(tuple(value.shape))
-                    if hasattr(value, 'dtype'):
-                        var_info['type'] = f"Tensor[{value.dtype}]"
-                except:
-                    pass
-
-            # Handle lists/tuples
             elif isinstance(value, (list, tuple)):
-                try:
-                    var_info['shape'] = f'({len(value)},)'
-                except:
-                    pass
-
-            # Handle dicts
-            elif isinstance(value, dict):
-                try:
-                    var_info['shape'] = f'{{{len(value)} items}}'
-                except:
-                    pass
-
-            # Handle sets
-            elif isinstance(value, (set, frozenset)):
-                try:
-                    var_info['shape'] = f'{{{len(value)} items}}'
-                except:
-                    pass
-
-            # Handle strings
+                info['shape'] = f'({len(value)},)'
+            elif isinstance(value, (dict, set, frozenset)):
+                info['shape'] = f'{{{len(value)} items}}'
             elif isinstance(value, str):
-                var_info['shape'] = f'len={len(value)}'
-
-            result.append(var_info)
-        except Exception as e:
-            pass  # Skip variables that cause errors
-
+                info['shape'] = f'len={len(value)}'
+            result.append(info)
+        except Exception:
+            pass  # a variable that cannot be described is skipped
     return json.dumps(result)
 
-_cyxwiz_result = _cyxwiz_get_variables()
-del _cyxwiz_get_variables
+try:
+    print(_cyxwiz_variables_json())
+finally:
+    del _cyxwiz_variables_json
 )";
 
     try {
-        auto exec_result = scripting_engine_->ExecuteScript(py_code);
+        const auto exec_result = scripting_engine_->ExecuteScript(kIntrospect);
         if (!exec_result.success) {
             spdlog::warn("Variable introspection failed: {}", exec_result.error_message);
             return result;
         }
-
-        // Get the result variable
-        std::string get_result_code = "_cyxwiz_result";
-        auto value_result = scripting_engine_->ExecuteCommand("print(_cyxwiz_result); del _cyxwiz_result");
-
-        if (value_result.success && !value_result.output.empty()) {
-            result = ParseVariableJson(value_result.output);
+        if (!exec_result.output.empty()) {
+            result = ParseVariableJson(exec_result.output);
         }
     } catch (const std::exception& e) {
         spdlog::error("Exception during variable introspection: {}", e.what());
