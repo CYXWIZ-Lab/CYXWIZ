@@ -357,8 +357,13 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/tests/test_script_keys.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/script_keys.cpp"
     )
+    # Script Editor text model (TOFIX133 P1, decision D1).
+    add_executable(test_text_document
+        "${_cyxwiz_installer_engine_dir}/tests/test_text_document.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/editor/text_document.cpp"
+    )
     foreach(_cyxwiz_p0_test test_python_tokenizer test_argb_colour test_text_search test_cyx_format
-            test_python_literal test_script_keys)
+            test_python_literal test_script_keys test_text_document)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
