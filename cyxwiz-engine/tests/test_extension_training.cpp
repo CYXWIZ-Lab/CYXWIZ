@@ -318,6 +318,20 @@ int main() {
         Check(!config.is_valid, "the graph is not valid");
     }
 
+    std::cout << "a remote job refuses a graph with an extension node, before anything is sent\n";
+    {
+        cyxwiz::GraphJobDatasetPlan plan;
+        std::string error;
+        Check(cyxwiz::PlanGraphJobDatasets(cyxwiz::test::LoadTokenWindowGraph(root).dump(), plan, error),
+              "the example graph without it can be planned" + (error.empty() ? "" : " (" + error + ")"));
+        error.clear();
+        Check(!cyxwiz::PlanGraphJobDatasets(GraphWith(root, "Softsign").dump(), plan, error),
+              "with an extension node it is refused");
+        Check(error.find("test.trainable:Softsign") != std::string::npos &&
+                  error.find("Remote nodes do not run extension nodes") != std::string::npos,
+              "the reason names the node: " + error);
+    }
+
     cyxwiz::ExtensionNodeRegistry::Instance().RemoveByProvider(kProvider);
     fs::remove_all(work, ec);
     if (g_failures > 0) {

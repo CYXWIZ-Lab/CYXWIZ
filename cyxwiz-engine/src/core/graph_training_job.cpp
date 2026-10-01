@@ -365,6 +365,14 @@ bool PlanGraphJobDatasets(const std::string& graph_json, GraphJobDatasetPlan& pl
     GraphDocument graph;
     if (!ParseGraphDocument(graph_json, graph, error)) return false;
     if (FindPreparationNode(graph, error)) return false;
+    // Extension nodes run code the remote node does not have (TOFIX125,
+    // decision D3): refused before anything is sent.
+    for (const auto& node : graph.nodes) {
+        if (node.type != gui::NodeType::PluginCustom) continue;
+        error = "This graph uses extension node " + node.extension_type_id + " ('" + node.name +
+                "'). Remote nodes do not run extension nodes yet; train it on this computer.";
+        return false;
+    }
 
     // Data Split's third input (dataset.v2) is the supplied Test role.
     std::set<int> test_pins;
