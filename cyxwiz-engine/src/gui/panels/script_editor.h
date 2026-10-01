@@ -151,6 +151,11 @@ public:
 
     // Check if this panel has focus (including child windows)
     bool IsFocused() const { return is_focused_; }
+    bool HasOpenFiles() const {  // a file from disk, not the starting Untitled tab
+        for (const auto& tab : tabs_)
+            if (tab && !tab->is_new) return true;
+        return false;
+    }
 
 private:
     // Tab/File representation
@@ -277,6 +282,7 @@ private:
     bool show_editor_menu_;
     bool request_focus_;
     bool request_window_focus_;
+    int window_focus_frames_ = 0;
     int close_tab_index_;  // Tab to close (-1 = none)
 
     // Execution output

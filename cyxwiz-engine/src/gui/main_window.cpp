@@ -3387,6 +3387,10 @@ void MainWindow::RenderDockSpace() {
             if (front_tabs_countdown_ < kCount) {
                 const char* name = kFrontTabs[kCount - 1 - front_tabs_countdown_];
                 if (ImGui::FindWindowByName(name)) ImGui::SetWindowFocus(name);
+                // A file opened from the command line stays in front.
+                if (front_tabs_countdown_ == 0 && script_editor_ && script_editor_->IsVisible() &&
+                    script_editor_->HasOpenFiles() && ImGui::FindWindowByName(script_editor_->GetName()))
+                    ImGui::SetWindowFocus(script_editor_->GetName());
             }
         }
 
