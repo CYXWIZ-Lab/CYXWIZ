@@ -228,6 +228,8 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(script, "editor.fold", "Fold the block at the cursor", "Ctrl+Shift+[", "", true);
         add(script, "editor.unfold", "Unfold the block at the cursor", "Ctrl+Shift+]", "", true);
         add(script, "editor.add_cursor_click", "Add a cursor where you click", "Alt+Click", "", true);
+        add(script, "editor.find_next", "Next match (find open)", "F3", "", true);
+        add(script, "editor.find_previous", "Previous match (find open)", "Shift+F3", "", true);
 
         // Script Editor while debugging: the debugger handles these.
         add(debug, "debug.continue", "Continue", "F5", "", true);

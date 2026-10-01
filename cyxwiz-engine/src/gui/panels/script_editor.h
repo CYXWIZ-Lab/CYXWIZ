@@ -67,6 +67,9 @@ public:
     void SaveAllFiles();  // Save all unsaved files
     bool HasEmptyNewTab() const;  // Check if there's an empty untitled tab
 
+    // Inline find and replace widget (Ctrl+F / Ctrl+H).
+    void OpenFind(bool replace);
+
     // Find/Replace operations
     bool FindInEditor(const std::string& search_text, bool case_sensitive, bool whole_word, bool use_regex);
     bool FindNext();
@@ -311,6 +314,29 @@ private:
     void ApplyTabSizeToAllTabs();
     void ApplySyntaxHighlightingToAllTabs();
     void ConfigureEditor(CodeEditor& editor) const;  // tab size, whitespace, colouring
+
+    // Inline find widget (TOFIX133 P2)
+    struct FindState {
+        bool open = false;
+        bool show_replace = false;
+        int focus_input = 0;  // 1 find box, 2 replace box
+        char query[256] = {};
+        char replacement[256] = {};
+        bool case_sensitive = false;
+        bool whole_word = false;
+        bool regex = false;
+        uint64_t version = ~0ull;
+        uint64_t doc_id = 0;
+        std::string key;
+        std::string error;
+        std::vector<std::pair<editor::Pos, editor::Pos>> matches;
+        int current = -1;
+        float last_height = 0.0f;
+    } find_;
+    void CloseFind();
+    void UpdateFindMarks(CodeEditor& code);
+    void FindStep(bool forward);
+    void RenderFindWidget(CodeEditor& code, const ImVec2& code_min, float code_width, bool narrow);
 
     // Find/Replace state
     std::string last_search_text_;

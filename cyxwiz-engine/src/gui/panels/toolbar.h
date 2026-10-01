@@ -139,15 +139,12 @@ public:
     void SetSelectAllCallback(std::function<void()> callback) { select_all_callback_ = callback; }
     void SetToggleLineCommentCallback(std::function<void()> callback) { toggle_line_comment_callback_ = callback; }
     void SetToggleBlockCommentCallback(std::function<void()> callback) { toggle_block_comment_callback_ = callback; }
-    void SetFindCallback(std::function<void(const std::string&, bool, bool, bool)> callback) { find_callback_ = callback; }
-    void SetFindNextCallback(std::function<void()> callback) { find_next_callback_ = callback; }
-    void SetFindPreviousCallback(std::function<void(const std::string&, bool, bool, bool)> callback) { find_previous_callback_ = callback; }
+    // Edit > Find / Replace open the Script Editor's inline widget (replace = true for Replace).
+    void SetOpenFindCallback(std::function<void(bool)> callback) { open_find_callback_ = callback; }
     // Replace in Files: files open in the editor with unsaved edits are skipped;
     // open unmodified files are reloaded after the write.
     void SetFileHasUnsavedChangesCallback(std::function<bool(const std::string&)> callback) { file_has_unsaved_changes_callback_ = callback; }
     void SetReloadOpenFileCallback(std::function<void(const std::string&)> callback) { reload_open_file_callback_ = callback; }
-    void SetReplaceCallback(std::function<void(const std::string&, const std::string&, bool, bool, bool)> callback) { replace_callback_ = callback; }
-    void SetReplaceAllCallback(std::function<void(const std::string&, const std::string&, bool, bool, bool)> callback) { replace_all_callback_ = callback; }
 
     // New Edit menu callbacks
     void SetGoToLineCallback(std::function<void(int)> callback) { go_to_line_callback_ = callback; }
@@ -164,14 +161,10 @@ public:
     void SetJoinLinesCallback(std::function<void()> callback) { join_lines_callback_ = callback; }
 
     // Find dialog visibility
-    bool IsFindDialogOpen() const { return show_find_dialog_; }
-    bool IsReplaceDialogOpen() const { return show_replace_dialog_; }
     bool IsFindInFilesDialogOpen() const { return show_find_in_files_dialog_; }
     bool IsReplaceInFilesDialogOpen() const { return show_replace_in_files_dialog_; }
 
-    void OpenFindDialog() { show_find_dialog_ = true; }
     void OpenGoToLineDialog() { show_go_to_line_dialog_ = true; }
-    void OpenReplaceDialog() { show_replace_dialog_ = true; }
     void OpenFindInFilesDialog() { show_find_in_files_dialog_ = true; }
     void OpenReplaceInFilesDialog() { show_replace_in_files_dialog_ = true; }
 
@@ -497,13 +490,9 @@ private:
     std::function<void()> select_all_callback_;
     std::function<void()> toggle_line_comment_callback_;
     std::function<void()> toggle_block_comment_callback_;
-    std::function<void(const std::string&, bool, bool, bool)> find_callback_;  // text, case_sensitive, whole_word, regex
-    std::function<void()> find_next_callback_;  // Find next occurrence
-    std::function<void(const std::string&, bool, bool, bool)> find_previous_callback_;
+    std::function<void(bool)> open_find_callback_;
     std::function<bool(const std::string&)> file_has_unsaved_changes_callback_;
     std::function<void(const std::string&)> reload_open_file_callback_;
-    std::function<void(const std::string&, const std::string&, bool, bool, bool)> replace_callback_;  // find, replace, case_sensitive, whole_word, regex
-    std::function<void(const std::string&, const std::string&, bool, bool, bool)> replace_all_callback_;
 
     // New Edit menu callbacks
     std::function<void(int)> go_to_line_callback_;
@@ -520,21 +509,20 @@ private:
     std::function<void()> join_lines_callback_;
 
     // Find/Replace dialog state
-    bool show_find_dialog_ = false;
-    bool show_replace_dialog_ = false;
     bool show_find_in_files_dialog_ = false;
+    // Find in Files / Replace in Files text and options
+    char find_text_buffer_[512] = "";
+    char replace_text_buffer_[512] = "";
+    bool find_case_sensitive_ = false;
+    bool find_whole_word_ = false;
+    bool find_use_regex_ = false;
     bool show_replace_in_files_dialog_ = false;
 
     // Find/Replace buffers
-    char find_text_buffer_[512] = "";
-    char replace_text_buffer_[512] = "";
     char find_in_files_pattern_[256] = "*.py;*.cyx";  // File filter pattern
     char find_in_files_path_[512] = "";  // Search path
 
     // Find/Replace options
-    bool find_case_sensitive_ = false;
-    bool find_whole_word_ = false;
-    bool find_use_regex_ = false;
 
     // Find in Files results
     struct SearchResult {

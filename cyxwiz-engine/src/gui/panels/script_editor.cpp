@@ -598,8 +598,17 @@ void ScriptEditorPanel::RenderEditor() {
     }
     // Size: everything above the status bar. The code view draws its own
     // gutter (breakpoints, numbers, folds), scrollbars and minimap.
-    const float available_height = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
+    float available_height = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
     CodeEditor& code = tab->editor;
+    // Find: an overlay at the top right, or a full-width row when narrow.
+    const float code_width = ImGui::GetContentRegionAvail().x;
+    const bool narrow_find = code_width < 620.0f;
+    if (find_.open && narrow_find) {
+        const ImVec2 row = ImGui::GetCursorScreenPos();
+        RenderFindWidget(code, row, code_width, true);
+        available_height -= ImGui::GetCursorScreenPos().y - row.y;
+    }
+    const ImVec2 code_min = ImGui::GetCursorScreenPos();
     code.SetBreakpoints(&tab->breakpoints);
     code.on_gutter_click = [this](int line) {
         if (active_tab_index_ < 0) return;
@@ -618,6 +627,14 @@ void ScriptEditorPanel::RenderEditor() {
     }
     const bool text_changed = code.Render("##code", ImVec2(0.0f, available_height));
     completion_just_accepted_ = false;
+    if (find_.open && !narrow_find) {
+        const ImVec2 after = ImGui::GetCursorScreenPos();
+        RenderFindWidget(code, code_min, code_width, false);
+        ImGui::SetCursorScreenPos(after);
+    } else if (!find_.open && !find_.matches.empty()) {
+        find_.matches.clear();
+        code.SetMarks({});
+    }
 
     if (pushed_editor_font) {
         ImGui::PopFont();
@@ -807,6 +824,7 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
     }
 
     // Typing, moving, selecting, clipboard and undo keys are the code view's.
+    if (find_.open && !ctrl && !alt && ImGui::IsKeyPressed(ImGuiKey_F3)) FindStep(!shift);
 
     // Run, debug and notebook-toggle keys: one table decides, once per
     // frame (TOFIX133 P0 item 7; Preferences > Shortcuts lists the same).

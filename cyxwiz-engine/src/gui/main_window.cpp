@@ -2345,37 +2345,16 @@ MainWindow::MainWindow()
     });
 
 
-    // Find dialog: Find Previous; Replace in Files: editor state (TOFIX129 G3)
-    toolbar_->SetFindPreviousCallback([this](const std::string& text, bool case_sensitive, bool whole_word, bool use_regex) {
-        if (script_editor_) script_editor_->FindPreviousOf(text, case_sensitive, whole_word, use_regex);
+    // Edit > Find / Replace: the Script Editor's inline widget (TOFIX133 P2).
+    toolbar_->SetOpenFindCallback([this](bool replace) {
+        if (script_editor_) script_editor_->OpenFind(replace);
     });
+    // Replace in Files: editor state (TOFIX129 G3)
     toolbar_->SetFileHasUnsavedChangesCallback([this](const std::string& path) {
         return script_editor_ && script_editor_->HasUnsavedChangesFor(path);
     });
     toolbar_->SetReloadOpenFileCallback([this](const std::string& path) {
         if (script_editor_) script_editor_->ReloadOpenFile(path);
-    });
-
-    // Set up Edit menu callbacks for Find/Replace
-    toolbar_->SetFindCallback([this](const std::string& text, bool case_sensitive, bool whole_word, bool use_regex) {
-        if (script_editor_) {
-            script_editor_->FindInEditor(text, case_sensitive, whole_word, use_regex);
-        }
-    });
-
-    toolbar_->SetReplaceCallback([this](const std::string& find_text, const std::string& replace_text,
-                                        bool case_sensitive, bool whole_word, bool use_regex) {
-        if (script_editor_) {
-            script_editor_->Replace(find_text, replace_text, case_sensitive, whole_word, use_regex);
-        }
-    });
-
-    toolbar_->SetReplaceAllCallback([this](const std::string& find_text, const std::string& replace_text,
-                                           bool case_sensitive, bool whole_word, bool use_regex) {
-        if (script_editor_) {
-            int count = script_editor_->ReplaceAll(find_text, replace_text, case_sensitive, whole_word, use_regex);
-            spdlog::info("Replaced {} occurrences", count);
-        }
     });
 
     // Set up edit operation callbacks
@@ -5977,8 +5956,7 @@ void MainWindow::DetectKeyboardContext() {
 
     // Check for modal dialogs first (highest priority)
     if (toolbar_) {
-        if (toolbar_->IsFindDialogOpen() || toolbar_->IsReplaceDialogOpen() ||
-            toolbar_->IsFindInFilesDialogOpen() || toolbar_->IsReplaceInFilesDialogOpen() ||
+        if (toolbar_->IsFindInFilesDialogOpen() || toolbar_->IsReplaceInFilesDialogOpen() ||
             toolbar_->IsCommandPaletteOpen()) {
             kb.SetActiveContext(KeyboardContext::ModalDialog);
             return;

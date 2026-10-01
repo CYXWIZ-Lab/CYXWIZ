@@ -378,8 +378,8 @@ void ToolbarPanel::BuildActionHandlers() {
     call("edit.paste", paste_callback_);
     call("edit.delete", delete_callback_);
     call("edit.select_all", select_all_callback_);
-    h["edit.find"] = [this](const std::string&) { OpenFindDialog(); };
-    h["edit.replace"] = [this](const std::string&) { OpenReplaceDialog(); };
+    h["edit.find"] = [this](const std::string&) { if (open_find_callback_) open_find_callback_(false); };
+    h["edit.replace"] = [this](const std::string&) { if (open_find_callback_) open_find_callback_(true); };
     h["edit.find_in_files"] = [this](const std::string&) { OpenFindInFilesDialog(); };
     h["edit.replace_in_files"] = [this](const std::string&) { OpenReplaceInFilesDialog(); };
     h["edit.go_to_line"] = [this](const std::string&) { OpenGoToLineDialog(); };

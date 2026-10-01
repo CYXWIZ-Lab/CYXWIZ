@@ -386,6 +386,7 @@ set(ENGINE_SOURCES
     src/gui/panels/script_editor.cpp
     src/gui/panels/script_editor_edit.cpp
     src/gui/panels/script_editor_search.cpp
+    src/gui/panels/script_editor_find.cpp
     src/gui/panels/script_editor_settings.cpp
     src/gui/panels/script_editor_cells.cpp
     src/gui/panels/script_editor_debug.cpp
