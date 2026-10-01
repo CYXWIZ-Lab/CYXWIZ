@@ -2414,6 +2414,7 @@ MainWindow::MainWindow()
     });
 
     // Set up Go to Line callback
+    if (script_editor_) script_editor_->SetGoToLineRequest([this]() { if (toolbar_) toolbar_->OpenGoToLineDialog(); });
     toolbar_->SetGoToLineCallback([this](int line) {
         if (script_editor_) {
             script_editor_->GoToLine(line);
@@ -6035,7 +6036,7 @@ void MainWindow::SaveLayout() {
 void MainWindow::SaveProjectSettings() {
     auto& pm = cyxwiz::ProjectManager::Instance();
     if (!pm.HasActiveProject()) {
-        spdlog::warn("Cannot save project settings: no active project");
+        spdlog::debug("Editor settings not saved: no project open (they apply to this session)");
         return;
     }
 

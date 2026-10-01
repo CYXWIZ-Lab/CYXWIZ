@@ -98,9 +98,13 @@ const FoldRegion* FoldState::RegionAt(int line) const {
     return it != regions_.end() && it->start == line ? &*it : nullptr;
 }
 
-void FoldState::Update(Document& document) {
+void FoldState::Update(const Document& document, const std::vector<LineEdit>& edits) {
     // Move folded headers with the edits.
-    for (const LineEdit& e : document.TakeLineEdits()) {
+    for (const LineEdit& e : edits) {
+        if (e.reset) {
+            folded_.clear();
+            continue;
+        }
         std::set<int> moved;
         for (const int start : folded_) {
             if (start <= e.line) moved.insert(start);                       // above (or the edited header itself)

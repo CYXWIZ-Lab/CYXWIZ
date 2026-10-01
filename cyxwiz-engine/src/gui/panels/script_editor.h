@@ -69,6 +69,8 @@ public:
 
     // Inline find and replace widget (Ctrl+F / Ctrl+H).
     void OpenFind(bool replace);
+    // Edit > Go to Line (the Engine's dialog), offered in the code's right-click menu.
+    void SetGoToLineRequest(std::function<void()> request) { go_to_line_request_ = std::move(request); }
 
     // Find/Replace operations
     bool FindInEditor(const std::string& search_text, bool case_sensitive, bool whole_word, bool use_regex);
@@ -345,6 +347,9 @@ private:
     bool last_case_sensitive_ = false;
     bool last_whole_word_ = false;
     bool last_use_regex_ = false;
+
+    std::function<void()> go_to_line_request_;
+    void RenderCodeContextMenu(EditorTab& tab);
 
     // Settings changed callback (for syncing with Preferences)
     std::function<void()> on_settings_changed_callback_;

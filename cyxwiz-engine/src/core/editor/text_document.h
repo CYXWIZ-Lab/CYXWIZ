@@ -24,10 +24,12 @@ struct Pos {
 
 // Lines replaced by an edit: `removed` lines after `line` went away and
 // `added` new ones took their place (both 0 for an edit inside one line).
+// `reset` marks SetText (everything replaced; not a change by the user).
 struct LineEdit {
     int line = 0;
     int removed = 0;
     int added = 0;
+    bool reset = false;
 };
 
 struct Selection {

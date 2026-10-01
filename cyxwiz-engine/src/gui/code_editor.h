@@ -1,10 +1,11 @@
 #pragma once
 
-// The Script Editor's code view (TOFIX133 P1, decision D1): draws an
+// The Script Editor's code view (TOFIX133 P1/P2, decision D1): draws an
 // editor::Document with ImGui and turns keys and mouse into its commands.
-// Look approved on the mockup board "Text mode": one gutter (breakpoint,
+// Look approved on the mockup boards: one gutter (change bar, breakpoint,
 // line number, fold arrow), current-line tone, multiple cursors, colours from
-// the Engine theme, scrollbars in the surface tone, no outlines.
+// the Engine theme, scrollbars in the surface tone, no outlines, a minimap,
+// optional soft wrap.
 //
 // Keys handled here are the ones Preferences > Shortcuts marks as handled
 // by the window (typing, moving, selecting, clipboard, undo, Tab); commands
@@ -17,6 +18,7 @@
 
 #include <imgui.h>
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -46,6 +48,8 @@ public:
     void SetTabSize(int size) { doc_.Settings().tab_size = size; }
     void SetKeyboardEnabled(bool enabled) { keyboard_enabled_ = enabled; }
     void SetLanguageIsPython(bool python) { python_ = python; }
+    // Soft wrap at the view's width (Up/Down still move by document lines).
+    void SetWordWrap(bool wrap) { wrap_ = wrap; }
 
     // Breakpoints are 1-based line numbers owned by the caller; a gutter
     // click reports the 0-based line.
@@ -65,6 +69,13 @@ public:
     // Moves the cursor to a line (0-based), opening folds and scrolling there.
     void GoToLine(int line);
 
+    // A right click in the text since the last call (the caller opens its menu).
+    bool TakeContextMenuRequest() {
+        const bool r = context_menu_requested_;
+        context_menu_requested_ = false;
+        return r;
+    }
+
     // Draws the editor and handles input. Returns true when the text changed.
     bool Render(const char* id, const ImVec2& size);
 
@@ -75,15 +86,25 @@ private:
     struct Palette {
         ImU32 bg, current_line, text, line_number, line_number_current, selection, selection_inactive, caret,
             breakpoint, fold, fold_hover, mark, mark_current, debug_line, whitespace, pill_bg, pill_text,
-            scroll, scroll_hover;
+            scroll, scroll_hover, change_bar;
         ImU32 tokens[11];
     };
+    // One screen row: a whole line, or a wrapped piece of one.
+    struct Row {
+        int line = 0;
+        int start = 0;  // byte range of the line shown on this row
+        int end = 0;
+        bool first = true;
+        bool last = true;
+    };
+
     Palette BuildPalette() const;
+    void BuildRows(const std::vector<int>& visible, int wrap_columns);
+    int RowOfPos(editor::Pos p) const;
     void HandleKeyboard(float page_height, float line_height);
-    void HandleMouse(const ImVec2& origin, float gutter, float advance, float line_height,
-                     const std::vector<int>& visible);
-    editor::Pos MouseToPos(const ImVec2& mouse, const ImVec2& origin, float gutter, float advance, float line_height,
-                           const std::vector<int>& visible) const;
+    void HandleMouse(const ImVec2& origin, float gutter, float advance, float line_height);
+    editor::Pos MouseToPos(const ImVec2& mouse, const ImVec2& origin, float gutter, float advance, float line_height) const;
+    void TrackChanges(const std::vector<editor::LineEdit>& edits);
     void CopySelection(bool cut);
     void Touch() { last_activity_ = ImGui::GetTime(); }
     float MaxLineWidthColumns();
@@ -99,16 +120,27 @@ private:
     bool show_whitespace_ = false;
     bool colorize_ = true;
     bool python_ = true;
+    bool wrap_ = false;
     bool keyboard_enabled_ = true;
     bool focused_ = false;
     bool request_focus_ = false;
     bool scroll_to_cursor_ = false;
     bool scroll_to_top_ = false;
     bool dragging_ = false;
+    bool context_menu_requested_ = false;
     double last_activity_ = 0.0;
     ImVec2 cursor_screen_{0.0f, 0.0f};
     uint64_t width_version_ = ~0ull;
     float max_columns_ = 0.0f;
+
+    // Lines changed since the text was loaded or saved (change bars).
+    std::vector<uint8_t> changed_;
+
+    // Rows from the last Render, rebuilt when the text, folds or wrap width change.
+    std::vector<Row> rows_;
+    uint64_t rows_version_ = ~0ull;
+    int rows_wrap_ = -1;
+    std::vector<int> rows_visible_;
 
     bool show_minimap_ = false;
     float pending_scroll_y_ = -1.0f;  // set by the minimap, applied in the code view

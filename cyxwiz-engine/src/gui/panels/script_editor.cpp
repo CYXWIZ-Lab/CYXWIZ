@@ -353,6 +353,11 @@ void ScriptEditorPanel::RenderMenuBar() {
                 if (on_settings_changed_callback_) on_settings_changed_callback_();
             }
 
+            if (ImGui::MenuItem("Word Wrap", nullptr, word_wrap_)) {
+                SetWordWrap(!word_wrap_);
+                if (on_settings_changed_callback_) on_settings_changed_callback_();
+            }
+
             // Minimap toggle
             if (ImGui::MenuItem("Show Minimap", nullptr, &show_minimap_)) {
                 if (on_settings_changed_callback_) on_settings_changed_callback_();
@@ -394,6 +399,42 @@ void ScriptEditorPanel::ApplySyntaxHighlightingToAllTabs() {
         tab->cell_manager.ApplySyntaxHighlighting(syntax_highlighting_);
     }
     spdlog::info("Syntax highlighting: {}", syntax_highlighting_ ? "enabled" : "disabled");
+}
+
+// Right-click menu on the code (approved board 2). Groups are separated by
+// spacing, not lines.
+void ScriptEditorPanel::RenderCodeContextMenu(EditorTab& tab) {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 8.0f));
+    if (!ImGui::BeginPopup("##code_menu")) {
+        ImGui::PopStyleVar();
+        return;
+    }
+    editor::Document& doc = tab.editor.Doc();
+    const bool engine_busy = scripting_engine_ && scripting_engine_->IsScriptRunning();
+    const bool has_selection = !doc.SelectedText().empty();
+    auto gap = []() { ImGui::Dummy(ImVec2(0.0f, 4.0f)); };
+    if (ImGui::MenuItem("Run selection", "F9", false, has_selection && !engine_busy)) RunSelection();
+    if (ImGui::MenuItem("Run section", "Ctrl+Enter", false, !engine_busy)) RunCurrentSection();
+    gap();
+    if (ImGui::MenuItem("Cut", "Ctrl+X")) Cut();
+    if (ImGui::MenuItem("Copy", "Ctrl+C")) Copy();
+    if (ImGui::MenuItem("Paste", "Ctrl+V", false, ImGui::GetClipboardText() != nullptr)) Paste();
+    gap();
+    if (ImGui::MenuItem("Toggle line comment", "Ctrl+/")) ToggleLineComment();
+    const int line = doc.Primary().head.line;
+    auto& folds = tab.editor.Folds();
+    if (folds.CanFold(line)) {
+        if (ImGui::MenuItem(folds.IsFolded(line) ? "Unfold" : "Fold", folds.IsFolded(line) ? "Ctrl+Shift+]" : "Ctrl+Shift+["))
+            folds.Toggle(line);
+    }
+    if (ImGui::MenuItem("Fold all")) folds.FoldAll();
+    if (ImGui::MenuItem("Unfold all")) folds.UnfoldAll();
+    if (ImGui::MenuItem("Select every occurrence", "Ctrl+Shift+L")) doc.SelectAllOccurrences();
+    gap();
+    if (ImGui::MenuItem("Go to line...", "Ctrl+G", false, static_cast<bool>(go_to_line_request_))) go_to_line_request_();
+    if (ImGui::MenuItem("Find...", "Ctrl+F")) OpenFind(false);
+    ImGui::EndPopup();
+    ImGui::PopStyleVar();
 }
 
 void ScriptEditorPanel::RenderEditor() {
@@ -515,6 +556,9 @@ void ScriptEditorPanel::RenderEditor() {
     if (pushed_editor_font) {
         ImGui::PopFont();
     }
+    // The right-click menu uses the interface font.
+    if (code.TakeContextMenuRequest()) ImGui::OpenPopup("##code_menu");
+    RenderCodeContextMenu(*tab);
     // Modified follows the document (undoing back to the saved text clears it).
     tab->is_modified = tab->is_new ? !tab->editor.Doc().Text().empty() || tab->editor.Doc().Modified()
                                    : tab->editor.Doc().Modified() || tab->format_changed;

@@ -20,9 +20,9 @@ std::vector<FoldRegion> FindFoldRegions(const Document& document);
 
 class FoldState {
 public:
-    // Recomputes regions and moves folded headers with the line edits since
-    // the last call; folds whose header disappeared are dropped.
-    void Update(Document& document);
+    // Recomputes regions and moves folded headers with the given line edits
+    // (Document::TakeLineEdits); folds whose header disappeared are dropped.
+    void Update(const Document& document, const std::vector<LineEdit>& edits);
     const std::vector<FoldRegion>& Regions() const { return regions_; }
 
     bool CanFold(int line) const;

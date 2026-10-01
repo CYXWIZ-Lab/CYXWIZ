@@ -84,21 +84,21 @@ int main() {
     // Folds, visible lines, reveal, and folds that move with edits.
     d.SetText("a = 1\ndef f():\n    x = 1\n    y = 2\nb = 2\n");
     FoldState folds;
-    folds.Update(d);
+    folds.Update(d, d.TakeLineEdits());
     folds.Fold(1);
     Check(folds.IsHidden(2) && folds.IsHidden(3) && !folds.IsHidden(4), "lines 2-3 hidden");
     Check(folds.VisibleLines(d.LineCount()) == std::vector<int>({0, 1, 4, 5}), "visible lines skip the fold");
     Check(folds.HiddenCount(1) == 2, "two hidden lines");
     d.SetCursor({0, 0});
     d.Newline();  // a line above the fold
-    folds.Update(d);
+    folds.Update(d, d.TakeLineEdits());
     Check(folds.IsFolded(2) && !folds.IsFolded(1), "the fold moved down with its header");
     folds.Reveal(3);
     Check(!folds.IsFolded(2), "a cursor inside opens the fold");
     folds.Fold(2);
     d.SetCursor({2, 0});
     d.DeleteLines();  // the header goes away
-    folds.Update(d);
+    folds.Update(d, d.TakeLineEdits());
     Check(!folds.IsFolded(2), "a fold without its header is dropped");
 
     // Breadcrumb scopes.

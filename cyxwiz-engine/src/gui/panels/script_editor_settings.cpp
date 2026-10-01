@@ -13,6 +13,7 @@ void ScriptEditorPanel::ConfigureEditor(CodeEditor& editor) const {
     editor.SetTabSize(tab_size_);
     editor.SetShowWhitespace(show_whitespace_);
     editor.SetColorize(syntax_highlighting_);
+    editor.SetWordWrap(word_wrap_);
     editor.Doc().Settings().auto_indent = auto_indent_;
 }
 
@@ -29,8 +30,8 @@ void ScriptEditorPanel::SetShowWhitespace(bool show) {
 }
 
 void ScriptEditorPanel::SetWordWrap(bool wrap) {
-    // Kept for Preferences; the code view wraps from TOFIX133 P2.
     word_wrap_ = wrap;
+    for (auto& tab : tabs_) tab->editor.SetWordWrap(wrap);
 }
 
 void ScriptEditorPanel::SetAutoIndent(bool indent) {
