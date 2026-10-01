@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz::editor {
@@ -18,6 +19,14 @@ struct Pos {
     friend bool operator!=(const Pos& a, const Pos& b) { return !(a == b); }
     friend bool operator<(const Pos& a, const Pos& b) { return a.line != b.line ? a.line < b.line : a.col < b.col; }
     friend bool operator<=(const Pos& a, const Pos& b) { return !(b < a); }
+};
+
+// Lines replaced by an edit: `removed` lines after `line` went away and
+// `added` new ones took their place (both 0 for an edit inside one line).
+struct LineEdit {
+    int line = 0;
+    int removed = 0;
+    int added = 0;
 };
 
 struct Selection {
@@ -102,6 +111,9 @@ public:
     bool Modified() const;
     void MarkSaved();
 
+    // Line edits since the last call (folds and per-line caches follow them).
+    std::vector<LineEdit> TakeLineEdits() { return std::exchange(line_edits_, {}); }
+
 private:
     struct Change {
         Pos start;
@@ -150,6 +162,7 @@ private:
     uint64_t version_ = 0;
     uint64_t next_group_id_ = 1;
     uint64_t saved_group_id_ = 0;  // id of the top undo group when saved (0 = none)
+    std::vector<LineEdit> line_edits_;
 };
 
 }  // namespace cyxwiz::editor

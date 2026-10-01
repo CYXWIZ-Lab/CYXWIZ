@@ -115,7 +115,9 @@ Document::Document() : lines_(1), selections_(1) {}
 Document::Document(std::string_view text) : Document() { SetText(text); }
 
 void Document::SetText(std::string_view text) {
+    const int old_count = static_cast<int>(lines_.size());
     lines_ = SplitLines(text);
+    line_edits_.assign(1, LineEdit{0, old_count - 1, static_cast<int>(lines_.size()) - 1});
     selections_.assign(1, Selection{});
     primary_ = 0;
     undo_.clear();
@@ -391,8 +393,11 @@ Pos Document::RawReplace(Pos a, Pos b, std::string_view text) {
                   parts.size() == 1 ? a.col + static_cast<int>(parts[0].size()) : static_cast<int>(parts.back().size())};
     parts.front() = prefix + parts.front();
     parts.back() += suffix;
+    const int removed = b.line - a.line;
+    const int added = static_cast<int>(parts.size()) - 1;
     lines_.erase(lines_.begin() + a.line, lines_.begin() + b.line + 1);
     lines_.insert(lines_.begin() + a.line, parts.begin(), parts.end());
+    if (removed != 0 || added != 0) line_edits_.push_back({a.line, removed, added});
     return end;
 }
 

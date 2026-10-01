@@ -322,6 +322,8 @@ set(ENGINE_SOURCES
     src/core/cyx_format.cpp
     src/core/script_keys.cpp
     src/core/editor/text_document.cpp
+    src/core/editor/python_highlight.cpp
+    src/core/editor/folding.cpp
     src/core/live_graph_compile.cpp
     src/core/remote_job_presentation.cpp
     src/gui/node_config_dialog.cpp
