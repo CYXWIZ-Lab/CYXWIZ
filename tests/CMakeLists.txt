@@ -180,6 +180,8 @@ add_executable(test_model_builder_upsampling
     ../cyxwiz-engine/src/core/spatial_batch_layout.cpp
     ../cyxwiz-engine/src/core/synthetic_batch.cpp
     ../cyxwiz-engine/src/core/model_builder.cpp
+    ../cyxwiz-engine/src/core/guarded_extension_module.cpp
+    ../cyxwiz-engine/src/core/extension_node_registry.cpp
     ../cyxwiz-engine/src/core/executable_model.cpp
     ../cyxwiz-engine/src/core/graph_executable_model.cpp
 )

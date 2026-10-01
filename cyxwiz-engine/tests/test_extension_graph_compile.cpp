@@ -1,7 +1,7 @@
 // The compiler and extension nodes (TOFIX125 P1 step 1.4): an extension node
 // on the training path is never passed over. It is reported on the node when
-// it is not installed, when it is a simulation node, and (until the trainable
-// contract lands) when it is a trainable one.
+// it is not installed and when it is a simulation node; a trainable one
+// becomes a layer.
 //
 // The graph is the standard training benchmark graph with one extension node
 // inserted between "Final normalization" and the per-token Dense.
@@ -201,19 +201,20 @@ void TestSignalOnPath() {
     Unregister();
 }
 
-void TestTrainableOnPathIsReported() {
+void TestTrainableOnPathCompiles() {
     Unregister();
     RegisterNode(cyxwiz::ExtensionNodeKind::TensorLayer);
     const auto config = Compile(GraphWithExtension(true));
     const auto issues = IssuesOn(config, kExtensionNodeId);
-    // Until the trainable contract is compiled (P2) the node must not be
-    // passed over: the model would train without it.
-    Check(issues.size() == 1 && issues[0].level == cyxwiz::IssueLevel::Error,
-          "a trainable extension node is reported, not skipped: " + Describe(issues));
-    Check(!config.is_valid, "the graph is not valid while the node cannot be compiled");
+    // Since P2 a trainable extension node becomes a layer (it trains in
+    // test_extension_training).
+    Check(issues.empty(), "a trainable extension node has no issue: " + Describe(issues));
+    size_t layers = 0;
     for (const auto& layer : config.layers) {
-        Check(layer.node_id != kExtensionNodeId, "no layer is invented for it");
+        if (layer.node_id == kExtensionNodeId) ++layers;
     }
+    Check(layers == 1, "it becomes exactly one compiled layer");
+    Check(ErrorCount(config) == g_baseline_errors, "it adds no error");
     Unregister();
 }
 
@@ -253,7 +254,7 @@ int main() {
     TestBaseline();
     TestMissingOnPath();
     TestSignalOnPath();
-    TestTrainableOnPathIsReported();
+    TestTrainableOnPathCompiles();
     TestOffPath();
     TestLoadNoteBecomesWarning();
     std::cout << "test_extension_graph_compile: all checks passed\n";

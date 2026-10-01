@@ -65,6 +65,11 @@ struct CompiledLayer {
 
     // For shape ops that need normalized dimension order at runtime.
     std::vector<int> dims;
+
+    // Extension nodes (NodeType::PluginCustom, TOFIX125): the module comes
+    // from the factory registered for this type id.
+    std::string extension_type_id;
+    std::string extension_version;
 };
 
 /**
@@ -319,6 +324,8 @@ inline constexpr const char* UnsupportedSequentialModelLayer =
     "unsupported_sequential_model_layer";
 inline constexpr const char* NativeProviderSelected =
     "native_provider_selected";
+inline constexpr const char* ExtensionModuleCode =
+    "extension_module_code";
 } // namespace BackendPlacementReason
 
 struct BackendPlacementEntry {

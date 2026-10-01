@@ -1,3 +1,5 @@
+#include "extension_node_registry.h"
+#include "guarded_extension_module.h"
 #include "model_builder.h"
 #include "dense_activation_configuration_policy.h"
 #include "error_codes.h"
@@ -378,6 +380,21 @@ TensorMaskOp ParseTensorMaskOp(const CompiledLayer& layer) {
     return TensorMaskOp::CompareGreater;
 }
 
+// The type of the layer that will consume layer i's output. Extension
+// layers (TOFIX125) that keep their input's shape, such as an elementwise
+// activation, are looked through: the layer before one sizes its output for
+// the layer after it. Unknown when nothing follows.
+gui::NodeType NextConsumerType(const TrainingConfiguration& config, size_t i) {
+    for (size_t j = i + 1; j < config.layers.size(); ++j) {
+        const auto& next = config.layers[j];
+        if (next.type == gui::NodeType::PluginCustom && next.output_shape == next.input_shape) {
+            continue;
+        }
+        return next.type;
+    }
+    return gui::NodeType::Unknown;
+}
+
 // Populate `model` with modules per config.layers. Returns false if
 // config produced zero layers. Logging is identical to the pre-extraction
 // path so existing training regression tests still match on log output.
@@ -593,7 +610,7 @@ bool BuildSequential(
                 current_sequence_length = seq_len > 0 ? seq_len : 1;
                 bool next_is_recurrent = false;
                 if (i + 1 < config.layers.size()) {
-                    const auto nt = config.layers[i + 1].type;
+                    const auto nt = NextConsumerType(config, i);
                     if (nt == gui::NodeType::LSTM ||
                         nt == gui::NodeType::GRU  ||
                         nt == gui::NodeType::RNN  ||
@@ -797,11 +814,11 @@ bool BuildSequential(
                 bool next_is_transformer = false;
                 if (i + 1 < config.layers.size()) {
                     next_is_transformer =
-                        config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
-                        config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
-                        config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
-                        config.layers[i + 1].type == gui::NodeType::LayerNorm ||
-                        config.layers[i + 1].type == gui::NodeType::TimeDistributed;
+                        NextConsumerType(config, i) == gui::NodeType::TransformerEncoder ||
+                        NextConsumerType(config, i) == gui::NodeType::TransformerDecoder ||
+                        NextConsumerType(config, i) == gui::NodeType::MultiHeadAttention ||
+                        NextConsumerType(config, i) == gui::NodeType::LayerNorm ||
+                        NextConsumerType(config, i) == gui::NodeType::TimeDistributed;
                 }
 
                 const size_t downstream_features = current_sequence_length * d_model;
@@ -842,11 +859,11 @@ bool BuildSequential(
                 bool next_is_sequence_layer = false;
                 if (i + 1 < config.layers.size()) {
                     next_is_sequence_layer =
-                        config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
-                        config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
-                        config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
-                        config.layers[i + 1].type == gui::NodeType::LayerNorm ||
-                        config.layers[i + 1].type == gui::NodeType::TimeDistributed;
+                        NextConsumerType(config, i) == gui::NodeType::TransformerEncoder ||
+                        NextConsumerType(config, i) == gui::NodeType::TransformerDecoder ||
+                        NextConsumerType(config, i) == gui::NodeType::MultiHeadAttention ||
+                        NextConsumerType(config, i) == gui::NodeType::LayerNorm ||
+                        NextConsumerType(config, i) == gui::NodeType::TimeDistributed;
                 }
 
                 const size_t downstream_features =
@@ -915,11 +932,11 @@ bool BuildSequential(
                 bool next_is_transformer = false;
                 if (i + 1 < config.layers.size()) {
                     next_is_transformer =
-                        config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
-                        config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
-                        config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
-                        config.layers[i + 1].type == gui::NodeType::LayerNorm ||
-                        config.layers[i + 1].type == gui::NodeType::TimeDistributed;
+                        NextConsumerType(config, i) == gui::NodeType::TransformerEncoder ||
+                        NextConsumerType(config, i) == gui::NodeType::TransformerDecoder ||
+                        NextConsumerType(config, i) == gui::NodeType::MultiHeadAttention ||
+                        NextConsumerType(config, i) == gui::NodeType::LayerNorm ||
+                        NextConsumerType(config, i) == gui::NodeType::TimeDistributed;
                 }
 
                 const size_t downstream_features = current_sequence_length * d_model;
@@ -1290,11 +1307,11 @@ bool BuildSequential(
                 bool next_is_sequence_layer = false;
                 if (i + 1 < config.layers.size()) {
                     next_is_sequence_layer =
-                        config.layers[i + 1].type == gui::NodeType::TransformerEncoder ||
-                        config.layers[i + 1].type == gui::NodeType::TransformerDecoder ||
-                        config.layers[i + 1].type == gui::NodeType::MultiHeadAttention ||
-                        config.layers[i + 1].type == gui::NodeType::LayerNorm ||
-                        config.layers[i + 1].type == gui::NodeType::TimeDistributed;
+                        NextConsumerType(config, i) == gui::NodeType::TransformerEncoder ||
+                        NextConsumerType(config, i) == gui::NodeType::TransformerDecoder ||
+                        NextConsumerType(config, i) == gui::NodeType::MultiHeadAttention ||
+                        NextConsumerType(config, i) == gui::NodeType::LayerNorm ||
+                        NextConsumerType(config, i) == gui::NodeType::TimeDistributed;
                 }
                 if (config.preprocessing_domain == PreprocessingDomain::Text &&
                     !next_is_sequence_layer) {
@@ -1348,6 +1365,40 @@ bool BuildSequential(
                 spdlog::warn("  [{}] CNN layer {} not yet supported in SequentialModel",
                              i, static_cast<int>(layer_cfg.type));
                 break;
+
+            case gui::NodeType::PluginCustom: {
+                // An extension node (TOFIX125): its factory builds the module,
+                // wrapped so its shapes are checked and errors name the node.
+                auto& registry = ExtensionNodeRegistry::Instance();
+                const auto factory = registry.TensorFactory(layer_cfg.extension_type_id);
+                if (!factory) {
+                    throw std::runtime_error(
+                        "extension node '" + layer_cfg.name + "' (" + layer_cfg.extension_type_id +
+                        ") is not installed or cannot train");
+                }
+                std::string error;
+                std::unique_ptr<Module> module;
+                try {
+                    module = factory->CreateModule(layer_cfg.input_shape, layer_cfg.parameters, error);
+                } catch (const std::exception& e) {
+                    error = e.what();
+                }
+                if (!module) {
+                    throw std::runtime_error(
+                        "extension node '" + layer_cfg.name + "' (" + layer_cfg.extension_type_id +
+                        ") could not create its module" + (error.empty() ? std::string() : ": " + error));
+                }
+                model.AddModule(std::make_unique<GuardedExtensionModule>(
+                    std::move(module), layer_cfg.node_id, layer_cfg.name, layer_cfg.extension_type_id,
+                    layer_cfg.output_shape, registry.ProviderLease(layer_cfg.extension_type_id)));
+                CYXWIZ_BUILDER_INFO("  [{}] Extension {} ({} -> {})", i, layer_cfg.extension_type_id,
+                                    FormatTensorShape(layer_cfg.input_shape), FormatTensorShape(layer_cfg.output_shape));
+                // A node that changes the width tells the next layer.
+                if (!layer_cfg.output_shape.empty() && layer_cfg.output_shape != layer_cfg.input_shape) {
+                    current_input_size = layer_cfg.output_shape.back();
+                }
+                break;
+            }
 
             default:
                 spdlog::warn("  [{}] Unknown layer type: {}", i, static_cast<int>(layer_cfg.type));

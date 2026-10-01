@@ -1516,6 +1516,8 @@ add_executable(test_debug_executor
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
+    src/core/extension_node_registry.cpp
     src/core/checkpoint_manifest.cpp
     src/core/checkpoint_payload_io.cpp
     src/core/sha256_digest.cpp
@@ -2980,6 +2982,7 @@ set_target_properties(test_pattern_template_guard PROPERTIES
 add_executable(test_graph_compiler_deferred_nodes
     tests/test_graph_compiler_deferred_nodes.cpp
     src/core/graph_compiler.cpp
+    src/core/guarded_extension_module.cpp
     src/core/extension_node_registry.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
@@ -3092,6 +3095,7 @@ add_executable(test_graph_compiler_causal_lm_shape
     src/core/runtime_log_store.cpp
     src/core/route_qualification_snapshot.cpp
     src/core/graph_compiler.cpp
+    src/core/guarded_extension_module.cpp
     src/core/extension_node_registry.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
@@ -3134,6 +3138,7 @@ set_target_properties(test_graph_compiler_causal_lm_shape PROPERTIES
 add_executable(test_bert_encoder_contracts
     tests/test_bert_encoder_contracts.cpp
     src/core/graph_compiler.cpp
+    src/core/guarded_extension_module.cpp
     src/core/extension_node_registry.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
@@ -3175,6 +3180,7 @@ set_target_properties(test_bert_encoder_contracts PROPERTIES
 add_executable(test_recurrent_backend_placement
     tests/test_recurrent_backend_placement.cpp
     src/core/graph_compiler.cpp
+    src/core/guarded_extension_module.cpp
     src/core/extension_node_registry.cpp
     src/core/sequence_fusion_presentation.cpp
     src/core/graph_compiler_dataset_hooks.cpp
@@ -3292,6 +3298,8 @@ set_target_properties(test_text_loader_csv_preflight PROPERTIES
 add_executable(test_tensor_reshape_runtime_contract
     tests/test_tensor_reshape_runtime_contract.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
+    src/core/extension_node_registry.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3323,6 +3331,8 @@ set_target_properties(test_tensor_reshape_runtime_contract PROPERTIES
 add_executable(test_executable_model_wrapper
     tests/test_executable_model_wrapper.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
+    src/core/extension_node_registry.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3354,6 +3364,8 @@ set_target_properties(test_executable_model_wrapper PROPERTIES
 add_executable(test_graph_executable_model
     tests/test_graph_executable_model.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
+    src/core/extension_node_registry.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3392,6 +3404,8 @@ add_executable(test_text_arrow_materializer
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
+    src/core/extension_node_registry.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3432,6 +3446,8 @@ add_executable(test_text_arrow_training_launch
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
+    src/core/extension_node_registry.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3577,6 +3593,8 @@ add_executable(test_text_gui_training_launch
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
+    src/core/extension_node_registry.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3720,6 +3738,7 @@ add_executable(test_cyxmodel_layernorm_roundtrip
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3774,6 +3793,7 @@ add_executable(test_cyxmodel_mha_roundtrip
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3828,6 +3848,7 @@ add_executable(test_cyxmodel_transformer_encoder_roundtrip
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3881,6 +3902,7 @@ add_executable(test_cyxmodel_transformer_decoder_roundtrip
     src/core/graph_node_factory.cpp
     src/core/extension_node_registry.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -3935,6 +3957,7 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     src/core/extension_node_registry.cpp
     src/core/language_model_generation.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -4012,6 +4035,7 @@ add_executable(test_saved_ner_sequence_smoke
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -4091,6 +4115,7 @@ add_executable(cyxwiz-graph-compile-check
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -4171,6 +4196,7 @@ add_executable(test_compiled_node_presentation
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -4238,6 +4264,8 @@ add_executable(test_training_batcher_setup
     src/core/arrow_dataset.cpp
     src/core/arrow_dataset_batcher.cpp
     src/core/model_builder.cpp
+    src/core/guarded_extension_module.cpp
+    src/core/extension_node_registry.cpp
     src/core/spatial_batch_layout.cpp
     src/core/executable_model.cpp
     src/core/graph_executable_model.cpp
@@ -5325,6 +5353,11 @@ add_executable(test_training_core_link tests/test_training_core_link.cpp)
 target_link_libraries(test_training_core_link PRIVATE cyxwiz-training-core)
 
 # ===== Test: headless graph training job on the core alone (TOFIX118 P2) =====
+# ===== Test: trainable extension nodes train in a real graph (TOFIX125 P2) =====
+add_executable(test_extension_training tests/test_extension_training.cpp)
+target_link_libraries(test_extension_training PRIVATE cyxwiz-training-core)
+target_compile_definitions(test_extension_training PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+
 add_executable(test_graph_training_job tests/test_graph_training_job.cpp)
 target_link_libraries(test_graph_training_job PRIVATE cyxwiz-training-core)
 

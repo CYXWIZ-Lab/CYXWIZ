@@ -28,6 +28,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/arrow_dataset.cpp
     ${_cyxwiz_engine_src}/core/arrow_dataset_batcher.cpp
     ${_cyxwiz_engine_src}/core/model_builder.cpp
+    ${_cyxwiz_engine_src}/core/guarded_extension_module.cpp
     ${_cyxwiz_engine_src}/core/spatial_batch_layout.cpp
     ${_cyxwiz_engine_src}/core/executable_model.cpp
     ${_cyxwiz_engine_src}/core/graph_executable_model.cpp

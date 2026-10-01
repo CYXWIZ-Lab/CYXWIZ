@@ -6,6 +6,7 @@
 #include "backend_placement_capabilities.h"
 #include "execution_placement_plan.h"
 #include "extension_node_registry.h"
+#include "guarded_extension_module.h"
 #include "data_registry.h"
 #include "dense_activation_configuration_policy.h"
 #include "upsampling_configuration_policy.h"
@@ -2117,6 +2118,11 @@ size_t EstimateSequenceLength(const CompiledLayer& layer) {
 
 void AddBackendPlacementReports(TrainingConfiguration& config) {
     for (const auto& layer : config.layers) {
+        if (layer.type == gui::NodeType::PluginCustom) {
+            config.backend_placements.push_back(
+                backend_placement::BuildExtensionPlacement(layer));
+            continue;
+        }
         const auto capability = backend_placement::ClassifyLayer(layer);
         switch (capability.kind) {
             case backend_placement::LayerCapabilityKind::ArrayFireTensor:
@@ -3856,14 +3862,55 @@ void ValidateExtensionNodes(
             continue;
         }
 
-        // Replaced by the trainable contract (TOFIX125 P2).
-        AddIssue(config, IssueLevel::Error,
-                 "'" + node.name + "' (" + node.extension_type_id +
-                     ") is a trainable extension node, which the compiler "
-                     "does not build yet. The model would train without it.",
-                 node.id, node.name,
-                 errors::Compiler::UnsupportedTrainingNode);
+        // A trainable node on the training path becomes a layer in the
+        // layer loop (CompileExtensionLayer), which reports shape problems.
     }
+}
+
+// A trainable extension node on the training path: one CompiledLayer whose
+// output shape comes from the extension's own shape function. False when
+// the node cannot be compiled; the reason is an issue on the node.
+bool CompileExtensionLayer(const gui::MLNode& node,
+                           const std::vector<size_t>& input_shape,
+                           TrainingConfiguration& config,
+                           CompiledLayer& layer) {
+    const auto descriptor =
+        ExtensionNodeRegistry::Instance().Find(node.extension_type_id);
+    const auto factory =
+        ExtensionNodeRegistry::Instance().TensorFactory(node.extension_type_id);
+    // Missing and simulation nodes were reported by ValidateExtensionNodes.
+    if (!descriptor || descriptor->kind != ExtensionNodeKind::TensorLayer || !factory) {
+        return false;
+    }
+
+    ExtensionShapeResult shape;
+    try {
+        shape = factory->InferOutputShape(input_shape, node.parameters);
+    } catch (const std::exception& e) {
+        AddIssue(config, IssueLevel::Error,
+                 "Extension node '" + node.extension_type_id +
+                     "' failed to work out its output shape: " + e.what(),
+                 node.id, node.name, errors::Compiler::TensorShapeMismatch);
+        return false;
+    }
+    if (!shape.ok) {
+        AddIssue(config, IssueLevel::Error,
+                 "Extension node '" + node.extension_type_id + "' cannot take input " +
+                     FormatTensorShape(input_shape) +
+                     (shape.error.empty() ? std::string() : ": " + shape.error),
+                 node.id, node.name, errors::Compiler::TensorShapeMismatch);
+        return false;
+    }
+
+    layer.type = gui::NodeType::PluginCustom;
+    layer.node_id = node.id;
+    layer.name = gui::EffectiveNodeName(node);
+    layer.parameters = node.parameters;
+    layer.extension_type_id = node.extension_type_id;
+    layer.extension_version = descriptor->version;
+    layer.input_shape = input_shape;
+    layer.output_shape = shape.output_shape;
+    return true;
 }
 
 void CollectGraphRuntimeOpNodeIds(
@@ -4876,6 +4923,19 @@ TrainingConfiguration GraphCompiler::Compile(
                 : std::vector<size_t>{current_shape[0], width};
             current_shape = layer.output_shape;
             config.layers.push_back(layer);
+            continue;
+        }
+
+        // Extension nodes (TOFIX125): their own shape function and module.
+        if (node->type == gui::NodeType::PluginCustom) {
+            if (!ContainsWhenFiltered(training_path_ids, node->id)) {
+                continue;
+            }
+            CompiledLayer layer;
+            if (CompileExtensionLayer(*node, current_shape, config, layer)) {
+                current_shape = layer.output_shape;
+                config.layers.push_back(std::move(layer));
+            }
             continue;
         }
 
