@@ -151,11 +151,17 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
             tab->cell_manager.ClearAllOutputs();
         }
 
-        // Right-aligned cell count
-        float right_text_width = ImGui::CalcTextSize("Cells: 999").x + 20;
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - right_text_width);
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Cells: %d",
-                           tab->cell_manager.GetCellCount());
+        // Cell count at the right edge when it fits (it was placed at the
+        // remaining width as an x position, over the buttons when narrow).
+        const std::string cells_text = "Cells: " + std::to_string(tab->cell_manager.GetCellCount());
+        ImGui::SameLine();
+        const float cells_x = ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(cells_text.c_str()).x;
+        if (cells_x > ImGui::GetCursorPosX() + ImGui::GetStyle().ItemSpacing.x) {
+            ImGui::SetCursorPosX(cells_x);
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", cells_text.c_str());
+        } else {
+            ImGui::NewLine();
+        }
 
         ImGui::Separator();
         const char* notebook_mode = tab->editing_cell >= 0 ? "Edit mode" : "Command mode";

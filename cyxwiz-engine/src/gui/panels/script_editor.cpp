@@ -989,8 +989,17 @@ void ScriptEditorPanel::RenderStatusBar() {
             }
         }
 
-        ImGui::SameLine(ImGui::GetWindowWidth() - 150);
-        ImGui::Text("%s", tab->filepath.empty() ? "Untitled" : tab->filepath.c_str());
+        // Path at the right edge when it fits; it used to be drawn at a
+        // fixed x over the rest of the line in a narrow editor.
+        const char* path = tab->filepath.empty() ? "Untitled" : tab->filepath.c_str();
+        ImGui::SameLine();
+        const float path_x = ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(path).x;
+        if (path_x > ImGui::GetCursorPosX() + ImGui::GetStyle().ItemSpacing.x) {
+            ImGui::SetCursorPosX(path_x);
+            ImGui::TextDisabled("%s", path);
+        } else {
+            ImGui::NewLine();
+        }
     }
 }
 
