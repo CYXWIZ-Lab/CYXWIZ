@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 struct GLFWwindow;
 struct ImGuiIO;
@@ -96,4 +97,5 @@ private:
     // Startup project path (from command line)
     std::string startup_project_path_;
     std::string startup_graph_path_;
+    std::vector<std::string> startup_scripts_;  // .py / .cyx files named on the command line
 };

@@ -2284,13 +2284,7 @@ MainWindow::MainWindow()
     }
 
     // Set up Open Script in Editor callback (called with file path to open)
-    toolbar_->SetOpenScriptInEditorCallback([this](const std::string& file_path) {
-        if (script_editor_) {
-            script_editor_->OpenFile(file_path);
-            script_editor_->SetVisible(true);  // Show the Script Editor panel
-            spdlog::info("Opened script in editor: {}", file_path);
-        }
-    });
+    toolbar_->SetOpenScriptInEditorCallback([this](const std::string& file_path) { OpenScriptFile(file_path); });
 
     // Script > Run Script / Stop Script (the same actions as F5 / Shift+F5 in the editor)
     toolbar_->SetRunScriptCallback([this]() {
@@ -2657,6 +2651,13 @@ MainWindow::MainWindow()
     ApplyRememberedPanels();
 
     spdlog::info("MainWindow initialized with docking layout system");
+}
+
+void MainWindow::OpenScriptFile(const std::string& file_path) {
+    if (!script_editor_) return;
+    script_editor_->OpenFile(file_path);
+    script_editor_->SetVisible(true);  // Show the Script Editor panel
+    spdlog::info("Opened script in editor: {}", file_path);
 }
 
 MainWindow::~MainWindow() {

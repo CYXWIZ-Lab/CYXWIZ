@@ -203,6 +203,8 @@ public:
     // Exit request callback (set by Application to trigger window close)
     using ExitRequestCallback = std::function<void()>;
     void SetExitRequestCallback(ExitRequestCallback callback) { exit_request_callback_ = callback; }
+    // Opens a .py or .cyx file in the Script Editor and shows the editor.
+    void OpenScriptFile(const std::string& file_path);
 
     // Debug logging pointers (set by Application)
     void SetIdleLogPtr(bool* ptr);

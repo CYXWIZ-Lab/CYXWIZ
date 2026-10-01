@@ -188,7 +188,17 @@ void CyxWizApp::ProcessCommandLine(int argc, char** argv) {
             if (auto resolved = ResolveProjectArg(arg)) {
                 startup_project_path_ = resolved->string();
                 spdlog::info("Startup project detected: {}", startup_project_path_);
+                continue;
             }
+        }
+        // Scripts open in the Script Editor once the workspace is up
+        // (cyxwiz-engine train.py, like an editor's command line).
+        std::error_code ec;
+        const std::filesystem::path script = std::filesystem::absolute(arg, ec);
+        const std::string ext = script.extension().string();
+        if (!ec && (ext == ".py" || ext == ".cyx") && std::filesystem::is_regular_file(script, ec)) {
+            startup_scripts_.push_back(script.string());
+            spdlog::info("Startup script: {}", startup_scripts_.back());
         }
     }
 }
@@ -715,6 +725,8 @@ void CyxWizApp::Render() {
         main_window_ = std::make_unique<gui::MainWindow>();
         OpenStartupProjectIfRequested();  // This will call UpdateWindowTitle() if project opens
         OpenStartupGraphIfRequested();
+        for (const auto& script : startup_scripts_) main_window_->OpenScriptFile(script);
+        startup_scripts_.clear();
         UpdateWindowTitle();  // Update window title regardless (shows project name or just "CyxWiz Engine")
         grpc_client_ = std::make_unique<network::GRPCClient>();
         job_manager_ = std::make_unique<network::JobManager>(grpc_client_.get());
