@@ -208,6 +208,9 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
                 auto batchers = BuildSparseTrainingBatchers(
                     config, sparse_dataset, batch_size);
                 batcher = std::move(batchers.sparse_train);
+                // Train feeds CSR batches to a sparse-aware first layer; the
+                // Smoke model is dense, so densify each (bounded) batch.
+                batcher->SetSparseFeatureOutput(false);
             } catch (const std::exception& e) {
                 result.summary = std::string("Smoke Run could not batch the sparse features: ") +
                                  e.what();

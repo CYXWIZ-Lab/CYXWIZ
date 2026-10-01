@@ -4794,8 +4794,19 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         smoke_options.cache_config = GraphMaterializationCacheConfig(
             inputs ? inputs->project_root : std::filesystem::path{});
         smoke_options.should_stop = [&stop_requested]() { return stop_requested(); };
-        session.smoke_result = smoke_executor.RunTextSmoke(
-            config, nodes, links, run_id, 100, smoke_options);
+        try {
+            session.smoke_result = smoke_executor.RunTextSmoke(
+                config, nodes, links, run_id, 100, smoke_options);
+        } catch (const std::exception& e) {
+            // A Smoke failure is this step's result; the run still finishes
+            // and is saved.
+            session.smoke_result = {};
+            session.smoke_result.supported = true;
+            session.smoke_result.summary = std::string("Smoke Run threw: ") + e.what();
+            session.smoke_result.issues.push_back({
+                cyxwiz::IssueLevel::Error, -1, "SmokeRun", session.smoke_result.summary,
+                cyxwiz::errors::Training::TrainingExecutionFailed});
+        }
         session.traces.insert(session.traces.end(),
                               std::make_move_iterator(session.smoke_result.traces.begin()),
                               std::make_move_iterator(session.smoke_result.traces.end()));
