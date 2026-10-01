@@ -37,8 +37,8 @@ double Dot(const std::vector<float>& a, const std::vector<float>& b) {
     return sum;
 }
 
-double RelativeError(double analytic, double numeric) {
-    return std::fabs(analytic - numeric) / std::max(1e-3, std::fabs(analytic) + std::fabs(numeric));
+double RelativeError(double analytic, double numeric, double floor) {
+    return std::fabs(analytic - numeric) / std::max(floor, std::fabs(analytic) + std::fabs(numeric));
 }
 
 // Elements probed: all when few, otherwise evenly spread.
@@ -101,7 +101,7 @@ GradientCheckResult CheckModuleGradients(
                 minus[i] -= static_cast<float>(options.step);
                 const double numeric =
                     (loss_at(FromHost(shape, plus)) - loss_at(FromHost(shape, minus))) / (2.0 * options.step);
-                Record(result, RelativeError(analytic_input.at(i), numeric), "input");
+                Record(result, RelativeError(analytic_input.at(i), numeric, options.absolute_floor), "input");
             }
 
             // Parameter gradients.
@@ -123,7 +123,8 @@ GradientCheckResult CheckModuleGradients(
                     const double l_minus = loss_at(input);
                     module->SetParameters({{key, FromHost(value.Shape(), base)}});
                     const double numeric = (l_plus - l_minus) / (2.0 * options.step);
-                    Record(result, RelativeError(gradient->second.at(i), numeric), "parameter " + key);
+                    Record(result, RelativeError(gradient->second.at(i), numeric, options.absolute_floor),
+                           "parameter " + key);
                 }
             }
         }

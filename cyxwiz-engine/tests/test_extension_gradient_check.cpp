@@ -80,6 +80,21 @@ private:
     cyxwiz::Tensor grad_a_;
 };
 
+// y = x + sin^2(a x) / a with a = 0.8: its true gradient 1 + sin(2ax) comes
+// close to zero, where 32-bit rounding must not read as a failure.
+class SnakeLike : public cyxwiz::Module {
+public:
+    cyxwiz::Tensor Forward(const cyxwiz::Tensor& x) override {
+        input_cache_ = x;
+        const auto s = (x * 0.8f).Sin();
+        return x + (s * s) / 0.8f;
+    }
+    cyxwiz::Tensor Backward(const cyxwiz::Tensor& grad) override {
+        return grad * ((input_cache_ * 1.6f).Sin() + 1.0f);
+    }
+    std::string GetName() const override { return "SnakeLike"; }
+};
+
 class Throws : public cyxwiz::Module {
 public:
     cyxwiz::Tensor Forward(const cyxwiz::Tensor&) override { throw std::runtime_error("boom in forward"); }
@@ -100,6 +115,13 @@ int main() {
         const auto r = cyxwiz::CheckModuleGradients(
             [](const std::vector<size_t>&) { return std::make_unique<Scale>(false); });
         Check(r.passed && r.error.empty(), "Scale (learnable a): " + cyxwiz::DescribeGradientCheck(r));
+    }
+    {
+        cyxwiz::GradientCheckOptions options;
+        options.input_shapes = {{4, 16}, {3, 5, 8}};  // many inputs, some near the zero-gradient points
+        const auto r = cyxwiz::CheckModuleGradients(
+            [](const std::vector<size_t>&) { return std::make_unique<SnakeLike>(); }, options);
+        Check(r.passed, "a gradient that passes near zero (Snake-like): " + cyxwiz::DescribeGradientCheck(r));
     }
     std::cout << "built-in modules pass (the checker is not too strict)\n";
     {

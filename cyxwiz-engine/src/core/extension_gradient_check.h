@@ -24,6 +24,11 @@ struct GradientCheckOptions {
     float input_range = 2.0f;      // inputs uniform in [-range, range]
     double step = 1e-2;            // finite-difference step
     double tolerance = 2e-2;       // largest accepted relative error
+    // Relative error is |analytic - numeric| / max(floor, |analytic| + |numeric|).
+    // The floor keeps 32-bit rounding on a gradient near zero (Snake where
+    // sin(2ax) is close to -1: true value 4e-4, rounding 6e-5) from reading
+    // as a 6% error; wrong gradients differ by 0.1 or more.
+    double absolute_floor = 5e-2;
     size_t max_elements = 48;      // elements probed per tensor
 };
 
