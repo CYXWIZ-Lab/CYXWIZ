@@ -11,6 +11,7 @@
 #include "model_builder.h"
 #include "pipeline_materializer.h"
 #include "sparse_feature_dataset_batcher.h"
+#include "training_batcher_setup.h"
 #include "text_dataset_batcher.h"
 #include <algorithm>
 #include <chrono>
@@ -199,15 +200,23 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
                 });
                 return result;
             }
-            batcher = std::make_unique<SparseFeatureDatasetBatcher>(
-                sparse_dataset,
-                static_cast<size_t>(batch_size),
-                /*shuffle=*/false,
-                config.train_ratio,
-                /*is_training=*/true,
-                BatcherPhase::Train,
-                0.0f,
-                static_cast<uint32_t>(config.dataloader_seed));
+            // Same training batcher Train builds from the Data Loader and Data
+            // Split settings (seeded shuffle, stratified split, class
+            // balancing), so the bounded sample is representative instead of
+            // the first rows of a label-ordered file.
+            try {
+                auto batchers = BuildSparseTrainingBatchers(
+                    config, sparse_dataset, batch_size);
+                batcher = std::move(batchers.sparse_train);
+            } catch (const std::exception& e) {
+                result.summary = std::string("Smoke Run could not batch the sparse features: ") +
+                                 e.what();
+                result.issues.push_back({
+                    IssueLevel::Error, -1, "SparseFeatureDataset", result.summary,
+                    errors::Data::MaterializationFailed
+                });
+                return result;
+            }
             batcher_source = "materialized sparse features";
             config.input_size = static_cast<size_t>(sparse_dataset->GetNumFeatures());
             config.input_shape = {config.input_size};
@@ -241,7 +250,7 @@ SmokeRunResult SmokeRunExecutor::RunTextSmoke(
                 arrow_dataset,
                 label_column,
                 static_cast<size_t>(batch_size),
-                /*shuffle=*/false,
+                config.shuffle,
                 config.train_ratio,
                 /*is_training=*/true,
                 "",

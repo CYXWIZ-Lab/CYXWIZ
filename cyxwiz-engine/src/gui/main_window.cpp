@@ -4768,9 +4768,15 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         });
     } else if (run_smoke) {
         begin_step("smoke");
-        cyxwiz::TextPreprocessingTracer text_tracer;
-        auto preprocessing_traces = text_tracer.TraceSample(
-            config, nodes, run_id, selected_sample_index);
+        // The tokenizer/vocabulary/padding trace describes the plain text
+        // dataset path. A graph with table operators (for example TF-IDF)
+        // never pads, so its operators are traced by the operator trace above.
+        std::vector<cyxwiz::DebugTraceRecord> preprocessing_traces;
+        if (cyxwiz::PipelineMaterializer::CountTableOperatorNodes(nodes) == 0) {
+            cyxwiz::TextPreprocessingTracer text_tracer;
+            preprocessing_traces = text_tracer.TraceSample(
+                config, nodes, run_id, selected_sample_index);
+        }
         session.traces.insert(session.traces.end(),
                               std::make_move_iterator(preprocessing_traces.begin()),
                               std::make_move_iterator(preprocessing_traces.end()));
