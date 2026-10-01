@@ -315,6 +315,7 @@ set(ENGINE_SOURCES
     src/core/compiled_node_presentation.cpp
     src/core/menu_presentation.cpp
     src/core/start_page_presentation.cpp
+    src/core/python_setup_presentation.cpp
     src/core/live_graph_compile.cpp
     src/core/remote_job_presentation.cpp
     src/gui/node_config_dialog.cpp
@@ -398,7 +399,7 @@ set(ENGINE_SOURCES
     src/gui/panels/visualization_panel.cpp
     src/gui/panels/connection_dialog.cpp
     src/gui/panels/connection_dialog_job_fit.cpp
-    src/gui/dialogs/python_setup_wizard.cpp
+    src/gui/dialogs/python_setup_dialog.cpp
     src/gui/dialogs/start_page.cpp
     # Phase 5: Dataset Manager removed - functionality moved to node-based workflow
     # Interactive annotation tools (Phase 4) - kept for future Annotation Editor panel
@@ -713,7 +714,7 @@ set(ENGINE_HEADERS
     src/gui/panels/table_viewer.h
     src/gui/panels/data_explorer_panel.h
     src/gui/panels/connection_dialog.h
-    src/gui/dialogs/python_setup_wizard.h
+    src/gui/dialogs/python_setup_dialog.h
     src/gui/dialogs/start_page.h
     # Interactive annotation tools (Phase 4)
     src/gui/annotation/annotation_tools.h

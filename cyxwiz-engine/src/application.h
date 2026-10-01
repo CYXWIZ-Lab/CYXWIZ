@@ -8,7 +8,7 @@ struct ImGuiIO;
 struct ImFont;
 
 namespace cyxwiz {
-    class PythonSetupWizard;
+    class PythonSetupDialog;
     class StartPage;
 }
 
@@ -35,7 +35,7 @@ private:
     void OpenStartupProjectIfRequested();
     void OpenStartupGraphIfRequested();
     void UpdateWindowTitle();
-    void ScanForPython();  // Scan for Python on startup (no initialization)
+    void RenderPythonWait();
     void MainLoop();
     void HandleInput();
     void Update(float delta_time);
@@ -55,23 +55,11 @@ private:
     std::string resolved_font_base_path_;  // absolute, found on first load
     std::string imgui_ini_path_;  // Store ini file path
 
-    // Python setup wizard (shown on first launch if no Python configured)
-    std::unique_ptr<cyxwiz::PythonSetupWizard> python_wizard_;
+    // Python scan on a worker plus the Python dialog (TOFIX129 A2-3).
+    std::unique_ptr<cyxwiz::PythonSetupDialog> python_setup_;
     bool python_configured_ = false;
 
-    // Python detection (scanned on startup, not initialized)
-    struct {
-        bool scanned = false;
-        bool found = false;
-        bool compatible = false;
-        std::string version;
-        int major = 0;
-        int minor = 0;
-        std::string path;
-        std::string warning;  // Version warning message
-    } python_scan_;
-
-    // Start page (shown after Python wizard if no project specified)
+    // Start page (shown when no project was specified)
     std::unique_ptr<cyxwiz::StartPage> start_page_;
     bool project_selected_ = false;
 

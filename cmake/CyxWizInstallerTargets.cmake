@@ -303,6 +303,20 @@ if(CYXWIZ_BUILD_TESTS)
         COMMAND test_start_page_presentation
     )
 
+    # Python for scripting: start page chip and Python dialog (TOFIX129 A2-3).
+    add_executable(test_python_setup_presentation
+        "${_cyxwiz_installer_engine_dir}/tests/test_python_setup_presentation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/python_setup_presentation.cpp"
+    )
+    set_target_properties(test_python_setup_presentation PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME python_setup_presentation_contract
+        COMMAND test_python_setup_presentation
+    )
+
     add_executable(test_installer_product_removal
         "${_cyxwiz_installer_engine_dir}/tests/test_installer_product_removal.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"

@@ -9,7 +9,7 @@
 #include "gui/ui_tokens.h"
 #include "gui/ui_widgets.h"
 #include "gui/theme.h"
-#include "gui/dialogs/python_setup_wizard.h"
+#include "gui/dialogs/python_setup_dialog.h"
 #include "gui/dialogs/start_page.h"
 #include "auth/auth_client.h"
 #include "network/grpc_client.h"
@@ -237,54 +237,6 @@ void CyxWizApp::UpdateWindowTitle() {
     spdlog::debug("Window title updated to: {}", title);
 }
 
-void CyxWizApp::ScanForPython() {
-    spdlog::info("Scanning for Python installation...");
-
-    auto& config = cyxwiz::core::EngineConfig::Instance();
-
-    // First check if system Python is already configured
-    if (config.HasSystemPython()) {
-        auto python_info = cyxwiz::core::PythonDetector::ValidatePythonInstallation(config.GetSystemPythonPath());
-        if (python_info) {
-            python_scan_.scanned = true;
-            python_scan_.found = true;
-            python_scan_.version = python_info->version;
-            python_scan_.major = python_info->major;
-            python_scan_.minor = python_info->minor;
-            python_scan_.path = python_info->executable_path;
-            python_scan_.compatible = cyxwiz::core::PythonDetector::MeetsRequirements(*python_info);
-            if (!python_scan_.compatible) {
-                python_scan_.warning = cyxwiz::core::PythonDetector::GetRequirementError(*python_info);
-                spdlog::warn("{}", python_scan_.warning);
-            }
-
-            spdlog::info("Python {} detected at: {}", python_scan_.version, python_scan_.path);
-            return;
-        }
-    }
-
-    // No configured Python or validation failed - scan for available Python
-    auto best_python = cyxwiz::core::PythonDetector::FindBestPython();
-    if (best_python) {
-        python_scan_.scanned = true;
-        python_scan_.found = true;
-        python_scan_.version = best_python->version;
-        python_scan_.major = best_python->major;
-        python_scan_.minor = best_python->minor;
-        python_scan_.path = best_python->executable_path;
-        python_scan_.compatible = true;
-        // Use it for this session (project venvs, scripting) without saving.
-        config.SetDetectedPythonPath(best_python->executable_path);
-
-        spdlog::info("Python {} detected at: {}", python_scan_.version, python_scan_.path);
-    } else {
-        python_scan_.scanned = true;
-        python_scan_.found = false;
-        python_scan_.warning = "No supported Python installation found. Please install Python 3.12 or 3.13.";
-        spdlog::warn("{}", python_scan_.warning);
-    }
-}
-
 bool CyxWizApp::Initialize() {
     // Setup GLFW
     glfwSetErrorCallback(glfw_error_callback);
@@ -440,25 +392,14 @@ bool CyxWizApp::Initialize() {
     spdlog::info("Initial font atlas texture uploaded successfully");
 
 #ifdef CYXWIZ_HAS_PYTHON
-    // Scan for Python on startup (no initialization yet).
-    ScanForPython();
-    python_configured_ = python_scan_.found && python_scan_.compatible;
-
-    if (!python_configured_) {
-        spdlog::info("No compatible system Python configured - showing setup wizard");
-        python_wizard_ = std::make_unique<cyxwiz::PythonSetupWizard>();
-        // Main window will be created after wizard completes.
-        return true;
-    }
+    // The Python scan runs on a worker while the start page is up (TOFIX129
+    // A2-3); the start page chip shows its state.
+    python_setup_ = std::make_unique<cyxwiz::PythonSetupDialog>();
+    python_setup_->StartScan();
 #else
     // Do not block the core Engine on an interpreter when scripting was not built.
     python_configured_ = true;
     spdlog::info("Python scripting support is disabled in this build; skipping interpreter setup");
-#endif
-#ifdef CYXWIZ_HAS_PYTHON
-    spdlog::info("Compatible Python configured - showing start page");
-#else
-    spdlog::info("Showing start page without Python scripting support");
 #endif
     start_page_ = std::make_unique<cyxwiz::StartPage>();
 
@@ -689,6 +630,16 @@ void CyxWizApp::Update(float delta_time) {
     cyxwiz::AsyncTaskManager::Instance().ProcessCompletedCallbacks();
 }
 
+void CyxWizApp::RenderPythonWait() {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::Begin("##python_wait", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoMove);
+    cyxwiz::ui::StatusText(cyxwiz::ui::Status::Verifying, "Checking Python before opening the workspace...");
+    ImGui::End();
+}
+
 void CyxWizApp::Render() {
     RefreshFontRasterizerDensity();
     // Interface text size changed in Preferences > Appearance: new fonts
@@ -703,32 +654,25 @@ void CyxWizApp::Render() {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    // Render Python setup wizard if active (shown on first launch)
-    if (python_wizard_) {
-        bool wizard_still_active = python_wizard_->Render();
-
-        if (!wizard_still_active) {
-            // Wizard completed or cancelled
-            auto result = python_wizard_->GetResult();
-
-            if (result == cyxwiz::PythonSetupWizard::Result::Completed) {
-                spdlog::info("Python setup wizard completed successfully");
-                python_configured_ = true;
-                python_wizard_.reset();
-
-                // Check if project needs to be selected
-                // Show start page after Python wizard completes
-                spdlog::info("Python setup complete - showing start page");
-                start_page_ = std::make_unique<cyxwiz::StartPage>();
-
-            } else if (result == cyxwiz::PythonSetupWizard::Result::Cancelled) {
-                spdlog::info("Python setup wizard cancelled - exiting application");
-                glfwSetWindowShouldClose(window_, GLFW_TRUE);
-            }
+    // Python scan and dialog (TOFIX129 A2-3).
+    if (python_setup_) {
+        python_setup_->Poll();
+        if (start_page_) {
+            const auto view = python_setup_->View();
+            cyxwiz::StartPage::PythonStatus status;
+            status.text = view.chip;
+            status.level = view.level;
+            status.on_click = [this]() { python_setup_->Open(); };
+            start_page_->SetPythonStatus(std::move(status));
         }
+        python_setup_->Render();
+        if (python_setup_->Settled()) python_configured_ = true;
+        // A project was chosen before the scan finished: say why the
+        // workspace has not opened yet.
+        if (!start_page_ && project_selected_ && python_setup_->Scanning()) RenderPythonWait();
     }
 
-    // Render start page if active (shown after Python wizard)
+    // Render start page if active
     if (start_page_) {
         bool page_still_active = start_page_->Render();
 
