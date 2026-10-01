@@ -25,7 +25,6 @@ namespace cyxwiz {
 
 ToolbarPanel::ToolbarPanel()
     : Panel("Toolbar", true)
-    , show_about_dialog_(false)
     , route_qualification_service_(
           std::make_shared<RouteQualificationService>())
 {

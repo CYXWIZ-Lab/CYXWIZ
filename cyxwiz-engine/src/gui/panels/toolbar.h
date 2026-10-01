@@ -8,6 +8,7 @@
 #include "../../core/menu_presentation.h"
 #include "../dialogs/create_project_dialog.h"
 #include "../dialogs/new_script_dialog.h"
+#include "../dialogs/about_dialog.h"
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -384,7 +385,6 @@ private:
     std::string OpenFolderDialog();
     std::string OpenFileDialog(const char* filter, const char* title);
 
-    bool show_about_dialog_;
     bool show_account_settings_dialog_ = false;
     bool auto_save_enabled_ = false;
     float auto_save_interval_ = 60.0f;  // Auto save every 60 seconds
@@ -478,6 +478,7 @@ private:
     // Project creation state
     CreateProjectDialog create_project_dialog_;  // File > New Project
     NewScriptDialog new_script_dialog_;          // File / Script > New Script
+    AboutDialog about_dialog_;                   // Help > About CyxWiz
 
     // Save As dialog state
     bool show_save_as_dialog_ = false;

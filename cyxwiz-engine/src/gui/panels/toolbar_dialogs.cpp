@@ -24,23 +24,7 @@ void ToolbarPanel::RenderProjectDialogs() {
     // File > New Project: the same dialog as the start page (TOFIX129 A2-1).
     create_project_dialog_.Render();
 
-    if (show_about_dialog_) {
-        ImGui::OpenPopup("About CyxWiz");
-        if (ImGui::BeginPopupModal("About CyxWiz", &show_about_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("CyxWiz Engine");
-            ImGui::Text("Version %s", cyxwiz::GetVersionString());
-            ImGui::Separator();
-            ImGui::Text("Decentralized ML Compute Platform");
-            ImGui::Text("Built with C++, ImGui, ArrayFire, and Solana");
-            ImGui::Separator();
-
-            if (ImGui::Button("OK", ImVec2(120, 0))) {
-                show_about_dialog_ = false;
-            }
-
-            ImGui::EndPopup();
-        }
-    }
+    about_dialog_.Render();  // Help > About CyxWiz (TOFIX129 A2-7)
 
     // Login Required popup - shown when user tries to access server features without logging in
     if (show_login_required_popup_) {

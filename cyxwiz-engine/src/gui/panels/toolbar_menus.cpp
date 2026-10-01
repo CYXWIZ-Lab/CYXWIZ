@@ -398,7 +398,7 @@ void ToolbarPanel::BuildActionHandlers() {
     call("edit.toggle_block_comment", toggle_block_comment_callback_);
 
     // View
-    h["view.command_palette"] = [this](const std::string&) { show_command_palette_ = true; };
+    h["view.command_palette"] = [this](const std::string&) { OpenCommandPalette(); };
     h["view.panel"] = [](const std::string& name) { ShowSidebarPanel(name, true); };
     call("view.save_layout", save_layout_callback_);
     call("view.reset_layout", reset_layout_callback_);
@@ -575,7 +575,7 @@ void ToolbarPanel::BuildActionHandlers() {
     h["help.browse_tutorials"] = [](const std::string&) { TutorialSystem::Instance().OpenTutorialBrowser(); };
     h["help.shortcuts"] = [this](const std::string&) { OpenPreferences("Shortcuts"); };
     h["help.report_issue"] = [](const std::string&) { ui::OpenUrl("https://github.com/CYXWIZ-Lab/CYXWIZ/issues"); };
-    h["help.about"] = [this](const std::string&) { show_about_dialog_ = true; };
+    h["help.about"] = [this](const std::string&) { about_dialog_.Open(); };
 
     // Account
     h["account.settings"] = [this](const std::string&) { show_account_settings_dialog_ = true; };

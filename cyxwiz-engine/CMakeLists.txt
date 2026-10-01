@@ -360,6 +360,7 @@ set(ENGINE_SOURCES
     src/gui/ui_platform.cpp
     src/gui/dialogs/create_project_dialog.cpp
     src/gui/dialogs/new_script_dialog.cpp
+    src/gui/dialogs/about_dialog.cpp
     src/gui/panels/toolbar_search_dialogs.cpp
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp
@@ -884,6 +885,19 @@ set(ENGINE_HEADERS
     src/utils/shape_utils.h
     src/utils/labeling_utils.h
 )
+
+# Commit shown in Help > About (TOFIX129). Read at configure time.
+find_package(Git QUIET)
+set(CYXWIZ_GIT_COMMIT "unknown")
+if(GIT_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                    OUTPUT_VARIABLE CYXWIZ_GIT_COMMIT_OUT
+                    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE CYXWIZ_GIT_RESULT)
+    if(CYXWIZ_GIT_RESULT EQUAL 0 AND CYXWIZ_GIT_COMMIT_OUT)
+        set(CYXWIZ_GIT_COMMIT "${CYXWIZ_GIT_COMMIT_OUT}")
+    endif()
+endif()
 
 add_executable(cyxwiz-engine
     ${ENGINE_SOURCES}
@@ -5300,3 +5314,5 @@ target_compile_definitions(test_dataset_file_server PRIVATE
     CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 target_compile_definitions(test_graph_training_job PRIVATE
     CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+
+set_source_files_properties(src/gui/dialogs/about_dialog.cpp PROPERTIES COMPILE_DEFINITIONS "CYXWIZ_GIT_COMMIT=\"${CYXWIZ_GIT_COMMIT}\"")
