@@ -365,7 +365,7 @@ void PythonSandbox::SetupTimeoutWatchdog() {
         // - Windows: Use sys.settrace (checks elapsed time on each line)
         // - Fallback: sys.settrace works everywhere but can't interrupt C code
 
-        long timeout_ms = std::chrono::duration_cast<std::chrono::milliseconds>(config_.timeout).count();
+        const long long timeout_ms = std::chrono::duration_cast<std::chrono::milliseconds>(config_.timeout).count();
 
         std::string timeout_code = R"PY(
 import sys
@@ -572,7 +572,7 @@ bool PythonSandbox::CheckASTForDangerousPatterns(const std::string& code, std::s
         py::object tree;
         try {
             tree = ast.attr("parse")(code);
-        } catch (const py::error_already_set& e) {
+        } catch (const py::error_already_set&) {
             // Syntax error in code - let it through, Python will catch it later
             // AST check is for security, not syntax validation
             return true;

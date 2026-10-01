@@ -312,7 +312,8 @@ bool DataTable::SaveToTXT(const std::string& filepath, char delimiter) const {
 // HDF5 Support
 // ============================================================================
 
-bool DataTable::LoadFromHDF5(const std::string& filepath, const std::string& dataset_name) {
+bool DataTable::LoadFromHDF5([[maybe_unused]] const std::string& filepath,
+                              [[maybe_unused]] const std::string& dataset_name) {
 #ifdef CYXWIZ_HAS_HDF5
     try {
         HighFive::File file(filepath, HighFive::File::ReadOnly);
@@ -440,7 +441,8 @@ bool DataTable::LoadFromHDF5(const std::string& filepath, const std::string& dat
 #endif
 }
 
-bool DataTable::SaveToHDF5(const std::string& filepath, const std::string& dataset_name) const {
+bool DataTable::SaveToHDF5([[maybe_unused]] const std::string& filepath,
+                            [[maybe_unused]] const std::string& dataset_name) const {
 #ifdef CYXWIZ_HAS_HDF5
     try {
         HighFive::File file(filepath, HighFive::File::Truncate);
