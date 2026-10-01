@@ -4,6 +4,7 @@
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
+#include <cfloat>
 #include <cstring>
 #include <limits>
 #include <numeric>
@@ -50,6 +51,9 @@ void TableViewerPanel::Render() {
 
     // Not docked yet (layout saved before it had a slot): open at a usable size.
     ImGui::SetNextWindowSize(ImVec2(900.0f, 560.0f), ImGuiCond_FirstUseEver);
+    // A size saved while floating can be a sliver (121 px wide was seen):
+    // floating, the viewer is never narrower than its toolbar and a few columns.
+    ImGui::SetNextWindowSizeConstraints(ImVec2(480.0f, 300.0f), ImVec2(FLT_MAX, FLT_MAX));
     // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
     const bool expanded = ImGui::Begin(GetName(), &visible_);
     if (expanded) {
