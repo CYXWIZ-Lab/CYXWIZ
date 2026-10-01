@@ -4,6 +4,7 @@
 #include "gui/console.h"
 #include "gui/display_density.h"
 #include "gui/editor_fonts.h"
+#include "gui/ui_fonts.h"
 #include "gui/theme.h"
 #include "gui/dialogs/python_setup_wizard.h"
 #include "gui/dialogs/start_page.h"
@@ -19,6 +20,7 @@
 #include "core/texture_manager.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>  // for _exit()
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -502,6 +504,12 @@ int CyxWizApp::Run() {
 
         HandleInput();
         Update(delta_time);
+        // A minimised window has nothing to show: keep background work and
+        // event handling going, skip the frame (TOFIX129 step 0.7).
+        if (glfwGetWindowAttrib(window_, GLFW_ICONIFIED)) {
+            glfwWaitEventsTimeout(MINIMISED_WAIT_TIME);
+            continue;
+        }
         Render();
     }
 
@@ -726,6 +734,8 @@ void CyxWizApp::HandleInput() {
     // Track state transitions for debugging
     static bool was_idle = false;
 
+    const bool focused = glfwGetWindowAttrib(window_, GLFW_FOCUSED) != 0;
+
     if (is_idle_ && !training_active) {
         // Use wait with timeout for reduced CPU/GPU usage when idle
         glfwWaitEventsTimeout(IDLE_FRAME_TIME);
@@ -736,6 +746,11 @@ void CyxWizApp::HandleInput() {
             }
             was_idle = true;
         }
+    } else if (!focused) {
+        // Another window has focus: 30 frames a second is plenty for a
+        // training chart in the background (TOFIX129 step 0.7).
+        glfwWaitEventsTimeout(UNFOCUSED_FRAME_TIME);
+        was_idle = false;
     } else {
         glfwPollEvents();
 
@@ -1026,6 +1041,7 @@ void CyxWizApp::RebuildFontAtlas() {
     ImGui_ImplOpenGL3_DestroyFontsTexture();
     io.FontDefault = nullptr;
     cyxwiz::gui::ClearEditorMonoFonts();
+    cyxwiz::ui::ClearFonts();
     font_regular_ = nullptr;
     font_medium_ = nullptr;
     font_bold_ = nullptr;
@@ -1231,6 +1247,22 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
         }
     }
 
+    // Heading font: Inter-Medium at a larger size, for section and dialog
+    // titles (TOFIX129). Screens get it through cyxwiz::ui::GetFont.
+    const float heading_font_size = std::round(base_font_size * 1.35f);
+    if (std::filesystem::exists(inter_medium)) {
+        ImFont* heading = io.Fonts->AddFontFromFileTTF(inter_medium.c_str(), heading_font_size, &font_config);
+        if (heading) {
+            spdlog::info("Loaded Inter-Medium heading ({}px)", heading_font_size);
+            if (std::filesystem::exists(fa_solid)) {
+                icon_config.GlyphMinAdvanceX = heading_font_size;
+                io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), heading_font_size - 1.0f, &icon_config, icon_ranges);
+                icon_config.GlyphMinAdvanceX = base_font_size;
+            }
+            cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Heading, heading);
+        }
+    }
+
     // Load bold font
     if (std::filesystem::exists(inter_bold)) {
         font_bold_ = io.Fonts->AddFontFromFileTTF(inter_bold.c_str(), base_font_size, &font_config);
@@ -1295,6 +1327,9 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     }
 
     io.FontDefault = font_regular_;
+    cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Regular, font_regular_);
+    cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Medium, font_medium_);
+    cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Bold, font_bold_);
 
     // Build font atlas
     spdlog::info("Building font atlas...");

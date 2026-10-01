@@ -2,6 +2,7 @@
 
 #include "icons.h"
 #include "ui_buttons.h"
+#include "ui_fonts.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -33,7 +34,10 @@ ImVec2 WorkCenter() {
 void SectionHeader(const char* title, const char* subtitle) {
     const Tokens& t = CurrentTokens();
     ImGui::Spacing();
-    ImGui::TextColored(t.text_bright, "%s", title);
+    {
+        FontScope medium(Font::Medium);
+        ImGui::TextColored(t.text_bright, "%s", title);
+    }
     if (subtitle && subtitle[0]) {
         ImGui::SameLine(0.0f, t.space_lg);
         ImGui::TextColored(t.text_dim, "%s", subtitle);
@@ -63,7 +67,10 @@ void EndCard() {
 
 void CardHeader(const char* title, const char* subtitle, const StatusStyle* status) {
     const Tokens& t = CurrentTokens();
-    ImGui::TextColored(t.text_bright, "%s", title);
+    {
+        FontScope medium(Font::Medium);
+        ImGui::TextColored(t.text_bright, "%s", title);
+    }
     if (subtitle && subtitle[0]) {
         ImGui::SameLine(0.0f, t.space_md);
         ImGui::TextColored(t.text_dim, "%s", subtitle);

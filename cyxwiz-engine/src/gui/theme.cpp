@@ -124,7 +124,10 @@ Theme::PresetSwatch Theme::GetPresetSwatch(ThemePreset preset) {
 
 void Theme::ApplyPreset(ThemePreset preset) {
     current_preset_ = preset;
-    config_.child_border_size = 1.0f;
+    // Start from the defaults: a preset that does not set its own padding
+    // or spacing must not inherit the previous preset's (TOFIX129 0.4).
+    config_ = ThemeConfig{};
+    ImGui::GetStyle().TabBarOverlineSize = 2.0f;
 
     switch (preset) {
         // CyxWiz branded

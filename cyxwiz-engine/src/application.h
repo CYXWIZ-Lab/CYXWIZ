@@ -102,6 +102,8 @@ private:
     bool is_idle_ = false;
     static constexpr double IDLE_TIMEOUT = 1.0;  // Seconds before entering idle mode
     static constexpr double IDLE_FRAME_TIME = 0.1;  // 10 FPS when idle
+    static constexpr double UNFOCUSED_FRAME_TIME = 1.0 / 30.0;  // 30 FPS when another window has focus
+    static constexpr double MINIMISED_WAIT_TIME = 0.25;  // no frames while minimised; wake 4x a second
 
     // Debug logging flags (can be toggled via console commands)
     bool log_idle_transitions_ = false;  // Log idle mode enter/exit
