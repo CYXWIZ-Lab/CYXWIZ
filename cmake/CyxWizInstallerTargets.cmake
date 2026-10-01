@@ -339,7 +339,12 @@ if(CYXWIZ_BUILD_TESTS)
     add_executable(test_argb_colour
         "${_cyxwiz_installer_engine_dir}/tests/test_argb_colour.cpp"
     )
-    foreach(_cyxwiz_p0_test test_python_tokenizer test_argb_colour)
+    # Find/Replace and editor columns (TOFIX133 P0 item 13).
+    add_executable(test_text_search
+        "${_cyxwiz_installer_engine_dir}/tests/test_text_search.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/text_search.cpp"
+    )
+    foreach(_cyxwiz_p0_test test_python_tokenizer test_argb_colour test_text_search)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

@@ -14,9 +14,8 @@ namespace cyxwiz {
 // ============================================================================
 
 void ScriptEditorPanel::Undo() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     if (editor.CanUndo()) {
@@ -26,9 +25,8 @@ void ScriptEditorPanel::Undo() {
 }
 
 void ScriptEditorPanel::Redo() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     if (editor.CanRedo()) {
@@ -38,9 +36,8 @@ void ScriptEditorPanel::Redo() {
 }
 
 void ScriptEditorPanel::Cut() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
 
@@ -68,18 +65,16 @@ void ScriptEditorPanel::Cut() {
 }
 
 void ScriptEditorPanel::Copy() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     editor.Copy();
 }
 
 void ScriptEditorPanel::Paste() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     editor.Paste();
@@ -87,9 +82,8 @@ void ScriptEditorPanel::Paste() {
 }
 
 void ScriptEditorPanel::Delete() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
 
@@ -117,9 +111,8 @@ void ScriptEditorPanel::Delete() {
 }
 
 void ScriptEditorPanel::SelectAll() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     editor.SelectAll();
@@ -130,9 +123,8 @@ void ScriptEditorPanel::SelectAll() {
 // ============================================================================
 
 void ScriptEditorPanel::GoToLine(int line_number) {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     int total_lines = editor.GetTotalLines();
@@ -154,9 +146,8 @@ void ScriptEditorPanel::GoToLine(int line_number) {
 // ============================================================================
 
 void ScriptEditorPanel::DuplicateLine() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     auto cursor = editor.GetCursorPosition();
@@ -177,9 +168,8 @@ void ScriptEditorPanel::DuplicateLine() {
 }
 
 void ScriptEditorPanel::MoveLineUp() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     auto cursor = editor.GetCursorPosition();
@@ -210,9 +200,8 @@ void ScriptEditorPanel::MoveLineUp() {
 }
 
 void ScriptEditorPanel::MoveLineDown() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     auto cursor = editor.GetCursorPosition();
@@ -239,9 +228,8 @@ void ScriptEditorPanel::MoveLineDown() {
 }
 
 void ScriptEditorPanel::Indent() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
 
@@ -282,9 +270,8 @@ void ScriptEditorPanel::Indent() {
 }
 
 void ScriptEditorPanel::Outdent() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     auto cursor = editor.GetCursorPosition();
@@ -335,9 +322,8 @@ void ScriptEditorPanel::Outdent() {
 // ============================================================================
 
 void ScriptEditorPanel::TransformToUppercase() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     if (!editor.HasSelection()) {
@@ -357,9 +343,8 @@ void ScriptEditorPanel::TransformToUppercase() {
 }
 
 void ScriptEditorPanel::TransformToLowercase() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     if (!editor.HasSelection()) {
@@ -379,9 +364,8 @@ void ScriptEditorPanel::TransformToLowercase() {
 }
 
 void ScriptEditorPanel::TransformToTitleCase() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     if (!editor.HasSelection()) {
@@ -415,9 +399,8 @@ void ScriptEditorPanel::TransformToTitleCase() {
 // ============================================================================
 
 void ScriptEditorPanel::SortLinesAscending() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     if (!editor.HasSelection()) {
@@ -456,9 +439,8 @@ void ScriptEditorPanel::SortLinesAscending() {
 }
 
 void ScriptEditorPanel::SortLinesDescending() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     if (!editor.HasSelection()) {
@@ -497,9 +479,8 @@ void ScriptEditorPanel::SortLinesDescending() {
 }
 
 void ScriptEditorPanel::JoinLines() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
     if (!editor.HasSelection()) {
@@ -537,9 +518,8 @@ void ScriptEditorPanel::JoinLines() {
 // ==================== Comment Operations ====================
 
 void ScriptEditorPanel::ToggleLineComment() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
 
@@ -591,9 +571,8 @@ void ScriptEditorPanel::ToggleLineComment() {
 }
 
 void ScriptEditorPanel::ToggleBlockComment() {
-    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) {
-        return;
-    }
+    // Only on the text buffer the user sees (TOFIX133 P0 item 14).
+    if (!IsActiveTabTextMode()) return;
 
     auto& editor = tabs_[active_tab_index_]->editor;
 

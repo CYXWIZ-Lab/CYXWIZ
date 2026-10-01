@@ -35,6 +35,12 @@ int main() {
     Check(!CanWriteTab(true, false, false), "loading tab is not writable");
     Check(!CanWriteTab(false, false, true), "large-file view is read-only");
 
+    // Item 14: text operations only on the visible text buffer.
+    Check(UsesTextBuffer(false, false, false, false), "text mode uses the buffer");
+    Check(!UsesTextBuffer(false, false, false, true), "notebook mode hides the buffer");
+    Check(!UsesTextBuffer(false, false, true, false), "large-file view has no buffer");
+    Check(!UsesTextBuffer(false, true, false, false), "failed load has no buffer");
+
     // Item 2: Save As keeps the extension the user typed.
     Check(SaveAsPath("C:/w/x.py", "Untitled1.cyx") == "C:/w/x.py", "x.py stays x.py");
     Check(SaveAsPath("C:/w/notes.cyx", "a.py") == "C:/w/notes.cyx", "typed .cyx kept");

@@ -204,6 +204,7 @@ private:
     void CancelTabTasks(EditorTab& tab);
     int FindTabIndex(std::uint64_t document_id) const;
     bool IsActiveTabEditable() const;
+    bool IsActiveTabTextMode() const;  // editable and showing its text buffer (not notebook mode)
 
     // Rendering functions
     void RenderTabBar();

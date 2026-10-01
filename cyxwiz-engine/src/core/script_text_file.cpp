@@ -85,6 +85,10 @@ bool CanWriteTab(bool loading, bool load_failed, bool large_file_view) {
     return !loading && !load_failed && !large_file_view;
 }
 
+bool UsesTextBuffer(bool loading, bool load_failed, bool large_file_view, bool notebook_mode) {
+    return CanWriteTab(loading, load_failed, large_file_view) && !notebook_mode;
+}
+
 std::string SaveAsPath(const std::string& chosen, const std::string& current_name) {
     namespace fs = std::filesystem;
     if (chosen.empty()) return chosen;

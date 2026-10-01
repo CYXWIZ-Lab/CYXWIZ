@@ -33,6 +33,10 @@ bool WriteAtomically(const std::string& path, const std::string& bytes, std::str
 // A failed or cancelled load leaves an empty editor bound to the file.
 bool CanWriteTab(bool loading, bool load_failed, bool large_file_view);
 
+// Text operations (edit, line, find, run selection/section) act on the
+// tab's text buffer, which is hidden in notebook mode (TOFIX133 P0 item 14).
+bool UsesTextBuffer(bool loading, bool load_failed, bool large_file_view, bool notebook_mode);
+
 // Save As keeps the extension the user typed (x.py stays x.py). Without one,
 // the tab's current extension is used, else ".cyx".
 std::string SaveAsPath(const std::string& chosen, const std::string& current_name);

@@ -295,6 +295,12 @@ void ScriptEditorPanel::RetryLoad(int tab_index) {
     OpenFileAsync(tab->document_id, tab->filepath);
 }
 
+bool ScriptEditorPanel::IsActiveTabTextMode() const {
+    if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) return false;
+    const auto& tab = tabs_[active_tab_index_];
+    return tab && scriptfile::UsesTextBuffer(tab->is_loading, tab->load_failed, tab->is_large_file, tab->cell_mode);
+}
+
 int ScriptEditorPanel::FindTabIndex(std::uint64_t document_id) const {
     for (int index = 0; index < static_cast<int>(tabs_.size()); ++index) {
         if (tabs_[index] && tabs_[index]->document_id == document_id) {
