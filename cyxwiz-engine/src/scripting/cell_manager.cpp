@@ -325,6 +325,7 @@ bool CellManager::TryRestart() {
     if (is_running_) return false;
     if (scripting_engine_ && !scripting_engine_->DropNotebookNamespace(namespace_key_)) return false;
     restart_pending_ = false;
+    ++run_generation_;
     execution_counter_ = 0;
     batch_position_ = batch_total_ = 0;
     stopped_at_count_ = 0;
@@ -512,6 +513,7 @@ void CellManager::Pump() {
                     spdlog::info("Cell {} execution complete. Success: {}", index, e.success);
                 }
                 outputs_changed_ = true;
+                ++run_generation_;
                 if ((e.cancelled || !e.success) && index >= 0) {
                     stopped_at_count_ = cells_[index].execution_count;
                     stopped_by_interrupt_ = e.cancelled;

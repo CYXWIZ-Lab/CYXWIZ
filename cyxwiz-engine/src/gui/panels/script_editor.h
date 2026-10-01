@@ -26,6 +26,15 @@ namespace scripting {
 
 namespace cyxwiz {
 class DataTable;
+
+// One row of a notebook's Variables panel (TOFIX133 P4 step 4.3d).
+struct NotebookVariable {
+    std::string name;
+    std::string type;
+    std::string size;
+    std::string value;
+    bool table = false;  // a pandas table: double-click opens it in the Table Viewer
+};
 }
 
 namespace cyxwiz {
@@ -213,6 +222,13 @@ private:
         float cell_scroll_y = 0.0f;      // Scroll position in cell view
         bool restore_cell_scroll = false;  // set when the notebook view returns to a kept position
         std::unordered_map<std::string, float> cell_heights;  // last frame's row height per cell id
+        // Notebook side panels (board 4).
+        bool show_variables = false;
+        bool show_outline = false;
+        int scroll_to_cell = -1;  // the Outline asks the cell list to scroll there
+        std::vector<NotebookVariable> variables;
+        std::uint64_t variables_generation = 0;
+        char variables_filter[64] = {};
 
         // Breakpoints for traditional script mode (1-based line numbers)
         std::vector<int> breakpoints;
@@ -280,6 +296,10 @@ private:
     };
     std::vector<PlotWindow> plot_windows_;
     int next_plot_window_ = 1;
+    void RenderNotebookVariables(EditorTab& tab, float height);  // script_editor_notebook_side.cpp
+    void RenderNotebookOutline(EditorTab& tab, float width, float height);
+    void RefreshNotebookVariables(EditorTab& tab);
+    void OpenVariableInTableViewer(EditorTab& tab, const std::string& name);
     struct CellClipboard {
         bool has = false;
         CellType type = CellType::Code;

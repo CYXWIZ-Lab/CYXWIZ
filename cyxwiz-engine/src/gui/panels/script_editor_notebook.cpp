@@ -76,8 +76,8 @@ void ScriptEditorPanel::RenderNotebookToolbar(EditorTab& tab) {
     const float group = 18.0f;
     auto w = [](const char* label) { return ui::ButtonWidth(label, ui::ButtonSize::Small); };
     const float full = w("+ Code") + w("+ Markdown") + group + w(run_all) + w("Run Above") + w("Run Below") + group +
-                       w(interrupt) + w("Restart") + w("Clear outputs") + 9.0f * gap + group +
-                       ui::StatusPillWidth(chip.text.c_str()) + 2.0f * t.space_lg;
+                       w(interrupt) + w("Restart") + w("Clear outputs") + w("Outline") + w("Variables") + 11.0f * gap +
+                       2.0f * group + ui::StatusPillWidth(chip.text.c_str()) + 2.0f * t.space_lg;
     const bool compact = full > width;
     const char* why_busy = "Another script is running in the Engine's Python";
 
@@ -132,13 +132,29 @@ void ScriptEditorPanel::RenderNotebookToolbar(EditorTab& tab) {
                 tab.is_modified = true;
             }
             ImGui::Separator();
+            ImGui::MenuItem("Outline", nullptr, &tab.show_outline);
+            ImGui::MenuItem("Variables", nullptr, &tab.show_variables);
+            ImGui::Separator();
             ImGui::TextDisabled("%s", chip.text.c_str());
             ImGui::EndPopup();
         }
     }
 
-    // Kernel chip at the right edge (in the menu above when it does not fit).
+    // Outline and Variables (board 4), then the kernel chip at the right edge
+    // (in the menu above when it does not fit).
     const float chip_w = ui::StatusPillWidth(chip.text.c_str());
+    if (!compact) {
+        const float toggles_w = w("Outline") + w("Variables") + gap + 10.0f;
+        ImGui::SameLine();
+        const float toggles_x = bar_min.x + width - t.space_lg - chip_w - toggles_w;
+        if (toggles_x > ImGui::GetCursorScreenPos().x)
+            ImGui::SetCursorScreenPos(ImVec2(toggles_x, ImGui::GetCursorScreenPos().y));
+        if (ui::GhostButton("Outline", true, nullptr, tab.show_outline)) tab.show_outline = !tab.show_outline;
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Headings and code cells; click to go there");
+        ImGui::SameLine();
+        if (ui::GhostButton("Variables", true, nullptr, tab.show_variables)) tab.show_variables = !tab.show_variables;
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("This notebook's variables");
+    }
     ImGui::SameLine();
     const float chip_x = bar_min.x + width - t.space_lg - chip_w;
     if (chip_x > ImGui::GetCursorScreenPos().x) {
@@ -262,6 +278,10 @@ void ScriptEditorPanel::RenderCell(Cell& cell, int index) {
 
     const ImVec2 row_min = ImGui::GetCursorScreenPos();
     const float row_w = ImGui::GetContentRegionAvail().x;
+    if (tab.scroll_to_cell == index) {
+        ImGui::SetScrollHereY(0.1f);
+        tab.scroll_to_cell = -1;
+    }
     const float content_x = row_min.x + kGutterWidth;
     const float content_w = std::max(120.0f, row_w - kGutterWidth - 12.0f);
     ImDrawList* dl = ImGui::GetWindowDrawList();

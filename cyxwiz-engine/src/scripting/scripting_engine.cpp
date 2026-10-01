@@ -1251,6 +1251,54 @@ bool ScriptingEngine::ExportNotebookValueToCsv(const std::string& key, int count
     }
 }
 
+bool ScriptingEngine::ExportNotebookVariableToCsv(const std::string& key, const std::string& name, const std::string& path,
+                                                  std::string* error) {
+    if (script_running_ || command_running_) {
+        if (error) *error = "A script is running; try again when it finishes";
+        return false;
+    }
+    if (!IsInitialized()) {
+        if (error) *error = "Python is not running";
+        return false;
+    }
+    try {
+        py::gil_scoped_acquire acquire;
+        auto main = py::module_::import("__main__").attr("__dict__").cast<py::dict>();
+        if (!main.contains("_cyxwiz_export_variable")) {
+            if (error) *error = "Run a cell first";
+            return false;
+        }
+        const std::string reason = py::object(main["_cyxwiz_export_variable"])(key, name, path).cast<std::string>();
+        if (!reason.empty() && error) *error = reason;
+        return reason.empty();
+    } catch (const py::error_already_set& e) {
+        if (error) *error = e.what();
+        return false;
+    }
+}
+
+bool ScriptingEngine::NotebookVariablesJson(const std::string& key, std::string* json) {
+    if (script_running_ || command_running_) return false;
+    if (!IsInitialized()) {
+        if (json) *json = "[]";
+        return true;
+    }
+    try {
+        py::gil_scoped_acquire acquire;
+        auto main = py::module_::import("__main__").attr("__dict__").cast<py::dict>();
+        if (!main.contains("_cyxwiz_notebook_variables")) {
+            if (json) *json = "[]";
+            return true;
+        }
+        const std::string text = py::object(main["_cyxwiz_notebook_variables"])(key).cast<std::string>();
+        if (json) *json = text;
+        return true;
+    } catch (const py::error_already_set& e) {
+        spdlog::warn("Notebook variables: {}", e.what());
+        return false;
+    }
+}
+
 ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script, const RunCallbacks& callbacks) {
     const OutputCallback& on_output = callbacks.on_output;
     ExecutionResult result;
@@ -1430,6 +1478,66 @@ def _cyxwiz_export_value(key, count, path):
         return 'Only tables (pandas DataFrame or Series) open in the Table Viewer'
     value.to_csv(path)
     return ''
+
+def _cyxwiz_export_variable(key, name, path):
+    ns = _cyxwiz_notebook_ns.get(key)
+    if ns is None or name not in ns:
+        return 'This variable is gone (the notebook was restarted)'
+    value = ns[name]
+    if not hasattr(value, 'to_csv'):
+        return 'Only tables (pandas DataFrame or Series) open in the Table Viewer'
+    value.to_csv(path)
+    return ''
+
+def _cyxwiz_notebook_variables(key):
+    import json, reprlib, types
+    ns = _cyxwiz_notebook_ns.get(key) or {}
+    short = reprlib.Repr()
+    short.maxstring = 160
+    short.maxother = 160
+    short.maxlist = short.maxtuple = short.maxset = short.maxfrozenset = short.maxdeque = 12
+    short.maxdict = 12
+    short.maxlevel = 2
+    out = []
+    for name, value in list(ns.items()):
+        if name.startswith('_') or name in ('Out', 'In'):
+            continue
+        if isinstance(value, (types.ModuleType, types.FunctionType, types.BuiltinFunctionType, type)):
+            continue
+        try:
+            type_name = type(value).__name__
+            size = ''
+            shape = getattr(value, 'shape', None)
+            if shape is not None and not callable(shape):
+                try:
+                    size = str(tuple(shape))
+                except Exception:
+                    pass
+            elif isinstance(value, (list, tuple)):
+                size = '(%d,)' % len(value)
+            elif isinstance(value, (dict, set, frozenset)):
+                size = '%d items' % len(value)
+            elif isinstance(value, (str, bytes)):
+                size = 'len=%d' % len(value)
+            dtype = getattr(value, 'dtype', None)
+            if dtype is not None and shape is not None and type_name not in ('DataFrame', 'Series'):
+                type_name = '%s[%s]' % (type_name, dtype)
+            try:
+                if type_name == 'DataFrame':
+                    cols = [str(c) for c in list(value.columns)[:12]]
+                    text = 'columns: ' + ', '.join(cols) + (', ...' if len(value.columns) > 12 else '')
+                elif type_name == 'Series':
+                    text = '%s, dtype %s' % (value.name if value.name is not None else 'unnamed', value.dtype)
+                else:
+                    text = short.repr(value)
+            except Exception:
+                text = '<no preview>'
+            out.append({'name': name, 'type': type_name, 'size': size, 'value': text.replace('\n', ' '),
+                        'table': hasattr(value, 'to_csv')})
+        except Exception:
+            pass
+    out.sort(key=lambda v: v['name'].lower())
+    return json.dumps(out)
 
 def _cyxwiz_frames(tb, skip):
     import traceback

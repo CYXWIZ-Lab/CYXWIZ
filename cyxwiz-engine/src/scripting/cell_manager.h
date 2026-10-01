@@ -198,6 +198,8 @@ public:
     double RunningSeconds() const;
     // True once after a run changed outputs (an .ipynb stores them, so its
     // tab becomes modified).
+    // Changes when a run ends or the notebook restarts (its variables changed).
+    std::uint64_t RunGeneration() const { return run_generation_; }
     bool TakeOutputsChanged() {
         const bool changed = outputs_changed_;
         outputs_changed_ = false;
@@ -312,6 +314,7 @@ private:
     int stopped_at_count_ = 0;
     bool stopped_by_interrupt_ = false;
     bool outputs_changed_ = false;
+    std::uint64_t run_generation_ = 1;
     std::chrono::steady_clock::time_point run_started_{};
     bool TryRestart();
     void AppendStream(Cell& cell, const std::string& name, const std::string& text);
