@@ -24,6 +24,12 @@ option(CYXWIZ_BUILD_INSTALLER_ONLY "Build only the standalone installer and back
 set(CYXWIZ_INSTALLER_BOOTSTRAP_METADATA_DIR "" CACHE PATH
     "Release-signed trust, catalog, and manifest bundle staged below runtime/")
 option(CYXWIZ_BUILD_TESTS "Build tests" ON)
+# Before any add_subdirectory: add_test() in a directory processed before
+# enable_testing() is dropped, which hid every contract test registered
+# from cyxwiz-engine (cmake/CyxWizInstallerTargets.cmake) from ctest.
+if(CYXWIZ_BUILD_TESTS)
+    enable_testing()
+endif()
 option(CYXWIZ_ENABLE_SENTENCEPIECE "Enable optional SentencePiece tokenizer provider" OFF)
 if(CYXWIZ_ENABLE_SENTENCEPIECE)
     message(STATUS
