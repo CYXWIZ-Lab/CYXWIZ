@@ -209,6 +209,13 @@ public:
     std::string SerializeToCyx() const;
 
     /**
+     * Jupyter .ipynb (TOFIX133 P4, D3). Outputs, ids and metadata are kept;
+     * what the Engine does not draw is written back unchanged.
+     */
+    bool ParseFromIpynb(const std::string& content, std::string* error = nullptr);
+    std::string SerializeToIpynb() const;
+
+    /**
      * Check if content has cell markers
      */
     static bool HasCellMarkers(const std::string& content);
@@ -260,6 +267,8 @@ private:
     // Execution state
     bool is_running_ = false;
     int execution_counter_ = 0;
+    std::string ipynb_metadata_;         // notebook metadata of an opened .ipynb
+    int ipynb_minor_ = 5;
     std::string running_cell_id_;
     std::vector<std::string> execution_queue_;  // cell ids
     std::uint64_t run_counter_ = 0;

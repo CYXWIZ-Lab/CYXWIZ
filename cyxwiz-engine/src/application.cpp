@@ -196,7 +196,7 @@ void CyxWizApp::ProcessCommandLine(int argc, char** argv) {
         std::error_code ec;
         const std::filesystem::path script = std::filesystem::absolute(arg, ec);
         const std::string ext = script.extension().string();
-        if (!ec && (ext == ".py" || ext == ".cyx") && std::filesystem::is_regular_file(script, ec)) {
+        if (!ec && (ext == ".py" || ext == ".cyx" || ext == ".ipynb") && std::filesystem::is_regular_file(script, ec)) {
             startup_scripts_.push_back(script.string());
             spdlog::info("Startup script: {}", startup_scripts_.back());
         }

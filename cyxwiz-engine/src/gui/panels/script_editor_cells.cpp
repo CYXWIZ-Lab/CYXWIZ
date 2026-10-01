@@ -24,6 +24,10 @@ void ScriptEditorPanel::ToggleCellMode() {
     }
 
     auto& tab = tabs_[active_tab_index_];
+    if (tab->cell_mode && scriptfile::IsNotebookJson(tab->filepath)) {
+        spdlog::info("A Jupyter notebook always opens as a notebook");
+        return;
+    }
     tab->cell_mode = !tab->cell_mode;
 
     if (tab->cell_mode) {

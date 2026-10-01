@@ -41,4 +41,7 @@ bool UsesTextBuffer(bool loading, bool load_failed, bool large_file_view, bool n
 // the tab's current extension is used, else ".cyx".
 std::string SaveAsPath(const std::string& chosen, const std::string& current_name);
 
+// A Jupyter notebook (.ipynb, any case): stored as JSON, always shown as cells.
+bool IsNotebookJson(const std::string& path);
+
 }  // namespace cyxwiz::scriptfile

@@ -192,7 +192,8 @@ std::optional<std::string> FileDialogs::OpenScript(const char* default_path) {
     return OpenFile("Open Script", {
         {"Python Scripts", "py"},
         {"CyxWiz Scripts", "cyx"},
-        {"All Scripts", "py,cyx"},
+        {"Jupyter Notebooks", "ipynb"},
+        {"All Scripts", "py,cyx,ipynb"},
         {"All Files", "*"}
     }, default_path);
 }
@@ -200,7 +201,8 @@ std::optional<std::string> FileDialogs::OpenScript(const char* default_path) {
 std::optional<std::string> FileDialogs::SaveScript(const char* default_path) {
     return SaveFile("Save Script", {
         {"Python Scripts", "py"},
-        {"CyxWiz Scripts", "cyx"}
+        {"CyxWiz Scripts", "cyx"},
+        {"Jupyter Notebooks", "ipynb"}
     }, default_path, "script.py");
 }
 

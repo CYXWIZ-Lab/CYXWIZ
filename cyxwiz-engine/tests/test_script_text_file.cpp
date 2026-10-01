@@ -45,6 +45,8 @@ int main() {
     Check(SaveAsPath("C:/w/x.py", "Untitled1.cyx") == "C:/w/x.py", "x.py stays x.py");
     Check(SaveAsPath("C:/w/notes.cyx", "a.py") == "C:/w/notes.cyx", "typed .cyx kept");
     Check(SaveAsPath("C:/w/x", "train.py") == "C:/w/x.py", "no extension: current one");
+    Check(SaveAsPath("C:/w/x", "eda.ipynb") == "C:/w/x.ipynb", "a notebook stays a notebook");
+    Check(IsNotebookJson("C:/w/EDA.IPYNB") && !IsNotebookJson("C:/w/eda.cyx") && !IsNotebookJson(""), "ipynb by extension");
     Check(SaveAsPath("C:/w/x", "Untitled") == "C:/w/x.cyx", "no extension anywhere: .cyx");
 
     // Item 3: BOM and CRLF are kept.

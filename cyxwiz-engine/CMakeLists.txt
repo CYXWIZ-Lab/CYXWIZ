@@ -320,6 +320,7 @@ set(ENGINE_SOURCES
     src/core/python_tokenizer.cpp
     src/core/text_search.cpp
     src/core/cyx_format.cpp
+    src/core/notebook_format.cpp
     src/core/script_keys.cpp
     src/core/editor/text_document.cpp
     src/core/editor/python_highlight.cpp

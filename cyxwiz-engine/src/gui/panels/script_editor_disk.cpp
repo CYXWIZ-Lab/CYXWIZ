@@ -72,7 +72,12 @@ void ScriptEditorPanel::ReloadFromDisk(EditorTab& tab) {
     tab.format = decoded.format;
     tab.format_changed = false;
     const int line = tab.editor.Doc().Primary().head.line;
-    if (tab.cell_mode) {
+    if (scriptfile::IsNotebookJson(tab.filepath)) {
+        if (!tab.cell_manager.ParseFromIpynb(decoded.text)) return;  // half-written by another program: try again later
+        tab.selected_cell = tab.cell_manager.GetCellCount() > 0 ? 0 : -1;
+        tab.editing_cell = -1;
+        tab.last_editing_cell = -1;
+    } else if (tab.cell_mode) {
         tab.cell_manager.ParseFromCyx(decoded.text);
         tab.selected_cell = tab.cell_manager.GetCellCount() > 0 ? 0 : -1;
         tab.editing_cell = -1;

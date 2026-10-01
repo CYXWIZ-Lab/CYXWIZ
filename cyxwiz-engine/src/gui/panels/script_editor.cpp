@@ -383,7 +383,8 @@ void ScriptEditorPanel::RenderMenuBar() {
             // Cell Mode toggle (Jupyter-like notebook mode)
             bool has_active_tab = IsActiveTabEditable();
             bool is_cell_mode = has_active_tab && tabs_[active_tab_index_]->cell_mode;
-            if (ImGui::MenuItem(ICON_FA_FILE_LINES "  Notebook Mode", "Ctrl+Shift+M", is_cell_mode, has_active_tab)) {
+            const bool is_ipynb = has_active_tab && scriptfile::IsNotebookJson(tabs_[active_tab_index_]->filepath);
+            if (ImGui::MenuItem(ICON_FA_FILE_LINES "  Notebook Mode", "Ctrl+Shift+M", is_cell_mode, has_active_tab && !is_ipynb)) {
                 ToggleCellMode();
             }
             if (ImGui::IsItemHovered()) {

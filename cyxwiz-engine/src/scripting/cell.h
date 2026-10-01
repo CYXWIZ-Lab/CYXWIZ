@@ -61,6 +61,10 @@ struct CellOutput {
     int height = 0;                 // Image height
     std::vector<unsigned char> image_data;  // Raw PNG data (alternative to base64 in data)
 
+    // The output's JSON as read from an .ipynb file, written back unchanged
+    // (keeps MIME types this Engine does not draw). Empty for new outputs.
+    std::string ipynb_raw;
+
     CellOutput() = default;
 
     CellOutput(OutputType t, const std::string& d, const std::string& mime = "text/plain")
@@ -115,6 +119,9 @@ struct Cell {
 
     // Breakpoints (line numbers)
     std::vector<int> breakpoints;
+
+    // Other keys of an .ipynb cell (id, metadata, attachments) as JSON.
+    std::string ipynb_extra;
 
     Cell() {
         id = GenerateId();

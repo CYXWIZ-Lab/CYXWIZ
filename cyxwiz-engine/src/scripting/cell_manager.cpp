@@ -1,5 +1,6 @@
 #include "cell_manager.h"
 #include "../core/cyx_format.h"
+#include "../core/notebook_format.h"
 #include "scripting_engine.h"
 #include <spdlog/spdlog.h>
 #include <sstream>
@@ -480,6 +481,124 @@ std::string CellManager::SerializeToCyx() const {
         cells.push_back({ToCellKind(cell.type), cell.source});
     }
     return cyx::Serialize(cells);
+}
+
+namespace {
+CellType ToCellType(nb::CellKind kind) {
+    switch (kind) {
+        case nb::CellKind::Markdown: return CellType::Markdown;
+        case nb::CellKind::Raw: return CellType::Raw;
+        case nb::CellKind::Code: break;
+    }
+    return CellType::Code;
+}
+
+CellOutput FromNotebookOutput(const nb::Output& o) {
+    CellOutput out;
+    switch (o.kind) {
+        case nb::Output::Kind::Stream:
+            out = CellOutput::Stream(o.text, o.stream_name);
+            break;
+        case nb::Output::Kind::Error: {
+            std::string text;
+            for (const auto& line : o.traceback) text += nb::StripAnsi(line) + "\n";
+            if (text.empty()) text = o.ename + ": " + o.evalue;
+            out = CellOutput::Error(text);
+            break;
+        }
+        case nb::Output::Kind::Result:
+        case nb::Output::Kind::Display:
+            if (!o.png_base64.empty()) {
+                out.type = OutputType::Plot;
+                out.mime_type = "image/png";
+                out.image_data = nb::DecodeBase64(o.png_base64);
+            } else {
+                out = CellOutput::Text(o.text);
+            }
+            break;
+    }
+    out.ipynb_raw = o.raw;
+    return out;
+}
+
+nb::Output ToNotebookOutput(const CellOutput& out, int execution_count) {
+    nb::Output o;
+    o.raw = out.ipynb_raw;
+    switch (out.type) {
+        case OutputType::Error: {
+            const std::string raw = o.raw;
+            o = nb::ErrorFromText(out.data);
+            o.raw = raw;
+            break;
+        }
+        case OutputType::Image:
+        case OutputType::Plot:
+            o.kind = nb::Output::Kind::Display;
+            o.png_base64 = out.image_data.empty() ? out.data : nb::EncodeBase64(out.image_data);
+            o.text = out.name.empty() ? "<Figure>" : out.name;
+            break;
+        case OutputType::Html:
+            o.kind = nb::Output::Kind::Display;
+            o.html = out.data;
+            o.text = out.data;
+            break;
+        case OutputType::Text:
+        case OutputType::Stream:
+        case OutputType::Table:
+        case OutputType::Markdown:
+            o.kind = nb::Output::Kind::Stream;
+            o.stream_name = out.name.empty() ? "stdout" : out.name;
+            o.text = out.data;
+            break;
+    }
+    o.execution_count = execution_count;
+    return o;
+}
+}  // namespace
+
+bool CellManager::ParseFromIpynb(const std::string& content, std::string* error) {
+    nb::Notebook notebook;
+    if (!nb::ParseIpynb(content, notebook, error)) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& cell : cells_) {
+        cell.ClearOutputs();
+    }
+    cells_.clear();
+    for (const auto& parsed : notebook.cells) {
+        Cell& cell = cells_.emplace_back(ToCellType(parsed.kind), parsed.source);
+        cell.execution_count = parsed.execution_count;
+        cell.ipynb_extra = parsed.extra;
+        for (const auto& o : parsed.outputs) cell.outputs.push_back(FromNotebookOutput(o));
+    }
+    if (cells_.empty()) {
+        cells_.emplace_back(CellType::Code);
+    }
+    ipynb_metadata_ = notebook.metadata;
+    ipynb_minor_ = notebook.nbformat_minor;
+    spdlog::info("Parsed .ipynb file with {} cells", cells_.size());
+    return true;
+}
+
+std::string CellManager::SerializeToIpynb() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    nb::Notebook notebook;
+    notebook.metadata = ipynb_metadata_.empty() ? nb::DefaultMetadata("") : ipynb_metadata_;
+    notebook.nbformat_minor = ipynb_minor_;
+    for (const auto& cell : cells_) {
+        nb::Cell out;
+        out.kind = cell.type == CellType::Markdown ? nb::CellKind::Markdown
+                   : cell.type == CellType::Raw    ? nb::CellKind::Raw
+                                                   : nb::CellKind::Code;
+        out.source = cell.source;
+        if (cell.type == CellType::Code) {
+            out.execution_count = cell.execution_count;
+            for (const auto& o : cell.outputs) out.outputs.push_back(ToNotebookOutput(o, cell.execution_count));
+        }
+        // nbformat 4.5 wants an id per cell.
+        out.extra = cell.ipynb_extra.empty() ? "{\"id\":\"" + cell.id.substr(cell.id.rfind('-') + 1) + "\"}" : cell.ipynb_extra;
+        notebook.cells.push_back(std::move(out));
+    }
+    return nb::SerializeIpynb(notebook);
 }
 
 // ========== Editor Theme ==========

@@ -224,7 +224,26 @@ void ScriptEditorPanel::FinalizeAsyncLoad(
     tab->editor.SetText(content);
 
     const std::filesystem::path loaded_path(tab->filepath);
-    if (loaded_path.extension() == ".cyx" && CellManager::HasCellMarkers(content)) {
+    if (scriptfile::IsNotebookJson(tab->filepath)) {
+        std::string error;
+        tab->cell_manager.SetScriptingEngine(scripting_engine_);
+        if (!tab->cell_manager.ParseFromIpynb(content, &error)) {
+            // Nothing to edit: Save must not overwrite the file (P0 item 1).
+            tab->is_loading = false;
+            tab->load_failed = true;
+            tab->load_status = "Could not open this notebook. " + error;
+            tab->load_task_id = 0;
+            spdlog::error("Could not open {}: {}", tab->filepath, error);
+            return;
+        }
+        tab->cell_mode = true;
+        tab->cell_manager.ApplyTabSize(tab_size_);
+        tab->cell_manager.ApplySyntaxHighlighting(syntax_highlighting_);
+        tab->selected_cell = tab->cell_manager.GetCellCount() > 0 ? 0 : -1;
+        tab->editing_cell = -1;
+        tab->last_editing_cell = -1;
+        spdlog::info("Opened Jupyter notebook: {}", tab->filename);
+    } else if (loaded_path.extension() == ".cyx" && CellManager::HasCellMarkers(content)) {
         tab->cell_mode = true;
         tab->cell_manager.SetScriptingEngine(scripting_engine_);
         tab->cell_manager.ParseFromCyx(content);
@@ -342,7 +361,7 @@ void ScriptEditorPanel::SaveFile() {
     }
 
     // Save to existing path
-    std::string content = GetTabContentForPersistence(*tab);
+    std::string content = GetTabContentForPersistence(*tab, tab->filepath);
     std::string error;
     if (SaveFileContent(tab->filepath, content, tab->format, &error)) {
         tab->is_modified = false;
@@ -364,7 +383,6 @@ void ScriptEditorPanel::SaveFileAs() {
     auto& tab = tabs_[active_tab_index_];
 
     // Check if script is empty before showing save dialog
-    std::string content = GetTabContentForPersistence(*tab);
     bool is_empty = IsTabContentBlank(*tab);
     if (is_empty) {
         show_empty_script_warning_ = true;
@@ -379,7 +397,7 @@ void ScriptEditorPanel::SaveFileAs() {
     // Keep the extension the user typed (x.py stays x.py; P0 item 2).
     path = scriptfile::SaveAsPath(path, tab->filename);
 
-    // Save content (already have content from empty check above)
+    const std::string content = GetTabContentForPersistence(*tab, path);
     std::string error;
     if (SaveFileContent(path, content, tab->format, &error)) {
         tab->filepath = path;

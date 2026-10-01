@@ -105,12 +105,13 @@ void ScriptEditorPanel::SyncActiveCellEditor(EditorTab& tab) {
     }
 }
 
-std::string ScriptEditorPanel::GetTabContentForPersistence(EditorTab& tab) {
+std::string ScriptEditorPanel::GetTabContentForPersistence(EditorTab& tab, const std::string& path) {
     if (!tab.cell_mode) {
         return tab.editor.GetText();
     }
 
     SyncActiveCellEditor(tab);
+    if (scriptfile::IsNotebookJson(path)) return tab.cell_manager.SerializeToIpynb();
     return tab.cell_manager.SerializeToCyx();
 }
 

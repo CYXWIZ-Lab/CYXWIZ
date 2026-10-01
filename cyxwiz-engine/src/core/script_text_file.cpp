@@ -1,5 +1,6 @@
 #include "script_text_file.h"
 
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <system_error>
@@ -95,6 +96,12 @@ std::string SaveAsPath(const std::string& chosen, const std::string& current_nam
     if (fs::path(chosen).has_extension()) return chosen;
     const fs::path current(current_name);
     return chosen + (current.has_extension() ? current.extension().string() : std::string(".cyx"));
+}
+
+bool IsNotebookJson(const std::string& path) {
+    std::string ext = std::filesystem::path(path).extension().string();
+    for (auto& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return ext == ".ipynb";
 }
 
 }  // namespace cyxwiz::scriptfile

@@ -259,7 +259,7 @@ private:
     Section GetCurrentSection();
     std::string DedentCode(const std::string& code);  // Remove common leading whitespace
     void SyncActiveCellEditor(EditorTab& tab);
-    std::string GetTabContentForPersistence(EditorTab& tab);
+    std::string GetTabContentForPersistence(EditorTab& tab, const std::string& path);
     std::string GetTabExecutableText(EditorTab& tab);
     bool IsTabContentBlank(EditorTab& tab) const;
 
