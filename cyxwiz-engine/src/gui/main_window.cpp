@@ -36,6 +36,7 @@
 #include "../core/placement_observation_cache_session.h"
 #include "../core/execution_device_preferences.h"
 #include "../core/keyboard_shortcuts.h"
+#include "frame_metrics.h"
 #include "../core/sequence_arrow_batcher.h"
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
@@ -2312,6 +2313,8 @@ MainWindow::MainWindow()
         if (script_editor_) script_editor_->StopScript();
     });
 
+    toolbar_->SetFrameOverlayPtr(FrameMetrics::Instance().enabled_ptr());
+
     // Menu bar state: focus window, selection, training and script state
     // (TOFIX129). Read by the menus, the palette and the shortcut handler.
     toolbar_->SetMenuStateProvider([this]() {
@@ -3106,6 +3109,7 @@ void MainWindow::ResetDockLayout() {
 }
 
 void MainWindow::Render() {
+    FrameMetrics::Instance().BeginFrame();
     // Handle global keyboard shortcuts
     HandleGlobalShortcuts();
 
@@ -3135,35 +3139,35 @@ void MainWindow::Render() {
     RenderSidebar();
 
     // Render new panel system - Toolbar (replaces old menu bar)
-    if (toolbar_) toolbar_->Render();
+    TimedRender("toolbar", toolbar_);
 
     // Render new panels
-    if (asset_browser_) asset_browser_->Render();
-    if (training_plot_panel_) training_plot_panel_->Render();  // Now "Training Dashboard"
-    if (plot_test_control_) plot_test_control_->Render();
-    if (script_editor_) script_editor_->Render();
-    if (table_viewer_) table_viewer_->Render();
-    if (data_explorer_panel_) data_explorer_panel_->Render();
-    if (annotation_editor_panel_) annotation_editor_panel_->Render();
-    if (visualization_panel_) visualization_panel_->Render();
-    if (connection_dialog_) connection_dialog_->Render();
-    if (job_status_panel_) job_status_panel_->Render();
-    if (p2p_training_panel_) p2p_training_panel_->Render();
-    if (wallet_panel_) wallet_panel_->Render();
-    if (task_progress_panel_) task_progress_panel_->Render();
-    if (pattern_browser_) pattern_browser_->Render();
-    if (query_console_) query_console_->Render();
-    if (custom_node_editor_) custom_node_editor_->Render();
-    if (theme_editor_) theme_editor_->Render();
-    if (memory_panel_) memory_panel_->Render();
-    if (memory_monitor_) memory_monitor_->Render();
-    if (variable_explorer_) variable_explorer_->Render();
-    if (plot_output_panel_) plot_output_panel_->Render();
-    if (test_results_panel_) test_results_panel_->Render();
-    if (export_dialog_) export_dialog_->Render();
-    if (import_dialog_) import_dialog_->Render();
-    if (deployment_dialog_) deployment_dialog_->Render();
-    if (studio_debugger_panel_) studio_debugger_panel_->Render();
+    TimedRender("asset browser", asset_browser_);
+    TimedRender("training plot", training_plot_panel_);  // Now "Training Dashboard"
+    TimedRender("plot test control", plot_test_control_);
+    TimedRender("script editor", script_editor_);
+    TimedRender("table viewer", table_viewer_);
+    TimedRender("data explorer", data_explorer_panel_);
+    TimedRender("annotation editor", annotation_editor_panel_);
+    TimedRender("visualization", visualization_panel_);
+    TimedRender("connection dialog", connection_dialog_);
+    TimedRender("job status", job_status_panel_);
+    TimedRender("p2p training", p2p_training_panel_);
+    TimedRender("wallet", wallet_panel_);
+    TimedRender("task progress", task_progress_panel_);
+    TimedRender("pattern browser", pattern_browser_);
+    TimedRender("query console", query_console_);
+    TimedRender("custom node editor", custom_node_editor_);
+    TimedRender("theme editor", theme_editor_);
+    TimedRender("memory", memory_panel_);
+    TimedRender("memory monitor", memory_monitor_);
+    TimedRender("variable explorer", variable_explorer_);
+    TimedRender("plot output", plot_output_panel_);
+    TimedRender("test results", test_results_panel_);
+    TimedRender("export dialog", export_dialog_);
+    TimedRender("import dialog", import_dialog_);
+    TimedRender("deployment dialog", deployment_dialog_);
+    TimedRender("studio debugger", studio_debugger_panel_);
 
     // Render Python-created plot windows (cyxwiz_plotting)
     for (const auto& plot_window : cyxwiz::GetPythonPlotWindows()) {
@@ -3173,109 +3177,109 @@ void MainWindow::Render() {
     }
 
     // Render Model Analysis panels (Phase 2)
-    if (model_summary_panel_) model_summary_panel_->Render();
-    if (architecture_diagram_) architecture_diagram_->Render();
-    if (lr_finder_panel_) lr_finder_panel_->Render();
+    TimedRender("model summary", model_summary_panel_);
+    TimedRender("architecture diagram", architecture_diagram_);
+    TimedRender("lr finder", lr_finder_panel_);
 
     // Render Data Science panels (Phase 3)
-    if (data_profiler_panel_) data_profiler_panel_->Render();
-    if (correlation_matrix_panel_) correlation_matrix_panel_->Render();
-    if (missing_value_panel_) missing_value_panel_->Render();
-    if (outlier_detection_panel_) outlier_detection_panel_->Render();
+    TimedRender("data profiler", data_profiler_panel_);
+    TimedRender("correlation matrix", correlation_matrix_panel_);
+    TimedRender("missing value", missing_value_panel_);
+    TimedRender("outlier detection", outlier_detection_panel_);
 
     // Render Statistics panels (Phase 4)
-    if (descriptive_stats_panel_) descriptive_stats_panel_->Render();
-    if (hypothesis_test_panel_) hypothesis_test_panel_->Render();
-    if (distribution_fitter_panel_) distribution_fitter_panel_->Render();
-    if (regression_panel_) regression_panel_->Render();
+    TimedRender("descriptive stats", descriptive_stats_panel_);
+    TimedRender("hypothesis test", hypothesis_test_panel_);
+    TimedRender("distribution fitter", distribution_fitter_panel_);
+    TimedRender("regression", regression_panel_);
 
     // Render Advanced Tools panels (Phase 5)
-    if (dim_reduction_panel_) dim_reduction_panel_->Render();
-    if (gradcam_panel_) gradcam_panel_->Render();
-    if (feature_importance_panel_) feature_importance_panel_->Render();
-    if (nas_panel_) nas_panel_->Render();
-    if (hyperparam_search_panel_) hyperparam_search_panel_->Render();
-    if (serving_panel_) serving_panel_->Render();
-    if (dnn_inference_panel_) dnn_inference_panel_->Render();
+    TimedRender("dim reduction", dim_reduction_panel_);
+    TimedRender("gradcam", gradcam_panel_);
+    TimedRender("feature importance", feature_importance_panel_);
+    TimedRender("nas", nas_panel_);
+    TimedRender("hyperparam search", hyperparam_search_panel_);
+    TimedRender("serving", serving_panel_);
+    TimedRender("dnn inference", dnn_inference_panel_);
 
     // Render Clustering panels (Phase 6A)
-    if (kmeans_panel_) kmeans_panel_->Render();
-    if (dbscan_panel_) dbscan_panel_->Render();
-    if (hierarchical_panel_) hierarchical_panel_->Render();
-    if (gmm_panel_) gmm_panel_->Render();
-    if (cluster_eval_panel_) cluster_eval_panel_->Render();
+    TimedRender("kmeans", kmeans_panel_);
+    TimedRender("dbscan", dbscan_panel_);
+    TimedRender("hierarchical", hierarchical_panel_);
+    TimedRender("gmm", gmm_panel_);
+    TimedRender("cluster eval", cluster_eval_panel_);
 
     // Render Model Evaluation panels (Phase 6B)
-    if (confusion_matrix_panel_) confusion_matrix_panel_->Render();
-    if (roc_auc_panel_) roc_auc_panel_->Render();
-    if (pr_curve_panel_) pr_curve_panel_->Render();
-    if (cross_validation_panel_) cross_validation_panel_->Render();
-    if (learning_curves_panel_) learning_curves_panel_->Render();
+    TimedRender("confusion matrix", confusion_matrix_panel_);
+    TimedRender("roc auc", roc_auc_panel_);
+    TimedRender("pr curve", pr_curve_panel_);
+    TimedRender("cross validation", cross_validation_panel_);
+    TimedRender("learning curves", learning_curves_panel_);
 
     // Render Data Transformation panels (Phase 6C)
-    if (normalization_panel_) normalization_panel_->Render();
-    if (standardization_panel_) standardization_panel_->Render();
-    if (log_transform_panel_) log_transform_panel_->Render();
-    if (boxcox_panel_) boxcox_panel_->Render();
-    if (feature_scaling_panel_) feature_scaling_panel_->Render();
-    if (optimizer_settings_panel_) optimizer_settings_panel_->Render();
+    TimedRender("normalization", normalization_panel_);
+    TimedRender("standardization", standardization_panel_);
+    TimedRender("log transform", log_transform_panel_);
+    TimedRender("boxcox", boxcox_panel_);
+    TimedRender("feature scaling", feature_scaling_panel_);
+    TimedRender("optimizer settings", optimizer_settings_panel_);
 
     // Linear Algebra panels (Phase 7)
-    if (matrix_calculator_panel_) matrix_calculator_panel_->Render();
-    if (eigen_decomp_panel_) eigen_decomp_panel_->Render();
-    if (svd_panel_) svd_panel_->Render();
-    if (qr_panel_) qr_panel_->Render();
-    if (cholesky_panel_) cholesky_panel_->Render();
+    TimedRender("matrix calculator", matrix_calculator_panel_);
+    TimedRender("eigen decomp", eigen_decomp_panel_);
+    TimedRender("svd", svd_panel_);
+    TimedRender("qr", qr_panel_);
+    TimedRender("cholesky", cholesky_panel_);
 
     // Signal Processing panels (Phase 8)
-    if (fft_panel_) fft_panel_->Render();
-    if (spectrogram_panel_) spectrogram_panel_->Render();
-    if (filter_designer_panel_) filter_designer_panel_->Render();
-    if (convolution_panel_) convolution_panel_->Render();
-    if (wavelet_panel_) wavelet_panel_->Render();
+    TimedRender("fft", fft_panel_);
+    TimedRender("spectrogram", spectrogram_panel_);
+    TimedRender("filter designer", filter_designer_panel_);
+    TimedRender("convolution", convolution_panel_);
+    TimedRender("wavelet", wavelet_panel_);
 
     // Optimization & Calculus panels (Phase 9)
-    if (gradient_descent_panel_) gradient_descent_panel_->Render();
-    if (convexity_panel_) convexity_panel_->Render();
-    if (lp_panel_) lp_panel_->Render();
-    if (qp_panel_) qp_panel_->Render();
-    if (differentiation_panel_) differentiation_panel_->Render();
-    if (integration_panel_) integration_panel_->Render();
+    TimedRender("gradient descent", gradient_descent_panel_);
+    TimedRender("convexity", convexity_panel_);
+    TimedRender("lp", lp_panel_);
+    TimedRender("qp", qp_panel_);
+    TimedRender("differentiation", differentiation_panel_);
+    TimedRender("integration", integration_panel_);
 
     // Time Series Analysis panels (Phase 10)
-    if (decomposition_panel_) decomposition_panel_->Render();
-    if (acf_pacf_panel_) acf_pacf_panel_->Render();
-    if (stationarity_panel_) stationarity_panel_->Render();
-    if (seasonality_panel_) seasonality_panel_->Render();
-    if (forecasting_panel_) forecasting_panel_->Render();
+    TimedRender("decomposition", decomposition_panel_);
+    TimedRender("acf pacf", acf_pacf_panel_);
+    TimedRender("stationarity", stationarity_panel_);
+    TimedRender("seasonality", seasonality_panel_);
+    TimedRender("forecasting", forecasting_panel_);
 
     // Text Processing panels (Phase 11)
-    if (tokenization_panel_) tokenization_panel_->Render();
-    if (word_frequency_panel_) word_frequency_panel_->Render();
-    if (tfidf_panel_) tfidf_panel_->Render();
-    if (embeddings_panel_) embeddings_panel_->Render();
-    if (sentiment_panel_) sentiment_panel_->Render();
-    if (language_model_generation_panel_) language_model_generation_panel_->Render();
+    TimedRender("tokenization", tokenization_panel_);
+    TimedRender("word frequency", word_frequency_panel_);
+    TimedRender("tfidf", tfidf_panel_);
+    TimedRender("embeddings", embeddings_panel_);
+    TimedRender("sentiment", sentiment_panel_);
+    TimedRender("language model generation", language_model_generation_panel_);
 
     // Render Utilities panels (Phase 12)
-    if (calculator_panel_) calculator_panel_->Render();
-    if (unit_converter_panel_) unit_converter_panel_->Render();
-    if (random_generator_panel_) random_generator_panel_->Render();
-    if (hash_generator_panel_) hash_generator_panel_->Render();
-    if (json_viewer_panel_) json_viewer_panel_->Render();
-    if (regex_tester_panel_) regex_tester_panel_->Render();
+    TimedRender("calculator", calculator_panel_);
+    TimedRender("unit converter", unit_converter_panel_);
+    TimedRender("random generator", random_generator_panel_);
+    TimedRender("hash generator", hash_generator_panel_);
+    TimedRender("json viewer", json_viewer_panel_);
+    TimedRender("regex tester", regex_tester_panel_);
     
     // Cloud panels
-    if (cloud_browser_panel_) cloud_browser_panel_->Render();
-    if (node_browser_panel_) node_browser_panel_->Render();
-    if (node_info_panel_) node_info_panel_->Render();
-    if (cloud_dataset_manager_panel_) cloud_dataset_manager_panel_->Render();
+    TimedRender("cloud browser", cloud_browser_panel_);
+    TimedRender("node browser", node_browser_panel_);
+    TimedRender("node info", node_info_panel_);
+    TimedRender("cloud dataset manager", cloud_dataset_manager_panel_);
 
     // Plugin Manager panel
-    if (plugin_manager_panel_) plugin_manager_panel_->Render();
+    TimedRender("plugin manager", plugin_manager_panel_);
 
     // Data Studio panel (Phase 1 Week 1)
-    if (data_studio_panel_) data_studio_panel_->Render();
+    TimedRender("data studio", data_studio_panel_);
 
     // Render plugin-provided panels
     cyxwiz::plugin::PluginPanelRegistry::Instance().RenderAllVisible();
@@ -3284,10 +3288,10 @@ void MainWindow::Render() {
     cyxwiz::plugin::PluginManager::Instance().RenderPermissionDialogs();
 
     // Render original panels
-    if (node_editor_) node_editor_->Render();
-    if (console_) console_->Render();
-    if (viewport_) viewport_->Render();
-    if (properties_) properties_->Render();
+    TimedRender("node editor", node_editor_);
+    TimedRender("console", console_);
+    TimedRender("viewport", viewport_);
+    TimedRender("properties", properties_);
 
     // Render the Compile Graph result popup (triggered from Train -> Compile Graph menu)
     RenderCompileResultPopup();
@@ -3298,6 +3302,8 @@ void MainWindow::Render() {
     cyxwiz::TutorialSystem::Instance().Render();
 
     // Render status bar at the bottom of the screen
+    FrameMetrics::Instance().Render();
+    FrameMetrics::Instance().EndFrame();
     RenderStatusBar();
 }
 
@@ -6229,6 +6235,13 @@ void MainWindow::RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm) {
         case SetupState::None:
             break;
     }
+}
+
+template <class PanelPtr>
+void MainWindow::TimedRender(const char* name, PanelPtr& panel) {
+    if (!panel) return;
+    PanelTimer timer(name);
+    panel->Render();
 }
 
 float MainWindow::StatusBarHeight() {

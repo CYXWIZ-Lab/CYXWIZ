@@ -353,6 +353,9 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_backend_manager.cpp
     src/gui/panels/toolbar_compute_devices.cpp
     src/gui/ui_buttons.cpp
+    src/gui/ui_tokens.cpp
+    src/gui/ui_widgets.cpp
+    src/gui/frame_metrics.cpp
     src/gui/panels/toolbar_search_dialogs.cpp
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp
@@ -1077,6 +1080,8 @@ pybind11_add_module(cyxwiz_plotting
     src/gui/panels/plot_window.cpp
     src/gui/panels/plot_test_control.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/ui_tokens.cpp
+    src/core/appearance_options.cpp
     src/gui/panels/training_plot_panel_global.cpp
     src/gui/panels/python_plot_window_registry.cpp
 )
@@ -3337,6 +3342,8 @@ add_executable(test_graph_training_sequence_preflight
     src/gui/graph_training_launcher.cpp
     src/core/graph_training_prep.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/ui_tokens.cpp
+    src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
     src/core/training_trace_collector.cpp
     src/core/crash_run_recorder.cpp
@@ -3428,6 +3435,8 @@ add_executable(test_text_gui_training_launch
     src/gui/graph_training_launcher.cpp
     src/core/graph_training_prep.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/ui_tokens.cpp
+    src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
     src/core/training_trace_collector.cpp
     src/core/crash_run_recorder.cpp
@@ -4614,6 +4623,8 @@ add_executable(test_training_manager_session
     src/core/sequence_arrow_batcher.cpp
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/ui_tokens.cpp
+    src/core/appearance_options.cpp
 )
 configure_training_executor_harness(test_training_manager_session)
 target_compile_definitions(test_training_manager_session PRIVATE
@@ -5205,6 +5216,8 @@ add_executable(test_engine_node_parity
     src/core/training_manager.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/gui/ui_tokens.cpp
+    src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
     src/core/pipeline_materializer.cpp
     src/core/materialization_cache.cpp

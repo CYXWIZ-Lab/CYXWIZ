@@ -143,6 +143,7 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
     in.script_minimap = script_editor_minimap_ptr_ && *script_editor_minimap_ptr_;
     in.idle_log = idle_log_ptr_ && *idle_log_ptr_;
     in.verbose_python = verbose_python_log_ptr_ && *verbose_python_log_ptr_;
+    in.frame_overlay = frame_overlay_ptr_ && *frame_overlay_ptr_;
 
     // Panels: the sidebar registry, already in group order (main_window.cpp).
     for (const auto& p : gui::GetDockStyle().GetPanels()) {
@@ -543,6 +544,9 @@ void ToolbarPanel::BuildActionHandlers() {
         if (!idle_log_ptr_) return;
         *idle_log_ptr_ = !*idle_log_ptr_;
         spdlog::info("Idle mode logging {}", *idle_log_ptr_ ? "ENABLED" : "DISABLED");
+    };
+    h["tools.frame_overlay"] = [this](const std::string&) {
+        if (frame_overlay_ptr_) *frame_overlay_ptr_ = !*frame_overlay_ptr_;
     };
     h["tools.verbose_python"] = [this](const std::string&) {
         if (!verbose_python_log_ptr_) return;

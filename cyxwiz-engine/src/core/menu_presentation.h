@@ -56,6 +56,7 @@ struct MenuInputs {
     bool script_minimap = false;
     bool idle_log = false;
     bool verbose_python = false;
+    bool frame_overlay = false;
     std::vector<PanelEntry> panels;
     std::vector<NamedEntry> recent_projects;  // id = path, label = project name
     std::vector<NamedEntry> themes;

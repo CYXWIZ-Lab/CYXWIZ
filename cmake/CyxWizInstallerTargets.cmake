@@ -267,6 +267,25 @@ if(CYXWIZ_BUILD_TESTS)
         COMMAND test_menu_presentation
     )
 
+    # Design tokens (TOFIX129): status vocabulary, light and dark sets.
+    add_executable(test_ui_tokens
+        "${_cyxwiz_installer_engine_dir}/tests/test_ui_tokens.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/gui/ui_tokens.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/appearance_options.cpp"
+    )
+    target_include_directories(test_ui_tokens PRIVATE
+        "${_cyxwiz_installer_engine_dir}/src"
+    )
+    target_link_libraries(test_ui_tokens PRIVATE imgui::imgui)
+    set_target_properties(test_ui_tokens PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME ui_tokens_contract
+        COMMAND test_ui_tokens
+    )
+
     add_executable(test_installer_product_removal
         "${_cyxwiz_installer_engine_dir}/tests/test_installer_product_removal.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
@@ -469,6 +488,9 @@ set(_cyxwiz_installer_sources
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_theme.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_view.cpp"
     "${_cyxwiz_installer_engine_dir}/src/gui/ui_buttons.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/gui/ui_tokens.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/gui/ui_widgets.cpp"
+    "${_cyxwiz_installer_engine_dir}/src/core/appearance_options.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_operation.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"
     "${_cyxwiz_installer_engine_dir}/src/installer/installer_external_session.cpp"

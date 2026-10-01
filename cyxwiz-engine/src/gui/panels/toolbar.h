@@ -111,6 +111,7 @@ public:
         bool script_running = false;
     };
     void SetMenuStateProvider(std::function<MenuStateSnapshot()> provider) { menu_state_provider_ = provider; }
+    void SetFrameOverlayPtr(bool* ptr) { frame_overlay_ptr_ = ptr; }
     // One sentence about the hovered menu item, for the status bar. Empty
     // when no menu item is hovered this frame.
     const std::string& StatusHint() const { return status_hint_; }
@@ -468,6 +469,7 @@ private:
     std::function<void()> run_script_callback_;
     std::function<void()> stop_script_callback_;
     std::function<MenuStateSnapshot()> menu_state_provider_;
+    bool* frame_overlay_ptr_ = nullptr;
     std::unordered_map<std::string, std::function<void(const std::string&)>> action_handlers_;
     std::string status_hint_;
     std::function<void()> save_all_callback_;

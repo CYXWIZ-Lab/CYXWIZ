@@ -596,7 +596,11 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                         {Toggle(f, "tools.idle_log", "Log Idle Mode Transitions",
                                 "Logs when the Engine slows its frame rate to save power.", in.idle_log),
                          Toggle(f, "tools.verbose_python", "Verbose Python Logging",
-                                "Logs more detail from the Python runtime.", in.verbose_python)}));
+                                "Logs more detail from the Python runtime.", in.verbose_python),
+                         Sep(),
+                         Toggle(f, "tools.frame_overlay", "Frame Time Overlay",
+                                "Shows frame time, the panels that cost the most and the font atlas size.",
+                                in.frame_overlay)}));
         model.menus.push_back(std::move(m));
     }
 

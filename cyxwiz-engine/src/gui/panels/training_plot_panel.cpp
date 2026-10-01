@@ -1,3 +1,4 @@
+#include "../ui_tokens.h"
 #include "training_plot_panel.h"
 #ifndef CYXWIZ_PLOTTING_MODULE
 #include "../../core/async_task_manager.h"
@@ -65,8 +66,8 @@ constexpr float kTrainingPlotMaxHeight = 480.0f;
 constexpr float kTrainingPlotSideBySideWidth = 860.0f;
 // ---- Dashboard look ----------------------------------------------------
 // This file is also compiled into test targets and the Python plotting
-// module, so the dashboard styles itself from the active ImGui theme here
-// instead of depending on the engine's shared button and palette helpers.
+// module; those targets compile ui_tokens.cpp too, so the dashboard reads
+// the shared tokens but keeps its own button helpers.
 
 struct DashColors {
     ImVec4 text;
@@ -97,34 +98,24 @@ ImVec4 WithAlpha(ImVec4 color, float alpha) {
 }
 
 DashColors CurrentDashColors() {
-    const ImGuiStyle& style = ImGui::GetStyle();
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
     DashColors c;
-    c.window = WithAlpha(style.Colors[ImGuiCol_WindowBg], 1.0f);
-    const float luminance =
-        0.299f * c.window.x + 0.587f * c.window.y + 0.114f * c.window.z;
-    c.light = luminance > 0.5f;
+    c.window = t.bg_window;
+    c.light = t.light;
     const ImVec4 lift = c.light ? ImVec4(0, 0, 0, 1) : ImVec4(1, 1, 1, 1);
-    c.text = style.Colors[ImGuiCol_Text];
-    c.muted = style.Colors[ImGuiCol_TextDisabled];
-    c.faint = MixColor(c.muted, c.window, 0.35f);
+    c.text = t.text;
+    c.muted = t.text_dim;
+    c.faint = t.text_faint;
     c.card = WithAlpha(MixColor(c.window, lift, c.light ? 0.035f : 0.03f), 1.0f);
     c.track = WithAlpha(MixColor(c.window, lift, c.light ? 0.09f : 0.08f), 1.0f);
-    c.border = WithAlpha(style.Colors[ImGuiCol_Border], 1.0f);
-    c.accent = WithAlpha(style.Colors[ImGuiCol_SliderGrab], 1.0f);
-    c.accent_text = WithAlpha(style.Colors[ImGuiCol_CheckMark], 1.0f);
-    if (c.light) {
-        c.success = ImVec4(0.10f, 0.55f, 0.32f, 1.0f);
-        c.warning = ImVec4(0.70f, 0.47f, 0.02f, 1.0f);
-        c.caution = ImVec4(0.80f, 0.38f, 0.10f, 1.0f);
-        c.error = ImVec4(0.80f, 0.22f, 0.20f, 1.0f);
-        c.info = ImVec4(0.15f, 0.45f, 0.80f, 1.0f);
-    } else {
-        c.success = ImVec4(0.24f, 0.84f, 0.55f, 1.0f);
-        c.warning = ImVec4(0.89f, 0.70f, 0.25f, 1.0f);
-        c.caution = ImVec4(0.96f, 0.60f, 0.35f, 1.0f);
-        c.error = ImVec4(1.0f, 0.48f, 0.45f, 1.0f);
-        c.info = ImVec4(0.45f, 0.72f, 1.0f, 1.0f);
-    }
+    c.border = t.border;
+    c.accent = t.accent;
+    c.accent_text = t.accent_text;
+    c.success = t.success;
+    c.warning = t.warning;
+    c.caution = t.caution;
+    c.error = t.error;
+    c.info = t.info;
     return c;
 }
 

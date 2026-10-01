@@ -223,6 +223,9 @@ private:
     void SetDefaultPanelVisibility();  // Hide tool panels, show only core panels
     void RenderSidebar();
     void RenderStatusBar();
+    // Renders a panel under a frame-metrics timer (Tools > Diagnostics > Frame Time Overlay).
+    template <class PanelPtr>
+    void TimedRender(const char* name, PanelPtr& panel);
     // Status bar height follows the interface text size (TOFIX129).
     static float StatusBarHeight();
     void RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm);

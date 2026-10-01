@@ -1,4 +1,5 @@
 #include "ui_buttons.h"
+#include "ui_tokens.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -6,44 +7,30 @@
 namespace cyxwiz::ui {
 namespace {
 
-// Brand palette from the approved verification mockup (tofix119 C).
-constexpr ImVec4 kPrimary = ImVec4(0.357f, 0.239f, 0.961f, 1.0f);
-constexpr ImVec4 kPrimaryHover = ImVec4(0.439f, 0.333f, 0.980f, 1.0f);
-constexpr ImVec4 kPrimaryActive = ImVec4(0.290f, 0.192f, 0.820f, 1.0f);
-// Neutral and status colours: dark values from the mockup, light values
-// when the active theme has a light window background (Engine light
-// themes). Refreshed at the start of every button call.
+// Colours come from the shared tokens (ui_tokens.h): one light/dark
+// decision, one brand purple, theme-derived neutrals. Refreshed at the
+// start of every button call.
+ImVec4 kPrimary, kPrimaryHover, kPrimaryActive;
 ImVec4 kSecondaryHover, kSecondaryActive, kBorder, kText, kLink, kLinkHover;
 ImVec4 kDanger, kDangerHover, kChipBg, kChipText, kChipTextHover;
 
 void RefreshColors() {
-    const ImVec4 bg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
-    const bool light = (0.2126f * bg.x + 0.7152f * bg.y + 0.0722f * bg.z) > 0.5f;
-    if (light) {
-        kSecondaryHover = ImVec4(0.90f, 0.91f, 0.94f, 1.0f);
-        kSecondaryActive = ImVec4(0.84f, 0.86f, 0.91f, 1.0f);
-        kBorder = ImVec4(0.74f, 0.77f, 0.84f, 1.0f);
-        kText = ImVec4(0.12f, 0.13f, 0.16f, 1.0f);
-        kLink = ImVec4(0.290f, 0.192f, 0.820f, 1.0f);
-        kLinkHover = ImVec4(0.357f, 0.239f, 0.961f, 1.0f);
-        kDanger = ImVec4(0.75f, 0.15f, 0.13f, 1.0f);
-        kDangerHover = ImVec4(0.98f, 0.88f, 0.88f, 1.0f);
-        kChipBg = ImVec4(0.95f, 0.96f, 0.98f, 1.0f);
-        kChipText = ImVec4(0.20f, 0.22f, 0.27f, 1.0f);
-        kChipTextHover = ImVec4(0.05f, 0.05f, 0.08f, 1.0f);
-    } else {
-        kSecondaryHover = ImVec4(0.094f, 0.133f, 0.231f, 1.0f);
-        kSecondaryActive = ImVec4(0.141f, 0.196f, 0.322f, 1.0f);
-        kBorder = ImVec4(0.141f, 0.196f, 0.322f, 1.0f);
-        kText = ImVec4(0.906f, 0.925f, 0.961f, 1.0f);
-        kLink = ImVec4(0.702f, 0.651f, 1.0f, 1.0f);
-        kLinkHover = ImVec4(0.812f, 0.776f, 1.0f, 1.0f);
-        kDanger = ImVec4(1.0f, 0.482f, 0.447f, 1.0f);
-        kDangerHover = ImVec4(0.302f, 0.106f, 0.114f, 1.0f);
-        kChipBg = ImVec4(0.078f, 0.102f, 0.145f, 1.0f);
-        kChipText = ImVec4(0.79f, 0.82f, 0.88f, 1.0f);
-        kChipTextHover = ImVec4(0.95f, 0.96f, 0.97f, 1.0f);
-    }
+    const Tokens& t = CurrentTokens();
+    const ImVec4 ink = t.light ? ImVec4(0, 0, 0, 1) : ImVec4(1, 1, 1, 1);
+    kPrimary = t.accent;
+    kPrimaryHover = t.accent_hover;
+    kPrimaryActive = t.accent_active;
+    kSecondaryHover = Mix(t.bg_window, t.accent, t.light ? 0.08f : 0.14f);
+    kSecondaryActive = t.border;
+    kBorder = t.border;
+    kText = t.text_bright;
+    kLink = t.accent_text;
+    kLinkHover = t.light ? t.accent : Mix(t.accent_text, ink, 0.35f);
+    kDanger = t.error;
+    kDangerHover = Mix(t.bg_window, t.error, t.light ? 0.15f : 0.25f);
+    kChipBg = t.bg_raised;
+    kChipText = Mix(t.text, t.text_dim, 0.30f);
+    kChipTextHover = t.text_bright;
 }
 constexpr float kRounding = 6.0f;
 

@@ -1,4 +1,5 @@
 #include "console_palette.h"
+#include "ui_tokens.h"
 
 #include "../core/appearance_options.h"
 #include "theme.h"
@@ -32,7 +33,8 @@ const ConsolePalette &CurrentConsolePalette() {
 
     const ImGuiStyle &style = ImGui::GetStyle();
     const ImVec4 window = Opaque(style.Colors[ImGuiCol_WindowBg]);
-    const bool light = cyxwiz::appearance::IsLightBackground(window.x, window.y, window.z);
+    const cyxwiz::ui::Tokens &tokens = cyxwiz::ui::CurrentTokens();
+    const bool light = tokens.light;
     const ImVec4 text = Opaque(style.Colors[ImGuiCol_Text]);
     const ImVec4 muted = Opaque(style.Colors[ImGuiCol_TextDisabled]);
     const ImVec4 ink = light ? ImVec4(0, 0, 0, 1) : ImVec4(1, 1, 1, 1);
@@ -50,27 +52,22 @@ const ConsolePalette &CurrentConsolePalette() {
     p.inner_border = Mix(window, ink, light ? 0.10f : 0.07f);
     p.continuation = p.faint;
 
-    // Brand accent works on both backgrounds; its text tint depends on it.
-    p.accent = ImVec4(0.357f, 0.239f, 0.961f, 1.0f);
-    p.accent_text = light ? ImVec4(0.290f, 0.192f, 0.820f, 1.0f) : ImVec4(0.702f, 0.651f, 1.0f, 1.0f);
+    // Brand accent and status colours are the shared tokens.
+    p.accent = tokens.accent;
+    p.accent_text = tokens.accent_text;
+    p.success = tokens.success;
+    p.warning = tokens.warning;
+    p.error = tokens.error;
+    p.critical = tokens.critical;
+    p.info = tokens.info;
 
     if (light) {
-        p.success = ImVec4(0.09f, 0.52f, 0.29f, 1.0f);
-        p.warning = ImVec4(0.66f, 0.42f, 0.00f, 1.0f);
-        p.error = ImVec4(0.78f, 0.17f, 0.15f, 1.0f);
-        p.critical = ImVec4(0.72f, 0.05f, 0.25f, 1.0f);
-        p.info = ImVec4(0.22f, 0.33f, 0.82f, 1.0f);
         p.keyword = ImVec4(0.70f, 0.10f, 0.45f, 1.0f);
         p.builtin = ImVec4(0.05f, 0.38f, 0.68f, 1.0f);
         p.string = ImVec4(0.12f, 0.46f, 0.14f, 1.0f);
         p.number = ImVec4(0.62f, 0.38f, 0.00f, 1.0f);
         p.decorator = ImVec4(0.42f, 0.28f, 0.78f, 1.0f);
     } else {
-        p.success = ImVec4(0.24f, 0.84f, 0.55f, 1.0f);
-        p.warning = ImVec4(0.89f, 0.70f, 0.25f, 1.0f);
-        p.error = ImVec4(1.00f, 0.48f, 0.45f, 1.0f);
-        p.critical = ImVec4(1.00f, 0.30f, 0.43f, 1.0f);
-        p.info = ImVec4(0.60f, 0.65f, 1.00f, 1.0f);
         p.keyword = ImVec4(1.00f, 0.48f, 0.70f, 1.0f);
         p.builtin = ImVec4(0.47f, 0.78f, 1.00f, 1.0f);
         p.string = ImVec4(0.65f, 0.84f, 0.65f, 1.0f);
