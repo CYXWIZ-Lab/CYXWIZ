@@ -4,6 +4,7 @@
 #include <chrono>
 #include "../../core/async_task_manager.h"
 #include "../../core/large_text_file.h"
+#include "../../core/script_text_file.h"
 #include "../../scripting/cell_manager.h"
 #include "../../scripting/debugger.h"
 #include "../../scripting/script_manager.h"
@@ -162,6 +163,8 @@ private:
         bool is_loading = false;         // True while loading file content
         float load_progress = 0.0f;      // Loading progress (0-1)
         std::string load_status;         // Status text during loading
+        bool load_failed = false;        // the file was not read: never write this tab over it
+        scriptfile::TextFormat format;   // BOM and line endings of the file, kept on save
         std::uint64_t load_task_id = 0;
 
         // Large files use a bounded, read-only, virtualized text view.
@@ -194,6 +197,7 @@ private:
     // Async loading helper
     void OpenFileAsync(std::uint64_t document_id, const std::string& filepath);
     void FinalizeAsyncLoad(std::uint64_t document_id, std::string content);
+    void RetryLoad(int tab_index);  // a failed or cancelled load, again
     void OpenLargeFileAsync(std::uint64_t document_id, const std::string& filepath);
     void RequestLargeFilePage(std::uint64_t document_id, std::uint64_t first_line);
     void RenderLargeFileViewer(EditorTab& tab);
@@ -228,7 +232,8 @@ private:
 
     // File operations helpers
     bool LoadFileContent(const std::string& filepath, std::string& content);
-    bool SaveFileContent(const std::string& filepath, const std::string& content);
+    bool SaveFileContent(const std::string& filepath, const std::string& content,
+                         const scriptfile::TextFormat& format, std::string* error);
     std::string OpenFileDialog();
     std::string SaveFileDialog();
 

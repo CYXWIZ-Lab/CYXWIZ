@@ -317,6 +317,20 @@ if(CYXWIZ_BUILD_TESTS)
         COMMAND test_python_setup_presentation
     )
 
+    # Script Editor file rules (TOFIX133 P0 items 1-3).
+    add_executable(test_script_text_file
+        "${_cyxwiz_installer_engine_dir}/tests/test_script_text_file.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/script_text_file.cpp"
+    )
+    set_target_properties(test_script_text_file PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME script_text_file_contract
+        COMMAND test_script_text_file
+    )
+
     add_executable(test_installer_product_removal
         "${_cyxwiz_installer_engine_dir}/tests/test_installer_product_removal.cpp"
         "${_cyxwiz_installer_engine_dir}/src/installer/installer_product_removal.cpp"

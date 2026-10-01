@@ -316,6 +316,7 @@ set(ENGINE_SOURCES
     src/core/menu_presentation.cpp
     src/core/start_page_presentation.cpp
     src/core/python_setup_presentation.cpp
+    src/core/script_text_file.cpp
     src/core/live_graph_compile.cpp
     src/core/remote_job_presentation.cpp
     src/gui/node_config_dialog.cpp

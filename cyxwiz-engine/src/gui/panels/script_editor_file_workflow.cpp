@@ -59,6 +59,7 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
     for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
         if (tabs_[i]->filepath == path) {
             active_tab_index_ = i;
+            if (tabs_[i]->load_failed) RetryLoad(i);
             request_focus_ = true;
             request_window_focus_ = true;  // Focus the Script Editor window
             spdlog::info("File already open: {}", path);
@@ -100,6 +101,8 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
         tab->is_new = false;
         tab->is_modified = false;
         tab->is_loading = true;
+        tab->load_failed = false;
+        tab->format = {};
         tab->load_progress = 0.0f;
         tab->load_status = use_large_file_view ? "Indexing large file..." : "Loading...";
         tab->is_large_file = use_large_file_view;
@@ -112,6 +115,8 @@ void ScriptEditorPanel::OpenFile(const std::string& filepath) {
         tab->is_new = false;
         tab->is_modified = false;
         tab->is_loading = true;
+        tab->load_failed = false;
+        tab->format = {};
         tab->load_progress = 0.0f;
         tab->load_status = use_large_file_view ? "Indexing large file..." : "Loading...";
         tab->is_large_file = use_large_file_view;
@@ -207,7 +212,8 @@ void ScriptEditorPanel::OpenFileAsync(
             } else {
                 auto& tab = tabs_[current_index];
                 tab->is_loading = false;
-                tab->load_status = error.empty() ? "Cancelled" : "Failed: " + error;
+                tab->load_failed = true;  // the editor is empty: Save must not write it (P0 item 1)
+                tab->load_status = error.empty() ? "Opening was cancelled." : error;
                 spdlog::warn("Async script load stopped: {} - {}", path, tab->load_status);
             }
         }
@@ -224,6 +230,11 @@ void ScriptEditorPanel::FinalizeAsyncLoad(
 
     auto& tab = tabs_[tab_index];
     if (!tab->is_loading) return;
+
+    scriptfile::Decoded decoded = scriptfile::Decode(content);
+    tab->format = decoded.format;
+    content = std::move(decoded.text);
+    tab->load_failed = false;
 
     auto lang = CreatePythonLanguage();
     tab->editor.SetLanguageDefinition(lang);
@@ -274,6 +285,16 @@ void ScriptEditorPanel::FinalizeAsyncLoad(
     request_focus_ = true;
 }
 
+void ScriptEditorPanel::RetryLoad(int tab_index) {
+    if (tab_index < 0 || tab_index >= static_cast<int>(tabs_.size())) return;
+    auto& tab = tabs_[tab_index];
+    tab->is_loading = true;
+    tab->load_failed = false;
+    tab->load_progress = 0.0f;
+    tab->load_status = "Loading...";
+    OpenFileAsync(tab->document_id, tab->filepath);
+}
+
 int ScriptEditorPanel::FindTabIndex(std::uint64_t document_id) const {
     for (int index = 0; index < static_cast<int>(tabs_.size()); ++index) {
         if (tabs_[index] && tabs_[index]->document_id == document_id) {
@@ -288,7 +309,7 @@ bool ScriptEditorPanel::IsActiveTabEditable() const {
         return false;
     }
     const auto& tab = tabs_[active_tab_index_];
-    return tab && !tab->is_loading && !tab->is_large_file;
+    return tab && scriptfile::CanWriteTab(tab->is_loading, tab->load_failed, tab->is_large_file);
 }
 
 void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::string& framework_name) {
@@ -365,11 +386,12 @@ void ScriptEditorPanel::SaveFile() {
 
     // Save to existing path
     std::string content = GetTabContentForPersistence(*tab);
-    if (SaveFileContent(tab->filepath, content)) {
+    std::string error;
+    if (SaveFileContent(tab->filepath, content, tab->format, &error)) {
         tab->is_modified = false;
         spdlog::info("Saved file: {}", tab->filepath);
     } else {
-        spdlog::error("Failed to save file: {}", tab->filepath);
+        spdlog::error("Could not save {}: {}", tab->filepath, error);
     }
 }
 
@@ -394,21 +416,19 @@ void ScriptEditorPanel::SaveFileAs() {
     std::string path = SaveFileDialog();
     if (path.empty()) return;  // User cancelled
 
-    // Ensure .cyx extension
-    std::filesystem::path fspath(path);
-    if (fspath.extension() != ".cyx") {
-        path += ".cyx";
-    }
+    // Keep the extension the user typed (x.py stays x.py; P0 item 2).
+    path = scriptfile::SaveAsPath(path, tab->filename);
 
     // Save content (already have content from empty check above)
-    if (SaveFileContent(path, content)) {
+    std::string error;
+    if (SaveFileContent(path, content, tab->format, &error)) {
         tab->filepath = path;
         tab->filename = std::filesystem::path(path).filename().string();
         tab->is_new = false;
         tab->is_modified = false;
         spdlog::info("Saved file as: {}", path);
     } else {
-        spdlog::error("Failed to save file: {}", path);
+        spdlog::error("Could not save {}: {}", path, error);
     }
 }
 
@@ -461,7 +481,9 @@ bool ScriptEditorPanel::ReloadOpenFile(const std::string& filepath) {
         std::ifstream file(filepath, std::ios::binary);
         if (!file.is_open()) return false;
         std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-        tab->editor.SetText(content);
+        scriptfile::Decoded decoded = scriptfile::Decode(content);
+        tab->format = decoded.format;
+        tab->editor.SetText(decoded.text);
         tab->is_modified = false;
         spdlog::info("Reloaded {} after Replace in Files", filepath);
         return true;

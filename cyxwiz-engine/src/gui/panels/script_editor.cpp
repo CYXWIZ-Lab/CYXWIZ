@@ -2,6 +2,8 @@
 #include "script_editor.h"
 #include "output_renderer.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_widgets.h"
 #include "../editor_fonts.h"
 #include "../../scripting/scripting_engine.h"
 #include "../../scripting/script_output_sink.h"
@@ -638,6 +640,22 @@ void ScriptEditorPanel::RenderEditor() {
         ImGui::SetCursorPosX(window_width * 0.2f);
         ImGui::ProgressBar(tab->load_progress, ImVec2(window_width * 0.6f, 0.0f));
 
+        return;
+    }
+
+    // The file was not read: say so and offer to try again. The tab stays
+    // read-only so Save cannot write an empty editor over it (P0 item 1).
+    if (tab->load_failed) {
+        ImGui::Spacing();
+        ui::StatusText(ui::Status::Failed, ("Could not open " + tab->filename).c_str());
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", tab->load_status.c_str());
+        ImGui::TextDisabled("%s", tab->filepath.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+        if (ui::PrimaryButton("Try again")) RetryLoad(active_tab_index_);
+        ImGui::SameLine();
+        if (ui::SecondaryButton("Close tab", true, nullptr, ui::ButtonSize::Regular)) close_tab_index_ = active_tab_index_;
         return;
     }
 
