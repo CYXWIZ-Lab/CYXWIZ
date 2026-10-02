@@ -731,9 +731,9 @@ void TrainingPlotPanel::RenderEmptyState() {
         }
         ImGui::Spacing();
         centered("No training data yet", c.text);
-        centered("Press Train on the canvas, or run a training script, to see real-time metrics", c.muted);
-        ImGui::Spacing();
-        centered("Try: scripts/train_xor_simple.py", c.accent_text);
+        // Only canvas training reports here; the script hint named a file
+        // that does not exist and scripts cannot feed this panel.
+        centered("Press Train on the canvas to see real-time metrics", c.muted);
         ImGui::Spacing();
         centered("Loss and accuracy charts will appear here", c.faint);
         ImGui::Dummy(ImVec2(0.0f, 48.0f));
