@@ -4,6 +4,8 @@
 #include "../../core/project_manager.h"
 #include "../../scripting/scripting_engine.h"
 #include "../editor_fonts.h"
+#include "../variables_view.h"
+#include <nlohmann/json.hpp>
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include <algorithm>
@@ -304,7 +306,8 @@ Type any Python code to execute.
 PythonReplSession::PythonReplSession() : input_buffer_(1024, '\0') {}
 
 PythonReplSession::~PythonReplSession() {
-  if (command_executing_) {
+  VariablesView::CancelReads(this);
+  if (command_executing_ && !debug_console_) {
     StopAsyncCommand();
   }
 }
@@ -696,6 +699,11 @@ void PythonReplSession::RenderEntry(int index, const Entry &entry) {
   }
   }
 
+  if (!entry.note.empty()) {
+    ImGui::Indent(entry.kind == Entry::Kind::Command ? output_indent : 0.0f);
+    ImGui::TextColored(kMuted, "%s", entry.note.c_str());
+    ImGui::Unindent(entry.kind == Entry::Kind::Command ? output_indent : 0.0f);
+  }
   if (!entry.hint.empty()) {
     ImGui::Indent(entry.kind == Entry::Kind::Command ? output_indent : 0.0f);
     ImGui::PushFont(nullptr);
@@ -1436,6 +1444,7 @@ std::string PythonReplSession::EntryText(const Entry &entry) {
   }
   if (!entry.hint.empty())
     add("Install packages into the project environment: " + entry.hint);
+  add(entry.note);
   return text;
 }
 
@@ -1563,11 +1572,55 @@ void PythonReplSession::StartAsyncCommand(const std::string &command) {
     return;
   command_executing_ = true;
   command_started_ = std::chrono::steady_clock::now();
+  if (scripting_engine_->IsDebugPaused()) {
+    // Board 12: the Console evaluates in the paused frame (statements run
+    // there, a last expression is echoed), on the variables worker.
+    debug_console_ = true;
+    const auto snap = scripting_engine_->GetDebugSnapshot();
+    const std::string where = snap.stack.empty()
+                                  ? std::string("the paused frame")
+                                  : snap.stack.front().name + " (line " + std::to_string(snap.stack.front().line) + ")";
+    scripting::VariablesService::Request r;
+    r.kind = scripting::VariablesService::Kind::Console;
+    r.expression = command;
+    r.frame = 0;
+    VariablesView::Read(scripting_engine_.get(), std::move(r), this,
+                        [this, where](const scripting::VariablesService::Result &result) {
+                          if (running_entry_ >= 0 && running_entry_ < static_cast<int>(entries_.size())) {
+                            Entry &entry = entries_[running_entry_];
+                            entry.running = false;
+                            entry.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                                          command_started_)
+                                                .count();
+                            const auto doc = nlohmann::json::parse(result.json.empty() ? "{}" : result.json, nullptr, false);
+                            if (result.busy || doc.is_discarded()) {
+                              entry.failed = true;
+                              entry.error = "The run is no longer paused";
+                            } else {
+                              AppendCapped(entry.output, doc.value("output", ""));
+                              if (doc.contains("value") && doc["value"].is_string())
+                                AppendCapped(entry.output, doc["value"].get<std::string>() + "\n");
+                              const std::string error = doc.value("error", "");
+                              if (!error.empty()) {
+                                entry.failed = true;
+                                entry.error = error;
+                              }
+                            }
+                            entry.note = "Evaluated in " + where + ", where the run is paused";
+                          }
+                          debug_console_ = false;
+                          command_executing_ = false;
+                          running_entry_ = -1;
+                          focus_input_ = true;
+                          scroll_to_bottom_ = true;
+                        });
+    return;
+  }
   scripting_engine_->ExecuteCommandAsync(command);
 }
 
 void PythonReplSession::CheckAsyncCompletion() {
-  if (!command_executing_ || !scripting_engine_)
+  if (!command_executing_ || !scripting_engine_ || debug_console_)
     return;
   if (scripting_engine_->IsCommandRunning())
     return;

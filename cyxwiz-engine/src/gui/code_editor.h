@@ -12,6 +12,7 @@
 // with Engine-wide chords (duplicate line, comment, find...) reach the
 // Script Editor through the shortcut table and call the document directly.
 
+#include "../core/editor/breakpoint_lines.h"
 #include "../core/editor/folding.h"
 #include "../core/editor/python_highlight.h"
 #include "../core/editor/text_document.h"
@@ -54,8 +55,12 @@ public:
 
     // Breakpoints are 1-based line numbers owned by the caller; a gutter
     // click reports the 0-based line.
-    void SetBreakpoints(const std::vector<int>* lines) { breakpoints_ = lines; }
+    // Breakpoints are owned by the caller (TOFIX133 P6); the view moves them
+    // with line edits and draws a condition or hit count as a ring, a
+    // disabled one hollow. Clicks report the 0-based line.
+    void SetBreakpoints(std::vector<scripting::DebugBreakpoint>* breakpoints) { breakpoints_ = breakpoints; }
     std::function<void(int line)> on_gutter_click;
+    std::function<void(int line)> on_gutter_context;  // right-click in the gutter
 
     void SetMarks(std::vector<Mark> marks) { marks_ = std::move(marks); }
 
@@ -159,7 +164,9 @@ private:
     ImVec2 hover_below_;
     bool ctrl_click_ = false;
     editor::Pos ctrl_click_pos_;
-    const std::vector<int>* breakpoints_ = nullptr;
+    std::vector<scripting::DebugBreakpoint>* breakpoints_ = nullptr;
+    void MoveBreakpointsWith(const std::vector<editor::LineEdit>& edits);
+    void DrawBreakpoint(ImDrawList* dl, ImVec2 centre, float radius, int line, const Palette& pal) const;
     int debug_line_ = -1;
     bool read_only_ = false;
     bool show_whitespace_ = false;

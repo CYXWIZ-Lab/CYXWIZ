@@ -6,6 +6,7 @@
 #include "script_editor.h"
 
 #include "../../scripting/script_output_sink.h"
+#include "../../core/editor/breakpoint_lines.h"
 #include "../../scripting/scripting_engine.h"
 #include "../editor_fonts.h"
 #include "../icons.h"
@@ -49,13 +50,7 @@ std::string WithoutSectionMarkers(const std::string& text) {
 
 std::vector<scripting::DebugBreakpoint> ScriptEditorPanel::DebugBreakpointsFor(const EditorTab& tab,
                                                                                                 const Cell* cell) const {
-    std::vector<scripting::DebugBreakpoint> out;
-    for (int line : cell ? cell->breakpoints : tab.breakpoints) {
-        scripting::DebugBreakpoint bp;
-        bp.line = line;
-        out.push_back(bp);
-    }
-    return out;
+    return cell ? cell->breakpoints : tab.breakpoints;
 }
 
 void ScriptEditorPanel::SyncDebugBreakpoints() {
@@ -190,21 +185,19 @@ void ScriptEditorPanel::RenderDebugToolbar() {
 void ScriptEditorPanel::ToggleBreakpointAtCursor() {
     if (tabs_.empty() || active_tab_index_ < 0) return;
     auto& tab = tabs_[active_tab_index_];
-    std::vector<int>* lines = nullptr;
+    std::vector<scripting::DebugBreakpoint>* bps = nullptr;
     int line = 0;
     if (tab->cell_mode) {
         if (tab->selected_cell < 0 || tab->selected_cell >= tab->cell_manager.GetCellCount()) return;
         Cell& cell = tab->cell_manager.GetCell(tab->selected_cell);
         if (cell.type != CellType::Code) return;
-        lines = &cell.breakpoints;
+        bps = &cell.breakpoints;
         line = cell.editor.Doc().Primary().head.line + 1;
     } else {
-        lines = &tab->breakpoints;
+        bps = &tab->breakpoints;
         line = tab->editor.Doc().Primary().head.line + 1;
     }
-    auto it = std::find(lines->begin(), lines->end(), line);
-    if (it != lines->end()) lines->erase(it);
-    else lines->push_back(line);
+    editor::ToggleBreakpoint(*bps, line);
     SyncDebugBreakpoints();  // a run being debugged picks the change up at once
 }
 
@@ -296,7 +289,7 @@ void ScriptEditorPanel::RenderDebugSidebar(float width, float height) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::Mix(t.bg_window, t.text, 0.03f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
     ImGui::BeginChild("##debug_sidebar", ImVec2(width, height), ImGuiChildFlags_AlwaysUseWindowPadding,
-                      ImGuiWindowFlags_NoScrollbar);
+                      ImGuiWindowFlags_None);  // scrolls when the editor is short
     auto section = [&](const char* title, int count) {
         ImGui::Dummy(ImVec2(0.0f, 2.0f));
         ui::FontScope bold(ui::Font::Bold);
@@ -320,8 +313,8 @@ void ScriptEditorPanel::RenderDebugSidebar(float width, float height) {
             for (int c = 0; c < bp_tab->cell_manager.GetCellCount(); ++c)
                 if (bp_tab->cell_manager.GetCell(c).id == debug_run_.cell_id) bp_cell = &bp_tab->cell_manager.GetCell(c);
     }
-    const std::vector<int> no_lines;
-    const std::vector<int>& bp_lines = bp_cell ? bp_cell->breakpoints : (bp_tab ? bp_tab->breakpoints : no_lines);
+    const std::vector<scripting::DebugBreakpoint> no_lines;
+    const std::vector<scripting::DebugBreakpoint>& bp_lines = bp_cell ? bp_cell->breakpoints : (bp_tab ? bp_tab->breakpoints : no_lines);
     const float fixed = (row + 6.0f) * 4.0f + row * (static_cast<float>(debug_watches_.size()) + 1.0f) +
                         row * static_cast<float>(stack_rows) + row * (static_cast<float>(bp_lines.size()) + 1.0f) + 30.0f;
     const float vars_h = std::max(140.0f, height - fixed);
@@ -414,16 +407,35 @@ void ScriptEditorPanel::RenderDebugSidebar(float width, float height) {
 
     // BREAKPOINTS: the debugged script's or cell's lines with their hits.
     section("BREAKPOINTS", static_cast<int>(bp_lines.size()));
-    std::vector<int> sorted = bp_lines;
-    std::sort(sorted.begin(), sorted.end());
+    std::vector<scripting::DebugBreakpoint> sorted = bp_lines;
+    std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.line < b.line; });
     const std::string label = bp_cell ? std::string("this cell") : (bp_tab ? bp_tab->filename : std::string());
-    for (int line : sorted) {
+    for (const auto& bp : sorted) {
+        const int line = bp.line;
         ImGui::PushID(line);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(t.error, "%s", ICON_FA_CIRCLE);
+        bool enabled = bp.enabled;
+        if (ImGui::Checkbox("##enabled", &enabled)) {
+            if (auto* list = BreakpointsOf(debug_run_.document_id, debug_run_.cell_id))
+                if (auto* b = editor::BreakpointAt(*list, line)) b->enabled = enabled;
+            SyncDebugBreakpoints();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Stop here (off: kept, not stopping)");
         ImGui::SameLine();
         if (ui::LinkButton((label + ", line " + std::to_string(line)).c_str()))
             if (CodeEditor* code = DebugEditorFor(debug_.file)) code->GoToLine(line - 1);
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) OpenBreakpointSettings(debug_run_.document_id, debug_run_.cell_id, line);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Go to the line \xC2\xB7 right-click: condition, hit count");
+        if (!bp.condition.empty()) {
+            ImGui::SameLine();
+            ImFont* code_font = gui::GetCodeFont();
+            if (code_font) ImGui::PushFont(code_font);
+            ImGui::TextColored(t.warning, "if %s", bp.condition.c_str());
+            if (code_font) ImGui::PopFont();
+        }
+        if (bp.hit > 0) {
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_dim, "from hit %d", bp.hit);
+        }
         auto hit = debug_.hits.find(line);
         if (hit != debug_.hits.end() && hit->second > 0) {
             ImGui::SameLine();
@@ -437,6 +449,104 @@ void ScriptEditorPanel::RenderDebugSidebar(float width, float height) {
     ImGui::EndChild();
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
+}
+
+// ---------------------------------------------------------------------------
+// Board 12: a breakpoint's settings.
+
+std::vector<scripting::DebugBreakpoint>* ScriptEditorPanel::BreakpointsOf(std::uint64_t document_id,
+                                                                         const std::string& cell_id) {
+    const int index = FindTabIndex(document_id);
+    if (index < 0) return nullptr;
+    EditorTab& tab = *tabs_[index];
+    if (cell_id.empty()) return &tab.breakpoints;
+    for (int i = 0; i < tab.cell_manager.GetCellCount(); ++i)
+        if (tab.cell_manager.GetCell(i).id == cell_id) return &tab.cell_manager.GetCell(i).breakpoints;
+    return nullptr;
+}
+
+void ScriptEditorPanel::OpenBreakpointSettings(std::uint64_t document_id, const std::string& cell_id, int line) {
+    bp_edit_ = BreakpointEdit{};
+    bp_edit_.open = true;
+    bp_edit_.document_id = document_id;
+    bp_edit_.cell_id = cell_id;
+    bp_edit_.line = line;
+    if (auto* list = BreakpointsOf(document_id, cell_id))
+        if (const auto* bp = editor::BreakpointAt(*list, line)) {
+            std::snprintf(bp_edit_.condition, sizeof(bp_edit_.condition), "%s", bp->condition.c_str());
+            bp_edit_.hit = bp->hit;
+            bp_edit_.enabled = bp->enabled;
+        }
+    bp_edit_.request_open = true;  // a gutter callback runs inside the code view's window
+}
+
+void ScriptEditorPanel::RenderBreakpointSettings() {
+    if (!bp_edit_.open) return;
+    if (bp_edit_.request_open) {
+        ImGui::OpenPopup("##breakpoint_settings");
+        bp_edit_.request_open = false;
+    }
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_Appearing);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
+    if (!ImGui::BeginPopup("##breakpoint_settings")) {
+        ImGui::PopStyleVar();
+        bp_edit_.open = false;
+        return;
+    }
+    auto* list = BreakpointsOf(bp_edit_.document_id, bp_edit_.cell_id);
+    std::string where = "line " + std::to_string(bp_edit_.line);
+    if (const int index = FindTabIndex(bp_edit_.document_id); index >= 0)
+        where = (bp_edit_.cell_id.empty() ? tabs_[index]->filename : std::string("this cell")) + ", " + where;
+    {
+        ui::FontScope bold(ui::Font::Bold);
+        ImGui::Text("Breakpoint \xC2\xB7 %s", where.c_str());
+    }
+    ImGui::Dummy(ImVec2(0.0f, 4.0f));
+    ImGui::TextColored(t.text_dim, "%s", "Stop only when (a Python expression; empty: always)");
+    ImGui::SetNextItemWidth(-1.0f);
+    ImFont* code_font = gui::GetCodeFont();
+    if (code_font) ImGui::PushFont(code_font);
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    const bool enter = ImGui::InputTextWithHint("##condition", "start == 48", bp_edit_.condition, sizeof(bp_edit_.condition),
+                                                ImGuiInputTextFlags_EnterReturnsTrue);
+    if (code_font) ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0.0f, 2.0f));
+    ImGui::TextColored(t.text_dim, "%s", "Stop from this hit on (0: every hit)");
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::InputInt("##hit", &bp_edit_.hit, 0, 0);  // no step buttons (default ImGui ones)
+    bp_edit_.hit = std::max(0, bp_edit_.hit);
+    ImGui::Checkbox("Enabled", &bp_edit_.enabled);
+    ImGui::Dummy(ImVec2(0.0f, 4.0f));
+    bool done = false;
+    if (ui::PrimaryButton("Apply", list != nullptr, "This file or cell is closed") || (enter && list)) {
+        scripting::DebugBreakpoint* bp = editor::BreakpointAt(*list, bp_edit_.line);
+        if (!bp) {
+            editor::ToggleBreakpoint(*list, bp_edit_.line);
+            bp = editor::BreakpointAt(*list, bp_edit_.line);
+        }
+        bp->condition = bp_edit_.condition;
+        bp->hit = bp_edit_.hit;
+        bp->enabled = bp_edit_.enabled;
+        done = true;
+    }
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Cancel")) done = true;
+    if (list && editor::BreakpointAt(*list, bp_edit_.line)) {
+        const float w = ui::ButtonWidth("Remove", ui::ButtonSize::Small);
+        ui::SameLineRight(w);
+        if (ui::DangerButton("Remove")) {
+            editor::ToggleBreakpoint(*list, bp_edit_.line);
+            done = true;
+        }
+    }
+    if (done) {
+        SyncDebugBreakpoints();
+        bp_edit_.open = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+    ImGui::PopStyleVar();
 }
 
 }  // namespace cyxwiz

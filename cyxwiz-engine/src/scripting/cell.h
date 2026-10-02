@@ -151,7 +151,7 @@ struct Cell {
     CodeEditor editor;
 
     // Breakpoints (line numbers)
-    std::vector<int> breakpoints;
+    std::vector<scripting::DebugBreakpoint> breakpoints;  // move with their lines (TOFIX133 P6)
 
     // Other keys of an .ipynb cell (id, metadata, attachments) as JSON.
     std::string ipynb_extra;

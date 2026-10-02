@@ -211,7 +211,7 @@ void ScriptEditorPanel::RenderStatusBar() {
         std::snprintf(buf, sizeof(buf), "Loading %.0f%%", tab->load_progress * 100.0f);
         state = buf;
         dot = t.running;
-    } else if (script_running_ && debug_run_.active && debug_.state == "paused") {
+    } else if (debug_run_.active && debug_.state == "paused") {
         state = "Debugging: paused";  // board 11
         dot = t.warning;
     } else if (script_running_) {

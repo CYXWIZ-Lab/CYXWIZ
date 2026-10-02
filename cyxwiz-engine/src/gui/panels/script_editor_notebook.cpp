@@ -232,6 +232,17 @@ bool ScriptEditorPanel::RenderCellEditorBlock(Cell& cell, int index, float width
     cell.editor.SetScrollPastEnd(false);
     cell.editor.SetBackground(ui::ToU32(BlockColour()));
     cell.editor.SetReadOnly(!editing);
+    // Breakpoints in the cell's narrow margin (P6): click toggles, right-click sets.
+    cell.editor.SetBreakpoints(&cell.breakpoints);
+    {
+        const std::uint64_t doc = tab.document_id;
+        const std::string cell_id = cell.id;
+        cell.editor.on_gutter_click = [this, doc, cell_id](int line) {
+            if (auto* list = BreakpointsOf(doc, cell_id)) editor::ToggleBreakpoint(*list, line + 1);
+            SyncDebugBreakpoints();
+        };
+        cell.editor.on_gutter_context = [this, doc, cell_id](int line) { OpenBreakpointSettings(doc, cell_id, line + 1); };
+    }
     // The paused line of a cell being debugged (board 12).
     cell.editor.SetDebugLine(debug_run_.active && debug_.state == "paused" && debug_run_.cell_id == cell.id &&
                                      debug_frame_ < static_cast<int>(debug_.stack.size()) &&

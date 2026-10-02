@@ -407,6 +407,9 @@ void CodeEditor::HandleMouse(const ImVec2& origin, float gutter, float advance, 
                 Touch();
             }
         }
+        if (in_gutter && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && on_gutter_context) {
+            on_gutter_context(MouseToPos(mouse, origin, gutter, advance, line_height).line);
+        }
         if (!in_gutter && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
             // Keep the selection when the click is inside it, else move the cursor there.
             const Pos p = MouseToPos(mouse, origin, gutter, advance, line_height);
@@ -434,12 +437,30 @@ void CodeEditor::HandleMouse(const ImVec2& origin, float gutter, float advance, 
     }
 }
 
+void CodeEditor::MoveBreakpointsWith(const std::vector<editor::LineEdit>& edits) {
+    if (breakpoints_ && !edits.empty()) editor::MoveBreakpoints(*breakpoints_, edits, doc_.LineCount());
+}
+
+void CodeEditor::DrawBreakpoint(ImDrawList* dl, ImVec2 centre, float radius, int line, const Palette& pal) const {
+    if (!breakpoints_) return;
+    const scripting::DebugBreakpoint* bp = editor::BreakpointAt(*breakpoints_, line);
+    if (!bp) return;
+    if (!bp->enabled) {
+        dl->AddCircle(centre, radius, pal.breakpoint, 0, 1.5f);  // hollow: kept but not stopping
+        return;
+    }
+    dl->AddCircleFilled(centre, radius, pal.breakpoint);
+    if (!bp->condition.empty() || bp->hit > 0)
+        dl->AddCircleFilled(centre, radius * 0.42f, pal.bg);  // a ring: it stops only sometimes
+}
+
 bool CodeEditor::Render(const char* id, const ImVec2& size) {
     const uint64_t version_before = doc_.Version();
     {
         const auto edits = doc_.TakeLineEdits();
         folds_.Update(doc_, edits);
         TrackChanges(edits);
+        MoveBreakpointsWith(edits);
     }
     if (colorize_ && python_) highlighter_.Update(doc_);
     Palette pal = BuildPalette();
@@ -497,6 +518,7 @@ bool CodeEditor::Render(const char* id, const ImVec2& size) {
         if (!edits.empty()) {
             folds_.Update(doc_, edits);
             TrackChanges(edits);
+            MoveBreakpointsWith(edits);
         }
         if (colorize_ && python_) highlighter_.Update(doc_);
     }
@@ -676,15 +698,10 @@ bool CodeEditor::Render(const char* id, const ImVec2& size) {
             dl->AddRectFilled(ImVec2(win.x, y), ImVec2(win.x + 3.0f, y + line_height), pal.change_bar);
         if (!row.first) continue;  // numbers, breakpoints and arrows on a line's first row
         if (!show_line_numbers_) {
-            if (breakpoints_ &&
-                std::find(breakpoints_->begin(), breakpoints_->end(), line_no + 1) != breakpoints_->end())
-                dl->AddCircleFilled(ImVec2(win.x + gutter * 0.5f, y + line_height * 0.5f), 3.5f, pal.breakpoint);
+            DrawBreakpoint(dl, ImVec2(win.x + gutter * 0.5f, y + line_height * 0.5f), 3.5f, line_no + 1, pal);
             continue;
         }
-        if (breakpoints_ &&
-            std::find(breakpoints_->begin(), breakpoints_->end(), line_no + 1) != breakpoints_->end()) {
-            dl->AddCircleFilled(ImVec2(win.x + advance * 1.2f, y + line_height * 0.5f), advance * 0.45f, pal.breakpoint);
-        }
+        DrawBreakpoint(dl, ImVec2(win.x + advance * 1.2f, y + line_height * 0.5f), advance * 0.45f, line_no + 1, pal);
         char num[16];
         std::snprintf(num, sizeof(num), "%d", line_no + 1);
         const float nw = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, num).x;

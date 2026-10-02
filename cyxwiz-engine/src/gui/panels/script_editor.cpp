@@ -561,6 +561,10 @@ void ScriptEditorPanel::RenderEditor() {
     }
     const ImVec2 code_min = ImGui::GetCursorScreenPos();
     code.SetBreakpoints(&tab->breakpoints);
+    code.on_gutter_context = [this](int line) {
+        if (active_tab_index_ < 0) return;
+        OpenBreakpointSettings(tabs_[active_tab_index_]->document_id, std::string(), line + 1);
+    };
     code.on_gutter_click = [this](int line) {
         if (active_tab_index_ < 0) return;
         auto& t = tabs_[active_tab_index_];
@@ -633,6 +637,7 @@ void ScriptEditorPanel::RenderEditor() {
 
     RenderCompletionPopup();
     RenderLanguageCards();
+    RenderBreakpointSettings();
 }
 
 void ScriptEditorPanel::HandleKeyboardShortcuts() {

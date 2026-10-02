@@ -240,7 +240,7 @@ private:
         bool problems_show_warnings = true;
 
         // Breakpoints for traditional script mode (1-based line numbers)
-        std::vector<int> breakpoints;
+        std::vector<scripting::DebugBreakpoint> breakpoints;  // move with their lines (P6)
 
         EditorTab() : is_modified(false), is_new(true) {}
     };
@@ -386,6 +386,22 @@ private:
     std::uint64_t debug_watch_version_ = 0;  // the pause they were evaluated at
     int debug_watch_frame_ = -1;
     char debug_watch_input_[256] = {};
+    // Board 12: a breakpoint's settings, from a right-click in the gutter
+    // or on its row in the side area.
+    struct BreakpointEdit {
+        bool open = false;
+        bool request_open = false;  // opened where the card is drawn (the popup id stack)
+        std::uint64_t document_id = 0;
+        std::string cell_id;  // empty: the script
+        int line = 0;         // 1-based
+        char condition[256] = {};
+        int hit = 0;
+        bool enabled = true;
+    };
+    BreakpointEdit bp_edit_;
+    void OpenBreakpointSettings(std::uint64_t document_id, const std::string& cell_id, int line);
+    void RenderBreakpointSettings();
+    std::vector<scripting::DebugBreakpoint>* BreakpointsOf(std::uint64_t document_id, const std::string& cell_id);
     scripting::IScriptOutputSink* script_output_sink_ = nullptr;
 
     // Debugger state

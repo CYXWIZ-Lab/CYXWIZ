@@ -124,6 +124,7 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
     completion_just_opened_ = false;
     RenderCompletionPopup();
     RenderLanguageCards();
+    RenderBreakpointSettings();
 }
 
 

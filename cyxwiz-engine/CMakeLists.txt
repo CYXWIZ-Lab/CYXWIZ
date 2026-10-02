@@ -328,6 +328,7 @@ set(ENGINE_SOURCES
     src/core/variables_presentation.cpp
     src/core/script_keys.cpp
     src/core/editor/text_document.cpp
+    src/core/editor/breakpoint_lines.cpp
     src/core/editor/python_highlight.cpp
     src/core/editor/folding.cpp
     src/core/editor/outline.cpp

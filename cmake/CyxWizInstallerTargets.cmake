@@ -362,6 +362,12 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/tests/test_text_document.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/editor/text_document.cpp"
     )
+    # Breakpoints follow their lines (TOFIX133 P6).
+    add_executable(test_breakpoint_lines
+        "${_cyxwiz_installer_engine_dir}/tests/test_breakpoint_lines.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/editor/breakpoint_lines.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/editor/text_document.cpp"
+    )
     add_executable(test_editor_highlight_folding
         "${_cyxwiz_installer_engine_dir}/tests/test_editor_highlight_folding.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/editor/text_document.cpp"
@@ -409,7 +415,7 @@ if(CYXWIZ_BUILD_TESTS)
             test_python_literal test_script_keys test_text_document test_editor_highlight_folding
             test_notebook_format test_notebook_presentation
             test_markdown_blocks test_html_table test_csv_records
-            test_language_results test_variables_presentation)
+            test_language_results test_variables_presentation test_breakpoint_lines)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
