@@ -1,6 +1,7 @@
 # python_tools
 
 Python code the Engine runs for its Script Editor's language intelligence
+and its Variable Explorer
 (TOFIX133 P3, decision D2): completion, hover, signature help, go to
 definition (Jedi) and problems (pyflakes). The owner chose (2026-10-02) to
 ship these with the Engine, so they work offline in every project without
@@ -11,7 +12,12 @@ touching the project's environment.
 - `wheels/`: the packages as published on PyPI. The build unpacks them next
   to the Engine executable (`<exe dir>/python_tools/`), and release packages
   ship that folder (`redist/scripts/package_release.py`).
-- `tests/test_cyxwiz_intel.py`: run by ctest against the unpacked folder.
+- `cyxwiz_vars.py`: the Variable Explorer and Data Viewer reader (TOFIX133
+  P5): lists a namespace's variables, expands values, gives the Data Viewer
+  bounded columns, copies, saves CSV, deletes. Standard library only; it
+  never imports numpy or pandas itself.
+- `tests/test_cyxwiz_intel.py`, `tests/test_cyxwiz_vars.py`: run by ctest
+  against the unpacked folder.
 
 | Package | Version | Licence | SHA-256 of the wheel |
 | --- | --- | --- | --- |
