@@ -362,6 +362,11 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/tests/test_text_document.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/editor/text_document.cpp"
     )
+    # "Plot with Python" writes valid Python (TOFIX134 P0 item 4).
+    add_executable(test_plot_script
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_script.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot_script.cpp"
+    )
     # Scatter/correlation pairs from one row (TOFIX134 P0 item 3).
     add_executable(test_paired_columns
         "${_cyxwiz_installer_engine_dir}/tests/test_paired_columns.cpp"
@@ -421,13 +426,17 @@ if(CYXWIZ_BUILD_TESTS)
             test_notebook_format test_notebook_presentation
             test_markdown_blocks test_html_table test_csv_records
             test_language_results test_variables_presentation test_breakpoint_lines
-            test_paired_columns)
+            test_paired_columns test_plot_script)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
         )
         add_test(NAME ${_cyxwiz_p0_test}_contract COMMAND ${_cyxwiz_p0_test})
     endforeach()
+    if(Python3_EXECUTABLE)
+        # The generated plot scripts are compiled by Python too.
+        set_tests_properties(test_plot_script_contract PROPERTIES ENVIRONMENT "CYXWIZ_TEST_PYTHON=${Python3_EXECUTABLE}")
+    endif()
 
     add_executable(test_installer_product_removal
         "${_cyxwiz_installer_engine_dir}/tests/test_installer_product_removal.cpp"

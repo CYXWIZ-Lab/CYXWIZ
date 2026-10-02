@@ -1,4 +1,5 @@
 ﻿#include "table_viewer.h"
+#include "../../core/plot_script.h"
 #include "../icons.h"
 #include <imgui.h>
 #include <implot.h>
@@ -306,87 +307,27 @@ void TableViewerPanel::RenderQuickPlot() {
             ImGui::SameLine();
 
             if (ImGui::Button(ICON_FA_CODE " Plot with Python")) {
-                // Generate matplotlib script
-                std::string plot_type;
+                // TOFIX134 P0 item 4: core/plot_script writes valid Python (all
+                // values, literal title, full digits); it used to put "..." in
+                // the data after 101 values and paste the title unescaped.
+                using plotscript::Kind;
+                Kind kind = Kind::Line;
                 switch (plot_popup_.type) {
-                    case QuickPlotType::Histogram: plot_type = "hist"; break;
-                    case QuickPlotType::Bar: plot_type = "bar"; break;
-                    case QuickPlotType::Line: plot_type = "plot"; break;
-                    case QuickPlotType::Scatter: plot_type = "scatter"; break;
-                    case QuickPlotType::Box: plot_type = "boxplot"; break;
-                    case QuickPlotType::Pie: plot_type = "pie"; break;
-                    case QuickPlotType::Stairs: plot_type = "step"; break;
-                    case QuickPlotType::Stem: plot_type = "stem"; break;
-                    case QuickPlotType::Area: plot_type = "fill_between"; break;
-                    default: plot_type = "plot"; break;
+                    case QuickPlotType::Histogram: kind = Kind::Histogram; break;
+                    case QuickPlotType::Bar: kind = Kind::Bar; break;
+                    case QuickPlotType::Line: kind = Kind::Line; break;
+                    case QuickPlotType::Scatter: kind = Kind::Scatter; break;
+                    case QuickPlotType::Box: kind = Kind::Box; break;
+                    case QuickPlotType::Pie: kind = Kind::Pie; break;
+                    case QuickPlotType::Stairs: kind = Kind::Stairs; break;
+                    case QuickPlotType::Stem: kind = Kind::Stem; break;
+                    case QuickPlotType::Area: kind = Kind::Area; break;
+                    default: kind = Kind::Line; break;
                 }
-
-                // Build data array string
-                std::ostringstream data_ss;
-                data_ss << "data = [";
-                for (size_t i = 0; i < plot_popup_.x_data.size(); i++) {
-                    if (i > 0) data_ss << ", ";
-                    data_ss << plot_popup_.x_data[i];
-                    if (i > 100) {
-                        data_ss << ", ...";  // Truncate for large datasets
-                        break;
-                    }
-                }
-                data_ss << "]";
-
-                std::ostringstream script;
-                script << "import matplotlib.pyplot as plt\n";
-                script << "import numpy as np\n\n";
-                script << "# Data from Table Viewer\n";
-                script << data_ss.str() << "\n\n";
-                script << "plt.figure(figsize=(10, 6))\n";
-
-                if (plot_type == "hist") {
-                    script << "plt.hist(data, bins=30, edgecolor='black', alpha=0.7)\n";
-                    script << "plt.xlabel('Value')\n";
-                    script << "plt.ylabel('Frequency')\n";
-                } else if (plot_type == "bar") {
-                    script << "plt.bar(range(len(data)), data, alpha=0.7)\n";
-                    script << "plt.xlabel('Index')\n";
-                    script << "plt.ylabel('Value')\n";
-                } else if (plot_type == "scatter" && !plot_popup_.y_data.empty()) {
-                    std::ostringstream y_ss;
-                    y_ss << "y_data = [";
-                    for (size_t i = 0; i < plot_popup_.y_data.size() && i < 100; i++) {
-                        if (i > 0) y_ss << ", ";
-                        y_ss << plot_popup_.y_data[i];
-                    }
-                    y_ss << "]";
-                    script << y_ss.str() << "\n";
-                    script << "plt.scatter(data[:len(y_data)], y_data, alpha=0.7)\n";
-                    script << "plt.xlabel('X')\n";
-                    script << "plt.ylabel('Y')\n";
-                } else if (plot_type == "boxplot") {
-                    script << "plt.boxplot(data)\n";
-                } else if (plot_type == "pie") {
-                    script << "# Binning data for pie chart\n";
-                    script << "counts, bins = np.histogram(data, bins=8)\n";
-                    script << "labels = [f'{bins[i]:.1f}-{bins[i+1]:.1f}' for i in range(len(counts))]\n";
-                    script << "plt.pie(counts, labels=labels, autopct='%1.1f%%')\n";
-                } else if (plot_type == "step") {
-                    script << "plt.step(range(len(data)), data, where='mid')\n";
-                } else if (plot_type == "stem") {
-                    script << "plt.stem(range(len(data)), data)\n";
-                } else if (plot_type == "fill_between") {
-                    script << "x = range(len(data))\n";
-                    script << "plt.fill_between(x, data, alpha=0.5)\n";
-                    script << "plt.plot(x, data)\n";
-                } else {
-                    script << "plt.plot(data)\n";
-                }
-
-                script << "plt.title('" << plot_popup_.title << "')\n";
-                script << "plt.tight_layout()\n";
-                script << "plt.show()\n";
-
-                // Copy to clipboard
-                ImGui::SetClipboardText(script.str().c_str());
-                spdlog::info("Python matplotlib script copied to clipboard ({} bytes)", script.str().length());
+                const std::string script =
+                    plotscript::MatplotlibScript(kind, plot_popup_.title, plot_popup_.x_data, plot_popup_.y_data);
+                ImGui::SetClipboardText(script.c_str());
+                spdlog::info("Python matplotlib script copied to clipboard ({} bytes)", script.size());
             }
             ImGui::SameLine();
 
