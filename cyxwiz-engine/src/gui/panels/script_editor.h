@@ -12,6 +12,7 @@
 #include "../../scripting/debugger.h"
 #include "../../scripting/script_manager.h"
 #include "../code_editor.h"
+#include "../variables_view.h"
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -28,15 +29,6 @@ namespace scripting {
 
 namespace cyxwiz {
 class DataTable;
-
-// One row of a notebook's Variables panel (TOFIX133 P4 step 4.3d).
-struct NotebookVariable {
-    std::string name;
-    std::string type;
-    std::string size;
-    std::string value;
-    bool table = false;  // a pandas table: double-click opens it in the Table Viewer
-};
 }
 
 namespace cyxwiz {
@@ -89,6 +81,11 @@ public:
     // Edit > Go to Line (the Engine's dialog), offered in the code's right-click menu.
     void SetGoToLineRequest(std::function<void()> request) { go_to_line_request_ = std::move(request); }
     // A notebook table result opens in the Table Viewer (TOFIX133 P4 board 5).
+    // Variable Explorer (TOFIX133 P5): the open notebooks it can show, and
+    // a name inserted at the cursor of the script or cell being edited.
+    std::vector<VariablesView::Scope> NotebookScopes() const;
+    void InsertTextAtCursor(const std::string& text);
+
     void SetOpenTableCallback(std::function<void(std::shared_ptr<DataTable>)> callback) {
         open_table_callback_ = std::move(callback);
     }
@@ -228,9 +225,8 @@ private:
         bool show_variables = false;
         bool show_outline = false;
         int scroll_to_cell = -1;  // the Outline asks the cell list to scroll there
-        std::vector<NotebookVariable> variables;
-        std::uint64_t variables_generation = 0;
-        char variables_filter[64] = {};
+        // The notebook's Variables (TOFIX133 P5): the shared view on its namespace.
+        std::unique_ptr<VariablesView> variables_view;
         // Problems (TOFIX133 P3 step 3.4): the script's last pyflakes check.
         std::vector<lang::Problem> problems;
         std::uint64_t problems_version = 0;  // the text version they are for (+1; 0 = not checked)
@@ -305,8 +301,7 @@ private:
     int next_plot_window_ = 1;
     void RenderNotebookVariables(EditorTab& tab, float height);  // script_editor_notebook_side.cpp
     void RenderNotebookOutline(EditorTab& tab, float width, float height);
-    void RefreshNotebookVariables(EditorTab& tab);
-    void OpenVariableInTableViewer(EditorTab& tab, const std::string& name);
+    void RestartNotebook(EditorTab& tab);  // Restart + the Variables view forgets
     struct CellClipboard {
         bool has = false;
         CellType type = CellType::Code;

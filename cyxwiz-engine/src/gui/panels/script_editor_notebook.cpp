@@ -107,7 +107,7 @@ void ScriptEditorPanel::RenderNotebookToolbar(EditorTab& tab) {
         ImGui::SetTooltip("Stop the running cell at its next Python line; queued cells are not run");
     if (!compact) {
         ImGui::SameLine();
-        if (ui::GhostButton("Restart", !cells.IsRestarting(), "Restarting")) cells.Restart();
+        if (ui::GhostButton("Restart", !cells.IsRestarting(), "Restarting")) RestartNotebook(tab);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
             ImGui::SetTooltip("Clear this notebook's variables and start the [n] count again; outputs stay");
         ImGui::SameLine();
@@ -126,7 +126,7 @@ void ScriptEditorPanel::RenderNotebookToolbar(EditorTab& tab) {
             if (ImGui::MenuItem("Run Above", nullptr, false, has_selection && !other_busy)) cells.RunCellsAbove(tab.selected_cell);
             if (ImGui::MenuItem("Run Below", nullptr, false, has_selection && !other_busy)) cells.RunCellsBelow(tab.selected_cell);
             ImGui::Separator();
-            if (ImGui::MenuItem("Restart", nullptr, false, !cells.IsRestarting())) cells.Restart();
+            if (ImGui::MenuItem("Restart", nullptr, false, !cells.IsRestarting())) RestartNotebook(tab);
             if (ImGui::MenuItem("Clear outputs")) {
                 cells.ClearAllOutputs();
                 tab.is_modified = true;
@@ -169,7 +169,7 @@ void ScriptEditorPanel::RenderNotebookToolbar(EditorTab& tab) {
         if (!python_tooltip_.empty()) ImGui::TextDisabled("%s", python_tooltip_.c_str());
         ImGui::Separator();
         if (ImGui::MenuItem("Interrupt", nullptr, false, running)) cells.InterruptExecution();
-        if (ImGui::MenuItem("Restart", nullptr, false, !cells.IsRestarting())) cells.Restart();
+        if (ImGui::MenuItem("Restart", nullptr, false, !cells.IsRestarting())) RestartNotebook(tab);
         ImGui::EndPopup();
     }
     ImGui::PopStyleVar();

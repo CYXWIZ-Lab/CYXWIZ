@@ -313,7 +313,8 @@ void ScriptEditorPanel::UpdateDiagnostics(EditorTab& tab) {
         code = &cell.editor;
         cell_id = cell.id;
         // Names the notebook already has are not "undefined" in a cell.
-        for (const auto& v : tab.variables) known.push_back(v.name);
+        if (tab.variables_view)
+            for (auto& n : tab.variables_view->Names()) known.push_back(std::move(n));
         for (int i = 0; i < tab.cell_manager.GetCellCount(); ++i) {
             const Cell& other = tab.cell_manager.GetCell(i);
             if (other.type != CellType::Code || other.id == cell.id) continue;

@@ -2415,6 +2415,28 @@ MainWindow::MainWindow()
 
     // Set up Go to Line callback
     if (script_editor_) script_editor_->SetGoToLineRequest([this]() { if (toolbar_) toolbar_->OpenGoToLineDialog(); });
+    if (variable_explorer_) {
+        // Variable Explorer (TOFIX133 P5): the session or an open notebook;
+        // View data opens the value in the Table Viewer.
+        auto& view = variable_explorer_->View();
+        view.scopes = [this]() {
+            std::vector<cyxwiz::VariablesView::Scope> out{{"", "Python session", "scripts and Console"}};
+            if (script_editor_)
+                for (auto& s : script_editor_->NotebookScopes()) out.push_back(std::move(s));
+            return out;
+        };
+        view.on_open_table = [this](const std::string& name, const cyxwiz::VariablesView::Scope& scope,
+                                    const scripting::VariablesService::Result& result) {
+            if (!table_viewer_ || !result.table) return;
+            result.table->SetName(name + " \xC2\xB7 " + scope.label);
+            table_viewer_->SetTable(result.table);
+            table_viewer_->SetVisible(true);
+            ImGui::SetWindowFocus(table_viewer_->GetName());
+        };
+        view.on_insert_name = [this](const std::string& name) {
+            if (script_editor_) script_editor_->InsertTextAtCursor(name);
+        };
+    }
     if (script_editor_) {
         // Notebook table results open in the Table Viewer (TOFIX133 P4 board 5).
         script_editor_->SetOpenTableCallback([this](std::shared_ptr<cyxwiz::DataTable> table) {
@@ -3142,6 +3164,7 @@ void MainWindow::Render() {
     TimedRender("theme editor", theme_editor_);
     TimedRender("memory", memory_panel_);
     TimedRender("memory monitor", memory_monitor_);
+    cyxwiz::VariablesView::PollAll(scripting_engine_.get());  // results for every Variables view
     TimedRender("variable explorer", variable_explorer_);
     TimedRender("plot output", plot_output_panel_);
     TimedRender("test results", test_results_panel_);
@@ -3501,7 +3524,7 @@ void MainWindow::BuildInitialDockLayout() {
     for (const char* name : {"Table Viewer", "Data Explorer", "Annotation Editor", "###Visualizer", "Query Console",
                              "Plot Output", "###CloudBrowser", "###DatasetManager", "Plugin Manager"})
         ImGui::DockBuilderDockWindow(name, dock_id_center_right);
-    for (const char* name : {ICON_FA_LIST_UL " Variable Explorer", "Background Tasks", "Job Status & Orchestration",
+    for (const char* name : {"###VariableExplorer", "Background Tasks", "Job Status & Orchestration",
                              "P2P Training Progress"})
         ImGui::DockBuilderDockWindow(name, dock_id_bottom_left);
     ImGui::DockBuilderDockWindow("###StudioDebuggerPanel", dock_id_bottom_right);

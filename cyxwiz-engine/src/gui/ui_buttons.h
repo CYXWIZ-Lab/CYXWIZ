@@ -48,6 +48,12 @@ float StatusPillWidth(const char* text);
 // Width a ToggleChip will take.
 float ToggleChipWidth(const char* label, const char* count);
 
+// One of a row of filter chips where exactly one is chosen (Variable
+// Explorer: All, Tables, ...): accent fill when chosen, faint fill
+// otherwise, the count muted. Returns true when clicked.
+bool FilterChip(const char* id, const char* label, const char* count, bool chosen);
+float FilterChipWidth(const char* label, const char* count);
+
 // Width a button will take, for sizing fixed table columns.
 float ButtonWidth(const char* label, ButtonSize size);
 

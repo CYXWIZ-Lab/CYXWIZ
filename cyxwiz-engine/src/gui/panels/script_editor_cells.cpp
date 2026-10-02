@@ -85,7 +85,7 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 4.0f));
     // The status bar below takes one frame row; the Variables panel (board
     // 4) sits under the cells, the Outline beside them.
-    const float variables_height = (tab->show_variables ? 168.0f : 0.0f) + (tab->show_problems ? 168.0f : 0.0f);
+    const float variables_height = (tab->show_variables ? 240.0f : 0.0f) + (tab->show_problems ? 168.0f : 0.0f);
     const float outline_width = tab->show_outline && available_width > 520.0f ? 220.0f : 0.0f;
     const float cells_height =
         std::max(60.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing() - variables_height);
@@ -115,7 +115,7 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor(5);
     if (tab->show_problems) RenderProblemsPanel(*tab, 168.0f);
-    if (tab->show_variables) RenderNotebookVariables(*tab, 168.0f);
+    if (tab->show_variables) RenderNotebookVariables(*tab, 240.0f);
     completion_just_opened_ = false;
     RenderCompletionPopup();
     RenderLanguageCards();

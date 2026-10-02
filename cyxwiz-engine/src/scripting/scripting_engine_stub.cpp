@@ -91,17 +91,6 @@ bool ScriptingEngine::ReadVariableTable(const std::string&, const std::string&, 
     return false;
 }
 
-bool ScriptingEngine::ExportNotebookVariableToCsv(const std::string&, const std::string&, const std::string&,
-                                                  std::string* error) {
-    if (error) *error = "This build has no Python scripting";
-    return false;
-}
-
-bool ScriptingEngine::NotebookVariablesJson(const std::string&, std::string* json) {
-    if (json) *json = "[]";
-    return true;
-}
-
 bool ScriptingEngine::ExportNotebookValueToCsv(const std::string&, int, const std::string&, std::string* error) {
     if (error) *error = "This build has no Python scripting";
     return false;

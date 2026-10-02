@@ -175,14 +175,7 @@ public:
     // file, for the Table Viewer. False with a reason while a script runs, after
     // Restart, or when the value is not a table.
     bool ExportNotebookValueToCsv(const std::string& key, int count, const std::string& path, std::string* error);
-    // The same for a variable of the notebook (a table in its Variables panel).
-    bool ExportNotebookVariableToCsv(const std::string& key, const std::string& name, const std::string& path,
-                                     std::string* error);
 
-    // A notebook's variables as JSON [{name, type, size, value, table}],
-    // summarised with reprlib (cheap, under the GIL on the caller's thread).
-    // False while a script or command runs.
-    bool NotebookVariablesJson(const std::string& key, std::string* json);
 
     // Stop currently running script
     // Sends interrupt signal to Python interpreter

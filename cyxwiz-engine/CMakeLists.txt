@@ -439,6 +439,7 @@ set(ENGINE_SOURCES
     src/gui/panels/memory_monitor.cpp
     src/gui/panels/pattern_browser.cpp
     src/gui/panels/variable_explorer.cpp
+    src/gui/variables_view.cpp
     src/gui/panels/test_results_panel.cpp
     src/gui/panels/export_dialog.cpp
     src/gui/panels/import_dialog.cpp

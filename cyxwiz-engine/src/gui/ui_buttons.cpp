@@ -178,6 +178,30 @@ bool ToggleChip(const char* id, const char* label, const char* count, bool on,
     return clicked;
 }
 
+float FilterChipWidth(const char* label, const char* count) {
+    return ImGui::CalcTextSize(label, nullptr, true).x + 5.0f + ImGui::CalcTextSize(count).x + 20.0f;
+}
+
+bool FilterChip(const char* id, const char* label, const char* count, bool chosen) {
+    RefreshColors();
+    const ui::Tokens& t = ui::CurrentTokens();
+    const float height = ImGui::GetFrameHeight() - 2.0f;
+    const float width = FilterChipWidth(label, count);
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, height));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec4 fill = chosen ? ui::WithAlpha(t.accent, 0.35f) : (hovered ? kSecondaryHover : ui::WithAlpha(t.text, 0.05f));
+    dl->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), ImGui::GetColorU32(fill), height * 0.5f);
+    const float text_y = pos.y + (height - ImGui::GetTextLineHeight()) * 0.5f;
+    const char* label_end = ImGui::FindRenderedTextEnd(label);
+    dl->AddText(ImVec2(pos.x + 10.0f, text_y), ImGui::GetColorU32(chosen ? t.text_bright : t.text), label, label_end);
+    dl->AddText(ImVec2(pos.x + 10.0f + ImGui::CalcTextSize(label, nullptr, true).x + 5.0f, text_y),
+                ImGui::GetColorU32(t.text_dim), count);
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return clicked;
+}
+
 float ChipButtonWidth(const char* label) {
     return ImGui::CalcTextSize(label, nullptr, true).x + 22.0f;
 }
