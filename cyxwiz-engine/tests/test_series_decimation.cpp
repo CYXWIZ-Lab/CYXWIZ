@@ -29,7 +29,8 @@ int main() {
     y[31337] = 9.0;
     y[77777] = -2.0;
     const Decimated d = MinMaxDecimate(x, y, 2000);
-    Check(d.x.size() == d.y.size() && d.x.size() <= 2001, "at most the requested points (plus the newest)");
+    Check(d.x.size() == d.y.size() && d.x.size() <= 2002, "at most the requested points (plus first and newest)");
+    Check(d.x.front() == x.front() && d.y.front() == y.front(), "the first value is drawn");
     Check(std::is_sorted(d.x.begin(), d.x.end()), "x stays in order");
     Check(*std::max_element(d.y.begin(), d.y.end()) == 9.0, "the spike is kept");
     Check(*std::min_element(d.y.begin(), d.y.end()) == -2.0, "the dip is kept");

@@ -13,8 +13,11 @@ Decimated MinMaxDecimate(const std::vector<double>& x, const std::vector<double>
         return out;
     }
     const size_t buckets = max_points / 2;
-    out.x.reserve(buckets * 2);
-    out.y.reserve(buckets * 2);
+    out.x.reserve(buckets * 2 + 2);
+    out.y.reserve(buckets * 2 + 2);
+    // The first value is always drawn (the line starts where the data does).
+    out.x.push_back(x[0]);
+    out.y.push_back(y[0]);
     for (size_t b = 0; b < buckets; ++b) {
         const size_t begin = b * n / buckets;
         const size_t end = (b + 1) * n / buckets;
@@ -25,8 +28,10 @@ Decimated MinMaxDecimate(const std::vector<double>& x, const std::vector<double>
             if (y[i] > y[hi]) hi = i;
         }
         const size_t first = std::min(lo, hi), second = std::max(lo, hi);
-        out.x.push_back(x[first]);
-        out.y.push_back(y[first]);
+        if (first != 0) {
+            out.x.push_back(x[first]);
+            out.y.push_back(y[first]);
+        }
         if (second != first) {
             out.x.push_back(x[second]);
             out.y.push_back(y[second]);
