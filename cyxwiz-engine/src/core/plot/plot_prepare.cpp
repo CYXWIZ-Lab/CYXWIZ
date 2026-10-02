@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <numeric>
 #include <random>
@@ -18,6 +20,12 @@ const SourceColumn* Source::Find(const std::string& name) const {
     return nullptr;
 }
 
+size_t Source::Rows() const {
+    size_t rows = 0;
+    for (const auto& c : columns) rows = std::max(rows, c.size());
+    return rows;
+}
+
 namespace {
 
 std::string CellText(const SourceColumn& c, size_t row) {
@@ -28,9 +36,37 @@ std::string CellText(const SourceColumn& c, size_t row) {
     return out.str();
 }
 
-double Number(const SourceColumn* c, size_t row) {
-    if (!c) return static_cast<double>(row);  // no X column: the row number
+double Number(const Source& src, const SourceColumn* c, size_t row) {
+    if (!c) {  // no X column: the row's place in the table
+        return row < src.row_index.size() ? src.row_index[row] : static_cast<double>(row);
+    }
     return row < c->numbers.size() ? c->numbers[row] : NAN;
+}
+
+std::string Short(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.3g", v);
+    return buf;
+}
+
+// Distinct values of a column, counted up to cap + 1.
+size_t CountDistinct(const SourceColumn& c, size_t cap) {
+    if (c.numeric) {
+        std::vector<double> seen;
+        for (double v : c.numbers) {
+            if (!std::isfinite(v) || std::find(seen.begin(), seen.end(), v) != seen.end()) continue;
+            seen.push_back(v);
+            if (seen.size() > cap) break;
+        }
+        return seen.size();
+    }
+    std::vector<std::string> seen;
+    for (const auto& v : c.text) {
+        if (std::find(seen.begin(), seen.end(), v) != seen.end()) continue;
+        seen.push_back(v);
+        if (seen.size() > cap) break;
+    }
+    return seen.size();
 }
 
 // Rows grouped by the colour column's value: the largest groups keep their
@@ -45,6 +81,25 @@ Groups GroupRows(const SourceColumn* colour, size_t rows) {
     g.of_row.assign(rows, 0);
     if (!colour) {
         g.names = {""};
+        return g;
+    }
+    if (colour->numeric && CountDistinct(*colour, kMaxColorGroups) > kMaxColorGroups) {
+        // Many numbers: equal ranges from the lowest to the highest value.
+        const ColumnStats st = Summarize(colour->numbers);
+        const double lo = st.min, hi = st.max > st.min ? st.max : st.min + 1.0;
+        const double step = (hi - lo) / kColourRanges;
+        for (int i = 0; i < kColourRanges; ++i) g.names.push_back(Short(lo + step * i) + " to " + Short(lo + step * (i + 1)));
+        bool missing = false;
+        for (size_t r = 0; r < rows; ++r) {
+            const double v = r < colour->numbers.size() ? colour->numbers[r] : NAN;
+            if (!std::isfinite(v)) {
+                g.of_row[r] = kColourRanges;
+                missing = true;
+                continue;
+            }
+            g.of_row[r] = std::clamp(static_cast<int>((v - lo) / step), 0, kColourRanges - 1);
+        }
+        if (missing) g.names.push_back("missing");
         return g;
     }
     std::vector<std::string> order;
@@ -90,7 +145,7 @@ void PrepareLines(Prepared& p, const Source& src, const SourceColumn* xcol, cons
             std::vector<double> xs, vs;
             for (size_t r = 0; r < y->numbers.size(); ++r) {
                 if (groups.of_row[r] != static_cast<int>(g)) continue;
-                const double x = Number(xcol, r), v = y->numbers[r];
+                const double x = Number(src, xcol, r), v = y->numbers[r];
                 if (!std::isfinite(x) || !std::isfinite(v)) continue;
                 xs.push_back(x);
                 vs.push_back(v);
@@ -116,13 +171,13 @@ void PrepareLines(Prepared& p, const Source& src, const SourceColumn* xcol, cons
             p.series.push_back(std::move(s));
         }
     }
-    (void)src;
     if (shown < total) p.label = {DataLabel::State::Reduced, shown, total};
     else p.label = {DataLabel::State::Exact, total, total};
 }
 
 void PrepareScatter(Prepared& p, const SourceColumn* xcol, const std::vector<const SourceColumn*>& ys,
-                    const Groups& groups) {
+                    const Groups& groups, const SourceColumn* scale) {
+    const auto colour_at = [&](size_t r) { return scale && r < scale->numbers.size() ? scale->numbers[r] : NAN; };
     // Rows with a finite x and y, sampled evenly and the same way each time.
     std::vector<size_t> rows;
     const size_t n = xcol->numbers.size();
@@ -148,6 +203,7 @@ void PrepareScatter(Prepared& p, const SourceColumn* xcol, const std::vector<con
                 if (!std::isfinite(y->numbers[r])) continue;
                 s.x.push_back(xcol->numbers[r]);
                 s.y.push_back(y->numbers[r]);
+                if (scale) s.c.push_back(colour_at(r));
             }
             if (rows.size() < all_rows.size()) {
                 for (size_t r : all_rows) {
@@ -155,9 +211,25 @@ void PrepareScatter(Prepared& p, const SourceColumn* xcol, const std::vector<con
                     if (!std::isfinite(y->numbers[r])) continue;
                     s.all_x.push_back(xcol->numbers[r]);
                     s.all_y.push_back(y->numbers[r]);
+                    if (scale) s.all_c.push_back(colour_at(r));
                 }
             }
             if (!s.x.empty()) p.series.push_back(std::move(s));
+        }
+    }
+    if (scale) {
+        // The scale spans the colour values of the plotted rows; values on
+        // both sides of 0 get the two-sided scale, centred on 0.
+        const ColumnStats st = Summarize(scale->numbers);
+        p.colour_scale = true;
+        p.colour_label = scale->name;
+        p.colour_min = st.min;
+        p.colour_max = st.max > st.min ? st.max : st.min + 1.0;
+        if (st.count > 0 && st.min < 0.0 && st.max > 0.0) {
+            const double m = std::max(-st.min, st.max);
+            p.colour_diverging = true;
+            p.colour_min = -m;
+            p.colour_max = m;
         }
     }
 }
@@ -419,14 +491,188 @@ void PrepareHistogram2D(Prepared& p, const SourceColumn* xcol, const SourceColum
     p.label = {DataLabel::State::Exact, pts.size(), pts.size()};
 }
 
+std::string Trim(const std::string& v) {
+    const size_t a = v.find_first_not_of(" \t");
+    if (a == std::string::npos) return "";
+    return v.substr(a, v.find_last_not_of(" \t") - a + 1);
+}
+
+bool ParseNumber(const std::string& text, double& out) {
+    if (text.empty()) return false;
+    char* end = nullptr;
+    out = std::strtod(text.c_str(), &end);
+    return end && *end == '\0' && std::isfinite(out);
+}
+
+template <typename T>
+bool Compare(const T& a, const std::string& op, const T& b) {
+    if (op == "=") return a == b;
+    if (op == "!=") return a != b;
+    if (op == "<") return a < b;
+    if (op == "<=") return a <= b;
+    if (op == ">") return a > b;
+    if (op == ">=") return a >= b;
+    return false;
+}
+
+struct Condition {
+    const SourceColumn* column = nullptr;
+    std::string op, value;
+    bool as_number = false;
+    double number = 0;
+};
+
+bool Matches(const Condition& c, size_t r) {
+    const SourceColumn& col = *c.column;
+    if (col.numeric && (r >= col.numbers.size() || !std::isfinite(col.numbers[r]))) return false;  // missing
+    if (col.numeric && c.as_number && c.op != "contains") return Compare(col.numbers[r], c.op, c.number);
+    const std::string text = CellText(col, r);
+    if (c.op == "contains") return text.find(c.value) != std::string::npos;
+    return Compare(text, c.op, c.value);
+}
+
 }  // namespace
 
-Prepared Prepare(const PlotSpec& spec, const Source& src) {
+std::vector<std::string> ColumnsNeeded(const PlotSpec& spec) {
+    std::vector<std::string> out;
+    const auto add = [&](const std::string& name) {
+        if (!name.empty() && std::find(out.begin(), out.end(), name) == out.end()) out.push_back(name);
+    };
+    add(spec.x_column);
+    for (const auto& y : spec.y_columns) add(y);
+    add(spec.color_column);
+    if (spec.rows == RowMode::Filter)
+        for (const auto& c : spec.conditions) add(c.column);
+    return out;
+}
+
+RowSelection SelectRows(const PlotSpec& spec, const Source& src) {
+    RowSelection out;
+    const size_t rows = src.Rows();
+    out.total = rows;
+    const std::string of_all = " of " + Thousands(static_cast<long long>(rows)) + " rows";
+    std::vector<size_t> keep;
+    switch (spec.rows) {
+        case RowMode::All: out.all = true; return out;
+        case RowMode::First: {
+            const size_t n = std::min(std::max<size_t>(1, spec.first_rows), rows);
+            if (n == rows) {
+                out.all = true;
+                return out;
+            }
+            for (size_t r = 0; r < n; ++r) keep.push_back(r);
+            out.text = "first " + Thousands(static_cast<long long>(n)) + of_all;
+            break;
+        }
+        case RowMode::Range: {
+            const size_t from = std::max<size_t>(1, spec.row_from);
+            const size_t to = std::min(std::max(from, spec.row_to), rows);
+            if (from > rows) {
+                out.problem = "The table has " + Thousands(static_cast<long long>(rows)) + " rows; the range starts at row " +
+                              Thousands(static_cast<long long>(from)) + ".";
+                return out;
+            }
+            for (size_t r = from - 1; r < to; ++r) keep.push_back(r);
+            out.text = "rows " + Thousands(static_cast<long long>(from)) + " to " + Thousands(static_cast<long long>(to)) + of_all;
+            break;
+        }
+        case RowMode::Filter: {
+            std::vector<Condition> conds;
+            for (const auto& rc : spec.conditions) {
+                if (rc.column.empty()) continue;
+                Condition c;
+                c.column = src.Find(rc.column);
+                if (!c.column) {
+                    out.problem = "Filter column '" + rc.column + "' is not in the table.";
+                    return out;
+                }
+                c.op = rc.op;
+                c.value = Trim(rc.value);
+                c.as_number = ParseNumber(c.value, c.number);
+                conds.push_back(std::move(c));
+            }
+            if (conds.empty()) {  // no condition yet: all rows
+                out.all = true;
+                return out;
+            }
+            for (size_t r = 0; r < rows; ++r) {
+                bool all = true;
+                for (const auto& c : conds) all = all && Matches(c, r);
+                if (all) keep.push_back(r);
+            }
+            if (keep.empty()) {
+                out.problem = "No rows match " + ConditionsText(spec.conditions) + ".";
+                return out;
+            }
+            out.text = "filtered \xC2\xB7 " + Thousands(static_cast<long long>(keep.size())) + of_all;
+            break;
+        }
+    }
+    out.source.row_limit = src.row_limit;
+    out.source.total_rows = src.total_rows;
+    for (const auto& c : src.columns) {
+        SourceColumn sc;
+        sc.name = c.name;
+        sc.numeric = c.numeric;
+        for (size_t r : keep) {
+            if (c.numeric) sc.numbers.push_back(r < c.numbers.size() ? c.numbers[r] : NAN);
+            else sc.text.push_back(r < c.text.size() ? c.text[r] : std::string());
+        }
+        out.source.columns.push_back(std::move(sc));
+    }
+    for (size_t r : keep) out.source.row_index.push_back(r < src.row_index.size() ? src.row_index[r] : static_cast<double>(r));
+    return out;
+}
+
+ColumnSummary SummarizeColumn(const SourceColumn& c) {
+    ColumnSummary s;
+    s.name = c.name;
+    s.numeric = c.numeric;
+    s.has_stats = true;
+    s.distinct = CountDistinct(c, kMaxColorGroups);
+    if (c.numeric) {
+        size_t n = 0, not_zero = 0;
+        for (double v : c.numbers) {
+            if (!std::isfinite(v)) continue;
+            s.min = n == 0 ? v : std::min(s.min, v);
+            s.max = n == 0 ? v : std::max(s.max, v);
+            ++n;
+            if (v != 0.0) ++not_zero;
+        }
+        s.not_zero = n > 0 ? static_cast<double>(not_zero) / static_cast<double>(n) : 0.0;
+    }
+    return s;
+}
+
+std::string ColumnSummary::Text() const {
+    if (!has_stats) return "";
+    if (numeric) {
+        if (distinct == 0) return "no numbers";
+        if (distinct == 1) return "always " + Short(min);
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "%s\xE2\x80\x93%s \xC2\xB7 %.1f%% not 0", Short(min).c_str(), Short(max).c_str(),
+                      100.0 * not_zero);
+        return buf;
+    }
+    if (distinct > kMaxColorGroups) return "more than " + std::to_string(kMaxColorGroups) + " values";
+    return std::to_string(distinct) + (distinct == 1 ? " value" : " values");
+}
+
+Prepared Prepare(const PlotSpec& spec, const Source& all_rows) {
     Prepared p;
     p.spec = spec;
     const KindInfo& kind = Info(spec.kind);
     p.problem = MissingEncoding(spec);
     if (!p.problem.empty()) return p;
+    // The rows the spec chose; the rest of the plot sees only them.
+    const RowSelection selection = SelectRows(spec, all_rows);
+    p.rows_total = selection.total;
+    if (!selection.problem.empty()) {
+        p.problem = selection.problem;
+        return p;
+    }
+    const Source& src = selection.all ? all_rows : selection.source;
+    p.rows_selected = src.Rows();
 
     const auto column = [&](const std::string& name, bool must_be_numeric) -> const SourceColumn* {
         const SourceColumn* c = src.Find(name);
@@ -464,6 +710,15 @@ Prepared Prepare(const PlotSpec& spec, const Source& src) {
     size_t rows = 0;
     if (xcol) rows = xcol->size();
     for (const auto* y : ys) rows = std::max(rows, y->size());
+    // A scatter coloured by a number column with many values draws a scale
+    // (or when asked); everything else colours groups.
+    const SourceColumn* scale = nullptr;
+    if (colour && colour->numeric && spec.kind == Kind::Scatter &&
+        (spec.color_mode == ColourMode::Scale ||
+         (spec.color_mode == ColourMode::Auto && CountDistinct(*colour, kMaxColorGroups) > kMaxColorGroups))) {
+        scale = colour;
+        colour = nullptr;
+    }
     const Groups groups = GroupRows(colour, rows);
 
     switch (spec.kind) {
@@ -471,7 +726,7 @@ Prepared Prepare(const PlotSpec& spec, const Source& src) {
         case Kind::Area:
         case Kind::Step:
         case Kind::Stem: PrepareLines(p, src, xcol, ys, groups); break;
-        case Kind::Scatter: PrepareScatter(p, xcol, ys, groups); break;
+        case Kind::Scatter: PrepareScatter(p, xcol, ys, groups, scale); break;
         case Kind::Histogram: PrepareHistogram(p, xcol, groups); break;
         case Kind::Bar:
         case Kind::Pie: PrepareCategories(p, xcol, ys.empty() ? nullptr : ys.front()); break;
@@ -485,6 +740,7 @@ Prepared Prepare(const PlotSpec& spec, const Source& src) {
         p.stats = Summarize(ys.front()->numbers);
     // A source read with a row limit says so, whatever the kind did.
     if (src.row_limit > 0) p.label = {DataLabel::State::Truncated, src.row_limit, src.total_rows};
+    p.label.selection = selection.text;
     if (p.problem.empty() && p.series.empty() && p.grid.empty()) p.problem = "No values to draw.";
     return p;
 }

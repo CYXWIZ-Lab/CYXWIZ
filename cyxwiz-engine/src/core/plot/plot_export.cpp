@@ -59,12 +59,18 @@ std::string ToCsv(const Prepared& p) {
         case Kind::Step:
         case Kind::Stem:
         case Kind::Scatter:
-            out << "series,x,y\n";
+            out << "series,x,y";
+            if (p.colour_scale) out << ',' << CsvCell(p.colour_label);
+            out << '\n';
             for (const auto& s : p.series) {
                 const auto& xs = s.all_x.empty() ? s.x : s.all_x;
                 const auto& ys = s.all_y.empty() ? s.y : s.all_y;
-                for (size_t i = 0; i < std::min(xs.size(), ys.size()); ++i)
-                    out << CsvCell(s.label) << ',' << Num(xs[i]) << ',' << Num(ys[i]) << '\n';
+                const auto& cs = s.all_x.empty() ? s.c : s.all_c;
+                for (size_t i = 0; i < std::min(xs.size(), ys.size()); ++i) {
+                    out << CsvCell(s.label) << ',' << Num(xs[i]) << ',' << Num(ys[i]);
+                    if (p.colour_scale) out << ',' << (i < cs.size() ? Num(cs[i]) : std::string());
+                    out << '\n';
+                }
             }
             break;
         case Kind::Histogram:
@@ -157,6 +163,16 @@ std::string Mix(const std::string& lo, const std::string& hi, double t) {
     return buf;
 }
 
+// A colour-scale point: the sequential scale, or the two-sided scale around
+// 0; a missing value in the dim text colour.
+std::string ScaleColour(const Prepared& p, const SvgStyle& st, double v) {
+    if (!std::isfinite(v)) return st.text_dim;
+    const double span = p.colour_max - p.colour_min;
+    const double t = span > 0 ? std::clamp((v - p.colour_min) / span, 0.0, 1.0) : 0.0;
+    if (!p.colour_diverging) return Mix(st.scale_low, st.scale_high, t);
+    return t < 0.5 ? Mix(st.diverging_low, st.diverging_mid, t * 2.0) : Mix(st.diverging_mid, st.diverging_high, (t - 0.5) * 2.0);
+}
+
 }  // namespace
 
 std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st) {
@@ -221,8 +237,10 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
                 const auto& s = p.series[i];
                 const std::string c = colour(i);
                 if (p.spec.kind == Kind::Scatter) {
-                    for (size_t k = 0; k < std::min(s.x.size(), s.y.size()); ++k)
-                        o << "<circle cx=\"" << f.X(s.x[k]) << "\" cy=\"" << f.Y(s.y[k]) << "\" r=\"2\" fill=\"" << c << "\" fill-opacity=\"0.7\"/>\n";
+                    for (size_t k = 0; k < std::min(s.x.size(), s.y.size()); ++k) {
+                        const std::string fill = p.colour_scale ? ScaleColour(p, st, k < s.c.size() ? s.c[k] : NAN) : c;
+                        o << "<circle cx=\"" << f.X(s.x[k]) << "\" cy=\"" << f.Y(s.y[k]) << "\" r=\"2\" fill=\"" << fill << "\" fill-opacity=\"0.7\"/>\n";
+                    }
                 } else if (p.spec.kind == Kind::Stem) {
                     for (size_t k = 0; k < std::min(s.x.size(), s.y.size()); ++k)
                         o << "<line x1=\"" << f.X(s.x[k]) << "\" y1=\"" << f.Y(0) << "\" x2=\"" << f.X(s.x[k]) << "\" y2=\"" << f.Y(s.y[k]) << "\" stroke=\"" << c << "\"/><circle cx=\"" << f.X(s.x[k]) << "\" cy=\"" << f.Y(s.y[k]) << "\" r=\"2.5\" fill=\"" << c << "\"/>\n";

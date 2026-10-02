@@ -61,6 +61,34 @@ int main() {
     Check(SpecFromJson("{\"version\":1,\"kind\":\"scatter\",\"bins\":0,\"extra\":1}", back) && back.bins == 1 &&
               back.legend,
           "out-of-range values clamped, missing keys default, unknown keys ignored");
+    Check(back.rows == RowMode::All && back.conditions.empty() && back.color_mode == ColourMode::Auto,
+          "a spec without rows plots all rows, colour mode auto");
+
+    // Rows and colour mode (P2 board 6) round trip; bad values are refused.
+    PlotSpec r;
+    r.kind = Kind::Scatter;
+    r.rows = RowMode::Filter;
+    r.conditions = {{"class", "=", "7"}, {"pixel407", ">", "0"}};
+    r.first_rows = 250;
+    r.row_from = 10000;
+    r.row_to = 10999;
+    r.color_mode = ColourMode::Scale;
+    Check(SpecFromJson(SpecToJson(r), back), "rows round trip parses");
+    Check(back.rows == RowMode::Filter && back.conditions.size() == 2 && back.conditions[1].column == "pixel407" &&
+              back.conditions[1].op == ">" && back.conditions[1].value == "0" && back.first_rows == 250 &&
+              back.row_from == 10000 && back.row_to == 10999 && back.color_mode == ColourMode::Scale,
+          "rows, conditions and colour mode kept");
+    Check(ConditionsText(r.conditions) == "class = 7 and pixel407 > 0", "conditions in words");
+    Check(!SpecFromJson("{\"version\":1,\"kind\":\"line\",\"rows\":{\"mode\":\"filter\",\"conditions\":[{\"column\":\"a\",\"op\":\"~\"}]}}",
+                        untouched, &problem) &&
+              problem.find("'~'") != std::string::npos,
+          "an unknown condition is refused");
+    Check(!SpecFromJson("{\"version\":1,\"kind\":\"line\",\"rows\":{\"mode\":\"some\"}}", untouched, &problem) &&
+              problem.find("'some'") != std::string::npos,
+          "an unknown row selection is refused");
+    Check(SpecFromJson("{\"version\":1,\"kind\":\"line\",\"rows\":{\"mode\":\"range\",\"from\":0,\"to\":0}}", back) &&
+              back.row_from == 1 && back.row_to == 1,
+          "a range starts at row 1 and never ends before it starts");
 
     // What is missing.
     PlotSpec scatter;
@@ -87,6 +115,12 @@ int main() {
     Check(label.Text() == "first 100,000 rows", "truncated, total unknown: " + label.Text());
     label.total = 250000;
     Check(label.Text() == "first 100,000 of 250,000 rows", "truncated, total known: " + label.Text());
+    label = {DataLabel::State::Exact, 7293, 7293, "filtered \xC2\xB7 7,293 of 70,000 rows"};
+    Check(label.Text() == "filtered \xC2\xB7 7,293 of 70,000 rows", "a selection says it alone when exact: " + label.Text());
+    label.state = DataLabel::State::Sampled;
+    label.shown = 5000;
+    Check(label.Text() == "filtered \xC2\xB7 7,293 of 70,000 rows \xC2\xB7 sampled \xC2\xB7 5,000 of 7,293 rows",
+          "then the sampling: " + label.Text());
     Check(Thousands(-1234567) == "-1,234,567" && Thousands(999) == "999", "thousands");
 
     // Statistics skip NaN and infinity and count them as missing.
@@ -95,6 +129,7 @@ int main() {
     Check(st.min == 1 && st.max == 4 && st.mean == 2.5 && st.median == 2.5, "min max mean median");
     Check(std::fabs(st.q1 - 1.75) < 1e-12 && std::fabs(st.q3 - 3.25) < 1e-12, "quartiles (linear)");
     Check(Summarize({}).count == 0, "empty column");
-    std::cout << "plot model: 13 kinds, spec JSON round trip and refusals, missing columns, labels, stats. OK\n";
+    std::cout << "plot model: 13 kinds, spec JSON round trip and refusals, rows and colour mode, missing columns, labels, "
+                 "stats. OK\n";
     return 0;
 }

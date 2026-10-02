@@ -173,6 +173,104 @@ int main() {
     cut.row_limit = 10;
     cut.total_rows = 2500;
     Check(Prepare(Spec(Kind::Histogram, "v"), cut).label.Text() == "first 10 of 2,500 rows", "row limit label");
-    std::cout << "plot prepare: 13 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems. OK\n";
+
+    // Rows (P2 board 6): 100 rows, class 0..9 repeating, v = row, name text.
+    Source rs;
+    std::vector<double> cls, v;
+    std::vector<std::string> names;
+    for (int i = 0; i < 100; ++i) {
+        cls.push_back(i % 10);
+        v.push_back(i);
+        names.push_back(i % 2 ? "odd" : "even");
+    }
+    rs.columns.push_back(Numbers("class", cls));
+    rs.columns.push_back(Numbers("v", v));
+    rs.columns.push_back(Text("name", names));
+    PlotSpec rsp = Spec(Kind::Line, "", {"v"});
+    p = Prepare(rsp, rs);
+    Check(p.rows_selected == 100 && p.rows_total == 100 && p.label.selection.empty(), "all rows by default");
+    rsp.rows = RowMode::First;
+    rsp.first_rows = 10;
+    p = Prepare(rsp, rs);
+    Check(p.rows_selected == 10 && p.series[0].y.back() == 9 && p.label.Text() == "first 10 of 100 rows", "first 10 rows");
+    rsp.first_rows = 500;
+    Check(Prepare(rsp, rs).label.selection.empty(), "first N beyond the table is all rows");
+    rsp.rows = RowMode::Range;
+    rsp.row_from = 21;
+    rsp.row_to = 30;
+    p = Prepare(rsp, rs);
+    Check(p.rows_selected == 10 && p.series[0].x.front() == 20 && p.series[0].y.front() == 20,
+          "range 21..30 keeps its row numbers (0-based x = 20)");
+    Check(p.label.Text() == "rows 21 to 30 of 100 rows", "range label: " + p.label.Text());
+    rsp.row_from = 101;
+    rsp.row_to = 200;
+    Check(Prepare(rsp, rs).problem == "The table has 100 rows; the range starts at row 101.", "range past the end");
+    rsp.rows = RowMode::Filter;
+    rsp.conditions = {{"class", "=", " 7 "}};
+    p = Prepare(rsp, rs);
+    Check(p.rows_selected == 10 && p.series[0].x[1] == 17 && p.label.Text() == "filtered \xC2\xB7 10 of 100 rows",
+          "class = 7 (number, spaces trimmed): " + p.label.Text());
+    rsp.conditions = {{"class", ">=", "8"}, {"name", "=", "odd"}};
+    Check(Prepare(rsp, rs).rows_selected == 10, "class >= 8 and name = odd (9, 19, ... 99)");
+    rsp.conditions = {{"name", "contains", "ve"}};
+    Check(Prepare(rsp, rs).rows_selected == 50, "text contains");
+    rsp.conditions = {{"class", "!=", "0"}};
+    Check(Prepare(rsp, rs).rows_selected == 90, "not equal");
+    rsp.conditions = {{"class", "=", "70"}};
+    Check(Prepare(rsp, rs).problem == "No rows match class = 70.", "no match is said");
+    rsp.conditions = {{"nope", "=", "1"}};
+    Check(Prepare(rsp, rs).problem == "Filter column 'nope' is not in the table.", "unknown filter column");
+    rsp.conditions = {{"", "=", ""}};
+    Check(Prepare(rsp, rs).rows_selected == 100, "an empty condition filters nothing yet");
+    rsp.conditions = {{"class", "=", "7"}};
+    Check(ColumnsNeeded(rsp) == std::vector<std::string>({"v", "class"}), "filter columns are read too");
+    Source nan_rows;
+    nan_rows.columns.push_back(Numbers("a", {1, NAN, 3}));
+    PlotSpec nsp = Spec(Kind::Histogram, "a");
+    nsp.rows = RowMode::Filter;
+    nsp.conditions = {{"a", "!=", "1"}};
+    Check(Prepare(nsp, nan_rows).rows_selected == 1, "a missing value never matches");
+
+    // Colour by a number column with many values: a scatter gets a scale,
+    // other kinds get equal ranges.
+    Source cs;
+    std::vector<double> cx, cy, cc;
+    for (int i = 0; i < 40; ++i) {
+        cx.push_back(i);
+        cy.push_back(i * 2);
+        cc.push_back(i - 10);  // -10..29: both sides of 0
+    }
+    cs.columns.push_back(Numbers("x", cx));
+    cs.columns.push_back(Numbers("y", cy));
+    cs.columns.push_back(Numbers("c", cc));
+    p = Prepare(Spec(Kind::Scatter, "x", {"y"}, "c"), cs);
+    Check(p.colour_scale && p.series.size() == 1 && p.series[0].c.size() == 40 && p.series[0].c[0] == -10,
+          "scatter: one series, a colour value per point");
+    Check(p.colour_diverging && p.colour_min == -29 && p.colour_max == 29 && p.colour_label == "c",
+          "both sides of 0: two-sided scale centred on 0");
+    PlotSpec groups_spec = Spec(Kind::Scatter, "x", {"y"}, "c");
+    groups_spec.color_mode = ColourMode::Groups;
+    p = Prepare(groups_spec, cs);
+    Check(!p.colour_scale && p.series.size() == static_cast<size_t>(kColourRanges) && p.series[0].label == "-10 to -3.5",
+          "groups of a many-valued number column are ranges: " + (p.series.empty() ? std::string() : p.series[0].label));
+    p = Prepare(Spec(Kind::Line, "x", {"y"}, "c"), cs);
+    Check(!p.colour_scale && p.series.size() == static_cast<size_t>(kColourRanges), "a line coloured by a number: ranges");
+    p = Prepare(Spec(Kind::Scatter, "class", {"v"}, "class"), rs);
+    Check(!p.colour_scale && p.series.size() == 10, "10 class values stay groups (auto)");
+    PlotSpec scale_spec = Spec(Kind::Scatter, "class", {"v"}, "v");
+    p = Prepare(scale_spec, rs);
+    Check(p.colour_scale && !p.colour_diverging && p.colour_min == 0 && p.colour_max == 99, "0..99: one-sided scale");
+
+    // Column summaries for the picker.
+    ColumnSummary cs1 = SummarizeColumn(Numbers("pixel1", {0, 0, 0}));
+    Check(cs1.OneValue() && cs1.Text() == "always 0", "a one-value column: " + cs1.Text());
+    cs1 = SummarizeColumn(Numbers("pixel407", {0, 0, 255, 128}));
+    Check(!cs1.OneValue() && cs1.distinct == 3 && cs1.Text() == "0\xE2\x80\x93" "255 \xC2\xB7 50.0% not 0",
+          "range and share not 0: " + cs1.Text());
+    cs1 = SummarizeColumn(Text("name", names));
+    Check(cs1.Text() == "2 values" && !cs1.numeric, "text: " + cs1.Text());
+    Check(SummarizeColumn(Numbers("v", v)).distinct == kMaxColorGroups + 1, "distinct counted up to 13");
+    std::cout << "plot prepare: 13 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems, rows "
+                 "(first, range, filter), colour scale and ranges, column summaries. OK\n";
     return 0;
 }

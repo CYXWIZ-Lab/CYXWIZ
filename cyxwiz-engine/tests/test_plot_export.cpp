@@ -130,6 +130,31 @@ int main() {
         ParsesAsXml(doc, k.id);
     }
     Check(HexColour(1.0f, 0.5f, 0.0f) == "#ff8000", "hex colour");
-    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 13 kinds. OK\n";
+
+    // Colour scale (P2 board 6): the CSV keeps the colour value, the SVG
+    // points take the scale's ends, a missing value the dim text colour.
+    Source sc;
+    sc.columns.push_back(Numbers("x", {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}));
+    sc.columns.push_back(Numbers("y", {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}));
+    sc.columns.push_back(Numbers("epoch", {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, NAN}));
+    PlotSpec scatter;
+    scatter.kind = Kind::Scatter;
+    scatter.x_column = "x";
+    scatter.y_columns = {"y"};
+    scatter.color_column = "epoch";
+    const Prepared sp = Prepare(scatter, sc);
+    Check(sp.colour_scale, "13 epoch values: a scale");
+    const std::string sc_csv = ToCsv(sp);
+    Check(sc_csv.rfind("series,x,y,epoch\n", 0) == 0 && sc_csv.find("y,12,12,12\n") != std::string::npos &&
+              sc_csv.find("y,13,13,\n") != std::string::npos,
+          "CSV: colour column, missing value empty");
+    SvgStyle style;
+    svg = ToSvg(sp, AxisRange{0, 13, 0, 13, false}, style);
+    Check(svg.find("fill=\"" + style.scale_low + "\"") != std::string::npos &&
+              svg.find("fill=\"" + style.scale_high + "\"") != std::string::npos &&
+              svg.find("fill=\"" + style.text_dim + "\" fill-opacity") != std::string::npos,
+          "SVG: low and high ends of the scale, missing in dim text");
+    ParsesAsXml(svg, "scatter with a colour scale");
+    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 13 kinds, colour scale. OK\n";
     return 0;
 }

@@ -56,6 +56,24 @@ const KindInfo& Info(Kind kind);
 const KindInfo* FindKind(const std::string& id);
 const char* GroupLabel(Group group);
 
+// Which rows are plotted (TOFIX134 P2, board 6).
+enum class RowMode { All, First, Range, Filter };
+
+// One filter condition: `column op value`. Numbers compare as numbers when
+// the column is numeric and the value is a number; otherwise as text.
+struct RowCondition {
+    std::string column;
+    std::string op = "=";
+    std::string value;
+};
+
+// The condition operators, in the order the window lists them.
+const std::vector<std::string>& ConditionOps();
+
+// How Colour by uses a number column: Auto makes a scale for a scatter when
+// the column has more than 12 values, groups otherwise.
+enum class ColourMode { Auto, Groups, Scale };
+
 // What the user chose. Saved as versioned JSON (Plot node params in P2).
 struct PlotSpec {
     static constexpr int kVersion = 1;
@@ -74,7 +92,15 @@ struct PlotSpec {
     bool log_x = false;
     bool log_y = false;
     bool legend = true;
+    RowMode rows = RowMode::All;
+    size_t first_rows = 1000;              // RowMode::First
+    size_t row_from = 1, row_to = 1000;    // RowMode::Range: 1-based, inclusive
+    std::vector<RowCondition> conditions;  // RowMode::Filter: all must match
+    ColourMode color_mode = ColourMode::Auto;
 };
+
+// "class = 7 and pixel407 > 0" (the filter in words).
+std::string ConditionsText(const std::vector<RowCondition>& conditions);
 
 std::string SpecToJson(const PlotSpec& spec);
 // false (and `problem` set) when the text is not a plot spec this version
@@ -94,8 +120,12 @@ struct DataLabel {
     State state = State::Exact;
     size_t shown = 0;  // values, points or rows drawn
     size_t total = 0;  // all of them; 0 when unknown (truncated)
+    // The rows chosen in the spec, in words ("filtered · 7,293 of 70,000
+    // rows", "first 1,000 of 70,000 rows"); empty for all rows.
+    std::string selection;
     // "exact · all 2,000 values", "reduced · 4,000 of 120,000 points",
-    // "sampled · 50,000 of 1,200,000 rows", "first 100,000 rows".
+    // "sampled · 50,000 of 1,200,000 rows", "first 100,000 rows"; the
+    // selection comes first and an exact label then adds nothing.
     std::string Text() const;
 };
 
@@ -120,6 +150,9 @@ struct Series {
     // All values when x/y were reduced or sampled for drawing: hover values
     // and exports use these (empty when x/y are already all of them).
     std::vector<double> all_x, all_y;
+    // Colour by a number column as a scale: the value per point (NaN when
+    // missing), with all_c beside all_x / all_y.
+    std::vector<double> c, all_c;
     bool x_sorted = false;  // x ascends (hover finds the nearest x by search)
     int colour = -1;        // theme series colour index; -1: by position
     bool markers = false;   // lines: also a marker at every point
@@ -143,6 +176,15 @@ struct Prepared {
     struct Box { double low, q1, median, q3, high, mean; };
     std::vector<Box> boxes;
     ColumnStats stats;     // of the X (histogram) or first Y column
+    // Colour by a number column as a scale (scatter): the theme's sequential
+    // scale over colour_min..colour_max, or the two-sided scale (symmetric
+    // around 0) when the values lie on both sides of 0.
+    bool colour_scale = false;
+    bool colour_diverging = false;
+    double colour_min = 0, colour_max = 0;
+    std::string colour_label;
+    // Rows chosen by the spec's row selection, of all rows of the source.
+    size_t rows_selected = 0, rows_total = 0;
     DataLabel label;
     std::string problem;   // why nothing can be drawn ("" when fine)
 };

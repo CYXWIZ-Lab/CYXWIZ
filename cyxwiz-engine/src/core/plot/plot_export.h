@@ -22,6 +22,10 @@ struct SvgStyle {
     std::string series[6] = {"#9d8fff", "#7fc8e8", "#e6bf4a", "#3dd68c", "#ff7a73", "#f27bc4"};
     std::string scale_low = "#3a2f7a";
     std::string scale_high = "#ebe6ff";
+    // Two-sided scale (values on both sides of 0): low, middle (0), high.
+    std::string diverging_low = "#4a8fd9";
+    std::string diverging_mid = "#262626";
+    std::string diverging_high = "#e0704f";
 };
 
 // The visible axis ranges (from the view; log_y draws the y axis in log10).

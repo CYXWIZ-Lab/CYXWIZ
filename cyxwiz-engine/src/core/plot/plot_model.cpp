@@ -47,6 +47,41 @@ const char* GroupLabel(Group group) {
     return "";
 }
 
+const std::vector<std::string>& ConditionOps() {
+    static const std::vector<std::string> ops = {"=", "!=", "<", "<=", ">", ">=", "contains"};
+    return ops;
+}
+
+std::string ConditionsText(const std::vector<RowCondition>& conditions) {
+    std::string out;
+    for (const auto& c : conditions) {
+        if (c.column.empty()) continue;
+        if (!out.empty()) out += " and ";
+        out += c.column + " " + c.op + " " + c.value;
+    }
+    return out;
+}
+
+namespace {
+const char* RowModeId(RowMode m) {
+    switch (m) {
+        case RowMode::All: return "all";
+        case RowMode::First: return "first";
+        case RowMode::Range: return "range";
+        case RowMode::Filter: return "filter";
+    }
+    return "all";
+}
+const char* ColourModeId(ColourMode m) {
+    switch (m) {
+        case ColourMode::Auto: return "auto";
+        case ColourMode::Groups: return "groups";
+        case ColourMode::Scale: return "scale";
+    }
+    return "auto";
+}
+}  // namespace
+
 std::string SpecToJson(const PlotSpec& s) {
     nlohmann::json j;
     j["version"] = PlotSpec::kVersion;
@@ -65,6 +100,15 @@ std::string SpecToJson(const PlotSpec& s) {
     j["log_x"] = s.log_x;
     j["log_y"] = s.log_y;
     j["legend"] = s.legend;
+    nlohmann::json rows;
+    rows["mode"] = RowModeId(s.rows);
+    rows["first"] = s.first_rows;
+    rows["from"] = s.row_from;
+    rows["to"] = s.row_to;
+    rows["conditions"] = nlohmann::json::array();
+    for (const auto& c : s.conditions) rows["conditions"].push_back({{"column", c.column}, {"op", c.op}, {"value", c.value}});
+    j["rows"] = rows;
+    j["color_mode"] = ColourModeId(s.color_mode);
     return j.dump();
 }
 
@@ -98,6 +142,33 @@ bool SpecFromJson(const std::string& text, PlotSpec& s, std::string* problem) {
     out.log_x = j.value("log_x", false);
     out.log_y = j.value("log_y", false);
     out.legend = j.value("legend", true);
+    if (j.contains("rows") && j["rows"].is_object()) {
+        const auto& r = j["rows"];
+        const std::string mode = r.value("mode", std::string("all"));
+        if (mode == "all") out.rows = RowMode::All;
+        else if (mode == "first") out.rows = RowMode::First;
+        else if (mode == "range") out.rows = RowMode::Range;
+        else if (mode == "filter") out.rows = RowMode::Filter;
+        else return fail("unknown row selection '" + mode + "'");
+        out.first_rows = std::max<size_t>(1, r.value("first", size_t{1000}));
+        out.row_from = std::max<size_t>(1, r.value("from", size_t{1}));
+        out.row_to = std::max(out.row_from, r.value("to", size_t{1000}));
+        if (r.contains("conditions") && r["conditions"].is_array()) {
+            for (const auto& c : r["conditions"]) {
+                if (!c.is_object()) continue;
+                RowCondition rc{c.value("column", std::string()), c.value("op", std::string("=")), c.value("value", std::string())};
+                const auto& ops = ConditionOps();
+                if (std::find(ops.begin(), ops.end(), rc.op) == ops.end())
+                    return fail("unknown filter condition '" + rc.op + "'");
+                out.conditions.push_back(std::move(rc));
+            }
+        }
+    }
+    const std::string colour_mode = j.value("color_mode", std::string("auto"));
+    if (colour_mode == "auto") out.color_mode = ColourMode::Auto;
+    else if (colour_mode == "groups") out.color_mode = ColourMode::Groups;
+    else if (colour_mode == "scale") out.color_mode = ColourMode::Scale;
+    else return fail("unknown colour mode '" + colour_mode + "'");
     s = std::move(out);
     return true;
 }
@@ -120,6 +191,12 @@ std::string Thousands(long long n) {
 }
 
 std::string DataLabel::Text() const {
+    if (!selection.empty()) {
+        if (state == State::Exact) return selection;
+        DataLabel base = *this;
+        base.selection.clear();
+        return selection + " \xC2\xB7 " + base.Text();
+    }
     const std::string n = Thousands(static_cast<long long>(shown));
     const std::string all = Thousands(static_cast<long long>(total));
     switch (state) {
