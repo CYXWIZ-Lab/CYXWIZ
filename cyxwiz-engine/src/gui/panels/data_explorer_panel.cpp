@@ -1,4 +1,5 @@
 #include "data_explorer_panel.h"
+#include "../../core/paired_columns.h"
 #include "../../core/project_manager.h"
 #include "../../data/data_table.h"
 #include "descriptive_stats_panel.h"
@@ -1314,11 +1315,14 @@ void DataExplorerPanel::ComputeQuickStats(int column_index) {
         for (int i = 0; i < (int)current_result_.column_names.size(); i++) {
             if (i == column_index) continue;
 
-            std::vector<double> other_col = GetColumnAsDoubles(i);
-            if (other_col.empty() || other_col.size() != quick_stats_cache_.column_data.size()) continue;
+            // Pairs from the same rows (TOFIX134 P0 item 3); equal counts did
+            // not mean the same rows.
+            std::vector<double> mine, other_col;
+            chartdata::PairedNumbers(current_result_.rows, column_index, i, &mine, &other_col);
+            if (mine.size() < 2) continue;
 
             // Use stats_utils for correlation
-            double corr = stats::PearsonCorrelation(quick_stats_cache_.column_data, other_col);
+            double corr = stats::PearsonCorrelation(mine, other_col);
 
             if (!std::isnan(corr)) {
                 quick_stats_cache_.top_correlations.push_back({current_result_.column_names[i], corr});
@@ -1619,18 +1623,17 @@ void DataExplorerPanel::RenderHistogramChart() {
 }
 
 void DataExplorerPanel::RenderScatterChart() {
-    std::vector<double> x_data = GetColumnAsDoubles(viz_x_column_);
-    std::vector<double> y_data = GetColumnAsDoubles(viz_y_column_);
+    // x and y from the same row (TOFIX134 P0 item 3): filtering each column
+    // on its own shifted every pair after the first skipped cell.
+    std::vector<double> x_data;
+    std::vector<double> y_data;
+    chartdata::PairedNumbers(current_result_.rows, viz_x_column_, viz_y_column_, &x_data, &y_data);
 
-    if (x_data.empty() || y_data.empty()) {
-        ImGui::TextDisabled("Selected columns have no numeric data");
+    if (x_data.empty()) {
+        ImGui::TextDisabled("No row has numbers in both selected columns");
         return;
     }
-
-    // Match sizes
-    size_t n = std::min(x_data.size(), y_data.size());
-    x_data.resize(n);
-    y_data.resize(n);
+    const size_t n = x_data.size();
 
     std::string x_name = current_result_.column_names[viz_x_column_];
     std::string y_name = current_result_.column_names[viz_y_column_];

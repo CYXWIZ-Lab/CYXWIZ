@@ -1,4 +1,5 @@
 #include "visualization_panel.h"
+#include "../../core/paired_columns.h"
 #include <cyxwiz/stats_utils.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -201,18 +202,17 @@ void VisualizationPanel::RenderHistogramChart() {
 }
 
 void VisualizationPanel::RenderScatterChart() {
-    std::vector<double> x_data = GetColumnAsDoubles(viz_x_column_);
-    std::vector<double> y_data = GetColumnAsDoubles(viz_y_column_);
+    // x and y from the same row (TOFIX134 P0 item 3): filtering each column
+    // on its own shifted every pair after the first skipped cell.
+    std::vector<double> x_data;
+    std::vector<double> y_data;
+    chartdata::PairedNumbers(rows_, viz_x_column_, viz_y_column_, &x_data, &y_data);
 
-    if (x_data.empty() || y_data.empty()) {
-        ImGui::TextDisabled("Selected columns have no numeric data");
+    if (x_data.empty()) {
+        ImGui::TextDisabled("No row has numbers in both selected columns");
         return;
     }
-
-    // Match sizes
-    size_t n = std::min(x_data.size(), y_data.size());
-    x_data.resize(n);
-    y_data.resize(n);
+    const size_t n = x_data.size();
 
     std::string x_name = column_names_[viz_x_column_];
     std::string y_name = column_names_[viz_y_column_];

@@ -326,6 +326,7 @@ set(ENGINE_SOURCES
     src/core/html_table.cpp
     src/core/language_results.cpp
     src/core/variables_presentation.cpp
+    src/core/paired_columns.cpp
     src/core/script_keys.cpp
     src/core/editor/text_document.cpp
     src/core/editor/breakpoint_lines.cpp
