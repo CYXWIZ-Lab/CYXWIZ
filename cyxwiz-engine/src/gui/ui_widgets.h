@@ -57,6 +57,11 @@ void Tooltip(const char* text);
 // A muted "(?)" that shows `text` on hover.
 void HelpMarker(const char* text);
 
+// Puts the next item, `width` wide, at the right edge of this line when it
+// fits after the last item; otherwise on the next line, so nothing overlaps
+// in a narrow window. Returns true when it stayed on this line.
+bool SameLineRight(float width, float gap = 12.0f);
+
 // Returns true when the text changed. `width` 0 = fill the line.
 bool SearchField(const char* id, char* buffer, size_t size, const char* hint = "Search", float width = 0.0f);
 

@@ -178,6 +178,16 @@ void Tooltip(const char* text) {
     ImGui::EndTooltip();
 }
 
+bool SameLineRight(float width, float gap) {
+    // Window-local x where the last item ended (GetCursorPosX would already
+    // be at the start of the next line).
+    const float last_end = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetScrollX();
+    const float x = ImGui::GetContentRegionMax().x - width;
+    if (x < last_end + gap) return false;
+    ImGui::SameLine(x);
+    return true;
+}
+
 void HelpMarker(const char* text) {
     const Tokens& t = CurrentTokens();
     ImGui::TextColored(t.text_dim, "(?)");

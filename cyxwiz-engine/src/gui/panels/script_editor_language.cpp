@@ -12,6 +12,7 @@
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -502,7 +503,7 @@ void ScriptEditorPanel::RenderProblemsPanel(EditorTab& tab, float height) {
     ImGui::TextColored(t.text_dim, "%s \xC2\xB7 %s", tab.cell_mode ? "this notebook" : "this file", lang::ProblemSummary(plain).c_str());
     const float close_w = ui::ButtonWidth(ICON_FA_XMARK, ui::ButtonSize::Small);
     const float check_w = ImGui::GetFrameHeight() + ImGui::CalcTextSize("Show warnings").x + 16.0f;
-    ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 12.0f, ImGui::GetContentRegionMax().x - close_w - check_w - 8.0f));
+    ui::SameLineRight(close_w + check_w + 8.0f);
     ImGui::Checkbox("Show warnings", &tab.problems_show_warnings);
     ImGui::SameLine();
     if (ui::GhostButton(ICON_FA_XMARK "##close_problems")) tab.show_problems = false;
