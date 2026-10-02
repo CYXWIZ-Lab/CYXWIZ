@@ -398,6 +398,7 @@ set(ENGINE_SOURCES
     src/gui/plot/plot_view.cpp
     src/gui/plot/plot_window.cpp
     src/core/plot/node_result_plan.cpp
+    src/core/plot/plot_arrow_source.cpp
     src/gui/panels/training_plot_panel_global.cpp
     src/gui/panels/plot_window.cpp
     src/gui/panels/python_plot_window_registry.cpp
@@ -1344,6 +1345,22 @@ set_target_properties(test_matplotlib_backend PROPERTIES RUNTIME_OUTPUT_DIRECTOR
 # Skips (passes) without matplotlib; set CYXWIZ_TEST_SITE_PACKAGES to run it fully.
 add_test(NAME matplotlib_backend_safety COMMAND test_matplotlib_backend)
 endif()
+
+# ===== Test: plot source from an Arrow table (TOFIX134 P2) =====
+add_executable(test_plot_arrow_source
+    tests/test_plot_arrow_source.cpp
+    src/core/plot/plot_arrow_source.cpp
+    src/core/plot/plot_prepare.cpp
+    src/core/plot/plot_model.cpp
+    src/core/series_decimation.cpp
+)
+target_include_directories(test_plot_arrow_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_plot_arrow_source PRIVATE Arrow::arrow_shared nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_plot_arrow_source PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_plot_arrow_source PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME plot_arrow_source_contract COMMAND test_plot_arrow_source)
 
 # ===== Test: PlotManager type, config, unknown id (TOFIX134 P0 item 5) =====
 if(CYXWIZ_HAS_PYTHON)
