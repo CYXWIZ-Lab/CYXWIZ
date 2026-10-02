@@ -245,6 +245,8 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(debug, "debug.step_into", "Step into", "F11", "", true);
         add(debug, "debug.step_out", "Step out", "Shift+F11", "", true);
         add(debug, "debug.toggle_breakpoint", "Toggle breakpoint", "F9", "", true);
+        add(script, "editor.breakpoint_settings", "Breakpoint settings: condition, hit count, enabled", "Right-click the gutter", "", true);
+        add(debug, "debug.frame_values", "Run Python in the paused frame (Console REPL)", "Enter in the REPL", "", true);
 
         // Script Editor in notebook mode: the notebook handles these. The
         // letters work in command mode (no cell being edited).
