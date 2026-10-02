@@ -2,6 +2,7 @@
 #include "../gui/panels/training_plot_panel.h"
 #include "../core/project_manager.h"
 #include "../core/engine_config.h"
+#include "../data/data_table.h"
 #include <Python.h>  // For PyThreadState_SetAsyncExc, PyThread_get_thread_ident
 #include <pybind11/embed.h>
 #include <spdlog/spdlog.h>
@@ -33,6 +34,10 @@ ScriptingEngine::~ScriptingEngine() {
     if (language_) {
         language_->Stop();
         language_.reset();
+    }
+    if (variables_) {
+        variables_->Stop();
+        variables_.reset();
     }
 
     // Stop any running script before destruction
@@ -1210,6 +1215,158 @@ LanguageService& ScriptingEngine::Language() {
     std::lock_guard<std::mutex> lock(language_mutex_);
     if (!language_) language_ = std::make_unique<LanguageService>(this);
     return *language_;
+}
+
+VariablesService& ScriptingEngine::Variables() {
+    std::lock_guard<std::mutex> lock(language_mutex_);
+    if (!variables_) variables_ = std::make_unique<VariablesService>(this);
+    return *variables_;
+}
+
+bool ScriptingEngine::RunActive() const { return script_running_ || command_running_ || python_busy_; }
+
+namespace {
+void DropFromPath(py::list& path, const std::string& dir) {
+    for (size_t i = 0; i < py::len(path); ++i) {
+        if (py::str(path[i]).cast<std::string>() == dir) {
+            path.attr("pop")(i);
+            return;
+        }
+    }
+}
+
+// A module of <exe dir>/python_tools, imported once and kept by sys.modules;
+// the folder is on sys.path only while importing. Needs the GIL.
+py::object BundledTool(const char* name) {
+    py::module_ sys_module = py::module_::import("sys");
+    if (sys_module.attr("modules").attr("__contains__")(name).cast<bool>()) return sys_module.attr("modules")[name];
+    const std::string dir = (cyxwiz::core::ExecutableDirectory() / "python_tools").string();
+    py::list path = sys_module.attr("path");
+    path.insert(0, dir);
+    py::object module;
+    try {
+        module = py::module_::import(name);
+    } catch (...) {
+        DropFromPath(path, dir);
+        throw;
+    }
+    DropFromPath(path, dir);
+    return module;
+}
+
+// The namespace of a scope: the session's __main__, or a notebook's own
+// (an empty dict when that notebook has not run yet).
+py::dict ScopeNamespace(const std::string& scope) {
+    auto main = py::module_::import("__main__").attr("__dict__").cast<py::dict>();
+    if (scope.empty()) return main;
+    if (main.contains("_cyxwiz_notebook_ns")) {
+        auto all = main["_cyxwiz_notebook_ns"].cast<py::dict>();
+        if (all.contains(scope)) return all[py::str(scope)].cast<py::dict>();
+    }
+    return py::dict();
+}
+
+cyxwiz::DataTable::CellValue CellFrom(const py::handle& v) {
+    if (v.is_none()) return std::monostate{};
+    if (py::isinstance<py::bool_>(v)) return std::string(v.cast<bool>() ? "True" : "False");
+    if (py::isinstance<py::int_>(v)) {
+        try {
+            return static_cast<int64_t>(v.cast<long long>());
+        } catch (const py::cast_error&) {
+            return py::str(v).cast<std::string>();  // beyond 64 bits
+        }
+    }
+    if (py::isinstance<py::float_>(v)) return v.cast<double>();
+    return py::str(v).cast<std::string>();
+}
+}  // namespace
+
+std::string ScriptingEngine::CallVariablesTool(const std::string& function, const std::string& args_json,
+                                               const std::string& scope, bool* busy) {
+    if (busy) *busy = false;
+    if (!IsInitialized()) return {};
+    if (RunActive()) {
+        if (busy) *busy = true;
+        return {};
+    }
+    try {
+        py::gil_scoped_acquire acquire;
+        py::object tool = BundledTool("cyxwiz_vars");
+        py::module_ json = py::module_::import("json");
+        py::dict kwargs = json.attr("loads")(args_json);
+        py::object result = tool.attr(function.c_str())(ScopeNamespace(scope), **kwargs);
+        return json.attr("dumps")(result).cast<std::string>();
+    } catch (const py::error_already_set& e) {
+        spdlog::warn("Variables: {} failed: {}", function, e.what());
+        return {};
+    } catch (const std::exception& e) {
+        spdlog::warn("Variables: {} failed: {}", function, e.what());
+        return {};
+    }
+}
+
+bool ScriptingEngine::ReadVariableTable(const std::string& scope, const std::string& path_json, long long max_rows,
+                                        const std::vector<int>& index, VariableTable* out, bool* busy) {
+    if (busy) *busy = false;
+    if (!out) return false;
+    if (!IsInitialized()) {
+        out->error = "Python is not running";
+        return false;
+    }
+    if (RunActive()) {
+        if (busy) *busy = true;
+        return false;
+    }
+    try {
+        py::gil_scoped_acquire acquire;
+        py::object tool = BundledTool("cyxwiz_vars");
+        py::module_ json = py::module_::import("json");
+        py::list idx;
+        for (int i : index) idx.append(i);
+        py::object rows_arg = max_rows > 0 ? py::object(py::int_(max_rows)) : py::object(py::none());
+        py::dict data = tool.attr("table")(ScopeNamespace(scope), json.attr("loads")(path_json), rows_arg, idx);
+        if (data.contains("error")) {
+            out->error = data["error"].cast<std::string>();
+            return false;
+        }
+        out->kind = data["kind"].cast<std::string>();
+        for (auto n : data["shape"].cast<py::list>()) out->shape.push_back(n.cast<long long>());
+        out->rows = data["rows"].cast<long long>();
+        out->shown = data["shown"].cast<long long>();
+        for (auto n : data["slice"].cast<py::list>()) out->slice.push_back(n.cast<int>());
+        py::list columns = data["columns"].cast<py::list>();
+        const bool has_index = !data["index"].is_none();
+        std::vector<std::string> headers;
+        if (has_index) {
+            headers.push_back(data["index_name"].cast<std::string>());
+            out->dtypes.push_back("index");
+        }
+        std::vector<py::list> cols;
+        for (auto c : columns) {
+            headers.push_back(c["name"].cast<std::string>());
+            out->dtypes.push_back(c["dtype"].cast<std::string>());
+            cols.push_back(c["values"].cast<py::list>());
+        }
+        auto table = std::make_shared<cyxwiz::DataTable>();
+        table->SetHeaders(headers);
+        py::list index_values = has_index ? data["index"].cast<py::list>() : py::list();
+        const size_t n = static_cast<size_t>(out->shown);
+        for (size_t r = 0; r < n; ++r) {
+            cyxwiz::DataTable::Row row;
+            row.reserve(headers.size());
+            if (has_index) row.push_back(CellFrom(index_values[r]));
+            for (auto& col : cols) row.push_back(r < py::len(col) ? CellFrom(col[r]) : cyxwiz::DataTable::CellValue{});
+            table->AddRow(std::move(row));
+        }
+        out->table = std::move(table);
+        return true;
+    } catch (const py::error_already_set& e) {
+        out->error = e.what();
+        return false;
+    } catch (const std::exception& e) {
+        out->error = e.what();
+        return false;
+    }
 }
 
 std::string ScriptingEngine::LanguageToolsError() const {

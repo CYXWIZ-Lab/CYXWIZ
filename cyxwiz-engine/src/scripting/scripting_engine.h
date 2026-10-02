@@ -1,6 +1,7 @@
 #pragma once
 
 #include "language_service.h"
+#include "variables_service.h"
 #include "python_engine.h"
 #include "python_sandbox.h"
 #include <string>
@@ -147,6 +148,29 @@ public:
     // Whether the bundled tools loaded ("" until tried; else the reason).
     std::string LanguageToolsError() const;
 
+    // Variable Explorer and Data Viewer (TOFIX133 P5). CallVariablesTool runs
+    // one function of python_tools/cyxwiz_vars.py on a namespace ("" = the
+    // Python session's __main__, else a notebook key) under the GIL, on the
+    // caller's thread, and returns its result as JSON ("" when Python is not
+    // running). *busy is set, and nothing read, while a script, cell or
+    // Console command runs. Variables() runs them on a worker thread.
+    std::string CallVariablesTool(const std::string& function, const std::string& args_json, const std::string& scope,
+                                  bool* busy);
+    struct VariableTable {
+        std::shared_ptr<cyxwiz::DataTable> table;
+        std::string kind;             // frame, array, list
+        std::vector<long long> shape;
+        long long rows = 0;
+        long long shown = 0;
+        std::vector<std::string> dtypes;
+        std::vector<int> slice;
+        std::string error;
+    };
+    // The Data Viewer's columns of a value, straight into a DataTable.
+    bool ReadVariableTable(const std::string& scope, const std::string& path_json, long long max_rows,
+                           const std::vector<int>& index, VariableTable* out, bool* busy);
+    VariablesService& Variables();
+
     // Writes Out[count] of a notebook (a pandas DataFrame or Series) to a CSV
     // file, for the Table Viewer. False with a reason while a script runs, after
     // Restart, or when the value is not a table.
@@ -234,6 +258,8 @@ private:
     bool training_dashboard_registered_{false};
     std::unique_ptr<PythonEngine> python_engine_;
     std::unique_ptr<LanguageService> language_;  // stopped before Python ends
+    std::unique_ptr<VariablesService> variables_;  // the same
+    bool RunActive() const;
     mutable std::mutex language_mutex_;
     std::string language_error_;
     std::unique_ptr<PythonSandbox> sandbox_;

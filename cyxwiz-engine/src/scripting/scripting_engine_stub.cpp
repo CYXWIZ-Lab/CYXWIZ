@@ -71,6 +71,26 @@ LanguageService& ScriptingEngine::Language() {
 
 std::string ScriptingEngine::LanguageToolsError() const { return "This build has no Python scripting"; }
 
+VariablesService& ScriptingEngine::Variables() {
+    std::lock_guard<std::mutex> lock(language_mutex_);
+    if (!variables_) variables_ = std::make_unique<VariablesService>(this);
+    return *variables_;
+}
+
+bool ScriptingEngine::RunActive() const { return false; }
+
+std::string ScriptingEngine::CallVariablesTool(const std::string&, const std::string&, const std::string&, bool* busy) {
+    if (busy) *busy = false;
+    return {};
+}
+
+bool ScriptingEngine::ReadVariableTable(const std::string&, const std::string&, long long, const std::vector<int>&,
+                                        VariableTable* out, bool* busy) {
+    if (busy) *busy = false;
+    if (out) out->error = "This build has no Python scripting";
+    return false;
+}
+
 bool ScriptingEngine::ExportNotebookVariableToCsv(const std::string&, const std::string&, const std::string&,
                                                   std::string* error) {
     if (error) *error = "This build has no Python scripting";

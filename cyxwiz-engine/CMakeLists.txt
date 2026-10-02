@@ -602,6 +602,7 @@ if(CYXWIZ_HAS_PYTHON)
         src/plotting/backends/matplotlib_backend.cpp
         src/scripting/scripting_engine.cpp
         src/scripting/language_service.cpp
+        src/scripting/variables_service.cpp
         src/scripting/python_sandbox.cpp
     )
 else()
@@ -609,6 +610,7 @@ else()
         src/plotting/backends/matplotlib_backend_stub.cpp
         src/scripting/scripting_engine_stub.cpp
         src/scripting/language_service.cpp
+        src/scripting/variables_service.cpp
         src/scripting/python_sandbox_stub.cpp
     )
 endif()
