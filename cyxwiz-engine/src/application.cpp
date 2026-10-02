@@ -1,6 +1,7 @@
 #include "application.h"
 #include "gui/appearance_settings.h"
 #include "gui/main_window.h"
+#include "gui/node_editor.h"
 #include "gui/console.h"
 #include "gui/display_density.h"
 #include "gui/editor_fonts.h"
@@ -225,6 +226,9 @@ void CyxWizApp::OpenStartupGraphIfRequested() {
     }
 
     if (main_window_->OpenGraphInNodeEditor(startup_graph_path_)) {
+        // A starter is a copy to work on: Save asks for a name instead of
+        // overwriting the example next to the Engine.
+        if (auto* editor = main_window_->GetNodeEditor()) editor->DetachFromFile();
         spdlog::info("Opened starter graph from start page: {}", startup_graph_path_);
     } else {
         spdlog::error("Failed to open starter graph from start page: {}", startup_graph_path_);

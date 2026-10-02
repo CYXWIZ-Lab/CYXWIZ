@@ -273,6 +273,7 @@ set(ENGINE_SOURCES
     src/gui/main_window_shortcuts.cpp
     src/gui/node_editor.cpp
     src/gui/node_editor_plot.cpp
+    src/gui/node_editor_toolbar.cpp
     src/gui/plot/plot_node_lane.cpp
     src/core/pipeline_type_names.cpp
     src/gui/node_editor_clipboard.cpp

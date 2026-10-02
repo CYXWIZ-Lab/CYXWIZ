@@ -59,6 +59,7 @@
 #define ICON_FA_EYE                 "\xef\x81\xae"  // U+F06E
 #define ICON_FA_EYE_SLASH           "\xef\x81\xb0"  // U+F070
 #define ICON_FA_BARS                "\xef\x83\x89"  // U+F0C9
+#define ICON_FA_ELLIPSIS            "\xef\x85\x81"  // U+F141
 #define ICON_FA_GRIP_VERTICAL       "\xef\x96\x8e"  // U+F58E
 #define ICON_FA_GRIP                "\xef\x96\x8d"  // U+F58D
 

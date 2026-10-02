@@ -38,10 +38,19 @@ static NodeType StringToNodeType(const std::string& type_str) {
     return NodeType::Unknown;
 }
 
+void NodeEditor::DetachFromFile() {
+    current_file_path_.clear();
+    saved_fingerprint_ = 0;
+    fingerprint_baseline_frames_ = 0;
+    unsaved_ = true;
+}
+
 bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
     if (!CanReplaceGraph("load a graph")) return false;
     // Clear existing graph
     ClearGraph();
+    // A template is a new graph, not the file it came from.
+    DetachFromFile();
 
     const auto& tmpl = j["template"];
 
@@ -453,53 +462,60 @@ DataBoundaryMigrationResult NodeEditor::MigrateLegacyDataBoundary() {
     return result;
 }
 
+// The graph as it is saved (also the unsaved-changes fingerprint).
+nlohmann::json NodeEditor::GraphDocumentJson() {
+    using json = nlohmann::json;
+    json j = detail::CreateSerializedGraphDocument("2.1", HasLegacyDataBoundary());
+    j["framework"] = static_cast<int>(selected_framework_);
+    j["execution_mode"] = static_cast<int>(execution_mode_);  // Save execution mode
+
+    // CyxWiz Studio: Save workflow description
+    j["workflow_description"] = std::string(workflow_description_);
+
+    // CyxWiz Studio: Save canvas annotations
+    json annotations_array = json::array();
+    for (const auto& annotation : annotations_) {
+        json ann_json;
+        ann_json["id"] = annotation.id;
+        ann_json["title"] = annotation.title;
+        ann_json["content"] = annotation.content;
+        ann_json["pos_x"] = annotation.position.x;
+        ann_json["pos_y"] = annotation.position.y;
+        ann_json["width"] = annotation.size.x;
+        ann_json["height"] = annotation.size.y;
+        ann_json["color"] = annotation.color;
+        ann_json["minimized"] = annotation.is_minimized;
+        annotations_array.push_back(ann_json);
+    }
+    j["annotations"] = annotations_array;
+
+    // CyxWiz Studio: Save node groups
+    json groups_array = json::array();
+    for (const auto& group : groups_) {
+        json group_json;
+        group_json["id"] = group.id;
+        group_json["name"] = group.name;
+        group_json["description"] = group.description;
+        group_json["node_ids"] = group.node_ids;
+        group_json["color_r"] = group.color.x;
+        group_json["color_g"] = group.color.y;
+        group_json["color_b"] = group.color.z;
+        group_json["color_a"] = group.color.w;
+        group_json["collapsed"] = group.collapsed;
+        group_json["padding"] = group.padding;
+        groups_array.push_back(group_json);
+    }
+    j["groups"] = groups_array;
+
+    detail::WriteEditorGraphContent(j, nodes_, links_, subgraphs_, cached_node_positions_);
+    return j;
+}
+
 bool NodeEditor::SaveGraph(const std::string& filepath) {
     using json = nlohmann::json;
 
     try {
-        json j = detail::CreateSerializedGraphDocument("2.1", HasLegacyDataBoundary());
-        j["framework"] = static_cast<int>(selected_framework_);
-        j["execution_mode"] = static_cast<int>(execution_mode_);  // Save execution mode
-
-        // CyxWiz Studio: Save workflow description
-        j["workflow_description"] = std::string(workflow_description_);
-
-        // CyxWiz Studio: Save canvas annotations
-        json annotations_array = json::array();
-        for (const auto& annotation : annotations_) {
-            json ann_json;
-            ann_json["id"] = annotation.id;
-            ann_json["title"] = annotation.title;
-            ann_json["content"] = annotation.content;
-            ann_json["pos_x"] = annotation.position.x;
-            ann_json["pos_y"] = annotation.position.y;
-            ann_json["width"] = annotation.size.x;
-            ann_json["height"] = annotation.size.y;
-            ann_json["color"] = annotation.color;
-            ann_json["minimized"] = annotation.is_minimized;
-            annotations_array.push_back(ann_json);
-        }
-        j["annotations"] = annotations_array;
-
-        // CyxWiz Studio: Save node groups
-        json groups_array = json::array();
-        for (const auto& group : groups_) {
-            json group_json;
-            group_json["id"] = group.id;
-            group_json["name"] = group.name;
-            group_json["description"] = group.description;
-            group_json["node_ids"] = group.node_ids;
-            group_json["color_r"] = group.color.x;
-            group_json["color_g"] = group.color.y;
-            group_json["color_b"] = group.color.z;
-            group_json["color_a"] = group.color.w;
-            group_json["collapsed"] = group.collapsed;
-            group_json["padding"] = group.padding;
-            groups_array.push_back(group_json);
-        }
-        j["groups"] = groups_array;
-
-        detail::WriteEditorGraphContent(j, nodes_, links_, subgraphs_, cached_node_positions_);
+        json j = GraphDocumentJson();
 
         // Write to file
         std::ofstream file(filepath);
@@ -510,6 +526,8 @@ bool NodeEditor::SaveGraph(const std::string& filepath) {
 
         file << j.dump(4);  // Pretty print with 4-space indent
         current_file_path_ = filepath;
+        saved_fingerprint_ = std::hash<std::string>{}(j.dump());
+        unsaved_ = false;
         cyxwiz::SetGraphDataSearchDirectoryFromGraphFile(filepath);
         spdlog::info("Graph saved to: {}", filepath);
         return true;
@@ -729,6 +747,7 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
         if (!LoadGraphJson(graph_json, filepath)) {
             return false;
         }
+        fingerprint_baseline_frames_ = 3;
         current_file_path_ = filepath;
         return true;
     } catch (const std::exception& error) {
@@ -765,7 +784,10 @@ bool NodeEditor::LoadGraphFromString(const std::string& json_string) {
     }
 
     try {
-        return LoadGraphJson(json::parse(json_string), "JSON string");
+        // An imported graph is new: Save asks for a file name.
+        const bool loaded = LoadGraphJson(json::parse(json_string), "JSON string");
+        if (loaded) DetachFromFile();
+        return loaded;
     } catch (const std::exception& error) {
         spdlog::error("Error parsing graph JSON string: {}", error.what());
         return false;

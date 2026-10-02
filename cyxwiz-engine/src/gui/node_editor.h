@@ -368,6 +368,11 @@ public:
 
     // Load graph from JSON string (for import from .cyxmodel)
     bool LoadGraphFromString(const std::string& json_string);
+
+    // The graph on the canvas no longer belongs to a file: Save asks for a
+    // name (a starter or template opened from the Engine's own files must not
+    // be overwritten).
+    void DetachFromFile();
     // The generated code for a framework, synchronously and without the
     // script editor (headless export: cyxwiz-engine --export-code; TOFIX112
     // export harness). Empty with a log line when the graph cannot be sorted.
@@ -510,6 +515,18 @@ public:
 
 private:
     void ShowToolbar();
+    // Studio nav (node_editor_toolbar.cpp, approved board 7): the graph menu,
+    // the clear confirmation, and whether the graph changed since it was
+    // saved or loaded.
+    void DrawGraphMenu();
+    void DrawClearConfirm();
+    void UpdateUnsavedState();
+    nlohmann::json GraphDocumentJson();
+    size_t saved_fingerprint_ = 0;
+    int fingerprint_baseline_frames_ = 2;  // take the baseline once a load settles
+    double fingerprint_checked_at_ = -1.0;
+    bool unsaved_ = false;
+    bool clear_confirm_requested_ = false;
     void RenderNodes();
     void RenderHoveredNodeTooltip(int hovered_node_id);
     void SyncPipelineExecutionVisualization();
