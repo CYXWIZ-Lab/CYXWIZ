@@ -171,10 +171,6 @@ public:
                            const std::vector<int>& index, VariableTable* out, bool* busy);
     VariablesService& Variables();
 
-    // Writes Out[count] of a notebook (a pandas DataFrame or Series) to a CSV
-    // file, for the Table Viewer. False with a reason while a script runs, after
-    // Restart, or when the value is not a table.
-    bool ExportNotebookValueToCsv(const std::string& key, int count, const std::string& path, std::string* error);
 
 
     // Stop currently running script

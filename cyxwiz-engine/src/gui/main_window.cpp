@@ -632,6 +632,7 @@ MainWindow::MainWindow()
     memory_monitor_ = std::make_unique<cyxwiz::MemoryMonitor>();
     variable_explorer_ = std::make_unique<cyxwiz::VariableExplorerPanel>();
     variable_explorer_->SetScriptingEngine(scripting_engine_);
+    table_viewer_->SetScriptingEngine(scripting_engine_.get());  // Data Viewer reads again (TOFIX133 P5)
 
     // Plot output panel (like MATLAB's figure window)
     plot_output_panel_ = std::make_unique<cyxwiz::PlotOutputPanel>();
@@ -2425,12 +2426,10 @@ MainWindow::MainWindow()
                 for (auto& s : script_editor_->NotebookScopes()) out.push_back(std::move(s));
             return out;
         };
-        view.on_open_table = [this](const std::string& name, const cyxwiz::VariablesView::Scope& scope,
+        view.on_open_table = [this](const cyxwiz::VariablesView::OpenRequest& request,
                                     const scripting::VariablesService::Result& result) {
-            if (!table_viewer_ || !result.table) return;
-            result.table->SetName(name + " \xC2\xB7 " + scope.label);
-            table_viewer_->SetTable(result.table);
-            table_viewer_->SetVisible(true);
+            if (!table_viewer_) return;
+            table_viewer_->OpenVariable(request, result);
             ImGui::SetWindowFocus(table_viewer_->GetName());
         };
         view.on_insert_name = [this](const std::string& name) {
@@ -2439,6 +2438,12 @@ MainWindow::MainWindow()
     }
     if (script_editor_) {
         // Notebook table results open in the Table Viewer (TOFIX133 P4 board 5).
+        script_editor_->SetOpenVariableCallback([this](const cyxwiz::VariablesView::OpenRequest& request,
+                                                       const scripting::VariablesService::Result& result) {
+            if (!table_viewer_) return;
+            table_viewer_->OpenVariable(request, result);
+            ImGui::SetWindowFocus(table_viewer_->GetName());
+        });
         script_editor_->SetOpenTableCallback([this](std::shared_ptr<cyxwiz::DataTable> table) {
             if (!table_viewer_) return;
             table_viewer_->SetTable(std::move(table));

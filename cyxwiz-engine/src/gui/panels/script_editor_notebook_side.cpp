@@ -27,11 +27,11 @@ void ScriptEditorPanel::RenderNotebookVariables(EditorTab& tab, float height) {
     if (!tab.variables_view) {
         tab.variables_view = std::make_unique<VariablesView>();
         tab.variables_view->SetTitle("Variables");
-        tab.variables_view->on_open_table = [this](const std::string& name, const VariablesView::Scope& scope,
-                                                    const scripting::VariablesService::Result& result) {
-            if (!result.table) return;
-            result.table->SetName(name + " \xC2\xB7 " + scope.label);
-            if (open_table_callback_) open_table_callback_(result.table);
+        tab.variables_view->on_open_table = [this, &tab](const VariablesView::OpenRequest& request,
+                                                          const scripting::VariablesService::Result& result) {
+            VariablesView::OpenRequest named = request;
+            named.scope.label = tab.filename;  // the Data Viewer says which notebook
+            if (open_variable_callback_) open_variable_callback_(named, result);
         };
         tab.variables_view->on_insert_name = [this](const std::string& name) { InsertTextAtCursor(name); };
     }

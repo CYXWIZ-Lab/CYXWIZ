@@ -1,4 +1,6 @@
 #include "table_viewer.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
 #include "../icons.h"
 #include <imgui.h>
 #include <implot.h>
@@ -158,7 +160,12 @@ void TableViewerPanel::SortByColumn(TableTab* tab, int column) {
 }
 
 void TableViewerPanel::RenderStatsSidebar(TableTab* tab) {
-    ImGui::BeginChild("StatsSidebar", ImVec2(stats_sidebar_width_, 0), true);
+    // A tinted area, no outline (owner rule: no lines around areas).
+    const ui::Tokens& tk = ui::CurrentTokens();
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::Mix(tk.bg_window, tk.text, 0.03f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
+    ImGui::BeginChild("StatsSidebar", ImVec2(stats_sidebar_width_, -30.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
 
     // Cell selection info at top
     ImGui::TextDisabled("Selection");
@@ -167,13 +174,14 @@ void TableViewerPanel::RenderStatsSidebar(TableTab* tab) {
     } else {
         ImGui::TextDisabled("No cell selected");
     }
-    ImGui::Separator();
+    ImGui::Spacing();
     ImGui::Spacing();
 
     if (tab->selected_column < 0 || tab->selected_column >= static_cast<int>(tab->column_stats.size())) {
         ImGui::TextDisabled("Click a cell to view");
         ImGui::TextDisabled("column statistics");
         ImGui::EndChild();
+        ImGui::PopStyleColor();
         return;
     }
 
@@ -182,12 +190,10 @@ void TableViewerPanel::RenderStatsSidebar(TableTab* tab) {
 
     // Column name with icon
     ImGui::Text(ICON_FA_CHART_COLUMN " %s", headers[tab->selected_column].c_str());
-    ImGui::Separator();
+    ImGui::Spacing();
 
     // Type badge
-    ImVec4 type_color = (stats.type == "Numeric")
-        ? ImVec4(0.2f, 0.6f, 0.9f, 1.0f)  // Blue
-        : ImVec4(0.9f, 0.6f, 0.2f, 1.0f);  // Orange
+    ImVec4 type_color = (stats.type == "Numeric") ? tk.info : tk.caution;
     ImGui::TextColored(type_color, "%s %s",
         stats.type == "Numeric" ? ICON_FA_HASHTAG : ICON_FA_FONT,
         stats.type.c_str());
@@ -203,7 +209,7 @@ void TableViewerPanel::RenderStatsSidebar(TableTab* tab) {
     ImGui::SameLine(90);
     ImGui::Text("%zu", stats.null_count);
 
-    ImGui::Separator();
+    ImGui::Spacing();
 
     if (stats.type == "Numeric") {
         ImGui::TextDisabled("Min");
@@ -226,7 +232,7 @@ void TableViewerPanel::RenderStatsSidebar(TableTab* tab) {
         ImGui::SameLine(90);
         ImGui::Text("%.4g", stats.median);
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         // Percentiles
         ImGui::TextDisabled("Percentiles:");
@@ -240,16 +246,16 @@ void TableViewerPanel::RenderStatsSidebar(TableTab* tab) {
         ImGui::SameLine(90);
         ImGui::Text("%.4g", stats.q3);
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         // Mini histogram
         ImGui::TextDisabled("Distribution:");
         RenderMiniHistogram(tab, tab->selected_column);
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         // Quick plot button
-        if (ImGui::Button(ICON_FA_CHART_BAR " Plot", ImVec2(-1, 0))) {
+        if (ui::SecondaryButton(ICON_FA_CHART_BAR " Plot")) {
             plot_popup_.type = QuickPlotType::Histogram;
             plot_popup_.x_column = tab->selected_column;
             plot_popup_.y_column = -1;
@@ -266,6 +272,7 @@ void TableViewerPanel::RenderStatsSidebar(TableTab* tab) {
     }
 
     ImGui::EndChild();
+    ImGui::PopStyleColor();
 }
 
 

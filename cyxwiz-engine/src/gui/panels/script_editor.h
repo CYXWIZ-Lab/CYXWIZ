@@ -86,6 +86,13 @@ public:
     std::vector<VariablesView::Scope> NotebookScopes() const;
     void InsertTextAtCursor(const std::string& text);
 
+    // A value read from Python for the Data Viewer (a notebook's Variables or
+    // a table output's "Open in Table Viewer").
+    void SetOpenVariableCallback(
+        std::function<void(const VariablesView::OpenRequest&, const scripting::VariablesService::Result&)> callback) {
+        open_variable_callback_ = std::move(callback);
+    }
+
     void SetOpenTableCallback(std::function<void(std::shared_ptr<DataTable>)> callback) {
         open_table_callback_ = std::move(callback);
     }
@@ -280,6 +287,7 @@ private:
     void OpenTraceFrame(const nbview::FrameLink& link);
     void RenderPlotWindows();
     std::function<void(std::shared_ptr<DataTable>)> open_table_callback_;
+    std::function<void(const VariablesView::OpenRequest&, const scripting::VariablesService::Result&)> open_variable_callback_;
     std::string table_open_error_;
     std::string table_open_error_cell_;
     std::string pending_goto_path_;

@@ -1452,36 +1452,6 @@ bool ScriptingEngine::DropNotebookNamespace(const std::string& key) {
     return true;
 }
 
-bool ScriptingEngine::ExportNotebookValueToCsv(const std::string& key, int count, const std::string& path,
-                                               std::string* error) {
-    if (script_running_) {
-        if (error) *error = "A script is running; try again when it finishes";
-        return false;
-    }
-    if (!IsInitialized()) {
-        if (error) *error = "Python is not running; run the cell again";
-        return false;
-    }
-    try {
-        py::gil_scoped_acquire acquire;
-        auto main = py::module_::import("__main__").attr("__dict__").cast<py::dict>();
-        py::object export_fn = main.contains("_cyxwiz_export_value") ? py::object(main["_cyxwiz_export_value"]) : py::none();
-        if (export_fn.is_none()) {
-            if (error) *error = "Run a cell first";
-            return false;
-        }
-        const std::string reason = export_fn(key, count, path).cast<std::string>();
-        if (!reason.empty()) {
-            if (error) *error = reason;
-            return false;
-        }
-        return true;
-    } catch (const py::error_already_set& e) {
-        if (error) *error = e.what();
-        return false;
-    }
-}
-
 ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script, const RunCallbacks& callbacks) {
     const OutputCallback& on_output = callbacks.on_output;
     ExecutionResult result;
@@ -1649,18 +1619,6 @@ try:
     _cyxwiz_notebook_ns
 except NameError:
     _cyxwiz_notebook_ns = {}
-
-def _cyxwiz_export_value(key, count, path):
-    ns = _cyxwiz_notebook_ns.get(key)
-    if ns is None:
-        return 'The notebook was restarted; run the cell again'
-    value = ns.get('Out', {}).get(count)
-    if value is None:
-        return 'This value is no longer in memory; run the cell again'
-    if not hasattr(value, 'to_csv'):
-        return 'Only tables (pandas DataFrame or Series) open in the Table Viewer'
-    value.to_csv(path)
-    return ''
 
 def _cyxwiz_frames(tb, skip):
     import traceback

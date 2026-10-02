@@ -1,4 +1,9 @@
 #include "table_viewer.h"
+#include "../../core/variables_presentation.h"
+#include "../editor_fonts.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include <imgui_internal.h>
 #include "visualization_panel.h"
 #include "../icons.h"
 #include <imgui.h>
@@ -57,15 +62,11 @@ void TableViewerPanel::Render() {
     // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
     const bool expanded = ImGui::Begin(GetName(), &visible_);
     if (expanded) {
-        // Tab bar at top
+        // Tab bar at top, the live-value line (Data Viewer), the toolbar.
         RenderTabBar();
-
-        ImGui::Separator();
-
-        // Toolbar
+        RenderLiveHeader(GetActiveTab());
         RenderToolbar();
-
-        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
 
         // Table display
         TableTab* active_tab = GetActiveTab();
@@ -76,8 +77,12 @@ void TableViewerPanel::Render() {
                     RenderStatsSidebar(active_tab);
                     ImGui::SameLine();
 
-                    // Draggable splitter
-                    ImGui::Button("##vsplitter", ImVec2(4.0f, -1));
+                    // Draggable splitter: a gap, a line in the surface tone on hover.
+                    const ImVec2 split = ImGui::GetCursorScreenPos();
+                    ImGui::InvisibleButton("##vsplitter", ImVec2(6.0f, std::max(1.0f, ImGui::GetContentRegionAvail().y - 30.0f)));
+                    if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+                        ImGui::GetWindowDrawList()->AddLine(ImVec2(split.x + 3.0f, split.y), ImVec2(split.x + 3.0f, ImGui::GetItemRectMax().y),
+                                                            ui::ToU32(ui::CurrentTokens().border), 1.0f);
                     if (ImGui::IsItemActive()) {
                         stats_sidebar_width_ += ImGui::GetIO().MouseDelta.x;
                         stats_sidebar_width_ = std::clamp(stats_sidebar_width_, 120.0f, 300.0f);
@@ -99,8 +104,6 @@ void TableViewerPanel::Render() {
             ImGui::TextWrapped("No table loaded. Registered datasets are previewed from Asset Browser or Data Input through Data Preview.");
         }
 
-        ImGui::Separator();
-
         // Status bar
         RenderStatusBar();
 
@@ -110,6 +113,130 @@ void TableViewerPanel::Render() {
     // Render modal dialogs (must be outside main window)
     RenderExportDialog();
     RenderFindDialog();
+}
+
+void TableViewerPanel::RenderLiveHeader(TableTab* tab) {
+    if (!tab || !tab->live.on) return;
+    const ui::Tokens& t = ui::CurrentTokens();
+    auto& live = tab->live;
+    vars::LiveTable lt;
+    lt.name = live.request.name;
+    lt.scope_label = live.request.scope.label;
+    lt.kind = live.kind;
+    lt.shape = live.shape;
+    lt.rows = live.rows;
+    lt.shown = live.shown;
+    lt.columns = static_cast<long long>(tab->GetColumnCount()) - (live.kind == "frame" ? 1 : 0);
+    lt.dtype = live.dtypes.empty() ? std::string() : live.dtypes.front();
+    lt.slice = live.slice;
+
+    // A tinted line: where the data comes from, and that it is a snapshot.
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = ImGui::GetContentRegionAvail().x;
+    const std::string header = vars::LiveHeader(lt, live.read_at);
+    const char* note = "Edits stay in this view";
+    const float right = ImGui::CalcTextSize(note).x + ui::ButtonWidth("Read again", ui::ButtonSize::Small) + 30.0f;
+    const bool one_line = 26.0f + ImGui::CalcTextSize(header.c_str()).x + 24.0f + right <= w;
+    const float h = (one_line ? 1.0f : 2.0f) * ImGui::GetFrameHeight() + 8.0f;
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ui::ToU32(ui::Mix(t.bg_window, t.accent, 0.10f)), 4.0f);
+    ImGui::SetCursorScreenPos(ImVec2(p.x + 10.0f, p.y + 4.0f));
+    const float mid = p.y + 4.0f + ImGui::GetFrameHeight() * 0.5f;
+    dl->AddCircleFilled(ImVec2(p.x + 14.0f, mid), 3.5f, ui::ToU32(live.problem.empty() ? t.success : t.warning));
+    ImGui::SetCursorScreenPos(ImVec2(p.x + 26.0f, p.y + 4.0f));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(header.c_str());
+    if (one_line) ImGui::SameLine(ImGui::GetContentRegionMax().x - right);
+    else ImGui::SetCursorScreenPos(ImVec2(p.x + 26.0f, p.y + 4.0f + ImGui::GetFrameHeight()));
+    if (live.reading) ImGui::TextColored(t.text_dim, "%s", "Reading...");
+    else if (ui::LinkButton("Read again")) ReadLive(tab, live.slice, live.request.max_rows);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Read the value from Python again");
+    ImGui::SameLine(0.0f, 14.0f);
+    ImGui::TextColored(t.text_dim, "%s", note);
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + 4.0f));
+    if (!live.problem.empty()) {
+        ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION " %s", live.problem.c_str());
+    }
+
+    // More than two axes: which slice (Up/Down step the first index).
+    if (live.kind == "array" && live.shape.size() > 2) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.text_dim, "%s", "Showing");
+        ImGui::SameLine();
+        ImFont* mono = gui::GetCodeFont();
+        if (mono) ImGui::PushFont(mono);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted((live.request.name + "[").c_str());
+        if (mono) ImGui::PopFont();
+        std::vector<int> wanted = live.slice;
+        bool step = false;
+        const size_t lead = live.shape.size() - 2;
+        wanted.resize(lead, 0);
+        for (size_t axis = 0; axis < lead; ++axis) {
+            ImGui::PushID(static_cast<int>(axis));
+            ImGui::SameLine(0.0f, 2.0f);
+            if (ui::GhostButton(ICON_FA_MINUS, wanted[axis] > 0 && !live.reading, "First index")) {
+                --wanted[axis];
+                step = true;
+            }
+            ImGui::SameLine(0.0f, 4.0f);
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("%d", wanted[axis]);
+            ImGui::SameLine(0.0f, 4.0f);
+            if (ui::GhostButton(ICON_FA_PLUS, wanted[axis] + 1 < live.shape[axis] && !live.reading, "Last index")) {
+                ++wanted[axis];
+                step = true;
+            }
+            ImGui::SameLine(0.0f, 2.0f);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(",");
+            ImGui::PopID();
+        }
+        ImGui::SameLine(0.0f, 6.0f);
+        if (mono) ImGui::PushFont(mono);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(":, :]");
+        if (mono) ImGui::PopFont();
+        ImGui::SameLine(0.0f, 10.0f);
+        const size_t n = live.shape.size();
+        ImGui::TextColored(t.text_dim, "\xC2\xB7 %s \xC3\x97 %s \xC2\xB7 Up/Down step the first index",
+                           vars::Thousands(live.shape[n - 2]).c_str(), vars::Thousands(live.shape[n - 1]).c_str());
+        const bool keys_ours = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && tab->editing_row < 0;
+        if (keys_ours) {
+            // Up/Down step the slice; owning them keeps ImGui's keyboard
+            // navigation from also moving in the table on the same press.
+            const ImGuiID owner = ImGui::GetID("##slice_keys");
+            ImGui::SetKeyOwner(ImGuiKey_UpArrow, owner);
+            ImGui::SetKeyOwner(ImGuiKey_DownArrow, owner);
+        }
+        if (keys_ours && !ImGui::IsAnyItemActive() && !live.reading) {
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) && wanted[0] > 0) {
+                --wanted[0];
+                step = true;
+            } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) && wanted[0] + 1 < live.shape[0]) {
+                ++wanted[0];
+                step = true;
+            }
+        }
+        if (step) ReadLive(tab, wanted, live.request.max_rows);
+    }
+
+    // A stated row limit, with the way past it.
+    const std::string limit = vars::LimitText(lt);
+    if (!limit.empty()) {
+        const ImVec2 q = ImGui::GetCursorScreenPos();
+        const float lh = ImGui::GetFrameHeight() + 6.0f;
+        dl->AddRectFilled(q, ImVec2(q.x + w, q.y + lh), ui::ToU32(ui::WithAlpha(t.warning, 0.10f)), 4.0f);
+        ImGui::SetCursorScreenPos(ImVec2(q.x + 10.0f, q.y + 3.0f));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.warning, "%s", ICON_FA_TRIANGLE_EXCLAMATION);
+        ImGui::SameLine();
+        ImGui::TextUnformatted(limit.c_str());
+        ImGui::SameLine(0.0f, 14.0f);
+        if (!live.reading && ui::LinkButton("Read all rows")) ReadLive(tab, live.slice, 0);
+        ImGui::SetCursorScreenPos(ImVec2(q.x, q.y + lh + 4.0f));
+    }
+    ImGui::Dummy(ImVec2(0.0f, 2.0f));
 }
 
 void TableViewerPanel::RenderTabBar() {
@@ -138,6 +265,10 @@ void TableViewerPanel::RenderTabBar() {
             bool tab_open = true;
             ImGuiTabItemFlags tab_flags = ImGuiTabItemFlags_None;
 
+            if (select_tab_ == i) {
+                tab_flags |= ImGuiTabItemFlags_SetSelected;
+                select_tab_ = -1;
+            }
             if (ImGui::BeginTabItem(tab_name.c_str(), &tab_open, tab_flags)) {
                 active_tab_index_ = i;
                 ImGui::EndTabItem();
@@ -157,7 +288,7 @@ void TableViewerPanel::RenderToolbar() {
     if (!active_tab) return;
 
     // Stats sidebar toggle
-    if (ImGui::Button(show_stats_sidebar_ ? ICON_FA_CHART_BAR " Stats" : ICON_FA_CHART_BAR)) {
+    if (ui::GhostButton(ICON_FA_CHART_BAR " Stats", true, nullptr, show_stats_sidebar_)) {
         show_stats_sidebar_ = !show_stats_sidebar_;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Statistics Sidebar");
@@ -176,9 +307,7 @@ void TableViewerPanel::RenderToolbar() {
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rows per page");
 
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, 18.0f);
 
     // Filter
     ImGui::Text(ICON_FA_FILTER);
@@ -207,15 +336,13 @@ void TableViewerPanel::RenderToolbar() {
     // Clear filter button
     if (!active_tab->filter_text.empty()) {
         ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_XMARK "##ClearFilter")) {
+        if (ui::GhostButton(ICON_FA_XMARK "##ClearFilter")) {
             ClearFilter(active_tab);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear filter");
     }
 
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, 18.0f);
 
     // Column freeze control
     ImGui::Text(ICON_FA_LOCK);
@@ -228,12 +355,10 @@ void TableViewerPanel::RenderToolbar() {
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Number of columns to freeze");
 
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, 18.0f);
 
     // Find button
-    if (ImGui::Button(ICON_FA_MAGNIFYING_GLASS " Find")) {
+    if (ui::GhostButton(ICON_FA_MAGNIFYING_GLASS " Find")) {
         show_find_dialog_ = true;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find in table");
@@ -241,23 +366,14 @@ void TableViewerPanel::RenderToolbar() {
     // Save button (only enabled if dirty)
     if (active_tab->table) {
         ImGui::SameLine();
-        if (active_tab->is_dirty) {
-            if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save")) {
-                SaveTable(active_tab);
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save changes (Ctrl+S)");
-        } else {
-            ImGui::BeginDisabled();
-            ImGui::Button(ICON_FA_FLOPPY_DISK " Save");
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("No unsaved changes");
-            }
-        }
+        if (ui::GhostButton(ICON_FA_FLOPPY_DISK " Save", active_tab->is_dirty && !active_tab->live.on,
+                            active_tab->live.on ? "A value from Python: export it instead" : "No unsaved changes"))
+            SaveTable(active_tab);
+        if (active_tab->is_dirty && ImGui::IsItemHovered()) ImGui::SetTooltip("Save changes (Ctrl+S)");
 
         // Export button
         ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_FILE_EXPORT " Export")) {
+        if (ui::GhostButton(ICON_FA_FILE_EXPORT " Export")) {
             show_export_dialog_ = true;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export table to file");
@@ -265,7 +381,7 @@ void TableViewerPanel::RenderToolbar() {
 
     // Close tab button
     ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_XMARK)) {
+    if (ui::GhostButton(ICON_FA_XMARK "##close_tab")) {
         close_tab_index_ = active_tab_index_;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close Tab");
@@ -309,7 +425,7 @@ void TableViewerPanel::RenderTable() {
     size_t end_row = std::min(start_row + rows_per_page_, display_count);
 
     // ImGui table flags
-    ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+    ImGuiTableFlags flags = ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
                            ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX |
                            ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable |
                            ImGuiTableFlags_Hideable | ImGuiTableFlags_Sortable |
@@ -355,7 +471,9 @@ void TableViewerPanel::RenderTable() {
         // -----------------------------------------------------------
         // Manual header row with context menu support
         // -----------------------------------------------------------
-        ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+        // A value from Python shows each column's dtype under its name.
+        const bool dtype_row = active_tab->live.on && !active_tab->live.dtypes.empty();
+        ImGui::TableNextRow(ImGuiTableRowFlags_Headers, dtype_row ? ImGui::GetTextLineHeight() * 2.0f + 6.0f : 0.0f);
 
         // Line number column header (if enabled)
         if (show_line_numbers_) {
@@ -381,6 +499,11 @@ void TableViewerPanel::RenderTable() {
 
             // Render clickable header
             ImGui::TableHeader(header.c_str());
+            if (dtype_row && i < active_tab->live.dtypes.size() && active_tab->live.dtypes[i] != "index") {
+                const ImVec2 h0 = ImGui::GetItemRectMin();
+                ImGui::GetWindowDrawList()->AddText(ImVec2(h0.x + ImGui::GetStyle().CellPadding.x, h0.y + ImGui::GetTextLineHeight() + 3.0f),
+                                                    ui::ToU32(ui::CurrentTokens().text_dim), active_tab->live.dtypes[i].c_str());
+            }
 
             // Right-click context menu on header
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
@@ -508,7 +631,7 @@ void TableViewerPanel::RenderTable() {
                             } else if (show_data_bars_) {
                                 // Default data bar
                                 float bar_width = cell_width * norm;
-                                ImU32 bar_color = ImGui::GetColorU32(ImVec4(0.2f, 0.5f, 0.8f, data_bar_alpha_));
+                                ImU32 bar_color = ui::ToU32(ui::WithAlpha(ui::CurrentTokens().accent, data_bar_alpha_));
                                 ImGui::GetWindowDrawList()->AddRectFilled(
                                     pos, ImVec2(pos.x + bar_width, pos.y + cell_height),
                                     bar_color);
@@ -537,11 +660,11 @@ void TableViewerPanel::RenderTable() {
 
                     // Apply multi-selection background color
                     if (in_multi_selection && !is_selected) {
-                        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.5f, 0.7f, 0.4f));
+                        ImGui::PushStyleColor(ImGuiCol_Header, ui::CurrentTokens().selection);
                     }
 
                     if (has_filter_match) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().warning);
                     }
 
                     // Push unique ID for each cell to avoid conflicts
@@ -645,16 +768,17 @@ void TableViewerPanel::RenderTable() {
 
     // Pagination controls
     if (total_pages > 1) {
-        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("Page:");
         ImGui::SameLine();
 
-        if (ImGui::Button(ICON_FA_ANGLES_LEFT "##First")) {
+        if (ui::GhostButton(ICON_FA_ANGLES_LEFT "##First")) {
             active_tab->current_page = 0;
         }
         ImGui::SameLine();
 
-        if (ImGui::Button(ICON_FA_CHEVRON_LEFT "##Prev")) {
+        if (ui::GhostButton(ICON_FA_CHEVRON_LEFT "##Prev")) {
             if (active_tab->current_page > 0) active_tab->current_page--;
         }
         ImGui::SameLine();
@@ -662,14 +786,14 @@ void TableViewerPanel::RenderTable() {
         ImGui::Text("%d / %zu", active_tab->current_page + 1, total_pages);
         ImGui::SameLine();
 
-        if (ImGui::Button(ICON_FA_CHEVRON_RIGHT "##Next")) {
+        if (ui::GhostButton(ICON_FA_CHEVRON_RIGHT "##Next")) {
             if (active_tab->current_page < static_cast<int>(total_pages) - 1) {
                 active_tab->current_page++;
             }
         }
         ImGui::SameLine();
 
-        if (ImGui::Button(ICON_FA_ANGLES_RIGHT "##Last")) {
+        if (ui::GhostButton(ICON_FA_ANGLES_RIGHT "##Last")) {
             active_tab->current_page = static_cast<int>(total_pages) - 1;
         }
 
@@ -700,9 +824,7 @@ void TableViewerPanel::RenderStatusBar() {
         tab->GetRowCount(), tab->GetColumnCount());
 
     // Middle: Selection info
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, 18.0f);
     if (tab->selected_row >= 0 && tab->selected_col >= 0) {
         ImGui::Text("Cell: Row %d, Col %d", tab->selected_row + 1, tab->selected_col + 1);
     } else {
@@ -710,9 +832,7 @@ void TableViewerPanel::RenderStatusBar() {
     }
 
     // Right: Memory estimate for in-memory table
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, 18.0f);
     size_t mem_bytes = tab->GetRowCount() * tab->GetColumnCount() * sizeof(double);
     if (mem_bytes > 1024 * 1024) {
         ImGui::Text(ICON_FA_MEMORY " %.1f MB", mem_bytes / (1024.0 * 1024.0));

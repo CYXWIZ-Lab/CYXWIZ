@@ -22,7 +22,9 @@
 namespace cyxwiz {
 
 namespace {
-std::string Clock() {
+}  // namespace
+
+std::string ClockNow() {
     const std::time_t now = std::time(nullptr);
     std::tm local{};
 #if defined(_WIN32)
@@ -34,6 +36,8 @@ std::string Clock() {
     std::strftime(buf, sizeof(buf), "%H:%M:%S", &local);
     return buf;
 }
+
+namespace {
 
 // The JSON string a cyxwiz_vars function returned ("" when it is not a string).
 std::string JsonString(const std::string& text) {
@@ -53,20 +57,30 @@ ImVec4 KindColour(const std::string& kind) {
 }
 }  // namespace
 
-std::map<std::uint64_t, std::pair<VariablesView*, VariablesView::Pending>>& VariablesView::Routes() {
-    static std::map<std::uint64_t, std::pair<VariablesView*, Pending>> routes;
+std::map<std::uint64_t, VariablesView::Route>& VariablesView::Routes() {
+    static std::map<std::uint64_t, Route> routes;
     return routes;
+}
+
+std::uint64_t VariablesView::Read(scripting::ScriptingEngine* engine, scripting::VariablesService::Request request,
+                                  const void* owner, std::function<void(const scripting::VariablesService::Result&)> done) {
+    if (!engine) return 0;
+    const std::uint64_t id = engine->Variables().Submit(std::move(request));
+    if (id != 0) Routes()[id] = Route{owner, std::move(done)};
+    return id;
+}
+
+void VariablesView::CancelReads(const void* owner) {
+    auto& routes = Routes();
+    for (auto it = routes.begin(); it != routes.end();) {
+        if (it->second.owner == owner) it = routes.erase(it);
+        else ++it;
+    }
 }
 
 VariablesView::VariablesView() = default;
 
-VariablesView::~VariablesView() {
-    auto& routes = Routes();
-    for (auto it = routes.begin(); it != routes.end();) {
-        if (it->second.first == this) it = routes.erase(it);
-        else ++it;
-    }
-}
+VariablesView::~VariablesView() { CancelReads(this); }
 
 void VariablesView::SetScope(const Scope& scope) {
     if (scope.key == scope_.key) {  // same namespace: only the words change
@@ -111,10 +125,10 @@ void VariablesView::Submit(scripting::VariablesService::Request request, Pending
     if (!engine_) return;
     request.scope = scope_.key;
     pending.scope = scope_.key;
-    const std::uint64_t id = engine_->Variables().Submit(std::move(request));
-    if (id == 0) return;
-    if (pending.kind == Kind::List) list_request_ = id;
-    Routes()[id] = {this, std::move(pending)};
+    const bool list = pending.kind == Kind::List;
+    const std::uint64_t id = Read(engine_, std::move(request), this,
+                                  [this, pending](const scripting::VariablesService::Result& r) { OnResult(r, pending); });
+    if (id != 0 && list) list_request_ = id;
 }
 
 void VariablesView::PollAll(scripting::ScriptingEngine* engine) {
@@ -123,10 +137,10 @@ void VariablesView::PollAll(scripting::ScriptingEngine* engine) {
     if (routes.empty()) return;  // nothing asked: no need to start the worker
     for (const auto& result : engine->Variables().Poll()) {
         auto it = routes.find(result.id);
-        if (it == routes.end()) continue;  // its view is gone
-        auto [view, pending] = std::move(it->second);
+        if (it == routes.end()) continue;  // whoever asked is gone
+        auto done = std::move(it->second.done);
         routes.erase(it);
-        view->OnResult(result, pending);
+        if (done) done(result);
     }
 }
 
@@ -146,7 +160,7 @@ void VariablesView::OnResult(const scripting::VariablesService::Result& result, 
             changed_ = vars::ChangedNames(previous, vars_);
             previous = vars::Digests(vars_);
             have_read_ = true;
-            status_ = vars::ReadStatus(pending.name, Clock());
+            status_ = vars::ReadStatus(pending.name, ClockNow());
             children_.clear();
             // Open rows stay open: read their children again.
             for (const auto& path : open_) {
@@ -191,9 +205,13 @@ void VariablesView::OnResult(const scripting::VariablesService::Result& result, 
             if (result.busy) Note("A run is active; view the data when it finishes.");
             else if (!result.error.empty() || !result.table) Note(result.error.empty() ? "Could not read the data." : result.error);
             else if (on_open_table) {
-                Scope scope = scope_;
-                if (!this_scope) scope.key = pending.scope;
-                on_open_table(pending.name, scope, result);
+                OpenRequest open;
+                open.name = pending.name;
+                open.path = pending.path;
+                open.scope = scope_;
+                if (!this_scope) open.scope.key = pending.scope;
+                open.plot = pending.plot;
+                on_open_table(open, result);
             }
             break;
     }
@@ -270,7 +288,8 @@ void VariablesView::RenderHeader() {
     const float refresh_w = ui::ButtonWidth(ICON_FA_ROTATE " Refresh", ui::ButtonSize::Small);
     const float filter_w = std::min(240.0f, std::max(120.0f, ImGui::GetContentRegionAvail().x * 0.3f));
     const float right = ImGui::GetContentRegionMax().x;
-    ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 12.0f, right - filter_w - refresh_w - 8.0f));
+    (void)right;
+    ui::SameLineRight(filter_w + refresh_w + 8.0f);
     ui::SearchField("##variables_filter", filter_, sizeof(filter_), "Filter by name, type or value", filter_w);
     ImGui::SameLine(0.0f, 8.0f);
     if (ui::GhostButton(ICON_FA_ROTATE " Refresh", engine_ && engine_->IsInitialized() && !running,
@@ -290,7 +309,7 @@ void VariablesView::RenderChips() {
     }
     const char* label = "Show modules, functions and classes";
     const float w = ImGui::GetFrameHeight() + ImGui::CalcTextSize(label).x + 8.0f;
-    ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 12.0f, ImGui::GetContentRegionMax().x - w));
+    ui::SameLineRight(w);
     if (ImGui::Checkbox(label, &show_all_)) Invalidate("on Refresh");
     ImGui::Dummy(ImVec2(0.0f, 2.0f));
 }
@@ -478,6 +497,8 @@ void VariablesView::RenderRowMenu(const vars::TreeRow& row) {
     const vars::Variable& v = *row.var;
     auto gap = []() { ImGui::Dummy(ImVec2(0.0f, 4.0f)); };
     if (v.viewable && ImGui::MenuItem("View data", "Enter")) ViewData(row.path, v.name);
+    if (v.viewable && (v.kind == "table" || v.kind == "array") && ImGui::MenuItem("Plot"))
+        ViewData(row.path, v.name, true);
     if (v.expandable && ImGui::MenuItem(row.open ? "Collapse" : "Expand", row.open ? "Left" : "Right")) ToggleOpen(row.path);
     gap();
     if (ImGui::MenuItem("Copy name")) ImGui::SetClipboardText(v.name.c_str());
@@ -538,8 +559,7 @@ void VariablesView::RenderFooter() {
     const bool noting = !note_.empty() && ImGui::GetTime() < note_until_;
     const char* hint = noting ? note_.c_str() : "Double-click or Enter: view data \xC2\xB7 right-click: more";
     const float w = ImGui::CalcTextSize(hint).x;
-    ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 16.0f, ImGui::GetContentRegionMax().x - w));
-    ImGui::TextColored(noting ? t.text : t.text_faint, "%s", hint);
+    if (ui::SameLineRight(w, 16.0f) || noting) ImGui::TextColored(noting ? t.text : t.text_faint, "%s", hint);
 }
 
 void VariablesView::ToggleOpen(const std::string& path) {
@@ -552,11 +572,11 @@ void VariablesView::ToggleOpen(const std::string& path) {
     Submit(std::move(r), Pending{Kind::Children, path, {}, {}});
 }
 
-void VariablesView::ViewData(const std::string& path, const std::string& name) {
+void VariablesView::ViewData(const std::string& path, const std::string& name, bool plot) {
     scripting::VariablesService::Request r;
     r.kind = Kind::Table;
     r.path_json = path;
-    Submit(std::move(r), Pending{Kind::Table, path, name, {}});
+    Submit(std::move(r), Pending{Kind::Table, path, name, {}, plot});
     Note("Reading " + name + "...");
 }
 

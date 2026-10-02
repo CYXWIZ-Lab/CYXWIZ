@@ -16,6 +16,7 @@ namespace cyxwiz {
 
 ScriptEditorPanel::~ScriptEditorPanel() {
     async_owner_alive_->store(false);
+    VariablesView::CancelReads(this);  // a table output being read for the Data Viewer
     for (auto& tab : tabs_) {
         if (tab) {
             CancelTabTasks(*tab);

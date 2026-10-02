@@ -222,6 +222,53 @@ std::vector<TreeRow> Flatten(const std::vector<Variable>& top, const std::set<st
     return out;
 }
 
+std::string Thousands(long long n) {
+    std::string digits = std::to_string(n < 0 ? -n : n);
+    std::string out;
+    for (size_t i = 0; i < digits.size(); ++i) {
+        if (i > 0 && (digits.size() - i) % 3 == 0) out += ',';
+        out += digits[i];
+    }
+    return n < 0 ? "-" + out : out;
+}
+
+namespace {
+std::string ShapeText(const std::vector<long long>& shape) {
+    std::string s = "(";
+    for (size_t i = 0; i < shape.size(); ++i) s += (i ? ", " : "") + Thousands(shape[i]);
+    return s + (shape.size() == 1 ? ",)" : ")");
+}
+}  // namespace
+
+std::string LiveHeader(const LiveTable& t, const std::string& clock) {
+    const std::string where = t.scope_label == "Python session" ? "the Python session" : t.scope_label;
+    std::string what;
+    if (t.kind == "frame")
+        what = Thousands(t.rows) + (t.rows == 1 ? " row" : " rows") + " \xC3\x97 " + Thousands(t.columns) +
+               (t.columns == 1 ? " column" : " columns");
+    else if (t.kind == "array")
+        what = (t.dtype.empty() ? std::string("array ") : t.dtype + " array ") + ShapeText(t.shape);
+    else
+        what = "list of " + Thousands(t.rows);
+    return "Variable " + t.name + " from " + where + " \xC2\xB7 " + what + " \xC2\xB7 read " + clock;
+}
+
+std::string LimitText(const LiveTable& t) {
+    if (t.shown >= t.rows) return {};
+    return "Showing the first " + Thousands(t.shown) + " of " + Thousands(t.rows) + " rows. Sorting and stats use these rows.";
+}
+
+std::string SliceText(const LiveTable& t) {
+    if (t.kind != "array" || t.shape.size() <= 2) return {};
+    std::string s = t.name + "[";
+    for (size_t i = 0; i < t.shape.size(); ++i) {
+        if (i) s += ", ";
+        s += i < t.slice.size() ? std::to_string(t.slice[i]) : std::string(":");
+    }
+    const size_t n = t.shape.size();
+    return s + "] \xC2\xB7 " + Thousands(t.shape[n - 2]) + " \xC3\x97 " + Thousands(t.shape[n - 1]);
+}
+
 std::string ReadStatus(const std::string& reason, const std::string& clock) {
     return "Read " + reason + " \xC2\xB7 " + clock;
 }

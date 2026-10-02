@@ -337,33 +337,41 @@ void ScriptEditorPanel::OpenResultInTableViewer(Cell& cell, const CellOutput& ou
     auto& tab = *tabs_[active_tab_index_];
     table_open_error_.clear();
     table_open_error_cell_ = cell.id;
-    const std::string name = std::filesystem::path(tab.filename).stem().string() + " Out[" + std::to_string(cell.execution_count) + "]";
-    std::shared_ptr<DataTable> table;
-    // The whole value from Python (Out[n]); else the rows the output shows.
-    std::string why;
-    if (scripting_engine_ && cell.execution_count > 0) {
-        std::error_code ec;
-        const auto dir = std::filesystem::temp_directory_path(ec) / "cyxwiz_notebook_tables";
-        std::filesystem::create_directories(dir, ec);
-        const auto file = dir / (tab.cell_manager.NamespaceKey() + "_out" + std::to_string(cell.execution_count) + ".csv");
-        if (scripting_engine_->ExportNotebookValueToCsv(tab.cell_manager.NamespaceKey(), cell.execution_count, file.string(), &why)) {
-            auto loaded = std::make_shared<DataTable>();
-            if (loaded->LoadFromCSV(file.string())) {
-                loaded->SetName(name);
-                table = loaded;
-            }
-        }
-    }
-    if (!table && out.table_cache) {
-        table = ToDataTable(*out.table_cache, name + " (shown rows)");
-        table_open_error_ = why.empty() ? "" : "Showing only the rows above: " + why;
-    }
-    if (!table) {
-        table_open_error_ = why.empty() ? "Nothing to open" : why;
+    const std::string name = "Out[" + std::to_string(cell.execution_count) + "]";
+    // The rows the output shows, when the whole value cannot be read.
+    std::shared_ptr<DataTable> shown;
+    if (out.table_cache) shown = ToDataTable(*out.table_cache, std::filesystem::path(tab.filename).stem().string() + " " + name + " (shown rows)");
+    if (!scripting_engine_ || cell.execution_count <= 0) {
+        if (shown && open_table_callback_) open_table_callback_(shown);
+        else table_open_error_ = "Nothing to open";
         return;
     }
-    if (open_table_callback_) open_table_callback_(table);
-    spdlog::info("Opened {} in the Table Viewer ({} rows)", name, table->GetRowCount());
+    // The whole value from Python: the notebook's Out[n], read on the worker.
+    VariablesView::OpenRequest request;
+    request.name = name;
+    request.path = "[[\"name\",\"Out\"],[\"key\"," + std::to_string(cell.execution_count) + "]]";
+    request.scope = {tab.cell_manager.NamespaceKey(), tab.filename, "notebook"};
+    scripting::VariablesService::Request r;
+    r.kind = scripting::VariablesService::Kind::Table;
+    r.scope = request.scope.key;
+    r.path_json = request.path;
+    const std::string cell_id = cell.id;
+    VariablesView::Read(scripting_engine_.get(), std::move(r), this,
+                        [this, request, shown, cell_id](const scripting::VariablesService::Result& result) {
+                            if (result.table && result.error.empty()) {
+                                if (open_variable_callback_) open_variable_callback_(request, result);
+                                spdlog::info("Opened {} in the Table Viewer ({} rows)", request.name, result.shown);
+                                return;
+                            }
+                            table_open_error_cell_ = cell_id;
+                            const std::string why = result.busy ? "a run is active" : result.error;
+                            if (shown && open_table_callback_) {
+                                open_table_callback_(shown);
+                                table_open_error_ = "Showing only the rows above: " + why;
+                            } else {
+                                table_open_error_ = why.empty() ? "Nothing to open" : why;
+                            }
+                        });
 }
 
 void ScriptEditorPanel::RenderPlotOutput(Cell& cell, CellOutput& out, float width) {

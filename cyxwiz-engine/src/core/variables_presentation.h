@@ -73,4 +73,25 @@ std::vector<TreeRow> Flatten(const std::vector<Variable>& top, const std::set<st
 // "Read after p5_vars.py finished · 12:04:31", "Read on Refresh · 12:05:02".
 std::string ReadStatus(const std::string& reason, const std::string& clock);
 
+// Data Viewer (board 10): the header line of a Table Viewer tab fed from a
+// variable, its row-limit note and its slice of an array.
+struct LiveTable {
+    std::string name;         // "df"
+    std::string scope_label;  // "Python session" or a notebook's file name
+    std::string kind;         // frame, array, list
+    std::vector<long long> shape;
+    long long rows = 0;       // in the value
+    long long shown = 0;      // read
+    long long columns = 0;    // data columns read (not the index)
+    std::string dtype;        // arrays: "float32"
+    std::vector<int> slice;   // leading-axis indices of an array with more than two axes
+};
+std::string Thousands(long long n);  // 10000 -> "10,000"
+// "Variable df from the Python session · 10,000 rows × 3 columns · read 12:04:31"
+std::string LiveHeader(const LiveTable& t, const std::string& clock);
+// "Showing the first 200,000 of 1,600,000 rows. Sorting and stats use these rows." ("" when all were read)
+std::string LimitText(const LiveTable& t);
+// "batch[3, :, :] · 28 × 28" ("" for two axes or fewer)
+std::string SliceText(const LiveTable& t);
+
 }  // namespace cyxwiz::vars

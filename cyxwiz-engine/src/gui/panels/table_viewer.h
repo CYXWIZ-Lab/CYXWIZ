@@ -2,6 +2,7 @@
 
 #include "../panel.h"
 #include "../../data/data_table.h"
+#include "../variables_view.h"
 #include <imgui.h>
 #include <cstring>
 #include <string>
@@ -123,7 +124,7 @@ struct TableColumnStats {
 class TableViewerPanel : public Panel {
 public:
     TableViewerPanel();
-    ~TableViewerPanel() override = default;
+    ~TableViewerPanel() override;
 
     void Render() override;
 
@@ -142,6 +143,12 @@ public:
 
     // Clear current table
     void Clear();
+
+    // Data Viewer (TOFIX133 P5, board 10): a tab fed from a Python value. A
+    // second open of the same value replaces its tab; "Read again", a slice
+    // change or "Read all rows" read it again through the variables worker.
+    void SetScriptingEngine(scripting::ScriptingEngine* engine) { engine_ = engine; }
+    void OpenVariable(const VariablesView::OpenRequest& request, const scripting::VariablesService::Result& result);
 
     // Visualization integration
     void SetVisualizationPanel(VisualizationPanel* viz) { visualization_panel_ = viz; }
@@ -203,6 +210,21 @@ private:
         char edit_buffer[1024] = {0};       // Text buffer for editing
         bool edit_just_started = false;     // Flag to focus input on first frame
 
+        // A tab fed from a Python value (Data Viewer, board 10).
+        struct Live {
+            bool on = false;
+            VariablesView::OpenRequest request;
+            std::string kind;                  // frame, array, list
+            std::vector<long long> shape;
+            long long rows = 0;                // in the value
+            long long shown = 0;               // read into this tab
+            std::vector<std::string> dtypes;   // per table column ("index" for a frame's index)
+            std::vector<int> slice;
+            std::string read_at;
+            std::string problem;               // why the last read again failed (the data shown stays)
+            bool reading = false;
+        } live;
+
         TableTab() {
             std::memset(filter_buffer, 0, sizeof(filter_buffer));
             std::memset(edit_buffer, 0, sizeof(edit_buffer));
@@ -236,6 +258,8 @@ private:
     };
 
     void RenderTabBar();
+    void RenderLiveHeader(TableTab* tab);
+    void ReadLive(TableTab* tab, std::vector<int> index, long long max_rows);
     void RenderToolbar();
     void RenderTable();
     void RenderStatusBar();
@@ -345,6 +369,9 @@ private:
 
     // Visualization integration
     VisualizationPanel* visualization_panel_ = nullptr;
+
+    scripting::ScriptingEngine* engine_ = nullptr;
+    int select_tab_ = -1;  // a replaced tab to bring to the front next frame
 };
 
 } // namespace cyxwiz

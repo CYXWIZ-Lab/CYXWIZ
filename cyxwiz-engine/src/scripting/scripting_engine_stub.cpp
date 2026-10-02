@@ -91,11 +91,6 @@ bool ScriptingEngine::ReadVariableTable(const std::string&, const std::string&, 
     return false;
 }
 
-bool ScriptingEngine::ExportNotebookValueToCsv(const std::string&, int, const std::string&, std::string* error) {
-    if (error) *error = "This build has no Python scripting";
-    return false;
-}
-
 void ScriptingEngine::StopScript() { script_running_ = false; }
 bool ScriptingEngine::IsScriptRunning() const { return false; }
 

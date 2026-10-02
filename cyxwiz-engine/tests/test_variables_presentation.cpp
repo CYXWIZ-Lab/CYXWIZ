@@ -91,6 +91,37 @@ int main() {
     Sort(more, Column::Name, true);
     Check(more[0].name == "a" && more[2].more == 5 && ChipCount(more, Chip::All) == 2, "more row");
 
+    // Data Viewer header (board 10).
+    LiveTable lt;
+    lt.name = "df";
+    lt.scope_label = "Python session";
+    lt.kind = "frame";
+    lt.shape = {10000, 3};
+    lt.rows = lt.shown = 10000;
+    lt.columns = 3;
+    Check(LiveHeader(lt, "12:04:31") ==
+              "Variable df from the Python session \xC2\xB7 10,000 rows \xC3\x97 3 columns \xC2\xB7 read 12:04:31",
+          "frame header");
+    Check(LimitText(lt).empty(), "no limit note when every row was read");
+    lt.rows = 1600000;
+    lt.shown = 200000;
+    Check(LimitText(lt) == "Showing the first 200,000 of 1,600,000 rows. Sorting and stats use these rows.", "limit note");
+    LiveTable arr;
+    arr.name = "weights";
+    arr.scope_label = "nb42.ipynb";
+    arr.kind = "array";
+    arr.dtype = "float32";
+    arr.shape = {128, 64};
+    Check(LiveHeader(arr, "12:05:00") == "Variable weights from nb42.ipynb \xC2\xB7 float32 array (128, 64) \xC2\xB7 read 12:05:00",
+          "array header");
+    Check(SliceText(arr).empty(), "two axes: no slice");
+    arr.name = "batch";
+    arr.shape = {32, 28, 28};
+    arr.slice = {3};
+    Check(SliceText(arr) == "batch[3, :, :] \xC2\xB7 28 \xC3\x97 28", "slice text");
+    Check(Thousands(0) == "0" && Thousands(999) == "999" && Thousands(1000) == "1,000" && Thousands(-1234567) == "-1,234,567",
+          "thousands");
+
     Check(ReadStatus("after p5_vars.py finished", "12:04:31") == "Read after p5_vars.py finished \xC2\xB7 12:04:31", "read status");
     Check(ParseVariables("not json").empty() && ParseVariables("{}").empty(), "bad input");
     std::cout << "variables presentation: chips, filter, memory, changed marks, sort, tree. OK\n";

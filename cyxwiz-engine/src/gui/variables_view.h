@@ -22,6 +22,9 @@ class ScriptingEngine;
 
 namespace cyxwiz {
 
+// The local time as "12:04:31" (read stamps of the views).
+std::string ClockNow();
+
 class VariablesView {
 public:
     struct Scope {
@@ -53,13 +56,27 @@ public:
 
     // Engine panel: the scopes to pick from; unset, no picker.
     std::function<std::vector<Scope>()> scopes;
+    // What the Data Viewer shows: a value of a scope, read with these limits.
+    struct OpenRequest {
+        std::string name;            // "df", "Out[3]"
+        std::string path;            // JSON
+        Scope scope;
+        bool plot = false;           // open its quick plot too
+        std::vector<int> index;      // leading-axis indices of an array
+        long long max_rows = 200000; // <= 0: every row
+    };
     // A value read for the Data Viewer.
-    std::function<void(const std::string& name, const Scope& scope, const scripting::VariablesService::Result&)> on_open_table;
+    std::function<void(const OpenRequest&, const scripting::VariablesService::Result&)> on_open_table;
     // Insert a name at the cursor of the Script Editor.
     std::function<void(const std::string& name)> on_insert_name;
 
-    // Routes the worker's results to their views; call once per frame.
+    // Routes the worker's results to whoever asked; call once per frame.
     static void PollAll(scripting::ScriptingEngine* engine);
+    // A read for someone else (the Data Viewer): `done` gets the result on
+    // the UI thread; CancelReads(owner) drops the owner's pending ones.
+    static std::uint64_t Read(scripting::ScriptingEngine* engine, scripting::VariablesService::Request request,
+                              const void* owner, std::function<void(const scripting::VariablesService::Result&)> done);
+    static void CancelReads(const void* owner);
 
 private:
     using Kind = scripting::VariablesService::Kind;
@@ -68,10 +85,15 @@ private:
         std::string path;  // JSON
         std::string name;
         std::string scope;
+        bool plot = false;
     };
 
-    // Request id -> the view that asked and what for.
-    static std::map<std::uint64_t, std::pair<VariablesView*, Pending>>& Routes();
+    // Request id -> who asked and what to do with the result.
+    struct Route {
+        const void* owner = nullptr;
+        std::function<void(const scripting::VariablesService::Result&)> done;
+    };
+    static std::map<std::uint64_t, Route>& Routes();
     void Submit(scripting::VariablesService::Request request, Pending pending);
     void OnResult(const scripting::VariablesService::Result& result, const Pending& pending);
     void ReadIfNeeded();
@@ -81,7 +103,7 @@ private:
     void RenderFooter();
     void RenderRowMenu(const vars::TreeRow& row);
     void HandleKeys(const std::vector<vars::TreeRow>& rows);
-    void ViewData(const std::string& path, const std::string& name);
+    void ViewData(const std::string& path, const std::string& name, bool plot = false);
     void CopyValue(const std::string& path);
     void SaveCsv(const std::string& path, const std::string& name);
     void Delete(const std::string& path, const std::string& name);

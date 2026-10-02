@@ -8,8 +8,8 @@ leaves nothing behind in the namespace.
 
 A path names a value inside the namespace: a list of steps, each
 ["name", str] (first step), ["item", int] (n-th entry of a dict, list,
-tuple or set, in iteration order), ["attr", str] or ["col", str]
-(DataFrame column).
+tuple or set, in iteration order), ["key", k] (a dict's value by key, e.g.
+a notebook's Out[3]), ["attr", str] or ["col", str] (DataFrame column).
 """
 
 import reprlib
@@ -298,6 +298,8 @@ def resolve(namespace, path):
                 value = list(value)[int(key)]
             else:
                 value = value[int(key)]
+        elif kind == 'key':
+            value = value[key]
         elif kind == 'attr':
             value = vars(value)[key]
         elif kind == 'col':

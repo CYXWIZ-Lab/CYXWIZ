@@ -105,6 +105,8 @@ class PlainValuesTest(unittest.TestCase):
         t = cv.table(self.ns, [['name', 'grid']])
         self.assertEqual([c['values'] for c in t['columns']], [[1, 3, 5], [2, 4, None]])
         self.assertIn('error', cv.table(self.ns, [['name', 'config']]))
+        self.ns['Out'] = {3: [1, 2, 3]}
+        self.assertEqual(cv.table(self.ns, [['name', 'Out'], ['key', 3]])['rows'], 3)  # a notebook's Out[3]
         self.assertIn('error', cv.table(self.ns, [['name', 'gone']]))
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, 'grid.csv')
