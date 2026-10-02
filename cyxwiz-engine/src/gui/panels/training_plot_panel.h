@@ -320,6 +320,27 @@ private:
     // Thread safety
     mutable std::mutex data_mutex_;
 
+    // Drawn copies of the series (TOFIX134 P0 item 8): reduced to a few
+    // thousand points with their smoothed curves, rebuilt only when the data
+    // or the smoothing changes. Drawing 100k points and smoothing them every
+    // frame held data_mutex_ (and so the training thread) for the frame.
+    struct DrawnSeries {
+        MetricSeries line;
+        std::vector<double> smooth_x;
+        std::vector<double> smooth_y;
+    };
+    struct DrawnCache {
+        uint64_t version = ~0ull;
+        int smoothing = 0;
+        bool smoothed = false;
+        DrawnSeries train_loss, val_loss, train_accuracy, val_accuracy;
+        std::vector<MetricSeries> custom;
+    };
+    uint64_t data_version_ = 0;
+    DrawnCache drawn_;
+    // Call with data_mutex_ held.
+    const DrawnCache& Drawn();
+
     // Helper methods
     void RenderTrainingStatus();
     void RenderLossPlot(float plot_height);

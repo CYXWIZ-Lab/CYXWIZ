@@ -387,6 +387,7 @@ set(ENGINE_SOURCES
     src/gui/panels/asset_browser.cpp
     src/gui/panels/training_dashboard.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/series_decimation.cpp
     src/gui/panels/training_plot_panel_global.cpp
     src/gui/panels/plot_window.cpp
     src/gui/panels/python_plot_window_registry.cpp
@@ -1185,6 +1186,7 @@ pybind11_add_module(cyxwiz_plotting
     src/gui/panels/plot_window.cpp
     src/gui/panels/plot_test_control.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/series_decimation.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/gui/panels/training_plot_panel_global.cpp
@@ -3485,6 +3487,7 @@ add_executable(test_graph_training_sequence_preflight
     src/gui/graph_training_launcher.cpp
     src/core/graph_training_prep.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/series_decimation.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
@@ -3579,6 +3582,7 @@ add_executable(test_text_gui_training_launch
     src/gui/graph_training_launcher.cpp
     src/core/graph_training_prep.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/series_decimation.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
@@ -4767,6 +4771,7 @@ add_executable(test_training_manager_session
     src/core/sequence_arrow_batcher.cpp
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/series_decimation.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
 )
@@ -5360,6 +5365,7 @@ add_executable(test_engine_node_parity
     src/core/training_manager.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/series_decimation.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp

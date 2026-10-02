@@ -362,6 +362,11 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/tests/test_text_document.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/editor/text_document.cpp"
     )
+    # Training Dashboard draws reduced series (TOFIX134 P0 item 8).
+    add_executable(test_series_decimation
+        "${_cyxwiz_installer_engine_dir}/tests/test_series_decimation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
+    )
     # Plot Output takes every published figure once (TOFIX134 P0 item 6).
     add_executable(test_plot_inbox
         "${_cyxwiz_installer_engine_dir}/tests/test_plot_inbox.cpp"
@@ -430,7 +435,7 @@ if(CYXWIZ_BUILD_TESTS)
             test_notebook_format test_notebook_presentation
             test_markdown_blocks test_html_table test_csv_records
             test_language_results test_variables_presentation test_breakpoint_lines
-            test_paired_columns test_plot_script test_plot_inbox)
+            test_paired_columns test_plot_script test_plot_inbox test_series_decimation)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

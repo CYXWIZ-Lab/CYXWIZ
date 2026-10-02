@@ -1,4 +1,5 @@
 #include "../ui_tokens.h"
+#include "../../core/series_decimation.h"
 #include "training_plot_panel.h"
 #ifndef CYXWIZ_PLOTTING_MODULE
 #include "../../core/async_task_manager.h"
@@ -964,6 +965,7 @@ void TrainingPlotPanel::AddLossPoint(double epoch, double train_loss, double val
                      "epoch=" + std::to_string(epoch) +
                      " train_loss=" + std::to_string(train_loss));
 
+    ++data_version_;
     train_loss_.epochs.push_back(epoch);
     train_loss_.values.push_back(train_loss);
     TrimDataIfNeeded(train_loss_);
@@ -981,6 +983,7 @@ void TrainingPlotPanel::AddAccuracyPoint(double epoch, double train_acc, double 
                      "epoch=" + std::to_string(epoch) +
                      " train_acc=" + std::to_string(train_acc));
 
+    ++data_version_;
     train_accuracy_.epochs.push_back(epoch);
     train_accuracy_.values.push_back(train_acc);
     TrimDataIfNeeded(train_accuracy_);
@@ -1017,6 +1020,7 @@ void TrainingPlotPanel::AddCustomMetric(const std::string& metric_name, int epoc
         it = custom_metrics_.end() - 1;
     }
 
+    ++data_version_;
     it->epochs.push_back(epoch);
     it->values.push_back(value);
     TrimDataIfNeeded(*it);
@@ -1041,6 +1045,7 @@ void TrainingPlotPanel::Clear() {
 }
 
 void TrainingPlotPanel::ClearLocked() {
+    ++data_version_;
     train_loss_.epochs.clear();
     train_loss_.values.clear();
     val_loss_.epochs.clear();
@@ -1544,6 +1549,7 @@ void TrainingPlotPanel::RenderLossPlot(float plot_height) {
 
 void TrainingPlotPanel::DrawLossPlot(const ImVec2& size, bool fit) {
     const DashColors c = CurrentDashColors();
+    const DrawnCache& drawn = Drawn();
     PushDashPlotStyle(c);
     if (fit) {
         ImPlot::SetNextAxesToFit();
@@ -1555,13 +1561,13 @@ void TrainingPlotPanel::DrawLossPlot(const ImVec2& size, bool fit) {
             ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
         }
 
-        if (auto_scale_ && !train_loss_.epochs.empty()) {
-            const auto [min_epoch, max_epoch] = CalculateEpochWindow(train_loss_);
+        if (auto_scale_ && !drawn.train_loss.line.epochs.empty()) {
+            const auto [min_epoch, max_epoch] = CalculateEpochWindow(drawn.train_loss.line);
             ImPlot::SetupAxisLimits(
                 ImAxis_X1, min_epoch, max_epoch,
                 follow_current_epoch_ ? ImGuiCond_Always : ImGuiCond_Once);
 
-            ValueRange range = CalculateVisibleRange(train_loss_, val_loss_, min_epoch, max_epoch);
+            ValueRange range = CalculateVisibleRange(drawn.train_loss.line, drawn.val_loss.line, min_epoch, max_epoch);
             if (log_loss_scale_) {
                 double min_positive = std::numeric_limits<double>::max();
                 const auto include_positive = [&](const MetricSeries& series) {
@@ -1576,8 +1582,8 @@ void TrainingPlotPanel::DrawLossPlot(const ImVec2& size, bool fit) {
                         min_positive = std::min(min_positive, series.values[i]);
                     }
                 };
-                include_positive(train_loss_);
-                include_positive(val_loss_);
+                include_positive(drawn.train_loss.line);
+                include_positive(drawn.val_loss.line);
                 if (min_positive == std::numeric_limits<double>::max()) {
                     min_positive = 1.0e-6;
                 }
@@ -1597,47 +1603,41 @@ void TrainingPlotPanel::DrawLossPlot(const ImVec2& size, bool fit) {
         }
 
         // Plot training loss
-        if (!train_loss_.values.empty()) {
-            ImPlot::SetNextLineStyle(train_loss_.color, 2.0f);
-            ImPlot::PlotLine(train_loss_.name.c_str(),
-                           train_loss_.epochs.data(),
-                           train_loss_.values.data(),
-                           static_cast<int>(train_loss_.values.size()));
-            if (show_smoothed_curves_ &&
-                static_cast<int>(train_loss_.values.size()) >= smoothing_window_) {
-                auto smoothed =
-                    CalculateMovingAverage(train_loss_.values, smoothing_window_);
-                ImPlot::SetNextLineStyle(MixColor(train_loss_.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
+        if (!drawn.train_loss.line.values.empty()) {
+            ImPlot::SetNextLineStyle(drawn.train_loss.line.color, 2.0f);
+            ImPlot::PlotLine(drawn.train_loss.line.name.c_str(),
+                           drawn.train_loss.line.epochs.data(),
+                           drawn.train_loss.line.values.data(),
+                           static_cast<int>(drawn.train_loss.line.values.size()));
+            if (!drawn.train_loss.smooth_y.empty()) {
+                ImPlot::SetNextLineStyle(MixColor(drawn.train_loss.line.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
                 ImPlot::PlotLine("Training Loss (smoothed)",
-                                 train_loss_.epochs.data(),
-                                 smoothed.data(),
-                                 static_cast<int>(smoothed.size()));
+                                 drawn.train_loss.smooth_x.data(),
+                                 drawn.train_loss.smooth_y.data(),
+                                 static_cast<int>(drawn.train_loss.smooth_y.size()));
             }
         }
 
         // Plot validation loss
-        if (!val_loss_.values.empty()) {
-            ImPlot::SetNextLineStyle(val_loss_.color, 2.0f);
-            ImPlot::PlotLine(val_loss_.name.c_str(),
-                           val_loss_.epochs.data(),
-                           val_loss_.values.data(),
-                           static_cast<int>(val_loss_.values.size()));
+        if (!drawn.val_loss.line.values.empty()) {
+            ImPlot::SetNextLineStyle(drawn.val_loss.line.color, 2.0f);
+            ImPlot::PlotLine(drawn.val_loss.line.name.c_str(),
+                           drawn.val_loss.line.epochs.data(),
+                           drawn.val_loss.line.values.data(),
+                           static_cast<int>(drawn.val_loss.line.values.size()));
             ImPlot::SetNextMarkerStyle(
-                ImPlotMarker_Circle, 5.0f, val_loss_.color,
-                1.5f, val_loss_.color);
+                ImPlotMarker_Circle, 5.0f, drawn.val_loss.line.color,
+                1.5f, drawn.val_loss.line.color);
             ImPlot::PlotScatter("##Validation Loss Points",
-                                val_loss_.epochs.data(),
-                                val_loss_.values.data(),
-                                static_cast<int>(val_loss_.values.size()));
-            if (show_smoothed_curves_ &&
-                static_cast<int>(val_loss_.values.size()) >= smoothing_window_) {
-                auto smoothed =
-                    CalculateMovingAverage(val_loss_.values, smoothing_window_);
-                ImPlot::SetNextLineStyle(MixColor(val_loss_.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
+                                drawn.val_loss.line.epochs.data(),
+                                drawn.val_loss.line.values.data(),
+                                static_cast<int>(drawn.val_loss.line.values.size()));
+            if (!drawn.val_loss.smooth_y.empty()) {
+                ImPlot::SetNextLineStyle(MixColor(drawn.val_loss.line.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
                 ImPlot::PlotLine("Validation Loss (smoothed)",
-                                 val_loss_.epochs.data(),
-                                 smoothed.data(),
-                                 static_cast<int>(smoothed.size()));
+                                 drawn.val_loss.smooth_x.data(),
+                                 drawn.val_loss.smooth_y.data(),
+                                 static_cast<int>(drawn.val_loss.smooth_y.size()));
             }
         }
 
@@ -1671,6 +1671,7 @@ void TrainingPlotPanel::RenderAccuracyPlot(float plot_height) {
 
 void TrainingPlotPanel::DrawAccuracyPlot(const ImVec2& size, bool fit) {
     const DashColors c = CurrentDashColors();
+    const DrawnCache& drawn = Drawn();
     PushDashPlotStyle(c);
     if (fit) {
         ImPlot::SetNextAxesToFit();
@@ -1679,58 +1680,52 @@ void TrainingPlotPanel::DrawAccuracyPlot(const ImVec2& size, bool fit) {
         ImPlot::SetupAxes("Epoch", "Accuracy (%)", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
         ImPlot::SetupLegend(ImPlotLocation_SouthEast);
 
-        if (auto_scale_ && follow_current_epoch_ && !train_accuracy_.epochs.empty()) {
-            const auto [min_epoch, max_epoch] = CalculateEpochWindow(train_accuracy_);
+        if (auto_scale_ && follow_current_epoch_ && !drawn.train_accuracy.line.epochs.empty()) {
+            const auto [min_epoch, max_epoch] = CalculateEpochWindow(drawn.train_accuracy.line);
             ImPlot::SetupAxisLimits(ImAxis_X1, min_epoch, max_epoch, ImGuiCond_Always);
 
-            ValueRange range = CalculateVisibleRange(train_accuracy_, val_accuracy_, min_epoch, max_epoch);
+            ValueRange range = CalculateVisibleRange(drawn.train_accuracy.line, drawn.val_accuracy.line, min_epoch, max_epoch);
             double padding = (range.max - range.min) * 0.1;
             if (padding < 1.0) padding = 5.0;
             ImPlot::SetupAxisLimits(ImAxis_Y1,
                 std::max(0.0, range.min - padding),
                 std::min(100.0, range.max + padding),
                 ImGuiCond_Always);
-        } else if (auto_scale_ && !train_accuracy_.epochs.empty()) {
-            const double max_epoch = std::max(1.0, train_accuracy_.epochs.back());
+        } else if (auto_scale_ && !drawn.train_accuracy.line.epochs.empty()) {
+            const double max_epoch = std::max(1.0, drawn.train_accuracy.line.epochs.back());
             ImPlot::SetupAxisLimits(
                 ImAxis_X1, 0.0, max_epoch + 1.0, ImGuiCond_Once);
         }
 
         // Plot training accuracy
-        if (!train_accuracy_.values.empty()) {
-            ImPlot::SetNextLineStyle(train_accuracy_.color, 2.0f);
-            ImPlot::PlotLine(train_accuracy_.name.c_str(),
-                           train_accuracy_.epochs.data(),
-                           train_accuracy_.values.data(),
-                           static_cast<int>(train_accuracy_.values.size()));
-            if (show_smoothed_curves_ &&
-                static_cast<int>(train_accuracy_.values.size()) >= smoothing_window_) {
-                auto smoothed = CalculateMovingAverage(
-                    train_accuracy_.values, smoothing_window_);
-                ImPlot::SetNextLineStyle(MixColor(train_accuracy_.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
+        if (!drawn.train_accuracy.line.values.empty()) {
+            ImPlot::SetNextLineStyle(drawn.train_accuracy.line.color, 2.0f);
+            ImPlot::PlotLine(drawn.train_accuracy.line.name.c_str(),
+                           drawn.train_accuracy.line.epochs.data(),
+                           drawn.train_accuracy.line.values.data(),
+                           static_cast<int>(drawn.train_accuracy.line.values.size()));
+            if (!drawn.train_accuracy.smooth_y.empty()) {
+                ImPlot::SetNextLineStyle(MixColor(drawn.train_accuracy.line.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
                 ImPlot::PlotLine("Training Accuracy (smoothed)",
-                                 train_accuracy_.epochs.data(),
-                                 smoothed.data(),
-                                 static_cast<int>(smoothed.size()));
+                                 drawn.train_accuracy.smooth_x.data(),
+                                 drawn.train_accuracy.smooth_y.data(),
+                                 static_cast<int>(drawn.train_accuracy.smooth_y.size()));
             }
         }
 
         // Plot validation accuracy
-        if (!val_accuracy_.values.empty()) {
-            ImPlot::SetNextLineStyle(val_accuracy_.color, 2.0f);
-            ImPlot::PlotLine(val_accuracy_.name.c_str(),
-                           val_accuracy_.epochs.data(),
-                           val_accuracy_.values.data(),
-                           static_cast<int>(val_accuracy_.values.size()));
-            if (show_smoothed_curves_ &&
-                static_cast<int>(val_accuracy_.values.size()) >= smoothing_window_) {
-                auto smoothed =
-                    CalculateMovingAverage(val_accuracy_.values, smoothing_window_);
-                ImPlot::SetNextLineStyle(MixColor(val_accuracy_.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
+        if (!drawn.val_accuracy.line.values.empty()) {
+            ImPlot::SetNextLineStyle(drawn.val_accuracy.line.color, 2.0f);
+            ImPlot::PlotLine(drawn.val_accuracy.line.name.c_str(),
+                           drawn.val_accuracy.line.epochs.data(),
+                           drawn.val_accuracy.line.values.data(),
+                           static_cast<int>(drawn.val_accuracy.line.values.size()));
+            if (!drawn.val_accuracy.smooth_y.empty()) {
+                ImPlot::SetNextLineStyle(MixColor(drawn.val_accuracy.line.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
                 ImPlot::PlotLine("Validation Accuracy (smoothed)",
-                                 val_accuracy_.epochs.data(),
-                                 smoothed.data(),
-                                 static_cast<int>(smoothed.size()));
+                                 drawn.val_accuracy.smooth_x.data(),
+                                 drawn.val_accuracy.smooth_y.data(),
+                                 static_cast<int>(drawn.val_accuracy.smooth_y.size()));
             }
         }
 
@@ -1780,7 +1775,7 @@ void TrainingPlotPanel::DrawCustomMetricsPlot(const ImVec2& size, bool fit) {
         ImPlot::SetupAxes("Epoch", y_label, ImPlotAxisFlags_None, ImPlotAxisFlags_None);
         ImPlot::SetupLegend(ImPlotLocation_NorthEast);
 
-        for (const auto& metric : custom_metrics_) {
+        for (const auto& metric : Drawn().custom) {
             if (!metric.values.empty()) {
                 ImPlot::SetNextLineStyle(metric.color, 2.0f);
                 ImPlot::PlotLine(metric.name.c_str(),
@@ -2756,7 +2751,17 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
 
 void TrainingPlotPanel::RenderTrainingWarningSummary() {
 #ifndef CYXWIZ_PLOTTING_MODULE
-    const auto trace = TrainingTraceCollector::LatestTrace();
+    // LatestTrace copies the whole trace (events, timings) and may read the
+    // saved one from disk; it ran every frame with data_mutex_ held
+    // (TOFIX134 P0 item 8). UI thread only.
+    static TrainingTraceSummary cached_trace;
+    static std::chrono::steady_clock::time_point trace_read_at{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now - trace_read_at > std::chrono::milliseconds(500)) {
+        cached_trace = TrainingTraceCollector::LatestTrace();
+        trace_read_at = now;
+    }
+    const auto& trace = cached_trace;
     if (!trace.available && trace.run_id.empty()) {
         return;
     }
@@ -3574,7 +3579,9 @@ void TrainingPlotPanel::RenderStatistics() {
 }
 
 void TrainingPlotPanel::TrimDataIfNeeded(MetricSeries& series) {
-    if (series.epochs.size() > max_points_) {
+    // Trimmed in chunks of a tenth: erasing the front for every new point
+    // moved the whole series each time once it was full (TOFIX134 P0 item 8).
+    if (series.epochs.size() > max_points_ + max_points_ / 10) {
         size_t to_remove = series.epochs.size() - max_points_;
         RecordPanelEvent("TrainingPlotPanel.TrimData",
                          series.name + " remove=" + std::to_string(to_remove));
@@ -3656,21 +3663,49 @@ TrainingPlotPanel::ValueRange TrainingPlotPanel::CalculateVisibleRange(
 std::vector<double> TrainingPlotPanel::CalculateMovingAverage(
     const std::vector<double>& values,
     int window) const {
-    std::vector<double> smoothed;
-    smoothed.reserve(values.size());
-    const int safe_window = std::max(1, window);
-    double running_sum = 0.0;
-    for (size_t i = 0; i < values.size(); ++i) {
-        running_sum += values[i];
-        if (i >= static_cast<size_t>(safe_window)) {
-            running_sum -= values[i - static_cast<size_t>(safe_window)];
-        }
-        const size_t denom = std::min(
-            i + 1,
-            static_cast<size_t>(safe_window));
-        smoothed.push_back(running_sum / static_cast<double>(denom));
+    return series::MovingAverage(values, window);
+}
+
+namespace {
+// Enough for a full-screen chart; min/max per bucket keeps spikes.
+constexpr size_t kDrawnPoints = 4000;
+}
+
+const TrainingPlotPanel::DrawnCache& TrainingPlotPanel::Drawn() {
+    if (drawn_.version == data_version_ && drawn_.smoothing == smoothing_window_ &&
+        drawn_.smoothed == show_smoothed_curves_) {
+        return drawn_;
     }
-    return smoothed;
+    const auto reduce = [](const MetricSeries& from) {
+        MetricSeries line;
+        line.name = from.name;
+        line.color = from.color;
+        auto d = series::MinMaxDecimate(from.epochs, from.values, kDrawnPoints);
+        line.epochs = std::move(d.x);
+        line.values = std::move(d.y);
+        return line;
+    };
+    const auto build = [&](const MetricSeries& from, DrawnSeries& to) {
+        to.line = reduce(from);
+        to.smooth_x.clear();
+        to.smooth_y.clear();
+        if (show_smoothed_curves_ && static_cast<int>(from.values.size()) >= smoothing_window_) {
+            const auto avg = series::MovingAverage(from.values, smoothing_window_);
+            auto d = series::MinMaxDecimate(from.epochs, avg, kDrawnPoints);
+            to.smooth_x = std::move(d.x);
+            to.smooth_y = std::move(d.y);
+        }
+    };
+    build(train_loss_, drawn_.train_loss);
+    build(val_loss_, drawn_.val_loss);
+    build(train_accuracy_, drawn_.train_accuracy);
+    build(val_accuracy_, drawn_.val_accuracy);
+    drawn_.custom.clear();
+    for (const auto& metric : custom_metrics_) drawn_.custom.push_back(reduce(metric));
+    drawn_.version = data_version_;
+    drawn_.smoothing = smoothing_window_;
+    drawn_.smoothed = show_smoothed_curves_;
+    return drawn_;
 }
 
 bool TrainingPlotPanel::HasData() const {
