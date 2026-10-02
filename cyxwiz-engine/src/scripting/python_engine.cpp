@@ -941,7 +941,11 @@ bool PythonEngine::HasInterpreterMismatch(std::string* reason_out) const {
         return false;
     }
 
-    PythonSelection desired = ResolvePythonConfig();
+    // Asked every two seconds by the status bars: the quiet lookup (same
+    // priority as ResolvePythonConfig, without its logging and venv repair,
+    // which wrote three log lines each time).
+    PythonSelection desired;
+    desired.interpreter_path = PreviewInterpreterPath();
 
     auto normalize = [](const std::string& path) {
         std::filesystem::path p(path);
