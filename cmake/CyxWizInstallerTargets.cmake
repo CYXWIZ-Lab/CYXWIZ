@@ -376,6 +376,15 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
     )
     target_link_libraries(test_plot_prepare PRIVATE nlohmann_json::nlohmann_json)
+    # Plot exports: CSV and SVG (TOFIX134 P1).
+    add_executable(test_plot_export
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_export.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_export.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
+    )
+    target_link_libraries(test_plot_export PRIVATE nlohmann_json::nlohmann_json)
     # Training Dashboard draws reduced series (TOFIX134 P0 item 8).
     add_executable(test_series_decimation
         "${_cyxwiz_installer_engine_dir}/tests/test_series_decimation.cpp"
@@ -450,7 +459,7 @@ if(CYXWIZ_BUILD_TESTS)
             test_markdown_blocks test_html_table test_csv_records
             test_language_results test_variables_presentation test_breakpoint_lines
             test_paired_columns test_plot_script test_plot_inbox test_series_decimation
-            test_plot_model test_plot_prepare)
+            test_plot_model test_plot_prepare test_plot_export)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
@@ -460,6 +469,7 @@ if(CYXWIZ_BUILD_TESTS)
     if(Python3_EXECUTABLE)
         # The generated plot scripts are compiled by Python too.
         set_tests_properties(test_plot_script_contract PROPERTIES ENVIRONMENT "CYXWIZ_TEST_PYTHON=${Python3_EXECUTABLE}")
+        set_tests_properties(test_plot_export_contract PROPERTIES ENVIRONMENT "CYXWIZ_TEST_PYTHON=${Python3_EXECUTABLE}")
     endif()
 
     add_executable(test_installer_product_removal

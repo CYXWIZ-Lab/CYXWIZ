@@ -48,6 +48,7 @@
 #include <imgui_impl_opengl3.h>
 #include <implot.h>
 #include "gui/plot/plot_style.h"
+#include "gui/plot/plot_capture_gl.h"
 #include <imnodes.h>
 #include <cyxwiz/device.h>
 
@@ -349,6 +350,7 @@ bool CyxWizApp::Initialize() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     implot_context_ = ImPlot::CreateContext();  // the one ImPlot context (TOFIX134 P0 item 1)
+    cyxwiz::plot::InstallPlotViewHooks();  // PNG export, save dialog, image copy (TOFIX134 P1)
     ImNodes::CreateContext();  // Initialize ImNodes for visual node editor
     ImGuiIO& io = ImGui::GetIO();
 
@@ -798,6 +800,7 @@ void CyxWizApp::Render() {
     ImDrawData* draw_data = ImGui::GetDrawData();
     if (draw_data != nullptr) {
         ImGui_ImplOpenGL3_RenderDrawData(draw_data);
+        cyxwiz::plot::CompletePlotCaptures();  // plot images asked for this frame
     } else {
         spdlog::error("ImGui::GetDrawData() returned nullptr - skipping render");
     }

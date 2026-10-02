@@ -117,6 +117,10 @@ struct Series {
     std::vector<double> low;   // error bars: y - low; violin: left edge
     std::vector<double> high;  // error bars: y + high; violin: right edge
     std::vector<double> smooth_x, smooth_y;  // moving average, when asked
+    // All values when x/y were reduced or sampled for drawing: hover values
+    // and exports use these (empty when x/y are already all of them).
+    std::vector<double> all_x, all_y;
+    bool x_sorted = false;  // x ascends (hover finds the nearest x by search)
 };
 
 // Data ready to draw: built off the UI thread from a source, then only drawn.

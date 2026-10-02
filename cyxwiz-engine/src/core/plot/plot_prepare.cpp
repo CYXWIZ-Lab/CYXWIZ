@@ -104,10 +104,15 @@ void PrepareLines(Prepared& p, const Source& src, const SourceColumn* xcol, cons
                 s.smooth_x = std::move(d.x);
                 s.smooth_y = std::move(d.y);
             }
+            s.x_sorted = std::is_sorted(xs.begin(), xs.end());
             auto d = series::MinMaxDecimate(xs, vs, kMaxLinePoints);
             shown += d.x.size();
             s.x = std::move(d.x);
             s.y = std::move(d.y);
+            if (s.x.size() < xs.size()) {
+                s.all_x = std::move(xs);
+                s.all_y = std::move(vs);
+            }
             p.series.push_back(std::move(s));
         }
     }
@@ -124,6 +129,7 @@ void PrepareScatter(Prepared& p, const SourceColumn* xcol, const std::vector<con
     for (size_t r = 0; r < n; ++r)
         if (std::isfinite(xcol->numbers[r])) rows.push_back(r);
     const size_t total = rows.size();
+    const std::vector<size_t> all_rows = rows;
     if (rows.size() > kMaxScatterPoints) {
         std::mt19937_64 rng(0x5eed);
         std::shuffle(rows.begin(), rows.end(), rng);
@@ -142,6 +148,14 @@ void PrepareScatter(Prepared& p, const SourceColumn* xcol, const std::vector<con
                 if (!std::isfinite(y->numbers[r])) continue;
                 s.x.push_back(xcol->numbers[r]);
                 s.y.push_back(y->numbers[r]);
+            }
+            if (rows.size() < all_rows.size()) {
+                for (size_t r : all_rows) {
+                    if (groups.of_row[r] != static_cast<int>(g) || r >= y->numbers.size()) continue;
+                    if (!std::isfinite(y->numbers[r])) continue;
+                    s.all_x.push_back(xcol->numbers[r]);
+                    s.all_y.push_back(y->numbers[r]);
+                }
             }
             if (!s.x.empty()) p.series.push_back(std::move(s));
         }

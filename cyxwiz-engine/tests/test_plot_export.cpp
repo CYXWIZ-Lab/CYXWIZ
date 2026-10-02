@@ -1,0 +1,135 @@
+// Plot exports (TOFIX134 P1 step 1.4): CSV with all values (also when the
+// drawing was reduced), quoting, and SVG for every kind. When
+// CYXWIZ_TEST_PYTHON names a Python, each SVG is parsed as XML by it.
+#include "../src/core/plot/plot_export.h"
+#include "../src/core/plot/plot_prepare.h"
+
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <string>
+
+using namespace cyxwiz::plot;
+
+namespace {
+void Check(bool condition, const std::string& message) {
+    if (!condition) {
+        std::cerr << "FAIL: " << message << '\n';
+        std::exit(1);
+    }
+}
+
+size_t Lines(const std::string& s) {
+    size_t n = 0;
+    for (char c : s) n += c == '\n';
+    return n;
+}
+
+size_t Count(const std::string& s, const std::string& what) {
+    size_t n = 0;
+    for (size_t at = s.find(what); at != std::string::npos; at = s.find(what, at + what.size())) ++n;
+    return n;
+}
+
+void ParsesAsXml(const std::string& svg, const std::string& what) {
+    const char* python = std::getenv("CYXWIZ_TEST_PYTHON");
+    if (!python) return;
+    const auto file = std::filesystem::temp_directory_path() / "cyxwiz_plot_export_test.svg";
+    std::ofstream(file, std::ios::binary) << svg;
+    const std::string cmd = std::string("\"\"") + python +
+                            "\" -c \"import sys, xml.etree.ElementTree as E; E.parse(sys.argv[1])\" \"" + file.string() + "\"\"";
+    Check(std::system(cmd.c_str()) == 0, what + ": the SVG is not well-formed XML");
+    std::filesystem::remove(file);
+}
+
+SourceColumn Numbers(const std::string& name, std::vector<double> v) {
+    SourceColumn c;
+    c.name = name;
+    c.numbers = std::move(v);
+    return c;
+}
+
+SourceColumn Text(const std::string& name, std::vector<std::string> v) {
+    SourceColumn c;
+    c.name = name;
+    c.numeric = false;
+    c.text = std::move(v);
+    return c;
+}
+}  // namespace
+
+int main() {
+    // A long line: the drawing is reduced, the CSV has every row.
+    Source src;
+    std::vector<double> x(10000), y(10000);
+    for (size_t i = 0; i < x.size(); ++i) {
+        x[i] = static_cast<double>(i);
+        y[i] = std::sin(static_cast<double>(i) / 100.0);
+    }
+    src.columns.push_back(Numbers("step", x));
+    src.columns.push_back(Numbers("loss", y));
+    src.columns.push_back(Text("label", std::vector<std::string>(10000, "a, \"quoted\"")));
+    PlotSpec line;
+    line.kind = Kind::Line;
+    line.x_column = "step";
+    line.y_columns = {"loss"};
+    line.title = "loss <by> step & more";
+    Prepared p = Prepare(line, src);
+    Check(p.label.state == DataLabel::State::Reduced, "the line is reduced for drawing");
+    const std::string csv = ToCsv(p);
+    Check(Lines(csv) == 10001 && csv.rfind("series,x,y\n", 0) == 0, "CSV: header and all 10,000 rows");
+    Check(csv.find("loss,9999,") != std::string::npos, "CSV: the last row");
+
+    // Quoting of names with commas and quotes.
+    PlotSpec bar;
+    bar.kind = Kind::Bar;
+    bar.x_column = "label";
+    const std::string bar_csv = ToCsv(Prepare(bar, src));
+    Check(bar_csv.find("\"a, \"\"quoted\"\"\",10000") != std::string::npos, "CSV: a name with a comma and quotes is quoted");
+
+    // SVG: escaped title, a polyline, closed document.
+    AxisRange range{0, 10000, -1.1, 1.1, false};
+    std::string svg = ToSvg(p, range, SvgStyle{});
+    Check(svg.rfind("<svg ", 0) == 0 && svg.find("</svg>") != std::string::npos, "SVG document");
+    Check(svg.find("loss &lt;by&gt; step &amp; more") != std::string::npos, "SVG: title escaped");
+    Check(Count(svg, "<polyline") == 1, "SVG: one line");
+    ParsesAsXml(svg, "line");
+
+    // Histogram: one rect per bin.
+    PlotSpec hist;
+    hist.kind = Kind::Histogram;
+    hist.x_column = "loss";
+    hist.bins = 25;
+    const Prepared hp = Prepare(hist, src);
+    svg = ToSvg(hp, AxisRange{-1, 1, 0, 600, false}, SvgStyle{});
+    Check(Count(svg, "<rect x=") == 25 + 1, "SVG histogram: 25 bars (and the clip area)");
+    Check(Lines(ToCsv(hp)) == 26, "CSV histogram: header and 25 bins");
+    ParsesAsXml(svg, "histogram");
+
+    // Every kind writes a document (and parses when Python is there).
+    Source cat;
+    cat.columns.push_back(Text("pred", {"cat", "dog", "cat", "cat", "bird"}));
+    cat.columns.push_back(Text("truth", {"cat", "dog", "dog", "cat", "bird"}));
+    cat.columns.push_back(Numbers("v", {1, 2, 3, 4, 5}));
+    cat.columns.push_back(Numbers("w", {2, 1, 4, 3, 5}));
+    for (const auto& k : Kinds()) {
+        PlotSpec s;
+        s.kind = k.kind;
+        const bool categories = k.kind == Kind::Bar || k.kind == Kind::Pie || k.kind == Kind::ErrorBars || k.kind == Kind::Heatmap;
+        if (k.required & kEncX) s.x_column = categories ? "pred" : "v";
+        if (k.required & kEncY) s.y_columns = {k.kind == Kind::Heatmap ? "truth" : "w"};
+        if (k.kind == Kind::ErrorBars) s.y_columns = {"v"};
+        const Prepared kp = Prepare(s, cat);
+        Check(kp.problem.empty(), std::string(k.id) + ": prepared (" + kp.problem + ")");
+        const std::string doc = ToSvg(kp, AxisRange{0, 5, 0, 6, false}, SvgStyle{});
+        Check(doc.find("</svg>") != std::string::npos, std::string(k.id) + ": SVG written");
+        Check(!ToCsv(kp).empty(), std::string(k.id) + ": CSV written");
+        ParsesAsXml(doc, k.id);
+    }
+    Check(HexColour(1.0f, 0.5f, 0.0f) == "#ff8000", "hex colour");
+    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 13 kinds. OK\n";
+    return 0;
+}

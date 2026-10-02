@@ -76,6 +76,7 @@ int main() {
     for (double v : p.series[0].y) top = std::max(top, v);
     Check(top == 9.0, "the spike is drawn");
     Check(!p.series[0].smooth_y.empty() && p.series[0].smooth_y.size() <= kMaxLinePoints + 2, "smoothed curve");
+    Check(p.series[0].all_y.size() == 120000 && p.series[0].x_sorted, "all values kept for hover and export");
 
     // Scatter: sampled evenly and the same way each time.
     Source sc;
@@ -92,6 +93,7 @@ int main() {
           "sampled: " + s1.label.Text());
     Check(s1.series[0].x == s2.series[0].x, "the same sample each time");
     Check(s1.series[0].x.front() < 1000 && s1.series[0].x.back() > 119000, "spread over all rows");
+    Check(s1.series[0].all_x.size() == 120000, "all rows kept for export");
 
     // Colour groups: 15 values -> 11 largest + other.
     Source g;
