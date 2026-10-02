@@ -10,6 +10,7 @@
 #include <implot.h>
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -51,8 +52,15 @@ bool IsLineLike(Kind k) {
     return k == Kind::Line || k == Kind::Area || k == Kind::Step || k == Kind::Stem;
 }
 
+// Grid kinds lay out their own axes and draw a colour bar.
+bool IsGridKind(Kind k) {
+    return k == Kind::Heatmap || k == Kind::Histogram2D || k == Kind::Matrix || k == Kind::Hexbin || k == Kind::Contour ||
+           k == Kind::FilledContour;
+}
+
 std::string XLabel(const Prepared& p) {
     if (!p.spec.x_label.empty()) return p.spec.x_label;
+    if (p.spec.kind == Kind::Kde) return p.spec.y_columns.size() == 1 ? p.spec.y_columns.front() : std::string("value");
     if (!p.spec.x_column.empty()) return p.spec.x_column;
     return IsLineLike(p.spec.kind) ? "row" : "";
 }
@@ -60,6 +68,8 @@ std::string XLabel(const Prepared& p) {
 std::string YLabel(const Prepared& p) {
     if (!p.spec.y_label.empty()) return p.spec.y_label;
     if (p.spec.kind == Kind::Histogram) return p.spec.density ? "density" : "count";
+    if (p.spec.kind == Kind::Kde) return "density";
+    if (p.spec.kind == Kind::Bar && p.spec.bar_layout == PlotSpec::BarLayout::Percent && p.series.size() > 1) return "percent";
     if ((p.spec.kind == Kind::Bar || p.spec.kind == Kind::Pie) && p.spec.y_columns.empty()) return "rows";
     if (p.spec.y_columns.size() == 1) return p.spec.y_columns.front();
     return "";
@@ -80,6 +90,18 @@ ImVec4 LabelColour(DataLabel::State s) {
 // and shown on hover ("##" hides an ImPlot item from the legend).
 std::string LegendLabel(const Prepared& p, size_t i, const std::string& label) {
     return p.series.size() > kMaxLegendSeries && i >= kMaxLegendSeries ? "##" + label : label;
+}
+
+// A grid value's colour on the plot's grid range (hexbin: log option).
+ImVec4 GridColourOf(const Prepared& p, double v) {
+    double lo = p.grid_lo, hi = p.grid_hi;
+    if (p.spec.kind == Kind::Hexbin && p.spec.log_colour) {
+        v = std::log1p(std::max(0.0, v));
+        lo = std::log1p(std::max(0.0, lo));
+        hi = std::log1p(std::max(0.0, hi));
+    }
+    const float t = static_cast<float>(hi > lo ? std::clamp((v - lo) / (hi - lo), 0.0, 1.0) : 0.0);
+    return ImPlot::SampleColormap(t, p.grid_diverging ? DivergingColormap() : SequentialColormap());
 }
 
 // Colour of a value on the plot's colour scale (a missing value: faint).
@@ -267,8 +289,7 @@ void PlotView::DrawToolbar(const Options& o) {
         if (ui::GhostButton(("Fit##" + id_).c_str(), usable)) fit_ = true;
         ImGui::SameLine();
     }
-    const bool can_log = usable && data_.spec.kind != Kind::Pie && data_.spec.kind != Kind::Heatmap &&
-                         data_.spec.kind != Kind::Histogram2D;
+    const bool can_log = usable && data_.spec.kind != Kind::Pie && !IsGridKind(data_.spec.kind);
     if (o.tool_log) {
         if (ui::GhostButton(("Log Y##" + id_).c_str(), can_log, "Not for this plot type", log_y_)) {
             log_y_ = !log_y_;
@@ -354,7 +375,7 @@ void PlotView::DrawPlot(ImVec2 size) {
     const Prepared& p = data_;
     const Kind kind = p.spec.kind;
     const ui::Tokens& t = ui::CurrentTokens();
-    const bool scale_bar = kind == Kind::Heatmap || kind == Kind::Histogram2D || p.colour_scale;
+    const bool scale_bar = IsGridKind(kind) || p.colour_scale;
     ImVec2 plot_size = size;
     // A colour bar with a column name needs room for its ticks and the name.
     const float bar_w = p.colour_scale ? 60.0f + ImGui::GetTextLineHeight() + 8.0f : 60.0f;
@@ -367,8 +388,7 @@ void PlotView::DrawPlot(ImVec2 size) {
 
     // Fixed-layout kinds set their limits; the rest fit to the data.
     const ImPlotCond cond = fit_ ? ImPlotCond_Always : ImPlotCond_Once;
-    if (fit_ && !x_range_.on && !y_range_.on && kind != Kind::Pie && kind != Kind::Box && kind != Kind::Violin &&
-        kind != Kind::Heatmap && kind != Kind::Histogram2D)
+    if (fit_ && !x_range_.on && !y_range_.on && kind != Kind::Pie && kind != Kind::Box && kind != Kind::Violin && !IsGridKind(kind))
         ImPlot::SetNextAxesToFit();
 
     const std::string plot_id = "##plot";
@@ -380,9 +400,9 @@ void PlotView::DrawPlot(ImVec2 size) {
         ImPlot::SetupAxesLimits(0, 1, 0, 1, ImPlotCond_Always);
     } else {
         ImPlotAxisFlags xf = ImPlotAxisFlags_None, yf = ImPlotAxisFlags_None;
-        if (kind == Kind::Heatmap) xf = yf = ImPlotAxisFlags_NoGridLines | ImPlotAxisFlags_NoTickMarks;
+        if (kind == Kind::Heatmap || kind == Kind::Matrix) xf = yf = ImPlotAxisFlags_NoGridLines | ImPlotAxisFlags_NoTickMarks;
         ImPlot::SetupAxes(xl.empty() ? nullptr : xl.c_str(), yl.empty() ? nullptr : yl.c_str(), xf, yf);
-        if (log_y_ && kind != Kind::Heatmap && kind != Kind::Histogram2D) ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
+        if (log_y_ && !IsGridKind(kind)) ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
     }
     ImPlot::SetupLegend(ImPlotLocation_NorthEast);
     if (x_range_.on) ImPlot::SetupAxisLimits(ImAxis_X1, x_range_.lo, x_range_.hi, x_range_.once ? ImPlotCond_Once : ImPlotCond_Always);
@@ -417,6 +437,7 @@ void PlotView::DrawPlot(ImVec2 size) {
     for (const auto& s : p.series) series_names.push_back(s.label);
     std::vector<const char*> xnames, ynames;
     std::vector<double> xpos, ypos;
+    std::vector<std::string> short_names;
 
     switch (kind) {
         case Kind::Bar:
@@ -441,11 +462,23 @@ void PlotView::DrawPlot(ImVec2 size) {
             ImPlot::SetupAxesLimits(-0.6, static_cast<double>(p.boxes.size()) - 0.4, lo - pad, hi + pad, cond);
             break;
         }
-        case Kind::Heatmap: {
+        case Kind::Heatmap:
+        case Kind::Matrix: {
+            // Column names longer than their cell are shortened ("artist_po..");
+            // the rows and the hover keep the full names.
+            float row_w = 0.0f;
+            for (const auto& r : p.row_names) row_w = std::max(row_w, ImGui::CalcTextSize(r.c_str()).x);
+            const float cell_w = p.grid_cols > 0 ? (plot_size.x - row_w - 40.0f) / static_cast<float>(p.grid_cols) - 6.0f : 0.0f;
             for (size_t i = 0; i < p.col_names.size() && p.col_names.size() <= 40; ++i) {
-                xnames.push_back(p.col_names[i].c_str());
+                std::string name = p.col_names[i];
+                if (ImGui::CalcTextSize(name.c_str()).x > cell_w) {
+                    while (name.size() > 1 && ImGui::CalcTextSize((name + "..").c_str()).x > cell_w) name.pop_back();
+                    name += "..";
+                }
+                short_names.push_back(std::move(name));
                 xpos.push_back(static_cast<double>(i) + 0.5);
             }
+            for (const auto& name : short_names) xnames.push_back(name.c_str());
             // Row 0 is drawn at the top.
             for (size_t i = 0; i < p.row_names.size() && p.row_names.size() <= 40; ++i) {
                 ynames.push_back(p.row_names[i].c_str());
@@ -456,7 +489,10 @@ void PlotView::DrawPlot(ImVec2 size) {
             ImPlot::SetupAxesLimits(0, p.grid_cols, 0, p.grid_rows, cond);
             break;
         }
-        case Kind::Histogram2D: ImPlot::SetupAxesLimits(p.x_min, p.x_max, p.y_min, p.y_max, cond); break;
+        case Kind::Histogram2D:
+        case Kind::Hexbin:
+        case Kind::Contour:
+        case Kind::FilledContour: ImPlot::SetupAxesLimits(p.x_min, p.x_max, p.y_min, p.y_max, cond); break;
         default: break;
     }
     fit_ = false;
@@ -467,14 +503,15 @@ void PlotView::DrawPlot(ImVec2 size) {
         case Kind::Area:
         case Kind::Step:
         case Kind::Stem:
+        case Kind::Kde:
             for (size_t i = 0; i < p.series.size(); ++i) {
                 const auto& s = p.series[i];
                 const ImVec4 c = ColourOf((i));
                 const bool smoothed = !s.smooth_y.empty();
                 const std::string legend_label = LegendLabel(p, i, s.label);
                 const char* label = legend_label.c_str();
-                if (kind == Kind::Area) {
-                    ImPlot::SetNextFillStyle(c, 0.25f);
+                if (kind == Kind::Area || kind == Kind::Kde) {
+                    ImPlot::SetNextFillStyle(c, kind == Kind::Kde ? 0.18f : 0.25f);
                     ImPlot::PlotShaded(label, s.x.data(), s.y.data(), n(s.x), 0.0);
                 }
                 ImPlot::SetNextLineStyle(smoothed ? ui::WithAlpha(c, 0.55f) : c, smoothed ? 1.2f : 1.8f);
@@ -534,7 +571,19 @@ void PlotView::DrawPlot(ImVec2 size) {
             break;
         }
         case Kind::Bar:
-            if (!p.series.empty()) {
+            if (p.series.size() > 1) {
+                std::vector<const char*> labels;
+                std::vector<double> values;
+                for (const auto& s : p.series) {
+                    labels.push_back(s.label.c_str());
+                    values.insert(values.end(), s.y.begin(), s.y.end());
+                }
+                ImPlot::PushColormap(SeriesColormap());
+                ImPlot::PlotBarGroups(labels.data(), values.data(), static_cast<int>(p.series.size()),
+                                      static_cast<int>(p.categories.size()), 0.67, 0.0,
+                                      p.spec.bar_layout == PlotSpec::BarLayout::Grouped ? 0 : ImPlotBarGroupsFlags_Stacked);
+                ImPlot::PopColormap();
+            } else if (!p.series.empty()) {
                 ImPlot::SetNextFillStyle(ColourOf((0)), 0.9f);
                 ImPlot::PlotBars(p.series[0].label.c_str(), p.series[0].x.data(), p.series[0].y.data(), n(p.series[0].x), 0.67);
             }
@@ -553,7 +602,23 @@ void PlotView::DrawPlot(ImVec2 size) {
                 std::vector<const char*> labels;
                 for (const auto& c : p.categories) labels.push_back(c.c_str());
                 ImPlot::PlotPieChart(labels.data(), p.series[0].y.data(), static_cast<int>(labels.size()), 0.5, 0.5, 0.4,
-                                     "%.0f", 90);
+                                     p.spec.donut ? nullptr : "%.0f", 90);
+                if (p.spec.donut) {
+                    double total = 0;
+                    for (double v : p.series[0].y) total += std::max(0.0, v);
+                    const ImVec2 c = ImPlot::PlotToPixels(0.5, 0.5), e = ImPlot::PlotToPixels(0.5 + 0.4 * 0.58, 0.5);
+                    ImDrawList* dl = ImPlot::GetPlotDrawList();
+                    ImPlot::PushPlotClipRect();
+                    dl->AddCircleFilled(c, e.x - c.x, ui::ToU32(t.plot_bg), 64);
+                    const std::string text = Thousands(static_cast<long long>(std::llround(total)));
+                    ImFont* font = ImGui::GetFont();
+                    const float big = ImGui::GetFontSize() * 1.6f;
+                    const ImVec2 ts = font->CalcTextSizeA(big, FLT_MAX, 0.0f, text.c_str());
+                    dl->AddText(font, big, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.6f), ui::ToU32(t.text_bright), text.c_str());
+                    const ImVec2 ls = ImGui::CalcTextSize("total");
+                    dl->AddText(ImVec2(c.x - ls.x * 0.5f, c.y + ts.y * 0.45f), ui::ToU32(t.text_dim), "total");
+                    ImPlot::PopPlotClipRect();
+                }
             }
             break;
         case Kind::Box:
@@ -586,16 +651,52 @@ void PlotView::DrawPlot(ImVec2 size) {
             break;
         }
         case Kind::Heatmap:
+        case Kind::Matrix:
         case Kind::Histogram2D: {
-            double peak = 0;
-            for (double v : p.grid) peak = std::max(peak, v);
-            ImPlot::PushColormap(SequentialColormap());
-            const bool numbers = kind == Kind::Heatmap && p.grid.size() <= 400;
-            const ImPlotPoint lo = kind == Kind::Heatmap ? ImPlotPoint(0, 0) : ImPlotPoint(p.x_min, p.y_min);
-            const ImPlotPoint hi = kind == Kind::Heatmap ? ImPlotPoint(p.grid_cols, p.grid_rows) : ImPlotPoint(p.x_max, p.y_max);
-            ImPlot::PlotHeatmap("##grid", p.grid.data(), p.grid_rows, p.grid_cols, 0.0, peak > 0 ? peak : 1.0,
-                                numbers ? "%g" : nullptr, lo, hi);
+            const bool named = kind != Kind::Histogram2D;
+            ImPlot::PushColormap(p.grid_diverging ? DivergingColormap() : SequentialColormap());
+            const bool numbers = named && p.grid.size() <= 400;
+            const char* format = kind == Kind::Matrix && p.spec.matrix_values != PlotSpec::MatrixValues::Values ? "%.2f" : "%g";
+            const ImPlotPoint lo = named ? ImPlotPoint(0, 0) : ImPlotPoint(p.x_min, p.y_min);
+            const ImPlotPoint hi = named ? ImPlotPoint(p.grid_cols, p.grid_rows) : ImPlotPoint(p.x_max, p.y_max);
+            ImPlot::PlotHeatmap("##grid", p.grid.data(), p.grid_rows, p.grid_cols, p.grid_lo,
+                                p.grid_hi > p.grid_lo ? p.grid_hi : p.grid_lo + 1.0, numbers ? format : nullptr, lo, hi);
             ImPlot::PopColormap();
+            break;
+        }
+        case Kind::Hexbin: {
+            ImDrawList* dl = ImPlot::GetPlotDrawList();
+            ImPlot::PushPlotClipRect();
+            static const double vx[6] = {0.5, 0.5, 0.0, -0.5, -0.5, 0.0};
+            static const double vy[6] = {-1.0 / 6, 1.0 / 6, 1.0 / 3, 1.0 / 6, -1.0 / 6, -1.0 / 3};
+            for (size_t i = 0; i < p.hex_x.size(); ++i) {
+                ImVec2 pts[6];
+                for (int k = 0; k < 6; ++k)
+                    pts[k] = ImPlot::PlotToPixels(p.hex_x[i] + vx[k] * p.hex_sx, p.hex_y[i] + vy[k] * p.hex_sy);
+                dl->AddConvexPolyFilled(pts, 6, ui::ToU32(GridColourOf(p, p.hex_v[i])));
+            }
+            ImPlot::PopPlotClipRect();
+            break;
+        }
+        case Kind::Contour:
+        case Kind::FilledContour: {
+            if (kind == Kind::FilledContour && p.band_rows > 0) {
+                ImPlot::PushColormap(SequentialColormap());
+                ImPlot::PlotHeatmap("##bands", p.band_grid.data(), p.band_rows, p.band_cols, p.grid_lo, p.grid_hi, nullptr,
+                                    ImPlotPoint(p.x_min, p.y_min), ImPlotPoint(p.x_max, p.y_max));
+                ImPlot::PopColormap();
+            }
+            ImDrawList* dl = ImPlot::GetPlotDrawList();
+            ImPlot::PushPlotClipRect();
+            for (size_t l = 0; l < p.contour_segments.size(); ++l) {
+                const ImU32 c = kind == Kind::FilledContour ? ui::ToU32(ui::WithAlpha(t.plot_bg, 0.8f))
+                                                            : ui::ToU32(GridColourOf(p, p.contour_levels[l]));
+                const auto& seg = p.contour_segments[l];
+                for (size_t k = 0; k + 3 < seg.size(); k += 4)
+                    dl->AddLine(ImPlot::PlotToPixels(seg[k], seg[k + 1]), ImPlot::PlotToPixels(seg[k + 2], seg[k + 3]), c,
+                                kind == Kind::FilledContour ? 1.0f : 1.8f);
+            }
+            ImPlot::PopPlotClipRect();
             break;
         }
     }
@@ -631,10 +732,15 @@ void PlotView::DrawPlot(ImVec2 size) {
         ImPlot::ColormapScale(p.colour_label.c_str(), p.colour_min, p.colour_max, ImVec2(bar_w, plot_size.y), "%g", 0,
                               p.colour_diverging ? DivergingColormap() : SequentialColormap());
     } else if (scale_bar) {
-        double peak = 0;
-        for (double v : p.grid) peak = std::max(peak, v);
+        double lo = p.grid_lo, hi = p.grid_hi > p.grid_lo ? p.grid_hi : p.grid_lo + 1.0;
+        const bool log = kind == Kind::Hexbin && p.spec.log_colour;
+        if (log) {
+            lo = std::log1p(std::max(0.0, lo));
+            hi = std::log1p(std::max(0.0, hi));
+        }
         ImGui::SameLine();
-        ImPlot::ColormapScale("##scale", 0.0, peak > 0 ? peak : 1.0, ImVec2(60, plot_size.y), "%g", 0, SequentialColormap());
+        ImPlot::ColormapScale(log ? "log(1 + count)##scale" : "##scale", lo, hi, ImVec2(60, plot_size.y), "%g", 0,
+                              p.grid_diverging ? DivergingColormap() : SequentialColormap());
     }
 }
 
@@ -659,7 +765,8 @@ void PlotView::DrawHover() {
         case Kind::Line:
         case Kind::Area:
         case Kind::Step:
-        case Kind::Stem: {
+        case Kind::Stem:
+        case Kind::Kde: {
             // The value of each series at the x nearest the mouse (all points).
             for (size_t i = 0; i < p.series.size(); ++i) {
                 const auto& s = p.series[i];
@@ -725,6 +832,13 @@ void PlotView::DrawHover() {
             const int i = category(p.categories, m.x);
             if (i < 0 || p.series.empty()) break;
             begin(p.categories[static_cast<size_t>(i)]);
+            if (p.series.size() > 1) {  // Colour by: every group in this category
+                const bool percent = p.spec.bar_layout == PlotSpec::BarLayout::Percent;
+                for (size_t g = 0; g < p.series.size(); ++g)
+                    TooltipRow(SeriesColour(g), p.series[g].label,
+                               Value(p.series[g].y[static_cast<size_t>(i)]) + (percent ? "%" : ""));
+                break;
+            }
             const auto& s = p.series[0];
             TooltipRow(ColourOf((0)), s.label, Value(s.y[static_cast<size_t>(i)]) +
                                                      (kind == Kind::ErrorBars ? " \xC2\xB1 " + Value(s.low[static_cast<size_t>(i)]) : ""));
@@ -767,7 +881,8 @@ void PlotView::DrawHover() {
             TooltipRow(c, "mean", Value(b.mean));
             break;
         }
-        case Kind::Heatmap: {
+        case Kind::Heatmap:
+        case Kind::Matrix: {
             const int c = static_cast<int>(std::floor(m.x));
             const int r = p.grid_rows - 1 - static_cast<int>(std::floor(m.y));
             if (c < 0 || r < 0 || c >= p.grid_cols || r >= p.grid_rows) break;
@@ -775,8 +890,11 @@ void PlotView::DrawHover() {
             const std::string yl = YLabel(p), xl = XLabel(p);
             begin((yl.empty() ? std::string() : yl + " ") + p.row_names[static_cast<size_t>(r)] + " \xC2\xB7 " +
                   (xl.empty() ? std::string() : xl + " ") + p.col_names[static_cast<size_t>(c)]);
-            TooltipRow(ColourOf((0)), p.spec.value_column.empty() ? std::string("rows") : p.spec.value_column,
-                       Value(p.grid[static_cast<size_t>(r * p.grid_cols + c)]));
+            const double v = p.grid[static_cast<size_t>(r * p.grid_cols + c)];
+            const std::string what = kind == Kind::Matrix
+                                         ? (p.spec.matrix_values == PlotSpec::MatrixValues::Values ? "value" : "correlation")
+                                         : (p.spec.value_column.empty() ? std::string("rows") : p.spec.value_column);
+            TooltipRow(GridColourOf(p, v), what, std::isfinite(v) ? Value(v) : std::string("missing"));
             break;
         }
         case Kind::Histogram2D: {
@@ -788,6 +906,44 @@ void PlotView::DrawHover() {
             begin(XLabel(p) + " " + Value(p.x_min + dx * c) + " to " + Value(p.x_min + dx * (c + 1)));
             TooltipRow(ColourOf((0)), YLabel(p) + " " + Value(p.y_min + dy * rb) + " to " + Value(p.y_min + dy * (rb + 1)),
                        Value(p.grid[static_cast<size_t>(r * p.grid_cols + c)]) + " rows");
+            break;
+        }
+        case Kind::Hexbin: {
+            // The hexagon whose centre is nearest in lattice units.
+            size_t best = 0;
+            double best_d = 1e300;
+            for (size_t i = 0; i < p.hex_x.size(); ++i) {
+                const double ux = (m.x - p.hex_x[i]) / p.hex_sx, uy = (m.y - p.hex_y[i]) / p.hex_sy;
+                const double dd = ux * ux + 3.0 * uy * uy;
+                if (dd < best_d) {
+                    best_d = dd;
+                    best = i;
+                }
+            }
+            if (p.hex_x.empty() || best_d > 0.34) break;
+            double total = 0;
+            for (double v : p.hex_v) total += v;
+            begin(XLabel(p) + " " + Value(p.hex_x[best]) + " \xC2\xB7 " + YLabel(p) + " " + Value(p.hex_y[best]));
+            if (p.spec.value_column.empty()) {
+                char share[32];
+                std::snprintf(share, sizeof(share), "  (%.1f%%)", total > 0 ? 100.0 * p.hex_v[best] / total : 0.0);
+                TooltipRow(GridColourOf(p, p.hex_v[best]), "rows", Value(p.hex_v[best]) + share);
+            } else {
+                TooltipRow(GridColourOf(p, p.hex_v[best]), "mean of " + p.spec.value_column, Value(p.hex_v[best]));
+            }
+            break;
+        }
+        case Kind::Contour:
+        case Kind::FilledContour: {
+            if (m.x < p.x_min || m.x > p.x_max || m.y < p.y_min || m.y > p.y_max || p.grid_cols == 0) break;
+            const double dx = (p.x_max - p.x_min) / p.grid_cols, dy = (p.y_max - p.y_min) / p.grid_rows;
+            const int c = std::min(p.grid_cols - 1, static_cast<int>((m.x - p.x_min) / dx));
+            const int r = p.grid_rows - 1 - std::min(p.grid_rows - 1, static_cast<int>((m.y - p.y_min) / dy));
+            const double v = p.grid[static_cast<size_t>(r * p.grid_cols + c)];
+            begin(XLabel(p) + " " + Value(m.x) + " \xC2\xB7 " + YLabel(p) + " " + Value(m.y));
+            TooltipRow(GridColourOf(p, v), p.spec.value_column.empty() ? std::string("density (rows per cell)")
+                                                                       : "mean of " + p.spec.value_column,
+                       std::isfinite(v) ? Value(v) : std::string("no rows here"));
             break;
         }
     }

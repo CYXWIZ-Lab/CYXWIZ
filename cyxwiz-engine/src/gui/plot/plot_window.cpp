@@ -323,7 +323,8 @@ void PlotWindow::DrawKinds() {
                 const bool auto_title = spec_.title == DefaultTitle(spec_);
                 spec_.kind = k.kind;
                 // Keep what still fits; Box/Violin read values from Y.
-                if ((k.kind == Kind::Box || k.kind == Kind::Violin) && spec_.y_columns.empty() && !spec_.x_column.empty())
+                if ((k.kind == Kind::Box || k.kind == Kind::Violin || k.kind == Kind::Kde || k.kind == Kind::Matrix) &&
+                    spec_.y_columns.empty() && !spec_.x_column.empty())
                     spec_.y_columns = {spec_.x_column};
                 if ((k.required & kEncX) && spec_.x_column.empty() && !spec_.y_columns.empty())
                     spec_.x_column = spec_.y_columns.front();
@@ -344,7 +345,7 @@ void PlotWindow::DrawKinds() {
         }
     }
     ImGui::Spacing();
-    ImGui::TextColored(t.text_faint, "Model results: P2");
+    ImGui::TextColored(t.text_faint, "More kinds: P2b");
     ImGui::TextColored(t.text_faint, "3D: P4");
 }
 
@@ -523,11 +524,55 @@ void PlotWindow::DrawSettings() {
         changed |= ImGui::Checkbox("Show the y = x line", &spec_.show_diagonal);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A reference line where y equals x (chance on a ROC curve)");
     }
-    if (spec_.kind == Kind::Histogram || spec_.kind == Kind::Histogram2D) {
-        ImGui::TextColored(t.text_dim, "Bins");
+    if (spec_.kind == Kind::Histogram || spec_.kind == Kind::Histogram2D || spec_.kind == Kind::Hexbin ||
+        spec_.kind == Kind::Contour || spec_.kind == Kind::FilledContour) {
+        ImGui::TextColored(t.text_dim, "%s", spec_.kind == Kind::Hexbin ? "Hexagons across"
+                                             : spec_.kind == Kind::Contour || spec_.kind == Kind::FilledContour ? "Grid cells across"
+                                                                                                               : "Bins");
         ImGui::SetNextItemWidth(w);
         if (ImGui::InputInt("##bins", &spec_.bins, 0, 0)) {
-            spec_.bins = std::clamp(spec_.bins, 1, spec_.kind == Kind::Histogram2D ? 400 : 1000);
+            spec_.bins = std::clamp(spec_.bins, spec_.kind == Kind::Histogram ? 1 : 2,
+                                    spec_.kind == Kind::Histogram ? 1000 : spec_.kind == Kind::Histogram2D ? 400 : 200);
+            changed = true;
+        }
+    }
+    // P2b group 1 options (board 8).
+    if (spec_.kind == Kind::Bar && !spec_.color_column.empty()) {
+        ImGui::TextColored(t.text_dim, "Layout");
+        static const char* const kLayouts[] = {"Grouped", "Stacked", "100%"};
+        int layout = static_cast<int>(spec_.bar_layout);
+        if (ui::SegmentedControl("##bar_layout", kLayouts, 3, &layout)) {
+            spec_.bar_layout = static_cast<PlotSpec::BarLayout>(layout);
+            changed = true;
+        }
+    }
+    if (spec_.kind == Kind::Pie) changed |= ImGui::Checkbox("Donut (the total in the middle)", &spec_.donut);
+    if (spec_.kind == Kind::Kde) {
+        ImGui::TextColored(t.text_dim, "Bandwidth (times Silverman's)");
+        float bw = static_cast<float>(spec_.kde_bandwidth);
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::SliderFloat("##kde_bw", &bw, 0.2f, 5.0f, "%.2f", ImGuiSliderFlags_Logarithmic)) {
+            spec_.kde_bandwidth = bw;
+            changed = true;
+        }
+    }
+    if (spec_.kind == Kind::Matrix) {
+        ImGui::TextColored(t.text_dim, "Values");
+        static const char* const kMatrix[] = {"Correlation (Pearson)", "Correlation (Spearman, ranks)", "The values (rows x columns)"};
+        int mode = static_cast<int>(spec_.matrix_values);
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::Combo("##matrix_values", &mode, kMatrix, 3)) {
+            spec_.matrix_values = static_cast<PlotSpec::MatrixValues>(mode);
+            changed = true;
+        }
+    }
+    if (spec_.kind == Kind::Hexbin && spec_.value_column.empty())
+        changed |= ImGui::Checkbox("Colour by the log of the count", &spec_.log_colour);
+    if (spec_.kind == Kind::Contour || spec_.kind == Kind::FilledContour) {
+        ImGui::TextColored(t.text_dim, "Levels");
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::InputInt("##levels", &spec_.levels, 0, 0)) {
+            spec_.levels = std::clamp(spec_.levels, 1, 50);
             changed = true;
         }
     }
@@ -583,8 +628,11 @@ void PlotWindow::DrawSettings() {
 
     ImGui::Spacing();
     // The script is built on click (a histogram reads the whole column).
+    const bool new_kind = spec_.kind == Kind::Kde || spec_.kind == Kind::Matrix || spec_.kind == Kind::Hexbin ||
+                          spec_.kind == Kind::Contour || spec_.kind == Kind::FilledContour ||
+                          (spec_.kind == Kind::Bar && !spec_.color_column.empty()) || (spec_.kind == Kind::Pie && spec_.donut);
     const bool scriptable = spec_.kind != Kind::Violin && spec_.kind != Kind::ErrorBars && spec_.kind != Kind::Heatmap &&
-                            spec_.kind != Kind::Histogram2D && view_.HasData() && view_.Data().problem.empty();
+                            spec_.kind != Kind::Histogram2D && !new_kind && view_.HasData() && view_.Data().problem.empty();
     if (ui::SecondaryButton("Plot with Python (copy script)", scriptable, "Not for this plot type",
                             ui::ButtonSize::Small, w)) {
         const std::string script = PythonScript();

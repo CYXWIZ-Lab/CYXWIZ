@@ -38,8 +38,9 @@ Variable Explorer), then either right-click a column and choose **Plot**
 or press **Plot** under the column's statistics. The Plot window opens:
 
 - **Plot type** (left): Basic (line, scatter, bar, histogram, area, step,
-  stem, pie), Distribution (box, violin, error bars), Grid and density
-  (heatmap, 2D histogram). Pick one; the columns that still fit are kept.
+  stem, pie), Distribution (box, violin, KDE, error bars), Grid and density
+  (heatmap, matrix, 2D histogram, hexbin, contour, filled contour). Pick
+  one; the columns that still fit are kept.
 - **Rows** (top of the right panel): **All**, **First** N rows, a **Range**
   of rows (numbered from 1, as in the Table Viewer) or **Filter**:
   conditions *column = != < <= > >= contains value*, all of which must
@@ -66,6 +67,21 @@ or press **Plot** under the column's statistics. The Plot window opens:
   series per value.
 - **Heatmap**: **Cell values** sums a column per cell; without it, rows are
   counted. Labels that are all numbers read in numeric order.
+- **Matrix** (Grid and density): choose two or more number columns. Values:
+  **Correlation (Pearson)**, **Correlation (Spearman, ranks)** (on a -1 to
+  +1 two-sided scale, the value in each cell) or **The values** (the
+  columns as a grid, one row per table row, up to 500 rows).
+- **Contour** and **Filled contour**: X and Y numbers; **Z** is the density
+  of rows (lightly smoothed) or the mean of a column per cell. **Grid cells
+  across** and **Levels**. Hover gives the value at the mouse.
+- **Hexbin**: like the 2D histogram with hexagons. **Hexagons across**;
+  colour by the count (optionally its log) or the mean of a column. Hover
+  gives the rows in the hexagon and their share.
+- **KDE** (Distribution): a smooth histogram, one curve per Y column or per
+  **Colour by** group. **Bandwidth** multiplies Silverman's rule (1.00).
+- **Bar** with **Colour by**: one bar per group, **Grouped**, **Stacked** or
+  **100%** (each category's shares). Hover lists every group.
+- **Pie**: **Donut** shows the total in the middle.
 - **Line and scatter**: **Show the y = x line** draws a reference line
   (chance on a ROC curve).
 - **The plot**: hover for values (the nearest x of every series, the
