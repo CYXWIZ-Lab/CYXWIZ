@@ -296,7 +296,7 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
     };
     std::atomic<bool> finished{false};
     std::thread watcher;
-    if (callbacks.should_cancel || callbacks.should_pause) {
+    if (callbacks.should_cancel || callbacks.should_pause || callbacks.should_stop_with_checkpoint) {
         // Cancel and pause reach the executor from here; it honours both
         // between batches (Stop, and Pause/Resume via WaitWhilePaused).
         watcher = std::thread([&] {
@@ -305,6 +305,11 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
                 if (callbacks.should_cancel && callbacks.should_cancel()) {
                     result.cancelled = true;
                     executor->Stop();
+                    return;
+                }
+                if (callbacks.should_stop_with_checkpoint && callbacks.should_stop_with_checkpoint()) {
+                    result.cancelled = true;
+                    executor->StopWithCheckpoint();
                     return;
                 }
                 const bool pause = callbacks.should_pause && callbacks.should_pause();

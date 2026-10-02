@@ -11,7 +11,7 @@ namespace cyxwiz {
 namespace {
 
 constexpr const char* kWireCodes[] = {"REFUSED", "DATA_ERROR", "DEVICE_ERROR", "OUT_OF_MEMORY",
-                                      "CANCELLED", "INTERNAL"};
+                                      "CANCELLED", "RESERVATION_ENDED", "INTERNAL"};
 
 std::string NextStepFor(const std::string& wire_code) {
     if (wire_code == "OUT_OF_MEMORY") {
@@ -23,6 +23,9 @@ std::string NextStepFor(const std::string& wire_code) {
     }
     if (wire_code == "REFUSED") return "The node cannot train this graph as it is: check the reason, then change the graph.";
     if (wire_code == "CANCELLED") return "Resume from the last checkpoint, or start over.";
+    if (wire_code == "RESERVATION_ENDED") {
+        return "Reserve a node again, then resume from the last checkpoint.";
+    }
     return "Try again; if it happens again, keep the node's log for a report.";
 }
 

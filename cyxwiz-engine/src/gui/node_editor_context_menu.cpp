@@ -9,7 +9,7 @@
 #include "../core/node_metadata.h"
 #include "../core/node_metadata_registry.h"
 #include "../core/project_manager.h"
-#include "../plugin/registries/plugin_node_registry.h"
+#include "../core/extension_node_registry.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cstring>
@@ -203,7 +203,9 @@ void NodeEditor::ShowContextMenu() {
                     if (is_unavailable) ImGui::BeginDisabled();
                     if (ImGui::MenuItem(node->name.c_str())) {
                         if (!is_unavailable && node->type != NodeType::Unknown) {
-                            AddNode(node->type, node->name);
+                            AddNode(node->type, node->type == NodeType::PluginCustom
+                                                    ? node->extension_type_id
+                                                    : node->name);
                             context_menu_search_[0] = '\0';
                             ImGui::CloseCurrentPopup();
                         }
@@ -227,7 +229,9 @@ void NodeEditor::ShowContextMenu() {
                         if (is_unavailable) ImGui::BeginDisabled();
                         if (ImGui::MenuItem(node->name.c_str())) {
                             if (!is_unavailable && node->type != NodeType::Unknown) {
-                                AddNode(node->type, node->name);
+                                AddNode(node->type, node->type == NodeType::PluginCustom
+                                                        ? node->extension_type_id
+                                                        : node->name);
                                 context_menu_search_[0] = '\0';
                                 ImGui::CloseCurrentPopup();
                             }

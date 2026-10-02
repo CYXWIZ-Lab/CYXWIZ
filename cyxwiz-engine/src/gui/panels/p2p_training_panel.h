@@ -1,5 +1,7 @@
 #pragma once
 
+#include <utility>
+
 #include "../../core/remote_job_presentation.h"
 #include <functional>
 #include <set>
@@ -54,6 +56,8 @@ public:
     const std::string& GetJobId() const { return job_id_; }
     const std::string& GetNodeAddress() const { return node_address_; }
     float GetProgress() const { return current_progress_; }
+    // Epoch position for the reservation card: {epoch, total}, 0 when unknown.
+    std::pair<int, int> GetEpochPosition() const;
     bool IsTrainingComplete() const { return training_complete_; }
     bool HasError() const { return has_error_; }
 

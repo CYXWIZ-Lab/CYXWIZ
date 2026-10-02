@@ -412,7 +412,10 @@ bool NodeClient::Register() {
 
     if (status.ok()) {
         if (response.status() == protocol::STATUS_SUCCESS) {
-            node_id_ = response.node_id();
+            {
+                std::lock_guard<std::mutex> lock(node_id_mutex_);
+                node_id_ = response.node_id();
+            }
             session_token_ = response.session_token();
             is_registered_ = true;
 
@@ -518,7 +521,10 @@ bool NodeClient::RegisterWithAllocations(const std::vector<DeviceAllocation>& al
 
     if (status.ok()) {
         if (response.status() == protocol::STATUS_SUCCESS) {
-            node_id_ = response.node_id();
+            {
+                std::lock_guard<std::mutex> lock(node_id_mutex_);
+                node_id_ = response.node_id();
+            }
             session_token_ = response.session_token();
             is_registered_ = true;
 

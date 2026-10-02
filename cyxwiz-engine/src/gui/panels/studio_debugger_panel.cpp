@@ -1,10 +1,15 @@
 #include "studio_debugger_panel.h"
+#include "studio_debugger_colors.h"
+#include "../ui_buttons.h"
 #include "../../core/debug_training_graph_diff.h"
+#include "../../core/training_manager.h"
+#include "../../core/node_metadata_registry.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <iomanip>
 #include <map>
+#include <optional>
 #include <sstream>
 
 namespace cyxwiz {
@@ -13,37 +18,27 @@ namespace {
 
 ImVec4 LevelColor(IssueLevel level) {
     switch (level) {
-        case IssueLevel::Error:   return ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
-        case IssueLevel::Warning: return ImVec4(1.0f, 0.85f, 0.3f, 1.0f);
-        case IssueLevel::Info:    return ImVec4(0.45f, 0.7f, 1.0f, 1.0f);
+        case IssueLevel::Error:   return DebuggerDanger();
+        case IssueLevel::Warning: return DebuggerWarning();
+        case IssueLevel::Info:    return DebuggerInfo();
     }
-    return ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+    return DebuggerText();
 }
 
 ImVec4 RecommendationColor(DebugRecommendationSeverity severity) {
     switch (severity) {
         case DebugRecommendationSeverity::Critical:
-            return ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
+            return DebuggerDanger();
         case DebugRecommendationSeverity::Warning:
-            return ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+            return DebuggerWarning();
         case DebugRecommendationSeverity::Info:
-            return ImVec4(0.45f, 0.7f, 1.0f, 1.0f);
+            return DebuggerInfo();
     }
-    return ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+    return DebuggerText();
 }
 
 ImVec4 TraceStatusColor(const std::string& status) {
-    if (status == "ok" || status == "passed" || status == "ready" || status == "captured") {
-        return ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
-    }
-    if (status == "warning" || status == "zero" || status == "shape_mismatch" ||
-        status == "blocked") {
-        return ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
-    }
-    if (status == "failed" || status == "nan") {
-        return ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
-    }
-    return ImVec4(0.65f, 0.7f, 0.78f, 1.0f);
+    return DebuggerTraceStatusColor(status);
 }
 
 const char* ClassifyTrainingWarning(const std::string& text) {
@@ -72,22 +67,6 @@ const char* ClassifyTrainingWarning(const std::string& text) {
         return "Memory";
     }
     return "Warning";
-}
-
-int TraceStatusSeverity(const std::string& status) {
-    if (status == "failed" || status == "nan") {
-        return 4;
-    }
-    if (status == "shape_mismatch" || status == "blocked") {
-        return 3;
-    }
-    if (status == "warning" || status == "zero") {
-        return 2;
-    }
-    if (status == "ok" || status == "passed" || status == "ready" || status == "captured") {
-        return 1;
-    }
-    return 0;
 }
 
 int CountTraceStatus(const StudioDebuggerSnapshot& session, const std::string& status) {
@@ -276,12 +255,12 @@ std::string TraceOutcomeLabel(const DebugTraceRecord& trace) {
 ImVec4 TraceOutcomeColor(const DebugTraceRecord& trace) {
     const std::string outcome = TraceOutcomeLabel(trace);
     if (outcome == "Success" || outcome == "Captured") {
-        return ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+        return DebuggerSuccess();
     }
     if (outcome == "Needs attention") {
-        return ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+        return DebuggerWarning();
     }
-    return ImVec4(0.65f, 0.7f, 0.78f, 1.0f);
+    return DebuggerMuted();
 }
 
 std::string TraceSourceLabel(const DebugTraceRecord& trace) {
@@ -645,7 +624,7 @@ void RenderSlowPathInspection(const DebugTraceRecord& trace) {
 
     if (JsonNumber(payload, "native_cpu_fallback_count") > 0.0) {
         ImGui::TextColored(
-            ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+            DebuggerWarning(),
             "Native CPU fallback occurrences: %.0f (duration unavailable)",
             JsonNumber(payload, "native_cpu_fallback_count"));
     }
@@ -705,10 +684,10 @@ void RenderErrorCodeTimeline(const std::vector<DebugTraceRecord>& traces) {
             ImGui::TableSetColumnIndex(3);
             const std::string severity = JsonString(entry, "severity");
             const ImVec4 severity_color = severity == "error"
-                ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f)
+                ? DebuggerDanger()
                 : severity == "warning"
-                    ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
-                    : ImVec4(0.65f, 0.72f, 0.82f, 1.0f);
+                    ? DebuggerWarning()
+                    : DebuggerMuted();
             ImGui::TextColored(severity_color, "%s", severity.c_str());
             ImGui::TableSetColumnIndex(4);
             const std::string node_name = JsonString(entry, "node_name");
@@ -732,7 +711,7 @@ void RenderErrorCodeTimeline(const std::vector<DebugTraceRecord>& traces) {
     }
     if (JsonBool(timeline->payload, "timeline_truncated", false)) {
         ImGui::TextColored(
-            ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+            DebuggerWarning(),
             "Timeline capped at %.0f entries.",
             JsonNumber(timeline->payload, "entry_limit"));
     }
@@ -795,30 +774,155 @@ std::optional<LayerTimingRow> ParseLayerTimingEvent(const TrainingTraceEvent& ev
 StudioDebuggerPanel::StudioDebuggerPanel()
     : Panel("Studio Debugger", false) {}
 
-void StudioDebuggerPanel::SetSession(const StudioDebuggerSnapshot& session) {
-    session_ = session;
-    current_session_ = session;
-    has_current_session_ = true;
+void StudioDebuggerPanel::SetSession(StudioDebuggerSnapshot session) {
+    // The run already carries its evidence (loaded on the worker); the panel
+    // does no disk I/O here and never replaces the run's training truth with
+    // whatever trace is newest (tofix96). One copy is kept.
+    session_ = std::move(session);
+    parked_latest_.reset();
     current_run_id_ = session_.run_id;
-    if (auto last_run = CrashRunRecorder::LoadLastRun()) {
-        session_.last_run = *last_run;
+    if (!session_.run_history.empty()) {
+        history_loaded_ = true;
     }
-    const auto training_trace = TrainingTraceCollector::LatestTrace();
-    if (training_trace.available) {
-        session_.training_trace = training_trace;
-        current_session_.training_trace = training_trace;
-        if (!session_.execution.available) {
-            session_.execution = MakeDebugRunExecutionSummary(training_trace);
-            current_session_.execution = session_.execution;
-        }
+    if (!session_.graph_domain.empty()) {
+        smoke_capability_ = EvaluateSmokeCapability(session_.graph_domain);
+        smoke_capability_known_ = true;
     }
-    session_.run_history = DebugRunStore::ListRecent(8);
-    current_session_.run_history = session_.run_history;
     has_session_ = true;
     selected_trace_index_ = session_.debug_result.layer_traces.empty() ? -1 : 0;
     run_comparison_trace_.reset();
     run_comparison_baseline_id_.clear();
     run_comparison_current_id_.clear();
+}
+
+bool StudioDebuggerPanel::StartRun(StudioDebuggerRunMode mode,
+                                   int sample_index,
+                                   int explain_node_id) {
+    if (run_in_progress_ || !run_debug_callback_) {
+        return false;
+    }
+    auto task = std::make_shared<std::function<StudioDebuggerSnapshot(
+        const StudioDebuggerRunControl&)>>(
+        run_debug_callback_(mode, sample_index, explain_node_id));
+    auto state = std::make_shared<AsyncRunState>();
+    state->steps = PlanStudioDebuggerSteps(
+        mode, smoke_capability_known_ ? smoke_capability_ : SmokeCapability{true, {}, {}});
+    pending_run_state_ = state;
+    running_mode_ = mode;
+    if (explain_node_id < 0) {
+        run_mode_ = mode;
+    }
+    running_steps_ = state->steps;
+    running_step_.clear();
+    running_progress_ = 0.0f;
+    stop_requested_ = false;
+    run_started_ = std::chrono::steady_clock::now();
+    pending_explain_node_id_ = explain_node_id;
+    run_status_message_.clear();
+    run_in_progress_ = true;
+    pending_task_id_ = AsyncTaskManager::Instance().RunAsync(
+        std::string("Studio Debugger: ") + StudioDebuggerRunModeLabel(mode),
+        [task, state](LambdaTask& async_task) {
+            StudioDebuggerRunControl control;
+            control.on_progress = [state, &async_task](
+                                      const std::vector<StudioDebuggerStep>& steps,
+                                      const std::string& running_step,
+                                      float progress) {
+                {
+                    std::lock_guard<std::mutex> lock(state->mutex);
+                    state->steps = steps;
+                    state->running_step = running_step;
+                    state->progress = progress;
+                }
+                async_task.ReportProgress(progress, running_step);
+            };
+            control.should_stop = [state, &async_task]() {
+                return state->stop.load() || async_task.ShouldStop();
+            };
+            StudioDebuggerSnapshot result = (*task)(control);
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->result = std::move(result);
+        },
+        nullptr,
+        [this, state](bool success, const std::string& error) {
+            run_in_progress_ = false;
+            pending_task_id_ = 0;
+            stop_requested_ = false;
+            std::optional<StudioDebuggerSnapshot> result;
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                result = std::move(state->result);
+            }
+            if (!result) {
+                StudioDebuggerSnapshot failed;
+                failed.mode = running_mode_;
+                failed.outcome = StudioDebuggerOutcome::Failed;
+                failed.failure_summary = !success && !error.empty()
+                    ? error : "Studio Debugger run ended without a result.";
+                result = std::move(failed);
+            }
+            SetSession(std::move(*result));
+            if (pending_explain_node_id_ >= 0) {
+                ShowNodeExplanation(pending_explain_node_id_);
+            }
+            pending_explain_node_id_ = -1;
+            if (run_completed_callback_) {
+                run_completed_callback_(session_);
+            }
+        });
+    return true;
+}
+
+void StudioDebuggerPanel::RequestStop() {
+    if (!run_in_progress_ || !pending_run_state_) {
+        return;
+    }
+    pending_run_state_->stop.store(true);
+    stop_requested_ = true;
+}
+
+void StudioDebuggerPanel::PollRunProgress() {
+    if (!run_in_progress_ || !pending_run_state_) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(pending_run_state_->mutex);
+    running_steps_ = pending_run_state_->steps;
+    running_step_ = pending_run_state_->running_step;
+    running_progress_ = pending_run_state_->progress;
+}
+
+void StudioDebuggerPanel::RefreshSmokeCapability() {
+    if (!graph_domain_callback_) {
+        return;
+    }
+    const std::string domain = graph_domain_callback_();
+    smoke_capability_ = EvaluateSmokeCapability(domain);
+    smoke_capability_known_ = !domain.empty();
+}
+
+void StudioDebuggerPanel::RequestRunHistoryRefresh() {
+    if (history_refresh_in_progress_) {
+        return;
+    }
+    history_refresh_in_progress_ = true;
+    auto state = std::make_shared<AsyncLoadState>();
+    AsyncTaskManager::Instance().RunAsync(
+        "Studio Debugger: saved runs",
+        [state](LambdaTask&) {
+            auto history = DebugRunStore::ListRecent(8);
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->history = std::move(history);
+        },
+        nullptr,
+        [this, state](bool, const std::string&) {
+            history_refresh_in_progress_ = false;
+            history_loaded_ = true;
+            std::lock_guard<std::mutex> lock(state->mutex);
+            session_.run_history = state->history;
+            if (parked_latest_) {
+                parked_latest_->run_history = state->history;
+            }
+        });
 }
 
 void StudioDebuggerPanel::ShowRuntimeProfile() {
@@ -850,9 +954,8 @@ void StudioDebuggerPanel::Clear() {
         return;
     }
     session_ = StudioDebuggerSnapshot{};
-    current_session_ = StudioDebuggerSnapshot{};
+    parked_latest_.reset();
     has_session_ = false;
-    has_current_session_ = false;
     current_run_id_.clear();
     selected_trace_index_ = -1;
     run_comparison_trace_.reset();
@@ -1102,16 +1205,17 @@ void StudioDebuggerPanel::RenderTraceFilters() {
     }
 
     ImGui::SetNextItemWidth(260.0f);
-    ImGui::InputText("Search traces", trace_search_, sizeof(trace_search_));
+    ImGui::InputTextWithHint("##StudioDebuggerTraceSearch", ICON_FA_MAGNIFYING_GLASS " Search traces",
+                             trace_search_, sizeof(trace_search_));
     ImGui::SameLine();
     ImGui::Checkbox("Attention only", &trace_attention_only_);
     ImGui::SameLine();
-    if (ImGui::SmallButton("Clear filters")) {
+    if (ui::LinkButton("Clear filters")) {
         trace_search_[0] = '\0';
         trace_attention_only_ = false;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("%d/%d visible, %d attention",
+    ImGui::TextColored(DebuggerFaint(), "%d / %d visible · %d attention",
                         filtered_count,
                         lens_count,
                         attention_count);
@@ -1158,30 +1262,81 @@ void StudioDebuggerPanel::RenderTraceSettings() {
     ImGui::TextDisabled("Lower N gives better crash evidence; higher N reduces disk writes.");
 }
 
+const StudioDebuggerSnapshot* StudioDebuggerPanel::LatestRun() const {
+    if (current_run_id_.empty()) {
+        return nullptr;
+    }
+    if (session_.run_id == current_run_id_) {
+        return &session_;
+    }
+    return parked_latest_ ? &*parked_latest_ : nullptr;
+}
+
 void StudioDebuggerPanel::LoadStoredRun(const std::string& run_id) {
-    auto record = DebugRunStore::Load(run_id);
-    if (!record) {
+    if (load_in_progress_ || run_in_progress_) {
         return;
     }
-
-    const auto history = DebugRunStore::ListRecent(8);
-    session_ = StudioDebuggerSnapshot{};
-    session_.run_id = record->summary.run_id;
-    session_.graph_hash = record->summary.graph_hash;
-    session_.success = record->summary.success;
-    session_.failure_summary = record->summary.success ? "" : record->summary.summary;
-    session_.sample_summary = "Saved Studio Debugger run";
-    session_.issues = std::move(record->issues);
-    session_.traces = std::move(record->traces);
-    session_.studio_events = std::move(record->studio_events);
-    session_.recommendations = std::move(record->recommendations);
-    session_.execution = record->summary.execution;
-    session_.run_history = history;
-    has_session_ = true;
-    selected_trace_index_ = session_.traces.empty() ? -1 : 0;
-    run_comparison_trace_.reset();
-    run_comparison_baseline_id_.clear();
-    run_comparison_current_id_.clear();
+    if (run_id == current_run_id_ && parked_latest_) {
+        auto history = std::move(session_.run_history);
+        session_ = std::move(*parked_latest_);
+        parked_latest_.reset();
+        if (!history.empty()) {
+            session_.run_history = std::move(history);
+        }
+        selected_trace_index_ = -1;
+        return;
+    }
+    load_in_progress_ = true;
+    auto state = std::make_shared<AsyncLoadState>();
+    pending_load_state_ = state;
+    AsyncTaskManager::Instance().RunAsync(
+        "Studio Debugger: load saved run",
+        [state, run_id](LambdaTask&) {
+            auto record = DebugRunStore::Load(run_id);
+            auto history = DebugRunStore::ListRecent(8);
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->history = std::move(history);
+            if (!record) {
+                return;
+            }
+            StudioDebuggerSnapshot loaded;
+            loaded.run_id = record->summary.run_id;
+            loaded.graph_hash = record->summary.graph_hash;
+            loaded.success = record->summary.success;
+            loaded.failure_summary = record->summary.success ? "" : record->summary.summary;
+            loaded.sample_summary = "Saved Studio Debugger run";
+            loaded.issues = std::move(record->issues);
+            loaded.traces = std::move(record->traces);
+            loaded.studio_events = std::move(record->studio_events);
+            loaded.recommendations = std::move(record->recommendations);
+            loaded.execution = record->summary.execution;
+            if (!ApplyStudioDebuggerRunSummaryTrace(loaded)) {
+                // Saved before run summaries existed: keep the stored verdict.
+                loaded.outcome = loaded.success ? StudioDebuggerOutcome::Passed
+                                                : StudioDebuggerOutcome::Failed;
+            }
+            state->result = std::move(loaded);
+        },
+        nullptr,
+        [this, state](bool, const std::string&) {
+            load_in_progress_ = false;
+            std::lock_guard<std::mutex> lock(state->mutex);
+            if (!state->result) {
+                run_status_message_ = "That saved run could not be loaded.";
+                return;
+            }
+            if (!current_run_id_.empty() && session_.run_id == current_run_id_) {
+                parked_latest_ = std::move(session_);
+            }
+            session_ = std::move(*state->result);
+            session_.run_history = state->history;
+            history_loaded_ = true;
+            has_session_ = true;
+            selected_trace_index_ = -1;
+            run_comparison_trace_.reset();
+            run_comparison_baseline_id_.clear();
+            run_comparison_current_id_.clear();
+        });
 }
 
 void StudioDebuggerPanel::RenderRunComparison() {
@@ -1189,66 +1344,58 @@ void StudioDebuggerPanel::RenderRunComparison() {
         return;
     }
 
-    if (!has_current_session_ && !current_run_id_.empty()) {
-        if (auto record = DebugRunStore::Load(current_run_id_)) {
-            current_session_ = StudioDebuggerSnapshot{};
-            current_session_.run_id = record->summary.run_id;
-            current_session_.graph_hash = record->summary.graph_hash;
-            current_session_.success = record->summary.success;
-            current_session_.failure_summary = record->summary.success ? "" : record->summary.summary;
-            current_session_.issues = std::move(record->issues);
-            current_session_.traces = std::move(record->traces);
-            current_session_.studio_events = std::move(record->studio_events);
-            current_session_.recommendations = std::move(record->recommendations);
-            has_current_session_ = true;
-        }
-    }
+    const StudioDebuggerSnapshot* latest = LatestRun();
 
     ImGui::Text("Run Comparison");
     ImGui::BeginChild("StudioDebuggerRunComparison", ImVec2(0, 0), false);
 
-    if (!has_current_session_ || current_run_id_.empty()) {
+    if (!latest) {
         ImGui::TextDisabled("Run a new debug session to establish a comparison baseline.");
         ImGui::EndChild();
         return;
     }
 
-    if (session_.run_id == current_session_.run_id) {
+    const StudioDebuggerSnapshot& current_session = *latest;
+    if (session_.run_id == current_session.run_id) {
         ImGui::TextDisabled("Viewing the current run. Select an older run to compare.");
         ImGui::EndChild();
         return;
     }
 
-    ImGui::Text("Baseline: %s", session_.run_id.c_str());
-    ImGui::Text("Current:  %s", current_session_.run_id.c_str());
+    ImGui::TextColored(DebuggerMuted(), "This run");
+    ImGui::SameLine(110.0f);
+    ImGui::TextUnformatted(session_.run_id.c_str());
+    ImGui::TextColored(DebuggerMuted(), "Latest run");
+    ImGui::SameLine(110.0f);
+    ImGui::TextUnformatted(current_session.run_id.c_str());
     ImGui::Separator();
 
     const int selected_errors = CountTraceStatus(session_, "failed") +
         CountTraceStatus(session_, "nan");
-    const int current_errors = CountTraceStatus(current_session_, "failed") +
-        CountTraceStatus(current_session_, "nan");
+    const int current_errors = CountTraceStatus(current_session, "failed") +
+        CountTraceStatus(current_session, "nan");
     const int selected_shape = CountTraceStatus(session_, "shape_mismatch");
-    const int current_shape = CountTraceStatus(current_session_, "shape_mismatch");
+    const int current_shape = CountTraceStatus(current_session, "shape_mismatch");
     const int selected_warnings = CountTraceStatus(session_, "warning") +
         static_cast<int>(session_.issues.size());
-    const int current_warnings = CountTraceStatus(current_session_, "warning") +
-        static_cast<int>(current_session_.issues.size());
+    const int current_warnings = CountTraceStatus(current_session, "warning") +
+        static_cast<int>(current_session.issues.size());
     const int selected_critical = CountRecommendationSeverity(
         session_, DebugRecommendationSeverity::Critical);
     const int current_critical = CountRecommendationSeverity(
-        current_session_, DebugRecommendationSeverity::Critical);
+        current_session, DebugRecommendationSeverity::Critical);
 
     auto render_delta = [](const char* label, int selected, int current) {
         const int delta = current - selected;
-        ImVec4 color = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+        ImVec4 color = DebuggerText();
         if (delta > 0) {
-            color = ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+            color = DebuggerWarning();
         } else if (delta < 0) {
-            color = ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+            color = DebuggerSuccess();
         }
         ImGui::Text("%s", label);
         ImGui::SameLine(170.0f);
-        ImGui::Text("selected=%d current=%d", selected, current);
+        ImGui::Text("this run %d  ·  latest %d", selected, current);
         ImGui::SameLine();
         ImGui::TextColored(color, "delta=%+d", delta);
     };
@@ -1259,7 +1406,7 @@ void StudioDebuggerPanel::RenderRunComparison() {
     render_delta("Critical recommendations", selected_critical, current_critical);
     render_delta("Total traces",
                  static_cast<int>(session_.traces.size()),
-                 static_cast<int>(current_session_.traces.size()));
+                 static_cast<int>(current_session.traces.size()));
 
     const bool comparison_pair_changed =
         run_comparison_baseline_id_ != session_.run_id ||
@@ -1268,16 +1415,40 @@ void StudioDebuggerPanel::RenderRunComparison() {
         run_comparison_trace_.reset();
         run_comparison_baseline_id_ = session_.run_id;
         run_comparison_current_id_ = current_run_id_;
-        const auto baseline = DebugRunStore::Load(session_.run_id);
-        const auto current = DebugRunStore::Load(current_run_id_);
-        if (baseline && current) {
-            run_comparison_trace_ =
-                DebugTrainingGraphDiff{}.BuildTrace(*baseline, *current);
-        }
+        comparison_loading_ = true;
+        auto result = std::make_shared<std::optional<DebugTraceRecord>>();
+        auto guard = std::make_shared<std::mutex>();
+        const std::string baseline_id = session_.run_id;
+        const std::string current_id = current_run_id_;
+        AsyncTaskManager::Instance().RunAsync(
+            "Studio Debugger: compare runs",
+            [result, guard, baseline_id, current_id](LambdaTask&) {
+                const auto baseline = DebugRunStore::Load(baseline_id);
+                const auto current = DebugRunStore::Load(current_id);
+                if (baseline && current) {
+                    std::lock_guard<std::mutex> lock(*guard);
+                    *result = DebugTrainingGraphDiff{}.BuildTrace(*baseline, *current);
+                }
+            },
+            nullptr,
+            [this, result, guard, baseline_id, current_id](bool, const std::string&) {
+                if (baseline_id != run_comparison_baseline_id_ ||
+                    current_id != run_comparison_current_id_) {
+                    return;  // the user picked another pair meanwhile
+                }
+                comparison_loading_ = false;
+                std::lock_guard<std::mutex> lock(*guard);
+                run_comparison_trace_ = *result;
+            });
     }
 
     ImGui::Separator();
     ImGui::Text("Training graph/config diff");
+    if (comparison_loading_) {
+        ImGui::TextColored(DebuggerMuted(), "Loading the saved runs...");
+        ImGui::EndChild();
+        return;
+    }
     if (!run_comparison_trace_) {
         ImGui::TextDisabled(
             "Persisted evidence for one or both runs is unavailable.");
@@ -1288,11 +1459,11 @@ void StudioDebuggerPanel::RenderRunComparison() {
     const auto& diff = run_comparison_trace_->payload;
     const std::string outcome = JsonString(
         diff, "comparison_outcome", "unobserved");
-    ImVec4 outcome_color(0.65f, 0.7f, 0.78f, 1.0f);
+    ImVec4 outcome_color = DebuggerMuted();
     if (outcome == "unchanged") {
-        outcome_color = ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+        outcome_color = DebuggerSuccess();
     } else if (outcome == "changed") {
-        outcome_color = ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+        outcome_color = DebuggerWarning();
     }
     ImGui::TextColored(outcome_color, "Outcome: %s", outcome.c_str());
 
@@ -1398,18 +1569,25 @@ void StudioDebuggerPanel::RefreshLiveTrainingTrace() {
         return;
     }
     next_training_trace_refresh_ = now + std::chrono::milliseconds(250);
-    const auto trace = TrainingTraceCollector::LatestTrace();
-    if (trace.available) {
-        if (has_current_session_) {
-            current_session_.training_trace = trace;
-        }
-        const bool viewing_saved_history = has_current_session_ &&
-            !current_run_id_.empty() &&
-            !session_.run_id.empty() &&
-            session_.run_id != current_run_id_;
-        if (!viewing_saved_history) {
-            session_.training_trace = trace;
-        }
+    // Only live training replaces the shown evidence, and it is labeled live.
+    if (!TrainingManager::Instance().IsTrainingActive()) {
+        return;
+    }
+    const auto trace = TrainingTraceCollector::Instance().Snapshot();
+    if (!IsTrainingTraceLive(trace, true)) {
+        return;
+    }
+    if (parked_latest_) {
+        parked_latest_->training_trace = trace;
+        parked_latest_->training_trace_historical = false;
+    }
+    const bool viewing_saved_history = !current_run_id_.empty() &&
+        !session_.run_id.empty() &&
+        session_.run_id != current_run_id_;
+    if (!viewing_saved_history) {
+        session_.training_trace = trace;
+        session_.training_trace_historical = false;
+        session_.execution = MakeDebugRunExecutionSummary(trace);
     }
 }
 
@@ -1421,7 +1599,13 @@ void StudioDebuggerPanel::RenderLiveTrainingStatus() {
     }
 
     ImGui::Separator();
-    ImGui::Text("Live Training");
+    if (session_.training_trace_historical) {
+        ImGui::TextColored(DebuggerMuted(), "Historical training evidence");
+        ImGui::SameLine();
+        ImGui::TextColored(DebuggerFaint(), "(an earlier run, not part of this debugger run)");
+    } else {
+        ImGui::TextColored(DebuggerInfo(), "Live training");
+    }
     ImGui::Text("Run: %s", trace.run_id.c_str());
     ImGui::SameLine();
     ImGui::TextDisabled("Status: %s", trace.status.c_str());
@@ -1434,7 +1618,7 @@ void StudioDebuggerPanel::RenderLiveTrainingStatus() {
                 trace.latest_loss,
                 trace.latest_accuracy * 100.0f);
     if (!trace.warnings.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+        ImGui::TextColored(DebuggerWarning(),
                            "Latest %s warning: %s",
                            ClassifyTrainingWarning(trace.warnings.back()),
                            trace.warnings.back().c_str());
@@ -1443,34 +1627,34 @@ void StudioDebuggerPanel::RenderLiveTrainingStatus() {
 
 void StudioDebuggerPanel::RenderOverview() {
     if (!has_session_) {
-        ImGui::TextDisabled("Run a debug session to capture a trace.");
+        ImGui::TextColored(DebuggerMuted(),
+                           "Choose a mode and press Run to check this graph before training.");
         RenderLiveTrainingStatus();
         return;
     }
 
-    ImGui::Text("Graph hash: 0x%016llx", static_cast<unsigned long long>(session_.graph_hash));
-    ImGui::Text("Nodes: %zu  Links: %zu", session_.node_count, session_.link_count);
-    ImGui::Text("Sample: %s", session_.sample_summary.c_str());
-    ImGui::Text("Status: %s", session_.success ? "Success" : "Failed");
-    if (!session_.preflight.summary.empty()) {
-        ImGui::Text("Preflight: %s", session_.preflight.ready ? "Ready" : "Blocked");
-    }
-    if (!session_.failure_summary.empty()) {
-        ImGui::TextWrapped("Failure: %s", session_.failure_summary.c_str());
-    }
-    if (session_.smoke_result.supported) {
-        ImVec4 smoke_color = session_.smoke_result.success
-            ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
-            : ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
-        ImGui::TextColored(smoke_color, "Smoke Run: %s",
-                           session_.smoke_result.success ? "Passed" : "Needs attention");
-        ImGui::Text("Smoke samples: %d  batches: %d  avg loss: %.4f  last acc: %.2f%%",
-                    session_.smoke_result.samples_seen,
-                    session_.smoke_result.batches_seen,
-                    session_.smoke_result.average_loss,
-                    session_.smoke_result.last_accuracy * 100.0f);
+    RenderSummaryCards();
+    ImGui::Spacing();
+
+    if (!session_.success && !session_.failure_summary.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(DebuggerDanger(), "%s", session_.failure_summary.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
     }
 
+    ImGui::PushStyleColor(ImGuiCol_Text, DebuggerBright());
+    ImGui::TextUnformatted("Graph trace");
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+    ImGui::TextColored(DebuggerMuted(), view_graph_layout_.from_canvas
+                                            ? "laid out like your canvas · click a node to inspect"
+                                            : "click a node to inspect");
+    const float graph_height = std::clamp(view_graph_layout_.height + 36.0f, 120.0f, 420.0f);
+    RenderGraphTraceView(graph_height);
+
+    ImGui::Spacing();
+    ImGui::TextColored(DebuggerMuted(), "Sample: %s", session_.sample_summary.c_str());
     RenderLiveTrainingStatus();
 
     if (!session_.preflight.summary.empty()) {
@@ -1488,10 +1672,136 @@ void StudioDebuggerPanel::RenderOverview() {
     }
 }
 
-void StudioDebuggerPanel::RenderGraphTraceView() {
-    ImGui::Text("Graph Trace");
-    ImGui::BeginChild("StudioDebuggerGraphTrace", ImVec2(0, 0), false,
-                      ImGuiWindowFlags_HorizontalScrollbar);
+void StudioDebuggerPanel::RenderSummaryCards() {
+    struct Card {
+        std::string title;
+        std::string value;
+        std::string detail;
+        DebuggerTone tone = DebuggerTone::Neutral;
+    };
+    const auto step_state = [this](const char* id) -> const StudioDebuggerStep* {
+        for (const auto& step : session_.steps) {
+            if (step.id == id) return &step;
+        }
+        return nullptr;
+    };
+    std::vector<Card> cards;
+    {
+        Card card;
+        card.title = "Graph";
+        card.value = std::to_string(session_.node_count) + " nodes · " +
+            std::to_string(session_.link_count) + " links";
+        char hash[32];
+        std::snprintf(hash, sizeof(hash), "0x%016llx",
+                      static_cast<unsigned long long>(session_.graph_hash));
+        card.detail = session_.graph_domain.empty() ? std::string(hash)
+                                                    : session_.graph_domain + " data · " + hash;
+        cards.push_back(card);
+    }
+    const auto add_step_card = [&](const char* id, const char* title, std::string detail) {
+        Card card;
+        card.title = title;
+        if (const auto* step = step_state(id)) {
+            card.value = StudioDebuggerStepStateLabel(step->state);
+            card.tone = StudioDebuggerStepStateTone(step->state);
+            if (detail.empty()) detail = step->detail;
+        } else {
+            card.value = "Not in this mode";
+            card.tone = DebuggerTone::Muted;
+        }
+        card.detail = std::move(detail);
+        cards.push_back(card);
+    };
+    {
+        std::string detail;
+        if (!session_.preflight.summary.empty()) {
+            detail = session_.preflight.ready ? "Ready" : "Blocked";
+            if (!session_.preflight.issues.empty()) {
+                detail += " · " + std::to_string(session_.preflight.issues.size()) + " findings";
+            }
+        }
+        add_step_card("preflight", "Preflight", detail);
+    }
+    {
+        std::string detail;
+        if (session_.smoke_result.supported && session_.smoke_result.batches_seen > 0) {
+            char text[128];
+            std::snprintf(text, sizeof(text), "%d samples · %d batches · loss %.4f",
+                          session_.smoke_result.samples_seen, session_.smoke_result.batches_seen,
+                          session_.smoke_result.average_loss);
+            detail = text;
+        }
+        add_step_card("smoke", "Smoke Run", detail);
+    }
+    {
+        std::string detail;
+        if (session_.has_debug_result) {
+            char text[128];
+            std::snprintf(text, sizeof(text), "forward %.1f ms · backward %.1f ms",
+                          session_.debug_result.forward_total_ms,
+                          session_.debug_result.backward_total_ms);
+            detail = text;
+        }
+        add_step_card("local_debug", "Local Debug", detail);
+    }
+    if (session_.mode == StudioDebuggerRunMode::RuntimeTrace) {
+        cards.resize(1);
+        add_step_card("runtime", "Runtime evidence", {});
+    }
+
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float available = ImGui::GetContentRegionAvail().x;
+    const int columns = std::clamp(static_cast<int>((available + spacing) / (200.0f + spacing)), 1,
+                                   static_cast<int>(cards.size()));
+    if (!ImGui::BeginTable("StudioDebuggerSummaryCards", columns,
+                           ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings |
+                               ImGuiTableFlags_NoPadOuterX)) {
+        return;
+    }
+    for (size_t i = 0; i < cards.size(); ++i) {
+        if (i % static_cast<size_t>(columns) == 0) {
+            ImGui::TableNextRow();
+        }
+        ImGui::TableSetColumnIndex(static_cast<int>(i % static_cast<size_t>(columns)));
+        const auto& card = cards[i];
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, DebuggerPanelBg());
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
+        ImGui::BeginChild("card", ImVec2(0.0f, 0.0f),
+                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::TextColored(DebuggerMuted(), "%s", card.title.c_str());
+        ImGui::PushStyleColor(ImGuiCol_Text, card.tone == DebuggerTone::Neutral
+                                                 ? DebuggerBright()
+                                                 : DebuggerToneColor(card.tone));
+        ImGui::TextUnformatted(card.value.c_str());
+        ImGui::PopStyleColor();
+        if (!card.detail.empty()) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(DebuggerFaint(), "%s", card.detail.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor();
+        ImGui::PopID();
+    }
+    ImGui::EndTable();
+}
+
+void StudioDebuggerPanel::RebuildViewModelIfNeeded() {
+    const std::string key = session_.run_id + "|" + std::to_string(session_.traces.size()) + "|" +
+        std::to_string(session_.issues.size()) + "|" +
+        std::to_string(session_.recommendations.size()) + "|" + (has_session_ ? "1" : "0");
+    if (key == view_key_) {
+        return;
+    }
+    view_key_ = key;
+    view_node_status_ = AggregateDebuggerNodeStatus(session_);
+    view_graph_layout_ = {};
+    view_graph_links_.clear();
+    view_section_tone_.clear();
+    selected_graph_node_ = -1;
 
     const DebugTraceRecord* snapshot = nullptr;
     for (const auto& trace : session_.traces) {
@@ -1500,192 +1810,171 @@ void StudioDebuggerPanel::RenderGraphTraceView() {
             break;
         }
     }
+    if (snapshot && snapshot->payload.contains("nodes") && snapshot->payload["nodes"].is_array()) {
+        std::vector<DebuggerGraphNodeInput> nodes;
+        for (const auto& item : snapshot->payload["nodes"]) {
+            DebuggerGraphNodeInput node;
+            node.id = item.value("id", -1);
+            node.name = item.value("name", std::string{});
+            if (node.name.empty()) {
+                node.name = item.value("type", std::string{});
+            }
+            if (node.name.empty()) {
+                node.name = "Node " + std::to_string(node.id);
+            }
+            if (item.contains("x") && item.contains("y")) {
+                node.has_position = true;
+                node.x = item.value("x", 0.0f);
+                node.y = item.value("y", 0.0f);
+            }
+            nodes.push_back(std::move(node));
+        }
+        if (snapshot->payload.contains("links") && snapshot->payload["links"].is_array()) {
+            for (const auto& link : snapshot->payload["links"]) {
+                view_graph_links_.push_back({link.value("from_node", -1), link.value("to_node", -1)});
+            }
+        }
+        view_graph_layout_ = LayoutDebuggerGraph(nodes, view_graph_links_, 150.0f, 44.0f, 46.0f, 18.0f);
+    }
 
-    if (!snapshot || !snapshot->payload.contains("nodes") ||
-        !snapshot->payload["nodes"].is_array()) {
-        ImGui::TextDisabled("No frozen graph snapshot available for this run.");
-        ImGui::TextDisabled("Run Studio Debugger again to capture a graph trace snapshot.");
-        ImGui::EndChild();
+    // Attention markers on the section rail.
+    const auto section_of = [](DebugTraceRole role) -> std::optional<StudioDebuggerSection> {
+        switch (role) {
+            case DebugTraceRole::RawInput:
+            case DebugTraceRole::PreprocessingOutput:
+            case DebugTraceRole::FeatureTensor:
+                return StudioDebuggerSection::Data;
+            case DebugTraceRole::ModelInput:
+            case DebugTraceRole::Activation:
+            case DebugTraceRole::Prediction:
+                return StudioDebuggerSection::Model;
+            case DebugTraceRole::Parameter:
+            case DebugTraceRole::Gradient:
+            case DebugTraceRole::Target:
+            case DebugTraceRole::Loss:
+            case DebugTraceRole::OptimizerStep:
+                return StudioDebuggerSection::Training;
+            case DebugTraceRole::Warning:
+            case DebugTraceRole::Error:
+                return StudioDebuggerSection::Diagnostics;
+            default:
+                return std::nullopt;
+        }
+    };
+    for (const auto& trace : session_.traces) {
+        const auto section = section_of(trace.role);
+        const DebuggerTone tone = TraceStatusTone(trace.status);
+        if (!section || (tone != DebuggerTone::Warning && tone != DebuggerTone::Danger)) {
+            continue;
+        }
+        auto& current = view_section_tone_[*section];
+        if (current != DebuggerTone::Danger) {
+            current = tone;
+        }
+    }
+}
+
+void StudioDebuggerPanel::RenderGraphTraceView(float height) {
+    const auto& layout = view_graph_layout_;
+    if (layout.nodes.empty()) {
+        ImGui::TextColored(DebuggerMuted(), "No frozen graph snapshot available for this run.");
+        ImGui::TextColored(DebuggerFaint(), "Run Studio Debugger again to capture a graph trace.");
         return;
     }
 
-    struct NodeDrawInfo {
-        int id = -1;
-        std::string name;
-        std::string status = "captured";
-        int trace_count = 0;
-        int issue_count = 0;
-        int recommendation_count = 0;
-        std::string detail;
-        ImVec2 min;
-        ImVec2 max;
-    };
-
-    std::map<int, NodeDrawInfo> node_draws;
-    struct NodeAggregate {
-        std::string status = "captured";
-        int severity = 1;
-        int trace_count = 0;
-        int issue_count = 0;
-        int recommendation_count = 0;
-        std::vector<std::string> details;
-    };
-    std::map<int, NodeAggregate> node_status;
-    for (const auto& trace : session_.traces) {
-        if (trace.node_id < 0) {
-            continue;
-        }
-        auto& agg = node_status[trace.node_id];
-        const int severity = TraceStatusSeverity(trace.status);
-        if (severity >= agg.severity) {
-            agg.severity = severity;
-            agg.status = trace.status.empty() ? "unknown" : trace.status;
-        }
-        agg.trace_count++;
-        agg.issue_count += static_cast<int>(trace.issues.size());
-        if (agg.details.size() < 4) {
-            std::string detail = trace.phase + " / " +
-                std::string(DebugTraceRoleName(trace.role)) + " / " +
-                (trace.status.empty() ? "unknown" : trace.status);
-            agg.details.push_back(std::move(detail));
-        }
-    }
-    for (const auto& rec : session_.recommendations) {
-        if (rec.node_id >= 0) {
-            node_status[rec.node_id].recommendation_count++;
-            if (node_status[rec.node_id].details.size() < 4) {
-                node_status[rec.node_id].details.push_back(
-                    "Recommendation: " + rec.title);
-            }
-        }
-    }
-
-    const ImVec2 canvas_origin = ImGui::GetCursorScreenPos();
-    const float node_w = 150.0f;
-    const float node_h = 48.0f;
-    const float step_x = 190.0f;
-    const float step_y = 82.0f;
-    const int cols = 4;
-    int index = 0;
-
-    for (const auto& item : snapshot->payload["nodes"]) {
-        const int id = item.value("id", -1);
-        std::string name = item.value("name", "");
-        if (name.empty()) {
-            name = "Node " + std::to_string(id);
-        }
-        const int col = index % cols;
-        const int row = index / cols;
-        NodeDrawInfo info;
-        info.id = id;
-        info.name = name;
-        if (auto it = node_status.find(id); it != node_status.end()) {
-            info.status = it->second.status;
-            info.trace_count = it->second.trace_count;
-            info.issue_count = it->second.issue_count;
-            info.recommendation_count = it->second.recommendation_count;
-            for (const auto& detail : it->second.details) {
-                if (!info.detail.empty()) {
-                    info.detail += "\n";
-                }
-                info.detail += detail;
-            }
-        }
-        info.min = ImVec2(canvas_origin.x + col * step_x, canvas_origin.y + row * step_y);
-        info.max = ImVec2(info.min.x + node_w, info.min.y + node_h);
-        node_draws[id] = std::move(info);
-        ++index;
-    }
-
-    const int rows = std::max(1, (index + cols - 1) / cols);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, DebuggerPanelBg());
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
+    ImGui::BeginChild("StudioDebuggerGraphTrace", ImVec2(0.0f, height), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+    constexpr float kNodeW = 150.0f;
+    constexpr float kNodeH = 44.0f;
+    constexpr float kPad = 16.0f;
+    const ImVec2 origin(ImGui::GetCursorScreenPos().x + kPad, ImGui::GetCursorScreenPos().y + kPad);
     ImDrawList* draw = ImGui::GetWindowDrawList();
 
-    if (snapshot->payload.contains("links") && snapshot->payload["links"].is_array()) {
-        for (const auto& link : snapshot->payload["links"]) {
-            const int from = link.value("from_node", -1);
-            const int to = link.value("to_node", -1);
-            auto from_it = node_draws.find(from);
-            auto to_it = node_draws.find(to);
-            if (from_it == node_draws.end() || to_it == node_draws.end()) {
-                continue;
-            }
-            const ImVec2 p1(from_it->second.max.x,
-                            (from_it->second.min.y + from_it->second.max.y) * 0.5f);
-            const ImVec2 p2(to_it->second.min.x,
-                            (to_it->second.min.y + to_it->second.max.y) * 0.5f);
-            draw->AddLine(p1, p2, IM_COL32(120, 135, 155, 210), 2.0f);
-            draw->AddTriangleFilled(
-                ImVec2(p2.x, p2.y),
-                ImVec2(p2.x - 7.0f, p2.y - 4.0f),
-                ImVec2(p2.x - 7.0f, p2.y + 4.0f),
-                IM_COL32(120, 135, 155, 210));
+    std::map<int, ImVec2> positions;
+    for (const auto& box : layout.nodes) {
+        positions[box.id] = ImVec2(origin.x + box.x, origin.y + box.y);
+    }
+    const ImU32 edge = DebuggerU32(DebuggerMuted(), 0.55f);
+    for (const auto& link : view_graph_links_) {
+        const auto from = positions.find(link.from_node);
+        const auto to = positions.find(link.to_node);
+        if (from == positions.end() || to == positions.end()) {
+            continue;
         }
+        const ImVec2 p1(from->second.x + kNodeW, from->second.y + kNodeH * 0.5f);
+        const ImVec2 p2(to->second.x, to->second.y + kNodeH * 0.5f);
+        const float bend = std::max(24.0f, std::abs(p2.x - p1.x) * 0.45f);
+        draw->AddBezierCubic(p1, ImVec2(p1.x + bend, p1.y), ImVec2(p2.x - bend, p2.y), p2, edge, 1.6f);
+        draw->AddTriangleFilled(p2, ImVec2(p2.x - 6.0f, p2.y - 3.5f), ImVec2(p2.x - 6.0f, p2.y + 3.5f),
+                                edge);
     }
 
-    for (auto& [id, info] : node_draws) {
-        const ImVec4 color = TraceStatusColor(info.status);
-        const ImU32 fill = ImGui::ColorConvertFloat4ToU32(
-            ImVec4(color.x * 0.22f, color.y * 0.22f, color.z * 0.22f, 0.95f));
-        const ImU32 border = ImGui::ColorConvertFloat4ToU32(color);
-        draw->AddRectFilled(info.min, info.max, fill, 6.0f);
-        draw->AddRect(info.min, info.max, border, 6.0f, 0, 2.0f);
-        draw->AddText(ImVec2(info.min.x + 8.0f, info.min.y + 7.0f),
-                      IM_COL32(235, 238, 245, 255),
-                      info.name.c_str());
-        draw->AddText(ImVec2(info.min.x + 8.0f, info.min.y + 27.0f),
-                      IM_COL32(180, 188, 200, 255),
-                      info.status.c_str());
-        if (info.trace_count > 0) {
-            const std::string count_text = std::to_string(info.trace_count) + " traces";
-            draw->AddText(ImVec2(info.max.x - 68.0f, info.min.y + 27.0f),
-                          IM_COL32(170, 178, 190, 255),
-                          count_text.c_str());
-        }
-        if (info.issue_count > 0 || info.recommendation_count > 0) {
-            const std::string badge = std::to_string(info.issue_count) + "i " +
-                std::to_string(info.recommendation_count) + "r";
-            draw->AddText(ImVec2(info.max.x - 54.0f, info.min.y + 7.0f),
-                          IM_COL32(255, 215, 120, 255),
-                          badge.c_str());
-        }
+    for (const auto& box : layout.nodes) {
+        const ImVec2 min = positions[box.id];
+        const ImVec2 max(min.x + kNodeW, min.y + kNodeH);
+        const auto status_it = view_node_status_.find(box.id);
+        const DebuggerNodeStatus status = status_it == view_node_status_.end()
+            ? DebuggerNodeStatus{} : status_it->second;
+        const std::string status_text = status.worst_status.empty()
+            ? std::string("no traces") : TraceStatusLabel(status.worst_status);
+        const ImVec4 tone = status.worst_status.empty() ? DebuggerFaint()
+                                                        : DebuggerTraceStatusColor(status.worst_status);
+        const bool selected = box.id == selected_graph_node_;
+        draw->AddRectFilled(min, max, DebuggerU32(DebuggerInputBg()), 6.0f);
+        draw->AddRectFilled(min, max, DebuggerU32(tone, 0.10f), 6.0f);
+        draw->AddRect(min, max, selected ? DebuggerU32(DebuggerAccentText()) : DebuggerU32(tone, 0.75f),
+                      6.0f, 0, selected ? 2.4f : 1.3f);
+        ImGui::PushClipRect(min, max, true);
+        draw->AddText(ImVec2(min.x + 9.0f, min.y + 6.0f), DebuggerU32(DebuggerBright()), box.name.c_str());
+        const std::string sub = status_text + (status.trace_count > 0
+            ? " · " + std::to_string(status.trace_count) + (status.trace_count == 1 ? " trace" : " traces")
+            : std::string{});
+        draw->AddText(ImVec2(min.x + 9.0f, min.y + 24.0f), DebuggerU32(tone), sub.c_str());
+        ImGui::PopClipRect();
 
-        ImGui::SetCursorScreenPos(info.min);
-        ImGui::PushID(id);
-        if (ImGui::InvisibleButton("graph_node", ImVec2(node_w, node_h))) {
+        ImGui::SetCursorScreenPos(min);
+        ImGui::PushID(box.id);
+        if (ImGui::InvisibleButton("graph_node", ImVec2(kNodeW, kNodeH))) {
+            // Inspect the node's most important trace; the canvas moves only
+            // on "Show on canvas".
+            selected_graph_node_ = box.id;
+            int best = -1;
+            int best_rank = -1;
             for (int i = 0; i < static_cast<int>(session_.traces.size()); ++i) {
-                if (session_.traces[i].node_id == id) {
-                    selected_trace_index_ = i;
-                    break;
+                const auto& trace = session_.traces[i];
+                if (trace.node_id != box.id) continue;
+                const int rank = TraceStatusSeverity(trace.status);
+                if (rank > best_rank) {
+                    best_rank = rank;
+                    best = i;
                 }
             }
-            if (focus_node_callback_) {
-                focus_node_callback_(id);
-            }
+            selected_trace_index_ = best;
         }
         if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             ImGui::BeginTooltip();
-            ImGui::Text("%s", info.name.c_str());
-            ImGui::Text("node %d", id);
-            ImGui::Text("status: %s", info.status.c_str());
-            ImGui::Text("traces: %d  issues: %d  recommendations: %d",
-                        info.trace_count, info.issue_count, info.recommendation_count);
-            if (!info.detail.empty()) {
-                ImGui::Separator();
-                ImGui::TextUnformatted(info.detail.c_str());
-            }
+            ImGui::TextUnformatted(box.name.c_str());
+            ImGui::TextColored(DebuggerMuted(), "node %d · %s", box.id, status_text.c_str());
+            ImGui::Text("%zu traces · %zu issues · %zu fixes", status.trace_count, status.issue_count,
+                        status.recommendation_count);
             ImGui::EndTooltip();
         }
         ImGui::PopID();
     }
 
-    ImGui::SetCursorScreenPos(canvas_origin);
-    ImGui::Dummy(ImVec2(cols * step_x, rows * step_y + 12.0f));
+    ImGui::SetCursorScreenPos(ImVec2(origin.x - kPad, origin.y - kPad));
+    ImGui::Dummy(ImVec2(layout.width + kPad * 2.0f, layout.height + kPad * 2.0f));
     ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
 }
 
 void StudioDebuggerPanel::RenderRunHistory() {
-    if (session_.run_history.empty()) {
-        session_.run_history = DebugRunStore::ListRecent(8);
+    if (!history_loaded_) {
+        RequestRunHistoryRefresh();
     }
 
     ImGui::Text("Run History");
@@ -1702,8 +1991,8 @@ void StudioDebuggerPanel::RenderRunHistory() {
         ImGui::PushID(i);
         const bool current = !current_run_id_.empty() && run.run_id == current_run_id_;
         const ImVec4 status_color = run.success
-            ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
-            : ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+            ? DebuggerSuccess()
+            : DebuggerWarning();
 
         ImGui::PushStyleColor(ImGuiCol_Text, status_color);
         const bool selected = run.run_id == session_.run_id;
@@ -1777,8 +2066,8 @@ void StudioDebuggerPanel::RenderLastRun() {
     }
 
     const ImVec4 status_color = run.suspected_crash
-        ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f)
-        : ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+        ? DebuggerDanger()
+        : DebuggerSuccess();
 
     ImGui::Text("Run: %s", run.run_id.c_str());
     ImGui::SameLine();
@@ -1814,7 +2103,7 @@ void StudioDebuggerPanel::RenderLastRun() {
                            run.checkpoint_used.c_str());
     }
     if (!run.warning.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f), "Warning:");
+        ImGui::TextColored(DebuggerWarning(), "Warning:");
         ImGui::SameLine();
         ImGui::TextWrapped("%s", run.warning.c_str());
     }
@@ -1869,6 +2158,20 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
         ImGui::EndChild();
         return;
     }
+    // Provenance first (tofix96): whose evidence this is.
+    if (session_.training_trace_historical) {
+        ImGui::TextColored(DebuggerWarning(), ICON_FA_CLOCK " Historical evidence");
+        ImGui::SameLine();
+        ImGui::TextColored(DebuggerMuted(),
+                           "from training run %s; it is not part of this debugger run "
+                           "and does not affect its result.",
+                           trace.run_id.c_str());
+    } else {
+        ImGui::TextColored(DebuggerInfo(), ICON_FA_CIRCLE " Live training");
+        ImGui::SameLine();
+        ImGui::TextColored(DebuggerMuted(), "run %s", trace.run_id.c_str());
+    }
+    ImGui::Spacing();
 
     const TrainingTraceEvent* latest_task = nullptr;
     const TrainingTraceEvent* latest_validation = nullptr;
@@ -1936,7 +2239,7 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
                 trace.latest_loss, trace.latest_accuracy * 100.0f);
 
     if (!trace.warnings.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+        ImGui::TextColored(DebuggerWarning(),
                            "Warnings: %zu", trace.warnings.size());
         ImGui::SameLine();
         ImGui::TextDisabled("latest %s: %s",
@@ -1948,7 +2251,7 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
              i < static_cast<int>(trace.warnings.size());
              ++i) {
             const auto& warning = trace.warnings[i];
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+            ImGui::TextColored(DebuggerWarning(),
                                "%s:",
                                ClassifyTrainingWarning(warning));
             ImGui::SameLine();
@@ -2015,7 +2318,7 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
             }
         }
         if (latest_terminal) {
-            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f),
+            ImGui::TextColored(DebuggerWarning(),
                                "Terminal: %s",
                                latest_terminal->status.c_str());
             ImGui::SameLine();
@@ -2033,8 +2336,8 @@ void StudioDebuggerPanel::RenderTrainingTrace() {
     for (int i = start; i < static_cast<int>(trace.recent_events.size()); ++i) {
         const auto& event = trace.recent_events[i];
         ImVec4 color = event.status == "ok"
-            ? ImVec4(0.85f, 0.85f, 0.85f, 1.0f)
-            : ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
+            ? DebuggerText()
+            : DebuggerDanger();
         ImGui::PushStyleColor(ImGuiCol_Text, color);
         ImGui::Text("%s", event.stage.c_str());
         ImGui::PopStyleColor();
@@ -2247,18 +2550,21 @@ void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trac
     for (const auto& [thread_id, events] : lanes) {
         const float y = origin.y + lane_index * row_h;
         draw->AddText(ImVec2(origin.x, y + 8.0f),
-                      IM_COL32(185, 190, 202, 255),
+                      DebuggerU32(DebuggerMuted()),
                       thread_id.c_str());
         draw->AddLine(ImVec2(origin.x + label_w, y + row_h - 5.0f),
                       ImVec2(origin.x + label_w + 1200.0f, y + row_h - 5.0f),
-                      IM_COL32(62, 68, 82, 255));
+                      DebuggerU32(DebuggerBorder()));
 
         const int start = std::max(0, static_cast<int>(events.size()) - max_events_per_lane);
         float x = origin.x + label_w;
         for (int i = start; i < static_cast<int>(events.size()); ++i) {
             const auto& event = *events[i];
-            const std::string event_key = thread_id + "|" + std::to_string(i) + "|" +
-                event.timestamp + "|" + event.stage;
+            // Identity from the event itself, not its position: the recent
+            // window slides while training runs.
+            const std::string event_key = thread_id + "|" + event.timestamp + "|" +
+                event.stage + "|" + std::to_string(event.epoch) + "|" +
+                std::to_string(event.batch);
             if (event_key == selected_runtime_event_key_) {
                 selected_event = &event;
                 selected_thread_id = thread_id;
@@ -2269,23 +2575,23 @@ void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trac
                 : min_bar_w;
             const ImVec2 min = ImVec2(x, y + 7.0f);
             const ImVec2 max = ImVec2(x + bar_w, y + 25.0f);
-            ImU32 color = IM_COL32(88, 150, 255, 230);
+            ImU32 color = DebuggerU32(DebuggerInfo(), 0.9f);
             if (event.status != "ok") {
                 color = event.status == "warning"
-                    ? IM_COL32(245, 188, 65, 240)
-                    : IM_COL32(245, 86, 86, 240);
+                    ? DebuggerU32(DebuggerWarning(), 0.95f)
+                    : DebuggerU32(DebuggerDanger(), 0.95f);
             } else if (event.stage.find("Backward") != std::string::npos) {
-                color = IM_COL32(183, 111, 255, 230);
+                color = DebuggerU32(DebuggerAccentText(), 0.9f);
             } else if (event.stage.find("Forward") != std::string::npos) {
-                color = IM_COL32(76, 199, 132, 230);
+                color = DebuggerU32(DebuggerSuccess(), 0.9f);
             } else if (event.stage.find("Batch") != std::string::npos) {
-                color = IM_COL32(100, 170, 255, 230);
+                color = DebuggerU32(DebuggerInfo(), 0.9f);
             }
             draw->AddRectFilled(min, max, color, 3.0f);
             draw->AddRect(min, max,
                           event_key == selected_runtime_event_key_
-                              ? IM_COL32(255, 255, 255, 245)
-                              : IM_COL32(20, 24, 32, 220),
+                              ? DebuggerU32(DebuggerBright(), 0.96f)
+                              : DebuggerU32(DebuggerPanelBg(), 0.86f),
                           3.0f,
                           0,
                           event_key == selected_runtime_event_key_ ? 2.0f : 1.0f);
@@ -2427,11 +2733,11 @@ void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->AddRectFilled(graph_pos,
                         ImVec2(graph_pos.x + graph_w, graph_pos.y + graph_h),
-                        IM_COL32(24, 28, 36, 255),
+                        DebuggerU32(DebuggerPanelBg()),
                         4.0f);
     draw->AddRect(graph_pos,
                   ImVec2(graph_pos.x + graph_w, graph_pos.y + graph_h),
-                  IM_COL32(70, 76, 90, 255),
+                  DebuggerU32(DebuggerBorder()),
                   4.0f);
 
     const size_t max_points = 80;
@@ -2452,7 +2758,7 @@ void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
         const float y = graph_pos.y + graph_h * static_cast<float>(grid) / 4.0f;
         draw->AddLine(ImVec2(graph_pos.x, y),
                       ImVec2(graph_pos.x + graph_w, y),
-                      IM_COL32(48, 54, 66, 180));
+                      DebuggerU32(DebuggerBorder(), 0.7f));
     }
 
     for (size_t i = 1; i < point_count; ++i) {
@@ -2460,15 +2766,15 @@ void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
         const auto& current = *snapshots[start + i];
         draw->AddLine(point_for(i - 1, prev.cpu_allocated_bytes),
                       point_for(i, current.cpu_allocated_bytes),
-                      IM_COL32(76, 199, 132, 240),
+                      DebuggerU32(DebuggerSuccess(), 0.95f),
                       2.0f);
         draw->AddLine(point_for(i - 1, prev.af_allocated_bytes),
                       point_for(i, current.af_allocated_bytes),
-                      IM_COL32(88, 150, 255, 240),
+                      DebuggerU32(DebuggerInfo(), 0.95f),
                       2.0f);
         draw->AddLine(point_for(i - 1, prev.af_locked_bytes),
                       point_for(i, current.af_locked_bytes),
-                      IM_COL32(183, 111, 255, 230),
+                      DebuggerU32(DebuggerAccentText(), 0.9f),
                       1.5f);
     }
 
@@ -2494,11 +2800,11 @@ void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
         ImGui::EndTooltip();
     }
 
-    ImGui::TextColored(ImVec4(0.30f, 0.78f, 0.52f, 1.0f), "CyxWiz tensor allocator");
+    ImGui::TextColored(DebuggerSuccess(), "CyxWiz tensor allocator");
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.35f, 0.60f, 1.0f, 1.0f), "ArrayFire allocated");
+    ImGui::TextColored(DebuggerInfo(), "ArrayFire allocated");
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.72f, 0.44f, 1.0f, 1.0f), "ArrayFire locked");
+    ImGui::TextColored(DebuggerAccentText(), "ArrayFire locked");
     ImGui::SameLine();
     ImGui::TextDisabled("scale max %s", FormatBytesCompact(max_bytes).c_str());
     ImGui::TextDisabled(
@@ -2515,18 +2821,18 @@ void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
             ? std::min(1.0f, static_cast<float>(static_cast<double>(bytes) / static_cast<double>(max_bytes)))
             : 0.0f;
         ImDrawList* draw = ImGui::GetWindowDrawList();
-        draw->AddRectFilled(p, ImVec2(p.x + full_w, p.y + 14.0f), IM_COL32(36, 41, 52, 255), 3.0f);
+        draw->AddRectFilled(p, ImVec2(p.x + full_w, p.y + 14.0f), DebuggerU32(DebuggerInputBg()), 3.0f);
         draw->AddRectFilled(p, ImVec2(p.x + full_w * ratio, p.y + 14.0f), color, 3.0f);
-        draw->AddRect(p, ImVec2(p.x + full_w, p.y + 14.0f), IM_COL32(70, 76, 90, 255), 3.0f);
+        draw->AddRect(p, ImVec2(p.x + full_w, p.y + 14.0f), DebuggerU32(DebuggerBorder()), 3.0f);
         ImGui::Dummy(ImVec2(full_w, 16.0f));
         ImGui::SameLine();
         ImGui::TextDisabled("%s", FormatBytesCompact(bytes).c_str());
     };
 
-    draw_bar("CPU now", latest->cpu_allocated_bytes, IM_COL32(76, 199, 132, 230));
-    draw_bar("CPU peak", latest->cpu_peak_bytes, IM_COL32(245, 188, 65, 230));
-    draw_bar("AF alloc", latest->af_allocated_bytes, IM_COL32(88, 150, 255, 230));
-    draw_bar("AF locked", latest->af_locked_bytes, IM_COL32(183, 111, 255, 230));
+    draw_bar("CPU now", latest->cpu_allocated_bytes, DebuggerU32(DebuggerSuccess(), 0.9f));
+    draw_bar("CPU peak", latest->cpu_peak_bytes, DebuggerU32(DebuggerWarning(), 0.9f));
+    draw_bar("AF alloc", latest->af_allocated_bytes, DebuggerU32(DebuggerInfo(), 0.9f));
+    draw_bar("AF locked", latest->af_locked_bytes, DebuggerU32(DebuggerAccentText(), 0.9f));
 
     ImGui::Separator();
     ImGui::TextDisabled("ArrayFire buffers: alloc %llu  locked %llu",
@@ -2772,12 +3078,12 @@ void StudioDebuggerPanel::RenderGradientHealth() {
             const bool unobserved = status == "unobserved" ||
                 status == "partial_evidence";
             const ImVec4 status_color = healthy
-                ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
+                ? DebuggerSuccess()
                 : (non_finite
-                    ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f)
+                    ? DebuggerDanger()
                     : (unobserved
-                        ? ImVec4(0.65f, 0.7f, 0.78f, 1.0f)
-                        : ImVec4(1.0f, 0.82f, 0.35f, 1.0f)));
+                        ? DebuggerMuted()
+                        : DebuggerWarning()));
 
             ImGui::TableSetColumnIndex(0);
             const int node_id = static_cast<int>(
@@ -2975,8 +3281,8 @@ void StudioDebuggerPanel::RenderLossMetricExplainer() {
                     row, "shapes_compatible", false);
                 ImGui::TextColored(
                     compatible
-                        ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
-                        : ImVec4(1.0f, 0.45f, 0.45f, 1.0f),
+                        ? DebuggerSuccess()
+                        : DebuggerDanger(),
                     "%s", compatible ? "compatible" : "mismatch");
             }
 
@@ -3171,7 +3477,7 @@ void StudioDebuggerPanel::RenderModelConstructionTrace() {
                 ImGui::TextDisabled("%.0f tensors", JsonNumber(
                     payload, "parameter_tensor_count"));
                 if (JsonBool(payload, "parameter_numel_overflow", false)) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f),
+                    ImGui::TextColored(DebuggerDanger(),
                                        "count overflow");
                 }
             } else {
@@ -3189,8 +3495,8 @@ void StudioDebuggerPanel::RenderModelConstructionTrace() {
 
             ImGui::TableSetColumnIndex(6);
             const ImVec4 status_color = trace->status == "ok"
-                ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
-                : ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+                ? DebuggerSuccess()
+                : DebuggerWarning();
             ImGui::TextColored(status_color, "%s", trace->status.c_str());
             if (!trace->issues.empty()) {
                 ImGui::TextWrapped("%s", trace->issues.front().message.c_str());
@@ -3250,18 +3556,18 @@ void StudioDebuggerPanel::RenderShapeProphecyTrace() {
     if (first_divergence) {
         if (first_divergence->node_id >= 0) {
             ImGui::TextColored(
-                ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                DebuggerWarning(),
                 "First divergence: %s  node %d",
                 first_divergence->node_name.c_str(),
                 first_divergence->node_id);
         } else {
             ImGui::TextColored(
-                ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                DebuggerWarning(),
                 "First divergence: %s  node unbound",
                 first_divergence->node_name.c_str());
         }
     } else {
-        ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f),
+        ImGui::TextColored(DebuggerSuccess(),
                            "No shape divergence observed.");
     }
     ImGui::TextDisabled(
@@ -3332,14 +3638,14 @@ void StudioDebuggerPanel::RenderShapeProphecyTrace() {
 
             ImGui::TableSetColumnIndex(3);
             if (mismatch) {
-                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                ImGui::TextColored(DebuggerWarning(),
                                    "%s", mismatch_kind.c_str());
                 if (first) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                    ImGui::TextColored(DebuggerWarning(),
                                        "first divergence");
                 }
             } else {
-                ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f),
+                ImGui::TextColored(DebuggerSuccess(),
                                    "match");
             }
 
@@ -3492,7 +3798,7 @@ void StudioDebuggerPanel::RenderBackendDecisionAudit() {
 
             ImGui::TableSetColumnIndex(2);
             if (actual_observed) {
-                ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f),
+                ImGui::TextColored(DebuggerSuccess(),
                     "%s", JsonString(row, "actual_backend").c_str());
                 ImGui::TextDisabled("%s", JsonString(
                     row, "actual_evidence_phase", "same-run trace").c_str());
@@ -3503,11 +3809,11 @@ void StudioDebuggerPanel::RenderBackendDecisionAudit() {
 
             ImGui::TableSetColumnIndex(3);
             if (JsonBool(row, "fallback_observed_this_run", false)) {
-                ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f),
+                ImGui::TextColored(DebuggerDanger(),
                     "observed this run");
             } else if (JsonBool(
                            row, "prior_runtime_fallback_observed", false)) {
-                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                ImGui::TextColored(DebuggerWarning(),
                     "prior observation");
             } else if (JsonBool(row, "fallback_possible", false)) {
                 ImGui::TextDisabled("possible");
@@ -3532,8 +3838,8 @@ void StudioDebuggerPanel::RenderBackendDecisionAudit() {
 
             ImGui::TableSetColumnIndex(5);
             const ImVec4 reason_color = needs_attention
-                ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
-                : ImVec4(0.78f, 0.82f, 0.88f, 1.0f);
+                ? DebuggerWarning()
+                : DebuggerText();
             ImGui::TextColored(reason_color, "%s", JsonString(
                 row, "reason_code", "unclassified").c_str());
             const std::string unsupported_reason = JsonString(
@@ -3623,8 +3929,8 @@ void StudioDebuggerPanel::RenderLayerTimingBreakdown(const TrainingTraceSummary&
     for (int i = 0; i < limit; ++i) {
         const auto& row = rows[i];
         const ImVec4 color = row.duration_ms >= 100.0f
-            ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
-            : ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+            ? DebuggerWarning()
+            : DebuggerText();
         ImGui::Text("%s", row.direction.c_str()); ImGui::NextColumn();
         ImGui::Text("%d", row.layer); ImGui::NextColumn();
         ImGui::Text("%s", row.name.c_str()); ImGui::NextColumn();
@@ -3638,17 +3944,10 @@ void StudioDebuggerPanel::RenderLayerTimingBreakdown(const TrainingTraceSummary&
 
 void StudioDebuggerPanel::RenderTraceTimeline() {
     if (!session_.traces.empty()) {
-        if (selected_trace_index_ < 0 ||
-            selected_trace_index_ >= static_cast<int>(session_.traces.size()) ||
-            !TraceMatchesWorkflowFilter(
-                session_.traces[selected_trace_index_])) {
+        if (selected_trace_index_ >= static_cast<int>(session_.traces.size()) ||
+            (selected_trace_index_ >= 0 &&
+             !TraceMatchesWorkflowFilter(session_.traces[selected_trace_index_]))) {
             selected_trace_index_ = -1;
-            for (int i = 0; i < static_cast<int>(session_.traces.size()); ++i) {
-                if (TraceMatchesWorkflowFilter(session_.traces[i])) {
-                    selected_trace_index_ = i;
-                    break;
-                }
-            }
         }
 
         RenderTraceFilters();
@@ -3669,24 +3968,14 @@ void StudioDebuggerPanel::RenderTraceTimeline() {
             }
             label += "##trace_" + std::to_string(i);
 
-            ImVec4 row_color = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
-            if (trace.status == "ok" || trace.status == "passed") {
-                row_color = ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
-            } else if (trace.status == "warning" || trace.status == "zero" ||
-                       trace.status == "shape_mismatch") {
-                row_color = ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
-            } else if (trace.status == "failed" || trace.status == "nan") {
-                row_color = ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
-            }
-
-            ImGui::PushStyleColor(ImGuiCol_Text, row_color);
+            // Selecting a row inspects it; the canvas moves only on
+            // "Show on canvas" in the inspector.
+            ImGui::TextColored(DebuggerTraceStatusColor(trace.status), ICON_FA_CIRCLE);
+            ImGui::SameLine(0.0f, 6.0f);
             if (ImGui::Selectable(label.c_str(), selected)) {
                 selected_trace_index_ = i;
-                if (focus_node_callback_ && trace.node_id >= 0) {
-                    focus_node_callback_(trace.node_id);
-                }
+                selected_graph_node_ = trace.node_id;
             }
-            ImGui::PopStyleColor();
 
             ImGui::SameLine();
             ImGui::TextColored(TraceOutcomeColor(trace), "%s", TraceOutcomeLabel(trace).c_str());
@@ -3721,21 +4010,18 @@ void StudioDebuggerPanel::RenderTraceTimeline() {
             label += "  [node " + std::to_string(trace.node_id) + "]";
         }
 
-        ImVec4 row_color = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+        ImVec4 row_color = DebuggerText();
         if (trace.has_nan || trace.has_inf) {
-            row_color = ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
+            row_color = DebuggerDanger();
         } else if (trace.has_shape_mismatch()) {
-            row_color = ImVec4(1.0f, 0.82f, 0.35f, 1.0f);
+            row_color = DebuggerWarning();
         } else {
-            row_color = ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+            row_color = DebuggerSuccess();
         }
 
         ImGui::PushStyleColor(ImGuiCol_Text, row_color);
         if (ImGui::Selectable(label.c_str(), selected)) {
             selected_trace_index_ = i;
-            if (focus_node_callback_ && trace.node_id >= 0) {
-                focus_node_callback_(trace.node_id);
-            }
         }
         ImGui::PopStyleColor();
 
@@ -3774,11 +4060,11 @@ void StudioDebuggerPanel::RenderStudioEvents() {
     }
 
     for (const auto& event : session_.studio_events) {
-        ImVec4 color = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+        ImVec4 color = DebuggerText();
         if (event.status == "passed" || event.status == "ready" || event.status == "started") {
-            color = ImVec4(0.45f, 0.7f, 1.0f, 1.0f);
+            color = DebuggerInfo();
         } else if (event.status == "failed" || event.status == "blocked") {
-            color = ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
+            color = DebuggerDanger();
         }
 
         ImGui::PushStyleColor(ImGuiCol_Text, color);
@@ -3880,8 +4166,8 @@ void StudioDebuggerPanel::RenderTextPayloadInspector(const DebugTraceRecord& tra
         const bool padded = JsonBool(payload, "padded");
         const bool truncated = JsonBool(payload, "truncated");
         ImVec4 trunc_color = truncated
-            ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
-            : ImVec4(0.45f, 0.95f, 0.55f, 1.0f);
+            ? DebuggerWarning()
+            : DebuggerSuccess();
         ImGui::Text("Padded: %s", padded ? "yes" : "no");
         ImGui::SameLine();
         ImGui::TextColored(trunc_color, "Truncated: %s", truncated ? "yes" : "no");
@@ -4019,8 +4305,7 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
         const bool graph_level_trace = selected_trace_index_ >= 0 &&
             selected_trace_index_ < static_cast<int>(session_.traces.size()) &&
             session_.traces[selected_trace_index_].node_id < 0;
-        ImGui::Text("%s Inspector",
-                    graph_level_trace ? "Trace" : "Node");
+        (void)graph_level_trace;
         ImGui::BeginChild("StudioDebuggerUnifiedTraceDetails", ImVec2(0, 0), false);
 
         if (selected_trace_index_ < 0 ||
@@ -4185,10 +4470,10 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
                 trace.payload, "consistency_outcome", "unobserved");
             ImGui::TextColored(
                 outcome == "compatible"
-                    ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
+                    ? DebuggerSuccess()
                     : (outcome == "unobserved" || outcome == "warning"
-                        ? ImVec4(1.0f, 0.82f, 0.35f, 1.0f)
-                        : ImVec4(1.0f, 0.45f, 0.45f, 1.0f)),
+                        ? DebuggerWarning()
+                        : DebuggerDanger()),
                 "Consistency: %s", outcome.c_str());
             ImGui::Text("Inspection: %s (%s)",
                 JsonBool(trace.payload, "inspection_available", false)
@@ -4223,10 +4508,10 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
                     trace.payload, present_key, false);
                 ImGui::TextColored(
                     present
-                        ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
+                        ? DebuggerSuccess()
                         : (required
-                            ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f)
-                            : ImVec4(1.0f, 0.82f, 0.35f, 1.0f)),
+                            ? DebuggerDanger()
+                            : DebuggerWarning()),
                     "%s: %s", label, present ? "present" : "missing");
             };
             render_asset("Manifest", "manifest_expected",
@@ -4336,8 +4621,8 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
                     trace.payload, "numeric_exploding_values", false);
                 ImGui::TextColored(
                     exploding
-                        ? ImVec4(1.0f, 0.45f, 0.45f, 1.0f)
-                        : ImVec4(0.45f, 0.95f, 0.55f, 1.0f),
+                        ? DebuggerDanger()
+                        : DebuggerSuccess(),
                     "Exploding-value candidates: %.0f (|x| >= %.6g)",
                     JsonNumber(trace.payload, "numeric_exploding_count"),
                     JsonNumber(trace.payload,
@@ -4357,13 +4642,13 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
                     if (JsonBool(trace.payload,
                                  "dead_relu_candidate", false)) {
                         ImGui::TextColored(
-                            ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                            DebuggerWarning(),
                             "Dead ReLU / zero-output candidate");
                     }
                     if (JsonBool(trace.payload,
                                  "softmax_saturation_candidate", false)) {
                         ImGui::TextColored(
-                            ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+                            DebuggerWarning(),
                             "Softmax saturation candidate");
                     }
                 }
@@ -4375,8 +4660,8 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
                     false);
                 ImGui::TextColored(
                     compatible
-                        ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
-                        : ImVec4(1.0f, 0.45f, 0.45f, 1.0f),
+                        ? DebuggerSuccess()
+                        : DebuggerDanger(),
                     "Prediction/target shape contract: %s",
                     compatible ? "compatible" : "mismatch");
                 ImGui::TextWrapped("%s",
@@ -4468,12 +4753,6 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
             }
         }
 
-        if (trace.node_id >= 0 && focus_node_callback_) {
-            if (ImGui::Button("Focus Node")) {
-                focus_node_callback_(trace.node_id);
-            }
-        }
-
         if (!trace.issues.empty()) {
             ImGui::Separator();
             ImGui::Text("Trace issues");
@@ -4541,7 +4820,11 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
     const auto& trace = traces[selected_trace_index_];
     ImGui::Text("Name: %s", trace.name.c_str());
     ImGui::Text("Node id: %d", trace.node_id);
-    ImGui::Text("Type: %d", static_cast<int>(trace.type));
+    if (const auto* metadata = NodeMetadataRegistry::Instance().GetMetadata(trace.type)) {
+        ImGui::Text("Type: %s", metadata->name.c_str());
+    } else {
+        ImGui::Text("Type: node type %d", static_cast<int>(trace.type));
+    }
     ImGui::Text("Input predicted: %s",
                 FormatShape(trace.predicted_input_shape).c_str());
     ImGui::Text("Input actual: %s",
@@ -4553,10 +4836,10 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
     ImGui::Text("Duration: %.2f ms", trace.forward_ms);
 
     if (!trace.has_shape_mismatch()) {
-        ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f), "Shape match");
+        ImGui::TextColored(DebuggerSuccess(), "Shape match");
     } else {
         ImGui::TextColored(
-            ImVec4(1.0f, 0.82f, 0.35f, 1.0f),
+            DebuggerWarning(),
             "Shape mismatch: %s%s",
             ShapeMismatchKindName(trace.shape_mismatch),
             trace.is_first_shape_mismatch ? " (first divergence)" : "");
@@ -4568,14 +4851,14 @@ void StudioDebuggerPanel::RenderSelectedTraceDetails() {
     }
 
     if (trace.has_nan) {
-        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "NaN detected");
+        ImGui::TextColored(DebuggerDanger(), "NaN detected");
     }
     if (trace.has_inf) {
-        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "Inf detected");
+        ImGui::TextColored(DebuggerDanger(), "Inf detected");
     }
 
     if (trace.node_id >= 0 && focus_node_callback_) {
-        if (ImGui::Button("Focus Node")) {
+        if (ui::SecondaryButton("Show on canvas")) {
             focus_node_callback_(trace.node_id);
         }
     }
@@ -4626,7 +4909,7 @@ void StudioDebuggerPanel::RenderRecommendations() {
 
         if (rec.node_id >= 0 && focus_node_callback_) {
             ImGui::SameLine();
-            if (ImGui::SmallButton("Focus")) {
+            if (ui::LinkButton("Show on canvas")) {
                 focus_node_callback_(rec.node_id);
             }
         }

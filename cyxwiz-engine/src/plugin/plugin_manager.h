@@ -111,6 +111,10 @@ public:
     // Get load order respecting dependencies (topological sort)
     std::vector<std::string> ResolveLoadOrder() const;
 
+    // Removes the plugin's nodes, panels, data loaders, training hooks and
+    // analytics from their registries. Each registry takes its own lock.
+    void RemoveRegistrations(const std::string& plugin_id);
+
     // ===== Security =====
 
     // Render permission approval dialogs (call from main render loop)

@@ -64,6 +64,9 @@ message ExtendReservationResponse {
   int64 new_expires = 2;           // New expiration timestamp
   int64 additional_escrow = 3;     // Additional escrow amount locked
   string escrow_tx_hash = 4;       // Transaction hash for additional escrow
+  // A P2P token carrying the new end; the Engine forwards it to the node
+  // (TrainingCommand.reservation_extension_token, TOFIX118 gap 5).
+  string p2p_auth_token = 5;
   Error error = 10;
 }
 

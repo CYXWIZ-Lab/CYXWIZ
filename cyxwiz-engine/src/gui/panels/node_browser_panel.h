@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../core/extension_node_presentation.h"
 #include <string>
 #include <vector>
 #include <functional>
@@ -49,6 +50,17 @@ public:
     }
 
     /**
+     * Extension nodes (TOFIX125) share one NodeType; these callbacks carry
+     * their type id "<provider_id>:<TypeName>".
+     */
+    void SetExtensionHoverCallback(std::function<void(const std::string&)> callback) {
+        on_extension_hover_ = std::move(callback);
+    }
+    void SetExtensionSelectCallback(std::function<void(const std::string&)> callback) {
+        on_extension_select_ = std::move(callback);
+    }
+
+    /**
      * Render the panel
      */
     void Render();
@@ -91,8 +103,14 @@ private:
     void RenderFilterTags();
     void RenderCategorySection(cyxwiz::NodeCategory category);
     void RenderNodeGrid(const std::vector<const cyxwiz::NodeMetadata*>& nodes, int max_visible = -1);
-    void RenderNodeCard(const cyxwiz::NodeMetadata* metadata, float card_width);
-    void RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 size);
+    // extension: set for an extension node, whose identity is its type id.
+    void RenderNodeCard(const cyxwiz::NodeMetadata* metadata, float card_width,
+                        const cyxwiz::ExtensionPaletteEntry* extension = nullptr);
+    void RenderNodeIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 size,
+                        const cyxwiz::ExtensionPaletteEntry* extension = nullptr);
+    // Extension nodes (the Plugins section), through the same cards.
+    void RenderExtensionSection(bool show_all);
+    void RenderExtensionGrid(const std::vector<cyxwiz::ExtensionPaletteEntry>& entries);
     void RenderPortIndicators(const cyxwiz::NodeMetadata* metadata, ImVec2 icon_pos, ImVec2 icon_size);
     void RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata);
     std::vector<const cyxwiz::NodeMetadata*> ApplySupportFilter(
@@ -112,8 +130,9 @@ private:
     };
     const char* GetSupportFilterLabel(SupportFilterMode mode) const;
 
-    // Node creation
-    void CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata);
+    // Node creation (adds at the centre of the canvas view)
+    void CreateNodeAtMouse(const cyxwiz::NodeMetadata* metadata,
+                           const cyxwiz::ExtensionPaletteEntry* extension = nullptr);
 
     // Navigation
     void NavigateToCategory(cyxwiz::NodeCategory category);
@@ -147,6 +166,9 @@ private:
     std::function<void(cyxwiz::NodeType)> on_node_hover_;
     std::function<void(cyxwiz::NodeType)> on_node_select_;
     cyxwiz::NodeType pinned_node_type_ = cyxwiz::NodeType::Unknown;
+    std::function<void(const std::string&)> on_extension_hover_;
+    std::function<void(const std::string&)> on_extension_select_;
+    std::string pinned_extension_id_;
 
     // Layout constants
     static constexpr float PANEL_MIN_WIDTH = 280.0f;

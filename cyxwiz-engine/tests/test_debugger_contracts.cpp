@@ -4722,6 +4722,34 @@ void TestTextPreprocessingTraceContract() {
 
 } // namespace
 
+void TestErrorCodeTimelineCarriedForwardIssueOnce() {
+    // TOFIX128: Preflight repeats the compile findings; the timeline lists
+    // each finding once (first phase), not once per phase.
+    std::vector<cyxwiz::DebugTraceRecord> traces;
+    for (const char* phase : {"Compile", "Preflight"}) {
+        auto trace = cyxwiz::DebugNodeTraceContract::Make(
+            "timeline-dedupe", -1, phase, phase, phase,
+            cyxwiz::DebugTraceRole::CompileArtifact,
+            {}, {}, "graph", phase, "passed");
+        trace.issues.push_back({cyxwiz::IssueLevel::Warning, 1, "Sentiment CSV",
+                                "No pre-train data inspection node found.",
+                                cyxwiz::errors::Compiler::GenericIssue});
+        traces.push_back(trace);
+    }
+    cyxwiz::DebugErrorCodeTimeline timeline;
+    const auto summary = timeline.BuildTrace("timeline-dedupe", traces, {}, std::nullopt);
+    const auto& entries = summary.payload["entries"];
+    int matches = 0;
+    for (const auto& entry : entries) {
+        if (entry.value("message", std::string{}) == "No pre-train data inspection node found.") {
+            ++matches;
+            Check(entry.value("phase", std::string{}) == "compile",
+                  "carried-forward issue keeps its first phase");
+        }
+    }
+    Check(matches == 1, "carried-forward issue appears once in the error-code timeline");
+}
+
 int main() {
     TestDebugSessionSnapshotContract();
     TestPersistedTrainingTraceWarningSanitization();
@@ -4735,6 +4763,7 @@ int main() {
     TestSlowPathDetectorContract();
     TestTrainingStallDetectorContract();
     TestErrorCodeTimelineContract();
+    TestErrorCodeTimelineCarriedForwardIssueOnce();
     TestExportCorrelationTraceContract();
     TestArtifactConsistencyTraceContract();
     TestWindowsCrashImportContract();

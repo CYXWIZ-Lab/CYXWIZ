@@ -6,7 +6,7 @@
 
 #include "node_metadata_registry.h"
 #include "sql_step_contract.h"
-#include "../plugin/registries/plugin_node_registry.h"
+#include "extension_node_registry.h"
 
 #include <spdlog/spdlog.h>
 
@@ -1730,33 +1730,45 @@ MLNode CreateGraphNode(NodeType type,
         }
 
         case NodeType::PluginCustom: {
-            // Copy node info to avoid use-after-free if plugin unloads
-            auto info_opt = cyxwiz::plugin::PluginNodeRegistry::Instance().GetNodeTypeInfoCopy(name);
-            node.parameters["plugin_qualified_name"] = name;
-            node.plugin_qualified_name = name;
-            if (info_opt.has_value()) {
-                const auto& info = info_opt.value();
-                node.name = info.display_name;
-                for (const auto& pin : info.pins) {
-                    NodePin p;
-                    p.id = next_pin_id_++;
-                    p.type = PinType::Tensor;  // Default; plugins use Tensor type
-                    p.name = pin.name;
-                    p.is_input = pin.is_input;
-                    if (pin.is_input) node.inputs.push_back(p);
-                    else node.outputs.push_back(p);
-                }
-                for (const auto& [key, val] : info.default_parameters) {
-                    node.parameters[key] = val;
+            // `name` is the extension type id. A copy of the descriptor: the
+            // provider may unload while the node lives on.
+            const auto descriptor = cyxwiz::ExtensionNodeRegistry::Instance().Find(name);
+            node.extension_type_id = name;
+            if (descriptor.has_value()) {
+                node.name = descriptor->metadata.name;
+                node.extension_version = descriptor->version;
+                node.extension_content_hash = descriptor->content_hash;
+                const auto append_pins = [&](const std::vector<cyxwiz::PortDefinition>& ports,
+                                             bool is_input, std::vector<NodePin>& pins) {
+                    for (const auto& port : ports) {
+                        NodePin p;
+                        p.id = next_pin_id_++;
+                        p.type = port.type;
+                        p.name = port.name;
+                        p.is_input = is_input;
+                        p.description = port.description;
+                        pins.push_back(p);
+                    }
+                };
+                append_pins(descriptor->metadata.inputs, true, node.inputs);
+                append_pins(descriptor->metadata.outputs, false, node.outputs);
+                for (const auto& parameter : descriptor->metadata.parameters) {
+                    node.parameters[parameter.name] = parameter.default_value;
                 }
                 // Dynamic pin support
-                if (info.supports_dynamic_pins) {
+                if (descriptor->supports_dynamic_pins) {
                     node.has_dynamic_pins = true;
-                    node.dynamic_pin_trigger = info.dynamic_pin_trigger;
+                    node.dynamic_pin_trigger = descriptor->dynamic_pin_trigger;
                 }
             } else {
-                // Fallback: plugin not loaded, create generic node
-                node.name = "Plugin Node (Missing)";
+                // The extension is not registered: keep the identity and
+                // give the node one input and one output.
+                node.extension_missing = true;
+                std::string provider_id;
+                std::string type_name;
+                node.name = cyxwiz::SplitExtensionTypeId(name, provider_id, type_name)
+                    ? type_name + " (not installed)"
+                    : "Extension node (not installed)";
                 NodePin in; in.id = next_pin_id_++; in.type = PinType::Tensor;
                 in.name = "Input"; in.is_input = true; node.inputs.push_back(in);
                 NodePin out; out.id = next_pin_id_++; out.type = PinType::Tensor;
@@ -2617,6 +2629,10 @@ MLNode CreateGraphNode(NodeType type,
     }
 
     return node;
+}
+
+MLNode CreateExtensionGraphNode(const std::string& type_id, int& next_node_id, int& next_pin_id) {
+    return CreateGraphNode(NodeType::PluginCustom, type_id, next_node_id, next_pin_id);
 }
 
 void RebuildDataBoundaryPins(MLNode& node, bool legacy_contract, int& next_pin_id) {

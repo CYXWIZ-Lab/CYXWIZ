@@ -14,6 +14,11 @@
 
 namespace cyxwiz {
 
+std::pair<int, int> P2PTrainingPanel::GetEpochPosition() const {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    return {static_cast<int>(current_epoch_), static_cast<int>(total_epochs_)};
+}
+
 void P2PTrainingPanel::OnFailure(const network::TrainingFailureReport& report) {
     std::lock_guard<std::mutex> lock(data_mutex_);
     has_failure_ = true;

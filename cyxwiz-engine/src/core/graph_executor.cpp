@@ -375,19 +375,19 @@ bool GraphExecutor::EvaluatePluginNode(const gui::MLNode& node, float dt) {
     ctx.sim_time = sim_time_.load();
     ctx.dt = dt;
 
-    // Extract type name from plugin_qualified_name ("mujoco:MuJoCoPlant" -> "MuJoCoPlant")
-    auto colon = node.plugin_qualified_name.find(':');
+    // Extract type name from the extension type id ("mujoco:MuJoCoPlant" -> "MuJoCoPlant")
+    auto colon = node.extension_type_id.find(':');
     if (colon != std::string::npos) {
-        ctx.node_type_name = node.plugin_qualified_name.substr(colon + 1);
+        ctx.node_type_name = node.extension_type_id.substr(colon + 1);
     } else {
-        ctx.node_type_name = node.plugin_qualified_name;
+        ctx.node_type_name = node.extension_type_id;
     }
 
     // Gather inputs by pin name
     ctx.input_values = GatherInputs(node);
 
     // Call plugin
-    auto result = plugin_eval_callback_(node.plugin_qualified_name, ctx);
+    auto result = plugin_eval_callback_(node.extension_type_id, ctx);
 
     if (!result.success) {
         error_ = "Plugin node '" + node.name + "': " + result.error_message;

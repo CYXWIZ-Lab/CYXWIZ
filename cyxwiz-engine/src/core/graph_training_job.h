@@ -49,6 +49,10 @@ struct GraphTrainingJobCallbacks {
     EpochCallback on_epoch;
     // Polled between batches; true stops the run (reported as cancelled).
     std::function<bool()> should_cancel;
+    // Polled likewise; true stops the run after writing a resume checkpoint
+    // where the run supports one mid-epoch (reported as cancelled; TOFIX118
+    // gap 6).
+    std::function<bool()> should_stop_with_checkpoint;
     // Polled likewise; true holds training between batches until it turns
     // false again (TOFIX118 P4d).
     std::function<bool()> should_pause;

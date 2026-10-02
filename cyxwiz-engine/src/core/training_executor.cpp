@@ -2403,6 +2403,11 @@ void TrainingExecutor::Stop() {
     is_paused_.store(false);  // Unpause so thread can exit
 }
 
+void TrainingExecutor::StopWithCheckpoint() {
+    checkpoint_on_stop_.store(true);
+    Stop();
+}
+
 void TrainingExecutor::Pause() {
     is_paused_.store(true);
     UpdateMetrics([](TrainingMetrics& m) {
@@ -2480,7 +2485,22 @@ void TrainingExecutor::RunTrainingEpochSequence(
     const int run_model_seed = GetMetrics().randomness.model_seed;
 
     while (!batcher.IsEpochComplete()) {
-        if (ShouldStop()) break;
+        if (ShouldStop()) {
+            // Keep the work done so far in this epoch (TOFIX118 gap 6): only
+            // on a completed optimizer step, like the periodic checkpoint.
+            if (checkpoint_on_stop_.load() && !resume_root_.empty() && batch_num > 0 &&
+                gradient_accumulated_batches_ == 0) {
+                TrainingEpochProgress progress;
+                progress.epoch = epoch;
+                progress.next_batch = batch_num;
+                progress.epoch_loss = epoch_loss;
+                progress.loss_weight_sum = loss_weight_sum;
+                progress.sample_count = sample_count;
+                progress.metrics = aggregate_metrics;
+                SaveResumeCheckpoint(epoch - 1, progress);
+            }
+            break;
+        }
         if (!WaitWhilePaused()) break;
 
         // Each batch draws from (seed, epoch, batch): a batch replayed after

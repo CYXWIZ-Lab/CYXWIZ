@@ -984,12 +984,14 @@ def compatibility_contract(backend: str) -> dict[str, object]:
     elif backend == "cuda":
         kinds = ["gpu"]
         providers = ["nvidia-driver"]
-        recommendations = ["opencl", "cpu"]
+        # recommendation_targets = backends this pack may be recommended for
+        # once its route verifies (backend_pack_compatibility.cpp).
+        recommendations = ["cuda"]
         confidence = "stable_hardware"
     elif backend == "opencl":
         kinds = ["cpu", "gpu", "accelerator"]
         providers = ["opencl-icd"]
-        recommendations = ["cuda", "oneapi", "cpu"]
+        recommendations = ["opencl"]
         confidence = "stable_hardware"
     else:
         # No CPU: the SYCL CPU device recompiles kernels per process (sum took
@@ -997,7 +999,8 @@ def compatibility_contract(backend: str) -> dict[str, object]:
         # benchmark in milliseconds (tofix119 D).
         kinds = ["gpu", "accelerator"]
         providers = ["sycl-unified-runtime"]
-        recommendations = ["opencl", "cpu"]
+        # oneAPI is available but never auto-preferred (route policy).
+        recommendations = []
         confidence = "stable_hardware"
     return {
         "device_kinds": kinds,

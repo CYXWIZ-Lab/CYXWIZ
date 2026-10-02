@@ -588,6 +588,14 @@ bool P2PClient::SendNewJobConfig(const cyxwiz::protocol::JobConfig& config) {
     return success;
 }
 
+bool P2PClient::SendReservationExtension(const std::string& p2p_auth_token) {
+    cyxwiz::protocol::TrainingCommand cmd;
+    cmd.set_reservation_extension_token(p2p_auth_token);
+    const bool success = SendTrainingCommand(cmd);
+    if (!success) spdlog::error("P2PClient: Failed to send the reservation extension");
+    return success;
+}
+
 bool P2PClient::SendReservationEnd() {
     spdlog::debug("P2PClient: Sending reservation end signal");
 

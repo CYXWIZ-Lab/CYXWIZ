@@ -1,6 +1,6 @@
 #include "plugin_context.h"
 #include "security/permission_store.h"
-#include "registries/plugin_node_registry.h"
+#include "../core/extension_node_registry.h"
 #include "registries/plugin_panel_registry.h"
 #include "registries/plugin_data_loader_registry.h"
 #include "registries/plugin_training_hook_manager.h"
@@ -54,8 +54,24 @@ bool PluginContext::CheckPermission(PluginPermission required, const char* actio
 
 bool PluginContext::RegisterNodeProvider(INodeProvider* provider) {
     if (!CheckPermission(PluginPermission::UIModify, "RegisterNodeProvider")) return false;
-    PluginNodeRegistry::Instance().Register(plugin_id_, provider);
-    return true;
+    if (!provider) return false;
+
+    // NOTE: GetNodeTypes() returns a vector allocated by the plugin library.
+    // The engine registers through EnumerateNodeTypes in plugin_manager.cpp,
+    // which copies strings before the library's vector is destroyed.
+    bool all_registered = true;
+    for (const auto& info : provider->GetNodeTypes()) {
+        ExtensionNodeRegistry::Registration registration;
+        registration.descriptor = DescribeSignalNode(plugin_id_, info);
+        registration.descriptor.source_path = plugin_dir_.string();
+        registration.signal_provider = provider;
+        std::string error;
+        if (!ExtensionNodeRegistry::Instance().Register(std::move(registration), error)) {
+            spdlog::warn("[Plugin:{}] node not registered: {}", plugin_id_, error);
+            all_registered = false;
+        }
+    }
+    return all_registered;
 }
 
 bool PluginContext::RegisterPanelProvider(IPanelProvider* provider) {

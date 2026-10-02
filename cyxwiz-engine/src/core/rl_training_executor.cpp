@@ -1,5 +1,5 @@
 #include "rl_training_executor.h"
-#include "../plugin/registries/plugin_node_registry.h"
+#include "extension_node_registry.h"
 #include "../plugin/interfaces/i_node_provider.h"
 #include <spdlog/spdlog.h>
 #include <chrono>
@@ -80,8 +80,8 @@ void RLTrainingExecutor::TrainingLoop() {
     spdlog::info("  Plugin: {}", config_.plugin_qualified_name);
 
     // Get the MuJoCo plugin provider
-    auto* provider = plugin::PluginNodeRegistry::Instance()
-                         .GetNodeProvider(config_.plugin_qualified_name);
+    auto* provider = ExtensionNodeRegistry::Instance()
+                         .SignalProvider(config_.plugin_qualified_name);
     if (!provider) {
         spdlog::error("RLTrainingExecutor: Plugin provider not found for '{}'",
                        config_.plugin_qualified_name);

@@ -1,6 +1,6 @@
 # The GUI-free compile-and-train path shared by every host (TOFIX118 P2).
 #
-# cyxwiz-training-hooks: the plugin training-hook manager and plugin node
+# cyxwiz-training-hooks: the plugin training-hook manager and extension node
 # registry, shared by the plugin SDK and the core (linked once per exe).
 # cyxwiz-training-core: graph loader and compiler, launch preparation, model
 # builder, training/test executors, Arrow/Parquet/sequence/sparse batchers,
@@ -70,7 +70,7 @@ find_package(HighFive CONFIG QUIET)
 
 add_library(cyxwiz-training-hooks STATIC
     ${_cyxwiz_engine_src}/plugin/registries/plugin_training_hook_manager.cpp
-    ${_cyxwiz_engine_src}/plugin/registries/plugin_node_registry.cpp
+    ${_cyxwiz_engine_src}/core/extension_node_registry.cpp
 )
 target_include_directories(cyxwiz-training-hooks PUBLIC ${_cyxwiz_engine_src})
 target_link_libraries(cyxwiz-training-hooks PUBLIC spdlog::spdlog)
@@ -88,11 +88,13 @@ add_library(cyxwiz-training-core STATIC
     ${_cyxwiz_engine_src}/core/graph_compiler_dataset_hooks.cpp
     ${_cyxwiz_engine_src}/core/graph_node_factory.cpp
     ${_cyxwiz_engine_src}/core/graph_document.cpp
+    ${_cyxwiz_engine_src}/core/extension_node_document.cpp
     ${_cyxwiz_engine_src}/core/graph_training_prep.cpp
     ${_cyxwiz_engine_src}/core/graph_training_job.cpp
     ${_cyxwiz_engine_src}/core/compiled_graph_plan.cpp
     ${_cyxwiz_engine_src}/core/graph_topology_utils.cpp
     ${_cyxwiz_engine_src}/core/node_metadata_registry.cpp
+    ${_cyxwiz_engine_src}/core/extension_node_metadata.cpp
     ${_cyxwiz_engine_src}/core/pipeline_runtime_capabilities.cpp
     ${_cyxwiz_engine_src}/core/sequence_arrow_batcher.cpp
     ${_cyxwiz_engine_src}/core/sha256_digest.cpp
