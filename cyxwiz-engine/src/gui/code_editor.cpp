@@ -63,8 +63,8 @@ CodeEditor::Palette CodeEditor::BuildPalette() const {
     const ui::Tokens& t = ui::CurrentTokens();
     const ImVec4 black(0, 0, 0, 1);
     const ImVec4 white(1, 1, 1, 1);
-    // The code surface is one step darker (lighter on light themes) than the window.
-    const ImVec4 bg = t.light ? ui::Mix(t.bg_window, white, 0.6f) : ui::Mix(t.bg_window, black, 0.18f);
+    // The code surface is the window's own colour (owner 2026-10-02).
+    const ImVec4 bg = ui::WithAlpha(t.bg_window, 1.0f);
     Palette p{};
     p.bg = ui::ToU32(bg);
     p.current_line = ui::ToU32(ui::Mix(bg, t.light ? black : white, 0.035f));

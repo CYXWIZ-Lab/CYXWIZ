@@ -156,9 +156,30 @@ void Theme::ApplyPreset(ThemePreset preset) {
         default:                           ApplyCyxWizDark(); break;
     }
 
+    HarmonizeSurfaces();
     ApplyStyleConfig();
     ApplyImNodesStyle();  // Apply matching node editor styling
     ApplyDockStyle();     // Apply matching dock tab styling
+}
+
+// Owner 2026-10-02: a list or table sits on the same background as the
+// window around it. Presets gave scrollbar tracks, table headers and grid
+// lines their own darker or lighter greys (Unreal Engine: window 41, header
+// 31, scrollbar track 20), so tables looked pasted on. These follow the
+// window now; each preset keeps its own text, accent and window colours.
+void Theme::HarmonizeSurfaces() {
+    ImVec4* c = ImGui::GetStyle().Colors;
+    const ImVec4 bg = c[ImGuiCol_WindowBg];
+    const ImVec4 text = c[ImGuiCol_Text];
+    auto toward_text = [&](float amount) {
+        return ImVec4(bg.x + (text.x - bg.x) * amount, bg.y + (text.y - bg.y) * amount, bg.z + (text.z - bg.z) * amount, 1.0f);
+    };
+    c[ImGuiCol_ScrollbarBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+    c[ImGuiCol_TableHeaderBg] = ImVec4(bg.x, bg.y, bg.z, 1.0f);
+    c[ImGuiCol_TableBorderStrong] = toward_text(0.10f);
+    c[ImGuiCol_TableBorderLight] = toward_text(0.06f);
+    c[ImGuiCol_TableRowBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+    c[ImGuiCol_TableRowBgAlt] = ImVec4(text.x, text.y, text.z, 0.025f);
 }
 
 void Theme::ApplyConfig(const ThemeConfig& config) {

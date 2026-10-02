@@ -117,6 +117,8 @@ public:
 
     // Apply matching dock style for current theme
     void ApplyDockStyle();
+    // Scrollbar tracks, table headers and grid lines in the window tone, for every preset.
+    void HarmonizeSurfaces();
 
 private:
     // Theme application methods
