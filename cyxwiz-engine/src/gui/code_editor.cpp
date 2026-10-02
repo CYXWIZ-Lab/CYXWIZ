@@ -473,6 +473,10 @@ bool CodeEditor::Render(const char* id, const ImVec2& size) {
         return false;
     }
     focused_ = ImGui::IsWindowFocused();
+    // Esc is the editor's (extra cursors, completion list, signature help).
+    // Unowned, ImGui's keyboard navigation takes it and moves focus out of
+    // this child window, so typing after Esc went nowhere.
+    if (focused_) ImGui::SetKeyOwner(ImGuiKey_Escape, ImGui::GetID("##escape"));
 
     const float font_size = ImGui::GetFontSize();
     ImFont* font = ImGui::GetFont();
