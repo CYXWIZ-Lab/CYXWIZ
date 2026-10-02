@@ -62,6 +62,8 @@ void ScriptEditorPanel::Render() {
     CheckFilesOnDisk();
     RenderPlotWindows();
     PollLanguageResults();  // completion, details, problems, signatures, hover (P3)
+    if (active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size()) && tabs_[active_tab_index_])
+        UpdateDiagnostics(*tabs_[active_tab_index_]);
     if (!deferred_open_path_.empty()) {
         const std::string path = std::move(deferred_open_path_);
         deferred_open_path_.clear();
@@ -567,7 +569,10 @@ void ScriptEditorPanel::RenderEditor() {
         code.RequestFocus();
         request_focus_ = false;
     }
-    const bool text_changed = code.Render("##code", ImVec2(0.0f, available_height));
+    // Problems: underlines, and the panel under the code when it is open (board 7).
+    ApplyProblemSquiggles(*tab, code, tab->problems);
+    const float problems_height = tab->show_problems ? 168.0f : 0.0f;
+    const bool text_changed = code.Render("##code", ImVec2(0.0f, available_height - problems_height));
     completion_just_accepted_ = false;
     if (find_.open && !narrow_find) {
         const ImVec2 after = ImGui::GetCursorScreenPos();
@@ -581,6 +586,8 @@ void ScriptEditorPanel::RenderEditor() {
     if (pushed_editor_font) {
         ImGui::PopFont();
     }
+    // Under the code, in the interface font (board 7).
+    if (tab->show_problems) RenderProblemsPanel(*tab, problems_height);
     // The right-click menu uses the interface font.
     if (code.TakeContextMenuRequest()) ImGui::OpenPopup("##code_menu");
     RenderCodeContextMenu(*tab);

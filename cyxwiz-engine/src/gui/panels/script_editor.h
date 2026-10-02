@@ -231,6 +231,11 @@ private:
         std::vector<NotebookVariable> variables;
         std::uint64_t variables_generation = 0;
         char variables_filter[64] = {};
+        // Problems (TOFIX133 P3 step 3.4): the script's last pyflakes check.
+        std::vector<lang::Problem> problems;
+        std::uint64_t problems_version = 0;  // the text version they are for (+1; 0 = not checked)
+        bool show_problems = false;
+        bool problems_show_warnings = true;
 
         // Breakpoints for traditional script mode (1-based line numbers)
         std::vector<int> breakpoints;
@@ -477,6 +482,31 @@ private:
     void AcceptCompletion();
     void OpenCompletionList(bool fallback);
     bool HandleLanguageResult(const scripting::LanguageService::Result& result);
+    // Problems (step 3.4)
+    struct PendingDiagnostics {
+        std::uint64_t document_id = 0;
+        std::string cell_id;
+        std::uint64_t version = 0;
+    };
+    struct ProblemCounts {
+        int errors = 0;
+        int warnings = 0;
+    };
+    void UpdateDiagnostics(EditorTab& tab);
+    bool HandleDiagnosticsResult(const scripting::LanguageService::Result& result);
+    void ApplyProblemSquiggles(const EditorTab& tab, CodeEditor& code, const std::vector<lang::Problem>& problems);
+    ProblemCounts CountProblems(const EditorTab& tab) const;
+    float ProblemCountsWidth(const EditorTab& tab) const;
+    bool ProblemCountsItem(EditorTab& tab);
+    void RenderProblemsPanel(EditorTab& tab, float height);
+    std::unordered_map<std::uint64_t, PendingDiagnostics> pending_diagnostics_;
+    std::uint64_t diag_seen_doc_ = 0;
+    std::string diag_seen_cell_;
+    std::uint64_t diag_seen_version_ = 0;
+    double diag_changed_at_ = 0.0;
+    std::uint64_t diag_in_flight_doc_ = 0;
+    std::string diag_in_flight_cell_;
+    std::uint64_t diag_in_flight_version_ = 0;
 
     // Focus tracking
     bool is_focused_ = false;

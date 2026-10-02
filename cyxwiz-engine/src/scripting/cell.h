@@ -7,6 +7,7 @@
 #include <chrono>
 #include <random>
 #include "../gui/code_editor.h"
+#include "../core/language_results.h"
 
 // Use GLAD for cross-platform OpenGL loading
 #include <glad/glad.h>
@@ -154,6 +155,11 @@ struct Cell {
 
     // Other keys of an .ipynb cell (id, metadata, attachments) as JSON.
     std::string ipynb_extra;
+
+    // pyflakes problems of the last check (TOFIX133 P3), and the text
+    // version it was for (+1; 0 = not checked).
+    std::vector<lang::Problem> problems;
+    std::uint64_t problems_version = 0;
 
     Cell() {
         id = GenerateId();

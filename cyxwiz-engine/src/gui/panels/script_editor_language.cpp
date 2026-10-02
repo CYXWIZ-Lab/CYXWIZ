@@ -8,6 +8,8 @@
 #include "../../core/project_manager.h"
 #include "../../scripting/scripting_engine.h"
 #include "../editor_fonts.h"
+#include "../icons.h"
+#include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
 
@@ -15,7 +17,9 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cfloat>
+#include <cstdio>
 #include <string>
 
 namespace cyxwiz {
@@ -241,7 +245,7 @@ void ScriptEditorPanel::RenderCompletionPopup() {
 }
 
 bool ScriptEditorPanel::HandleLanguageResult(const scripting::LanguageService::Result& result) {
-    (void)result;
+    if (result.kind == scripting::LanguageService::Kind::Diagnostics) return HandleDiagnosticsResult(result);
     return false;
 }
 
@@ -256,6 +260,307 @@ void ScriptEditorPanel::AcceptCompletion() {
         }
     }
     CloseCompletionPopup();
+}
+
+
+// ---------------------------------------------------------------------------
+// Problems (step 3.4, boards 6-7): pyflakes half a second after typing
+// stops, underlines in the code, counts in the status bar, a Problems panel.
+
+namespace {
+// pyflakes columns count characters; the editor's are UTF-8 byte offsets.
+int ByteColumn(const std::string& line, int char_col) {
+    int chars = 0;
+    for (int i = 0; i < static_cast<int>(line.size()); ++i) {
+        if ((static_cast<unsigned char>(line[static_cast<size_t>(i)]) & 0xC0) == 0x80) continue;
+        if (chars == char_col) return i;
+        ++chars;
+    }
+    return static_cast<int>(line.size());
+}
+
+void SetSquigglesFrom(CodeEditor& code, const std::vector<lang::Problem>& problems, bool show_warnings) {
+    std::vector<CodeEditor::Squiggle> marks;
+    const editor::Document& doc = code.Doc();
+    for (const auto& p : problems) {
+        if (!p.error && !show_warnings) continue;
+        const int line = p.line - 1;
+        if (line < 0 || line >= doc.LineCount()) continue;
+        const std::string& text = doc.Line(line);
+        lang::Problem bytes = p;
+        bytes.column = ByteColumn(text, p.column);
+        const auto range = lang::ProblemRange(text, bytes);
+        marks.push_back({{line, range.first}, {line, std::min(range.second, static_cast<int>(text.size()) + 1)}, p.error});
+    }
+    code.SetSquiggles(std::move(marks));
+}
+}  // namespace
+
+void ScriptEditorPanel::UpdateDiagnostics(EditorTab& tab) {
+    if (!scripting_engine_) return;
+    const double now = ImGui::GetTime();
+    // The code to check: the script, or the notebook cell being edited.
+    CodeEditor* code = nullptr;
+    std::string cell_id;
+    std::vector<std::string> known;
+    if (!tab.cell_mode) {
+        if (tab.is_loading || tab.is_large_file || tab.load_failed) return;
+        code = &tab.editor;
+    } else {
+        if (tab.editing_cell < 0 || tab.editing_cell >= tab.cell_manager.GetCellCount()) return;
+        Cell& cell = tab.cell_manager.GetCell(tab.editing_cell);
+        if (cell.type != CellType::Code) return;
+        code = &cell.editor;
+        cell_id = cell.id;
+        // Names the notebook already has are not "undefined" in a cell.
+        for (const auto& v : tab.variables) known.push_back(v.name);
+        for (int i = 0; i < tab.cell_manager.GetCellCount(); ++i) {
+            const Cell& other = tab.cell_manager.GetCell(i);
+            if (other.type != CellType::Code || other.id == cell.id) continue;
+            // Names assigned or imported in other cells (a light scan).
+            size_t start = 0;
+            while (start < other.source.size()) {
+                size_t end = other.source.find('\n', start);
+                if (end == std::string::npos) end = other.source.size();
+                const std::string line = other.source.substr(start, end - start);
+                size_t i0 = 0;
+                while (i0 < line.size() && (std::isalnum(static_cast<unsigned char>(line[i0])) || line[i0] == '_')) ++i0;
+                if (i0 > 0 && line.find('=') != std::string::npos && line.find_first_not_of(" \t", i0) == line.find('=') &&
+                    line.compare(line.find('='), 2, "==") != 0)
+                    known.push_back(line.substr(0, i0));
+                for (const char* kw : {"import ", "def ", "class "}) {
+                    const size_t k = line.rfind(kw, 0) == 0 ? 0 : std::string::npos;
+                    if (k == 0) {
+                        size_t a = std::string(kw).size();
+                        size_t b = a;
+                        while (b < line.size() && (std::isalnum(static_cast<unsigned char>(line[b])) || line[b] == '_')) ++b;
+                        if (b > a) known.push_back(line.substr(a, b - a));
+                    }
+                }
+                const size_t imp = line.find(" import ");
+                if (line.rfind("from ", 0) == 0 && imp != std::string::npos) {
+                    std::string names = line.substr(imp + 8);
+                    size_t s0 = 0;
+                    while (s0 < names.size()) {
+                        size_t comma = names.find(',', s0);
+                        std::string n = names.substr(s0, comma == std::string::npos ? std::string::npos : comma - s0);
+                        const size_t as = n.find(" as ");
+                        if (as != std::string::npos) n = n.substr(as + 4);
+                        n.erase(0, n.find_first_not_of(" ("));
+                        n.erase(n.find_last_not_of(" )") + 1);
+                        if (!n.empty()) known.push_back(n);
+                        if (comma == std::string::npos) break;
+                        s0 = comma + 1;
+                    }
+                }
+                start = end + 1;
+            }
+        }
+    }
+    const std::uint64_t version = code->Doc().Version();
+    if (diag_seen_doc_ != tab.document_id || diag_seen_cell_ != cell_id || diag_seen_version_ != version) {
+        diag_seen_doc_ = tab.document_id;
+        diag_seen_cell_ = cell_id;
+        diag_seen_version_ = version;
+        diag_changed_at_ = now;
+        return;
+    }
+    const std::uint64_t have = cell_id.empty() ? tab.problems_version : tab.cell_manager.GetCell(tab.editing_cell).problems_version;
+    if (have == version + 1 || now - diag_changed_at_ < 0.5) return;  // up to date, or still typing
+    if (diag_in_flight_version_ == version + 1 && diag_in_flight_doc_ == tab.document_id && diag_in_flight_cell_ == cell_id) return;
+    if (!LanguageReady()) return;
+    auto request = LanguageRequest(scripting::LanguageService::Kind::Diagnostics, *code, code->Doc().Primary().head);
+    request.known_names = std::move(known);
+    request.namespace_key.clear();  // pyflakes reads the text only; names come in known_names
+    const std::uint64_t id = scripting_engine_->Language().Submit(std::move(request));
+    if (id == 0) return;
+    // Versions are stored +1 so 0 means "never checked".
+    pending_diagnostics_[id] = {tab.document_id, cell_id, version + 1};
+    diag_in_flight_doc_ = tab.document_id;
+    diag_in_flight_cell_ = cell_id;
+    diag_in_flight_version_ = version + 1;
+}
+
+bool ScriptEditorPanel::HandleDiagnosticsResult(const scripting::LanguageService::Result& result) {
+    auto it = pending_diagnostics_.find(result.id);
+    if (it == pending_diagnostics_.end()) return true;  // replaced by a newer request
+    const PendingDiagnostics target = it->second;
+    pending_diagnostics_.erase(it);
+    if (diag_in_flight_version_ == target.version && diag_in_flight_doc_ == target.document_id) diag_in_flight_version_ = 0;
+    const int index = FindTabIndex(target.document_id);
+    if (index < 0) return true;
+    auto& tab = *tabs_[index];
+    std::vector<lang::Problem> problems = lang::ParseProblems(result.json);
+    if (target.cell_id.empty()) {
+        tab.problems = std::move(problems);
+        tab.problems_version = target.version;
+    } else {
+        for (int i = 0; i < tab.cell_manager.GetCellCount(); ++i) {
+            Cell& cell = tab.cell_manager.GetCell(i);
+            if (cell.id != target.cell_id) continue;
+            cell.problems = std::move(problems);
+            cell.problems_version = target.version;
+        }
+    }
+    return true;
+}
+
+void ScriptEditorPanel::ApplyProblemSquiggles(const EditorTab& tab, CodeEditor& code, const std::vector<lang::Problem>& problems) {
+    // The last check's problems stay until the next one (0.5 s after typing stops).
+    SetSquigglesFrom(code, problems, tab.problems_show_warnings);
+}
+
+ScriptEditorPanel::ProblemCounts ScriptEditorPanel::CountProblems(const EditorTab& tab) const {
+    ProblemCounts c;
+    auto add = [&](const std::vector<lang::Problem>& list) {
+        for (const auto& p : list) (p.error ? c.errors : c.warnings)++;
+    };
+    if (!tab.cell_mode) add(tab.problems);
+    else
+        for (int i = 0; i < tab.cell_manager.GetCellCount(); ++i) add(tab.cell_manager.GetCell(i).problems);
+    return c;
+}
+
+float ScriptEditorPanel::ProblemCountsWidth(const EditorTab& tab) const {
+    const ProblemCounts c = CountProblems(tab);
+    char text[64];
+    std::snprintf(text, sizeof(text), "%s %d   %s %d", ICON_FA_CIRCLE_XMARK, c.errors, ICON_FA_TRIANGLE_EXCLAMATION, c.warnings);
+    return ImGui::CalcTextSize(text).x + 16.0f;
+}
+
+// The counts in the status bar (board 6): coloured icons, click for the panel.
+bool ScriptEditorPanel::ProblemCountsItem(EditorTab& tab) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const ProblemCounts c = CountProblems(tab);
+    char errors[16], warnings[16];
+    std::snprintf(errors, sizeof(errors), "%d", c.errors);
+    std::snprintf(warnings, sizeof(warnings), "%d", c.warnings);
+    const float w = ProblemCountsWidth(tab);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = ImGui::GetFrameHeight();
+    const bool clicked = ImGui::InvisibleButton("##problem_counts", ImVec2(w, h));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (hovered || tab.show_problems) dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ui::ToU32(hovered ? t.hover : ui::WithAlpha(t.text, 0.06f)), 4.0f);
+    const float y = p.y + (h - ImGui::GetFontSize()) * 0.5f;
+    float x = p.x + 8.0f;
+    auto part = [&](const char* icon, const ImVec4& colour, const char* count) {
+        dl->AddText(ImVec2(x, y), ui::ToU32(colour), icon);
+        x += ImGui::CalcTextSize(icon).x + ImGui::CalcTextSize(" ").x;
+        dl->AddText(ImVec2(x, y), ui::ToU32(t.text_dim), count);
+        x += ImGui::CalcTextSize(count).x + ImGui::CalcTextSize("   ").x;
+    };
+    part(ICON_FA_CIRCLE_XMARK, c.errors ? t.error : t.text_dim, errors);
+    part(ICON_FA_TRIANGLE_EXCLAMATION, c.warnings ? t.warning : t.text_dim, warnings);
+    if (hovered) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        std::vector<lang::Problem> all;
+        if (!tab.cell_mode) all = tab.problems;
+        else
+            for (int i = 0; i < tab.cell_manager.GetCellCount(); ++i)
+                for (const auto& pr : tab.cell_manager.GetCell(i).problems) all.push_back(pr);
+        ImGui::SetTooltip("%s (pyflakes). Click to show the Problems panel.", lang::ProblemSummary(all).c_str());
+    }
+    if (clicked) tab.show_problems = !tab.show_problems;
+    return clicked;
+}
+
+// Problems panel (board 7): under the code, one row per problem; click a
+// row to go there.
+void ScriptEditorPanel::RenderProblemsPanel(EditorTab& tab, float height) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    struct Row {
+        lang::Problem p;
+        int cell = -1;  // notebook cell index
+        int count = 0;  // its [n]
+    };
+    std::vector<Row> rows;
+    if (!tab.cell_mode) {
+        for (const auto& p : tab.problems) rows.push_back({p});
+    } else {
+        for (int i = 0; i < tab.cell_manager.GetCellCount(); ++i) {
+            const Cell& cell = tab.cell_manager.GetCell(i);
+            for (const auto& p : cell.problems) rows.push_back({p, i, cell.execution_count});
+        }
+    }
+    std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.p.error && !b.p.error; });
+    int errors = 0, warnings = 0;
+    for (const auto& r : rows) (r.p.error ? errors : warnings)++;
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::Mix(t.bg_window, t.bg_panel, 0.6f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 6.0f));
+    ImGui::BeginChild("##problems_panel", ImVec2(0.0f, height), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+    ImGui::AlignTextToFramePadding();
+    {
+        ui::FontScope bold(ui::Font::Bold);
+        ImGui::TextUnformatted("Problems");
+    }
+    ImGui::SameLine(0.0f, 12.0f);
+    std::vector<lang::Problem> plain;
+    for (const auto& r : rows) plain.push_back(r.p);
+    ImGui::TextColored(t.text_dim, "%s \xC2\xB7 %s", tab.cell_mode ? "this notebook" : "this file", lang::ProblemSummary(plain).c_str());
+    const float close_w = ui::ButtonWidth(ICON_FA_XMARK, ui::ButtonSize::Small);
+    const float check_w = ImGui::GetFrameHeight() + ImGui::CalcTextSize("Show warnings").x + 16.0f;
+    ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 12.0f, ImGui::GetContentRegionMax().x - close_w - check_w - 8.0f));
+    ImGui::Checkbox("Show warnings", &tab.problems_show_warnings);
+    ImGui::SameLine();
+    if (ui::GhostButton(ICON_FA_XMARK "##close_problems")) tab.show_problems = false;
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Close Problems");
+
+    ImGui::BeginChild("##problem_rows", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+    if (rows.empty()) {
+        ImGui::TextColored(t.text_dim, "%s", "No problems found by pyflakes.");
+    }
+    ImGui::PushStyleColor(ImGuiCol_Header, t.selection);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, t.hover);
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, t.selection);
+    for (size_t i = 0; i < rows.size(); ++i) {
+        const Row& r = rows[i];
+        if (!r.p.error && !tab.problems_show_warnings) continue;
+        ImGui::PushID(static_cast<int>(i));
+        const ImVec2 start = ImGui::GetCursorScreenPos();
+        const float w = ImGui::GetContentRegionAvail().x;
+        if (ImGui::Selectable("##row", false, ImGuiSelectableFlags_None, ImVec2(w, ImGui::GetFrameHeight()))) {
+            // Go there: the line in the script, or the cell in a notebook.
+            if (r.cell >= 0) {
+                tab.selected_cell = r.cell;
+                tab.editing_cell = r.cell;
+                tab.last_editing_cell = r.cell;
+                tab.scroll_to_cell = r.cell;
+                Cell& cell = tab.cell_manager.GetCell(r.cell);
+                cell.SyncEditorFromSource();
+                cell.editor.GoToLine(std::max(0, r.p.line - 1));
+                const int line = std::clamp(r.p.line - 1, 0, cell.editor.Doc().LineCount() - 1);
+                cell.editor.Doc().SetCursor({line, ByteColumn(cell.editor.Doc().Line(line), r.p.column)});
+                cell.editor.RequestFocus();
+            } else {
+                tab.editor.GoToLine(std::max(0, r.p.line - 1));
+                const int line = std::clamp(r.p.line - 1, 0, tab.editor.Doc().LineCount() - 1);
+                tab.editor.Doc().SetCursor({line, ByteColumn(tab.editor.Doc().Line(line), r.p.column)});
+                request_focus_ = true;
+            }
+        }
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const float y = start.y + (ImGui::GetFrameHeight() - ImGui::GetFontSize()) * 0.5f;
+        dl->AddText(ImVec2(start.x + 4.0f, y), ui::ToU32(r.p.error ? t.error : t.warning),
+                    r.p.error ? ICON_FA_CIRCLE_XMARK : ICON_FA_TRIANGLE_EXCLAMATION);
+        dl->AddText(ImVec2(start.x + 28.0f, y), ui::ToU32(t.text), r.p.message.c_str());
+        char where[64];
+        if (r.cell >= 0) std::snprintf(where, sizeof(where), "Cell %d, Ln %d", r.cell + 1, r.p.line);
+        else std::snprintf(where, sizeof(where), "Ln %d, Col %d", r.p.line, r.p.column + 1);
+        const float ww = ImGui::CalcTextSize(where).x;
+        const float sw = ImGui::CalcTextSize("pyflakes").x;
+        dl->AddText(ImVec2(start.x + w - ww - 8.0f, y), ui::ToU32(t.text_dim), where);
+        dl->AddText(ImVec2(start.x + w - ww - sw - 28.0f, y), ui::ToU32(t.text_faint), "pyflakes");
+        ImGui::PopID();
+    }
+    ImGui::PopStyleColor(3);
+    ImGui::EndChild();
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    (void)errors;
+    (void)warnings;
 }
 
 }  // namespace cyxwiz

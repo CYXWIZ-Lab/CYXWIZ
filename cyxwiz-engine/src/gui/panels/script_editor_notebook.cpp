@@ -233,6 +233,7 @@ bool ScriptEditorPanel::RenderCellEditorBlock(Cell& cell, int index, float width
     cell.editor.SetBackground(ui::ToU32(BlockColour()));
     cell.editor.SetReadOnly(!editing);
     cell.editor.SetKeyboardEnabled(editing && !completion_just_accepted_);
+    ApplyProblemSquiggles(tab, cell.editor, cell.problems);
 
     const int rows = std::max(1, cell.editor.RowCount() > 0 ? cell.editor.RowCount() : SourceLines(cell.source));
     const float view_h = rows * line_h;

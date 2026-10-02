@@ -287,7 +287,7 @@ void ScriptEditorPanel::RenderStatusBar() {
     } else {
         right = {python_status_, "\xC2\xB7\xC2\xB7\xC2\xB7"};
     }
-    float right_w = 0.0f;
+    float right_w = ProblemCountsWidth(*tab) + 16.0f;
     for (const auto& s : right) right_w += ImGui::CalcTextSize(s.c_str()).x + 16.0f;
     ImGui::SameLine();
     // Nothing may be pushed out of sight: when even the narrow set does not
@@ -337,12 +337,16 @@ void ScriptEditorPanel::RenderStatusBar() {
         next();
         StatusItem("python", python_status_, false, python_tooltip_.c_str());
         next();
+        ProblemCountsItem(*tab);
+        next();
         StatusItem("sandbox", sandbox, false, "Security > Enable Sandbox");
     } else {
         if (!python_in_menu) {
             next();
             StatusItem("python", python_status_, false, python_tooltip_.c_str());
         }
+        next();
+        ProblemCountsItem(*tab);
         next();
         if (StatusItem("more", "\xC2\xB7\xC2\xB7\xC2\xB7", true, "More: lines, indentation, encoding, line endings, sandbox"))
             ImGui::OpenPopup("##status_more");
