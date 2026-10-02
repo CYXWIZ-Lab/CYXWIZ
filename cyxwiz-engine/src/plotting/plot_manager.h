@@ -39,8 +39,8 @@ public:
         std::string title;
         std::string x_label;
         std::string y_label;
-        PlotType type;
-        BackendType backend;
+        PlotType type = PlotType::Line;          // were uninitialised (TOFIX134 P0 item 5)
+        BackendType backend = BackendType::ImPlot;
         bool auto_fit = true;
         bool show_legend = true;
         bool show_grid = true;
@@ -79,6 +79,10 @@ public:
 
     // Real-time plotting (ImPlot)
     void RenderImPlot(const std::string& plot_id);
+    // Draws datasets with a plot's config: labels, legend, grid, and each
+    // series by the plot type (it used to be a line whatever the type).
+    static void DrawPlot(PlotBackend& backend, const PlotConfig& config,
+                         const std::unordered_map<std::string, PlotDataset>& datasets);
     bool UpdateRealtimePlot(const std::string& plot_id, double x, double y,
                            const std::string& series_name = "default");
 

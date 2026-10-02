@@ -1327,6 +1327,24 @@ set_target_properties(test_matplotlib_backend PROPERTIES RUNTIME_OUTPUT_DIRECTOR
 add_test(NAME matplotlib_backend_safety COMMAND test_matplotlib_backend)
 endif()
 
+# ===== Test: PlotManager type, config, unknown id (TOFIX134 P0 item 5) =====
+if(CYXWIZ_HAS_PYTHON)
+add_executable(test_plot_manager
+    tests/test_plot_manager.cpp
+    src/plotting/plot_manager.cpp
+    src/plotting/plot_dataset.cpp
+    src/plotting/backends/implot_backend.cpp
+    src/plotting/backends/matplotlib_backend.cpp
+)
+target_include_directories(test_plot_manager PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_plot_manager PRIVATE imgui::imgui implot::implot pybind11::embed spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_plot_manager PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_plot_manager PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME plot_manager_contract COMMAND test_plot_manager)
+endif()
+
 # ===== Test: OpenCV Integration =====
 add_executable(test_opencv_integration
     tests/test_opencv_integration.cpp

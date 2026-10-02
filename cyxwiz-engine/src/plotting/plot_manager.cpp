@@ -194,37 +194,55 @@ void PlotManager::RenderImPlot(const std::string& plot_id) {
         return;
     }
 
-    // Convert datasets to backend format and render
-    plot->backend->BeginPlot(plot->config.title.c_str());
+    DrawPlot(*plot->backend, plot->config, plot->datasets);
+    plot->is_dirty = false;
+}
 
-    for (const auto& [name, dataset] : plot->datasets) {
+void PlotManager::DrawPlot(PlotBackend& backend, const PlotConfig& config,
+                           const std::unordered_map<std::string, PlotDataset>& datasets) {
+    backend.SetAxisLabel(0, config.x_label.c_str());
+    backend.SetAxisLabel(1, config.y_label.c_str());
+    backend.SetLegendVisible(config.show_legend);
+    backend.SetGridVisible(config.show_grid);
+    if (config.auto_fit) {
+        backend.SetAxisAutoFit(0, true);
+        backend.SetAxisAutoFit(1, true);
+    }
+    backend.BeginPlot(config.title.c_str());
+    for (const auto& [name, dataset] : datasets) {
         for (const auto& series : dataset.GetAllSeries()) {
-            plot->backend->PlotLine(series.name.c_str(),
-                                   series.x_data.data(),
-                                   series.y_data.data(),
-                                   static_cast<int>(series.x_data.size()));
+            const int n = static_cast<int>(std::min(series.x_data.size(), series.y_data.size()));
+            const char* label = series.name.c_str();
+            switch (config.type) {
+                case PlotType::Scatter: backend.PlotScatter(label, series.x_data.data(), series.y_data.data(), n); break;
+                case PlotType::Bar: backend.PlotBars(label, series.x_data.data(), series.y_data.data(), n); break;
+                case PlotType::Histogram: backend.PlotHistogram(label, series.y_data.data(), n, 30); break;
+                case PlotType::BoxPlot: backend.PlotBoxPlot(label, series.y_data.data(), n); break;
+                default: backend.PlotLine(label, series.x_data.data(), series.y_data.data(), n); break;
+            }
         }
     }
-
-    plot->backend->EndPlot();
-    plot->is_dirty = false;
+    backend.EndPlot();
 }
 
 bool PlotManager::UpdateRealtimePlot(const std::string& plot_id, double x, double y,
                                      const std::string& series_name) {
+    if (!GetPlot(plot_id)) return false;  // an unknown id crashed here (TOFIX134 P0 item 5)
     auto* dataset = GetDataset(plot_id, "realtime");
     if (!dataset) {
         // Create default realtime dataset
         PlotDataset new_dataset;
         new_dataset.AddSeries(series_name);
-        AddDataset(plot_id, "realtime", new_dataset);
+        if (!AddDataset(plot_id, "realtime", new_dataset)) return false;
         dataset = GetDataset(plot_id, "realtime");
+        if (!dataset) return false;
     }
 
     auto* series = dataset->GetSeries(series_name);
     if (!series) {
         dataset->AddSeries(series_name);
         series = dataset->GetSeries(series_name);
+        if (!series) return false;
     }
 
     series->AddPoint(x, y);

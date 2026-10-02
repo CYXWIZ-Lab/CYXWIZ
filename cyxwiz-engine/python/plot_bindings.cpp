@@ -234,21 +234,13 @@ void show_plot(const std::string& plot_id) {
         throw std::runtime_error("Plot ID not found: " + plot_id);
     }
 
-    // Get plot config to determine title
-    auto config = mgr.GetPlotConfig(plot_id);
-
-    // Create a PlotWindow (this will be managed by MainWindow's docking system)
-    // For now, we store it in a global registry
-    // TODO: Better integration with MainWindow's panel management
-    auto window = std::make_shared<cyxwiz::PlotWindow>(
-        config.title,
-        cyxwiz::PlotWindow::PlotWindowType::Line2D,  // Will be determined by plot type
-        false  // Don't auto-generate data
-    );
-
-    cyxwiz::AddPythonPlotWindow(window);
-
-    // The window will be rendered by MainWindow in the next frame
+    // TOFIX134 P0 item 5: this module is a separate binary with its own
+    // window registry, so the window it made never reached the Engine, and it
+    // was built from a config with uninitialised fields. Until the embedded
+    // plot API replaces it (decision D3), say so instead.
+    throw std::runtime_error(
+        "show_plot cannot open Engine windows yet (cyxwiz_plotting is being replaced, TOFIX134). "
+        "Use matplotlib: plt.show() in a script or notebook shows the figure in the Engine.");
 }
 
 /**
