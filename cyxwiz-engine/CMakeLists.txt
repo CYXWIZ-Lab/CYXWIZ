@@ -389,6 +389,7 @@ set(ENGINE_SOURCES
     src/gui/panels/training_plot_panel.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
+    src/core/plot/plot_model.cpp
     src/gui/panels/training_plot_panel_global.cpp
     src/gui/panels/plot_window.cpp
     src/gui/panels/python_plot_window_registry.cpp
@@ -1189,6 +1190,7 @@ pybind11_add_module(cyxwiz_plotting
     src/gui/panels/training_plot_panel.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
+    src/core/plot/plot_model.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/gui/panels/training_plot_panel_global.cpp
@@ -3491,6 +3493,7 @@ add_executable(test_graph_training_sequence_preflight
     src/gui/panels/training_plot_panel.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
+    src/core/plot/plot_model.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
@@ -3587,6 +3590,7 @@ add_executable(test_text_gui_training_launch
     src/gui/panels/training_plot_panel.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
+    src/core/plot/plot_model.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
@@ -4777,6 +4781,7 @@ add_executable(test_training_manager_session
     src/gui/panels/training_plot_panel.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
+    src/core/plot/plot_model.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
 )
@@ -5372,6 +5377,7 @@ add_executable(test_engine_node_parity
     src/gui/panels/training_plot_panel.cpp
     src/core/series_decimation.cpp
     src/gui/plot/plot_style.cpp
+    src/core/plot/plot_model.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
