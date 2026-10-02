@@ -2,6 +2,7 @@
 #include <spdlog/spdlog.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/embed.h>
+#include "../../core/python_literal.h"
 #include <sstream>
 #include <vector>
 
@@ -18,6 +19,9 @@ struct MatplotlibBackend::PythonState {
     py::object np_module;
     py::object fig;
     py::object ax;
+    // TOFIX134 P0 item 2: the plot commands run in this private namespace,
+    // not __main__ (they used to overwrite the user's x, y, data, fig, ax).
+    py::object scope;
     bool python_available = false;
 };
 
@@ -58,6 +62,9 @@ bool MatplotlibBackend::Initialize(int width, int height) {
 
         py_state_->plt_module = plt;
         py_state_->np_module = np;
+        py::dict scope;
+        scope["__builtins__"] = py::module_::import("builtins");
+        py_state_->scope = scope;
         py_state_->python_available = true;
 
         spdlog::info("MatplotlibBackend initialized with Agg backend (non-interactive)");
@@ -83,6 +90,20 @@ void MatplotlibBackend::Shutdown() {
     }
 
     python_commands_.clear();
+    // Python objects are released under the GIL, while Python still runs.
+    if (Py_IsInitialized()) {
+        py::gil_scoped_acquire acquire;
+        try {
+            if (py_state_->python_available && py_state_->scope)
+                py::exec("import matplotlib.pyplot as plt\nplt.close('all')\n", py_state_->scope);
+        } catch (const std::exception&) {
+        }
+        py_state_->scope = py::object();
+        py_state_->fig = py::object();
+        py_state_->ax = py::object();
+        py_state_->plt_module = py::object();
+        py_state_->np_module = py::object();
+    }
     py_state_->python_available = false;
     initialized_ = false;
 
@@ -110,18 +131,21 @@ void MatplotlibBackend::BeginPlot(const char* title) {
 
     // Build matplotlib figure
     std::ostringstream cmd;
+    cmd.precision(17);
     cmd << "import matplotlib.pyplot as plt\n";
     cmd << "import numpy as np\n";
-    // Note: Don't close figures here - we need to save them later
+    // The previous figure is closed here (figures used to pile up); the
+    // current one stays open until it is saved or the next plot begins.
+    cmd << "if 'fig' in globals():\n    plt.close(fig)\n";
     cmd << "fig, ax = plt.subplots(figsize=("
         << (width_ / 100.0) << ", " << (height_ / 100.0) << "))\n";
-    cmd << "ax.set_title('" << current_title_ << "')\n";
+    cmd << "ax.set_title(" << PythonStringLiteral(current_title_) << ")\n";
 
     if (!x_label_.empty()) {
-        cmd << "ax.set_xlabel('" << x_label_ << "')\n";
+        cmd << "ax.set_xlabel(" << PythonStringLiteral(x_label_) << ")\n";
     }
     if (!y_label_.empty()) {
-        cmd << "ax.set_ylabel('" << y_label_ << "')\n";
+        cmd << "ax.set_ylabel(" << PythonStringLiteral(y_label_) << ")\n";
     }
 
     if (show_grid_) {
@@ -157,6 +181,7 @@ void MatplotlibBackend::PlotLine(const char* label, const double* x_data,
     }
 
     std::ostringstream cmd;
+    cmd.precision(17);
     cmd << "x = np.array([";
     for (int i = 0; i < count; ++i) {
         if (i > 0) cmd << ", ";
@@ -171,7 +196,7 @@ void MatplotlibBackend::PlotLine(const char* label, const double* x_data,
     }
     cmd << "])\n";
 
-    cmd << "ax.plot(x, y, label='" << label << "')\n";
+    cmd << "ax.plot(x, y, label=" << PythonStringLiteral(label ? label : "") << ")\n";
     python_commands_ += cmd.str();
 }
 
@@ -182,6 +207,7 @@ void MatplotlibBackend::PlotScatter(const char* label, const double* x_data,
     }
 
     std::ostringstream cmd;
+    cmd.precision(17);
     cmd << "x = np.array([";
     for (int i = 0; i < count; ++i) {
         if (i > 0) cmd << ", ";
@@ -196,7 +222,7 @@ void MatplotlibBackend::PlotScatter(const char* label, const double* x_data,
     }
     cmd << "])\n";
 
-    cmd << "ax.scatter(x, y, label='" << label << "')\n";
+    cmd << "ax.scatter(x, y, label=" << PythonStringLiteral(label ? label : "") << ")\n";
     python_commands_ += cmd.str();
 }
 
@@ -207,6 +233,7 @@ void MatplotlibBackend::PlotBars(const char* label, const double* x_data,
     }
 
     std::ostringstream cmd;
+    cmd.precision(17);
     cmd << "x = np.array([";
     for (int i = 0; i < count; ++i) {
         if (i > 0) cmd << ", ";
@@ -221,7 +248,7 @@ void MatplotlibBackend::PlotBars(const char* label, const double* x_data,
     }
     cmd << "])\n";
 
-    cmd << "ax.bar(x, y, label='" << label << "')\n";
+    cmd << "ax.bar(x, y, label=" << PythonStringLiteral(label ? label : "") << ")\n";
     python_commands_ += cmd.str();
 }
 
@@ -232,6 +259,7 @@ void MatplotlibBackend::PlotHistogram(const char* label, const double* values,
     }
 
     std::ostringstream cmd;
+    cmd.precision(17);
     cmd << "data = np.array([";
     for (int i = 0; i < count; ++i) {
         if (i > 0) cmd << ", ";
@@ -239,8 +267,8 @@ void MatplotlibBackend::PlotHistogram(const char* label, const double* values,
     }
     cmd << "])\n";
 
-    cmd << "ax.hist(data, bins=" << bins << ", label='" << label
-        << "', alpha=0.7, edgecolor='black')\n";
+    cmd << "ax.hist(data, bins=" << bins << ", label=" << PythonStringLiteral(label ? label : "")
+        << ", alpha=0.7, edgecolor='black')\n";
     python_commands_ += cmd.str();
 }
 
@@ -255,6 +283,7 @@ void MatplotlibBackend::PlotHeatmap([[maybe_unused]] const char* label,
     }
 
     std::ostringstream cmd;
+    cmd.precision(17);
     cmd << "import matplotlib.pyplot as plt\n";
     cmd << "data = np.array([";
     for (int i = 0; i < rows * cols; ++i) {
@@ -275,6 +304,7 @@ void MatplotlibBackend::PlotBoxPlot(const char* label, const double* values,
     }
 
     std::ostringstream cmd;
+    cmd.precision(17);
     cmd << "data = np.array([";
     for (int i = 0; i < count; ++i) {
         if (i > 0) cmd << ", ";
@@ -282,7 +312,7 @@ void MatplotlibBackend::PlotBoxPlot(const char* label, const double* values,
     }
     cmd << "])\n";
 
-    cmd << "ax.boxplot([data], labels=['" << label << "'])\n";
+    cmd << "ax.boxplot([data], labels=[" << PythonStringLiteral(label ? label : "") << "])\n";
     python_commands_ += cmd.str();
 }
 
@@ -292,6 +322,7 @@ void MatplotlibBackend::PlotKDE(const char* label, const double* values, int cou
     }
 
     std::ostringstream cmd;
+    cmd.precision(17);
     cmd << "from scipy import stats\n";
     cmd << "data = np.array([";
     for (int i = 0; i < count; ++i) {
@@ -302,7 +333,7 @@ void MatplotlibBackend::PlotKDE(const char* label, const double* values, int cou
 
     cmd << "kde = stats.gaussian_kde(data)\n";
     cmd << "x_range = np.linspace(data.min(), data.max(), 100)\n";
-    cmd << "ax.plot(x_range, kde(x_range), label='" << label << "')\n";
+    cmd << "ax.plot(x_range, kde(x_range), label=" << PythonStringLiteral(label ? label : "") << ")\n";
 
     python_commands_ += cmd.str();
 }
@@ -314,6 +345,7 @@ void MatplotlibBackend::PlotQQPlot([[maybe_unused]] const char* label,
     }
 
     std::ostringstream cmd;
+    cmd.precision(17);
     cmd << "from scipy import stats\n";
     cmd << "data = np.array([";
     for (int i = 0; i < count; ++i) {
@@ -333,6 +365,7 @@ void MatplotlibBackend::PlotViolin([[maybe_unused]] const char* label,
     }
 
     std::ostringstream cmd;
+    cmd.precision(17);
     cmd << "data = np.array([";
     for (int i = 0; i < count; ++i) {
         if (i > 0) cmd << ", ";
@@ -363,6 +396,7 @@ void MatplotlibBackend::PlotStems(const char* label, const double* x_data,
     }
 
     std::ostringstream cmd;
+    cmd.precision(17);
     cmd << "x = np.array([";
     for (int i = 0; i < count; ++i) {
         if (i > 0) cmd << ", ";
@@ -377,7 +411,7 @@ void MatplotlibBackend::PlotStems(const char* label, const double* x_data,
     }
     cmd << "])\n";
 
-    cmd << "ax.stem(x, y, label='" << label << "')\n";
+    cmd << "ax.stem(x, y, label=" << PythonStringLiteral(label ? label : "") << ")\n";
     python_commands_ += cmd.str();
 }
 
@@ -388,6 +422,7 @@ void MatplotlibBackend::PlotStairs(const char* label, const double* x_data,
     }
 
     std::ostringstream cmd;
+    cmd.precision(17);
     cmd << "x = np.array([";
     for (int i = 0; i < count; ++i) {
         if (i > 0) cmd << ", ";
@@ -402,7 +437,7 @@ void MatplotlibBackend::PlotStairs(const char* label, const double* x_data,
     }
     cmd << "])\n";
 
-    cmd << "ax.stairs(y, x, label='" << label << "')\n";
+    cmd << "ax.stairs(y, x, label=" << PythonStringLiteral(label ? label : "") << ")\n";
     python_commands_ += cmd.str();
 }
 
@@ -414,6 +449,7 @@ void MatplotlibBackend::PlotPieChart([[maybe_unused]] const char* label,
     }
 
     std::ostringstream cmd;
+    cmd.precision(17);
     cmd << "values = np.array([";
     for (int i = 0; i < count; ++i) {
         if (i > 0) cmd << ", ";
@@ -424,7 +460,7 @@ void MatplotlibBackend::PlotPieChart([[maybe_unused]] const char* label,
     cmd << "labels = [";
     for (int i = 0; i < count; ++i) {
         if (i > 0) cmd << ", ";
-        cmd << "'" << labels[i] << "'";
+        cmd << PythonStringLiteral(labels[i] ? labels[i] : "");
     }
     cmd << "]\n";
 
@@ -439,6 +475,7 @@ void MatplotlibBackend::PlotPolarLine(const char* label, const double* theta,
     }
 
     std::ostringstream cmd;
+    cmd.precision(17);
     cmd << "theta = np.array([";
     for (int i = 0; i < count; ++i) {
         if (i > 0) cmd << ", ";
@@ -454,7 +491,7 @@ void MatplotlibBackend::PlotPolarLine(const char* label, const double* theta,
     cmd << "])\n";
 
     cmd << "ax = plt.subplot(projection='polar')\n";
-    cmd << "ax.plot(theta, r, label='" << label << "')\n";
+    cmd << "ax.plot(theta, r, label=" << PythonStringLiteral(label ? label : "") << ")\n";
     python_commands_ += cmd.str();
 }
 
@@ -472,6 +509,7 @@ void MatplotlibBackend::SetAxisLabel(int axis, const char* label) {
 
 void MatplotlibBackend::SetAxisLimits(int axis, double min, double max) {
     std::ostringstream cmd;
+    cmd.precision(17);
     if (axis == 0) {
         cmd << "ax.set_xlim(" << min << ", " << max << ")\n";
     } else if (axis == 1) {
@@ -483,6 +521,7 @@ void MatplotlibBackend::SetAxisLimits(int axis, double min, double max) {
 void MatplotlibBackend::SetAxisAutoFit(int axis, bool enabled) {
     if (enabled) {
         std::ostringstream cmd;
+    cmd.precision(17);
         cmd << "ax.autoscale(enable=True, axis='";
         cmd << (axis == 0 ? "x" : "y") << "')\n";
         python_commands_ += cmd.str();
@@ -517,8 +556,7 @@ bool MatplotlibBackend::SaveToFile(const char* filepath) {
 
     // Create save command with necessary imports (plt might be out of scope)
     std::string cmd = "import matplotlib.pyplot as plt\n";
-    cmd += "plt.savefig('" + std::string(filepath) +
-           "', dpi=300, bbox_inches='tight')\n";
+    cmd += "plt.savefig(" + PythonStringLiteral(filepath ? filepath : "") + ", dpi=300, bbox_inches='tight')\n";
 
     // Execute save command separately (don't use python_commands_ which has plt.close)
     ExecutePythonCommand(cmd);
@@ -554,7 +592,7 @@ void MatplotlibBackend::ExecutePythonCommand(const std::string& cmd) {
     try {
         // Acquire GIL before executing Python code
         py::gil_scoped_acquire acquire;
-        py::exec(cmd);
+        py::exec(cmd, py_state_->scope);
         spdlog::debug("Executed Python command:\n{}", cmd);
     } catch (const py::error_already_set& e) {
         spdlog::error("Python execution error: {}", e.what());

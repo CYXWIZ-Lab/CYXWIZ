@@ -1309,6 +1309,22 @@ set_target_properties(test_sandbox_timeout PROPERTIES
 )
 endif()
 
+# ===== Test: Matplotlib backend safety (TOFIX134 P0 item 2) =====
+if(CYXWIZ_HAS_PYTHON)
+add_executable(test_matplotlib_backend
+    tests/test_matplotlib_backend.cpp
+    src/plotting/backends/matplotlib_backend.cpp
+)
+target_include_directories(test_matplotlib_backend PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_matplotlib_backend PRIVATE pybind11::embed spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_matplotlib_backend PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_matplotlib_backend PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+# Skips (passes) without matplotlib; set CYXWIZ_TEST_SITE_PACKAGES to run it fully.
+add_test(NAME matplotlib_backend_safety COMMAND test_matplotlib_backend)
+endif()
+
 # ===== Test: OpenCV Integration =====
 add_executable(test_opencv_integration
     tests/test_opencv_integration.cpp
