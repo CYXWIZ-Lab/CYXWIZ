@@ -5,6 +5,7 @@
 #include <vector>
 
 struct GLFWwindow;
+struct ImPlotContext;
 struct ImGuiIO;
 struct ImFont;
 
@@ -47,6 +48,9 @@ private:
     void RebuildFontAtlas();
 
     GLFWwindow* window_;
+    // The Engine's one ImPlot context (TOFIX134 P0 item 1): every chart
+    // draws in it; it is the one destroyed at shutdown.
+    ImPlotContext* implot_context_ = nullptr;
     std::unique_ptr<gui::MainWindow> main_window_;
     std::unique_ptr<network::GRPCClient> grpc_client_;
     std::unique_ptr<network::JobManager> job_manager_;

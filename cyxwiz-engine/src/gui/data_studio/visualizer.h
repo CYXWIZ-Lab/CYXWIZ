@@ -80,7 +80,6 @@ private:
     int selected_plot_id_;
 
     // ImPlot context (separate from other plots in Engine)
-    ImPlotContext* context_;
 
     // DuckDB connector for data queries
     std::unique_ptr<DuckDBConnector> duckdb_;

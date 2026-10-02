@@ -3,9 +3,6 @@
 namespace cyxwiz {
 
 void Visualizer::Render() {
-    // Set Data Studio ImPlot context
-    ImPlot::SetCurrentContext(context_);
-
     RenderPlotToolbar();
     ImGui::Separator();
 

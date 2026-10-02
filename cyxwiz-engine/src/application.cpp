@@ -347,7 +347,7 @@ bool CyxWizApp::Initialize() {
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImPlot::CreateContext();  // Initialize ImPlot for plotting functionality
+    implot_context_ = ImPlot::CreateContext();  // the one ImPlot context (TOFIX134 P0 item 1)
     ImNodes::CreateContext();  // Initialize ImNodes for visual node editor
     ImGuiIO& io = ImGui::GetIO();
 
@@ -669,6 +669,17 @@ void CyxWizApp::Render() {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+    // Every chart draws in the Engine's ImPlot context. A panel that swapped
+    // it (the Data Studio Visualizer once made its own and left it current)
+    // is put right here, once per frame, and named in the log once.
+    if (ImPlot::GetCurrentContext() != implot_context_) {
+        static bool reported = false;
+        if (!reported) {
+            spdlog::error("ImPlot context was replaced by a panel; restoring the Engine's");
+            reported = true;
+        }
+        ImPlot::SetCurrentContext(implot_context_);
+    }
 
     // Python scan and dialog (TOFIX129 A2-3).
     if (python_setup_) {
@@ -833,7 +844,8 @@ void CyxWizApp::Shutdown() {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImNodes::DestroyContext();  // Cleanup ImNodes context
-    ImPlot::DestroyContext();  // Cleanup ImPlot context
+    ImPlot::DestroyContext(implot_context_);  // the Engine's context, whatever is current
+    implot_context_ = nullptr;
     ImGui::DestroyContext();
 
     // Cleanup GLFW

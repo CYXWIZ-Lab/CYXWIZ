@@ -10,22 +10,16 @@ namespace cyxwiz {
 Visualizer::Visualizer()
     : next_plot_id_(1)
     , selected_plot_id_(-1)
-    , context_(ImPlot::CreateContext())
     , duckdb_(std::make_unique<DuckDBConnector>())
     , show_create_plot_dialog_(false)
     , selected_plot_type_(0)
 {
-    // Create separate ImPlot context for Data Studio
-    ImPlot::SetCurrentContext(context_);
-
+    // Charts draw in the Engine's one ImPlot context (TOFIX134 P0 item 1):
+    // this used to create its own and leave it current for every panel.
     spdlog::info("[Data Studio] Visualizer initialized");
 }
 
-Visualizer::~Visualizer() {
-    // Skip context cleanup - ImPlot contexts are cleaned up automatically
-    // when ImGui shuts down. Explicit cleanup can cause crashes during
-    // application shutdown if ImGui is already destroyed.
-}
+Visualizer::~Visualizer() = default;
 
 void Visualizer::SetActiveDataset(const std::string& dataset_name) {
     current_dataset_ = dataset_name;
