@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cell.h"
+#include "debug_types.h"
 #include <cstdint>
 #include <vector>
 #include <string>
@@ -152,6 +153,12 @@ public:
      * @param index Cell index to run
      */
     void RunCell(int index);
+
+    /**
+     * Run one cell under the debugger (TOFIX133 P6) with these breakpoints
+     * (its lines, 1-based).
+     */
+    void DebugCell(int index, std::vector<scripting::DebugBreakpoint> breakpoints, bool stop_on_error);
 
     /**
      * Run all cells in order
@@ -306,6 +313,10 @@ private:
     int ipynb_minor_ = 5;
     std::string running_cell_id_;
     std::vector<std::string> execution_queue_;  // cell ids
+    // The cell to run under the debugger, and its breakpoints (P6).
+    std::string debug_cell_id_;
+    std::vector<scripting::DebugBreakpoint> debug_breakpoints_;
+    bool debug_stop_on_error_ = true;
     std::uint64_t run_counter_ = 0;
     std::string namespace_key_;
     bool restart_pending_ = false;

@@ -16,6 +16,8 @@ const char* VariablesFunctionName(VariablesService::Kind kind) {
         case VariablesService::Kind::Delete: return "delete";
         case VariablesService::Kind::SaveCsv: return "save_csv";
         case VariablesService::Kind::Table: return "table";
+        case VariablesService::Kind::Evaluate: return "evaluate";
+        case VariablesService::Kind::Console: return "console";
     }
     return "list_variables";
 }
@@ -86,6 +88,10 @@ void VariablesService::Run() {
             result.dtypes = std::move(table.dtypes);
             result.slice = std::move(table.slice);
             result.error = std::move(table.error);
+        } else if (request.kind == Kind::Evaluate || request.kind == Kind::Console) {
+            nlohmann::json args = {{request.kind == Kind::Evaluate ? "expr" : "source", request.expression},
+                                   {"index", request.frame}};
+            result.json = engine_->CallDebugTool(VariablesFunctionName(request.kind), args.dump(), &result.busy);
         } else {
             nlohmann::json args = nlohmann::json::object();
             if (request.kind == Kind::List) args["show_all"] = request.show_all;

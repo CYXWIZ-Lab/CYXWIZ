@@ -62,6 +62,7 @@ void ScriptEditorPanel::Render() {
     CheckFilesOnDisk();
     RenderPlotWindows();
     PollLanguageResults();  // completion, details, problems, signatures, hover (P3)
+    UpdateDebugState();     // the debugger's snapshot and paused line (P6)
     if (active_tab_index_ >= 0 && active_tab_index_ < static_cast<int>(tabs_.size()) && tabs_[active_tab_index_])
         UpdateDiagnostics(*tabs_[active_tab_index_]);
     UpdateSignatureHelp();
@@ -536,7 +537,7 @@ void ScriptEditorPanel::RenderEditor() {
     }
 
     // Show debug toolbar when debugging is active (traditional mode)
-    if (debug_mode_active_ && debugger_) {
+    if (debug_run_.active) {
         RenderDebugToolbar();
     }
 
@@ -567,7 +568,16 @@ void ScriptEditorPanel::RenderEditor() {
         ToggleBreakpointAtCursor();
     };
     const std::string file_id = tab->filepath.empty() ? tab->filename : tab->filepath;
-    code.SetDebugLine(debug_mode_active_ && debug_current_cell_ == file_id ? debug_current_line_ - 1 : -1);
+    // The paused line (the selected call-stack frame) when it is in this script.
+    {
+        int debug_line = -1;
+        if (debug_.state == "paused" && debug_run_.active && debug_run_.cell_id.empty() &&
+            debug_run_.document_id == tab->document_id && debug_frame_ < static_cast<int>(debug_.stack.size()) &&
+            debug_.stack[debug_frame_].file == debug_.file)
+            debug_line = debug_.stack[debug_frame_].line - 1;
+        code.SetDebugLine(debug_line);
+        (void)file_id;
+    }
     code.SetShowMinimap(show_minimap_ && code_width >= 620.0f);  // no minimap in a narrow editor (board 3)
     // A completion just accepted with Tab must not also type the Tab.
     code.SetKeyboardEnabled(!completion_just_accepted_);
@@ -728,11 +738,8 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
     // frame (TOFIX133 P0 item 7; Preferences > Shortcuts lists the same).
     if (!IsActiveTabEditable()) return;
     scriptkeys::State key_state;
-    if (debugger_) {
-        const auto debug_state = debugger_->GetState();
-        key_state.debugging = debug_state != scripting::DebugState::Disconnected;
-        key_state.paused = debug_state == scripting::DebugState::Paused;
-    }
+    key_state.debugging = debug_run_.active;
+    key_state.paused = debug_run_.active && debug_.state == "paused";
     key_state.script_running = script_running_;
     key_state.notebook = tabs_[active_tab_index_]->cell_mode;
     struct Binding {
@@ -758,16 +765,11 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
             case scriptkeys::Action::RunSelection: RunSelection(); break;
             case scriptkeys::Action::RunSection: RunCurrentSection(); break;
             case scriptkeys::Action::StartDebug: Debug(); break;
-            case scriptkeys::Action::Continue: debugger_->Continue(); break;
-            case scriptkeys::Action::StopDebug:
-                debugger_->Stop();
-                debug_mode_active_ = false;
-                debug_current_line_ = -1;
-                debug_current_cell_.clear();
-                break;
-            case scriptkeys::Action::StepOver: debugger_->StepOver(); break;
-            case scriptkeys::Action::StepInto: debugger_->StepInto(); break;
-            case scriptkeys::Action::StepOut: debugger_->StepOut(); break;
+            case scriptkeys::Action::Continue: DebugCommand("continue"); break;
+            case scriptkeys::Action::StopDebug: StopDebugging(); break;
+            case scriptkeys::Action::StepOver: DebugCommand("over"); break;
+            case scriptkeys::Action::StepInto: DebugCommand("into"); break;
+            case scriptkeys::Action::StepOut: DebugCommand("out"); break;
             case scriptkeys::Action::ToggleBreakpoint: ToggleBreakpointAtCursor(); break;
             case scriptkeys::Action::ToggleNotebook: ToggleCellMode(); break;
             case scriptkeys::Action::Completion: UpdateAutoCompletion(true); break;

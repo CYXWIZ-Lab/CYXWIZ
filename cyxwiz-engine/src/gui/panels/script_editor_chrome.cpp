@@ -211,6 +211,9 @@ void ScriptEditorPanel::RenderStatusBar() {
         std::snprintf(buf, sizeof(buf), "Loading %.0f%%", tab->load_progress * 100.0f);
         state = buf;
         dot = t.running;
+    } else if (script_running_ && debug_run_.active && debug_.state == "paused") {
+        state = "Debugging: paused";  // board 11
+        dot = t.warning;
     } else if (script_running_) {
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - running_script_started_).count();
         char buf[160];

@@ -6,6 +6,7 @@
 #include <Python.h>  // For PyThreadState_SetAsyncExc, PyThread_get_thread_ident
 #include <pybind11/embed.h>
 #include <spdlog/spdlog.h>
+#include <nlohmann/json.hpp>
 #include <fstream>
 #include <optional>
 #include <filesystem>
@@ -1223,7 +1224,10 @@ VariablesService& ScriptingEngine::Variables() {
     return *variables_;
 }
 
-bool ScriptingEngine::RunActive() const { return script_running_ || command_running_ || python_busy_; }
+// A paused debug run leaves the interpreter free: the views may read it.
+bool ScriptingEngine::RunActive() const {
+    return (script_running_ && !debug_paused_) || command_running_ || python_busy_;
+}
 
 namespace {
 void DropFromPath(py::list& path, const std::string& dir) {
@@ -1254,11 +1258,19 @@ py::object BundledTool(const char* name) {
     return module;
 }
 
-// The namespace of a scope: the session's __main__, or a notebook's own
-// (an empty dict when that notebook has not run yet).
+// The namespace of a scope: the session's __main__, a notebook's own (an
+// empty dict when that notebook has not run yet), or a paused debug frame
+// ("debug:<frame>:locals" or "debug:<frame>:globals", a copy).
 py::dict ScopeNamespace(const std::string& scope) {
     auto main = py::module_::import("__main__").attr("__dict__").cast<py::dict>();
     if (scope.empty()) return main;
+    if (scope.rfind("debug:", 0) == 0) {
+        const size_t colon = scope.find(':', 6);
+        const int index = std::atoi(scope.substr(6, colon == std::string::npos ? std::string::npos : colon - 6).c_str());
+        const std::string which = colon == std::string::npos ? std::string("locals") : scope.substr(colon + 1);
+        py::object ns = BundledTool("cyxwiz_debug").attr("session").attr("frame_namespace")(index, which);
+        return py::dict(ns);
+    }
     if (main.contains("_cyxwiz_notebook_ns")) {
         auto all = main["_cyxwiz_notebook_ns"].cast<py::dict>();
         if (all.contains(scope)) return all[py::str(scope)].cast<py::dict>();
@@ -1280,6 +1292,104 @@ cyxwiz::DataTable::CellValue CellFrom(const py::handle& v) {
     return py::str(v).cast<std::string>();
 }
 }  // namespace
+
+ScriptingEngine::DebugSnapshot ScriptingEngine::GetDebugSnapshot() const {
+    std::lock_guard<std::mutex> lock(debug_mutex_);
+    return debug_snapshot_;
+}
+
+// Called on the run's worker thread (GIL held) at every debugger state change.
+void ScriptingEngine::OnDebugState(const std::string& state, const std::string& reason, const std::string& info_json) {
+    DebugSnapshot snap;
+    snap.state = state;
+    snap.reason = reason;
+    const auto info = nlohmann::json::parse(info_json, nullptr, false);
+    std::lock_guard<std::mutex> lock(debug_mutex_);
+    snap.file = debug_file_;
+    if (!info.is_discarded()) {
+        snap.error = info.value("error", "");
+        if (info.contains("stack") && info["stack"].is_array())
+            for (const auto& f : info["stack"])
+                snap.stack.push_back({f.value("name", ""), f.value("file", ""), f.value("line", 0)});
+        if (info.contains("hits") && info["hits"].is_object() && info["hits"].contains(debug_file_))
+            for (const auto& [line, n] : info["hits"][debug_file_].items())
+                if (n.is_number_integer()) snap.hits[std::atoi(line.c_str())] = n.get<int>();
+    }
+    snap.version = debug_snapshot_.version + 1;
+    debug_snapshot_ = std::move(snap);
+    debug_paused_ = state == "paused";
+}
+
+namespace {
+py::list BreakpointList(const std::vector<ScriptingEngine::DebugBreakpoint>& breakpoints) {
+    py::list items;
+    for (const auto& bp : breakpoints) {
+        py::dict d;
+        d["line"] = bp.line;
+        d["condition"] = bp.condition;
+        d["hit"] = bp.hit;
+        d["enabled"] = bp.enabled;
+        items.append(d);
+    }
+    return items;
+}
+}  // namespace
+
+bool ScriptingEngine::DebugCommand(const std::string& command) {
+    if (!debug_paused_ || !IsInitialized()) return false;
+    try {
+        py::gil_scoped_acquire acquire;
+        return BundledTool("cyxwiz_debug").attr("session").attr("command")(command).cast<bool>();
+    } catch (const std::exception& e) {
+        spdlog::warn("Debugger: {} failed: {}", command, e.what());
+        return false;
+    }
+}
+
+bool ScriptingEngine::DebugPause() {
+    if (!script_running_ || debug_paused_ || !IsInitialized()) return false;
+    try {
+        py::gil_scoped_acquire acquire;  // the run gives the GIL up every few milliseconds
+        BundledTool("cyxwiz_debug").attr("session").attr("request_pause")();
+        return true;
+    } catch (const std::exception& e) {
+        spdlog::warn("Debugger: pause failed: {}", e.what());
+        return false;
+    }
+}
+
+void ScriptingEngine::DebugSetBreakpoints(const std::vector<DebugBreakpoint>& breakpoints) {
+    std::string file;
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        file = debug_file_;
+    }
+    if (file.empty() || !script_running_ || !IsInitialized()) return;  // the next debug run takes them
+    try {
+        py::gil_scoped_acquire acquire;
+        BundledTool("cyxwiz_debug").attr("session").attr("set_breakpoints")(file, BreakpointList(breakpoints));
+    } catch (const std::exception& e) {
+        spdlog::warn("Debugger: breakpoints not updated: {}", e.what());
+    }
+}
+
+std::string ScriptingEngine::CallDebugTool(const std::string& function, const std::string& args_json, bool* busy) {
+    if (busy) *busy = false;
+    if (!debug_paused_ || !IsInitialized()) {
+        if (busy) *busy = true;
+        return {};
+    }
+    try {
+        py::gil_scoped_acquire acquire;
+        py::module_ json = py::module_::import("json");
+        py::dict kwargs = json.attr("loads")(args_json);
+        py::object result = BundledTool("cyxwiz_debug").attr("session").attr(function.c_str())(**kwargs);
+        return json.attr("dumps")(result).cast<std::string>();
+    } catch (const std::exception& e) {
+        spdlog::warn("Debugger: {} failed: {}", function, e.what());
+        return {};
+    }
+}
 
 std::string ScriptingEngine::CallVariablesTool(const std::string& function, const std::string& args_json,
                                                const std::string& scope, bool* busy) {
@@ -1624,7 +1734,7 @@ def _cyxwiz_frames(tb, skip):
     import traceback
     return [(f.filename, f.lineno or 0, f.name, f.line or '', '') for f in traceback.extract_tb(tb)[skip:]]
 
-def _cyxwiz_run_cell(src, key, filename, count=0):
+def _cyxwiz_run_cell(src, key, filename, count=0, on_error=None):
     import ast, builtins, linecache, traceback
     ns = _cyxwiz_notebook_ns.get(key)
     if ns is None:
@@ -1657,6 +1767,8 @@ def _cyxwiz_run_cell(src, key, filename, count=0):
     except KeyboardInterrupt:
         raise
     except BaseException as e:
+        if on_error is not None:
+            on_error(e)  # the debugger stops at the error's line first
         out['ename'] = type(e).__name__
         out['evalue'] = str(e)
         frames = traceback.extract_tb(e.__traceback__)[1:]  # not this helper
@@ -1781,15 +1893,44 @@ def _cyxwiz_setup_matplotlib_capture(capture_callback):
         // Set the trace function
         py::exec("sys.settrace(_cyxwiz_trace)");
 
+        // Debug (TOFIX133 P6): the run goes through cyxwiz_debug, which
+        // replaces the trace with its own (it checks the cancel flag too).
+        py::object debugger;
+        std::string debug_run_file;
+        const std::string cell_file = callbacks.cell_filename.empty() ? "<cell>" : callbacks.cell_filename;
+        if (callbacks.debug) {
+            debugger = BundledTool("cyxwiz_debug").attr("session");
+            debugger.attr("is_cancelled") = py::globals()["_cyxwiz_is_cancelled"];
+            debugger.attr("on_state") = py::cpp_function(
+                [this](const std::string& state, const std::string& reason, const std::string& info) {
+                    OnDebugState(state, reason, info);
+                });
+            debugger.attr("stop_on_error") = callbacks.stop_on_error;
+            const std::string file = callbacks.notebook_namespace.empty()
+                                         ? (callbacks.script_filename.empty() ? std::string("<script>") : callbacks.script_filename)
+                                         : cell_file;
+            {
+                std::lock_guard<std::mutex> lock(debug_mutex_);
+                debug_file_ = file;
+            }
+            debug_run_file = file;
+            debugger.attr("set_breakpoints")(file, BreakpointList(callbacks.breakpoints));
+        }
+
         try {
             // Execute the user script
             if (callbacks.notebook_namespace.empty()) {
-                py::exec(script);
+                if (debugger)
+                    debugger.attr("run_script")(script, debug_run_file, py::module_::import("__main__").attr("__dict__"));
+                else
+                    py::exec(script);
                 result.success = true;
             } else {
-                const std::string filename = callbacks.cell_filename.empty() ? "<cell>" : callbacks.cell_filename;
-                auto out = py::eval("_cyxwiz_run_cell")(script, callbacks.notebook_namespace, filename,
-                                                        callbacks.execution_count)
+                const std::string filename = cell_file;
+                py::object run_cell = py::eval("_cyxwiz_run_cell");
+                auto out = (debugger ? debugger.attr("run_cell")(run_cell, script, callbacks.notebook_namespace, filename,
+                                                                 callbacks.execution_count)
+                                     : run_cell(script, callbacks.notebook_namespace, filename, callbacks.execution_count))
                                .cast<py::dict>();
                 result.success = out["ok"].cast<bool>();
                 if (!out["repr"].is_none()) result.result_repr = out["repr"].cast<std::string>();

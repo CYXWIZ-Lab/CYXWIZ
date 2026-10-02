@@ -356,6 +356,15 @@ void CellManager::RunCell(int index) {
     if (IsValidIndex(index)) Enqueue(index, index);
 }
 
+void CellManager::DebugCell(int index, std::vector<scripting::DebugBreakpoint> breakpoints,
+                            bool stop_on_error) {
+    if (!IsValidIndex(index)) return;
+    debug_cell_id_ = cells_[index].id;
+    debug_breakpoints_ = std::move(breakpoints);
+    debug_stop_on_error_ = stop_on_error;
+    Enqueue(index, index);
+}
+
 void CellManager::RunAllCells() {
     Enqueue(0, static_cast<int>(cells_.size()) - 1);
 }
@@ -413,6 +422,12 @@ void CellManager::ExecuteCellInternal(int index) {
     callbacks.notebook_namespace = namespace_key_;
     callbacks.cell_filename = "Cell In[" + std::to_string(cell.execution_count) + "]";
     callbacks.execution_count = cell.execution_count;
+    if (!debug_cell_id_.empty() && debug_cell_id_ == cell.id) {
+        callbacks.debug = true;
+        callbacks.breakpoints = std::move(debug_breakpoints_);
+        callbacks.stop_on_error = debug_stop_on_error_;
+        debug_cell_id_.clear();
+    }
     auto post_text = [weak, run](RunEvent::Kind kind) {
         return [weak, run, kind](const std::string& text) {
             if (auto box = weak.lock()) {

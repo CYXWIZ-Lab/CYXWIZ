@@ -9,7 +9,6 @@
 #include "../../core/notebook_presentation.h"
 #include "../../core/language_results.h"
 #include "../../scripting/language_service.h"
-#include "../../scripting/debugger.h"
 #include "../../scripting/script_manager.h"
 #include "../code_editor.h"
 #include "../variables_view.h"
@@ -351,13 +350,28 @@ private:
     std::shared_ptr<std::atomic<bool>> async_owner_alive_ =
         std::make_shared<std::atomic<bool>>(true);
     std::shared_ptr<scripting::ScriptingEngine> scripting_engine_;
-    std::unique_ptr<scripting::DebuggerManager> debugger_;
+    // Debugger (TOFIX133 P6, boards 11-12): the run being debugged and the
+    // engine's last snapshot (read each frame without the GIL).
+    struct DebugRun {
+        bool active = false;
+        std::uint64_t document_id = 0;
+        std::string cell_id;  // a notebook cell; empty: the script
+    };
+    DebugRun debug_run_;
+    scripting::DebugSnapshot debug_;
+    std::uint64_t debug_seen_version_ = 0;
+    int debug_frame_ = 0;  // the selected call-stack frame
+    bool debug_stop_on_error_ = true;
+    void UpdateDebugState();
+    std::vector<scripting::DebugBreakpoint> DebugBreakpointsFor(const EditorTab& tab, const Cell* cell) const;
+    void SyncDebugBreakpoints();
+    // The editor a debug frame's file belongs to (the debugged script or cell), or null.
+    CodeEditor* DebugEditorFor(const std::string& file, EditorTab** tab_out = nullptr);
+    void DebugCommand(const char* command);
+    void StopDebugging();
     scripting::IScriptOutputSink* script_output_sink_ = nullptr;
 
     // Debugger state
-    bool debug_mode_active_ = false;      // True when debugging is active
-    int debug_current_line_ = -1;         // Current line being debugged (-1 = none)
-    std::string debug_current_cell_;      // Current cell ID being debugged
 
     // UI state
     bool show_editor_menu_;

@@ -113,6 +113,15 @@ class Session:
         finally:
             self.end()
 
+    def run_cell(self, run, source, key, filename, count):
+        """Runs a notebook cell under the debugger: `run` is the Engine's
+        cell runner, which reports an uncaught error through on_error."""
+        self.begin([filename])
+        try:
+            return run(source, key, filename, count, self.stop_on_exception)
+        finally:
+            self.end()
+
     def stop_on_exception(self, exc):
         """An uncaught error: pause at its deepest line in a debugged file."""
         if not self.stop_on_error or self.state != 'running':

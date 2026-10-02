@@ -538,7 +538,6 @@ set(ENGINE_SOURCES
     src/core/csv_records.cpp
     src/scripting/python_engine.cpp
     src/scripting/script_manager.cpp
-    src/scripting/debugger.cpp
     src/scripting/startup_script_manager.cpp
     src/scripting/cell_manager.cpp
     src/gui/panels/output_renderer.cpp

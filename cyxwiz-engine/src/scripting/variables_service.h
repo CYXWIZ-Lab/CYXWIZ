@@ -26,7 +26,8 @@ class ScriptingEngine;
 
 class VariablesService {
 public:
-    enum class Kind { List, Children, Value, Delete, SaveCsv, Table };
+    // Evaluate and Console run in a paused debug frame (TOFIX133 P6).
+    enum class Kind { List, Children, Value, Delete, SaveCsv, Table, Evaluate, Console };
 
     struct Request {
         Kind kind = Kind::List;
@@ -37,6 +38,8 @@ public:
         std::string file;         // SaveCsv
         long long max_rows = 200000;  // Table; <= 0 for all rows
         std::vector<int> index;   // Table: leading-axis indices of an array
+        std::string expression;   // Evaluate / Console
+        int frame = 0;            // Evaluate / Console: the paused frame (0 innermost)
     };
 
     struct Result {

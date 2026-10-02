@@ -2,9 +2,12 @@
 
 #include "language_service.h"
 #include "variables_service.h"
+#include "debug_types.h"
 #include "python_engine.h"
 #include "python_sandbox.h"
 #include <string>
+#include <map>
+#include <cstdint>
 #include <vector>
 #include <memory>
 #include <optional>
@@ -114,6 +117,11 @@ public:
     // and never cleared, so output went to whichever cell or panel set them
     // last). Both run on the worker thread; on_complete also runs at once if
     // Python cannot start.
+    // Script Editor debugger (TOFIX133 P6): see debug_types.h.
+    using DebugBreakpoint = scripting::DebugBreakpoint;
+    using DebugFrame = scripting::DebugFrame;
+    using DebugSnapshot = scripting::DebugSnapshot;
+
     struct RunCallbacks {
         OutputCallback on_output;
         CompletionCallback on_complete;
@@ -125,7 +133,25 @@ public:
         std::string notebook_namespace;
         std::string cell_filename;  // shown in tracebacks, e.g. "Cell In[3]"
         int execution_count = 0;    // the value is kept as Out[n] in the namespace
+        // Debug (TOFIX133 P6): run under python_tools/cyxwiz_debug.py with
+        // these breakpoints. script_filename names a script (tracebacks and
+        // breakpoints); a cell uses cell_filename.
+        bool debug = false;
+        bool stop_on_error = true;
+        std::string script_filename;
+        std::vector<DebugBreakpoint> breakpoints;
     };
+    DebugSnapshot GetDebugSnapshot() const;
+    bool IsDebugPaused() const { return debug_paused_.load(); }
+    // continue, over, into, out (while paused); false otherwise.
+    bool DebugCommand(const std::string& command);
+    // Pause a running debug run at its next line.
+    bool DebugPause();
+    // The running debug run's breakpoints (F9 while debugging).
+    void DebugSetBreakpoints(const std::vector<DebugBreakpoint>& breakpoints);
+    // evaluate / console of cyxwiz_debug while paused (JSON in and out);
+    // *busy when not paused.
+    std::string CallDebugTool(const std::string& function, const std::string& args_json, bool* busy);
     // Starts the script in a background thread and returns at once. Returns
     // false when another script is still running (nothing is started and no
     // callback is called).
@@ -248,6 +274,11 @@ private:
     std::unique_ptr<PythonEngine> python_engine_;
     std::unique_ptr<LanguageService> language_;  // stopped before Python ends
     std::unique_ptr<VariablesService> variables_;  // the same
+    void OnDebugState(const std::string& state, const std::string& reason, const std::string& info_json);
+    mutable std::mutex debug_mutex_;
+    DebugSnapshot debug_snapshot_;
+    std::string debug_file_;
+    std::atomic<bool> debug_paused_{false};
     bool RunActive() const;
     mutable std::mutex language_mutex_;
     std::string language_error_;

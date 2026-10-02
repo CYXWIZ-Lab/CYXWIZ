@@ -79,6 +79,15 @@ VariablesService& ScriptingEngine::Variables() {
 
 bool ScriptingEngine::RunActive() const { return false; }
 
+ScriptingEngine::DebugSnapshot ScriptingEngine::GetDebugSnapshot() const { return {}; }
+bool ScriptingEngine::DebugCommand(const std::string&) { return false; }
+bool ScriptingEngine::DebugPause() { return false; }
+void ScriptingEngine::DebugSetBreakpoints(const std::vector<DebugBreakpoint>&) {}
+std::string ScriptingEngine::CallDebugTool(const std::string&, const std::string&, bool* busy) {
+    if (busy) *busy = false;
+    return {};
+}
+
 std::string ScriptingEngine::CallVariablesTool(const std::string&, const std::string&, const std::string&, bool* busy) {
     if (busy) *busy = false;
     return {};

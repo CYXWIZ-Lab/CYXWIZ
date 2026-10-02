@@ -69,7 +69,7 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
     const float available_width = ImGui::GetContentRegionAvail().x;
 
     // Show debug toolbar when debugging is active
-    if (debug_mode_active_ && debugger_) {
+    if (debug_run_.active) {
         RenderDebugToolbar();
     }
 

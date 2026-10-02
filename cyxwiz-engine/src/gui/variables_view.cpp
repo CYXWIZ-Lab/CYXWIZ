@@ -223,8 +223,8 @@ void VariablesView::Note(const std::string& text) {
 }
 
 void VariablesView::ReadIfNeeded() {
-    const bool running = engine_ && (engine_->IsScriptRunning() || engine_->IsCommandRunning());
-    if (was_running_ && !running) Invalidate("after the run finished");
+    const bool running = engine_ && ((engine_->IsScriptRunning() && !engine_->IsDebugPaused()) || engine_->IsCommandRunning());
+    if (was_running_ && !running) Invalidate(engine_->IsDebugPaused() ? "while paused" : "after the run finished");
     was_running_ = running;
     const int frame = ImGui::GetFrameCount();
     if (last_frame_ >= 0 && frame > last_frame_ + 1 && have_read_) Invalidate("on opening");
@@ -278,7 +278,7 @@ void VariablesView::RenderHeader() {
         ImGui::TextColored(t.text_dim, "%s", scope_.label.c_str());
         ImGui::SameLine(0.0f, 12.0f);
     }
-    const bool running = engine_ && (engine_->IsScriptRunning() || engine_->IsCommandRunning());
+    const bool running = engine_ && ((engine_->IsScriptRunning() && !engine_->IsDebugPaused()) || engine_->IsCommandRunning());
     const char* status = !engine_ || !engine_->IsInitialized() ? "Python has not started"
                          : running                            ? "Running... values from before the run"
                          : list_request_ != 0 && !have_read_  ? "Reading..."
