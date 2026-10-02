@@ -119,6 +119,8 @@ std::filesystem::path GetExecutableDir() {
 
 }  // namespace
 
+std::filesystem::path ExecutableDirectory() { return GetExecutableDir(); }
+
 EngineConfig& EngineConfig::Instance() {
     static EngineConfig instance;
     return instance;

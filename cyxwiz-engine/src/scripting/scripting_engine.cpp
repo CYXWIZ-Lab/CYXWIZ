@@ -1,6 +1,7 @@
 #include "scripting_engine.h"
 #include "../gui/panels/training_plot_panel.h"
 #include "../core/project_manager.h"
+#include "../core/engine_config.h"
 #include <Python.h>  // For PyThreadState_SetAsyncExc, PyThread_get_thread_ident
 #include <pybind11/embed.h>
 #include <spdlog/spdlog.h>
@@ -28,6 +29,11 @@ ScriptingEngine::ScriptingEngine()
 
 ScriptingEngine::~ScriptingEngine() {
     spdlog::info("~ScriptingEngine: starting destruction");
+    // The language worker uses Python: it ends first.
+    if (language_) {
+        language_->Stop();
+        language_.reset();
+    }
 
     // Stop any running script before destruction
     if (script_running_) {
@@ -1198,6 +1204,74 @@ void ScriptingEngine::ScriptWorker(const std::string& script, RunCallbacks callb
     }
 
     spdlog::debug("Script worker thread finished");
+}
+
+LanguageService& ScriptingEngine::Language() {
+    std::lock_guard<std::mutex> lock(language_mutex_);
+    if (!language_) language_ = std::make_unique<LanguageService>(this);
+    return *language_;
+}
+
+std::string ScriptingEngine::LanguageToolsError() const {
+    std::lock_guard<std::mutex> lock(language_mutex_);
+    return language_error_;
+}
+
+std::string ScriptingEngine::CallLanguageTool(const std::string& function, const std::string& args_json,
+                                              const std::string& notebook_namespace) {
+    if (!IsInitialized()) return {};
+    try {
+        py::gil_scoped_acquire acquire;
+        // The module is imported once per interpreter and kept by sys.modules
+        // (a C++ static would outlive Python and release it after shutdown).
+        py::module_ sys_module = py::module_::import("sys");
+        py::object intel;
+        if (sys_module.attr("modules").attr("__contains__")("cyxwiz_intel").cast<bool>()) {
+            intel = sys_module.attr("modules")["cyxwiz_intel"];
+        } else {
+            const auto tools = cyxwiz::core::ExecutableDirectory() / "python_tools";
+            py::list path = sys_module.attr("path");
+            const std::string dir = tools.string();
+            path.insert(0, dir);
+            try {
+                intel = py::module_::import("cyxwiz_intel");
+            } catch (const py::error_already_set& e) {
+                std::lock_guard<std::mutex> lock(language_mutex_);
+                language_error_ = std::string("The Script Editor's language tools are missing: ") + e.what();
+            }
+            // Only cyxwiz_intel came from there; it loads jedi/pyflakes itself.
+            for (size_t i = 0; i < py::len(path); ++i) {
+                if (py::str(path[i]).cast<std::string>() == dir) {
+                    path.attr("pop")(i);
+                    break;
+                }
+            }
+            if (!intel) return {};
+            const py::dict status = intel.attr("status")();
+            std::lock_guard<std::mutex> lock(language_mutex_);
+            language_error_ = status["ok"].cast<bool>() ? std::string() : status["error"].cast<std::string>();
+            spdlog::info("Script Editor language tools: {}", language_error_.empty()
+                                                                 ? "jedi " + status["jedi"].cast<std::string>()
+                                                                 : language_error_);
+        }
+        py::module_ json = py::module_::import("json");
+        py::dict kwargs = json.attr("loads")(args_json);
+        if (!notebook_namespace.empty()) {
+            auto main = py::module_::import("__main__").attr("__dict__").cast<py::dict>();
+            if (main.contains("_cyxwiz_notebook_ns")) {
+                auto all = main["_cyxwiz_notebook_ns"].cast<py::dict>();
+                if (all.contains(notebook_namespace)) kwargs["namespace"] = all[py::str(notebook_namespace)];
+            }
+        }
+        py::object result = intel.attr(function.c_str())(**kwargs);
+        return json.attr("dumps")(result).cast<std::string>();
+    } catch (const py::error_already_set& e) {
+        spdlog::debug("Language tool {} failed: {}", function, e.what());
+        return {};
+    } catch (const std::exception& e) {
+        spdlog::debug("Language tool {} failed: {}", function, e.what());
+        return {};
+    }
 }
 
 bool ScriptingEngine::DropNotebookNamespace(const std::string& key) {

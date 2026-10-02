@@ -451,6 +451,12 @@ private:
     int selected_completion_ = 0;
     std::string completion_prefix_;
     editor::Pos completion_start_pos_;
+    // Jedi completion (TOFIX133 P3): the request in flight and where it was asked.
+    std::uint64_t completion_request_ = 0;
+    editor::Pos completion_request_pos_;
+    std::uint64_t completion_request_version_ = 0;
+    bool RequestLanguageCompletion(EditorTab& tab, const editor::Pos& cursor, const std::string& prefix);
+    void PollLanguageResults();
 
     // Focus tracking
     bool is_focused_ = false;

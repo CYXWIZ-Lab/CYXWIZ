@@ -393,10 +393,17 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/tests/test_csv_records.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/csv_records.cpp"
     )
+    # Script Editor language tool results (TOFIX133 P3).
+    add_executable(test_language_results
+        "${_cyxwiz_installer_engine_dir}/tests/test_language_results.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/language_results.cpp"
+    )
+    target_link_libraries(test_language_results PRIVATE nlohmann_json::nlohmann_json)
     foreach(_cyxwiz_p0_test test_python_tokenizer test_argb_colour test_text_search test_cyx_format
             test_python_literal test_script_keys test_text_document test_editor_highlight_folding
             test_notebook_format test_notebook_presentation
-            test_markdown_blocks test_html_table test_csv_records)
+            test_markdown_blocks test_html_table test_csv_records
+            test_language_results)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

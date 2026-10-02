@@ -1,6 +1,9 @@
 // Script Editor auto-completion popup and insertion handling.
 
 #include "script_editor.h"
+#include "../../core/language_results.h"
+#include "../../core/project_manager.h"
+#include "../../scripting/scripting_engine.h"
 #include "../../scripting/script_manager.h"
 
 #include <algorithm>
@@ -56,7 +59,12 @@ void ScriptEditorPanel::UpdateAutoCompletion(bool force) {
         }
     }
 
-    // Get completions
+    // Jedi (bundled, TOFIX133 P3) answers on its worker; the list opens when
+    // its result arrives (PollLanguageResults). Without the tools, the old
+    // keyword completer.
+    if (RequestLanguageCompletion(*tab, cursor_pos, scripting::ScriptManager::GetWordAtCursor(current_line, col))) {
+        return;
+    }
     completion_items_ = script_manager_.GetCompletions(current_line, col);
 
     if (completion_items_.empty()) {
@@ -71,6 +79,76 @@ void ScriptEditorPanel::UpdateAutoCompletion(bool force) {
     show_completion_popup_ = true;
     completion_just_opened_ = true;  // Prevent immediate close from Ctrl+Space inserting space
     selected_completion_ = 0;
+}
+
+namespace {
+// Jedi columns count characters; the editor's are UTF-8 byte offsets.
+int CharacterColumn(const std::string& line, int byte_col) {
+    int chars = 0;
+    for (int i = 0; i < byte_col && i < static_cast<int>(line.size()); ++i)
+        if ((static_cast<unsigned char>(line[static_cast<size_t>(i)]) & 0xC0) != 0x80) ++chars;
+    return chars;
+}
+
+scripting::CompletionItem::Kind ItemKind(const std::string& kind) {
+    using K = scripting::CompletionItem::Kind;
+    if (kind == "function") return K::Function;
+    if (kind == "class") return K::Class;
+    if (kind == "module") return K::Module;
+    if (kind == "keyword") return K::Keyword;
+    if (kind == "property") return K::Property;
+    return K::Variable;
+}
+}  // namespace
+
+bool ScriptEditorPanel::RequestLanguageCompletion(EditorTab& tab, const editor::Pos& cursor, const std::string& prefix) {
+    if (!scripting_engine_) return false;
+    if (!scripting_engine_->IsInitialized()) {
+        // Python starts on the UI thread, as a first run starts it.
+        std::string why;
+        if (!scripting_engine_->StartPython(&why)) return false;
+    }
+    const std::string tools_error = scripting_engine_->LanguageToolsError();
+    if (!tools_error.empty()) return false;
+    const editor::Document& doc = tab.editor.Doc();
+    scripting::LanguageService::Request request;
+    request.kind = scripting::LanguageService::Kind::Complete;
+    request.source = doc.Text();
+    request.line = cursor.line + 1;
+    request.column = CharacterColumn(doc.Line(cursor.line), cursor.col);
+    request.path = tab.filepath;
+    if (ProjectManager::Instance().HasActiveProject()) request.project_root = ProjectManager::Instance().GetProjectRoot();
+    completion_request_ = scripting_engine_->Language().Submit(std::move(request));
+    completion_request_pos_ = cursor;
+    completion_request_version_ = doc.Version();
+    completion_prefix_ = prefix;
+    completion_start_pos_ = {cursor.line, cursor.col - static_cast<int>(prefix.length())};
+    return completion_request_ != 0;
+}
+
+void ScriptEditorPanel::PollLanguageResults() {
+    if (!scripting_engine_) return;
+    for (auto& result : scripting_engine_->Language().Poll()) {
+        if (result.kind != scripting::LanguageService::Kind::Complete || result.id != completion_request_) continue;
+        completion_request_ = 0;
+        if (active_tab_index_ < 0 || active_tab_index_ >= static_cast<int>(tabs_.size())) continue;
+        auto& tab = tabs_[active_tab_index_];
+        // Stale when the text or the cursor moved since it was asked.
+        const editor::Document& doc = tab->editor.Doc();
+        if (doc.Version() != completion_request_version_ || !(doc.Primary().head == completion_request_pos_)) continue;
+        completion_items_.clear();
+        for (const auto& c : lang::ParseCompletions(result.json)) {
+            scripting::CompletionItem item(c.name, ItemKind(c.kind), c.detail);
+            completion_items_.push_back(std::move(item));
+        }
+        if (completion_items_.empty()) {
+            CloseCompletionPopup();
+            continue;
+        }
+        show_completion_popup_ = true;
+        completion_just_opened_ = true;
+        selected_completion_ = 0;
+    }
 }
 
 void ScriptEditorPanel::RenderCompletionPopup() {

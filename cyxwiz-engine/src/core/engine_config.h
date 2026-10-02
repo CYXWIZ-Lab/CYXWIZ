@@ -8,6 +8,10 @@
 
 namespace cyxwiz::core {
 
+// The folder of the running executable (files that ship next to the Engine,
+// e.g. python_tools/).
+std::filesystem::path ExecutableDirectory();
+
 struct RuntimeLogSavedFilterConfig {
     std::string name;
     std::string expression;

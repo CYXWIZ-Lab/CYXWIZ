@@ -324,6 +324,7 @@ set(ENGINE_SOURCES
     src/core/notebook_presentation.cpp
     src/core/markdown_blocks.cpp
     src/core/html_table.cpp
+    src/core/language_results.cpp
     src/core/script_keys.cpp
     src/core/editor/text_document.cpp
     src/core/editor/python_highlight.cpp
@@ -598,12 +599,14 @@ if(CYXWIZ_HAS_PYTHON)
     list(APPEND ENGINE_SOURCES
         src/plotting/backends/matplotlib_backend.cpp
         src/scripting/scripting_engine.cpp
+        src/scripting/language_service.cpp
         src/scripting/python_sandbox.cpp
     )
 else()
     list(APPEND ENGINE_SOURCES
         src/plotting/backends/matplotlib_backend_stub.cpp
         src/scripting/scripting_engine_stub.cpp
+        src/scripting/language_service.cpp
         src/scripting/python_sandbox_stub.cpp
     )
 endif()

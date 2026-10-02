@@ -61,6 +61,16 @@ bool ScriptingEngine::ExecuteScriptAsync(const std::string&, RunCallbacks callba
 
 bool ScriptingEngine::DropNotebookNamespace(const std::string&) { return true; }
 
+std::string ScriptingEngine::CallLanguageTool(const std::string&, const std::string&, const std::string&) { return {}; }
+
+LanguageService& ScriptingEngine::Language() {
+    std::lock_guard<std::mutex> lock(language_mutex_);
+    if (!language_) language_ = std::make_unique<LanguageService>(this);
+    return *language_;
+}
+
+std::string ScriptingEngine::LanguageToolsError() const { return "This build has no Python scripting"; }
+
 bool ScriptingEngine::ExportNotebookVariableToCsv(const std::string&, const std::string&, const std::string&,
                                                   std::string* error) {
     if (error) *error = "This build has no Python scripting";
@@ -100,6 +110,10 @@ PythonSandbox::Config ScriptingEngine::GetSandboxConfig() const {
 }
 
 bool ScriptingEngine::IsInitialized() const { return false; }
+bool ScriptingEngine::EnsurePythonInitialized(std::string* error_out) {
+    if (error_out) *error_out = "This build has no Python scripting";
+    return false;
+}
 
 std::string ScriptingEngine::GetPythonRuntimeDiagnostics() {
     return "Python scripting is disabled in this Engine build";

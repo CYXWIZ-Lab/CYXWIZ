@@ -598,7 +598,8 @@ void ScriptEditorPanel::RenderEditor() {
     // Clear the just-opened flag after the first frame
     completion_just_opened_ = false;
 
-    // Render auto-completion popup (if open)
+    // Language results that arrived (completion from Jedi), then the popup.
+    PollLanguageResults();
     RenderCompletionPopup();
 }
 

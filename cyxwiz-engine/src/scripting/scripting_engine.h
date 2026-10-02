@@ -1,5 +1,6 @@
 #pragma once
 
+#include "language_service.h"
 #include "python_engine.h"
 #include "python_sandbox.h"
 #include <string>
@@ -133,6 +134,19 @@ public:
     // Returns false (nothing done) while a script is running.
     bool DropNotebookNamespace(const std::string& key);
 
+    // Script Editor language intelligence (TOFIX133 P3). CallLanguageTool runs
+    // one function of python_tools/cyxwiz_intel.py with JSON keyword arguments
+    // (and a notebook's namespace when given) under the GIL, on the caller's
+    // thread; it returns the result as JSON, or "" when Python is not running
+    // or the tools are missing. Language() runs them on a worker thread.
+    std::string CallLanguageTool(const std::string& function, const std::string& args_json,
+                                 const std::string& notebook_namespace = {});
+    LanguageService& Language();
+    // Starts Python now (UI thread), as a first run would; false with the reason.
+    bool StartPython(std::string* error = nullptr) { return EnsurePythonInitialized(error); }
+    // Whether the bundled tools loaded ("" until tried; else the reason).
+    std::string LanguageToolsError() const;
+
     // Writes Out[count] of a notebook (a pandas DataFrame or Series) to a CSV
     // file, for the Table Viewer. False with a reason while a script runs, after
     // Restart, or when the value is not a table.
@@ -219,6 +233,9 @@ private:
     cyxwiz::TrainingPlotPanel* training_plot_panel_{nullptr};
     bool training_dashboard_registered_{false};
     std::unique_ptr<PythonEngine> python_engine_;
+    std::unique_ptr<LanguageService> language_;  // stopped before Python ends
+    mutable std::mutex language_mutex_;
+    std::string language_error_;
     std::unique_ptr<PythonSandbox> sandbox_;
     bool sandbox_enabled_;
     bool verbose_logging_{false};  // Log all commands including internal ones
