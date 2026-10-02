@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <numeric>
+#include <set>
 #include <string>
 
 using namespace cyxwiz::plot;
@@ -297,6 +298,129 @@ int main() {
               SpecFromJson(SpecToJson(*cm_preset), back_spec) && back_spec.value_column == "value",
           "diagonal and value column saved");
 
+    // ---- P2b group 1 (board 8) ----
+    // KDE: integrates to 1, symmetric data peaks in the middle; one curve per group.
+    Source kd;
+    kd.columns.push_back(Numbers("v", {-1, 0, 1, -1, 0, 1, 10, 11, 12}));
+    kd.columns.push_back(Text("g", {"a", "a", "a", "a", "a", "a", "b", "b", "b"}));
+    PlotSpec ks = Spec(Kind::Kde, "", {"v"}, "g");
+    p = Prepare(ks, kd);
+    Check(p.problem.empty() && p.series.size() == 2 && p.series[0].label == "a" && p.series[0].x.size() == 128, "KDE: a curve per group");
+    for (const auto& s : p.series) {
+        double kde_area = 0;
+        for (size_t k = 0; k + 1 < s.x.size(); ++k) kde_area += (s.y[k] + s.y[k + 1]) / 2 * (s.x[k + 1] - s.x[k]);
+        Check(std::fabs(kde_area - 1.0) < 0.02, "KDE integrates to 1 (" + std::to_string(kde_area) + ")");
+    }
+    {
+        const auto& a = p.series[0];
+        size_t peak = 0;
+        for (size_t k = 1; k < a.y.size(); ++k)
+            if (a.y[k] > a.y[peak]) peak = k;
+        Check(std::fabs(a.x[peak]) < 0.3, "symmetric data peaks at 0");
+        ks.kde_bandwidth = 2.0;
+        const Prepared wide = Prepare(ks, kd);
+        Check(wide.series[0].y[peak] < a.y[peak], "a wider bandwidth flattens the peak");
+    }
+
+    // Matrix: Pearson 1, -1 and 0.8 (a = 1..5, d = 1 3 2 5 4); Spearman of the same ranks.
+    Source mx;
+    mx.columns.push_back(Numbers("a", {1, 2, 3, 4, 5}));
+    mx.columns.push_back(Numbers("b", {2, 4, 6, 8, 10}));
+    mx.columns.push_back(Numbers("c", {-1, -2, -3, -4, -5}));
+    mx.columns.push_back(Numbers("d", {1, 3, 2, 5, 4}));
+    PlotSpec ms = Spec(Kind::Matrix, "", {"a", "b", "c", "d"});
+    p = Prepare(ms, mx);
+    const auto cell = [&](int r, int c) { return p.grid[static_cast<size_t>(r * p.grid_cols + c)]; };
+    Check(p.problem.empty() && p.grid_rows == 4 && p.grid_cols == 4 && p.grid_diverging && p.grid_lo == -1 && p.grid_hi == 1,
+          "matrix: 4 x 4 on -1..1");
+    Check(std::fabs(cell(0, 1) - 1) < 1e-12 && std::fabs(cell(0, 2) + 1) < 1e-12 && std::fabs(cell(0, 3) - 0.8) < 1e-12 &&
+              cell(3, 0) == cell(0, 3) && cell(2, 2) == 1,
+          "Pearson 1, -1, 0.8, symmetric, 1 on the diagonal");
+    ms.matrix_values = PlotSpec::MatrixValues::Spearman;
+    mx.columns[3].numbers = {1, 30, 20, 500, 40};  // same ranks as 1 3 2 5 4
+    p = Prepare(ms, mx);
+    Check(std::fabs(cell(0, 3) - 0.8) < 1e-12, "Spearman uses the ranks");
+    ms.matrix_values = PlotSpec::MatrixValues::Values;
+    p = Prepare(ms, mx);
+    Check(p.grid_rows == 5 && p.grid_cols == 4 && cell(1, 1) == 4 && p.grid_diverging && p.grid_lo == -500,
+          "values: the columns as a grid, two-sided across 0");
+    Check(Prepare(Spec(Kind::Matrix, "", {"a"}), mx).problem == "Choose two or more number columns.", "one column is not a matrix");
+
+    // Hexbin: every point in one hexagon, totals kept; mean of a column.
+    Source hx;
+    std::vector<double> hxs, hys, hvs;
+    for (int i = 0; i < 400; ++i) {
+        hxs.push_back((i * 37) % 100);
+        hys.push_back((i * 53) % 100);
+        hvs.push_back(i % 2 ? 1.0 : 3.0);
+    }
+    hx.columns.push_back(Numbers("x", hxs));
+    hx.columns.push_back(Numbers("y", hys));
+    hx.columns.push_back(Numbers("v", hvs));
+    PlotSpec hs2 = Spec(Kind::Hexbin, "x", {"y"});
+    hs2.bins = 10;
+    p = Prepare(hs2, hx);
+    double hex_total = 0;
+    for (double hv : p.hex_v) hex_total += hv;
+    Check(p.problem.empty() && hex_total == 400 && p.hex_x.size() == p.hex_v.size() && p.hex_sx > 0 && p.grid_lo == 0,
+          "hexbin: every row in one hexagon");
+    hs2.value_column = "v";
+    p = Prepare(hs2, hx);
+    for (double hv : p.hex_v) Check(hv >= 1.0 && hv <= 3.0, "hexbin mean stays within the values");
+
+    // Contour: z = x + y on a grid; the level lines lie on x + y = level.
+    Source ct;
+    std::vector<double> cxs, cys, czs;
+    for (int i = 0; i < 40; ++i)
+        for (int j = 0; j < 40; ++j) {
+            cxs.push_back(i / 39.0);
+            cys.push_back(j / 39.0);
+            czs.push_back(i / 39.0 + j / 39.0);
+        }
+    ct.columns.push_back(Numbers("x", cxs));
+    ct.columns.push_back(Numbers("y", cys));
+    ct.columns.push_back(Numbers("z", czs));
+    PlotSpec cs2 = Spec(Kind::Contour, "x", {"y"});
+    cs2.value_column = "z";
+    cs2.bins = 20;
+    cs2.levels = 3;
+    p = Prepare(cs2, ct);
+    Check(p.problem.empty() && p.contour_levels.size() == 3 && p.contour_segments.size() == 3, "contour: 3 levels");
+    for (size_t l = 0; l < 3; ++l) {
+        Check(!p.contour_segments[l].empty(), "every level has segments");
+        for (size_t k = 0; k + 1 < p.contour_segments[l].size(); k += 2)
+            Check(std::fabs(p.contour_segments[l][k] + p.contour_segments[l][k + 1] - p.contour_levels[l]) < 0.06,
+                  "segment points lie on x + y = level");
+    }
+    cs2.kind = Kind::FilledContour;
+    p = Prepare(cs2, ct);
+    Check(p.band_rows == 80 && p.band_cols == 80, "filled contour: bands upsampled 4x");
+    std::set<double> bands(p.band_grid.begin(), p.band_grid.end());
+    Check(bands.size() == 4, "4 bands for 3 levels (" + std::to_string(bands.size()) + ")");
+
+    // Bars with Colour by: grouped counts, stacked the same, 100% sums.
+    Source gb;
+    gb.columns.push_back(Text("type", {"album", "album", "album", "single", "single", "album"}));
+    gb.columns.push_back(Text("explicit", {"no", "yes", "no", "no", "yes", "no"}));
+    PlotSpec bs = Spec(Kind::Bar, "type", {}, "explicit");
+    p = Prepare(bs, gb);
+    Check(p.categories == std::vector<std::string>({"album", "single"}) && p.series.size() == 2 && p.series[0].label == "no" &&
+              p.series[0].y == std::vector<double>({3, 1}) && p.series[1].y == std::vector<double>({1, 1}),
+          "grouped bars: counts per category and group");
+    bs.bar_layout = PlotSpec::BarLayout::Percent;
+    p = Prepare(bs, gb);
+    Check(p.series[0].y[0] == 75 && p.series[1].y[0] == 25 && p.series[0].y[1] == 50, "100%: shares per category");
+    PlotSpec back_g1;
+    bs.donut = true;
+    bs.kde_bandwidth = 1.5;
+    bs.levels = 9;
+    bs.log_colour = true;
+    bs.matrix_values = PlotSpec::MatrixValues::Spearman;
+    Check(SpecFromJson(SpecToJson(bs), back_g1) && back_g1.bar_layout == PlotSpec::BarLayout::Percent && back_g1.donut &&
+              back_g1.kde_bandwidth == 1.5 && back_g1.levels == 9 && back_g1.log_colour &&
+              back_g1.matrix_values == PlotSpec::MatrixValues::Spearman,
+          "group 1 options saved");
+
     // Column summaries for the picker.
     ColumnSummary cs1 = SummarizeColumn(Numbers("pixel1", {0, 0, 0}));
     Check(cs1.OneValue() && cs1.Text() == "always 0", "a one-value column: " + cs1.Text());
@@ -306,7 +430,7 @@ int main() {
     cs1 = SummarizeColumn(Text("name", names));
     Check(cs1.Text() == "2 values" && !cs1.numeric, "text: " + cs1.Text());
     Check(SummarizeColumn(Numbers("v", v)).distinct == kMaxColorGroups + 1, "distinct counted up to 13");
-    std::cout << "plot prepare: 13 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems, rows "
-                 "(first, range, filter), colour scale and ranges, column summaries. OK\n";
+    std::cout << "plot prepare: 18 kinds, reduce, sample, colour groups, categories, box/violin, grids, problems, rows "
+                 "(first, range, filter), colour scale and ranges, column summaries, KDE, matrix, hexbin, contours, grouped bars. OK\n";
     return 0;
 }

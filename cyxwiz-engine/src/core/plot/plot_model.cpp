@@ -11,7 +11,7 @@ const std::vector<KindInfo>& Kinds() {
     static const std::vector<KindInfo> kinds = {
         {Kind::Line, "line", "Line", Group::Basic, kEncY, kEncX | kEncColor, true, "X (optional: row number)", "Y values"},
         {Kind::Scatter, "scatter", "Scatter", Group::Basic, kEncX | kEncY, kEncColor, true, "X values", "Y values"},
-        {Kind::Bar, "bar", "Bar", Group::Basic, kEncX, kEncY, false, "Categories", "Values (optional: count rows)"},
+        {Kind::Bar, "bar", "Bar", Group::Basic, kEncX, kEncY | kEncColor, false, "Categories", "Values (optional: count rows)"},
         {Kind::Histogram, "histogram", "Histogram", Group::Basic, kEncX, kEncColor, false, "Values", ""},
         {Kind::Area, "area", "Area", Group::Basic, kEncY, kEncX | kEncColor, true, "X (optional: row number)", "Y values"},
         {Kind::Step, "step", "Step", Group::Basic, kEncY, kEncX | kEncColor, true, "X (optional: row number)", "Y values"},
@@ -19,10 +19,18 @@ const std::vector<KindInfo>& Kinds() {
         {Kind::Pie, "pie", "Pie", Group::Basic, kEncX, kEncY, false, "Categories", "Values (optional: count rows)"},
         {Kind::Box, "box", "Box", Group::Distribution, kEncY, kEncColor, true, "", "Values"},
         {Kind::Violin, "violin", "Violin", Group::Distribution, kEncY, kEncColor, true, "", "Values"},
+        {Kind::Kde, "kde", "KDE", Group::Distribution, kEncY, kEncColor, true, "", "Values"},
         {Kind::ErrorBars, "error_bars", "Error bars", Group::Distribution, kEncX | kEncY, 0, false, "Groups", "Values (mean and spread)"},
         {Kind::Heatmap, "heatmap", "Heatmap", Group::GridDensity, kEncX | kEncY, kEncValue, false, "Columns (categories)", "Rows (categories)",
          "Cell values (optional: count rows)"},
+        {Kind::Matrix, "matrix", "Matrix", Group::GridDensity, kEncY, 0, true, "", "Columns (two or more numbers)"},
         {Kind::Histogram2D, "histogram_2d", "2D histogram", Group::GridDensity, kEncX | kEncY, 0, false, "X values", "Y values"},
+        {Kind::Hexbin, "hexbin", "Hexbin", Group::GridDensity, kEncX | kEncY, kEncValue, false, "X values", "Y values",
+         "Colour (optional: count rows)"},
+        {Kind::Contour, "contour", "Contour", Group::GridDensity, kEncX | kEncY, kEncValue, false, "X values", "Y values",
+         "Z (optional: density of rows)"},
+        {Kind::FilledContour, "filled_contour", "Filled contour", Group::GridDensity, kEncX | kEncY, kEncValue, false, "X values",
+         "Y values", "Z (optional: density of rows)"},
     };
     return kinds;
 }
@@ -92,6 +100,16 @@ std::string SpecToJson(const PlotSpec& s) {
     j["color"] = s.color_column;
     j["value"] = s.value_column;
     j["diagonal"] = s.show_diagonal;
+    j["bar_layout"] = s.bar_layout == PlotSpec::BarLayout::Stacked   ? "stacked"
+                      : s.bar_layout == PlotSpec::BarLayout::Percent ? "percent"
+                                                                     : "grouped";
+    j["donut"] = s.donut;
+    j["kde_bandwidth"] = s.kde_bandwidth;
+    j["matrix"] = s.matrix_values == PlotSpec::MatrixValues::Spearman ? "spearman"
+                  : s.matrix_values == PlotSpec::MatrixValues::Values ? "values"
+                                                                      : "pearson";
+    j["levels"] = s.levels;
+    j["log_colour"] = s.log_colour;
     j["title"] = s.title;
     j["x_label"] = s.x_label;
     j["y_label"] = s.y_label;
@@ -136,6 +154,20 @@ bool SpecFromJson(const std::string& text, PlotSpec& s, std::string* problem) {
     out.color_column = j.value("color", std::string());
     out.value_column = j.value("value", std::string());
     out.show_diagonal = j.value("diagonal", false);
+    const std::string layout = j.value("bar_layout", std::string("grouped"));
+    if (layout == "grouped") out.bar_layout = PlotSpec::BarLayout::Grouped;
+    else if (layout == "stacked") out.bar_layout = PlotSpec::BarLayout::Stacked;
+    else if (layout == "percent") out.bar_layout = PlotSpec::BarLayout::Percent;
+    else return fail("unknown bar layout '" + layout + "'");
+    out.donut = j.value("donut", false);
+    out.kde_bandwidth = std::clamp(j.value("kde_bandwidth", 1.0), 0.05, 20.0);
+    const std::string matrix = j.value("matrix", std::string("pearson"));
+    if (matrix == "pearson") out.matrix_values = PlotSpec::MatrixValues::Pearson;
+    else if (matrix == "spearman") out.matrix_values = PlotSpec::MatrixValues::Spearman;
+    else if (matrix == "values") out.matrix_values = PlotSpec::MatrixValues::Values;
+    else return fail("unknown matrix values '" + matrix + "'");
+    out.levels = std::clamp(j.value("levels", 7), 1, 50);
+    out.log_colour = j.value("log_colour", false);
     out.title = j.value("title", std::string());
     out.x_label = j.value("x_label", std::string());
     out.y_label = j.value("y_label", std::string());

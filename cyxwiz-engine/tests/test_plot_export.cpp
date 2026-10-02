@@ -122,6 +122,7 @@ int main() {
         if (k.required & kEncX) s.x_column = categories ? "pred" : "v";
         if (k.required & kEncY) s.y_columns = {k.kind == Kind::Heatmap ? "truth" : "w"};
         if (k.kind == Kind::ErrorBars) s.y_columns = {"v"};
+        if (k.kind == Kind::Matrix) s.y_columns = {"v", "w"};
         const Prepared kp = Prepare(s, cat);
         Check(kp.problem.empty(), std::string(k.id) + ": prepared (" + kp.problem + ")");
         const std::string doc = ToSvg(kp, AxisRange{0, 5, 0, 6, false}, SvgStyle{});
@@ -155,6 +156,6 @@ int main() {
               svg.find("fill=\"" + style.text_dim + "\" fill-opacity") != std::string::npos,
           "SVG: low and high ends of the scale, missing in dim text");
     ParsesAsXml(svg, "scatter with a colour scale");
-    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 13 kinds, colour scale. OK\n";
+    std::cout << "plot export: CSV keeps all rows, quoting, SVG escaped and written for all 18 kinds, colour scale. OK\n";
     return 0;
 }

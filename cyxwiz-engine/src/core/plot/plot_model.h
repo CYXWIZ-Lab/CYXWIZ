@@ -25,6 +25,12 @@ enum class Kind {
     ErrorBars,
     Heatmap,
     Histogram2D,
+    // P2b group 1 (approved board 8).
+    Kde,
+    Matrix,
+    Hexbin,
+    Contour,
+    FilledContour,
 };
 
 enum class Group { Basic, Distribution, GridDensity };
@@ -96,6 +102,15 @@ struct PlotSpec {
     bool log_y = false;
     bool legend = true;
     bool show_diagonal = false;         // line, scatter: a y = x reference line (ROC chance)
+    // P2b group 1 (approved board 8).
+    enum class BarLayout { Grouped, Stacked, Percent };
+    BarLayout bar_layout = BarLayout::Grouped;  // bar with Colour by
+    bool donut = false;                          // pie: a hole with the total
+    double kde_bandwidth = 1.0;                  // KDE: factor on Silverman's bandwidth
+    enum class MatrixValues { Pearson, Spearman, Values };
+    MatrixValues matrix_values = MatrixValues::Pearson;
+    int levels = 7;                              // contour levels
+    bool log_colour = false;                     // hexbin: colour by the log of the count
     RowMode rows = RowMode::All;
     size_t first_rows = 1000;              // RowMode::First
     size_t row_from = 1, row_to = 1000;    // RowMode::Range: 1-based, inclusive
@@ -176,6 +191,22 @@ struct Prepared {
     int grid_rows = 0, grid_cols = 0;
     double x_min = 0, x_max = 0, y_min = 0, y_max = 0;
     std::vector<std::string> row_names, col_names;
+    // The colour scale of a grid (heatmap, matrix, 2D histogram, contours,
+    // hexbin): grid_lo..grid_hi, two-sided around 0 when grid_diverging.
+    double grid_lo = 0, grid_hi = 0;
+    bool grid_diverging = false;
+    // Contour / filled contour: the level values, and per level its line
+    // segments as x0, y0, x1, y1 (data units). Filled contour also keeps
+    // band_grid: the grid upsampled (band_rows x band_cols) and set to the
+    // middle of its band, drawn like a heatmap over x_min..x_max, y_min..y_max.
+    std::vector<double> contour_levels;
+    std::vector<std::vector<double>> contour_segments;
+    std::vector<double> band_grid;
+    int band_rows = 0, band_cols = 0;
+    // Hexbin: hexagon centres and values (count or mean), and the lattice
+    // steps (matplotlib's layout: vertices (+-sx/2, +-sy/6), (0, +-sy/3)).
+    std::vector<double> hex_x, hex_y, hex_v;
+    double hex_sx = 0, hex_sy = 0;
     // Box: per series q1, median, q3, whisker low/high, mean.
     struct Box { double low, q1, median, q3, high, mean; };
     std::vector<Box> boxes;

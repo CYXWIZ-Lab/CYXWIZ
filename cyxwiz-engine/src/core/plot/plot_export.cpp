@@ -58,6 +58,7 @@ std::string ToCsv(const Prepared& p) {
         case Kind::Area:
         case Kind::Step:
         case Kind::Stem:
+        case Kind::Kde:
         case Kind::Scatter:
             out << "series,x,y";
             if (p.colour_scale) out << ',' << CsvCell(p.colour_label);
@@ -81,6 +82,13 @@ std::string ToCsv(const Prepared& p) {
             break;
         case Kind::Bar:
         case Kind::Pie:
+            if (p.series.size() > 1) {  // bars with Colour by
+                out << "category,series," << (p.spec.bar_layout == PlotSpec::BarLayout::Percent ? "percent" : "value") << '\n';
+                for (const auto& s : p.series)
+                    for (size_t i = 0; i < s.y.size(); ++i)
+                        out << CsvCell(Category(p, i)) << ',' << CsvCell(s.label) << ',' << Num(s.y[i]) << '\n';
+                break;
+            }
             out << "category," << CsvCell(p.series.empty() ? "value" : p.series[0].label) << '\n';
             if (!p.series.empty())
                 for (size_t i = 0; i < p.series[0].y.size(); ++i)
@@ -103,13 +111,31 @@ std::string ToCsv(const Prepared& p) {
             }
             break;
         case Kind::Heatmap:
-            out << "row,column,count\n";
+        case Kind::Matrix:
+            out << "row,column,"
+                << (p.spec.kind == Kind::Matrix ? (p.spec.matrix_values == PlotSpec::MatrixValues::Values ? "value" : "correlation")
+                                                : (p.spec.value_column.empty() ? "count" : p.spec.value_column.c_str()))
+                << '\n';
             for (int r = 0; r < p.grid_rows; ++r)
                 for (int c = 0; c < p.grid_cols; ++c)
                     out << CsvCell(r < static_cast<int>(p.row_names.size()) ? p.row_names[static_cast<size_t>(r)] : "") << ','
                         << CsvCell(c < static_cast<int>(p.col_names.size()) ? p.col_names[static_cast<size_t>(c)] : "") << ','
                         << Num(p.grid[static_cast<size_t>(r * p.grid_cols + c)]) << '\n';
             break;
+        case Kind::Hexbin:
+            out << "x,y," << (p.spec.value_column.empty() ? "count" : "mean of " + p.spec.value_column) << '\n';
+            for (size_t i = 0; i < p.hex_x.size(); ++i) out << Num(p.hex_x[i]) << ',' << Num(p.hex_y[i]) << ',' << Num(p.hex_v[i]) << '\n';
+            break;
+        case Kind::Contour:
+        case Kind::FilledContour: {
+            out << "x,y," << (p.spec.value_column.empty() ? "density" : "mean of " + p.spec.value_column) << '\n';
+            const double dx = (p.x_max - p.x_min) / std::max(1, p.grid_cols), dy = (p.y_max - p.y_min) / std::max(1, p.grid_rows);
+            for (int r = 0; r < p.grid_rows; ++r)
+                for (int c = 0; c < p.grid_cols; ++c)
+                    out << Num(p.x_min + dx * (c + 0.5)) << ',' << Num(p.y_max - dy * (r + 0.5)) << ','
+                        << Num(p.grid[static_cast<size_t>(r * p.grid_cols + c)]) << '\n';
+            break;
+        }
         case Kind::Histogram2D: {
             out << "x_start,x_end,y_start,y_end,count\n";
             const double dx = (p.x_max - p.x_min) / std::max(1, p.grid_cols);
@@ -163,6 +189,15 @@ std::string Mix(const std::string& lo, const std::string& hi, double t) {
     return buf;
 }
 
+// A grid cell's colour on its range (two-sided around 0 when asked); a
+// missing cell in the background.
+std::string RangeColour(double v, double lo, double hi, bool diverging, const SvgStyle& st) {
+    if (!std::isfinite(v)) return st.background;
+    const double t = hi > lo ? std::clamp((v - lo) / (hi - lo), 0.0, 1.0) : 0.0;
+    if (!diverging) return Mix(st.scale_low, st.scale_high, t);
+    return t < 0.5 ? Mix(st.diverging_low, st.diverging_mid, t * 2.0) : Mix(st.diverging_mid, st.diverging_high, (t - 0.5) * 2.0);
+}
+
 // A colour-scale point: the sequential scale, or the two-sided scale around
 // 0; a missing value in the dim text colour.
 std::string ScaleColour(const Prepared& p, const SvgStyle& st, double v) {
@@ -191,13 +226,14 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
     o << "<defs><clipPath id=\"area\"><rect x=\"" << f.left << "\" y=\"" << f.top << "\" width=\"" << f.width << "\" height=\"" << f.height << "\"/></clipPath></defs>\n";
 
     // Axes: grid, ticks and labels (categories under bars).
-    const bool categorical_x = p.spec.kind == Kind::Bar || p.spec.kind == Kind::ErrorBars || p.spec.kind == Kind::Heatmap;
+    const bool grid_names = p.spec.kind == Kind::Heatmap || p.spec.kind == Kind::Matrix;
+    const bool categorical_x = p.spec.kind == Kind::Bar || p.spec.kind == Kind::ErrorBars || grid_names;
     if (!pie) {
         if (categorical_x) {
-            const auto& names = p.spec.kind == Kind::Heatmap ? p.col_names : p.categories;
+            const auto& names = grid_names ? p.col_names : p.categories;
             const size_t every = names.size() > 30 ? names.size() / 30 + 1 : 1;
             for (size_t i = 0; i < names.size(); i += every) {
-                const double x = p.spec.kind == Kind::Heatmap ? f.r.x0 + (static_cast<double>(i) + 0.5) : static_cast<double>(i);
+                const double x = grid_names ? f.r.x0 + (static_cast<double>(i) + 0.5) : static_cast<double>(i);
                 o << "<text x=\"" << f.X(x) << "\" y=\"" << f.top + f.height + 16 << "\" fill=\"" << st.text_dim << "\" text-anchor=\"middle\">" << Xml(names[i]) << "</text>\n";
             }
         } else {
@@ -206,8 +242,8 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
                 o << "<text x=\"" << f.X(t) << "\" y=\"" << f.top + f.height + 16 << "\" fill=\"" << st.text_dim << "\" text-anchor=\"middle\">" << Num(t) << "</text>\n";
             }
         }
-        if (p.spec.kind == Kind::Heatmap) {
-            for (size_t i = 0; i < p.row_names.size(); ++i)
+        if (grid_names) {
+            for (size_t i = 0; i < p.row_names.size() && i < 60; ++i)
                 o << "<text x=\"" << f.left - 8 << "\" y=\"" << f.Y(f.r.y1 - (static_cast<double>(i) + 0.5)) + 4 << "\" fill=\"" << st.text_dim << "\" text-anchor=\"end\">" << Xml(p.row_names[i]) << "</text>\n";
         } else {
             const double a = f.r.log_y ? std::log10(std::max(f.r.y0, 1e-300)) : f.r.y0;
@@ -238,6 +274,7 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
         case Kind::Area:
         case Kind::Step:
         case Kind::Stem:
+        case Kind::Kde:
         case Kind::Scatter:
             for (size_t i = 0; i < p.series.size(); ++i) {
                 const auto& s = p.series[i];
@@ -258,7 +295,7 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
                     }
                     o << "\"/>\n";
                 } else {
-                    if (p.spec.kind == Kind::Area && !s.x.empty())
+                    if ((p.spec.kind == Kind::Area || p.spec.kind == Kind::Kde) && !s.x.empty())
                         o << "<polygon fill=\"" << c << "\" fill-opacity=\"0.25\" points=\"" << f.X(s.x.front()) << ',' << f.Y(0) << ' '
                           << Points(f, s.x, s.y) << f.X(s.x.back()) << ',' << f.Y(0) << "\"/>\n";
                     const bool smoothed = !s.smooth_y.empty();
@@ -275,6 +312,24 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
                 }
             break;
         case Kind::Bar:
+            if (p.series.size() > 1) {
+                // Colour by: side by side, or stacked (stacked and 100%).
+                const bool stacked = p.spec.bar_layout != PlotSpec::BarLayout::Grouped;
+                const double n = static_cast<double>(p.series.size());
+                for (size_t k = 0; k < p.series[0].y.size(); ++k) {
+                    double base = 0;
+                    for (size_t i = 0; i < p.series.size(); ++i) {
+                        const double v = p.series[i].y[k];
+                        const double x0 = stacked ? k - 0.33 : k - 0.33 + 0.66 * i / n;
+                        const double x1 = stacked ? k + 0.33 : x0 + 0.66 / n;
+                        const double y0 = stacked ? base : 0.0, y1 = y0 + v;
+                        o << "<rect x=\"" << f.X(x0) << "\" y=\"" << f.Y(y1) << "\" width=\"" << f.X(x1) - f.X(x0) << "\" height=\""
+                          << std::max(0.0, f.Y(y0) - f.Y(y1)) << "\" fill=\"" << colour(i) << "\"/>\n";
+                        base = y1;
+                    }
+                }
+                break;
+            }
             if (!p.series.empty())
                 for (size_t k = 0; k < p.series[0].y.size(); ++k) {
                     const double x = static_cast<double>(k), y = f.Y(p.series[0].y[k]);
@@ -328,21 +383,62 @@ std::string ToSvg(const Prepared& p, const AxisRange& range, const SvgStyle& st)
                 o << "<text x=\"" << cx + rad * 1.12 * std::cos(mid) << "\" y=\"" << cy + rad * 1.12 * std::sin(mid) << "\" fill=\"" << st.text << "\" text-anchor=\"middle\">" << Xml(Category(p, k)) << "</text>\n";
                 a = a2;
             }
+            if (p.spec.donut && total > 0) {
+                // The hole, with the total in it.
+                o << "<circle cx=\"" << cx << "\" cy=\"" << cy << "\" r=\"" << rad * 0.58 << "\" fill=\"" << st.background << "\"/>\n";
+                o << "<text x=\"" << cx << "\" y=\"" << cy + 6 << "\" fill=\"" << st.text << "\" font-size=\"18\" font-weight=\"600\" text-anchor=\"middle\">"
+                  << Num(total) << "</text>\n";
+            }
+            break;
+        }
+        case Kind::Hexbin:
+            for (size_t i = 0; i < p.hex_x.size(); ++i) {
+                const double v = p.spec.log_colour ? std::log1p(p.hex_v[i]) : p.hex_v[i];
+                const double hi = p.spec.log_colour ? std::log1p(p.grid_hi) : p.grid_hi;
+                const double lo = p.spec.log_colour ? std::log1p(p.grid_lo) : p.grid_lo;
+                const double vx[6] = {0.5, 0.5, 0.0, -0.5, -0.5, 0.0}, vy[6] = {-1.0 / 6, 1.0 / 6, 1.0 / 3, 1.0 / 6, -1.0 / 6, -1.0 / 3};
+                o << "<polygon fill=\"" << RangeColour(v, lo, hi, false, st) << "\" points=\"";
+                for (int k = 0; k < 6; ++k) o << f.X(p.hex_x[i] + vx[k] * p.hex_sx) << ',' << f.Y(p.hex_y[i] + vy[k] * p.hex_sy) << ' ';
+                o << "\"/>\n";
+            }
+            break;
+        case Kind::Contour:
+        case Kind::FilledContour: {
+            if (p.spec.kind == Kind::FilledContour && p.band_rows > 0) {
+                const double dx = (p.x_max - p.x_min) / p.band_cols, dy = (p.y_max - p.y_min) / p.band_rows;
+                for (int r = 0; r < p.band_rows; ++r)
+                    for (int c = 0; c < p.band_cols; ++c) {
+                        const double v = p.band_grid[static_cast<size_t>(r * p.band_cols + c)];
+                        if (!std::isfinite(v)) continue;
+                        const double top = p.y_max - dy * r;
+                        o << "<rect x=\"" << f.X(p.x_min + dx * c) << "\" y=\"" << f.Y(top) << "\" width=\"" << f.X(p.x_min + dx * (c + 1)) - f.X(p.x_min + dx * c) + 0.5
+                          << "\" height=\"" << f.Y(top - dy) - f.Y(top) + 0.5 << "\" fill=\"" << RangeColour(v, p.grid_lo, p.grid_hi, false, st) << "\"/>\n";
+                    }
+            }
+            for (size_t l = 0; l < p.contour_segments.size(); ++l) {
+                const std::string c = p.spec.kind == Kind::FilledContour ? st.background
+                                                                         : RangeColour(p.contour_levels[l], p.grid_lo, p.grid_hi, false, st);
+                const auto& seg = p.contour_segments[l];
+                o << "<path fill=\"none\" stroke=\"" << c << "\" stroke-width=\"" << (p.spec.kind == Kind::FilledContour ? 0.8 : 1.6) << "\" d=\"";
+                for (size_t k = 0; k + 3 < seg.size(); k += 4)
+                    o << 'M' << f.X(seg[k]) << ' ' << f.Y(seg[k + 1]) << 'L' << f.X(seg[k + 2]) << ' ' << f.Y(seg[k + 3]);
+                o << "\"/>\n";
+            }
             break;
         }
         case Kind::Heatmap:
+        case Kind::Matrix:
         case Kind::Histogram2D: {
-            double peak = 0;
-            for (double v : p.grid) peak = std::max(peak, v);
-            const double x0 = p.spec.kind == Kind::Heatmap ? f.r.x0 : p.x_min, x1 = p.spec.kind == Kind::Heatmap ? f.r.x0 + p.grid_cols : p.x_max;
-            const double y1 = p.spec.kind == Kind::Heatmap ? f.r.y1 : p.y_max, y0 = p.spec.kind == Kind::Heatmap ? f.r.y1 - p.grid_rows : p.y_min;
+            const bool names = p.spec.kind != Kind::Histogram2D;
+            const double x0 = names ? f.r.x0 : p.x_min, x1 = names ? f.r.x0 + p.grid_cols : p.x_max;
+            const double y1 = names ? f.r.y1 : p.y_max, y0 = names ? f.r.y1 - p.grid_rows : p.y_min;
             const double dx = (x1 - x0) / std::max(1, p.grid_cols), dy = (y1 - y0) / std::max(1, p.grid_rows);
             for (int r = 0; r < p.grid_rows; ++r)
                 for (int c = 0; c < p.grid_cols; ++c) {
                     const double v = p.grid[static_cast<size_t>(r * p.grid_cols + c)];
                     const double top = y1 - dy * r;
                     o << "<rect x=\"" << f.X(x0 + dx * c) << "\" y=\"" << f.Y(top) << "\" width=\"" << f.X(x0 + dx * (c + 1)) - f.X(x0 + dx * c) << "\" height=\"" << f.Y(top - dy) - f.Y(top) << "\" fill=\""
-                      << Mix(st.scale_low, st.scale_high, peak > 0 ? v / peak : 0) << "\"/>\n";
+                      << RangeColour(v, p.grid_lo, p.grid_hi, p.grid_diverging, st) << "\"/>\n";
                 }
             break;
         }
