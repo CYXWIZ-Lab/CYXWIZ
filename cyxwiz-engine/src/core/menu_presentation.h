@@ -15,7 +15,7 @@ namespace cyxwiz::menu {
 // Which dock window has keyboard focus. Shortcuts are window-wise: the same
 // chord can do the matching action in another window (F5 runs a script in
 // the Script Editor and starts training elsewhere).
-enum class Context { Any, StudioCanvas, ScriptEditor, ScriptDebugging, ScriptNotebook };
+enum class Context { Any, StudioCanvas, ScriptEditor, ScriptDebugging, ScriptNotebook, Variables };
 
 const char* ContextName(Context context);
 

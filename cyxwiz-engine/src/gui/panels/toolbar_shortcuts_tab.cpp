@@ -32,7 +32,8 @@ bool Matches(const menu::ShortcutEntry& e, const std::string& needle) {
 
 void ToolbarPanel::RenderShortcutsPreferences() {
     const menu::Context contexts[] = {menu::Context::Any, menu::Context::StudioCanvas, menu::Context::ScriptEditor,
-                                      menu::Context::ScriptDebugging, menu::Context::ScriptNotebook};
+                                      menu::Context::ScriptDebugging, menu::Context::ScriptNotebook,
+                                      menu::Context::Variables};
     constexpr int kContexts = static_cast<int>(sizeof(contexts) / sizeof(contexts[0]));
     const auto& table = menu::ShortcutTable();
     const std::string needle = Lower(shortcuts_search_);
