@@ -25,6 +25,7 @@ struct ScanResult {
     bool configured_ok = false;         // the saved path is usable
     std::vector<Candidate> found;       // every interpreter the scan found, best first
     double seconds = 0.0;
+    bool from_cache = false;            // the last scan's result, nothing changed since
 };
 
 struct PythonView {

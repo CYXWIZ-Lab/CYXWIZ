@@ -17,8 +17,10 @@ class PythonSetupDialog {
 public:
     enum class Outcome { None, Ready, ContinueWithout };
 
-    // Starts a scan on a worker; ignored while one is running.
-    void StartScan();
+    // Starts a scan on a worker; ignored while one is running. use_cache:
+    // take the last scan's result when nothing changed since (a start);
+    // false scans every interpreter again ("Scan again").
+    void StartScan(bool use_cache = true);
     // Call every frame: collects a finished scan. Returns true on the frame
     // the scan finished.
     bool Poll();

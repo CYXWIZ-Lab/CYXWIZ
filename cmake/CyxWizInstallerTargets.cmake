@@ -317,6 +317,21 @@ if(CYXWIZ_BUILD_TESTS)
         COMMAND test_python_setup_presentation
     )
 
+    # Python scan cache: a start skips the scan when nothing changed.
+    add_executable(test_python_scan_cache
+        "${_cyxwiz_installer_engine_dir}/tests/test_python_scan_cache.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/python_scan_cache.cpp"
+    )
+    target_link_libraries(test_python_scan_cache PRIVATE nlohmann_json::nlohmann_json)
+    set_target_properties(test_python_scan_cache PROPERTIES
+        CXX_STANDARD 20
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    add_test(
+        NAME python_scan_cache_contract
+        COMMAND test_python_scan_cache
+    )
+
     # Script Editor file rules (TOFIX133 P0 items 1-3).
     add_executable(test_script_text_file
         "${_cyxwiz_installer_engine_dir}/tests/test_script_text_file.cpp"

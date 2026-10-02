@@ -3,6 +3,7 @@
 #include "../../core/engine_config.h"
 #include "../../core/file_dialogs.h"
 #include "../../core/python_detector.h"
+#include "../../core/python_scan_cache.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
@@ -14,6 +15,9 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 namespace cyxwiz {
 
@@ -41,9 +45,26 @@ pythonsetup::Candidate ToCandidate(const core::PythonDetector::PythonInstallatio
     return c;
 }
 
+// The last scan, beside the Engine settings.
+std::filesystem::path CachePath() {
+    const auto config = core::EngineConfig::Instance().GetConfigPath();
+    return config.empty() ? std::filesystem::path() : config.parent_path() / "python_scan.json";
+}
+
 // Runs on the worker: no EngineConfig writes, no ImGui.
-pythonsetup::ScanResult RunScan(std::string configured) {
+pythonsetup::ScanResult RunScan(std::string configured, std::filesystem::path cache_path, bool use_cache) {
     const auto start = std::chrono::steady_clock::now();
+    if (use_cache && !cache_path.empty()) {
+        std::ifstream in(cache_path, std::ios::binary);
+        std::stringstream text;
+        text << in.rdbuf();
+        if (const auto cache = pythonsetup::ScanCacheFromJson(text.str())) {
+            if (auto cached = pythonsetup::ResultFromCache(*cache, configured, Required(), pythonsetup::StampOfFile)) {
+                cached->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+                return *cached;
+            }
+        }
+    }
     pythonsetup::ScanResult r;
     r.configured_path = configured;
     r.configured_path_set = !configured.empty();
@@ -61,16 +82,23 @@ pythonsetup::ScanResult RunScan(std::string configured) {
     }
     r.scanned = true;
     r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    if (!cache_path.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(cache_path.parent_path(), ec);
+        std::ofstream(cache_path, std::ios::binary)
+            << pythonsetup::ScanCacheToJson(pythonsetup::CacheOf(r, Required(), pythonsetup::StampOfFile));
+    }
     return r;
 }
 }  // namespace
 
-void PythonSetupDialog::StartScan() {
+void PythonSetupDialog::StartScan(bool use_cache) {
     if (scanning_) return;
     scanning_ = true;
     browse_note_.clear();
-    spdlog::info("Scanning for Python installations in the background...");
-    worker_ = std::async(std::launch::async, RunScan, core::EngineConfig::Instance().GetSystemPythonPath());
+    spdlog::info(use_cache ? "Checking Python in the background..." : "Scanning for Python installations in the background...");
+    worker_ = std::async(std::launch::async, RunScan, core::EngineConfig::Instance().GetSystemPythonPath(), CachePath(),
+                         use_cache);
 }
 
 bool PythonSetupDialog::Poll() {
@@ -93,7 +121,11 @@ bool PythonSetupDialog::Poll() {
     const auto view = View();
     choice_ = view.selected;
     if (view.ready) {
-        spdlog::info("Python {} in use: {} (scan {:.1f} s)", view.usable[view.selected].version, in_use_, scan_.seconds);
+        if (scan_.from_cache)
+            spdlog::info("Python {} in use: {} (last scan, unchanged; checked in {:.2f} s)", view.usable[view.selected].version,
+                         in_use_, scan_.seconds);
+        else
+            spdlog::info("Python {} in use: {} (scan {:.1f} s)", view.usable[view.selected].version, in_use_, scan_.seconds);
     } else {
         spdlog::warn("{} ({} interpreters found, none usable)", view.headline, scan_.found.size());
         request_open_ = true;
@@ -208,7 +240,7 @@ PythonSetupDialog::Outcome PythonSetupDialog::Render() {
                         ButtonSize::Regular))
         Browse();
     ImGui::SameLine(0.0f, t.space_md);
-    if (SecondaryButton(ICON_FA_ROTATE "  Scan again", !scanning_, "A scan is running", ButtonSize::Regular)) StartScan();
+    if (SecondaryButton(ICON_FA_ROTATE "  Scan again", !scanning_, "A scan is running", ButtonSize::Regular)) StartScan(false);
     ImGui::SameLine(0.0f, t.space_lg);
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_dim, "%s", scanning_ ? "Scanning..." : view.scan_line.c_str());

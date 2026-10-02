@@ -320,6 +320,7 @@ set(ENGINE_SOURCES
     src/core/menu_presentation.cpp
     src/core/start_page_presentation.cpp
     src/core/python_setup_presentation.cpp
+    src/core/python_scan_cache.cpp
     src/core/script_text_file.cpp
     src/core/python_tokenizer.cpp
     src/core/text_search.cpp
