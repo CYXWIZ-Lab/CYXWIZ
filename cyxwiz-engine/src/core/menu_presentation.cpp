@@ -164,7 +164,7 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(any, "train.local_debug", "Local Debug", "F6", "Train");
         add(any, "train.compile", "Compile Graph", "F7", "Train");
         add(any, "train.run_test", "Run Test", "F8", "Train > Test");
-        add(any, "script.python_console", "Open Python Console", "F12", "Script");
+        add(any, "script.python_console", "Open Python Console (go to definition when the Script Editor is focused)", "F12", "Script");
         add(any, "help.documentation", "Documentation", "F1", "Help", false, true);
         add(any, "view.fullscreen", "Fullscreen", "F11", "View", false, true);
         add(any, "file.exit", "Exit", "Alt+F4", "File", true);
@@ -203,7 +203,8 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(script, "script.debug", "Start debugging", "F10", "", true);
         add(script, "script.completion", "Completion (with the list open: show or hide details)", "Ctrl+Space", "", true);
         add(script, "editor.go_to_definition", "Go to definition (also Ctrl+click)", "F12", "", true);
-        add(script, "editor.signature_help", "Show the signature of the call", "Ctrl+Shift+Space", "", true);
+        add(script, "editor.signature_help", "Show the signature of the call (also opens when you type ( or ,)", "Ctrl+Shift+Space", "", true);
+        add(script, "editor.go_to_definition_click", "Go to the definition of the name clicked", "Ctrl+Click", "", true);
         add(script, "edit.find", "Find...", "Ctrl+F", "Edit");
         add(script, "edit.replace", "Replace...", "Ctrl+H", "Edit");
         add(script, "edit.go_to_line", "Go to Line...", "Ctrl+G", "Edit");
@@ -226,7 +227,7 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(script, "editor.cursor_above", "Add a cursor on the line above", "Ctrl+Alt+Up", "", true);
         add(script, "editor.cursor_below", "Add a cursor on the line below", "Ctrl+Alt+Down", "", true);
         add(script, "editor.select_occurrences", "Select every occurrence of the word", "Ctrl+Shift+L", "", true);
-        add(script, "editor.single_cursor", "Back to one cursor", "Escape", "", true);
+        add(script, "editor.single_cursor", "Back to one cursor; close the completion list or signature", "Escape", "", true);
         add(script, "editor.fold", "Fold the block at the cursor", "Ctrl+Shift+[", "", true);
         add(script, "editor.unfold", "Unfold the block at the cursor", "Ctrl+Shift+]", "", true);
         add(script, "editor.add_cursor_click", "Add a cursor where you click", "Alt+Click", "", true);
@@ -257,6 +258,10 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(notebook, "notebook.collapse", "Fold or unfold the cell", "C", "", true);
         add(notebook, "notebook.collapse_output", "Fold or unfold the output", "O", "", true);
         add(notebook, "script.cell_mode", "Leave notebook mode", "Ctrl+Shift+M", "", true);
+        // While a code cell is being edited, the language keys work as in a script.
+        add(notebook, "script.completion", "Completion in the cell (with the list open: details)", "Ctrl+Space", "", true);
+        add(notebook, "editor.signature_help", "Show the signature of the call in the cell", "Ctrl+Shift+Space", "", true);
+        add(notebook, "editor.go_to_definition", "Go to definition (also Ctrl+click)", "F12", "", true);
         return t;
     }();
     return table;
