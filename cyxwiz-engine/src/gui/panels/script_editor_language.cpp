@@ -74,6 +74,9 @@ scripting::LanguageService::Request ScriptEditorPanel::LanguageRequest(scripting
 bool ScriptEditorPanel::LanguageReady() {
     if (!scripting_engine_) return false;
     if (!scripting_engine_->IsInitialized()) {
+        // Python starts only with a project; without one, asking every frame
+        // (the problems check polls) only logged a warning each time.
+        if (!ProjectManager::Instance().HasActiveProject()) return false;
         // Python starts on the UI thread, as a first run starts it.
         std::string why;
         if (!scripting_engine_->StartPython(&why)) return false;
