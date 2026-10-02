@@ -250,6 +250,7 @@ void PlotView::DrawToolbar(const Options& o) {
 void PlotView::Draw(ImVec2 size, const Options& o) {
     FinishCaptures();
     export_name_ = o.export_name;
+    colour_offset_ = o.colour_offset;
     ImGui::PushID(id_.c_str());
     if (o.toolbar) DrawToolbar(o);
     if (o.show_title && has_data_) {
@@ -405,7 +406,7 @@ void PlotView::DrawPlot(ImVec2 size) {
         case Kind::Stem:
             for (size_t i = 0; i < p.series.size(); ++i) {
                 const auto& s = p.series[i];
-                const ImVec4 c = SeriesColour(i);
+                const ImVec4 c = SeriesColour(colour_offset_ + (i));
                 const bool smoothed = !s.smooth_y.empty();
                 const char* label = s.label.c_str();
                 if (kind == Kind::Area) {
@@ -428,7 +429,7 @@ void PlotView::DrawPlot(ImVec2 size) {
         case Kind::Scatter:
             for (size_t i = 0; i < p.series.size(); ++i) {
                 const auto& s = p.series[i];
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(SeriesColour(i), 0.7f), 0.0f);
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(SeriesColour(colour_offset_ + (i)), 0.7f), 0.0f);
                 ImPlot::PlotScatter(s.label.c_str(), s.x.data(), s.y.data(), n(s.x));
             }
             break;
@@ -436,33 +437,33 @@ void PlotView::DrawPlot(ImVec2 size) {
             const double width = p.edges.size() > 1 ? p.edges[1] - p.edges[0] : 1.0;
             for (size_t i = 0; i < p.series.size(); ++i) {
                 const auto& s = p.series[i];
-                ImPlot::SetNextFillStyle(SeriesColour(i), p.series.size() > 1 ? 0.6f : 0.9f);
+                ImPlot::SetNextFillStyle(SeriesColour(colour_offset_ + (i)), p.series.size() > 1 ? 0.6f : 0.9f);
                 ImPlot::PlotBars(s.label.c_str(), s.x.data(), s.y.data(), n(s.x), width * 0.94);
             }
             if (p.spec.show_median) {
                 const std::string l = "median " + Value(p.stats.median);
-                ImPlot::SetNextLineStyle(SeriesColour(2), 2.0f);
+                ImPlot::SetNextLineStyle(SeriesColour(colour_offset_ + (2)), 2.0f);
                 ImPlot::PlotInfLines(l.c_str(), &p.stats.median, 1);
             }
             if (p.spec.show_mean) {
                 const std::string l = "mean " + Value(p.stats.mean);
-                ImPlot::SetNextLineStyle(SeriesColour(1), 2.0f);
+                ImPlot::SetNextLineStyle(SeriesColour(colour_offset_ + (1)), 2.0f);
                 ImPlot::PlotInfLines(l.c_str(), &p.stats.mean, 1);
             }
             break;
         }
         case Kind::Bar:
             if (!p.series.empty()) {
-                ImPlot::SetNextFillStyle(SeriesColour(0), 0.9f);
+                ImPlot::SetNextFillStyle(SeriesColour(colour_offset_ + (0)), 0.9f);
                 ImPlot::PlotBars(p.series[0].label.c_str(), p.series[0].x.data(), p.series[0].y.data(), n(p.series[0].x), 0.67);
             }
             break;
         case Kind::ErrorBars:
             if (!p.series.empty()) {
                 const auto& s = p.series[0];
-                ImPlot::SetNextErrorBarStyle(SeriesColour(0), 1.5f, 6.0f);
+                ImPlot::SetNextErrorBarStyle(SeriesColour(colour_offset_ + (0)), 1.5f, 6.0f);
                 ImPlot::PlotErrorBars(s.label.c_str(), s.x.data(), s.y.data(), s.low.data(), s.high.data(), n(s.x));
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4.0f, SeriesColour(0), 0.0f);
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4.0f, SeriesColour(colour_offset_ + (0)), 0.0f);
                 ImPlot::PlotScatter(s.label.c_str(), s.x.data(), s.y.data(), n(s.x));
             }
             break;
@@ -481,7 +482,7 @@ void PlotView::DrawPlot(ImVec2 size) {
             for (size_t i = 0; i < p.boxes.size(); ++i) {
                 const auto& b = p.boxes[i];
                 const double x = static_cast<double>(i);
-                const ImVec4 c = SeriesColour(i);
+                const ImVec4 c = SeriesColour(colour_offset_ + (i));
                 if (kind == Kind::Violin && i < p.series.size()) {
                     const auto& s = p.series[i];
                     for (size_t k = 0; k + 1 < s.y.size(); ++k) {
@@ -563,10 +564,10 @@ void PlotView::DrawHover() {
                 if (xs.empty()) continue;
                 const size_t k = s.x_sorted ? NearestSorted(xs, m.x) : NearestScan(xs, m.x);
                 begin(XLabel(p) + " " + Value(xs[k]));
-                TooltipRow(SeriesColour(i), s.label, Value(ys[k]));
+                TooltipRow(SeriesColour(colour_offset_ + (i)), s.label, Value(ys[k]));
                 if (!s.smooth_y.empty()) {
                     const size_t j = NearestScan(s.smooth_x, xs[k]);
-                    TooltipRow(ui::Mix(SeriesColour(i), t.text_bright, 0.35f),
+                    TooltipRow(ui::Mix(SeriesColour(colour_offset_ + (i)), t.text_bright, 0.35f),
                                s.label + ", smoothed (" + std::to_string(p.spec.smooth) + ")", Value(s.smooth_y[j]));
                 }
             }
@@ -592,8 +593,8 @@ void PlotView::DrawHover() {
             if (found) {
                 const auto& s = p.series[bs];
                 begin(s.label);
-                TooltipRow(SeriesColour(bs), XLabel(p), Value(s.x[bk]));
-                TooltipRow(SeriesColour(bs), p.spec.y_columns.empty() ? "y" : p.spec.y_columns.front(), Value(s.y[bk]));
+                TooltipRow(SeriesColour(colour_offset_ + (bs)), XLabel(p), Value(s.x[bk]));
+                TooltipRow(SeriesColour(colour_offset_ + (bs)), p.spec.y_columns.empty() ? "y" : p.spec.y_columns.front(), Value(s.y[bk]));
             }
             break;
         }
@@ -607,7 +608,7 @@ void PlotView::DrawHover() {
                 for (double c : p.series[i].y) total += c;
                 char share[32];
                 std::snprintf(share, sizeof(share), "  (%.1f%%)", total > 0 ? 100.0 * p.series[i].y[b] / total : 0.0);
-                TooltipRow(SeriesColour(i), p.series[i].label,
+                TooltipRow(SeriesColour(colour_offset_ + (i)), p.series[i].label,
                            Value(p.series[i].y[b]) + (p.spec.density ? std::string() : std::string(share)));
             }
             break;
@@ -618,7 +619,7 @@ void PlotView::DrawHover() {
             if (i < 0 || p.series.empty()) break;
             begin(p.categories[static_cast<size_t>(i)]);
             const auto& s = p.series[0];
-            TooltipRow(SeriesColour(0), s.label, Value(s.y[static_cast<size_t>(i)]) +
+            TooltipRow(SeriesColour(colour_offset_ + (0)), s.label, Value(s.y[static_cast<size_t>(i)]) +
                                                      (kind == Kind::ErrorBars ? " \xC2\xB1 " + Value(s.low[static_cast<size_t>(i)]) : ""));
             break;
         }
@@ -638,7 +639,7 @@ void PlotView::DrawHover() {
                     char share[32];
                     std::snprintf(share, sizeof(share), "  (%.1f%%)", 100.0 * p.series[0].y[k] / total);
                     begin(p.categories[k]);
-                    TooltipRow(SeriesColour(k), p.series[0].label, Value(p.series[0].y[k]) + share);
+                    TooltipRow(SeriesColour(colour_offset_ + (k)), p.series[0].label, Value(p.series[0].y[k]) + share);
                     break;
                 }
             }
@@ -649,7 +650,7 @@ void PlotView::DrawHover() {
             const int i = category(std::vector<std::string>(p.boxes.size()), m.x);
             if (i < 0 || i >= static_cast<int>(p.series.size())) break;
             const auto& b = p.boxes[static_cast<size_t>(i)];
-            const ImVec4 c = SeriesColour(static_cast<size_t>(i));
+            const ImVec4 c = SeriesColour(colour_offset_ + (static_cast<size_t>(i)));
             begin(p.series[static_cast<size_t>(i)].label);
             TooltipRow(c, "high whisker", Value(b.high));
             TooltipRow(c, "q3", Value(b.q3));
@@ -664,7 +665,7 @@ void PlotView::DrawHover() {
             const int r = p.grid_rows - 1 - static_cast<int>(std::floor(m.y));
             if (c < 0 || r < 0 || c >= p.grid_cols || r >= p.grid_rows) break;
             begin(p.row_names[static_cast<size_t>(r)] + " \xC2\xB7 " + p.col_names[static_cast<size_t>(c)]);
-            TooltipRow(SeriesColour(0), "rows", Value(p.grid[static_cast<size_t>(r * p.grid_cols + c)]));
+            TooltipRow(SeriesColour(colour_offset_ + (0)), "rows", Value(p.grid[static_cast<size_t>(r * p.grid_cols + c)]));
             break;
         }
         case Kind::Histogram2D: {
@@ -674,7 +675,7 @@ void PlotView::DrawHover() {
             const int rb = std::min(p.grid_rows - 1, static_cast<int>((m.y - p.y_min) / dy));
             const int r = p.grid_rows - 1 - rb;
             begin(XLabel(p) + " " + Value(p.x_min + dx * c) + " to " + Value(p.x_min + dx * (c + 1)));
-            TooltipRow(SeriesColour(0), YLabel(p) + " " + Value(p.y_min + dy * rb) + " to " + Value(p.y_min + dy * (rb + 1)),
+            TooltipRow(SeriesColour(colour_offset_ + (0)), YLabel(p) + " " + Value(p.y_min + dy * rb) + " to " + Value(p.y_min + dy * (rb + 1)),
                        Value(p.grid[static_cast<size_t>(r * p.grid_cols + c)]) + " rows");
             break;
         }

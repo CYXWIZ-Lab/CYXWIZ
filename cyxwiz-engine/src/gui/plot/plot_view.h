@@ -44,6 +44,9 @@ public:
         std::function<std::string()> python_script;
         // Extra toolbar content drawn at the left (a screen's own controls).
         std::function<void()> toolbar_left;
+        // First theme series colour (a screen with one chart per metric
+        // gives each its own colour).
+        size_t colour_offset = 0;
     };
 
     void SetData(Prepared data);
@@ -87,6 +90,7 @@ private:
     std::string export_name_ = "plot";
     int capture_frame_ = 0;      // frame at which a requested image is read
     bool drawing_own_window_ = false;
+    size_t colour_offset_ = 0;
 };
 
 }  // namespace cyxwiz::plot

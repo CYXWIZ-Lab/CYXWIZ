@@ -1,12 +1,21 @@
 #pragma once
 
+// RL Training Dashboard (approved board 3, TOFIX134 P1 step 1.7): episode
+// and policy metrics a run reports (pycyxwiz.rl_update_metric), drawn with
+// the shared PlotView in the theme colours. UI thread only, except
+// SetRLTrainingState (a run's completion callback may call it from the
+// script worker).
+
 #include "../panel.h"
-#include "../../plotting/plot_manager.h"
+#include "../plot/plot_view.h"
+
 #include <imgui.h>
-#include <vector>
-#include <string>
+
+#include <atomic>
 #include <map>
-#include <mutex>
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -17,7 +26,7 @@ public:
 
     void Render() override;
 
-    void RegisterCustomPlot(const std::string& name, const std::string& display_name, ImVec4 color);
+    void RegisterCustomPlot(const std::string& name, const std::string& display_name);
     void UpdateCustomMetric(const std::string& name, float value);
 
     void SetTrainingState(bool is_training);
@@ -25,30 +34,22 @@ public:
     void ResetRLMetrics();
 
 private:
-    void RenderMetricsOverview();
-    void RenderTrainingControls();
-    void RenderCustomPlot(const std::string& name);
-    void RenderRLMetricsTab();
-    void RenderPolicyDiagnosticsTab();
-
-    void InitializeRLPlots();
-
-    bool is_training_;
-    bool is_rl_training_ = false;
-
-    static constexpr int MAX_HISTORY = 1000;
-
-    struct CustomMetric {
+    struct Metric {
         std::string display_name;
-        ImVec4 color;
-        std::string plot_id;
-        std::vector<float> history;
-        float current_value = 0.0f;
-        int update_count = 0;
+        std::vector<double> history;  // one value per report
+        bool dirty = true;            // the plot needs new data
+        std::unique_ptr<plot::PlotView> view;
     };
-    std::map<std::string, CustomMetric> custom_metrics_;
-    mutable std::mutex custom_metrics_mutex_;
-    bool rl_plots_initialized_ = false;
+
+    void RenderKpis();
+    void RenderMetric(const std::string& name, float height);
+
+    // Long runs keep every value; the plot draws a reduced copy.
+    static constexpr size_t kMaxHistory = 200000;
+
+    std::atomic<bool> training_{false};
+    std::map<std::string, Metric> metrics_;
+    std::vector<std::string> order_;  // registration order (series colours)
 };
 
-} // namespace cyxwiz
+}  // namespace cyxwiz
