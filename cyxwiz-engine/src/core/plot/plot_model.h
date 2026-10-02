@@ -121,6 +121,8 @@ struct Series {
     // and exports use these (empty when x/y are already all of them).
     std::vector<double> all_x, all_y;
     bool x_sorted = false;  // x ascends (hover finds the nearest x by search)
+    int colour = -1;        // theme series colour index; -1: by position
+    bool markers = false;   // lines: also a marker at every point
 };
 
 // Data ready to draw: built off the UI thread from a source, then only drawn.

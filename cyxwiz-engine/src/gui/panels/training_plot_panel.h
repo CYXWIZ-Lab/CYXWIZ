@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../plot/plot_view.h"
 #include "../panel.h"
 #include "../../core/training_run_comparison_record.h"
 #include "../../core/training_progress_estimate.h"
@@ -331,6 +332,7 @@ private:
     };
     struct DrawnCache {
         uint64_t version = ~0ull;
+        uint64_t build = 0;  // bumped on every rebuild (data or smoothing)
         int smoothing = 0;
         bool smoothed = false;
         DrawnSeries train_loss, val_loss, train_accuracy, val_accuracy;
@@ -341,15 +343,28 @@ private:
     // Call with data_mutex_ held.
     const DrawnCache& Drawn();
 
+    // Charts drawn with the shared plot view (TOFIX134 P1 step 1.6): one view
+    // per chart in the card and one in its own window.
+    struct ChartSlot {
+        std::unique_ptr<plot::PlotView> view;
+        uint64_t build = ~0ull;
+        bool log = false;
+    };
+    ChartSlot chart_slots_[3][2];  // [loss, accuracy, custom][card, window]
+    plot::Series ToPlotSeries(const MetricSeries& full, const MetricSeries& drawn, const std::vector<double>& smooth_x,
+                              const std::vector<double>& smooth_y, int colour, bool markers) const;
+    plot::Prepared ChartData(int chart) const;
+    void DrawChart(int chart, const ImVec2& size, bool fit, bool in_window);
+
     // Helper methods
     void RenderTrainingStatus();
     void RenderLossPlot(float plot_height);
     void RenderAccuracyPlot(float plot_height);
     void RenderCustomMetricsPlot(float plot_height);
     void RenderKpiCards();
-    void DrawLossPlot(const ImVec2& size, bool fit);
-    void DrawAccuracyPlot(const ImVec2& size, bool fit);
-    void DrawCustomMetricsPlot(const ImVec2& size, bool fit);
+    void DrawLossPlot(const ImVec2& size, bool fit, bool in_window = false);
+    void DrawAccuracyPlot(const ImVec2& size, bool fit, bool in_window = false);
+    void DrawCustomMetricsPlot(const ImVec2& size, bool fit, bool in_window = false);
     void RenderChartWindows();
     void RenderEmptyState();
     void RenderControls();

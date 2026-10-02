@@ -1199,9 +1199,8 @@ pybind11_add_module(cyxwiz_plotting
     src/core/plot/plot_model.cpp
     src/core/plot/plot_prepare.cpp
     src/core/plot/plot_export.cpp
-    src/core/plot/plot_table_source.cpp
     src/gui/plot/plot_view.cpp
-    src/gui/plot/plot_window.cpp
+    src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/gui/panels/training_plot_panel_global.cpp
@@ -3507,9 +3506,8 @@ add_executable(test_graph_training_sequence_preflight
     src/core/plot/plot_model.cpp
     src/core/plot/plot_prepare.cpp
     src/core/plot/plot_export.cpp
-    src/core/plot/plot_table_source.cpp
     src/gui/plot/plot_view.cpp
-    src/gui/plot/plot_window.cpp
+    src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
@@ -3609,9 +3607,8 @@ add_executable(test_text_gui_training_launch
     src/core/plot/plot_model.cpp
     src/core/plot/plot_prepare.cpp
     src/core/plot/plot_export.cpp
-    src/core/plot/plot_table_source.cpp
     src/gui/plot/plot_view.cpp
-    src/gui/plot/plot_window.cpp
+    src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp
@@ -4805,9 +4802,8 @@ add_executable(test_training_manager_session
     src/core/plot/plot_model.cpp
     src/core/plot/plot_prepare.cpp
     src/core/plot/plot_export.cpp
-    src/core/plot/plot_table_source.cpp
     src/gui/plot/plot_view.cpp
-    src/gui/plot/plot_window.cpp
+    src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
 )
@@ -5406,9 +5402,8 @@ add_executable(test_engine_node_parity
     src/core/plot/plot_model.cpp
     src/core/plot/plot_prepare.cpp
     src/core/plot/plot_export.cpp
-    src/core/plot/plot_table_source.cpp
     src/gui/plot/plot_view.cpp
-    src/gui/plot/plot_window.cpp
+    src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/core/appearance_options.cpp
     src/core/async_task_manager.cpp

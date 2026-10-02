@@ -69,8 +69,13 @@ Opens with **Train** on the CyxWiz Studio canvas; in the window list it is
 remaining), live loss and accuracy charts, custom metrics, data
 preparation progress, execution truth and run comparison. Long runs stay
 smooth: charts draw a reduced copy of each series (up to 4000 points, with
-every spike and dip kept). Use the window icon on a chart to open it in its
-own window.
+every spike and dip kept). Each chart uses the same plot view as the Plot
+window: hover for the values of every curve at that epoch (from all
+points), the data label, **Legend** and **Export** (PNG, SVG, copy image,
+CSV with every point, copy data). Use the window icon on a chart to open it
+in its own window; **Auto scale**, **Follow current epoch**, the epoch
+window, **Log loss axis** and **Smooth** are in the chart window's toolbar
+and the dashboard's controls.
 
 Only canvas training reports to this window.
 

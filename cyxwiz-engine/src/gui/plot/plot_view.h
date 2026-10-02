@@ -47,6 +47,19 @@ public:
         // First theme series colour (a screen with one chart per metric
         // gives each its own colour).
         size_t colour_offset = 0;
+        // Fixed axis ranges (a screen that follows its own window, e.g. the
+        // Training Dashboard's current epochs); off: fit to the data.
+        struct Range {
+            bool on = false;
+            double lo = 0, hi = 1;
+            bool once = false;  // set the first time only (the user may pan after)
+        };
+        Range x_range, y_range;
+        // Toolbar items a screen already has its own controls for.
+        bool tool_fit = true;
+        bool tool_log = true;
+        bool tool_legend = true;
+        bool own_window_button = true;
     };
 
     void SetData(Prepared data);
@@ -67,6 +80,7 @@ private:
     void DrawToolbar(const Options& options);
     void DrawPlot(ImVec2 size);
     void DrawHover();
+    ImVec4 ColourOf(size_t i) const;
     void ExportMenu(const Options& options);
     void FinishCaptures();
     std::string Title() const;
@@ -91,6 +105,7 @@ private:
     int capture_frame_ = 0;      // frame at which a requested image is read
     bool drawing_own_window_ = false;
     size_t colour_offset_ = 0;
+    Options::Range x_range_, y_range_;
 };
 
 }  // namespace cyxwiz::plot

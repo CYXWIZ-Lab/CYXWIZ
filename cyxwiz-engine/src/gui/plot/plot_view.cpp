@@ -101,11 +101,19 @@ PlotView::PlotView(std::string id) : id_(std::move(id)) {}
 void PlotView::SetData(Prepared data) {
     const bool kind_changed = !has_data_ || data.spec.kind != data_.spec.kind ||
                               data.spec.x_column != data_.spec.x_column || data.spec.y_columns != data_.spec.y_columns;
+    const bool log_changed = has_data_ && data.spec.log_y != data_.spec.log_y;
     data_ = std::move(data);
     has_data_ = true;
-    log_y_ = data_.spec.log_y;
-    legend_ = data_.spec.legend;
+    // New values keep the user's Log Y and Legend; a new plot or a changed
+    // log setting takes the spec's.
+    if (kind_changed || log_changed) log_y_ = data_.spec.log_y;
+    if (kind_changed) legend_ = data_.spec.legend;
     if (kind_changed) fit_ = true;
+}
+
+ImVec4 PlotView::ColourOf(size_t i) const {
+    if (i < data_.series.size() && data_.series[i].colour >= 0) return SeriesColour(static_cast<size_t>(data_.series[i].colour));
+    return SeriesColour(colour_offset_ + i);
 }
 
 void PlotView::Clear() {
@@ -220,37 +228,50 @@ void PlotView::DrawToolbar(const Options& o) {
     }
     // Right-aligned actions.
     const char* own = ICON_FA_WINDOW_RESTORE;
-    const float w = ui::ButtonWidth("Fit", ui::ButtonSize::Small) + ui::ButtonWidth("Log Y", ui::ButtonSize::Small) +
-                    ui::ButtonWidth("Legend", ui::ButtonSize::Small) + ui::ButtonWidth("Export", ui::ButtonSize::Small) +
-                    ui::ButtonWidth(own, ui::ButtonSize::Small) + ImGui::GetStyle().ItemSpacing.x * 4;
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float w = (o.tool_fit ? ui::ButtonWidth("Fit", ui::ButtonSize::Small) + gap : 0.0f) +
+                    (o.tool_log ? ui::ButtonWidth("Log Y", ui::ButtonSize::Small) + gap : 0.0f) +
+                    (o.tool_legend ? ui::ButtonWidth("Legend", ui::ButtonSize::Small) + gap : 0.0f) +
+                    ui::ButtonWidth("Export", ui::ButtonSize::Small) +
+                    (o.own_window_button ? ui::ButtonWidth(own, ui::ButtonSize::Small) + gap : 0.0f);
     const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - w;
     if (right > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(right);
     const bool usable = has_data_ && data_.problem.empty();
-    if (ui::GhostButton(("Fit##" + id_).c_str(), usable)) fit_ = true;
-    ImGui::SameLine();
+    if (o.tool_fit) {
+        if (ui::GhostButton(("Fit##" + id_).c_str(), usable)) fit_ = true;
+        ImGui::SameLine();
+    }
     const bool can_log = usable && data_.spec.kind != Kind::Pie && data_.spec.kind != Kind::Heatmap &&
                          data_.spec.kind != Kind::Histogram2D;
-    if (ui::GhostButton(("Log Y##" + id_).c_str(), can_log, "Not for this plot type", log_y_)) {
-        log_y_ = !log_y_;
-        fit_ = true;
+    if (o.tool_log) {
+        if (ui::GhostButton(("Log Y##" + id_).c_str(), can_log, "Not for this plot type", log_y_)) {
+            log_y_ = !log_y_;
+            fit_ = true;
+        }
+        ImGui::SameLine();
     }
-    ImGui::SameLine();
-    if (ui::GhostButton(("Legend##" + id_).c_str(), usable, nullptr, legend_)) legend_ = !legend_;
-    ImGui::SameLine();
+    if (o.tool_legend) {
+        if (ui::GhostButton(("Legend##" + id_).c_str(), usable, nullptr, legend_)) legend_ = !legend_;
+        ImGui::SameLine();
+    }
     if (ui::GhostButton(("Export##" + id_).c_str(), usable)) ImGui::OpenPopup(("##export" + id_).c_str());
     if (ImGui::BeginPopup(("##export" + id_).c_str())) {
         ExportMenu(o);
         ImGui::EndPopup();
     }
-    ImGui::SameLine();
-    if (ui::GhostButton((std::string(own) + "##own" + id_).c_str(), true, nullptr, own_window)) own_window = !own_window;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip(own_window ? "Back into this panel" : "Open in its own window");
+    if (o.own_window_button) {
+        ImGui::SameLine();
+        if (ui::GhostButton((std::string(own) + "##own" + id_).c_str(), true, nullptr, own_window)) own_window = !own_window;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(own_window ? "Back into this panel" : "Open in its own window");
+    }
 }
 
 void PlotView::Draw(ImVec2 size, const Options& o) {
     FinishCaptures();
     export_name_ = o.export_name;
     colour_offset_ = o.colour_offset;
+    x_range_ = o.x_range;
+    y_range_ = o.y_range;
     ImGui::PushID(id_.c_str());
     if (o.toolbar) DrawToolbar(o);
     if (o.show_title && has_data_) {
@@ -318,8 +339,8 @@ void PlotView::DrawPlot(ImVec2 size) {
 
     // Fixed-layout kinds set their limits; the rest fit to the data.
     const ImPlotCond cond = fit_ ? ImPlotCond_Always : ImPlotCond_Once;
-    if (fit_ && kind != Kind::Pie && kind != Kind::Box && kind != Kind::Violin && kind != Kind::Heatmap &&
-        kind != Kind::Histogram2D)
+    if (fit_ && !x_range_.on && !y_range_.on && kind != Kind::Pie && kind != Kind::Box && kind != Kind::Violin &&
+        kind != Kind::Heatmap && kind != Kind::Histogram2D)
         ImPlot::SetNextAxesToFit();
 
     const std::string plot_id = "##plot";
@@ -336,6 +357,8 @@ void PlotView::DrawPlot(ImVec2 size) {
         if (log_y_ && kind != Kind::Heatmap && kind != Kind::Histogram2D) ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
     }
     ImPlot::SetupLegend(ImPlotLocation_NorthEast);
+    if (x_range_.on) ImPlot::SetupAxisLimits(ImAxis_X1, x_range_.lo, x_range_.hi, x_range_.once ? ImPlotCond_Once : ImPlotCond_Always);
+    if (y_range_.on) ImPlot::SetupAxisLimits(ImAxis_Y1, y_range_.lo, y_range_.hi, y_range_.once ? ImPlotCond_Once : ImPlotCond_Always);
 
     // Category ticks (bar, error bars, box, violin, heatmap).
     std::vector<const char*> names;
@@ -406,7 +429,7 @@ void PlotView::DrawPlot(ImVec2 size) {
         case Kind::Stem:
             for (size_t i = 0; i < p.series.size(); ++i) {
                 const auto& s = p.series[i];
-                const ImVec4 c = SeriesColour(colour_offset_ + (i));
+                const ImVec4 c = ColourOf((i));
                 const bool smoothed = !s.smooth_y.empty();
                 const char* label = s.label.c_str();
                 if (kind == Kind::Area) {
@@ -418,7 +441,10 @@ void PlotView::DrawPlot(ImVec2 size) {
                 else if (kind == Kind::Stem) {
                     ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, c, 0.0f);
                     ImPlot::PlotStems(label, s.x.data(), s.y.data(), n(s.x));
-                } else ImPlot::PlotLine(label, s.x.data(), s.y.data(), n(s.x));
+                } else {
+                    if (s.markers) ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4.0f, c, 0.0f);
+                    ImPlot::PlotLine(label, s.x.data(), s.y.data(), n(s.x));
+                }
                 if (smoothed) {
                     const std::string sl = s.label + ", smoothed (" + std::to_string(p.spec.smooth) + ")";
                     ImPlot::SetNextLineStyle(ui::Mix(c, t.text_bright, 0.35f), 2.6f);
@@ -429,7 +455,7 @@ void PlotView::DrawPlot(ImVec2 size) {
         case Kind::Scatter:
             for (size_t i = 0; i < p.series.size(); ++i) {
                 const auto& s = p.series[i];
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(SeriesColour(colour_offset_ + (i)), 0.7f), 0.0f);
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 2.5f, ui::WithAlpha(ColourOf((i)), 0.7f), 0.0f);
                 ImPlot::PlotScatter(s.label.c_str(), s.x.data(), s.y.data(), n(s.x));
             }
             break;
@@ -437,33 +463,33 @@ void PlotView::DrawPlot(ImVec2 size) {
             const double width = p.edges.size() > 1 ? p.edges[1] - p.edges[0] : 1.0;
             for (size_t i = 0; i < p.series.size(); ++i) {
                 const auto& s = p.series[i];
-                ImPlot::SetNextFillStyle(SeriesColour(colour_offset_ + (i)), p.series.size() > 1 ? 0.6f : 0.9f);
+                ImPlot::SetNextFillStyle(ColourOf((i)), p.series.size() > 1 ? 0.6f : 0.9f);
                 ImPlot::PlotBars(s.label.c_str(), s.x.data(), s.y.data(), n(s.x), width * 0.94);
             }
             if (p.spec.show_median) {
                 const std::string l = "median " + Value(p.stats.median);
-                ImPlot::SetNextLineStyle(SeriesColour(colour_offset_ + (2)), 2.0f);
+                ImPlot::SetNextLineStyle(ColourOf((2)), 2.0f);
                 ImPlot::PlotInfLines(l.c_str(), &p.stats.median, 1);
             }
             if (p.spec.show_mean) {
                 const std::string l = "mean " + Value(p.stats.mean);
-                ImPlot::SetNextLineStyle(SeriesColour(colour_offset_ + (1)), 2.0f);
+                ImPlot::SetNextLineStyle(ColourOf((1)), 2.0f);
                 ImPlot::PlotInfLines(l.c_str(), &p.stats.mean, 1);
             }
             break;
         }
         case Kind::Bar:
             if (!p.series.empty()) {
-                ImPlot::SetNextFillStyle(SeriesColour(colour_offset_ + (0)), 0.9f);
+                ImPlot::SetNextFillStyle(ColourOf((0)), 0.9f);
                 ImPlot::PlotBars(p.series[0].label.c_str(), p.series[0].x.data(), p.series[0].y.data(), n(p.series[0].x), 0.67);
             }
             break;
         case Kind::ErrorBars:
             if (!p.series.empty()) {
                 const auto& s = p.series[0];
-                ImPlot::SetNextErrorBarStyle(SeriesColour(colour_offset_ + (0)), 1.5f, 6.0f);
+                ImPlot::SetNextErrorBarStyle(ColourOf((0)), 1.5f, 6.0f);
                 ImPlot::PlotErrorBars(s.label.c_str(), s.x.data(), s.y.data(), s.low.data(), s.high.data(), n(s.x));
-                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4.0f, SeriesColour(colour_offset_ + (0)), 0.0f);
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 4.0f, ColourOf((0)), 0.0f);
                 ImPlot::PlotScatter(s.label.c_str(), s.x.data(), s.y.data(), n(s.x));
             }
             break;
@@ -482,7 +508,7 @@ void PlotView::DrawPlot(ImVec2 size) {
             for (size_t i = 0; i < p.boxes.size(); ++i) {
                 const auto& b = p.boxes[i];
                 const double x = static_cast<double>(i);
-                const ImVec4 c = SeriesColour(colour_offset_ + (i));
+                const ImVec4 c = ColourOf((i));
                 if (kind == Kind::Violin && i < p.series.size()) {
                     const auto& s = p.series[i];
                     for (size_t k = 0; k + 1 < s.y.size(); ++k) {
@@ -564,10 +590,10 @@ void PlotView::DrawHover() {
                 if (xs.empty()) continue;
                 const size_t k = s.x_sorted ? NearestSorted(xs, m.x) : NearestScan(xs, m.x);
                 begin(XLabel(p) + " " + Value(xs[k]));
-                TooltipRow(SeriesColour(colour_offset_ + (i)), s.label, Value(ys[k]));
+                TooltipRow(ColourOf((i)), s.label, Value(ys[k]));
                 if (!s.smooth_y.empty()) {
                     const size_t j = NearestScan(s.smooth_x, xs[k]);
-                    TooltipRow(ui::Mix(SeriesColour(colour_offset_ + (i)), t.text_bright, 0.35f),
+                    TooltipRow(ui::Mix(ColourOf((i)), t.text_bright, 0.35f),
                                s.label + ", smoothed (" + std::to_string(p.spec.smooth) + ")", Value(s.smooth_y[j]));
                 }
             }
@@ -593,8 +619,8 @@ void PlotView::DrawHover() {
             if (found) {
                 const auto& s = p.series[bs];
                 begin(s.label);
-                TooltipRow(SeriesColour(colour_offset_ + (bs)), XLabel(p), Value(s.x[bk]));
-                TooltipRow(SeriesColour(colour_offset_ + (bs)), p.spec.y_columns.empty() ? "y" : p.spec.y_columns.front(), Value(s.y[bk]));
+                TooltipRow(ColourOf((bs)), XLabel(p), Value(s.x[bk]));
+                TooltipRow(ColourOf((bs)), p.spec.y_columns.empty() ? "y" : p.spec.y_columns.front(), Value(s.y[bk]));
             }
             break;
         }
@@ -608,7 +634,7 @@ void PlotView::DrawHover() {
                 for (double c : p.series[i].y) total += c;
                 char share[32];
                 std::snprintf(share, sizeof(share), "  (%.1f%%)", total > 0 ? 100.0 * p.series[i].y[b] / total : 0.0);
-                TooltipRow(SeriesColour(colour_offset_ + (i)), p.series[i].label,
+                TooltipRow(ColourOf((i)), p.series[i].label,
                            Value(p.series[i].y[b]) + (p.spec.density ? std::string() : std::string(share)));
             }
             break;
@@ -619,7 +645,7 @@ void PlotView::DrawHover() {
             if (i < 0 || p.series.empty()) break;
             begin(p.categories[static_cast<size_t>(i)]);
             const auto& s = p.series[0];
-            TooltipRow(SeriesColour(colour_offset_ + (0)), s.label, Value(s.y[static_cast<size_t>(i)]) +
+            TooltipRow(ColourOf((0)), s.label, Value(s.y[static_cast<size_t>(i)]) +
                                                      (kind == Kind::ErrorBars ? " \xC2\xB1 " + Value(s.low[static_cast<size_t>(i)]) : ""));
             break;
         }
@@ -639,7 +665,7 @@ void PlotView::DrawHover() {
                     char share[32];
                     std::snprintf(share, sizeof(share), "  (%.1f%%)", 100.0 * p.series[0].y[k] / total);
                     begin(p.categories[k]);
-                    TooltipRow(SeriesColour(colour_offset_ + (k)), p.series[0].label, Value(p.series[0].y[k]) + share);
+                    TooltipRow(ColourOf((k)), p.series[0].label, Value(p.series[0].y[k]) + share);
                     break;
                 }
             }
@@ -650,7 +676,7 @@ void PlotView::DrawHover() {
             const int i = category(std::vector<std::string>(p.boxes.size()), m.x);
             if (i < 0 || i >= static_cast<int>(p.series.size())) break;
             const auto& b = p.boxes[static_cast<size_t>(i)];
-            const ImVec4 c = SeriesColour(colour_offset_ + (static_cast<size_t>(i)));
+            const ImVec4 c = ColourOf((static_cast<size_t>(i)));
             begin(p.series[static_cast<size_t>(i)].label);
             TooltipRow(c, "high whisker", Value(b.high));
             TooltipRow(c, "q3", Value(b.q3));
@@ -665,7 +691,7 @@ void PlotView::DrawHover() {
             const int r = p.grid_rows - 1 - static_cast<int>(std::floor(m.y));
             if (c < 0 || r < 0 || c >= p.grid_cols || r >= p.grid_rows) break;
             begin(p.row_names[static_cast<size_t>(r)] + " \xC2\xB7 " + p.col_names[static_cast<size_t>(c)]);
-            TooltipRow(SeriesColour(colour_offset_ + (0)), "rows", Value(p.grid[static_cast<size_t>(r * p.grid_cols + c)]));
+            TooltipRow(ColourOf((0)), "rows", Value(p.grid[static_cast<size_t>(r * p.grid_cols + c)]));
             break;
         }
         case Kind::Histogram2D: {
@@ -675,7 +701,7 @@ void PlotView::DrawHover() {
             const int rb = std::min(p.grid_rows - 1, static_cast<int>((m.y - p.y_min) / dy));
             const int r = p.grid_rows - 1 - rb;
             begin(XLabel(p) + " " + Value(p.x_min + dx * c) + " to " + Value(p.x_min + dx * (c + 1)));
-            TooltipRow(SeriesColour(colour_offset_ + (0)), YLabel(p) + " " + Value(p.y_min + dy * rb) + " to " + Value(p.y_min + dy * (rb + 1)),
+            TooltipRow(ColourOf((0)), YLabel(p) + " " + Value(p.y_min + dy * rb) + " to " + Value(p.y_min + dy * (rb + 1)),
                        Value(p.grid[static_cast<size_t>(r * p.grid_cols + c)]) + " rows");
             break;
         }

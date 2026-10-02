@@ -270,29 +270,6 @@ std::string FormatEpochValue(double epoch) {
     return buffer;
 }
 
-// Plot styling: transparent frame and plot area (the card is the frame),
-// soft grid, muted axes, a translucent legend inside the plot.
-void PushDashPlotStyle(const DashColors& c) {
-    ImPlot::PushStyleColor(ImPlotCol_FrameBg, ImVec4(0, 0, 0, 0));
-    ImPlot::PushStyleColor(ImPlotCol_PlotBg, ImVec4(0, 0, 0, 0));
-    ImPlot::PushStyleColor(ImPlotCol_PlotBorder, ImVec4(0, 0, 0, 0));
-    ImPlot::PushStyleColor(ImPlotCol_LegendBg, WithAlpha(c.window, 0.82f));
-    ImPlot::PushStyleColor(ImPlotCol_LegendBorder, WithAlpha(c.border, 0.8f));
-    ImPlot::PushStyleColor(ImPlotCol_LegendText, c.text);
-    ImPlot::PushStyleColor(ImPlotCol_AxisText, c.muted);
-    ImPlot::PushStyleColor(ImPlotCol_AxisGrid, WithAlpha(c.muted, c.light ? 0.18f : 0.13f));
-    ImPlot::PushStyleColor(ImPlotCol_AxisTick, WithAlpha(c.muted, 0.35f));
-    ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding, ImVec2(2.0f, 6.0f));
-    ImPlot::PushStyleVar(ImPlotStyleVar_LegendPadding, ImVec2(10.0f, 10.0f));
-    ImPlot::PushStyleVar(ImPlotStyleVar_LegendInnerPadding, ImVec2(8.0f, 5.0f));
-    ImPlot::PushStyleVar(ImPlotStyleVar_LegendSpacing, ImVec2(6.0f, 3.0f));
-}
-
-void PopDashPlotStyle() {
-    ImPlot::PopStyleVar(4);
-    ImPlot::PopStyleColor(9);
-}
-
 // Small borderless icon button, tinted with the accent while active.
 bool DashIconButton(const char* id_label, bool active, const DashColors& c) {
     ImGui::PushStyleColor(ImGuiCol_Button, active ? WithAlpha(c.accent, 0.24f) : ImVec4(0, 0, 0, 0));
@@ -1547,104 +1524,10 @@ void TrainingPlotPanel::RenderLossPlot(float plot_height) {
     EndDashCard();
 }
 
-void TrainingPlotPanel::DrawLossPlot(const ImVec2& size, bool fit) {
-    const DashColors c = CurrentDashColors();
-    const DrawnCache& drawn = Drawn();
-    PushDashPlotStyle(c);
-    if (fit) {
-        ImPlot::SetNextAxesToFit();
-    }
-    if (ImPlot::BeginPlot("Loss", size, ImPlotFlags_NoTitle)) {
-        ImPlot::SetupAxes("Epoch", "Loss", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
-        ImPlot::SetupLegend(ImPlotLocation_NorthEast);
-        if (log_loss_scale_) {
-            ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
-        }
-
-        if (auto_scale_ && !drawn.train_loss.line.epochs.empty()) {
-            const auto [min_epoch, max_epoch] = CalculateEpochWindow(drawn.train_loss.line);
-            ImPlot::SetupAxisLimits(
-                ImAxis_X1, min_epoch, max_epoch,
-                follow_current_epoch_ ? ImGuiCond_Always : ImGuiCond_Once);
-
-            ValueRange range = CalculateVisibleRange(drawn.train_loss.line, drawn.val_loss.line, min_epoch, max_epoch);
-            if (log_loss_scale_) {
-                double min_positive = std::numeric_limits<double>::max();
-                const auto include_positive = [&](const MetricSeries& series) {
-                    const size_t count =
-                        std::min(series.epochs.size(), series.values.size());
-                    for (size_t i = 0; i < count; ++i) {
-                        if (series.epochs[i] < min_epoch ||
-                            series.epochs[i] > max_epoch ||
-                            series.values[i] <= 0.0) {
-                            continue;
-                        }
-                        min_positive = std::min(min_positive, series.values[i]);
-                    }
-                };
-                include_positive(drawn.train_loss.line);
-                include_positive(drawn.val_loss.line);
-                if (min_positive == std::numeric_limits<double>::max()) {
-                    min_positive = 1.0e-6;
-                }
-                const double lower = std::max(1.0e-12, min_positive / 1.25);
-                const double upper = std::max(lower * 10.0, range.max * 1.25);
-                ImPlot::SetupAxisLimits(
-                    ImAxis_Y1, lower, upper, ImGuiCond_Always);
-            } else {
-                double padding = (range.max - range.min) * 0.1;
-                if (padding < 0.01) padding = 0.1;
-                ImPlot::SetupAxisLimits(
-                    ImAxis_Y1,
-                    std::max(0.0, range.min - padding),
-                    range.max + padding,
-                    ImGuiCond_Always);
-            }
-        }
-
-        // Plot training loss
-        if (!drawn.train_loss.line.values.empty()) {
-            ImPlot::SetNextLineStyle(drawn.train_loss.line.color, 2.0f);
-            ImPlot::PlotLine(drawn.train_loss.line.name.c_str(),
-                           drawn.train_loss.line.epochs.data(),
-                           drawn.train_loss.line.values.data(),
-                           static_cast<int>(drawn.train_loss.line.values.size()));
-            if (!drawn.train_loss.smooth_y.empty()) {
-                ImPlot::SetNextLineStyle(MixColor(drawn.train_loss.line.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
-                ImPlot::PlotLine("Training Loss (smoothed)",
-                                 drawn.train_loss.smooth_x.data(),
-                                 drawn.train_loss.smooth_y.data(),
-                                 static_cast<int>(drawn.train_loss.smooth_y.size()));
-            }
-        }
-
-        // Plot validation loss
-        if (!drawn.val_loss.line.values.empty()) {
-            ImPlot::SetNextLineStyle(drawn.val_loss.line.color, 2.0f);
-            ImPlot::PlotLine(drawn.val_loss.line.name.c_str(),
-                           drawn.val_loss.line.epochs.data(),
-                           drawn.val_loss.line.values.data(),
-                           static_cast<int>(drawn.val_loss.line.values.size()));
-            ImPlot::SetNextMarkerStyle(
-                ImPlotMarker_Circle, 5.0f, drawn.val_loss.line.color,
-                1.5f, drawn.val_loss.line.color);
-            ImPlot::PlotScatter("##Validation Loss Points",
-                                drawn.val_loss.line.epochs.data(),
-                                drawn.val_loss.line.values.data(),
-                                static_cast<int>(drawn.val_loss.line.values.size()));
-            if (!drawn.val_loss.smooth_y.empty()) {
-                ImPlot::SetNextLineStyle(MixColor(drawn.val_loss.line.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
-                ImPlot::PlotLine("Validation Loss (smoothed)",
-                                 drawn.val_loss.smooth_x.data(),
-                                 drawn.val_loss.smooth_y.data(),
-                                 static_cast<int>(drawn.val_loss.smooth_y.size()));
-            }
-        }
-
-        ImPlot::EndPlot();
-    }
-    PopDashPlotStyle();
+void TrainingPlotPanel::DrawLossPlot(const ImVec2& size, bool fit, bool in_window) {
+    DrawChart(0, size, fit, in_window);
 }
+
 
 void TrainingPlotPanel::RenderAccuracyPlot(float plot_height) {
     const DashColors c = CurrentDashColors();
@@ -1669,70 +1552,10 @@ void TrainingPlotPanel::RenderAccuracyPlot(float plot_height) {
     EndDashCard();
 }
 
-void TrainingPlotPanel::DrawAccuracyPlot(const ImVec2& size, bool fit) {
-    const DashColors c = CurrentDashColors();
-    const DrawnCache& drawn = Drawn();
-    PushDashPlotStyle(c);
-    if (fit) {
-        ImPlot::SetNextAxesToFit();
-    }
-    if (ImPlot::BeginPlot("Accuracy", size, ImPlotFlags_NoTitle)) {
-        ImPlot::SetupAxes("Epoch", "Accuracy (%)", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
-        ImPlot::SetupLegend(ImPlotLocation_SouthEast);
-
-        if (auto_scale_ && follow_current_epoch_ && !drawn.train_accuracy.line.epochs.empty()) {
-            const auto [min_epoch, max_epoch] = CalculateEpochWindow(drawn.train_accuracy.line);
-            ImPlot::SetupAxisLimits(ImAxis_X1, min_epoch, max_epoch, ImGuiCond_Always);
-
-            ValueRange range = CalculateVisibleRange(drawn.train_accuracy.line, drawn.val_accuracy.line, min_epoch, max_epoch);
-            double padding = (range.max - range.min) * 0.1;
-            if (padding < 1.0) padding = 5.0;
-            ImPlot::SetupAxisLimits(ImAxis_Y1,
-                std::max(0.0, range.min - padding),
-                std::min(100.0, range.max + padding),
-                ImGuiCond_Always);
-        } else if (auto_scale_ && !drawn.train_accuracy.line.epochs.empty()) {
-            const double max_epoch = std::max(1.0, drawn.train_accuracy.line.epochs.back());
-            ImPlot::SetupAxisLimits(
-                ImAxis_X1, 0.0, max_epoch + 1.0, ImGuiCond_Once);
-        }
-
-        // Plot training accuracy
-        if (!drawn.train_accuracy.line.values.empty()) {
-            ImPlot::SetNextLineStyle(drawn.train_accuracy.line.color, 2.0f);
-            ImPlot::PlotLine(drawn.train_accuracy.line.name.c_str(),
-                           drawn.train_accuracy.line.epochs.data(),
-                           drawn.train_accuracy.line.values.data(),
-                           static_cast<int>(drawn.train_accuracy.line.values.size()));
-            if (!drawn.train_accuracy.smooth_y.empty()) {
-                ImPlot::SetNextLineStyle(MixColor(drawn.train_accuracy.line.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
-                ImPlot::PlotLine("Training Accuracy (smoothed)",
-                                 drawn.train_accuracy.smooth_x.data(),
-                                 drawn.train_accuracy.smooth_y.data(),
-                                 static_cast<int>(drawn.train_accuracy.smooth_y.size()));
-            }
-        }
-
-        // Plot validation accuracy
-        if (!drawn.val_accuracy.line.values.empty()) {
-            ImPlot::SetNextLineStyle(drawn.val_accuracy.line.color, 2.0f);
-            ImPlot::PlotLine(drawn.val_accuracy.line.name.c_str(),
-                           drawn.val_accuracy.line.epochs.data(),
-                           drawn.val_accuracy.line.values.data(),
-                           static_cast<int>(drawn.val_accuracy.line.values.size()));
-            if (!drawn.val_accuracy.smooth_y.empty()) {
-                ImPlot::SetNextLineStyle(MixColor(drawn.val_accuracy.line.color, ImVec4(1, 1, 1, 1), 0.35f), 3.0f);
-                ImPlot::PlotLine("Validation Accuracy (smoothed)",
-                                 drawn.val_accuracy.smooth_x.data(),
-                                 drawn.val_accuracy.smooth_y.data(),
-                                 static_cast<int>(drawn.val_accuracy.smooth_y.size()));
-            }
-        }
-
-        ImPlot::EndPlot();
-    }
-    PopDashPlotStyle();
+void TrainingPlotPanel::DrawAccuracyPlot(const ImVec2& size, bool fit, bool in_window) {
+    DrawChart(1, size, fit, in_window);
 }
+
 
 void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
     const char* plot_title = nullptr;
@@ -1761,45 +1584,154 @@ void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
     EndDashCard();
 }
 
-void TrainingPlotPanel::DrawCustomMetricsPlot(const ImVec2& size, bool fit) {
-    const char* plot_title = nullptr;
-    const char* y_label = nullptr;
-    ClassifyCustomMetrics(custom_metrics_, &plot_title, &y_label);
-    const DashColors c = CurrentDashColors();
-    PushDashPlotStyle(c);
-    if (fit) {
-        ImPlot::SetNextAxesToFit();
-    }
-    if (ImPlot::BeginPlot(plot_title, size, ImPlotFlags_NoTitle)) {
-        // Enable zoom and pan on both axes
-        ImPlot::SetupAxes("Epoch", y_label, ImPlotAxisFlags_None, ImPlotAxisFlags_None);
-        ImPlot::SetupLegend(ImPlotLocation_NorthEast);
+void TrainingPlotPanel::DrawCustomMetricsPlot(const ImVec2& size, bool fit, bool in_window) {
+    DrawChart(2, size, fit, in_window);
+}
 
-        for (const auto& metric : Drawn().custom) {
-            if (!metric.values.empty()) {
-                ImPlot::SetNextLineStyle(metric.color, 2.0f);
-                ImPlot::PlotLine(metric.name.c_str(),
-                               metric.epochs.data(),
-                               metric.values.data(),
-                               static_cast<int>(metric.values.size()));
-                if (IsValidationMetricName(metric.name)) {
-                    ImPlot::SetNextMarkerStyle(
-                        ImPlotMarker_Circle, 5.0f, metric.color,
-                        1.5f, metric.color);
-                    const std::string point_id =
-                        "##" + metric.name + " Points";
-                    ImPlot::PlotScatter(
-                        point_id.c_str(), metric.epochs.data(),
-                        metric.values.data(),
-                        static_cast<int>(metric.values.size()));
+namespace {
+// The curves keep their roles in theme colours (series index): training
+// loss coral, validation loss blue, training accuracy green, validation
+// accuracy amber.
+constexpr int kTrainLossColour = 4;
+constexpr int kValLossColour = 1;
+constexpr int kTrainAccuracyColour = 3;
+constexpr int kValAccuracyColour = 2;
+}  // namespace
+
+plot::Series TrainingPlotPanel::ToPlotSeries(const MetricSeries& full, const MetricSeries& drawn,
+                                             const std::vector<double>& smooth_x, const std::vector<double>& smooth_y,
+                                             int colour, bool markers) const {
+    plot::Series s;
+    s.label = full.name;
+    s.x = drawn.epochs;
+    s.y = drawn.values;
+    s.smooth_x = smooth_x;
+    s.smooth_y = smooth_y;
+    // Hover values and exports use every point of a reduced curve.
+    if (drawn.epochs.size() < full.epochs.size()) {
+        s.all_x = full.epochs;
+        s.all_y = full.values;
+    }
+    s.x_sorted = true;  // epochs ascend
+    s.colour = colour;
+    s.markers = markers;
+    return s;
+}
+
+plot::Prepared TrainingPlotPanel::ChartData(int chart) const {
+    const DrawnCache& d = drawn_;
+    plot::Prepared p;
+    p.spec.kind = plot::Kind::Line;
+    p.spec.x_label = "Epoch";
+    p.spec.legend = true;
+    p.spec.smooth = smoothing_window_;
+    size_t shown = 0, total = 0;
+    const auto add = [&](const MetricSeries& full, const DrawnSeries& drawn, int colour, bool markers) {
+        if (full.values.empty()) return;
+        p.series.push_back(ToPlotSeries(full, drawn.line, drawn.smooth_x, drawn.smooth_y, colour, markers));
+        shown += drawn.line.values.size();
+        total += full.values.size();
+    };
+    if (chart == 0) {
+        p.spec.title = "Loss";
+        p.spec.y_label = "Loss";
+        p.spec.log_y = log_loss_scale_;
+        add(train_loss_, d.train_loss, kTrainLossColour, false);
+        add(val_loss_, d.val_loss, kValLossColour, true);
+    } else if (chart == 1) {
+        p.spec.title = "Accuracy";
+        p.spec.y_label = "Accuracy (%)";
+        add(train_accuracy_, d.train_accuracy, kTrainAccuracyColour, false);
+        add(val_accuracy_, d.val_accuracy, kValAccuracyColour, true);
+    } else {
+        const char* title = nullptr;
+        const char* y_label = nullptr;
+        ClassifyCustomMetrics(custom_metrics_, &title, &y_label);
+        p.spec.title = title ? title : "Metrics";
+        p.spec.y_label = y_label ? y_label : "";
+        for (size_t i = 0; i < custom_metrics_.size() && i < d.custom.size(); ++i) {
+            const MetricSeries& full = custom_metrics_[i];
+            if (full.values.empty()) continue;
+            p.series.push_back(ToPlotSeries(full, d.custom[i], {}, {}, static_cast<int>(i % 6),
+                                            IsValidationMetricName(full.name)));
+            shown += d.custom[i].values.size();
+            total += full.values.size();
+        }
+    }
+    p.label = shown < total ? plot::DataLabel{plot::DataLabel::State::Reduced, shown, total}
+                            : plot::DataLabel{plot::DataLabel::State::Exact, total, total};
+    if (p.series.empty()) p.problem = "No values yet.";
+    return p;
+}
+
+void TrainingPlotPanel::DrawChart(int chart, const ImVec2& size, bool fit, bool in_window) {
+    const DrawnCache& d = Drawn();
+    ChartSlot& slot = chart_slots_[chart][in_window ? 1 : 0];
+    if (!slot.view) {
+        static const char* ids[3] = {"training_loss", "training_accuracy", "training_metrics"};
+        slot.view = std::make_unique<plot::PlotView>(std::string(ids[chart]) + (in_window ? "_window" : "_card"));
+    }
+    if (slot.build != d.build || slot.log != log_loss_scale_) {
+        slot.view->SetData(ChartData(chart));
+        slot.build = d.build;
+        slot.log = log_loss_scale_;
+    }
+    if (fit) slot.view->RequestFit();
+
+    plot::PlotView::Options o;
+    static const char* names[3] = {"training_loss", "training_accuracy", "training_metrics"};
+    o.export_name = names[chart];
+    // The dashboard has its own Log loss axis, Fit (chart window) and
+    // pop-out icon.
+    o.tool_fit = false;
+    o.tool_log = false;
+    o.own_window_button = false;
+    // Auto scale and Follow current epoch, as before: the epoch window and
+    // the value range of what is visible.
+    if (chart == 0 && auto_scale_ && !d.train_loss.line.epochs.empty()) {
+        const auto [min_epoch, max_epoch] = CalculateEpochWindow(d.train_loss.line);
+        // Following: the window moves with training; otherwise the planned
+        // epochs are set once and the user may pan (as before the port).
+        o.x_range = {true, min_epoch, max_epoch, !follow_current_epoch_};
+        const ValueRange range = CalculateVisibleRange(d.train_loss.line, d.val_loss.line, min_epoch, max_epoch);
+        if (log_loss_scale_) {
+            double min_positive = std::numeric_limits<double>::max();
+            for (const MetricSeries* series : {&d.train_loss.line, &d.val_loss.line}) {
+                const size_t count = std::min(series->epochs.size(), series->values.size());
+                for (size_t i = 0; i < count; ++i) {
+                    if (series->epochs[i] < min_epoch || series->epochs[i] > max_epoch || series->values[i] <= 0.0) continue;
+                    min_positive = std::min(min_positive, series->values[i]);
                 }
             }
+            if (min_positive == std::numeric_limits<double>::max()) min_positive = 1.0e-6;
+            const double lower = std::max(1.0e-12, min_positive / 1.25);
+            o.y_range = {true, lower, std::max(lower * 10.0, range.max * 1.25)};
+        } else {
+            double padding = (range.max - range.min) * 0.1;
+            if (padding < 0.01) padding = 0.1;
+            o.y_range = {true, std::max(0.0, range.min - padding), range.max + padding};
         }
-
-        ImPlot::EndPlot();
+    } else if (chart == 1 && auto_scale_ && follow_current_epoch_ && !d.train_accuracy.line.epochs.empty()) {
+        const auto [min_epoch, max_epoch] = CalculateEpochWindow(d.train_accuracy.line);
+        o.x_range = {true, min_epoch, max_epoch};
+        const ValueRange range = CalculateVisibleRange(d.train_accuracy.line, d.val_accuracy.line, min_epoch, max_epoch);
+        double padding = (range.max - range.min) * 0.1;
+        if (padding < 1.0) padding = 5.0;
+        o.y_range = {true, std::max(0.0, range.min - padding), std::min(100.0, range.max + padding)};
+    } else if (chart == 1 && auto_scale_ && !d.train_accuracy.line.epochs.empty()) {
+        // Not following: all epochs so far, set once (as before the port);
+        // with Auto scale the value range follows the data, like the loss
+        // chart (it used to stay at the first fit, so the curve left the top).
+        const double max_epoch = std::max(1.0, d.train_accuracy.line.epochs.back()) + 1.0;
+        o.x_range = {true, 0.0, max_epoch, true};
+        const ValueRange range = CalculateVisibleRange(d.train_accuracy.line, d.val_accuracy.line, 0.0, max_epoch);
+        double padding = (range.max - range.min) * 0.1;
+        if (padding < 1.0) padding = 5.0;
+        o.y_range = {true, std::max(0.0, range.min - padding), std::min(100.0, range.max + padding)};
     }
-    PopDashPlotStyle();
+    slot.view->Draw(size, o);
 }
+
 
 void TrainingPlotPanel::RenderChartWindows() {
     const DashColors c = CurrentDashColors();
@@ -1872,11 +1804,11 @@ void TrainingPlotPanel::RenderChartWindows() {
                                    : kind == 1 ? "No accuracy data yet. Start training to see the curve."
                                                : "No custom metrics yet.");
             } else if (kind == 0) {
-                DrawLossPlot(ImVec2(-1, -1), fit);
+                DrawLossPlot(ImVec2(-1, -1), fit, true);
             } else if (kind == 1) {
-                DrawAccuracyPlot(ImVec2(-1, -1), fit);
+                DrawAccuracyPlot(ImVec2(-1, -1), fit, true);
             } else {
-                DrawCustomMetricsPlot(ImVec2(-1, -1), fit);
+                DrawCustomMetricsPlot(ImVec2(-1, -1), fit, true);
             }
         }
         ImGui::End();
@@ -3703,6 +3635,7 @@ const TrainingPlotPanel::DrawnCache& TrainingPlotPanel::Drawn() {
     drawn_.custom.clear();
     for (const auto& metric : custom_metrics_) drawn_.custom.push_back(reduce(metric));
     drawn_.version = data_version_;
+    ++drawn_.build;
     drawn_.smoothing = smoothing_window_;
     drawn_.smoothed = show_smoothed_curves_;
     return drawn_;
