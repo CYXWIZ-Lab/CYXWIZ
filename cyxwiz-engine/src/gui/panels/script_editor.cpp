@@ -61,6 +61,7 @@ void ScriptEditorPanel::Render() {
     }
     CheckFilesOnDisk();
     RenderPlotWindows();
+    PollLanguageResults();  // completion, details, problems, signatures, hover (P3)
     if (!deferred_open_path_.empty()) {
         const std::string path = std::move(deferred_open_path_);
         deferred_open_path_.clear();
@@ -598,8 +599,6 @@ void ScriptEditorPanel::RenderEditor() {
     // Clear the just-opened flag after the first frame
     completion_just_opened_ = false;
 
-    // Language results that arrived (completion from Jedi), then the popup.
-    PollLanguageResults();
     RenderCompletionPopup();
 }
 
@@ -619,6 +618,12 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
     // ========================================================================
     // COMPLETION POPUP - Highest priority when popup is open
     // ========================================================================
+    // Ctrl+Space with the list open shows or hides the selected item's details.
+    if (show_completion_popup_ && ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Space)) {
+        completion_details_shown_ = !completion_details_shown_;
+        completion_just_accepted_ = true;  // the editor must not type the space
+        return;
+    }
     if (show_completion_popup_ && !ctrl && !shift && !alt) {
         // TOFIX133 P0 item 6: Tab inserts, Enter types its new line, Up/Down
         // move the selection without moving the editor cursor.
@@ -632,15 +637,12 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
                                                       {ImGuiKey_Escape, scriptkeys::PopupKey::Escape},
                                                       {ImGuiKey_UpArrow, scriptkeys::PopupKey::Up},
                                                       {ImGuiKey_DownArrow, scriptkeys::PopupKey::Down}};
-        const int visible = std::min(static_cast<int>(completion_items_.size()), 10);
+        const int visible = static_cast<int>(completion_entries_.size());
         for (const auto& b : kPopupKeys) {
             if (!ImGui::IsKeyPressed(b.imgui)) continue;
             switch (scriptkeys::ResolvePopupKey(b.key)) {
                 case scriptkeys::PopupAction::Accept:
-                    if (selected_completion_ >= 0 && selected_completion_ < static_cast<int>(completion_items_.size())) {
-                        ApplyCompletion(completion_items_[selected_completion_]);
-                    }
-                    CloseCompletionPopup();
+                    AcceptCompletion();
                     // The editor must not also insert the tab this frame.
                     completion_just_accepted_ = true;
                     for (int i = io.InputQueueCharacters.Size - 1; i >= 0; --i) {
@@ -657,6 +659,7 @@ void ScriptEditorPanel::HandleKeyboardShortcuts() {
                 case scriptkeys::PopupAction::Next:
                     selected_completion_ = scriptkeys::MoveSelection(
                         selected_completion_, b.key == scriptkeys::PopupKey::Up ? -1 : 1, visible);
+                    completion_scroll_to_selected_ = true;
                     completion_just_accepted_ = true;  // keep the editor cursor where it is
                     return;
             }

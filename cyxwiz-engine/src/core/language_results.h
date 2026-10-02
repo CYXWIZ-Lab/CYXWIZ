@@ -14,6 +14,7 @@ struct Completion {
     std::string complete;  // what is still to type after the prefix ("ad")
     std::string kind;      // function, class, module, variable, keyword, property, path, ...
     std::string detail;    // signature, module or inferred type
+    std::string module;    // where the name comes from ("json")
 };
 
 struct Description {  // the selected completion's details
@@ -72,6 +73,11 @@ struct KindChip {
     int role;  // 0 function, 1 class, 2 module, 3 variable, 4 keyword, 5 other
 };
 KindChip ChipFor(const std::string& kind);
+
+// A docstring for a card: lines of a paragraph joined (docstrings wrap at
+// ~72 columns), the first `paragraphs` kept, ``code`` marks dropped.
+// Indented blocks (examples) keep their lines.
+std::string ReflowDoc(const std::string& doc, int paragraphs);
 
 // "2 errors, 3 warnings" / "1 error" / "No problems".
 std::string ProblemSummary(const std::vector<Problem>& problems);

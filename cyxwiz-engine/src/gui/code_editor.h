@@ -58,6 +58,32 @@ public:
     std::function<void(int line)> on_gutter_click;
 
     void SetMarks(std::vector<Mark> marks) { marks_ = std::move(marks); }
+
+    // Problems (TOFIX133 P3, board 6): a wavy underline under [a, b), red for
+    // errors, amber and dimmer for warnings, and a mark on the minimap.
+    struct Squiggle {
+        editor::Pos a;
+        editor::Pos b;
+        bool error = false;
+    };
+    void SetSquiggles(std::vector<Squiggle> squiggles) { squiggles_ = std::move(squiggles); }
+
+    // The text position under the mouse while it rests over text (not past a
+    // line's end, not in the gutter), and the screen point under that
+    // character (for a hover card). False when the mouse is elsewhere.
+    bool HoverPos(editor::Pos& pos, ImVec2& below) const {
+        if (!hover_valid_) return false;
+        pos = hover_pos_;
+        below = hover_below_;
+        return true;
+    }
+    // A Ctrl+click in the text since the last call (go to definition).
+    bool TakeCtrlClick(editor::Pos& pos) {
+        if (!ctrl_click_) return false;
+        ctrl_click_ = false;
+        pos = ctrl_click_pos_;
+        return true;
+    }
     void SetDebugLine(int line) { debug_line_ = line; }  // 0-based, -1 none
 
     // Minimap at the right: the text's shape in its colours, the visible part
@@ -99,7 +125,7 @@ private:
     struct Palette {
         ImU32 bg, current_line, text, line_number, line_number_current, selection, selection_inactive, caret,
             breakpoint, fold, fold_hover, mark, mark_current, debug_line, whitespace, pill_bg, pill_text,
-            scroll, scroll_hover, change_bar;
+            scroll, scroll_hover, change_bar, squiggle_error, squiggle_warning;
         ImU32 tokens[11];
     };
     // One screen row: a whole line, or a wrapped piece of one.
@@ -127,6 +153,12 @@ private:
     editor::FoldState folds_;
     editor::Highlighter highlighter_;
     std::vector<Mark> marks_;
+    std::vector<Squiggle> squiggles_;
+    bool hover_valid_ = false;
+    editor::Pos hover_pos_;
+    ImVec2 hover_below_;
+    bool ctrl_click_ = false;
+    editor::Pos ctrl_click_pos_;
     const std::vector<int>* breakpoints_ = nullptr;
     int debug_line_ = -1;
     bool read_only_ = false;

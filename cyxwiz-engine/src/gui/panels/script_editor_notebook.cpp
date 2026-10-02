@@ -249,9 +249,13 @@ bool ScriptEditorPanel::RenderCellEditorBlock(Cell& cell, int index, float width
     const bool changed = cell.editor.Render("##cell_code", ImVec2(width - 8.0f, view_h));
     if (code_font) ImGui::PopFont();
     if (editing) {
+        const bool accepted = completion_just_accepted_;
         completion_just_accepted_ = false;
         cell.SyncSourceFromEditor();
-        if (changed) tab.is_modified = true;
+        if (changed) {
+            tab.is_modified = true;
+            if (python && !accepted && !completion_just_opened_) UpdateAutoCompletion(false);
+        }
     }
 
     // A click in the block edits the cell (the click also placed the cursor).

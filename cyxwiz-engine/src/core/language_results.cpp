@@ -34,7 +34,7 @@ std::vector<Completion> ParseCompletions(const std::string& text) {
     if (!doc.is_array()) return out;
     for (const auto& item : doc) {
         if (!item.is_object()) continue;
-        out.push_back({Str(item, "name"), Str(item, "complete"), Str(item, "kind"), Str(item, "detail")});
+        out.push_back({Str(item, "name"), Str(item, "complete"), Str(item, "kind"), Str(item, "detail"), Str(item, "module")});
     }
     return out;
 }
@@ -114,6 +114,55 @@ std::vector<Problem> ParseProblems(const std::string& text) {
         if (p.line > 0) out.push_back(std::move(p));
     }
     return out;
+}
+
+std::string ReflowDoc(const std::string& doc, int paragraphs) {
+    std::string out;
+    std::string para;
+    int kept = 0;
+    bool indented_block = false;
+    auto flush = [&]() {
+        if (para.empty()) return;
+        if (kept < paragraphs) {
+            if (!out.empty()) out += "\n\n";
+            out += para;
+            ++kept;
+        }
+        para.clear();
+    };
+    size_t start = 0;
+    while (start <= doc.size() && kept < paragraphs) {
+        size_t end = doc.find('\n', start);
+        if (end == std::string::npos) end = doc.size();
+        std::string line = doc.substr(start, end - start);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const size_t first = line.find_first_not_of(" \t");
+        if (first == std::string::npos) {
+            flush();
+            indented_block = false;
+        } else {
+            const bool indented = first >= 4;
+            if (indented || indented_block) {
+                para += (para.empty() ? "" : "\n") + line;
+                indented_block = indented;
+            } else {
+                para += (para.empty() ? "" : " ") + line.substr(first);
+            }
+        }
+        if (end == doc.size()) break;
+        start = end + 1;
+    }
+    flush();
+    // ``code`` -> code
+    std::string clean;
+    for (size_t i = 0; i < out.size(); ++i) {
+        if (out[i] == '`' && i + 1 < out.size() && out[i + 1] == '`') {
+            ++i;
+            continue;
+        }
+        clean += out[i];
+    }
+    return clean;
 }
 
 KindChip ChipFor(const std::string& kind) {

@@ -34,9 +34,9 @@ struct State {
 
 Action Resolve(Key key, bool ctrl, bool shift, bool alt, const State& state);
 
-// Completion popup (TOFIX133 P0 item 6). Tab inserts the selected item;
-// Enter closes the list and types the new line; Up/Down move the selection
-// (the editor cursor stays); Escape closes.
+// Completion popup (TOFIX133 P0 item 6, P3 board 6). Tab or Enter inserts
+// the selected item; Up/Down move the selection (the editor cursor stays);
+// Escape closes.
 enum class PopupKey { Tab, Enter, Escape, Up, Down };
 enum class PopupAction { Accept, CloseAndType, Close, Previous, Next };
 PopupAction ResolvePopupKey(PopupKey key);

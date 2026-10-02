@@ -99,6 +99,8 @@ CodeEditor::Palette CodeEditor::BuildPalette() const {
     p.tokens[static_cast<int>(TokenKind::Constant)] = ui::ToU32(konst);
     p.tokens[static_cast<int>(TokenKind::Punctuation)] = ui::ToU32(ui::Mix(t.text, bg, 0.2f));
     p.tokens[static_cast<int>(TokenKind::CellMarker)] = ui::ToU32(t.accent_text);
+    p.squiggle_error = ui::ToU32(t.error);
+    p.squiggle_warning = ui::ToU32(ui::WithAlpha(t.warning, 0.75f));
     return p;
 }
 
@@ -232,6 +234,13 @@ void CodeEditor::RenderMinimap(const Palette& pal, float height) {
                       ImGui::IsItemHovered() || active ? pal.scroll_hover : pal.scroll);
 
     dl->PushClipRect(p, ImVec2(p.x + kWidth, p.y + height), true);
+    for (const auto& sq : squiggles_) {
+        const auto it = std::lower_bound(visible_.begin(), visible_.end(), sq.a.line);
+        if (it == visible_.end() || *it != sq.a.line) continue;
+        const float y = p.y + static_cast<float>(it - visible_.begin()) * kRow - offset;
+        dl->AddRectFilled(ImVec2(p.x + kWidth - 6.0f, y - 1.0f), ImVec2(p.x + kWidth - 2.0f, y + kRow + 1.0f),
+                          sq.error ? pal.squiggle_error : pal.squiggle_warning);
+    }
     for (int r = first; r <= last; ++r) {
         const int line_no = visible_[static_cast<size_t>(r)];
         const std::string& line = doc_.Line(line_no);
@@ -363,6 +372,19 @@ void CodeEditor::HandleMouse(const ImVec2& origin, float gutter, float advance, 
     const ImVec2 win = ImGui::GetWindowPos();
     const bool in_gutter = mouse.x < win.x + gutter;
 
+    hover_valid_ = false;
+    if (ImGui::IsWindowHovered() && !in_gutter && !dragging_) {
+        const Pos p = MouseToPos(mouse, origin, gutter, advance, line_height);
+        const std::string& text = doc_.Line(p.line);
+        // Over a character, not in the empty space after the line.
+        const float row_top = origin.y + static_cast<float>(RowOfPos(p)) * line_height;
+        if (p.col < static_cast<int>(text.size()) && mouse.y >= row_top && mouse.y < row_top + line_height) {
+            hover_valid_ = true;
+            hover_pos_ = p;
+            hover_below_ = ImVec2(mouse.x, row_top + line_height);
+        }
+    }
+
     if (ImGui::IsWindowHovered()) {
         if (!in_gutter) ImGui::SetMouseCursor(ImGuiMouseCursor_TextInput);
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
@@ -373,6 +395,10 @@ void CodeEditor::HandleMouse(const ImVec2& origin, float gutter, float advance, 
                 else if (on_gutter_click) on_gutter_click(p.line);
             } else {
                 const int clicks = io.MouseClickedCount[ImGuiMouseButton_Left];
+                if (clicks == 1 && io.KeyCtrl && !io.KeyShift && !io.KeyAlt) {
+                    ctrl_click_ = true;
+                    ctrl_click_pos_ = p;
+                }
                 if (clicks == 2) doc_.SelectWord(p);
                 else if (clicks >= 3) doc_.SelectLine(p.line);
                 else if (io.KeyAlt) doc_.AddCursor(p);
@@ -590,6 +616,21 @@ bool CodeEditor::Render(const char* id, const ImVec2& size) {
             }
         }
         if (at < row.end) draw_run(at, row.end, pal.text);
+
+        // Problems: a wavy line under the range.
+        for (const auto& sq : squiggles_) {
+            if (!in_row(sq.a, sq.b, x1, x2, 0.0f)) continue;
+            const ImU32 colour = sq.error ? pal.squiggle_error : pal.squiggle_warning;
+            const float base_y = y + line_height - 2.5f;
+            const float step = 2.0f;
+            ImVec2 prev(x1, base_y);
+            for (float x = x1 + step; x <= x2 + 0.01f; x += step) {
+                const bool up = static_cast<int>((x - x1) / step) % 2 == 1;
+                const ImVec2 next(x, base_y + (up ? -1.6f : 0.0f));
+                dl->AddLine(prev, next, colour, 1.0f);
+                prev = next;
+            }
+        }
 
         if (show_whitespace_) {
             for (int i = row.start; i < row.end; ++i) {

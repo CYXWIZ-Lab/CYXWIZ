@@ -115,6 +115,8 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor(5);
     if (tab->show_variables) RenderNotebookVariables(*tab, variables_height);
+    completion_just_opened_ = false;
+    RenderCompletionPopup();
 }
 
 
@@ -124,6 +126,8 @@ void ScriptEditorPanel::HandleCellKeyboardShortcuts() {
     }
 
     auto& tab = tabs_[active_tab_index_];
+    // The completion list owns Enter/Esc/arrows while it is open.
+    if (show_completion_popup_ || completion_just_accepted_) return;
     bool ctrl = ImGui::GetIO().KeyCtrl;
     bool shift = ImGui::GetIO().KeyShift;
     bool is_editing = (tab->editing_cell >= 0);

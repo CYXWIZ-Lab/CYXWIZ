@@ -55,6 +55,17 @@ int main() {
     Problem past{1, 5, true, "x", "UndefinedName"};
     Check(ProblemRange("x", past) == std::make_pair(5, 6), "past the end: one column");
 
+    const std::string doc =
+        "Deserialize ``fp`` (a ``.read()``-supporting file-like object containing\n"
+        "a JSON document) to a Python object.\n\n"
+        "``object_hook`` is an optional function that will be called with the\n"
+        "result of any object literal decode (a ``dict``).\n\n"
+        "Third paragraph is dropped.";
+    Check(ReflowDoc(doc, 2) ==
+              "Deserialize fp (a .read()-supporting file-like object containing a JSON document) to a Python object.\n\n"
+              "object_hook is an optional function that will be called with the result of any object literal decode (a dict).",
+          "docstring reflowed, two paragraphs, code marks dropped");
+    Check(ReflowDoc("Example:\n\n    x = 1\n    y = 2", 2) == "Example:\n\n    x = 1\n    y = 2", "indented example keeps its lines");
     Check(std::string(ChipFor("function").letter) == "f" && ChipFor("class").role == 1 && ChipFor("module").role == 2, "kind chips");
 
     // Bad input never throws.

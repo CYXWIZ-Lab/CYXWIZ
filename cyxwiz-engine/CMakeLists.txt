@@ -398,6 +398,7 @@ set(ENGINE_SOURCES
     src/gui/panels/script_editor_notebook.cpp
     src/gui/panels/script_editor_notebook_outputs.cpp
     src/gui/panels/script_editor_notebook_side.cpp
+    src/gui/panels/script_editor_language.cpp
     src/gui/markdown_view.cpp
     src/gui/panels/script_editor_settings.cpp
     src/gui/panels/script_editor_cells.cpp

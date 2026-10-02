@@ -56,7 +56,7 @@ int main() {
     Check(Resolve(Key::F5, false, false, true, idle) == Action::None, "Alt combinations are not ours");
 
     // Completion popup (P0 item 6).
-    Check(ResolvePopupKey(PopupKey::Enter) == PopupAction::CloseAndType, "Enter types a new line");
+    Check(ResolvePopupKey(PopupKey::Enter) == PopupAction::Accept, "Enter inserts, like Tab (board 6)");
     Check(ResolvePopupKey(PopupKey::Tab) == PopupAction::Accept, "Tab inserts");
     Check(ResolvePopupKey(PopupKey::Down) == PopupAction::Next && ResolvePopupKey(PopupKey::Up) == PopupAction::Previous,
           "Up/Down move the selection");

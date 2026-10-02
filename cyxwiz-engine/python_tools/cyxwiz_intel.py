@@ -121,6 +121,7 @@ def complete(source, line, column, path='', project_root='', namespace=None, lim
             'complete': c.complete,  # the text still to type
             'kind': kind,
             'detail': detail,
+            'module': c.module_name or '',
         })
     return out
 

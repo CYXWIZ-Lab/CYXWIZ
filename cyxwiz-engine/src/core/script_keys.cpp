@@ -39,7 +39,7 @@ Action Resolve(Key key, bool ctrl, bool shift, bool alt, const State& s) {
 PopupAction ResolvePopupKey(PopupKey key) {
     switch (key) {
         case PopupKey::Tab: return PopupAction::Accept;
-        case PopupKey::Enter: return PopupAction::CloseAndType;
+        case PopupKey::Enter: return PopupAction::Accept;  // board 6 (P3): Enter or Tab insert
         case PopupKey::Escape: return PopupAction::Close;
         case PopupKey::Up: return PopupAction::Previous;
         case PopupKey::Down: return PopupAction::Next;

@@ -7,6 +7,8 @@
 #include "../../core/script_text_file.h"
 #include "../../scripting/cell_manager.h"
 #include "../../core/notebook_presentation.h"
+#include "../../core/language_results.h"
+#include "../../scripting/language_service.h"
 #include "../../scripting/debugger.h"
 #include "../../scripting/script_manager.h"
 #include "../code_editor.h"
@@ -444,7 +446,17 @@ private:
 
     // Auto-completion state
     scripting::ScriptManager script_manager_;
-    std::vector<scripting::CompletionItem> completion_items_;
+    // Completion (TOFIX133 P3, board 6): entries from Jedi, or the old keyword
+    // completer when the tools are missing; details of the selected entry.
+    std::vector<lang::Completion> completion_entries_;
+    bool completion_entries_from_fallback_ = false;
+    bool completion_scroll_to_selected_ = false;
+    bool completion_details_shown_ = true;  // Ctrl+Space hides/shows them
+    std::string completion_details_for_;
+    lang::Description completion_details_;
+    std::uint64_t completion_details_request_ = 0;
+    float completion_details_height_ = 120.0f;
+    std::string completion_file_stem_;  // names of this file show no module
     bool show_completion_popup_ = false;
     bool completion_just_opened_ = false;  // Skip close check for one frame after opening
     bool completion_just_accepted_ = false;  // Skip editor keyboard input for one frame after accepting
@@ -455,8 +467,16 @@ private:
     std::uint64_t completion_request_ = 0;
     editor::Pos completion_request_pos_;
     std::uint64_t completion_request_version_ = 0;
-    bool RequestLanguageCompletion(EditorTab& tab, const editor::Pos& cursor, const std::string& prefix);
     void PollLanguageResults();
+    // script_editor_language.cpp (boards 6-8)
+    CodeEditor* ActiveCodeEditor();  // the text, or the notebook cell being edited
+    scripting::LanguageService::Request LanguageRequest(scripting::LanguageService::Kind kind, const CodeEditor& code,
+                                                        const editor::Pos& pos);
+    bool LanguageReady();
+    void RequestCompletionDetails();
+    void AcceptCompletion();
+    void OpenCompletionList(bool fallback);
+    bool HandleLanguageResult(const scripting::LanguageService::Result& result);
 
     // Focus tracking
     bool is_focused_ = false;
@@ -474,7 +494,6 @@ private:
     // Auto-completion helpers
     void UpdateAutoCompletion(bool force = false);
     void RenderCompletionPopup();
-    void ApplyCompletion(const scripting::CompletionItem& item);
     void CloseCompletionPopup();
 };
 
