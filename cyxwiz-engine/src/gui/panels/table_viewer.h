@@ -3,6 +3,7 @@
 #include "../panel.h"
 #include "../../data/data_table.h"
 #include "../variables_view.h"
+#include "../plot/plot_window.h"
 #include <imgui.h>
 #include <cstring>
 #include <string>
@@ -27,28 +28,6 @@ enum class ColorMapType {
     Plasma,     // Purple → Pink → Orange → Yellow
     Magma,      // Black → Purple → Pink → White
     Custom      // User-defined range
-};
-
-// ============================================================================
-// Quick Plot Types
-// ============================================================================
-enum class QuickPlotType {
-    // Basic charts
-    Histogram,      // Distribution of single column
-    Bar,            // Categorical/value bars
-    Scatter,        // Two columns X vs Y
-    Line,           // Trend/sequence
-    Box,            // Quartiles, outliers
-
-    // Extended charts
-    Pie,            // Category proportions
-    Stairs,         // Step function
-    Stem,           // Discrete values
-    Area,           // Filled line chart
-
-    // Advanced charts
-    Heatmap,        // Matrix/grid data
-    Histogram2D     // 2D density
 };
 
 // ============================================================================
@@ -83,20 +62,6 @@ struct SelectionRange {
         return row >= row_start && row <= row_end &&
                col >= col_start && col <= col_end;
     }
-};
-
-// ============================================================================
-// Quick plot popup state
-// ============================================================================
-struct PlotPopup {
-    bool open = false;
-    QuickPlotType type = QuickPlotType::Histogram;
-    int x_column = -1;
-    int y_column = -1;
-    std::string title;
-    std::vector<double> x_data;
-    std::vector<double> y_data;
-    std::vector<std::string> labels;  // For categorical data
 };
 
 /**
@@ -289,10 +254,11 @@ private:
     void ClearFilter(TableTab* tab);
 
     // ═══════════════════════════════════════════════════════════════
-    // NEW: Quick Plot
+    // Plot window (TOFIX134 P1: replaces Quick Plot)
     // ═══════════════════════════════════════════════════════════════
-    void ShowQuickPlotPopup(TableTab* tab);
-    void RenderQuickPlot();
+    // Opens the Plot window on `tab` with `kind`; x/y are column indices
+    // (-1: none).
+    void OpenPlot(TableTab* tab, plot::Kind kind, int x_column, int y_column = -1);
     void RenderMiniHistogram(TableTab* tab, int column);
     std::vector<double> GetColumnAsDoubles(TableTab* tab, int column) const;
 
@@ -354,10 +320,9 @@ private:
     int context_menu_col_ = -1;
 
     // ═══════════════════════════════════════════════════════════════
-    // NEW: Quick plot popup
+    // Plot window
     // ═══════════════════════════════════════════════════════════════
-    PlotPopup plot_popup_;
-    bool show_plot_popup_ = false;
+    std::unique_ptr<plot::PlotWindow> plot_window_;
 
     // ═══════════════════════════════════════════════════════════════
     // NEW: Dialog states

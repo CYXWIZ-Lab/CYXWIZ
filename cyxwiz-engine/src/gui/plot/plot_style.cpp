@@ -59,6 +59,7 @@ void ApplyPlotStyle() {
     c[ImPlotCol_Selection] = t.accent_text;
     c[ImPlotCol_Crosshairs] = t.text_dim;
     style.PlotBorderSize = 0.0f;
+    style.FitPadding = ImVec2(0.02f, 0.06f);  // the tallest bar does not touch the edge
     style.Colormap = SeriesColormap();
 }
 

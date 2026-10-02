@@ -27,6 +27,8 @@ TableViewerPanel::TableViewerPanel()
 }
 
 void TableViewerPanel::Render() {
+    // The Plot window stays while the Table Viewer is closed or hidden.
+    if (plot_window_) plot_window_->Render();
     if (!visible_) return;
 
     // Handle deferred tab close
@@ -759,11 +761,6 @@ void TableViewerPanel::RenderTable() {
         }
 
         ImGui::EndTable();
-    }
-
-    // Render quick plot popup
-    if (show_plot_popup_) {
-        RenderQuickPlot();
     }
 
     // Pagination controls

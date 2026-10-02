@@ -29,14 +29,38 @@ Plot Output toolbar: previous / next figure, zoom (or mouse wheel, drag to
 pan), Fit, 100%, copy to the clipboard, save as PNG, close the figure,
 clear all. Right-click a figure for Copy, Save as PNG and Close.
 
-## Table Viewer quick plots
+## The Plot window (Table Viewer)
 
 Open a table in the Table Viewer (a dataset, a CSV, or a variable from the
-Variable Explorer), right-click a column and choose **Plot**: histogram,
-bar, line, scatter, box, pie, stairs, stem or area. The plot opens in the
-Quick Plot window. **Plot with Python** copies a
-complete matplotlib script for the same plot to the clipboard; paste it in
-the Script Editor and run it to get the figure in Plot Output.
+Variable Explorer), then either right-click a column and choose **Plot**
+(Histogram, Line Chart, Bar Chart, Box Plot, or Use as X-axis for Scatter)
+or press **Plot** under the column's statistics. The Plot window opens:
+
+- **Plot type** (left): Basic (line, scatter, bar, histogram, area, step,
+  stem, pie), Distribution (box, violin, error bars), Grid and density
+  (heatmap, 2D histogram). Pick one; the columns that still fit are kept.
+- **Data** (right): the X column (or the row number for lines), one or
+  more Y columns (one series each), **Colour by** a column (one series per
+  value; the 11 largest groups, the rest as "other"), bins, median and
+  mean lines, density, smoothing (moving average), the title. **Values**
+  lists count, missing, min, max, mean and median of the plotted column.
+- **The plot**: hover for values (the nearest x of every series, the
+  scatter point, the histogram bin and its share, the category, the pie
+  slice, the box statistics, the heatmap cell). Drag to pan, wheel to zoom,
+  double-click or **Fit** to fit. **Log Y**, **Legend**.
+- The label next to the toolbar says what is drawn: *exact* (all values),
+  *reduced* (long lines drawn with the lowest and highest value of each
+  step; hover and exports use all points), *sampled* (an even sample of a
+  large scatter; exports use all rows), or *first N rows* (a variable read
+  with a row limit).
+- **Export**: save image as PNG or SVG, copy image, save data as CSV, copy
+  data, Plot with Python (copies a matplotlib script; paste it in the
+  Script Editor and run it to get the figure in Plot Output).
+- The window icon opens the plot in its own window; **Open in Visualizer**
+  sends the column to the Visualizer.
+
+Plot colours come from the theme (Preferences > Theme): the series
+colours, the plot area (a shade of the window colour) and the text.
 
 ## Training Dashboard
 

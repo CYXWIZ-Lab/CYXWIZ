@@ -60,16 +60,14 @@ void TableViewerPanel::OpenVariable(const VariablesView::OpenRequest& request,
         for (int c = first; c < static_cast<int>(opened->column_stats.size()); ++c) {
             if (opened->column_stats[c].type != "Numeric") continue;
             const bool line = result.table_kind == "array" && result.shape.size() == 1;
-            plot_popup_ = PlotPopup{};
-            plot_popup_.type = line ? QuickPlotType::Line : QuickPlotType::Histogram;
-            plot_popup_.x_column = c;
-            plot_popup_.y_column = -1;
-            const std::string column = opened->table->GetHeaders()[static_cast<size_t>(c)];
-            plot_popup_.title = (line ? request.name : "Histogram of " + request.name + " " + column);
-            plot_popup_.x_data = GetColumnAsDoubles(opened, c);
-            show_plot_popup_ = true;
+            OpenPlot(opened, line ? plot::Kind::Line : plot::Kind::Histogram, c);
             break;
         }
+    } else if (plot_window_ && plot_window_->visible && plot_window_->SourceName() == opened->filename) {
+        // Read again: the open plot follows the new values, same settings.
+        const bool cut = opened->live.shown >= 0 && opened->live.shown < opened->live.rows;
+        plot_window_->SetTable(opened->table, cut ? static_cast<size_t>(opened->live.shown) : 0,
+                               cut ? static_cast<size_t>(opened->live.rows) : 0);
     }
 }
 

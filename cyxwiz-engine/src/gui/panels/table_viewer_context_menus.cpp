@@ -160,47 +160,14 @@ void TableViewerPanel::RenderColumnContextMenu(TableTab* tab, int column) {
 
     // Plotting
     if (ImGui::BeginMenu(ICON_FA_CHART_SIMPLE " Plot")) {
-        if (ImGui::MenuItem(ICON_FA_CHART_BAR " Histogram")) {
-            plot_popup_.type = QuickPlotType::Histogram;
-            plot_popup_.x_column = column;
-            plot_popup_.y_column = -1;
-            plot_popup_.title = "Histogram of " + col_name;
-            plot_popup_.x_data = GetColumnAsDoubles(tab, column);
-            show_plot_popup_ = true;
-        }
-        if (ImGui::MenuItem(ICON_FA_CHART_LINE " Line Chart")) {
-            plot_popup_.type = QuickPlotType::Line;
-            plot_popup_.x_column = column;
-            plot_popup_.y_column = -1;
-            plot_popup_.title = "Line Chart of " + col_name;
-            plot_popup_.x_data = GetColumnAsDoubles(tab, column);
-            show_plot_popup_ = true;
-        }
-        if (ImGui::MenuItem(ICON_FA_CHART_COLUMN " Bar Chart")) {
-            plot_popup_.type = QuickPlotType::Bar;
-            plot_popup_.x_column = column;
-            plot_popup_.y_column = -1;
-            plot_popup_.title = "Bar Chart of " + col_name;
-            plot_popup_.x_data = GetColumnAsDoubles(tab, column);
-            show_plot_popup_ = true;
-        }
-        if (ImGui::MenuItem(ICON_FA_CUBE " Box Plot")) {
-            plot_popup_.type = QuickPlotType::Box;
-            plot_popup_.x_column = column;
-            plot_popup_.y_column = -1;
-            plot_popup_.title = "Box Plot of " + col_name;
-            plot_popup_.x_data = GetColumnAsDoubles(tab, column);
-            show_plot_popup_ = true;
-        }
+        // The Plot window opens on the type; other types are one click there.
+        if (ImGui::MenuItem(ICON_FA_CHART_BAR " Histogram")) OpenPlot(tab, plot::Kind::Histogram, column);
+        if (ImGui::MenuItem(ICON_FA_CHART_LINE " Line Chart")) OpenPlot(tab, plot::Kind::Line, column);
+        if (ImGui::MenuItem(ICON_FA_CHART_COLUMN " Bar Chart")) OpenPlot(tab, plot::Kind::Bar, column);
+        if (ImGui::MenuItem(ICON_FA_CUBE " Box Plot")) OpenPlot(tab, plot::Kind::Box, column);
         ImGui::Separator();
-        if (ImGui::MenuItem(ICON_FA_CHART_SCATTER " Use as X-axis for Scatter")) {
-            plot_popup_.type = QuickPlotType::Scatter;
-            plot_popup_.x_column = column;
-            // Y column will be selected in popup
-            plot_popup_.title = "Scatter Plot";
-            plot_popup_.x_data = GetColumnAsDoubles(tab, column);
-            show_plot_popup_ = true;
-        }
+        // The Y column is chosen in the Plot window.
+        if (ImGui::MenuItem(ICON_FA_CHART_SCATTER " Use as X-axis for Scatter")) OpenPlot(tab, plot::Kind::Scatter, column);
         ImGui::EndMenu();
     }
 

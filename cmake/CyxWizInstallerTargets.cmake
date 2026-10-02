@@ -385,6 +385,21 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
     )
     target_link_libraries(test_plot_export PRIVATE nlohmann_json::nlohmann_json)
+    # Plot source from a DataTable: numeric columns, aligned rows (TOFIX134 P1).
+    add_executable(test_plot_table_source
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_table_source.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_table_source.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_prepare.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/plot_model.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/series_decimation.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/data/data_table.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/csv_records.cpp"
+    )
+    target_link_libraries(test_plot_table_source PRIVATE nlohmann_json::nlohmann_json spdlog::spdlog fmt::fmt)
+    if(MSVC)
+        target_compile_options(test_plot_table_source PRIVATE /utf-8)
+        target_compile_definitions(test_plot_table_source PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+    endif()
     # Training Dashboard draws reduced series (TOFIX134 P0 item 8).
     add_executable(test_series_decimation
         "${_cyxwiz_installer_engine_dir}/tests/test_series_decimation.cpp"
@@ -459,7 +474,8 @@ if(CYXWIZ_BUILD_TESTS)
             test_markdown_blocks test_html_table test_csv_records
             test_language_results test_variables_presentation test_breakpoint_lines
             test_paired_columns test_plot_script test_plot_inbox test_series_decimation
-            test_plot_model test_plot_prepare test_plot_export)
+            test_plot_model test_plot_prepare test_plot_export
+            test_plot_table_source)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

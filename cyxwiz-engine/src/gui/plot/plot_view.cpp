@@ -13,6 +13,8 @@
 #include <cstdio>
 #include <fstream>
 
+#include <spdlog/spdlog.h>
+
 namespace cyxwiz::plot {
 
 namespace {
@@ -134,6 +136,7 @@ void PlotView::FinishCaptures() {
         }
     }
     note_until_ = ImGui::GetTime() + 4.0;
+    spdlog::info("Plot '{}': {} ({} bytes of PNG)", id_, note_, png.size());
 }
 
 void PlotView::ExportMenu(const Options& o) {
@@ -275,6 +278,8 @@ void PlotView::Draw(ImVec2 size, const Options& o) {
         if (pending_->action != Pending::Action::None && capture_frame_ > 0 && ImGui::GetFrameCount() >= capture_frame_) {
             capture_frame_ = 0;
             auto sink = pending_;
+            spdlog::info("Plot '{}': reading the image ({:.0f} x {:.0f})", id_, frame_max_.x - frame_min_.x,
+                         frame_max_.y - frame_min_.y);
             if (Hooks().capture_png)
                 Hooks().capture_png(frame_min_, frame_max_, [sink](std::vector<unsigned char> png) {
                     sink->png = std::move(png);
@@ -305,7 +310,8 @@ void PlotView::DrawPlot(ImVec2 size) {
     ImVec2 plot_size = size;
     if (scale_bar) plot_size.x = std::max(100.0f, size.x - 76.0f);
 
-    ImPlotFlags flags = ImPlotFlags_NoTitle | ImPlotFlags_NoMenus;
+    // No mouse-position text: the hover card shows the values.
+    ImPlotFlags flags = ImPlotFlags_NoTitle | ImPlotFlags_NoMenus | ImPlotFlags_NoMouseText;
     if (!legend_) flags |= ImPlotFlags_NoLegend;
     if (kind == Kind::Pie) flags |= ImPlotFlags_Equal | ImPlotFlags_NoMouseText;
 

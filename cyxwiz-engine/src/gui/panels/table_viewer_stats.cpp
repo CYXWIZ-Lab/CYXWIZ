@@ -254,14 +254,9 @@ void TableViewerPanel::RenderStatsSidebar(TableTab* tab) {
 
         ImGui::Spacing();
 
-        // Quick plot button
+        // Plot: the Plot window on this column's histogram.
         if (ui::SecondaryButton(ICON_FA_CHART_BAR " Plot")) {
-            plot_popup_.type = QuickPlotType::Histogram;
-            plot_popup_.x_column = tab->selected_column;
-            plot_popup_.y_column = -1;
-            plot_popup_.title = "Histogram of " + headers[tab->selected_column];
-            plot_popup_.x_data = GetColumnAsDoubles(tab, tab->selected_column);
-            show_plot_popup_ = true;
+            OpenPlot(tab, plot::Kind::Histogram, tab->selected_column);
         }
     } else {
         ImGui::TextDisabled("Top Values:");
