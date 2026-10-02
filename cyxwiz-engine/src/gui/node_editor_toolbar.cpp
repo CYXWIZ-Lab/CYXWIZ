@@ -124,7 +124,11 @@ void NodeEditor::ShowToolbar() {
     std::string stats_text = std::to_string(nodes_.size()) + " nodes \xC2\xB7 " + std::to_string(links_.size()) + " links";
     if (num_selected > 0) stats_text += " \xC2\xB7 " + std::to_string(num_selected) + " selected";
     const char* stats = stats_text.c_str();
-    const float w_stats = ImGui::CalcTextSize(stats).x + 10.0f;
+    // The counts keep room for a selection, so selecting a node never moves
+    // the other tools.
+    const std::string widest_stats = std::to_string(nodes_.size()) + " nodes \xC2\xB7 " + std::to_string(links_.size()) +
+                                     " links \xC2\xB7 " + std::to_string(std::max<size_t>(nodes_.size(), 10)) + " selected";
+    const float w_stats = ImGui::CalcTextSize(widest_stats.c_str()).x + 10.0f;
     float w_code = kModeWidth + sp + W(ICON_FA_FILE_EXPORT " Export");
     if (execution_mode_ == ExecutionMode::CodeGeneration) w_code += kFrameworkWidth + sp + W(ICON_FA_GEARS " Generate") + sp;
     else if (!pipeline_running) w_code += W(ICON_FA_PLAY " Execute Pipeline") + sp;
@@ -137,21 +141,24 @@ void NodeEditor::ShowToolbar() {
                         (training_active ? 220.0f : W(ICON_FA_PLAY " Train"));
     const float w_more = W(ICON_FA_ELLIPSIS) + sp;
 
-    // Narrowing, in order: edit, code, view and counts, then Local Debug and
-    // the simulation / RL group move into the "more" menu.
+    // Narrowing, in order: the counts (the minimap shows them too), edit,
+    // code, view, then Local Debug and the simulation / RL group move into
+    // the "more" menu.
     const float avail = ImGui::GetContentRegionAvail().x - 2.0f * ImGui::GetStyle().WindowPadding.x;
     int level = 0;
     const auto need = [&](int l) {
         float w = w_left + kGroupGap + w_zoom + kGroupGap + w_run + w_pipeline_run;
-        if (l < 1) w += w_edit + kGroupGap;
-        if (l < 2) w += w_code + kGroupGap;
-        if (l < 3) w += w_view + sp + w_stats;
-        if (l < 4) w += w_debug + w_extras;
+        if (l < 1) w += w_stats;
+        if (l < 2) w += w_edit + kGroupGap;
+        if (l < 3) w += w_code + kGroupGap;
+        if (l < 4) w += w_view + sp;
+        if (l < 5) w += w_debug + w_extras;
         if (l > 0) w += w_more;
         return w;
     };
-    while (level < 4 && need(level) > avail) ++level;
-    const bool show_edit = level < 1, show_code = level < 2, show_view = level < 3, show_debug_extras = level < 4;
+    while (level < 5 && need(level) > avail) ++level;
+    const bool show_stats = level < 1, show_edit = level < 2, show_code = level < 3, show_view = level < 4,
+               show_debug_extras = level < 5;
 
     // ---- The bar: one row on the toolbar surface.
     ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_bar);
@@ -212,6 +219,8 @@ void NodeEditor::ShowToolbar() {
         ImGui::SameLine();
         if (ui::GhostButton(ICON_FA_SITEMAP " Minimap", true, nullptr, show_minimap_)) show_minimap_ = !show_minimap_;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip(show_minimap_ ? "Hide the minimap (M)" : "Show the minimap (M)");
+    }
+    if (show_stats) {
         ImGui::SameLine(0.0f, 10.0f);
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(t.text_dim, "%zu nodes \xC2\xB7 %zu links", nodes_.size(), links_.size());
@@ -243,6 +252,9 @@ void NodeEditor::ShowToolbar() {
             if (!show_view) {
                 if (ImGui::MenuItem(ICON_FA_EXPAND "  Fit", "F", false, !nodes_.empty())) FrameAll();
                 if (ImGui::MenuItem(ICON_FA_SITEMAP "  Minimap", "M", show_minimap_)) show_minimap_ = !show_minimap_;
+                ImGui::Separator();
+            }
+            if (!show_stats) {
                 ImGui::TextDisabled("%s", stats);
                 ImGui::Separator();
             }
