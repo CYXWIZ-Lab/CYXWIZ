@@ -21,6 +21,9 @@ TrainingDashboardPanel::TrainingDashboardPanel()
     : Panel("RL Training Dashboard", true)
     , is_training_(false)
 {
+    // Registered up front: values that arrive before the first frame are
+    // kept, not dropped as unknown metrics (TOFIX134 P0 item 7).
+    InitializeRLPlots();
 }
 
 void TrainingDashboardPanel::InitializeRLPlots() {

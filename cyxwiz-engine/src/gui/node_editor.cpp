@@ -860,6 +860,17 @@ void NodeEditor::Render() {
         ImGui::EndPopup();
     }
 
+    // RL metrics scripts reported (TOFIX134 P0 item 7); a script that reports
+    // without an RL run started from the canvas still gets the dashboard.
+    if (scripting_engine_) {
+        const auto samples = scripting_engine_->TakeRLMetrics();
+        if (!samples.empty() && !rl_dashboard_) {
+            rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
+            rl_dashboard_->SetVisible(true);
+        }
+        for (const auto& sample : samples) rl_dashboard_->UpdateCustomMetric(sample.name, sample.value);
+    }
+
     // Render RL Training Dashboard (separate window)
     if (rl_dashboard_) {
         rl_dashboard_->Render();

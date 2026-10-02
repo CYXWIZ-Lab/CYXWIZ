@@ -1,6 +1,7 @@
 #pragma once
 
-#include <mutex>
+#include "../core/thread_inbox.h"
+
 #include <string>
 #include <vector>
 
@@ -20,24 +21,13 @@ struct CapturedPlot {
 // (TOFIX134 P0 item 6). The script worker publishes, the UI thread takes
 // every frame, so no figure depends on the window being visible or on the
 // UI seeing the run's running -> finished edge.
-class PlotInbox {
-public:
-    void Publish(std::vector<CapturedPlot> plots) {
-        if (plots.empty()) return;
-        std::lock_guard<std::mutex> lock(mutex_);
-        for (auto& plot : plots) plots_.push_back(std::move(plot));
-    }
+using PlotInbox = cyxwiz::ThreadInbox<CapturedPlot>;
 
-    std::vector<CapturedPlot> Take() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        std::vector<CapturedPlot> taken;
-        taken.swap(plots_);
-        return taken;
-    }
-
-private:
-    std::mutex mutex_;
-    std::vector<CapturedPlot> plots_;
+// One value a script reported with pycyxwiz.rl_update_metric (TOFIX134 P0
+// item 7), for the RL Training Dashboard.
+struct RLMetricSample {
+    std::string name;
+    float value = 0.0f;
 };
 
 }  // namespace scripting

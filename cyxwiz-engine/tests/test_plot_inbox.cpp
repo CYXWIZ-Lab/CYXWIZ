@@ -1,6 +1,6 @@
-// Plot Output inbox (TOFIX134 P0 item 6): every figure a finished script
-// publishes is taken exactly once, in order, also when the UI takes late or
-// while scripts publish from another thread.
+// Worker -> UI inboxes (TOFIX134 P0 items 6 and 7): every figure a finished
+// script publishes, and every RL metric a script reports, is taken exactly
+// once, in order, also when the UI takes late or while a worker publishes.
 #include "../src/scripting/plot_inbox.h"
 
 #include <cstdlib>

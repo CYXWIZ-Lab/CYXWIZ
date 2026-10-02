@@ -2266,6 +2266,16 @@ except Exception as e:
         matlab_aliases_initialized_ = true;
         spdlog::info("MATLAB-style aliases initialized");
 
+        // RL metrics reach the dashboard (TOFIX134 P0 item 7): scripts call
+        // pycyxwiz.rl_update_metric, which dropped every value because no
+        // callback was ever set. The callback only queues; the UI takes.
+        if (py::module_::import("sys").attr("modules").contains("pycyxwiz")) {
+            py::module_::import("pycyxwiz").attr("rl_set_metric_callback")(
+                py::cpp_function([this](const std::string& name, float value) {
+                    rl_metrics_.Publish({RLMetricSample{name, value}});
+                }));
+        }
+
     } catch (const py::error_already_set& e) {
         spdlog::error("Failed to initialize MATLAB aliases: {}", e.what());
     } catch (const std::exception& e) {
