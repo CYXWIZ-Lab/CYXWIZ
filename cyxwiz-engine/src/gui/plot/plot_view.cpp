@@ -387,6 +387,18 @@ void PlotView::DrawPlot(ImVec2 size) {
     ImPlot::SetupLegend(ImPlotLocation_NorthEast);
     if (x_range_.on) ImPlot::SetupAxisLimits(ImAxis_X1, x_range_.lo, x_range_.hi, x_range_.once ? ImPlotCond_Once : ImPlotCond_Always);
     if (y_range_.on) ImPlot::SetupAxisLimits(ImAxis_Y1, y_range_.lo, y_range_.hi, y_range_.once ? ImPlotCond_Once : ImPlotCond_Always);
+    // Log Y over counts: fit to the positive counts (the bars' base of 0
+    // would pull a log axis down to 1e-300 and fill the plot).
+    if (log_y_ && fit_ && !y_range_.on && (kind == Kind::Histogram || kind == Kind::Bar)) {
+        double lo = 0, hi = 0;
+        for (const auto& s : p.series)
+            for (double v : s.y)
+                if (v > 0) {
+                    lo = lo == 0 ? v : std::min(lo, v);
+                    hi = std::max(hi, v);
+                }
+        if (hi > 0) ImPlot::SetupAxisLimits(ImAxis_Y1, lo * 0.5, hi * 2.0, ImPlotCond_Always);
+    }
 
     // Category ticks (bar, error bars, box, violin, heatmap).
     std::vector<const char*> names;
