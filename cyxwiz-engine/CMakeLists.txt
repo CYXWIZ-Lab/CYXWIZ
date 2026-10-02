@@ -1084,6 +1084,46 @@ add_custom_command(TARGET cyxwiz-engine POST_BUILD
     COMMENT "Copying test data files..."
 )
 
+# Language intelligence for the Script Editor (TOFIX133 P3, decision D2):
+# Jedi, parso and pyflakes ship with the Engine (owner decision 2026-10-02).
+# The wheels are unpacked next to the executable whenever they or the
+# service change; release packaging copies <exe dir>/python_tools.
+get_property(_cyxwiz_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(_cyxwiz_multi_config)
+    set(_cyxwiz_tools_dir "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/python_tools")
+else()
+    set(_cyxwiz_tools_dir "${CMAKE_BINARY_DIR}/bin/python_tools")
+endif()
+file(GLOB _cyxwiz_tool_wheels CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/wheels/*.whl")
+set(_cyxwiz_tool_unpack)
+foreach(_cyxwiz_wheel IN LISTS _cyxwiz_tool_wheels)
+    list(APPEND _cyxwiz_tool_unpack
+        COMMAND ${CMAKE_COMMAND} -E chdir "${_cyxwiz_tools_dir}" ${CMAKE_COMMAND} -E tar xf "${_cyxwiz_wheel}")
+endforeach()
+add_custom_command(
+    OUTPUT "${_cyxwiz_tools_dir}/.unpacked"
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${_cyxwiz_tools_dir}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_cyxwiz_tools_dir}"
+    ${_cyxwiz_tool_unpack}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_intel.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/README.md"
+        "${_cyxwiz_tools_dir}"
+    COMMAND ${CMAKE_COMMAND} -E touch "${_cyxwiz_tools_dir}/.unpacked"
+    DEPENDS ${_cyxwiz_tool_wheels}
+        "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/cyxwiz_intel.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/README.md"
+    COMMENT "Unpacking the Script Editor's language tools (jedi, parso, pyflakes)"
+    VERBATIM
+)
+add_custom_target(cyxwiz-python-tools ALL DEPENDS "${_cyxwiz_tools_dir}/.unpacked")
+add_dependencies(cyxwiz-engine cyxwiz-python-tools)
+if(Python3_EXECUTABLE)
+    add_test(NAME python_tools_intel
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/python_tools/tests/test_cyxwiz_intel.py"
+                "${_cyxwiz_tools_dir}")
+endif()
+
 # Copy pycyxwiz Python module to engine directory (built by cyxwiz-backend)
 if(TARGET pycyxwiz)
     # Windows loads pycyxwiz.pyd by that name; POSIX keeps the ABI-tagged .so

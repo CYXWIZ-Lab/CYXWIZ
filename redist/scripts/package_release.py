@@ -468,6 +468,10 @@ def copy_build_payload(
     ]
     backend = backend_runtime(paths, lib_suffix)
     require_directory(paths.resources, "Engine resources")
+    # The Script Editor's language tools (jedi, parso, pyflakes; TOFIX133 P3),
+    # unpacked by the Engine build. Required: without them completion would
+    # quietly fall back to keywords.
+    python_tools = require_directory(paths.build / "python_tools", "Script Editor language tools")
 
     copy_file(engine, stage / engine.name)
     copy_file(route_probe, stage / route_probe.name)
@@ -490,6 +494,13 @@ def copy_build_payload(
     if plugins.is_dir():
         copy_tree(plugins, stage / "plugins")
     copy_tree(paths.resources, stage / "resources")
+    if (stage / "python_tools").exists():
+        shutil.rmtree(stage / "python_tools")
+    shutil.copytree(
+        python_tools,
+        stage / "python_tools",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".unpacked"),
+    )
     copy_file(require_file(paths.root / "LICENSE", "CyxWiz LICENSE"), stage / "LICENSE")
     copy_vcpkg_notices(paths, stage, system)
 
@@ -851,6 +862,8 @@ def classify_source(relative_path: Path) -> str:
         return "python"
     if value.startswith("resources/"):
         return "cyxwiz-resources"
+    if value.startswith("python_tools/"):
+        return "python-tools"
     if value in ("README.md", "LICENSE", "start_cyxwiz.bat", "cyxwiz"):
         return "cyxwiz-package"
     return "cyxwiz-build"
