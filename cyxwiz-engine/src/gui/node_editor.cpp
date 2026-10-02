@@ -1037,10 +1037,24 @@ void NodeEditor::ShowToolbar() {
         separator();
     }
 
-    // File operations with icons
+    // File operations with icons. Save writes the graph's own file (a name
+    // is asked the first time); Save As writes a new file and leaves the
+    // open one as it was.
     if (ImGui::Button(ICON_FA_FLOPPY_DISK " Save")) {
+        SaveCurrentGraph();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", current_file_path_.empty()
+                                    ? "Save the graph (Ctrl+S): asks for a file name the first time"
+                                    : ("Save to " + std::filesystem::path(current_file_path_).filename().string() +
+                                       " (Ctrl+S)").c_str());
+    }
+    ImGui::SameLine();
+
+    if (ImGui::Button(ICON_FA_FILE_EXPORT " Save As")) {
         ShowSaveDialog();
     }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save the graph as a new file (Ctrl+Shift+S)");
     ImGui::SameLine();
 
     if (ImGui::Button(ICON_FA_FOLDER_OPEN " Load")) {

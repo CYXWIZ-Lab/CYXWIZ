@@ -154,8 +154,8 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(any, "file.open_project", "Open Project...", "Ctrl+Shift+O", "File");
         add(any, "script.new", "New Script...", "Ctrl+N", "File, Script");
         add(any, "script.open", "Open Script...", "Ctrl+O", "File, Script");
-        add(any, "file.save", "Save (the script when the Script Editor is focused)", "Ctrl+S", "File");
-        add(any, "file.save_as", "Save As... (the script when the Script Editor is focused)", "Ctrl+Shift+S", "File");
+        add(any, "file.save", "Save (the script or graph when the Script Editor or canvas is focused)", "Ctrl+S", "File");
+        add(any, "file.save_as", "Save As... (the script or graph when the Script Editor or canvas is focused)", "Ctrl+Shift+S", "File");
         add(any, "file.save_all", "Save All", "Ctrl+Alt+S", "File");
         add(any, "file.import_model", "Import Model...", "Ctrl+I", "File");
         add(any, "export.cyxmodel", "Export Model as CyxWiz package", "Ctrl+E", "File > Export Model");
@@ -192,6 +192,8 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(canvas, "canvas.subgraph", "Create subgraph from selection", "Ctrl+Shift+U", "", true);
         add(canvas, "view.studio_minimap", "Toggle minimap", "M", "View > Minimaps", true);
         add(canvas, "canvas.frame", "Frame selected nodes, or all", "F", "", true);
+        add(canvas, "graph.save", "Save the graph to its file (asks for a name the first time)", "Ctrl+S", "", true);
+        add(canvas, "graph.save_as", "Save the graph as a new file", "Ctrl+Shift+S", "", true);
 
         // Script Editor: the editor handles some keys, the main window others.
         add(script, "script.new", "New script tab", "Ctrl+N", "File, Script", true);

@@ -488,6 +488,15 @@ void NodeEditor::HandleKeyboardShortcuts() {
         UngroupSelection();
     }
 
+    // Ctrl+S - Save the graph to its file (a name is asked the first time);
+    // Ctrl+Shift+S - Save As a new file (the open one stays as it was).
+    if (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        SaveCurrentGraph();
+    }
+    if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        ShowSaveDialog();
+    }
+
     // Ctrl+Shift+U - Create subgraph from selection (Ctrl+Shift+S is Save As)
     if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_U) && selected_node_ids_.size() >= 2) {
         CreateSubgraphFromSelection("");
