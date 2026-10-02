@@ -206,6 +206,7 @@ int main() {
               ShortcutFor("variables.delete", Context::Variables) == "Delete",
           "Variable Explorer keys documented");
     Check(std::string(ContextName(Context::Variables)) == "Variable Explorer", "Variable Explorer context name");
+    Check(ShortcutFor("table.slice_step", Context::TableViewer) == "Up, Down", "Data Viewer slice keys documented");
     Check(ShortcutFor("editor.select_occurrences", Context::ScriptEditor) == "Ctrl+Shift+L", "editor keys documented");
     Check(ShortcutFor("tools.model_summary", Context::Any).empty(), "Model Summary has no chord");
     Check(ShortcutFor("data.profiler", Context::Any).empty(), "Data Profiler has no chord");

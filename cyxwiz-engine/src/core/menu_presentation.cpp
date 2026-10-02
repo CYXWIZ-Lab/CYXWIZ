@@ -121,6 +121,7 @@ const char* ContextName(Context context) {
         case Context::ScriptDebugging: return "Script Editor, debugging";
         case Context::ScriptNotebook: return "Script Editor, notebook";
         case Context::Variables: return "Variable Explorer";
+        case Context::TableViewer: return "Table Viewer";
     }
     return "Everywhere";
 }
@@ -146,6 +147,7 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         const Context debug = Context::ScriptDebugging;
         const Context notebook = Context::ScriptNotebook;
         const Context variables = Context::Variables;
+        const Context viewer = Context::TableViewer;
 
         // Everywhere: handled by the main window.
         add(any, "file.new_project", "New Project...", "Ctrl+Shift+N", "File");
@@ -267,6 +269,14 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(variables, "variables.view_data", "View data (tables, arrays, lists), or expand", "Enter", "", true);
         add(variables, "variables.copy_value", "Copy the value", "Ctrl+C", "", true);
         add(variables, "variables.delete", "Delete the variable", "Delete", "", true);
+
+        // Table Viewer (and the Data Viewer's tabs of Python values): the viewer handles these.
+        add(viewer, "table.save", "Save the table's edits", "Ctrl+S", "", true);
+        add(viewer, "table.cancel_edit", "Cancel editing a cell", "Escape", "", true);
+        add(viewer, "table.edit_cell", "Edit a cell", "Double-click", "", true);
+        add(viewer, "table.add_selection", "Add a cell to the selection", "Ctrl+Click", "", true);
+        add(viewer, "table.extend_selection", "Extend the selection", "Shift+Click", "", true);
+        add(viewer, "table.slice_step", "Step the first index of an array slice", "Up, Down", "", true);
         // While a code cell is being edited, the language keys work as in a script.
         add(notebook, "script.completion", "Completion in the cell (with the list open: details)", "Ctrl+Space", "", true);
         add(notebook, "editor.signature_help", "Show the signature of the call in the cell", "Ctrl+Shift+Space", "", true);

@@ -33,7 +33,7 @@ bool Matches(const menu::ShortcutEntry& e, const std::string& needle) {
 void ToolbarPanel::RenderShortcutsPreferences() {
     const menu::Context contexts[] = {menu::Context::Any, menu::Context::StudioCanvas, menu::Context::ScriptEditor,
                                       menu::Context::ScriptDebugging, menu::Context::ScriptNotebook,
-                                      menu::Context::Variables};
+                                      menu::Context::Variables, menu::Context::TableViewer};
     constexpr int kContexts = static_cast<int>(sizeof(contexts) / sizeof(contexts[0]));
     const auto& table = menu::ShortcutTable();
     const std::string needle = Lower(shortcuts_search_);
@@ -57,7 +57,7 @@ void ToolbarPanel::RenderShortcutsPreferences() {
         }
         ImGui::Spacing();
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("Console, Table Viewer and the other windows list their keys here when their "
+        ImGui::TextDisabled("Console and the other windows list their keys here when their "
                             "screens are reviewed.");
         ImGui::PopTextWrapPos();
     }
