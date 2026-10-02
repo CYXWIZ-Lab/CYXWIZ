@@ -1173,13 +1173,6 @@ void ScriptingEngine::QueuePlot(const CapturedPlot& plot) {
     plot_queue_.push_back(plot);
 }
 
-std::vector<CapturedPlot> ScriptingEngine::GetPendingPlots() {
-    std::lock_guard<std::mutex> lock(plot_mutex_);
-    std::vector<CapturedPlot> plots;
-    std::swap(plots, plot_queue_);
-    return plots;
-}
-
 void ScriptingEngine::ScriptWorker(const std::string& script, RunCallbacks callbacks) {
     spdlog::debug("Script worker thread started");
 
@@ -1196,6 +1189,7 @@ void ScriptingEngine::ScriptWorker(const std::string& script, RunCallbacks callb
         std::lock_guard<std::mutex> lock(result_mutex_);
         async_result_ = result;
     }
+    if (callbacks.notebook_namespace.empty()) published_plots_.Publish(result.plots);
 
     // Mark as not running
     script_running_ = false;

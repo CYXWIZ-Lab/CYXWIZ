@@ -3,6 +3,7 @@
 #include "language_service.h"
 #include "variables_service.h"
 #include "debug_types.h"
+#include "plot_inbox.h"
 #include "python_engine.h"
 #include "python_sandbox.h"
 #include <string>
@@ -25,16 +26,6 @@ namespace cyxwiz {
 }
 
 namespace scripting {
-
-/**
- * Captured plot/image from matplotlib or other plotting libraries
- */
-struct CapturedPlot {
-    std::vector<unsigned char> png_data;  // PNG image data
-    int width = 0;
-    int height = 0;
-    std::string label;  // Optional label (e.g., figure title)
-};
 
 /**
  * Execution result from ScriptingEngine
@@ -209,6 +200,9 @@ public:
     // Get the result of the last async execution (if finished)
     // Returns nullopt if still running or no async execution started
     std::optional<ExecutionResult> GetAsyncResult();
+    // Figures of finished script runs (not notebook cells, which show their
+    // own), for the Plot Output window; each figure is returned once.
+    std::vector<CapturedPlot> TakePublishedPlots() { return published_plots_.Take(); }
 
     // Get any pending output from the running script
     // Call this periodically from GUI to get real-time output
@@ -299,6 +293,7 @@ private:
     // Thread-safe plot queue
     std::mutex plot_mutex_;
     std::vector<CapturedPlot> plot_queue_;
+    PlotInbox published_plots_;
 
     // Result storage
     std::mutex result_mutex_;
@@ -318,9 +313,6 @@ private:
 
     // Queue plot for async retrieval
     void QueuePlot(const CapturedPlot& plot);
-
-    // Get pending plots and clear queue
-    std::vector<CapturedPlot> GetPendingPlots();
 
     // Shared cancellation flag - accessible from Python without GIL
     static std::atomic<int> shared_cancel_flag_;

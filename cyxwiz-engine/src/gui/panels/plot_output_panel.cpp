@@ -21,7 +21,6 @@ PlotOutputPanel::PlotOutputPanel()
 
 PlotOutputPanel::~PlotOutputPanel() {
     // Clean up textures
-    std::lock_guard<std::mutex> lock(plots_mutex_);
     for (auto& plot : plots_) {
         if (plot.texture_id != 0) {
             glDeleteTextures(1, &plot.texture_id);
@@ -43,7 +42,6 @@ void PlotOutputPanel::AddPlot(const scripting::CapturedPlot& plot) {
     entry.texture_id = CreateTextureFromPNG(plot.png_data, entry.width, entry.height);
 
     if (entry.texture_id != 0) {
-        std::lock_guard<std::mutex> lock(plots_mutex_);
         plots_.push_back(std::move(entry));
 
         // Auto-select new plot
@@ -56,7 +54,6 @@ void PlotOutputPanel::AddPlot(const scripting::CapturedPlot& plot) {
 }
 
 void PlotOutputPanel::ClearPlots() {
-    std::lock_guard<std::mutex> lock(plots_mutex_);
     for (auto& plot : plots_) {
         if (plot.texture_id != 0) {
             glDeleteTextures(1, &plot.texture_id);
@@ -67,10 +64,10 @@ void PlotOutputPanel::ClearPlots() {
 }
 
 void PlotOutputPanel::Render() {
-    if (!visible_) return;
-
-    // Poll for new plots from script execution
+    // Before the visibility check: a figure published while the window is
+    // closed still arrives (it used to be lost).
     PollForNewPlots();
+    if (!visible_) return;
 
     // Collapsed or behind another dock tab: skip the body (TOFIX129 0.6).
     if (!ImGui::Begin(GetName(), &visible_, ImGuiWindowFlags_MenuBar)) {
@@ -95,8 +92,6 @@ void PlotOutputPanel::Render() {
     }
 
     RenderToolbar();
-
-    std::lock_guard<std::mutex> lock(plots_mutex_);
 
     if (plots_.empty()) {
         // Empty state
@@ -451,29 +446,16 @@ bool PlotOutputPanel::SaveToFile(int plot_index) {
 void PlotOutputPanel::PollForNewPlots() {
     if (!scripting_engine_) return;
 
-    bool is_running = scripting_engine_->IsScriptRunning();
-
-    // Check if script just finished
-    if (was_script_running_ && !is_running) {
-        // Script finished - check for plots in the result
-        auto result = scripting_engine_->GetAsyncResult();
-        if (result.has_value()) {
-            auto& r = result.value();
-            if (!r.plots.empty()) {
-                spdlog::info("PlotOutputPanel: Received {} plots from script execution", r.plots.size());
-                for (const auto& plot : r.plots) {
-                    AddPlot(plot);
-                }
-
-                // Auto-scroll: ensure panel is visible
-                if (auto_scroll_ && !plots_.empty()) {
-                    visible_ = true;
-                }
-            }
-        }
+    const auto plots = scripting_engine_->TakePublishedPlots();
+    if (plots.empty()) return;
+    spdlog::info("PlotOutputPanel: Received {} plots from script execution", plots.size());
+    for (const auto& plot : plots) {
+        AddPlot(plot);
     }
-
-    was_script_running_ = is_running;
+    // Auto-scroll: show the window with the new figure
+    if (auto_scroll_ && !plots_.empty()) {
+        visible_ = true;
+    }
 }
 
 GLuint PlotOutputPanel::CreateTextureFromPNG(const std::vector<unsigned char>& png_data, int& out_width, int& out_height) {

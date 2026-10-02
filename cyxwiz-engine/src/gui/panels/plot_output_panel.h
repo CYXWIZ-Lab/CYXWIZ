@@ -5,7 +5,6 @@
 #include <vector>
 #include <memory>
 #include <string>
-#include <mutex>
 
 // Use GLAD for cross-platform OpenGL loading
 #include <glad/glad.h>
@@ -15,7 +14,8 @@ namespace cyxwiz {
 
 /**
  * Plot Output Panel - displays matplotlib figures from script execution
- * Similar to MATLAB's figure window, shows plots captured during script runs
+ * Similar to MATLAB's figure window, shows plots captured during script runs.
+ * UI thread only: figures arrive through ScriptingEngine::TakePublishedPlots.
  */
 class PlotOutputPanel : public Panel {
 public:
@@ -63,12 +63,6 @@ private:
     float max_zoom_ = 10.0f;            // 1000% maximum
     bool is_panning_ = false;           // Currently dragging to pan
 
-    // For polling script results
-    bool was_script_running_ = false;
-
-    // Thread safety
-    mutable std::mutex plots_mutex_;
-
     // Create OpenGL texture from PNG data
     GLuint CreateTextureFromPNG(const std::vector<unsigned char>& png_data, int& out_width, int& out_height);
 
@@ -101,7 +95,8 @@ private:
     // Save plot to file
     bool SaveToFile(int plot_index);
 
-    // Poll for new plots from script execution
+    // Take the figures finished scripts published (every frame, also while
+    // the window is hidden; TOFIX134 P0 item 6)
     void PollForNewPlots();
 };
 

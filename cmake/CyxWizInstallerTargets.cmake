@@ -362,6 +362,10 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/tests/test_text_document.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/editor/text_document.cpp"
     )
+    # Plot Output takes every published figure once (TOFIX134 P0 item 6).
+    add_executable(test_plot_inbox
+        "${_cyxwiz_installer_engine_dir}/tests/test_plot_inbox.cpp"
+    )
     # "Plot with Python" writes valid Python (TOFIX134 P0 item 4).
     add_executable(test_plot_script
         "${_cyxwiz_installer_engine_dir}/tests/test_plot_script.cpp"
@@ -426,7 +430,7 @@ if(CYXWIZ_BUILD_TESTS)
             test_notebook_format test_notebook_presentation
             test_markdown_blocks test_html_table test_csv_records
             test_language_results test_variables_presentation test_breakpoint_lines
-            test_paired_columns test_plot_script)
+            test_paired_columns test_plot_script test_plot_inbox)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
