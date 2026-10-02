@@ -1,5 +1,12 @@
 # Python Plotting Bindings - Integration Guide
 
+> **Status (2026-10-02, TOFIX134):** this module is a separate binary with its
+> own PlotManager, so nothing it creates appears in an Engine window, and
+> `show_plot` raises an error saying so. It is being replaced by an embedded
+> plot API (decision D3). To plot from Python in the Engine today, use
+> matplotlib: `plt.show()` puts the figure in the Plot Output window (see
+> `docs/usage/plotting.md` and `examples/`).
+
 ## Overview
 
 This document describes how the Python plotting bindings integrate with the CyxWiz Engine and how to use them from Python scripts.

@@ -123,7 +123,7 @@ def test_api_design():
     print("\nNext steps:")
     print("1. Build the module: cmake --build build/windows-debug")
     print("2. Test import: python -c 'import sys; sys.path.insert(0, \"build/windows-debug/python\"); import cyxwiz_plotting'")
-    print("3. Run examples: python cyxwiz-engine/python/examples/plotting_basic.py")
+    print("3. Note: windows created by this module do not reach the Engine (TOFIX134 D3).")
 
 
 def check_python_environment():

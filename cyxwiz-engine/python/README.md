@@ -1,8 +1,15 @@
 # CyxWiz Plotting System - Python Bindings
 
+> **Status (2026-10-02, TOFIX134):** this module is a separate binary with its
+> own PlotManager, so nothing it creates appears in an Engine window, and
+> `show_plot` raises an error saying so. It is being replaced by an embedded
+> plot API (decision D3). To plot from Python in the Engine today, use
+> matplotlib: `plt.show()` puts the figure in the Plot Output window (see
+> `docs/usage/plotting.md` and `examples/`).
+
 ## Overview
 
-This directory contains Python bindings for the CyxWiz plotting system, enabling users to create interactive plots from Python scripts that appear in the Engine GUI.
+This directory contains Python bindings for the CyxWiz plotting system, meant to let Python scripts create plots in the Engine GUI (they do not reach it; see the status note above).
 
 ## Files
 
@@ -15,8 +22,8 @@ python/
 ├── README.md                 # This file
 └── examples/
     ├── README.md             # Examples documentation
-    ├── plotting_basic.py     # Basic usage examples
-    └── plotting_advanced.py  # Advanced features and patterns
+    ├── matplotlib_figures.py # Figures to Plot Output with matplotlib
+    └── rl_metrics.py         # Metrics to the RL Training Dashboard
 ```
 
 ## Building
@@ -101,15 +108,8 @@ plt.show_plot(plot_id)
 
 ## Examples
 
-See `examples/` directory:
-
-- **plotting_basic.py**: Simple plots, multiple series, real-time updates
-- **plotting_advanced.py**: Custom config, training metrics, model comparison
-
-Run from Engine console:
-```python
-exec(open('python/examples/plotting_basic.py').read())
-```
+See `examples/README.md`: the examples use matplotlib and `pycyxwiz`, not
+this module.
 
 ## Documentation
 
