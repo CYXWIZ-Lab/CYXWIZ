@@ -7029,6 +7029,8 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
         }
     }
 
+    last_node_results_ = ctx.node_results;
+
     // Transfer deployment status from context to executor state
     if (ctx.deployment_ready) {
         deployment_ready_ = true;

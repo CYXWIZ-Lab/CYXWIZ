@@ -272,6 +272,7 @@ set(ENGINE_SOURCES
     src/gui/main_window.cpp
     src/gui/main_window_shortcuts.cpp
     src/gui/node_editor.cpp
+    src/core/pipeline_type_names.cpp
     src/gui/node_editor_clipboard.cpp
     src/gui/node_editor_codegen.cpp
     src/gui/node_editor_connection.cpp
@@ -396,6 +397,7 @@ set(ENGINE_SOURCES
     src/core/plot/plot_table_source.cpp
     src/gui/plot/plot_view.cpp
     src/gui/plot/plot_window.cpp
+    src/core/plot/node_result_plan.cpp
     src/gui/panels/training_plot_panel_global.cpp
     src/gui/panels/plot_window.cpp
     src/gui/panels/python_plot_window_registry.cpp
@@ -2667,6 +2669,8 @@ set_target_properties(test_graph_executor_simulation PROPERTIES
 # ===== Test: Legacy PipelineExecutor operator routing =====
 add_executable(test_pipeline_executor_operator_routing
     tests/test_pipeline_executor_operator_routing.cpp
+    src/core/plot/node_result_plan.cpp
+    src/core/pipeline_type_names.cpp
     src/core/preparation_recipe.cpp
     tests/test_ordered_text_aggregation.cpp
     src/core/preprocessing_state.cpp

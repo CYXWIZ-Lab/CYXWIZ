@@ -9,6 +9,7 @@
 #include "core/project_data_path.h"
 #include "core/preparation_recipe.h"
 #include "core/sql_step_contract.h"
+#include "core/plot/node_result_plan.h"
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
 #include <thread>
@@ -620,6 +621,63 @@ void CheckTrack70RowAndColumnLimits() {
             }
         }
     }
+}
+
+// TOFIX134 P2: the Plot node's result lane runs only the nodes above the
+// plot (a graph with a Dense layer beside them still runs) and finds the
+// table of the node wired into the plot.
+void CheckPlotLaneRunsOnlyTheClosure() {
+    namespace fs = std::filesystem;
+    using gui::MLNode;
+    using gui::NodeLink;
+    using gui::NodeType;
+    const fs::path csv_path = fs::temp_directory_path() / "cyxwiz_plot_lane.csv";
+    {
+        std::ofstream csv(csv_path, std::ios::binary | std::ios::trunc);
+        csv << "x,y,class\n1,10,a\n2,20,b\n3,30,a\n4,40,b\n";
+    }
+    int pin = 5000;
+    const auto node = [&pin](int id, NodeType type, const char* name, int ins, int outs) {
+        MLNode n{};
+        n.id = id;
+        n.type = type;
+        n.name = name;
+        for (int i = 0; i < ins; ++i) { gui::NodePin p{}; p.id = pin++; p.is_input = true; n.inputs.push_back(p); }
+        for (int i = 0; i < outs; ++i) { gui::NodePin p{}; p.id = pin++; n.outputs.push_back(p); }
+        return n;
+    };
+    MLNode input = node(93001, NodeType::DataInput, "Data Input", 0, 1);
+    input.parameters = {{"source_type", "file"}, {"file_path", csv_path.string()}, {"type", "csv"},
+                        {"has_header", "true"}, {"delimiter", ","}, {"decimal_point", "."},
+                        {"skip_rows", "0"}, {"max_rows", "0"}, {"missing_value_tokens", ""},
+                        {"selected_columns", "[]"}, {"force_disk_backed", "false"}};
+    MLNode filter = node(93002, NodeType::FilterRows, "Filter Rows", 1, 1);
+    filter.parameters["condition"] = "x > 1";
+    MLNode dense = node(93003, NodeType::Dense, "Dense", 1, 1);
+    MLNode plot = node(93009, NodeType::DescribeStats, "Plot", 1, 0);
+    const auto link = [](int id, const MLNode& a, const MLNode& b) {
+        NodeLink l{};
+        l.id = id;
+        l.from_node = a.id;
+        l.from_pin = a.outputs[0].id;
+        l.to_node = b.id;
+        l.to_pin = b.inputs[0].id;
+        return l;
+    };
+    const std::vector<MLNode> nodes = {input, filter, dense, plot};
+    const std::vector<NodeLink> links = {link(1, input, filter), link(2, filter, dense), link(3, filter, plot)};
+    const auto plan = cyxwiz::plot::PlanNodeResult(93009, nodes, links, [](const std::string&) { return false; });
+    Check(plan.state == cyxwiz::plot::NodeResultPlan::State::Run, "plot lane: the closure is runnable");
+    cyxwiz::PipelineExecutor executor;
+    Check(executor.ExecutePipeline(plan.pipeline_json),
+          "plot lane: the closure runs although Dense sits beside it: " + executor.GetLastError());
+    const auto it = executor.NodeResults().find(plan.feeder_id);
+    Check(it != executor.NodeResults().end(), "plot lane: the feeder's result is named");
+    auto table = cyxwiz::DataRegistry::Instance().GetArrowDataset(it->second);
+    Check(table && table->GetNumRows() == 3, "plot lane: the filtered table (3 of 4 rows) is in the registry");
+    std::error_code error;
+    fs::remove(csv_path, error);
+    std::cout << "plot lane: closure only, feeder result found (" << it->second << ")\n";
 }
 
 void CheckPipelineDataInputUsesProjectIngestionCache() {
@@ -1727,6 +1785,10 @@ int main(int argc, char** argv) {
         CheckTrack70RowAndColumnLimits();
         return 0;
     }
+    if (argc == 2 && std::string(argv[1]) == "--plot-lane") {
+        CheckPlotLaneRunsOnlyTheClosure();
+        return 0;
+    }
     if (argc == 2 &&
         std::string(argv[1]) == "--pipeline-ingestion-cache") {
         CheckPipelineDataInputUsesProjectIngestionCache();
@@ -1738,6 +1800,7 @@ int main(int argc, char** argv) {
     CheckValidationBadSchemaRoutingCoverage();
     CheckTrack70RowAndColumnLimits();
     CheckPipelineDataInputUsesProjectIngestionCache();
+    CheckPlotLaneRunsOnlyTheClosure();
 
     auto& registry = cyxwiz::DataRegistry::Instance();
 

@@ -160,6 +160,10 @@ public:
      */
     bool IsCancelled() const { return cancel_requested_; }
 
+    // Node id -> DataRegistry dataset of the last successful run (the Plot
+    // node's result lane reads the table of the node wired into it).
+    const std::map<int, std::string>& NodeResults() const { return last_node_results_; }
+
 private:
     struct InputLink {
         int node_id = -1;
@@ -182,6 +186,8 @@ private:
         uint64_t last_execution_hash = 0;   // Hash of parameters for change detection
         std::string cached_output_dataset;  // Result from last successful execution
     };
+
+    std::map<int, std::string> last_node_results_;
 
     struct ExecutionContext {
         std::map<int, std::string> node_results;  // Node ID -> Arrow table name

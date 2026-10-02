@@ -400,6 +400,14 @@ if(CYXWIZ_BUILD_TESTS)
         target_compile_options(test_plot_table_source PRIVATE /utf-8)
         target_compile_definitions(test_plot_table_source PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
     endif()
+    # Plot node result lane plan: closure only, staleness, unavailable (TOFIX134 P2).
+    add_executable(test_node_result_plan
+        "${_cyxwiz_installer_engine_dir}/tests/test_node_result_plan.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/plot/node_result_plan.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/pipeline_type_names.cpp"
+        "${_cyxwiz_installer_engine_dir}/src/core/pipeline_runtime_capabilities.cpp"
+    )
+    target_link_libraries(test_node_result_plan PRIVATE nlohmann_json::nlohmann_json)
     # Training Dashboard draws reduced series (TOFIX134 P0 item 8).
     add_executable(test_series_decimation
         "${_cyxwiz_installer_engine_dir}/tests/test_series_decimation.cpp"
@@ -475,7 +483,7 @@ if(CYXWIZ_BUILD_TESTS)
             test_language_results test_variables_presentation test_breakpoint_lines
             test_paired_columns test_plot_script test_plot_inbox test_series_decimation
             test_plot_model test_plot_prepare test_plot_export
-            test_plot_table_source)
+            test_plot_table_source test_node_result_plan)
         set_target_properties(${_cyxwiz_p0_test} PROPERTIES
             CXX_STANDARD 20
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
