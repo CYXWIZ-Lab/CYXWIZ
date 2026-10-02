@@ -81,6 +81,30 @@ int main() {
         Check(ratio >= 4.5f, std::string("dark ") + c.name + " contrast >= 4.5 (got " + std::to_string(ratio) + ")");
     }
 
+    // Plot series (TOFIX134 P1): six colours that read on the window (3:1,
+    // the graphics minimum) on dark, Unreal grey and light windows, and
+    // that differ from each other.
+    const Tokens grey = BuildTokens(StyleWithWindow(0.161f, 0.161f, 0.161f));
+    const struct { const char* name; const Tokens* tokens; ImVec4 window; } sets[] = {
+        {"dark", &dark, navy}, {"grey", &grey, ImVec4(0.161f, 0.161f, 0.161f, 1.0f)}, {"light", &light, window}};
+    for (const auto& set : sets) {
+        for (int i = 0; i < Tokens::kSeriesCount; ++i) {
+            const float ratio = Contrast(set.tokens->series[i], set.window);
+            Check(ratio >= 3.0f, std::string(set.name) + " series " + std::to_string(i) + " contrast >= 3 (got " +
+                                     std::to_string(ratio) + ")");
+            for (int j = i + 1; j < Tokens::kSeriesCount; ++j) {
+                const ImVec4 a = set.tokens->series[i], b = set.tokens->series[j];
+                const float d = std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+                Check(d >= 0.25f, std::string(set.name) + " series " + std::to_string(i) + " and " + std::to_string(j) +
+                                      " differ (distance " + std::to_string(d) + ")");
+            }
+        }
+        // The plot area follows the window colour (one surface rule).
+        const ImVec4 bg = set.tokens->plot_bg;
+        Check(std::fabs(bg.x - set.window.x) < 0.06f && std::fabs(bg.z - set.window.z) < 0.06f,
+              std::string(set.name) + " plot area is the window colour, a shade off");
+    }
+
     // Status vocabulary: the words users see, with an icon each.
     const struct { Status status; const char* label; } words[] = {
         {Status::Verified, "Verified"}, {Status::NotVerifiedYet, "Not verified yet"}, {Status::Failed, "Failed"},

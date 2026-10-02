@@ -51,6 +51,15 @@ struct Tokens {
     ImVec4 pending;       // not yet, unknown, idle
     ImVec4 running;       // in progress
 
+    // Plots (TOFIX134 P1): series colours in order, the plot area and its
+    // grid, and the stops of the sequential and diverging colour scales.
+    static constexpr int kSeriesCount = 6;
+    ImVec4 series[kSeriesCount];
+    ImVec4 plot_bg;
+    ImVec4 plot_grid;
+    ImVec4 scale_sequential[4];  // low to high
+    ImVec4 scale_diverging[3];   // negative, middle, positive
+
     // Spacing (px at 1x density)
     float space_xs = 4.0f;
     float space_sm = 6.0f;

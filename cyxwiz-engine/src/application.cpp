@@ -47,6 +47,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <implot.h>
+#include "gui/plot/plot_style.h"
 #include <imnodes.h>
 #include <cyxwiz/device.h>
 
@@ -680,6 +681,8 @@ void CyxWizApp::Render() {
         }
         ImPlot::SetCurrentContext(implot_context_);
     }
+    // Plot colours follow the theme tokens (TOFIX134 P1).
+    cyxwiz::plot::ApplyPlotStyle();
 
     // Python scan and dialog (TOFIX129 A2-3).
     if (python_setup_) {

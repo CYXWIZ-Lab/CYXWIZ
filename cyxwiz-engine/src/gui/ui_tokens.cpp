@@ -66,6 +66,38 @@ Tokens BuildTokens(const ImGuiStyle& style) {
         t.pending = ImVec4(0.64f, 0.69f, 0.78f, 1.0f);
         t.running = ImVec4(0.70f, 0.65f, 1.00f, 1.0f);
     }
+
+    // Plot series: violet, sky, amber, green, coral, pink. Each reads on the
+    // window (3:1 or more) and differs from the others; the light set is
+    // darker so it reads on a near-white window.
+    if (t.light) {
+        const ImVec4 series[] = {{0.357f, 0.239f, 0.961f, 1.0f}, {0.122f, 0.471f, 0.706f, 1.0f},
+                                 {0.659f, 0.420f, 0.000f, 1.0f}, {0.055f, 0.502f, 0.282f, 1.0f},
+                                 {0.776f, 0.184f, 0.157f, 1.0f}, {0.690f, 0.180f, 0.520f, 1.0f}};
+        for (int i = 0; i < Tokens::kSeriesCount; ++i) t.series[i] = series[i];
+    } else {
+        const ImVec4 series[] = {{0.616f, 0.561f, 1.000f, 1.0f}, {0.498f, 0.784f, 0.910f, 1.0f},
+                                 {0.902f, 0.749f, 0.290f, 1.0f}, {0.239f, 0.839f, 0.549f, 1.0f},
+                                 {1.000f, 0.478f, 0.451f, 1.0f}, {0.949f, 0.482f, 0.769f, 1.0f}};
+        for (int i = 0; i < Tokens::kSeriesCount; ++i) t.series[i] = series[i];
+    }
+    // The plot area is the window colour, a shade deeper (lighter on light).
+    t.plot_bg = Mix(t.bg_window, t.light ? ImVec4(1, 1, 1, 1) : ImVec4(0, 0, 0, 1), t.light ? 0.5f : 0.08f);
+    t.plot_grid = WithAlpha(t.text_dim, t.light ? 0.18f : 0.14f);
+    if (t.light) {
+        t.scale_sequential[0] = ImVec4(0.93f, 0.91f, 1.00f, 1.0f);
+        t.scale_sequential[1] = ImVec4(0.70f, 0.65f, 1.00f, 1.0f);
+        t.scale_sequential[2] = t.accent;
+        t.scale_sequential[3] = ImVec4(0.20f, 0.12f, 0.60f, 1.0f);
+    } else {
+        t.scale_sequential[0] = Mix(t.plot_bg, t.accent, 0.25f);
+        t.scale_sequential[1] = t.accent;
+        t.scale_sequential[2] = ImVec4(0.702f, 0.651f, 1.0f, 1.0f);
+        t.scale_sequential[3] = ImVec4(0.92f, 0.90f, 1.00f, 1.0f);
+    }
+    t.scale_diverging[0] = ImVec4(0.29f, 0.56f, 0.85f, 1.0f);
+    t.scale_diverging[1] = t.plot_bg;
+    t.scale_diverging[2] = ImVec4(0.88f, 0.44f, 0.31f, 1.0f);
     return t;
 }
 
