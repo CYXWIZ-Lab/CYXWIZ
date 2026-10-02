@@ -232,6 +232,12 @@ bool ScriptEditorPanel::RenderCellEditorBlock(Cell& cell, int index, float width
     cell.editor.SetScrollPastEnd(false);
     cell.editor.SetBackground(ui::ToU32(BlockColour()));
     cell.editor.SetReadOnly(!editing);
+    // The paused line of a cell being debugged (board 12).
+    cell.editor.SetDebugLine(debug_run_.active && debug_.state == "paused" && debug_run_.cell_id == cell.id &&
+                                     debug_frame_ < static_cast<int>(debug_.stack.size()) &&
+                                     debug_.stack[debug_frame_].file == debug_.file
+                                 ? debug_.stack[debug_frame_].line - 1
+                                 : -1);
     cell.editor.SetKeyboardEnabled(editing && !completion_just_accepted_);
     ApplyProblemSquiggles(tab, cell.editor, cell.problems);
 

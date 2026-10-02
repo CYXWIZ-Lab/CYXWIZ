@@ -7,15 +7,19 @@
 
 #include "../../scripting/script_output_sink.h"
 #include "../../scripting/scripting_engine.h"
+#include "../editor_fonts.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
+#include "../ui_fonts.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
 
 #include <imgui.h>
+#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 
@@ -239,6 +243,200 @@ void ScriptEditorPanel::Debug() {
         debug_run_ = DebugRun{true, tab->document_id, {}};
         spdlog::info("Debugging {}", tab->filename);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Board 11 side area.
+
+float ScriptEditorPanel::DebugSidebarWidth(float available) const {
+    if (!debug_run_.active || available < 900.0f) return 0.0f;
+    return std::min(480.0f, std::floor(available * 0.36f));
+}
+
+void ScriptEditorPanel::SelectDebugFrame(int index) {
+    if (index < 0 || index >= static_cast<int>(debug_.stack.size())) return;
+    debug_frame_ = index;
+    if (CodeEditor* code = DebugEditorFor(debug_.stack[index].file)) code->GoToLine(std::max(0, debug_.stack[index].line - 1));
+}
+
+// Watch: each expression in the selected frame, once per pause or frame.
+void ScriptEditorPanel::EvaluateWatches() {
+    if (!scripting_engine_ || debug_.state != "paused") return;
+    if (debug_watch_version_ == debug_.version && debug_watch_frame_ == debug_frame_) return;
+    debug_watch_version_ = debug_.version;
+    debug_watch_frame_ = debug_frame_;
+    for (const auto& expr : debug_watches_) {
+        scripting::VariablesService::Request r;
+        r.kind = scripting::VariablesService::Kind::Evaluate;
+        r.expression = expr;
+        r.frame = debug_frame_;
+        VariablesView::Read(scripting_engine_.get(), std::move(r), this, [this, expr](const scripting::VariablesService::Result& res) {
+            WatchResult w;
+            const auto doc = nlohmann::json::parse(res.json.empty() ? "{}" : res.json, nullptr, false);
+            if (res.busy || doc.is_discarded()) {
+                w.text = "not paused";
+                w.error = true;
+            } else if (doc.contains("value")) {
+                w.text = doc.value("value", "");
+            } else {
+                w.undefined = doc.value("undefined", false);
+                w.text = w.undefined ? "not defined in this frame" : doc.value("error", "");
+                w.error = true;
+            }
+            debug_watch_results_[expr] = std::move(w);
+        });
+    }
+}
+
+void ScriptEditorPanel::RenderDebugSidebar(float width, float height) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const bool paused = debug_.state == "paused";
+    if (paused) EvaluateWatches();
+    ui::FontScope interface_font(ui::Font::Regular);  // drawn inside the editor's code font
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::Mix(t.bg_window, t.text, 0.03f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
+    ImGui::BeginChild("##debug_sidebar", ImVec2(width, height), ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar);
+    auto section = [&](const char* title, int count) {
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        ui::FontScope bold(ui::Font::Bold);
+        if (count >= 0) ImGui::Text("%s  ", title);
+        else ImGui::TextUnformatted(title);
+        if (count >= 0) {
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextColored(t.text_dim, "%d", count);
+        }
+    };
+    const float row = ImGui::GetFrameHeight();
+    ImFont* mono = gui::GetCodeFont();
+
+    // Heights: Watch, Call stack and Breakpoints take their rows; Variables the rest.
+    const int stack_rows = std::min(6, std::max(1, static_cast<int>(debug_.stack.size())));
+    const Cell* bp_cell = nullptr;
+    const EditorTab* bp_tab = nullptr;
+    if (const int i = FindTabIndex(debug_run_.document_id); i >= 0) {
+        bp_tab = tabs_[i].get();
+        if (!debug_run_.cell_id.empty())
+            for (int c = 0; c < bp_tab->cell_manager.GetCellCount(); ++c)
+                if (bp_tab->cell_manager.GetCell(c).id == debug_run_.cell_id) bp_cell = &bp_tab->cell_manager.GetCell(c);
+    }
+    const std::vector<int> no_lines;
+    const std::vector<int>& bp_lines = bp_cell ? bp_cell->breakpoints : (bp_tab ? bp_tab->breakpoints : no_lines);
+    const float fixed = (row + 6.0f) * 4.0f + row * (static_cast<float>(debug_watches_.size()) + 1.0f) +
+                        row * static_cast<float>(stack_rows) + row * (static_cast<float>(bp_lines.size()) + 1.0f) + 30.0f;
+    const float vars_h = std::max(140.0f, height - fixed);
+
+    // VARIABLES: the shared view on the selected frame.
+    section("VARIABLES", -1);
+    if (!debug_variables_) {
+        debug_variables_ = std::make_unique<VariablesView>();
+        debug_variables_->SetCompact(true);
+        debug_variables_->on_open_table = [this](const VariablesView::OpenRequest& request,
+                                                 const scripting::VariablesService::Result& result) {
+            if (open_variable_callback_) open_variable_callback_(request, result);
+        };
+    }
+    if (paused && debug_frame_ < static_cast<int>(debug_.stack.size())) {
+        const char* labels[] = {"Locals", "Globals"};
+        ImGui::SameLine(0.0f, 12.0f);
+        ui::SegmentedControl("##frame_scope", labels, 2, &debug_variables_which_);
+        const auto& frame = debug_.stack[debug_frame_];
+        debug_variables_->SetEngine(scripting_engine_.get());
+        debug_variables_->SetScope({"debug:" + std::to_string(debug_frame_) + (debug_variables_which_ ? ":globals" : ":locals"),
+                                    frame.name, debug_variables_which_ ? "globals" : "locals"});
+        debug_variables_->Render(vars_h);
+    } else {
+        ImGui::TextColored(t.text_dim, "%s", "Running... values show when the run pauses.");
+        ImGui::Dummy(ImVec2(0.0f, vars_h - row));
+    }
+
+    // WATCH
+    section("WATCH", static_cast<int>(debug_watches_.size()));
+    int remove = -1;
+    for (size_t i = 0; i < debug_watches_.size(); ++i) {
+        const std::string& expr = debug_watches_[i];
+        ImGui::PushID(static_cast<int>(i));
+        if (mono) ImGui::PushFont(mono);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(expr.c_str());
+        ImGui::SameLine();
+        ImGui::TextColored(t.text_dim, "=");
+        ImGui::SameLine();
+        auto it = debug_watch_results_.find(expr);
+        if (!paused) ImGui::TextColored(t.text_faint, "%s", "(paused only)");
+        else if (it == debug_watch_results_.end()) ImGui::TextColored(t.text_faint, "%s", "...");
+        else ImGui::TextColored(it->second.undefined ? t.text_faint : (it->second.error ? t.error : t.info), "%s", it->second.text.c_str());
+        if (mono) ImGui::PopFont();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && it != debug_watch_results_.end())
+            ImGui::SetTooltip("%s\n\nRight-click: remove", it->second.text.c_str());
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) remove = static_cast<int>(i);
+        ImGui::PopID();
+    }
+    if (remove >= 0) {
+        debug_watch_results_.erase(debug_watches_[static_cast<size_t>(remove)]);
+        debug_watches_.erase(debug_watches_.begin() + remove);
+    }
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::InputTextWithHint("##add_watch", "+ Add an expression (Enter)", debug_watch_input_, sizeof(debug_watch_input_),
+                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
+        std::string expr = debug_watch_input_;
+        expr.erase(0, expr.find_first_not_of(" \t"));
+        expr.erase(expr.find_last_not_of(" \t") + 1);
+        if (!expr.empty() && std::find(debug_watches_.begin(), debug_watches_.end(), expr) == debug_watches_.end()) {
+            debug_watches_.push_back(expr);
+            debug_watch_version_ = 0;  // evaluate now
+        }
+        debug_watch_input_[0] = '\0';
+    }
+
+    // CALL STACK: click a frame to go there; Variables and Watch follow it.
+    section("CALL STACK", static_cast<int>(debug_.stack.size()));
+    ImGui::PushStyleColor(ImGuiCol_Header, t.selection);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, t.hover);
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, t.selection);
+    if (debug_.stack.empty()) ImGui::TextColored(t.text_faint, "%s", paused ? "" : "(paused only)");
+    for (size_t i = 0; i < debug_.stack.size(); ++i) {
+        const auto& f = debug_.stack[i];
+        ImGui::PushID(static_cast<int>(i));
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float w = ImGui::GetContentRegionAvail().x;
+        if (ImGui::Selectable("##frame", static_cast<int>(i) == debug_frame_, ImGuiSelectableFlags_None, ImVec2(w, row)))
+            SelectDebugFrame(static_cast<int>(i));
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const float y = p.y + (row - ImGui::GetFontSize()) * 0.5f;
+        if (mono) dl->AddText(mono, ImGui::GetFontSize(), ImVec2(p.x + 6.0f, y), ui::ToU32(t.text_bright), f.name.c_str());
+        const std::string where = std::filesystem::path(f.file).filename().string() + ":" + std::to_string(f.line);
+        const float ww = ImGui::CalcTextSize(where.c_str()).x;
+        dl->AddText(ImVec2(p.x + w - ww - 6.0f, y), ui::ToU32(t.text_dim), where.c_str());
+        ImGui::PopID();
+    }
+    ImGui::PopStyleColor(3);
+
+    // BREAKPOINTS: the debugged script's or cell's lines with their hits.
+    section("BREAKPOINTS", static_cast<int>(bp_lines.size()));
+    std::vector<int> sorted = bp_lines;
+    std::sort(sorted.begin(), sorted.end());
+    const std::string label = bp_cell ? std::string("this cell") : (bp_tab ? bp_tab->filename : std::string());
+    for (int line : sorted) {
+        ImGui::PushID(line);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.error, "%s", ICON_FA_CIRCLE);
+        ImGui::SameLine();
+        if (ui::LinkButton((label + ", line " + std::to_string(line)).c_str()))
+            if (CodeEditor* code = DebugEditorFor(debug_.file)) code->GoToLine(line - 1);
+        auto hit = debug_.hits.find(line);
+        if (hit != debug_.hits.end() && hit->second > 0) {
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_dim, "hit %d %s", hit->second, hit->second == 1 ? "time" : "times");
+        }
+        ImGui::PopID();
+    }
+    if (ImGui::Checkbox("Stop on uncaught errors", &debug_stop_on_error_)) {
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Takes effect at the next Debug");
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
 }
 
 }  // namespace cyxwiz

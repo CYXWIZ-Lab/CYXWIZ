@@ -43,6 +43,9 @@ public:
     const std::string& ScopeKey() const { return scope_.key; }
     // A bold title before the header (a notebook's "Variables"); empty: none.
     void SetTitle(const std::string& title) { title_ = title; }
+    // Compact (the debugger's side area): no type chips or footer; Name,
+    // Size and Value columns only. Deleting is off (a frame's values).
+    void SetCompact(bool compact) { compact_ = compact; }
 
     // Read again the next time the view draws ("after the run finished").
     void Invalidate(const std::string& reason);
@@ -113,6 +116,7 @@ private:
     scripting::ScriptingEngine* engine_ = nullptr;
     Scope scope_{"", "Python session", "scripts and Console"};
     std::string title_;
+    bool compact_ = false;
 
     std::vector<vars::Variable> vars_;
     std::map<std::string, std::vector<vars::Variable>> children_;

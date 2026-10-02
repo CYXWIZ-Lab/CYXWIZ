@@ -369,6 +369,23 @@ private:
     CodeEditor* DebugEditorFor(const std::string& file, EditorTab** tab_out = nullptr);
     void DebugCommand(const char* command);
     void StopDebugging();
+    // Board 11 side area: Variables of the selected frame, Watch, Call stack, Breakpoints.
+    float DebugSidebarWidth(float available) const;
+    void RenderDebugSidebar(float width, float height);
+    void SelectDebugFrame(int index);
+    void EvaluateWatches();
+    struct WatchResult {
+        std::string text;
+        bool error = false;
+        bool undefined = false;
+    };
+    std::unique_ptr<VariablesView> debug_variables_;
+    int debug_variables_which_ = 0;  // 0 locals, 1 globals
+    std::vector<std::string> debug_watches_;
+    std::map<std::string, WatchResult> debug_watch_results_;
+    std::uint64_t debug_watch_version_ = 0;  // the pause they were evaluated at
+    int debug_watch_frame_ = -1;
+    char debug_watch_input_[256] = {};
     scripting::IScriptOutputSink* script_output_sink_ = nullptr;
 
     // Debugger state

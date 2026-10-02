@@ -588,7 +588,15 @@ void ScriptEditorPanel::RenderEditor() {
     // Problems: underlines, and the panel under the code when it is open (board 7).
     ApplyProblemSquiggles(*tab, code, tab->problems);
     const float problems_height = tab->show_problems ? 168.0f : 0.0f;
-    const bool text_changed = code.Render("##code", ImVec2(0.0f, available_height - problems_height));
+    const float debug_width = DebugSidebarWidth(code_width);  // board 11: beside the code while debugging
+    const bool text_changed = code.Render("##code", ImVec2(debug_width > 0.0f ? code_width - debug_width : 0.0f,
+                                                         available_height - problems_height));
+    if (debug_width > 0.0f) {
+        const ImVec2 below = ImGui::GetCursorScreenPos();
+        ImGui::SetCursorScreenPos(ImVec2(code_min.x + code_width - debug_width, code_min.y));
+        RenderDebugSidebar(debug_width, available_height - problems_height);
+        ImGui::SetCursorScreenPos(below);
+    }
     completion_just_accepted_ = false;
     AfterCodeRender(code, tab->problems, std::string());  // hover card, Ctrl+click
     if (find_.open && !narrow_find) {

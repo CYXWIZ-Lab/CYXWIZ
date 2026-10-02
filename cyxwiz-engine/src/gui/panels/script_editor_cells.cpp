@@ -93,7 +93,8 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
         RenderNotebookOutline(*tab, outline_width, cells_height);
         ImGui::SameLine(0.0f, 0.0f);
     }
-    ImGui::BeginChild("##cells_container", ImVec2(available_width - outline_width, cells_height), false);
+    const float debug_width = DebugSidebarWidth(available_width - outline_width);  // board 11
+    ImGui::BeginChild("##cells_container", ImVec2(available_width - outline_width - debug_width, cells_height), false);
     {
         // Restore scroll position
         if (tab->restore_cell_scroll) {
@@ -112,6 +113,10 @@ void ScriptEditorPanel::RenderCellBasedEditor() {
         tab->cell_scroll_y = ImGui::GetScrollY();
     }
     ImGui::EndChild();
+    if (debug_width > 0.0f) {
+        ImGui::SameLine(0.0f, 0.0f);
+        RenderDebugSidebar(debug_width, cells_height);
+    }
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor(5);
     if (tab->show_problems) RenderProblemsPanel(*tab, 168.0f);

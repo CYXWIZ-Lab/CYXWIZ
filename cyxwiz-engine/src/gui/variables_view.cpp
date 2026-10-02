@@ -243,10 +243,10 @@ void VariablesView::Render(float height) {
     ImGui::BeginChild("##variables_view", ImVec2(0.0f, height), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     RenderHeader();
-    RenderChips();
-    const float footer_h = ImGui::GetFrameHeight() + 4.0f;
+    if (!compact_) RenderChips();
+    const float footer_h = compact_ ? 0.0f : ImGui::GetFrameHeight() + 4.0f;
     RenderTable(std::max(40.0f, ImGui::GetContentRegionAvail().y - footer_h));
-    RenderFooter();
+    if (!compact_) RenderFooter();
     ImGui::EndChild();
     ImGui::PopID();
 }
@@ -353,20 +353,25 @@ void VariablesView::RenderTable(float height) {
     }
 
     const ImGuiTableFlags flags = ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
-                                  ImGuiTableFlags_Sortable | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoBordersInBody;
+                                  ImGuiTableFlags_Sortable | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoBordersInBody |
+                                  ImGuiTableFlags_Hideable;
     ImGui::PushStyleColor(ImGuiCol_Header, t.selection);
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, t.hover);
     ImGui::PushStyleColor(ImGuiCol_HeaderActive, t.selection);
     bool open_menu = false;
     if (ImGui::BeginTable("##vars", 6, flags, ImVec2(0.0f, height))) {
         ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort, 220.0f);
+        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort, compact_ ? 120.0f : 220.0f);
         ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 150.0f);
         ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 110.0f);
         ImGui::TableSetupColumn("Memory", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 80.0f);
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("##view", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort |
                                               ImGuiTableColumnFlags_NoResize, 26.0f);
+        if (compact_) {
+            ImGui::TableSetColumnEnabled(1, false);  // Type: in the tooltip
+            ImGui::TableSetColumnEnabled(3, false);  // Memory
+        }
         ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
         ImGui::TableHeadersRow();
         ImGui::PopStyleColor();
@@ -456,6 +461,7 @@ void VariablesView::RenderTable(float height) {
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
                     ImGui::BeginTooltip();
                     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 36.0f);
+                    if (compact_) ImGui::TextColored(KindColour(v.kind), "%s", v.type.c_str());  // no Type column
                     ImGui::TextUnformatted(v.value.c_str());
                     ImGui::PopTextWrapPos();
                     ImGui::EndTooltip();
@@ -505,7 +511,7 @@ void VariablesView::RenderRowMenu(const vars::TreeRow& row) {
     if (ImGui::MenuItem("Copy value", "Ctrl+C")) CopyValue(row.path);
     if (row.depth == 0 && on_insert_name && ImGui::MenuItem("Insert name in the editor")) on_insert_name(v.name);
     if (v.viewable && ImGui::MenuItem("Save as CSV...")) SaveCsv(row.path, v.name);
-    if (row.depth == 0) {
+    if (row.depth == 0 && !compact_) {
         gap();
         ImGui::PushStyleColor(ImGuiCol_Text, t.error);
         if (ImGui::MenuItem("Delete variable", "Delete")) Delete(row.path, v.name);
@@ -535,7 +541,7 @@ void VariablesView::HandleKeys(const std::vector<vars::TreeRow>& rows) {
     else if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) {
         if (row.var->viewable) ViewData(row.path, row.var->name);
         else if (row.var->expandable) ToggleOpen(row.path);
-    } else if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && row.depth == 0) {
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && row.depth == 0 && !compact_) {
         Delete(row.path, row.var->name);
     } else if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) {
         CopyValue(row.path);
